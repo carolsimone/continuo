@@ -159,6 +159,15 @@ streams:
     producers: [k8s-controller]
     consumers: []
 
+  - name: executor.job.terminal:v1
+    const: ExecutorJobTerminalV1
+    description: Capacity-only terminal notification for executor-created Kubernetes Jobs.
+    producers: [k8s-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-job-terminal
+        const: ExecutorJobTerminal
+
   # ---------------- cross-service fanout ----------------
 
   - name: schedule.cancelled:v1

@@ -36,6 +36,8 @@ const (
 	CheckK8sV1 = "check.k8s:v1"
 	// TaskFailedV1 — Terminal task failure emitted by k8s-controller.
 	TaskFailedV1 = "task.failed:v1"
+	// ExecutorJobTerminalV1 — Capacity-only terminal notification for executor-created Kubernetes Jobs.
+	ExecutorJobTerminalV1 = "executor.job.terminal:v1"
 	// ScheduleCancelledV1 — Schedule cancellation broadcast; fanned out to orchestrator, executor, k8s.
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
@@ -106,6 +108,8 @@ const (
 	K8sDeployed = "k8s-deployed"
 	// K8sCheckStatus — k8s-controller consumer group on check.k8s:v1.
 	K8sCheckStatus = "k8s-check-status"
+	// ExecutorJobTerminal — executor-controller consumer group on executor.job.terminal:v1.
+	ExecutorJobTerminal = "executor-job-terminal"
 	// OrchestratorScheduleCancelled — orchestrator consumer group on schedule.cancelled:v1.
 	OrchestratorScheduleCancelled = "orchestrator-schedule-cancelled"
 	// ExecutorScheduleCancelled — executor-controller consumer group on schedule.cancelled:v1.
@@ -169,6 +173,7 @@ var All = []string{
 	NodeDeployedV1,
 	CheckK8sV1,
 	TaskFailedV1,
+	ExecutorJobTerminalV1,
 	ScheduleCancelledV1,
 	ReleaseRequestedV1,
 	ManifestLoadedCandidateV1,

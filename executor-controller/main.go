@@ -163,6 +163,7 @@ func main() {
 	seedBuildNodeHandler := handlers.NewSeedBuildNodeCompletedHandler(logger)
 	compileReqHandler := handlers.NewCompileRequestedHandler(logger)
 	compileNodeHandler := handlers.NewCompileNodeCompletedHandler(logger)
+	jobTerminalHandler := handlers.NewJobTerminalHandler(logger)
 
 	queryBinding := redis.NewQueryModelBinding(uowFactory, queryHandler, logger)
 	retryBinding := redis.NewRetryTaskBinding(uowFactory, retryHandler, logger)
@@ -180,6 +181,8 @@ func main() {
 		uowFactory, compileReqHandler, logger)
 	compileNodeBinding := redis.NewCompileNodeCompletedBinding(
 		uowFactory, compileNodeHandler, logger)
+	jobTerminalBinding := redis.NewJobTerminalBinding(
+		uowFactory, jobTerminalHandler, logger)
 	validationCompletedTeardownBinding := redis.NewValidationCompletedTeardownBinding(
 		candidateSchemaCleaner, logger)
 	releaseRejectedTeardownBinding := redis.NewReleaseRejectedTeardownBinding(
@@ -245,6 +248,12 @@ func main() {
 	logger.Info("compile.node.completed consumer initialized",
 		"stream", streams.CompileNodeCompletedV1, "group", streams.ExecutorCompileNodeCompleted)
 
+	jobTerminalConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ExecutorJobTerminalV1, streams.ExecutorJobTerminal,
+		jobTerminalBinding, logger)
+	logger.Info("executor.job.terminal consumer initialized",
+		"stream", streams.ExecutorJobTerminalV1, "group", streams.ExecutorJobTerminal)
+
 	validationCompletedTeardownConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.ValidationCompletedV1, streams.ExecutorValidationCompleted,
 		validationCompletedTeardownBinding, logger)
@@ -295,7 +304,9 @@ func main() {
 			return postgres.NewValidationAggregateRepository(exec)
 		},
 		cfg.MaxConcurrentExecutions, logger,
-		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
+		// BatchSize is left unset so it resolves to the configured execution
+		// cap: a batch can never start more work than the cap allows.
+		deployer.DispatcherConfig{Tick: 5 * time.Second},
 	)
 
 	go func() {
@@ -394,6 +405,11 @@ func main() {
 	go func() {
 		if err := compileNodeConsumer.Start(ctx); err != nil {
 			logger.Error("compile.node.completed consumer error", "error", err)
+		}
+	}()
+	go func() {
+		if err := jobTerminalConsumer.Start(ctx); err != nil {
+			logger.Error("executor.job.terminal consumer error", "error", err)
 		}
 	}()
 	go func() {

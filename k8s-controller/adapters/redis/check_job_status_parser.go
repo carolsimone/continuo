@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/google/uuid"
@@ -20,18 +21,21 @@ func ParseNodeDeployed(msg goredis.XMessage, defaultMaxRetries int) (command.Che
 		return command.CheckJobStatus{}, err
 	}
 	return buildCheckJobStatus(checkJobFields{
-		taskID:       wire.TaskID,
-		scheduleID:   wire.ScheduleID,
-		scheduleName: wire.ScheduleName,
-		serviceName:  wire.ServiceName,
-		schemaName:   wire.SchemaName,
-		tableName:    wire.TableName,
-		jobName:      wire.JobName,
-		nodeType:     wire.NodeType,
-		imageTag:     wire.ImageTag,
-		operation:    wire.Operation,
-		retryCount:   wire.TaskRetryCount,
-		maxRetries:   wire.MaxRetries,
+		taskID:               wire.TaskID,
+		scheduleID:           wire.ScheduleID,
+		scheduleName:         wire.ScheduleName,
+		serviceName:          wire.ServiceName,
+		schemaName:           wire.SchemaName,
+		tableName:            wire.TableName,
+		jobName:              wire.JobName,
+		nodeType:             wire.NodeType,
+		imageTag:             wire.ImageTag,
+		operation:            wire.Operation,
+		executorDeploymentID: wire.ExecutorDeploymentID,
+		mode:                 wire.Mode,
+		runtimeManifestRef:   wire.RuntimeManifestRef,
+		retryCount:           wire.TaskRetryCount,
+		maxRetries:           wire.MaxRetries,
 	}, defaultMaxRetries)
 }
 
@@ -44,19 +48,22 @@ func ParseCheckK8s(msg goredis.XMessage, defaultMaxRetries int) (command.CheckJo
 		return command.CheckJobStatus{}, err
 	}
 	return buildCheckJobStatus(checkJobFields{
-		taskID:           wire.TaskID,
-		scheduleID:       wire.ScheduleID,
-		scheduleName:     wire.ScheduleName,
-		serviceName:      wire.ServiceName,
-		schemaName:       wire.SchemaName,
-		tableName:        wire.TableName,
-		jobName:          wire.JobName,
-		nodeType:         wire.NodeType,
-		imageTag:         wire.ImageTag,
-		operation:        wire.Operation,
-		retryCount:       wire.RetryCount,
-		maxRetries:       wire.MaxRetries,
-		runningAnnounced: wire.RunningAnnounced,
+		taskID:               wire.TaskID,
+		scheduleID:           wire.ScheduleID,
+		scheduleName:         wire.ScheduleName,
+		serviceName:          wire.ServiceName,
+		schemaName:           wire.SchemaName,
+		tableName:            wire.TableName,
+		jobName:              wire.JobName,
+		nodeType:             wire.NodeType,
+		imageTag:             wire.ImageTag,
+		operation:            wire.Operation,
+		executorDeploymentID: wire.ExecutorDeploymentID,
+		mode:                 wire.Mode,
+		runtimeManifestRef:   wire.RuntimeManifestRef,
+		retryCount:           wire.RetryCount,
+		maxRetries:           wire.MaxRetries,
+		runningAnnounced:     wire.RunningAnnounced,
 	}, defaultMaxRetries)
 }
 
@@ -74,19 +81,22 @@ func decodePayload(msg goredis.XMessage, dst interface{}) error {
 
 // checkJobFields holds the common fields both streams decode into a command.
 type checkJobFields struct {
-	taskID           string
-	scheduleID       string
-	scheduleName     string
-	serviceName      string
-	schemaName       string
-	tableName        string
-	jobName          string
-	nodeType         string
-	imageTag         string
-	operation        string
-	retryCount       int32
-	maxRetries       int32
-	runningAnnounced bool
+	taskID               string
+	scheduleID           string
+	scheduleName         string
+	serviceName          string
+	schemaName           string
+	tableName            string
+	jobName              string
+	nodeType             string
+	imageTag             string
+	operation            string
+	executorDeploymentID string
+	mode                 string
+	runtimeManifestRef   pkgmodel.RuntimeManifestRef
+	retryCount           int32
+	maxRetries           int32
+	runningAnnounced     bool
 }
 
 // buildCheckJobStatus validates the decoded fields and assembles the command.
@@ -112,18 +122,21 @@ func buildCheckJobStatus(f checkJobFields, defaultMaxRetries int) (command.Check
 	}
 
 	return command.CheckJobStatus{
-		TaskID:           taskID,
-		ScheduleID:       scheduleID,
-		ScheduleName:     f.scheduleName,
-		ServiceName:      f.serviceName,
-		SchemaName:       f.schemaName,
-		TableName:        f.tableName,
-		JobName:          f.jobName,
-		NodeType:         f.nodeType,
-		ImageTag:         f.imageTag,
-		Operation:        f.operation,
-		RetryCount:       f.retryCount,
-		MaxRetries:       maxRetries,
-		RunningAnnounced: f.runningAnnounced,
+		TaskID:               taskID,
+		ScheduleID:           scheduleID,
+		ScheduleName:         f.scheduleName,
+		ServiceName:          f.serviceName,
+		SchemaName:           f.schemaName,
+		TableName:            f.tableName,
+		JobName:              f.jobName,
+		NodeType:             f.nodeType,
+		ImageTag:             f.imageTag,
+		Operation:            f.operation,
+		ExecutorDeploymentID: f.executorDeploymentID,
+		Mode:                 f.mode,
+		RuntimeManifestRef:   f.runtimeManifestRef,
+		RetryCount:           f.retryCount,
+		MaxRetries:           maxRetries,
+		RunningAnnounced:     f.runningAnnounced,
 	}, nil
 }

@@ -1,5 +1,7 @@
 package event
 
+import pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+
 // Event is a marker interface for all events
 type Event interface {
 	isEvent()
@@ -22,9 +24,18 @@ type JobDeployed struct {
 	// Operation is the dbt verb this Job runs (e.g. "test"); empty for a normal
 	// production `dbt run`. It flows onto node.deployed:v1 so k8s-controller
 	// carries it through the durable check/retry chain.
-	Operation      string `json:"operation,omitempty"`
-	TaskRetryCount int    `json:"task_retry_count"` // task-level retry count (not outbox delivery retries)
-	MaxRetries     int    `json:"max_retries"`      // maximum task retries allowed
+	Operation string `json:"operation,omitempty"`
+	// ExecutorDeploymentID names the executor_deployments row that reserved this
+	// Job's execution slot, so the Job's terminal notification can release it.
+	ExecutorDeploymentID string `json:"executor_deployment_id,omitempty"`
+	// Mode is the dispatch mode of this Job (e.g. events.ModePromoteSeed),
+	// carried so k8s-controller routes the terminal check from the message.
+	Mode string `json:"mode,omitempty"`
+	// RuntimeManifestRef names the prebuilt artifact this Job executes against,
+	// carried so a retry reproduces the same release.
+	pkg_model.RuntimeManifestRef
+	TaskRetryCount int `json:"task_retry_count"` // task-level retry count (not outbox delivery retries)
+	MaxRetries     int `json:"max_retries"`      // maximum task retries allowed
 }
 
 func (JobDeployed) isEvent() {}

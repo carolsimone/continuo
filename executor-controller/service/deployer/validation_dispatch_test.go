@@ -48,7 +48,6 @@ func (f *fakeValidationDeployer) DeployCompile(context.Context, deploy.Validatio
 	f.compileCalls++
 	return f.deployErr
 }
-func (f *fakeValidationDeployer) CountActive(context.Context) (int, error) { return 0, nil }
 
 // fakeDeploymentRepo is an in-memory DeploymentRepository sufficient for the
 // validation dispatch/aggregate unit tests.

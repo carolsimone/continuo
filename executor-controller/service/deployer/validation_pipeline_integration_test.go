@@ -60,7 +60,6 @@ func (c *capturingDeployer) DeployCompile(_ context.Context, spec deploy.Validat
 	return nil
 }
 
-func (c *capturingDeployer) CountActive(context.Context) (int, error) { return 0, nil }
 
 func (c *capturingDeployer) specs() []deploy.ValidationJobSpec {
 	c.mu.Lock()

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/google/uuid"
 	goredis "github.com/redis/go-redis/v9"
@@ -178,5 +179,91 @@ func TestParseCheckK8s_CarriesOperation(t *testing.T) {
 	}
 	if cmd.Operation != "test" {
 		t.Fatalf("expected Operation=test carried from check.k8s payload, got %q", cmd.Operation)
+	}
+}
+
+// parserRef is a complete runtime manifest reference used to assert the pin
+// survives both legs of the durable check chain.
+func parserRef() pkgmodel.RuntimeManifestRef {
+	return pkgmodel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://artifacts/svc/manifest.msgpack",
+		RuntimeManifestSHA256:             "9f2c1b4e7a6d5038c9b1e2f4a7d6c5b8093e1f2a4b6c8d0e2f4a6b8c0d2e4f60",
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+	}
+}
+
+// TestParseNodeDeployed_CarriesCapacityAndRuntimeFields covers the first leg of
+// the durable chain: the deployment id that owns the Job's execution slot, the
+// dispatch mode that routes its terminal result, and the artifact pin all enter
+// the command from the message rather than from Job metadata.
+func TestParseNodeDeployed_CarriesCapacityAndRuntimeFields(t *testing.T) {
+	depID := uuid.New()
+	cmd, err := ParseNodeDeployed(payloadMsg(t, pkgevents.NodeDeployed{
+		TaskID:               uuid.New().String(),
+		ScheduleID:           uuid.New().String(),
+		JobName:              "job-1",
+		ExecutorDeploymentID: depID.String(),
+		Mode:                 pkgevents.ModePromoteSeed,
+		RuntimeManifestRef:   parserRef(),
+	}), 3)
+	if err != nil {
+		t.Fatalf("ParseNodeDeployed: %v", err)
+	}
+	if cmd.ExecutorDeploymentID != depID.String() {
+		t.Errorf("ExecutorDeploymentID: expected %q, got %q", depID, cmd.ExecutorDeploymentID)
+	}
+	if cmd.Mode != pkgevents.ModePromoteSeed {
+		t.Errorf("Mode: expected %q, got %q", pkgevents.ModePromoteSeed, cmd.Mode)
+	}
+	if cmd.RuntimeManifestRef != parserRef() {
+		t.Errorf("RuntimeManifestRef: expected %+v, got %+v", parserRef(), cmd.RuntimeManifestRef)
+	}
+}
+
+// TestParseCheckK8s_CarriesCapacityAndRuntimeFields covers the self-poll leg:
+// the same three values must recirculate on every check, or a terminal observed
+// after the Job is TTL-reaped could neither release its slot nor route correctly.
+func TestParseCheckK8s_CarriesCapacityAndRuntimeFields(t *testing.T) {
+	depID := uuid.New()
+	cmd, err := ParseCheckK8s(payloadMsg(t, pkgevents.CheckK8s{
+		TaskID:               uuid.New().String(),
+		ScheduleID:           uuid.New().String(),
+		JobName:              "job-1",
+		ExecutorDeploymentID: depID.String(),
+		Mode:                 "validation",
+		RuntimeManifestRef:   parserRef(),
+	}), 3)
+	if err != nil {
+		t.Fatalf("ParseCheckK8s: %v", err)
+	}
+	if cmd.ExecutorDeploymentID != depID.String() {
+		t.Errorf("ExecutorDeploymentID: expected %q, got %q", depID, cmd.ExecutorDeploymentID)
+	}
+	if cmd.Mode != "validation" {
+		t.Errorf("Mode: expected %q, got %q", "validation", cmd.Mode)
+	}
+	if cmd.RuntimeManifestRef != parserRef() {
+		t.Errorf("RuntimeManifestRef: expected %+v, got %+v", parserRef(), cmd.RuntimeManifestRef)
+	}
+}
+
+// TestParseNodeDeployed_CapacityFieldsAbsentStayEmpty keeps a Job dispatched
+// before these fields existed parseable: absent is valid and yields empty, which
+// the terminal check reads as "no slot to release".
+func TestParseNodeDeployed_CapacityFieldsAbsentStayEmpty(t *testing.T) {
+	cmd, err := ParseNodeDeployed(payloadMsg(t, pkgevents.NodeDeployed{
+		TaskID:     uuid.New().String(),
+		ScheduleID: uuid.New().String(),
+		JobName:    "job-1",
+	}), 3)
+	if err != nil {
+		t.Fatalf("ParseNodeDeployed: %v", err)
+	}
+	if cmd.ExecutorDeploymentID != "" || cmd.Mode != "" {
+		t.Errorf("expected empty capacity fields, got id=%q mode=%q", cmd.ExecutorDeploymentID, cmd.Mode)
+	}
+	if cmd.RuntimeManifestRef != (pkgmodel.RuntimeManifestRef{}) {
+		t.Errorf("expected zero runtime ref, got %+v", cmd.RuntimeManifestRef)
 	}
 }

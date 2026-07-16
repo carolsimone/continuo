@@ -27,6 +27,15 @@ type JobSpec struct {
 	// stamps this as a Job label so k8s-controller can suppress the production
 	// lifecycle events for modes that carry no real state run.
 	Mode string
+	// ExecutorDeploymentID names the deployment that reserved this Job's
+	// execution slot. The adapter stamps it as a Job annotation so the Job can
+	// be traced back to the row accounting for it.
+	ExecutorDeploymentID string
+	// ResolvedArgv is the exact dbt command this Job must run. When empty the
+	// adapter resolves the command from the node's service and operation. When
+	// set it is used verbatim, which pins the command of a task that was routed
+	// to a worker pool and then rolled back to a Job.
+	ResolvedArgv []string
 }
 
 // ValidationJobSpec is the domain description of a single validation deploy.
@@ -52,10 +61,15 @@ type ValidationJobSpec struct {
 	// compiled manifest.json. Populated only for mode=compile dispatches; empty
 	// for validation and seed-build dispatches.
 	ManifestS3URI string
+	// ExecutorDeploymentID names the deployment that reserved this Job's
+	// execution slot, stamped by the adapter as a Job annotation.
+	ExecutorDeploymentID string
 }
 
-// Deployer is the driven port the dispatcher uses to deploy work and observe
-// how many deploys are currently in flight.
+// Deployer is the driven port the dispatcher uses to deploy work. How much work
+// may run at once is accounted durably against the execution slots the
+// dispatcher reserves, not observed from Kubernetes, so that Jobs and reusable
+// workers draw from one budget.
 type Deployer interface {
 	// Deploy executes the job described by spec. Implementations must be
 	// idempotent by job name so a redelivery is a no-op.
@@ -74,6 +88,4 @@ type Deployer interface {
 	// resulting manifest.json to S3 (main container). Implementations must be
 	// idempotent by job name so a redelivery is a no-op.
 	DeployCompile(ctx context.Context, spec ValidationJobSpec) error
-	// CountActive returns the number of deploys currently running.
-	CountActive(ctx context.Context) (int, error)
 }

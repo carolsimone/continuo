@@ -165,28 +165,49 @@ Alongside the argv templates, the port exposes the resolved compile leg (`Compil
 
 ### Deploy dispatcher (every 5 seconds)
 
-`deployer.Dispatcher` polls `executor_deployments` for due rows, capped by active K8s Jobs:
+`deployer.Dispatcher` polls `executor_deployments` for due rows, capped by the execution slots it reserves:
 
 ```
-1. CountActiveJobs — label selector app=dbt-job, .status.active > 0
-   headroom = max(0, MAX_CONCURRENT_EXECUTIONS - active)
-   if headroom == 0: return (pending rows stay pending until next tick)
+0. Recover one stranded reservation — GetStaleDispatchingForUpdate: a row that has
+   held 'dispatching' longer than the recovery window (2 min) repeats its idempotent
+   Job create and finishes its transition, keeping its slot reserved throughout
 
-2. GetDueJobs(headroom) — rows WHERE status='pending' AND next_attempt_at <= NOW()
-   AND execution_mode='jobs', up to min(headroom, batchSize) rows
+For each due row, up to batchSize (defaults to MAX_CONCURRENT_EXECUTIONS):
 
-For each due row (inside one transaction for the batch):
-  a. Unmarshal job_params into DeployJob
-     → unmarshal failure or invalid fields: writeFailed → write FAILED outbox rows, MarkFailed
-  b. CreateQueryJob (K8s) — idempotent by job name
-     → success: writeDeployed
-       - write node_deployed outbox row (k8s-controller announces RUNNING on first observed run)
-       - MarkDeployed
+Transaction A — reserve:
+1. LockCapacity — pg_advisory_xact_lock serializing all capacity accounting
+2. ActiveSlotCount — rows WHERE slot_reserved_at IS NOT NULL AND slot_released_at IS NULL,
+   counting Jobs-mode and worker-mode work alike
+   if active >= MAX_CONCURRENT_EXECUTIONS: stop (pending rows stay pending until next tick)
+3. GetDueJobs(1) — a row WHERE status='pending' AND next_attempt_at <= NOW()
+   AND execution_mode='jobs'
+4. ReserveForDispatch — takes the slot, status 'dispatching'; commit
+
+Kubernetes: create the idempotent Job outside any transaction
+
+Transaction B — record the outcome:
+  a. job_params that will not unmarshal, or a row with invalid fields
+     → writeFailed → write FAILED outbox rows, RegisterFailure (releases the slot)
+  b. Job create result:
+     → success:
+       - write node_deployed outbox row, naming this row and its mode, so
+         k8s-controller status-checks the Job (it never polls) and its terminal
+         status can release the slot; every mode emits it, promote_seed included
+       - MarkDeployed — the slot stays held until the Job reports terminal
      → transient error AND retry budget remains:
-       - Reschedule with exponential backoff (base 5s, cap 2m) via next_attempt_at
+       - RegisterFailure reschedules with exponential backoff (base 5s, cap 2m)
+         via next_attempt_at and releases the slot
      → permanent error (errors.Is ErrPermanent) OR retry budget exhausted:
-       - writeFailed: write task_status_updated (FAILED) + node_updated (FAILED) outbox rows, MarkFailed
+       - writeFailed: write task_status_updated (FAILED) + node_updated (FAILED)
+         outbox rows; RegisterFailure marks it failed and releases the slot
 ```
+
+A reserved slot is released exactly one of two ways: by the aggregate transition
+that settles the row (`RegisterFailure`, `FailValidation`, `FailSeedBuild`,
+`FailCompile`, `Complete`, `MarkRetryPending`, `MarkFailed`, `Cancel`), or —
+for a Job that actually launched — by the `executor.job.terminal:v1` event
+k8s-controller emits when the Job settles. A Job's row has no aggregate
+transition of its own at that point, which is why that stream exists.
 
 The dispatcher only dispatches `pending` validation rows; `blocked` rows (with unresolved in-set upstreams) remain in place until the `ValidationNodeCompletedHandler` transitions them to `pending`. On a successful K8s validation Job creation, the dispatcher `MarkDeployed`s the row and writes a single `node_deployed` → `node.deployed:v1` outbox row so k8s-controller status-checks the Job — it never polls, so without this trigger the release would hang in `validating`. This is the same single-row deploy announcement the production path now writes; validation rows have no real task/schedule, and k8s-controller suppresses the RUNNING announcement for `mode=validation` Jobs, so no `task_status_updated` row is ever surfaced for them. The per-node terminal outcome (`ok`/`failed`) arrives later via `validation.node.completed:v1`. A validation row that fails AT dispatch (not deployable, or a permanent pre-deploy error) is made terminal via `FailValidation`, records `outcome=failed`, emits no `node.deployed` trigger, skips transitively `blocked` downstreams (marking them `skipped`), and runs the aggregate gate.
 
@@ -230,8 +251,9 @@ On XADD failure:
 - **Inbound dedup**: `message_processing` keyed on `(message_id, stream_name)` prevents double-processing of duplicate Redis messages; managed by `pkg/messageprocessing.Dedup`
 - **Decoupled command queue**: inbound handlers write only a `pending` row to `executor_deployments` (a pure Postgres write, no Kubernetes I/O); the K8s deploy happens asynchronously in the dispatcher, keeping the Unit-of-Work transaction free of external side effects
 - **Explicit transaction boundary**: each inbound message runs dedup + deployment row insert inside a single Unit-of-Work transaction; the dedup row and deployment intent are committed atomically
-- **Concurrency cap**: `deployer.Dispatcher` counts live K8s Jobs (`app=dbt-job`, `.status.active > 0`) on every tick and processes at most `max(0, MAX_CONCURRENT_EXECUTIONS - active)` rows; rows beyond the cap stay `pending` until the next tick
+- **Concurrency cap**: capacity is durable state, not an observation of Kubernetes. A deployment reserves an execution slot (`slot_reserved_at`) before its Job is created and holds it until the work settles; `deployer.Dispatcher` reserves under a `pg_advisory_xact_lock` so the count it reads cannot be stale by the time it takes the slot. Jobs-mode and worker-mode work draw from the one `MAX_CONCURRENT_EXECUTIONS` budget, so a slot held by a worker lease throttles the Jobs path exactly as a Job's own does; rows beyond the cap stay `pending` until the next tick
 - **K8s idempotency**: `CreateQueryJob` treats already-exists as success; a dispatcher restart or crash after K8s success but before commit will re-attempt safely
+- **Dispatch crash recovery**: a crash between reserving a slot and recording the Job leaves the row in `dispatching` still holding its slot — deliberately, because its Job may be running. Each tick re-drives one such row past a 2-minute recovery window, repeating the idempotent create and finishing the transition; the slot is never released to be re-reserved while the Job it accounts for may still be live
 - **Dispatcher backoff**: transient K8s failures reschedule the row via `next_attempt_at` with exponential backoff (base 5s, cap 2 min); the row stays `pending` and is retried on the next tick when due
 - **Terminal failure propagation**: on `ErrPermanent` or retry-budget exhaustion, the dispatcher writes `task_status_updated` FAILED + `node_updated` FAILED as ordinary `executor_outbox` rows before marking the deployment `failed` — ensuring orchestrator and state always learn of the terminal outcome
 - **Uniform outbox publisher**: the executor `OutboxPublisher` is a plain marshal-and-XADD; it carries no K8s deploy logic and has no `TerminalFailureHook`; all failure signalling is handled upstream by the dispatcher

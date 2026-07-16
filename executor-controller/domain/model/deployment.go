@@ -402,7 +402,8 @@ func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI string, now ti
 // (not deployable, or a permanent pre-deploy deployer error) is still pending,
 // yet must reach a terminal "failed" outcome so the per-release aggregate can be
 // emitted. It is validation-only and idempotent-safe in that it rejects a second
-// recording once an outcome exists.
+// recording once an outcome exists. The row is terminal and its Job will never
+// run, so it also releases any execution slot it reserved.
 func (d *Deployment) FailValidation(reason string, now time.Time) error {
 	if d.mode != ModeValidation {
 		return fmt.Errorf("FailValidation called on non-validation deployment %s", d.id)
@@ -416,6 +417,7 @@ func (d *Deployment) FailValidation(reason string, now time.Time) error {
 	d.outcome = "failed"
 	ts := now
 	d.outcomeAt = &ts
+	d.releaseSlot(now)
 	return nil
 }
 
@@ -424,7 +426,8 @@ func (d *Deployment) FailValidation(reason string, now time.Time) error {
 // FailValidation: a seed-build row that fails BEFORE it is dispatched (not
 // deployable, or a permanent pre-deploy deployer error) is still pending yet
 // must reach a terminal "failed" outcome so the per-release seed-build
-// aggregate can be emitted.
+// aggregate can be emitted. Like FailValidation it releases any execution slot
+// the row reserved.
 func (d *Deployment) FailSeedBuild(reason string, now time.Time) error {
 	if d.mode != ModeSeedBuild {
 		return fmt.Errorf("FailSeedBuild called on non-seed-build deployment %s", d.id)
@@ -438,6 +441,7 @@ func (d *Deployment) FailSeedBuild(reason string, now time.Time) error {
 	d.outcome = "failed"
 	ts := now
 	d.outcomeAt = &ts
+	d.releaseSlot(now)
 	return nil
 }
 
@@ -446,7 +450,8 @@ func (d *Deployment) FailSeedBuild(reason string, now time.Time) error {
 // FailSeedBuild: a compile row that fails BEFORE it is dispatched (not
 // deployable, or a permanent pre-deploy deployer error) is still pending yet
 // must reach a terminal "failed" outcome so the per-release compile aggregate
-// can be emitted.
+// can be emitted. Like FailValidation it releases any execution slot the row
+// reserved.
 func (d *Deployment) FailCompile(reason string, now time.Time) error {
 	if d.mode != ModeCompile {
 		return fmt.Errorf("FailCompile called on non-compile deployment %s", d.id)
@@ -460,6 +465,7 @@ func (d *Deployment) FailCompile(reason string, now time.Time) error {
 	d.outcome = "failed"
 	ts := now
 	d.outcomeAt = &ts
+	d.releaseSlot(now)
 	return nil
 }
 

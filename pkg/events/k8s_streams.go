@@ -1,5 +1,7 @@
 package events
 
+import pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+
 // ModePromoteSeed is the job mode for prod seed builds triggered on promotion.
 // These jobs run as real prod dbt seeds but carry no state-bound schedule/run,
 // so k8s-controller suppresses the production lifecycle events for them (no
@@ -31,9 +33,21 @@ type NodeDeployed struct {
 	// production `dbt run`, whose wire format is unchanged. It rides the durable
 	// check/retry chain so a retry after the Job is TTL-reaped still rebuilds the
 	// same verb — it is never re-derived from Job metadata that may be gone.
-	Operation      string `json:"operation,omitempty"`
-	TaskRetryCount int32  `json:"task_retry_count"`
-	MaxRetries     int32  `json:"max_retries"`
+	Operation string `json:"operation,omitempty"`
+	// ExecutorDeploymentID names the executor_deployments row that reserved this
+	// Job's execution slot. It rides the whole check chain so the terminal
+	// notification can name the row to release without re-reading the Job.
+	ExecutorDeploymentID string `json:"executor_deployment_id,omitempty"`
+	// Mode is the dispatch mode of this Job (e.g. events.ModePromoteSeed). It
+	// travels durably so a terminal check routes on the message rather than on
+	// Job metadata, which is gone once the Job is TTL-reaped.
+	Mode string `json:"mode,omitempty"`
+	// RuntimeManifestRef names the prebuilt artifact this Job executes against.
+	// It recirculates so a retry reproduces the original release exactly instead
+	// of binding to whatever artifact is current when the retry runs.
+	pkgmodel.RuntimeManifestRef
+	TaskRetryCount int32 `json:"task_retry_count"`
+	MaxRetries     int32 `json:"max_retries"`
 }
 
 // CheckK8s — stream: check.k8s:v1
@@ -56,9 +70,19 @@ type CheckK8s struct {
 	// Operation is the dbt verb this Job runs (e.g. "test"); empty for a normal
 	// production `dbt run`. It recirculates on every check.k8s:v1 self-poll so a
 	// check that lands after the Job is gone still retains the verb for retry.
-	Operation    string `json:"operation,omitempty"`
-	RetryCount   int32  `json:"retry_count"`
-	MaxRetries   int32  `json:"max_retries"`
+	Operation string `json:"operation,omitempty"`
+	// ExecutorDeploymentID names the executor_deployments row holding this Job's
+	// execution slot; it recirculates on every self-poll so the terminal check
+	// can release that slot.
+	ExecutorDeploymentID string `json:"executor_deployment_id,omitempty"`
+	// Mode is the dispatch mode of this Job (e.g. events.ModePromoteSeed),
+	// carried durably so a terminal check routes without reading Job metadata.
+	Mode string `json:"mode,omitempty"`
+	// RuntimeManifestRef names the prebuilt artifact this Job executes against,
+	// recirculated so a retry issued from a check reproduces the same release.
+	pkgmodel.RuntimeManifestRef
+	RetryCount int32 `json:"retry_count"`
+	MaxRetries int32 `json:"max_retries"`
 	// RunningAnnounced is true once k8s-controller has announced this attempt as
 	// RUNNING on task.status.updated:v1. It rides the check.k8s:v1 self-poll loop
 	// so RUNNING is emitted exactly once per attempt; a fresh node.deployed:v1

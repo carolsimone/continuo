@@ -45,6 +45,14 @@ type JobParams struct {
 	// that have no real state run. Normal production jobs (empty Mode) get no
 	// mode label — the wire format is unchanged.
 	Mode string
+	// ExecutorDeploymentID names the deployment that reserved this Job's
+	// execution slot. When non-empty it is stamped as an annotation on the Job
+	// and its pod template. It is an annotation rather than a label because it
+	// is identity to carry, not a selector to match on.
+	ExecutorDeploymentID string
+	// ResolvedArgv is the exact dbt command to run. When empty the command is
+	// resolved from the service dialect; when set it is used verbatim.
+	ResolvedArgv []string
 }
 
 // K8sClient provides methods to interact with Kubernetes
@@ -127,6 +135,16 @@ func (c *K8sClient) CreateJob(ctx context.Context, job *batchv1.Job) error {
 	return nil
 }
 
+// executorDeploymentAnnotations returns the annotation map naming the
+// deployment that reserved a Job's execution slot, or nil when the caller
+// supplies no id — so a Job never carries the annotation with an empty value.
+func executorDeploymentAnnotations(deploymentID string) map[string]string {
+	if deploymentID == "" {
+		return nil
+	}
+	return map[string]string{pkg_model.AnnotationExecutorDeploymentID: deploymentID}
+}
+
 // CreateQueryJob builds and creates a K8s Job for query execution (idempotent)
 func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error {
 	// Step 1: Check if job already exists (idempotent operation)
@@ -143,9 +161,13 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		return nil
 	}
 
-	// Step 2: Build Job spec
-	podSpec, err := buildPodSpec(params,
-		c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName))
+	// Step 2: Build Job spec. A pinned argv is used verbatim; otherwise the
+	// command is resolved from the service's dialect.
+	command := params.ResolvedArgv
+	if len(command) == 0 {
+		command = c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName)
+	}
+	podSpec, err := buildPodSpec(params, command)
 	if err != nil {
 		return fmt.Errorf("failed to build pod spec: %w", err)
 	}
@@ -166,17 +188,20 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	if params.Mode != "" {
 		jobLabels["mode"] = params.Mode
 	}
+	annotations := executorDeploymentAnnotations(params.ExecutorDeploymentID)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      params.JobName,
-			Namespace: params.Namespace,
-			Labels:    jobLabels,
+			Name:        params.JobName,
+			Namespace:   params.Namespace,
+			Labels:      jobLabels,
+			Annotations: annotations,
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: jobLabels,
+					Labels:      jobLabels,
+					Annotations: annotations,
 				},
 				Spec: podSpec,
 			},
@@ -214,6 +239,10 @@ type ValidationJobParams struct {
 	// ManifestS3URI is the S3 destination where the compile Job uploads the
 	// compiled manifest.json. Populated only for mode=compile Jobs.
 	ManifestS3URI string
+
+	// ExecutorDeploymentID names the deployment that reserved this Job's
+	// execution slot; stamped as an annotation when non-empty.
+	ExecutorDeploymentID string
 
 	Namespace string
 }
@@ -255,6 +284,9 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 	annotations := map[string]string{
 		pkg_model.AnnotationReleaseID: params.ReleaseID,
 		pkg_model.AnnotationNodeID:    params.NodeID,
+	}
+	if params.ExecutorDeploymentID != "" {
+		annotations[pkg_model.AnnotationExecutorDeploymentID] = params.ExecutorDeploymentID
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -455,26 +487,6 @@ func sanitizeK8sLabel(s string) string {
 	return out
 }
 
-// CountActiveJobs returns the number of Jobs in the namespace matching
-// labelSelector that currently have a running pod (.status.active > 0). Jobs
-// that are created but whose pod is still Pending/unscheduled (active == 0) do
-// not count. Used by deployer.Dispatcher to enforce the concurrent-Job cap.
-func (c *K8sClient) CountActiveJobs(ctx context.Context, namespace, labelSelector string) (int, error) {
-	list, err := c.clientset.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("list jobs for active count: %w", err)
-	}
-	active := 0
-	for i := range list.Items {
-		if list.Items[i].Status.Active > 0 {
-			active++
-		}
-	}
-	return active, nil
-}
-
 // CreateSeedBuildJob builds and creates a mode=seed_build K8s Job (idempotent
 // by job name). The Job uses the team image (same as production) and runs
 // `dbt seed --select <TableName>`, materializing into the candidate schema via
@@ -513,6 +525,9 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 	annotations := map[string]string{
 		pkg_model.AnnotationReleaseID: params.ReleaseID,
 		pkg_model.AnnotationNodeID:    params.NodeID,
+	}
+	if params.ExecutorDeploymentID != "" {
+		annotations[pkg_model.AnnotationExecutorDeploymentID] = params.ExecutorDeploymentID
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -630,6 +645,9 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 	annotations := map[string]string{
 		pkg_model.AnnotationReleaseID: params.ReleaseID,
 		pkg_model.AnnotationNodeID:    params.NodeID,
+	}
+	if params.ExecutorDeploymentID != "" {
+		annotations[pkg_model.AnnotationExecutorDeploymentID] = params.ExecutorDeploymentID
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

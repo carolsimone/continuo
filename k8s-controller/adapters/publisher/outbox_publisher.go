@@ -99,19 +99,22 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 			return nil, fmt.Errorf("check.k8s payload: %w", err)
 		}
 		payload, err := json.Marshal(pkgevents.CheckK8s{
-			TaskID:           e.TaskID,
-			ScheduleID:       e.ScheduleID,
-			ScheduleName:     e.ScheduleName,
-			ServiceName:      e.ServiceName,
-			SchemaName:       e.SchemaName,
-			TableName:        e.TableName,
-			JobName:          e.JobName,
-			NodeType:         e.NodeType,
-			ImageTag:         e.ImageTag,
-			Operation:        e.Operation,
-			RetryCount:       retryCount,
-			MaxRetries:       maxRetries,
-			RunningAnnounced: e.RunningAnnounced,
+			TaskID:               e.TaskID,
+			ScheduleID:           e.ScheduleID,
+			ScheduleName:         e.ScheduleName,
+			ServiceName:          e.ServiceName,
+			SchemaName:           e.SchemaName,
+			TableName:            e.TableName,
+			JobName:              e.JobName,
+			NodeType:             e.NodeType,
+			ImageTag:             e.ImageTag,
+			Operation:            e.Operation,
+			ExecutorDeploymentID: e.ExecutorDeploymentID,
+			Mode:                 e.Mode,
+			RuntimeManifestRef:   e.RuntimeManifestRef,
+			RetryCount:           retryCount,
+			MaxRetries:           maxRetries,
+			RunningAnnounced:     e.RunningAnnounced,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("marshal check.k8s payload: %w", err)
@@ -127,6 +130,12 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 			return nil, fmt.Errorf("unmarshal node_status_updated: %w", err)
 		}
 		return e.ToMap(), nil
+
+	case event.EventTypeExecutorJobTerminal:
+		// The capacity notification carries the executor row to release as a
+		// single JSON "payload" field — the shape executor-controller's
+		// ParseExecutorJobTerminal decoder expects. Re-emit it verbatim.
+		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	case event.EventTypeValidationNodeCompleted, event.EventTypeSeedBuildNodeCompleted, event.EventTypeCompileNodeCompleted:
 		// The three candidate-leg node-completed events

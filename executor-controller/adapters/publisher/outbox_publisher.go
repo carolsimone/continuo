@@ -76,18 +76,21 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 			return nil, fmt.Errorf("node.deployed payload: %w", err)
 		}
 		payload, err := json.Marshal(pkgevents.NodeDeployed{
-			TaskID:         e.TaskID,
-			ScheduleID:     e.ScheduleID,
-			ScheduleName:   e.ScheduleName,
-			ServiceName:    e.ServiceName,
-			SchemaName:     e.SchemaName,
-			TableName:      e.TableName,
-			JobName:        e.JobName,
-			NodeType:       e.NodeType,
-			ImageTag:       e.ImageTag,
-			Operation:      e.Operation,
-			TaskRetryCount: taskRetryCount,
-			MaxRetries:     maxRetries,
+			TaskID:               e.TaskID,
+			ScheduleID:           e.ScheduleID,
+			ScheduleName:         e.ScheduleName,
+			ServiceName:          e.ServiceName,
+			SchemaName:           e.SchemaName,
+			TableName:            e.TableName,
+			JobName:              e.JobName,
+			NodeType:             e.NodeType,
+			ImageTag:             e.ImageTag,
+			Operation:            e.Operation,
+			ExecutorDeploymentID: e.ExecutorDeploymentID,
+			Mode:                 e.Mode,
+			RuntimeManifestRef:   e.RuntimeManifestRef,
+			TaskRetryCount:       taskRetryCount,
+			MaxRetries:           maxRetries,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("marshal node.deployed payload: %w", err)

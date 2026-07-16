@@ -155,32 +155,44 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 	if err != nil {
 		return fmt.Errorf("fetch job meta: %w", err)
 	}
+	mode := h.routeMode(cmd, labels)
 
-	if labels["mode"] == "validation" {
+	// The Job is now settled for this mode, so the executor may reclaim the
+	// execution slot it reserved at dispatch. Nothing else releases that slot:
+	// this is written before the mode's own routing so no terminal branch can
+	// return without it and strand the slot forever.
+	if jobSettled(mode, result.Status) {
+		if err := h.writeExecutorJobTerminal(ctx, u, cmd, result); err != nil {
+			return fmt.Errorf("executor_job_terminal: %w", err)
+		}
+	}
+
+	if mode == "validation" {
 		return h.handleValidationTerminal(ctx, u, cmd, result, annotations)
 	}
 
-	if labels["mode"] == "seed_build" {
+	if mode == "seed_build" {
 		return h.handleSeedBuildTerminal(ctx, u, cmd, result, annotations)
 	}
 
-	if labels["mode"] == "compile" {
+	if mode == "compile" {
 		return h.handleCompileTerminal(ctx, u, cmd, result, annotations)
 	}
 
-	if labels["mode"] == pkgevents.ModePromoteSeed {
+	if mode == pkgevents.ModePromoteSeed {
 		return h.handlePromoteSeedTerminal(ctx, u, cmd, result)
 	}
 
 	// Empty metadata means the Job is gone (deleted/TTL-reaped): GetJobMeta maps
-	// NotFound to empty maps. A vanished Job has no mode label, so it falls through
-	// to the production task-status path below — correct for a production Job
-	// (whose NotFound→Failed status must still drive the retry/permanent handlers).
-	// A vanished *validation* Job cannot be identified here (no annotations to
-	// recover release_id/node_id), so its per-node outcome is not emitted; surface
-	// it for operators rather than silently writing production rows for it.
-	if len(labels) == 0 {
-		h.logger.Warn("Job metadata unavailable on terminal check — routing as production; a vanished validation Job will not emit its per-node outcome",
+	// NotFound to empty maps. With no mode on the message either, the check falls
+	// through to the production task-status path below — correct for a production
+	// Job, whose NotFound→Failed status must still drive the retry/permanent
+	// handlers. A vanished candidate Job identified only by its labels cannot
+	// recover its release_id/node_id from annotations, so its per-node outcome is
+	// not emitted; surface that for operators rather than silently writing
+	// production rows for it.
+	if len(labels) == 0 && mode == "" {
+		h.logger.Warn("Job metadata unavailable on terminal check — routing as production; a vanished candidate Job will not emit its per-node outcome",
 			"job_name", cmd.JobName, "status", result.Status)
 	}
 
@@ -195,6 +207,84 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 	default:
 		return h.handleUnknown(ctx, u, cmd, result)
 	}
+}
+
+// executorDeploymentNamespace is the immutable UUIDv5 namespace used to derive
+// the executor_job_terminal outbox row's AggregateID from the executor
+// deployment id. It must never change: deriving the aggregate ID
+// deterministically gives every observation of one Job's terminal the same
+// identity, so a re-observation dedups instead of double-counting capacity.
+var executorDeploymentNamespace = uuid.MustParse("b5d9f3a1-7c2e-4a8b-9e6d-3f1c8a0b4e7d")
+
+// candidateModes are the dispatch modes that carry no state-bound run. They
+// re-poll an Unknown status instead of settling on it, because Unknown is
+// transient for them (e.g. pods not yet scheduled).
+var candidateModes = map[string]bool{
+	"validation":              true,
+	"seed_build":              true,
+	"compile":                 true,
+	pkgevents.ModePromoteSeed: true,
+}
+
+// routeMode reports the dispatch mode of the Job under check, preferring the
+// value carried on the durable check message. A Job that is TTL-reaped before
+// its terminal is observed has no labels left, so a label-only read would route
+// it as production. The label is the fallback for a Job dispatched before the
+// message carried a mode.
+func (h *CheckStatusHandler) routeMode(cmd command.CheckJobStatus, labels map[string]string) string {
+	if cmd.Mode != "" {
+		return cmd.Mode
+	}
+	return labels["mode"]
+}
+
+// jobSettled reports whether status ends the Job's occupancy of an execution
+// slot. Running is handled before this is reached, so status is Succeeded,
+// Failed, or Unknown. The production path settles Unknown as a permanent
+// failure; a candidate mode re-polls it, and its Job may still be running.
+func jobSettled(mode string, status model.JobStatus) bool {
+	if status == model.JobStatusUnknown {
+		return !candidateModes[mode]
+	}
+	return true
+}
+
+// writeExecutorJobTerminal records that the Job named by cmd has settled, so
+// executor-controller can release the execution slot it reserved. It carries no
+// business outcome: task status, per-node results and retries each travel on
+// their own stream. A Job whose message names no deployment predates the field
+// and holds no slot to release, so it writes nothing.
+func (h *CheckStatusHandler) writeExecutorJobTerminal(
+	ctx context.Context,
+	u uow.UnitOfWork,
+	cmd command.CheckJobStatus,
+	result *model.K8sPodResult,
+) error {
+	if cmd.ExecutorDeploymentID == "" {
+		return nil
+	}
+	terminal := pkgevents.ExecutorJobTerminal{
+		ExecutorDeploymentID: cmd.ExecutorDeploymentID,
+		JobName:              cmd.JobName,
+		TerminalStatus:       string(result.Status),
+	}
+	// A Job that never started a container (e.g. NotFound) reports no completion
+	// instant; the slot is released regardless, so the field is left empty.
+	if result.CompletedAt != nil {
+		terminal.CompletedAt = result.CompletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	payload, err := json.Marshal(terminal)
+	if err != nil {
+		return fmt.Errorf("marshal executor_job_terminal payload: %w", err)
+	}
+	return u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		AggregateType: "executor_deployment",
+		AggregateID:   uuid.NewSHA1(executorDeploymentNamespace, []byte("executor-deployment:"+cmd.ExecutorDeploymentID)),
+		EventType:     event.EventTypeExecutorJobTerminal,
+		Payload:       payload,
+		StreamName:    streams.ExecutorJobTerminalV1,
+		MaxRetries:    3,
+	})
 }
 
 // handleSucceeded handles successful job completion.
@@ -606,6 +696,10 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 		MaxRetries:   int(maxRetries),
 		NodeType:     cmd.NodeType,
 		Operation:    cmd.Operation,
+		// Pin the retry to the artifact this attempt ran against, sourced from
+		// the durable check chain: a TTL-reaped Job cannot be re-read, and a
+		// retry that lost the pin would rebuild against a different release.
+		RuntimeManifestRef: cmd.RuntimeManifestRef,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal task_retry: %w", err)
@@ -648,7 +742,9 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 		if err != nil {
 			return fmt.Errorf("fetch job meta for running announcement: %w", err)
 		}
-		if labels["mode"] != "validation" && labels["mode"] != "seed_build" && labels["mode"] != "compile" && labels["mode"] != pkgevents.ModePromoteSeed {
+		// Only a production Job has a task whose status can advance; the
+		// candidate modes run against synthetic identities with no state run.
+		if !candidateModes[h.routeMode(cmd, labels)] {
 			if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "RUNNING", cmd.RetryCount); err != nil {
 				return fmt.Errorf("task_status_updated RUNNING: %w", err)
 			}
@@ -671,20 +767,23 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 	outboxEntryID := uuid.New()
 
 	checkPayload, err := json.Marshal(event.JobCheckRequest{
-		TaskID:           cmd.TaskID.String(),
-		ScheduleID:       cmd.ScheduleID.String(),
-		ScheduleName:     cmd.ScheduleName,
-		ServiceName:      cmd.ServiceName,
-		SchemaName:       cmd.SchemaName,
-		TableName:        cmd.TableName,
-		JobName:          cmd.JobName,
-		CheckAfter:       checkAfter.Unix(),
-		NodeType:         cmd.NodeType,
-		ImageTag:         cmd.ImageTag,
-		Operation:        cmd.Operation,
-		RetryCount:       int(cmd.RetryCount),
-		MaxRetries:       int(maxRetries),
-		RunningAnnounced: true,
+		TaskID:               cmd.TaskID.String(),
+		ScheduleID:           cmd.ScheduleID.String(),
+		ScheduleName:         cmd.ScheduleName,
+		ServiceName:          cmd.ServiceName,
+		SchemaName:           cmd.SchemaName,
+		TableName:            cmd.TableName,
+		JobName:              cmd.JobName,
+		CheckAfter:           checkAfter.Unix(),
+		NodeType:             cmd.NodeType,
+		ImageTag:             cmd.ImageTag,
+		Operation:            cmd.Operation,
+		ExecutorDeploymentID: cmd.ExecutorDeploymentID,
+		Mode:                 cmd.Mode,
+		RuntimeManifestRef:   cmd.RuntimeManifestRef,
+		RetryCount:           int(cmd.RetryCount),
+		MaxRetries:           int(maxRetries),
+		RunningAnnounced:     true,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal check_delayed: %w", err)

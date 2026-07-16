@@ -364,3 +364,57 @@ func TestBackoff_CapAndOverflow(t *testing.T) {
 		_ = prev
 	}
 }
+
+// TestFailValidation_ReleasesReservedSlot pins the anti-leak invariant for a
+// validation row that reserved a slot and then proved undispatchable. No
+// Kubernetes Job is ever created for it, so no terminal notification will ever
+// arrive to release the slot; the transition to failed must hand it back here or
+// it is consumed against MAX_CONCURRENT_EXECUTIONS forever.
+func TestFailValidation_ReleasesReservedSlot(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
+	require.NoError(t, d.ReserveForDispatch(now))
+
+	require.NoError(t, d.FailValidation("not deployable", now))
+
+	assert.Equal(t, model.StatusFailed, d.Status())
+	require.NotNil(t, d.SlotReleasedAt(), "a validation row that will never run must hand its slot back")
+	assert.Equal(t, now, *d.SlotReleasedAt())
+}
+
+// TestFailSeedBuild_ReleasesReservedSlot — see TestFailValidation_ReleasesReservedSlot.
+func TestFailSeedBuild_ReleasesReservedSlot(t *testing.T) {
+	now := time.Now()
+	d := model.NewSeedBuildDeployment(validationCmd(), nil, now)
+	require.NoError(t, d.ReserveForDispatch(now))
+
+	require.NoError(t, d.FailSeedBuild("not deployable", now))
+
+	assert.Equal(t, model.StatusFailed, d.Status())
+	require.NotNil(t, d.SlotReleasedAt())
+	assert.Equal(t, now, *d.SlotReleasedAt())
+}
+
+// TestFailCompile_ReleasesReservedSlot — see TestFailValidation_ReleasesReservedSlot.
+func TestFailCompile_ReleasesReservedSlot(t *testing.T) {
+	now := time.Now()
+	d := model.NewCompileDeployment(validationCmd(), nil, now)
+	require.NoError(t, d.ReserveForDispatch(now))
+
+	require.NoError(t, d.FailCompile("not deployable", now))
+
+	assert.Equal(t, model.StatusFailed, d.Status())
+	require.NotNil(t, d.SlotReleasedAt())
+	assert.Equal(t, now, *d.SlotReleasedAt())
+}
+
+// TestFailValidation_WithoutReservationHoldsNoSlot keeps the
+// released-implies-reserved invariant true for a row that never reserved one.
+func TestFailValidation_WithoutReservationHoldsNoSlot(t *testing.T) {
+	now := time.Now()
+	d := model.NewValidationDeployment(validationCmd(), nil, now, false)
+
+	require.NoError(t, d.FailValidation("not deployable", now))
+
+	assert.Nil(t, d.SlotReleasedAt(), "a row that reserved no slot releases none")
+}

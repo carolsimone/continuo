@@ -1,5 +1,7 @@
 package event
 
+import pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+
 // EventTypeValidationNodeCompleted is the canonical outbox event_type string for
 // the validation.node.completed:v1 per-node event. Defined in the domain package
 // so both the emit site (service/handlers) and the publisher adapter
@@ -14,6 +16,10 @@ const EventTypeSeedBuildNodeCompleted = "seed_build_node_completed"
 // EventTypeCompileNodeCompleted is the canonical outbox event_type string for
 // the compile.node.completed:v1 per-node event.
 const EventTypeCompileNodeCompleted = "compile_node_completed"
+
+// EventTypeExecutorJobTerminal is the canonical outbox event_type string for the
+// executor.job.terminal:v1 capacity notification.
+const EventTypeExecutorJobTerminal = "executor_job_terminal"
 
 // Event is a marker interface for all events
 type Event interface {
@@ -37,9 +43,19 @@ type JobCheckRequest struct {
 	// Operation is the dbt verb the Job runs (e.g. "test"); empty for a normal
 	// production `dbt run`. It recirculates on every check.k8s:v1 self-poll so a
 	// check that lands after the Job is TTL-reaped still carries the verb for retry.
-	Operation    string `json:"operation,omitempty"`
-	RetryCount   int    `json:"retry_count"` // current task retry count
-	MaxRetries   int    `json:"max_retries"` // maximum task retries allowed
+	Operation string `json:"operation,omitempty"`
+	// ExecutorDeploymentID names the executor_deployments row holding this Job's
+	// execution slot; it recirculates on every self-poll so the terminal check
+	// can name the row to release.
+	ExecutorDeploymentID string `json:"executor_deployment_id,omitempty"`
+	// Mode is the dispatch mode of this Job (e.g. events.ModePromoteSeed),
+	// carried durably so a terminal check routes without reading Job metadata.
+	Mode string `json:"mode,omitempty"`
+	// RuntimeManifestRef names the prebuilt artifact the Job executes against,
+	// recirculated so a retry issued from a check reproduces the same release.
+	pkgmodel.RuntimeManifestRef
+	RetryCount int `json:"retry_count"` // current task retry count
+	MaxRetries int `json:"max_retries"` // maximum task retries allowed
 	// RunningAnnounced is true once RUNNING has been announced for this attempt.
 	RunningAnnounced bool `json:"running_announced"`
 }
@@ -96,6 +112,11 @@ type TaskRetry struct {
 	// TTL-reaped Job has no labels, so a retried `dbt test` Job stays `dbt test`
 	// instead of rebuilding as `dbt run`.
 	Operation string `json:"operation,omitempty"`
+	// RuntimeManifestRef pins the retry to the artifact the failed attempt ran
+	// against. Sourced from the durable check chain rather than from the Job, so
+	// a retry reproduces the original release instead of binding to whatever
+	// artifact is current when it runs.
+	pkgmodel.RuntimeManifestRef
 }
 
 func (TaskRetry) isEvent() {}
@@ -120,6 +141,15 @@ func (e TaskRetry) ToMap() map[string]interface{} {
 	// wire-identical to before this field existed.
 	if e.Operation != "" {
 		m["operation"] = e.Operation
+	}
+	// The four reference fields are stamped together or not at all: the consumer
+	// rejects a partial reference, so a task with no runtime manifest must emit
+	// no field rather than four empty ones.
+	if e.RuntimeManifestRef != (pkgmodel.RuntimeManifestRef{}) {
+		m["runtime_manifest_uri"] = e.RuntimeManifestURI
+		m["runtime_manifest_sha256"] = e.RuntimeManifestSHA256
+		m["runtime_manifest_dbt_version"] = e.RuntimeManifestDBTVersion
+		m["runtime_manifest_parse_context_sha256"] = e.RuntimeManifestParseContextSHA256
 	}
 	return m
 }

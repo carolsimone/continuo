@@ -49,6 +49,7 @@ Legend:
 | `check.k8s:v1` | `k8s-controller` | `k8s-controller` | Delayed re-check queue |
 | `retry.task:v1` | `k8s-controller` | `executor-controller` | Re-dispatch retry deployment |
 | `task.failed:v1` | `k8s-controller` | not consumed | Terminal failure event (external observability) |
+| `executor.job.terminal:v1` | `k8s-controller` | `executor-controller` | Capacity only: the Job created for an executor deployment has settled, so its execution slot is released. Carries no business outcome — task status, per-node results and retries each travel on their own stream. |
 | `task.status.updated:v1` | `k8s-controller` (RUNNING + SUCCEEDED/FAILED — the pod lifecycle), `executor-controller` (FAILED only, on the never-deployed path: permanent dispatch error or retry-exhaustion before a pod exists), `orchestrator` (SKIPPED on cascade-skip) | `state` | Task status update; drives finalization state machine in state. Each producer owns a non-overlapping slice; all serialize via the shared `pkg/events.TaskStatusUpdated.ToMap`. |
 | `task.execution.recorded:v1` | `k8s-controller` | `state` | Persist task execution record with timing and S3 log key |
 | `node.updated:v1` | `k8s-controller` (**also `executor-controller` on permanent dispatch error or retry-exhaustion**) | `orchestrator` | Node terminal status projection; orchestrator unlocks downstream nodes |

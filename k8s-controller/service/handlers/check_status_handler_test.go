@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/k8s-controller/domain/command"
+	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
@@ -1736,3 +1737,202 @@ func TestHandle_PromoteSeedMode_RunningJob_SuppressesRunningAnnouncement(t *test
 // Compile-time interface checks.
 var _ ports.LogUploader = (*fakeLogUploader)(nil)
 var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)
+
+// --- executor.job.terminal:v1 capacity notification ---
+
+// succeededPodResult is a settled, successful Job.
+func succeededPodResult() *model.K8sPodResult {
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	return &model.K8sPodResult{
+		Status:           model.JobStatusSucceeded,
+		StartedAt:        &now,
+		CompletedAt:      &now,
+		ExecutionSeconds: 1.0,
+	}
+}
+
+// terminalPayload decodes the single capacity notification among entries, or
+// fails when none was written.
+func terminalPayload(t *testing.T, entries []*pkgoutbox.Entry) pkgevents.ExecutorJobTerminal {
+	t.Helper()
+	e := findEntryByEventType(entries, event.EventTypeExecutorJobTerminal)
+	if e == nil {
+		t.Fatal("missing executor_job_terminal entry — the Job's execution slot would leak")
+	}
+	var p pkgevents.ExecutorJobTerminal
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		t.Fatalf("unmarshal executor_job_terminal: %v", err)
+	}
+	return p
+}
+
+// TestExecutorJobTerminal_EmittedOnEveryTerminalBranch is the anti-leak guard: a
+// slot reserved at dispatch is released only by this event, so every way a Job
+// can settle must emit exactly one. A branch that forgets it consumes capacity
+// against MAX_CONCURRENT_EXECUTIONS forever, invisibly.
+func TestExecutorJobTerminal_EmittedOnEveryTerminalBranch(t *testing.T) {
+	depID := uuid.New()
+	notFound := &model.K8sPodResult{Status: model.JobStatusUnknown, TerminationMsg: "not found"}
+
+	cases := []struct {
+		name   string
+		mode   string
+		status *model.K8sPodResult
+		retry  int32
+		want   string
+	}{
+		{name: "production succeeded", status: succeededPodResult(), want: "succeeded"},
+		{name: "production failed with retry", status: failedResult(), retry: 0, want: "failed"},
+		{name: "production failed permanently", status: failedResult(), retry: 3, want: "failed"},
+		{name: "production unknown", status: notFound, want: "unknown"},
+		{name: "validation terminal", mode: "validation", status: succeededPodResult(), want: "succeeded"},
+		{name: "seed_build terminal", mode: "seed_build", status: failedResult(), want: "failed"},
+		{name: "compile terminal", mode: "compile", status: succeededPodResult(), want: "succeeded"},
+		{name: "promote_seed terminal", mode: pkgevents.ModePromoteSeed, status: succeededPodResult(), want: "succeeded"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outbox := &fakeOutboxRepo{}
+			handler := newHandler(&fakeK8sClient{
+				status:      tc.status,
+				labels:      map[string]string{"mode": tc.mode},
+				annotations: map[string]string{pkgmodel.AnnotationReleaseID: "rel1", pkgmodel.AnnotationNodeID: "n1"},
+			}, noopCancelledRepo(), 3)
+
+			cmd := command.CheckJobStatus{
+				TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-abc",
+				ExecutorDeploymentID: depID.String(), Mode: tc.mode,
+				RetryCount: tc.retry, MaxRetries: 3,
+			}
+			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+
+			got := terminalPayload(t, outbox.entries)
+			if got.ExecutorDeploymentID != depID.String() {
+				t.Errorf("ExecutorDeploymentID: expected %q, got %q", depID, got.ExecutorDeploymentID)
+			}
+			if got.TerminalStatus != tc.want {
+				t.Errorf("TerminalStatus: expected %q, got %q", tc.want, got.TerminalStatus)
+			}
+			if got.JobName != "job-abc" {
+				t.Errorf("JobName: expected %q, got %q", "job-abc", got.JobName)
+			}
+		})
+	}
+}
+
+// TestExecutorJobTerminal_NotEmittedWhileJobStillRuns prevents the opposite
+// failure: releasing a slot the Job still occupies lets the executor start work
+// beyond MAX_CONCURRENT_EXECUTIONS. A Running Job, and an Unknown one in a
+// candidate mode (which re-polls rather than settling), both still hold theirs.
+func TestExecutorJobTerminal_NotEmittedWhileJobStillRuns(t *testing.T) {
+	running := &model.K8sPodResult{Status: model.JobStatusRunning}
+	unknown := &model.K8sPodResult{Status: model.JobStatusUnknown, TerminationMsg: "pods not scheduled yet"}
+
+	cases := []struct {
+		name   string
+		mode   string
+		status *model.K8sPodResult
+	}{
+		{name: "production running", status: running},
+		{name: "validation running", mode: "validation", status: running},
+		{name: "validation unknown re-polls", mode: "validation", status: unknown},
+		{name: "seed_build unknown re-polls", mode: "seed_build", status: unknown},
+		{name: "compile unknown re-polls", mode: "compile", status: unknown},
+		{name: "promote_seed unknown re-polls", mode: pkgevents.ModePromoteSeed, status: unknown},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outbox := &fakeOutboxRepo{}
+			handler := newHandler(&fakeK8sClient{
+				status:      tc.status,
+				labels:      map[string]string{"mode": tc.mode},
+				annotations: map[string]string{},
+			}, noopCancelledRepo(), 3)
+
+			cmd := command.CheckJobStatus{
+				TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-abc",
+				ExecutorDeploymentID: uuid.New().String(), Mode: tc.mode, MaxRetries: 3,
+			}
+			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+			if e := findEntryByEventType(outbox.entries, event.EventTypeExecutorJobTerminal); e != nil {
+				t.Error("released the execution slot of a Job that has not settled")
+			}
+		})
+	}
+}
+
+// TestExecutorJobTerminal_DeterministicIdentityPerObservation keeps a
+// re-observed terminal idempotent: both observations address the same aggregate,
+// so the release is a no-op the second time rather than a second accounting event.
+func TestExecutorJobTerminal_DeterministicIdentityPerObservation(t *testing.T) {
+	depID := uuid.New()
+	newEntries := func() []*pkgoutbox.Entry {
+		outbox := &fakeOutboxRepo{}
+		handler := newHandler(&fakeK8sClient{status: succeededPodResult(), labels: map[string]string{}}, noopCancelledRepo(), 3)
+		cmd := command.CheckJobStatus{
+			TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-abc",
+			ExecutorDeploymentID: depID.String(), MaxRetries: 3,
+		}
+		if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			t.Fatalf("Handle: %v", err)
+		}
+		return outbox.entries
+	}
+
+	first := findEntryByEventType(newEntries(), event.EventTypeExecutorJobTerminal)
+	second := findEntryByEventType(newEntries(), event.EventTypeExecutorJobTerminal)
+	if first == nil || second == nil {
+		t.Fatal("missing executor_job_terminal entry")
+	}
+	if first.AggregateID != second.AggregateID {
+		t.Errorf("AggregateID must derive from the deployment id: %s != %s", first.AggregateID, second.AggregateID)
+	}
+	if first.StreamName != streams.ExecutorJobTerminalV1 {
+		t.Errorf("StreamName: expected %q, got %q", streams.ExecutorJobTerminalV1, first.StreamName)
+	}
+}
+
+// TestExecutorJobTerminal_SkippedWithoutDeploymentID keeps a Job dispatched
+// before the field existed working: with no row to name, there is nothing to
+// release and the notification is pointless.
+func TestExecutorJobTerminal_SkippedWithoutDeploymentID(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{status: succeededPodResult(), labels: map[string]string{}}, noopCancelledRepo(), 3)
+	cmd := command.CheckJobStatus{TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-abc", MaxRetries: 3}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if e := findEntryByEventType(outbox.entries, event.EventTypeExecutorJobTerminal); e != nil {
+		t.Error("emitted a capacity notification naming no deployment")
+	}
+}
+
+// TestHandle_RoutesOnDurableMode_WhenJobMetadataIsGone pins terminal routing to
+// the check message. A TTL-reaped Job returns empty labels, so a label-only read
+// would route a candidate Job down the production path and emit task lifecycle
+// events for a task that does not exist.
+func TestHandle_RoutesOnDurableMode_WhenJobMetadataIsGone(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(&fakeK8sClient{
+		status:      succeededPodResult(),
+		labels:      map[string]string{}, // vanished Job: no labels
+		annotations: map[string]string{},
+	}, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-abc",
+		Mode: pkgevents.ModePromoteSeed, MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if e := findEntryByEventType(outbox.entries, "task_status_updated"); e != nil {
+		t.Error("promote_seed routed to the production path: it has no state run, so task lifecycle events strand state")
+	}
+}

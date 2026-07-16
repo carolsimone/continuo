@@ -1,6 +1,6 @@
 // Package deployer holds the application service that drains the
-// executor_deployments command queue: it deploys K8s Jobs (capped by a live
-// in-flight count) and, once a deploy resolves, writes the canonical
+// executor_deployments command queue: it deploys K8s Jobs (capped by the
+// execution slots it reserves) and, once a deploy resolves, writes the canonical
 // announcement rows to executor_outbox. It depends only on domain ports.
 package deployer
 
@@ -37,26 +37,34 @@ type ValidationAggRepoFactory func(exec outbox.Executor) repository.ValidationAg
 
 // DispatcherConfig groups the optional knobs.
 type DispatcherConfig struct {
-	Tick        time.Duration // poll interval; default 5s
-	BatchSize   int           // max rows per batch (also clamped by headroom); default 50
+	Tick time.Duration // poll interval; default 5s
+	// BatchSize caps the rows one batch may dispatch. Zero resolves to the
+	// executor's concurrency cap, which is the most a batch could ever start.
+	BatchSize   int
 	BackoffBase time.Duration // first retry delay; default 5s
 	BackoffCap  time.Duration // max retry delay; default 2m
+	// DispatchRecoveryAfter is how long a reservation may sit in 'dispatching'
+	// before a tick re-drives it; default 2m. It must exceed the time a healthy
+	// Job create takes, so a dispatch that is merely slow is not re-driven
+	// alongside the one still working on it.
+	DispatchRecoveryAfter time.Duration
 }
 
 // Dispatcher drains executor_deployments under a concurrency cap. The K8s
 // deploy is a command effect kept off the outbox so every outbox Publisher
 // stays a uniform marshal-and-XADD.
 type Dispatcher struct {
-	db            *sqlx.DB
-	deployer      deploy.Deployer
-	newRepo       RepoFactory
-	newAggRepo    ValidationAggRepoFactory
-	maxConcurrent int
-	logger        *slog.Logger
-	tick          time.Duration
-	batchSize     int
-	backoff       model.BackoffPolicy
-	now           func() time.Time
+	db              *sqlx.DB
+	deployer        deploy.Deployer
+	newRepo         RepoFactory
+	newAggRepo      ValidationAggRepoFactory
+	maxConcurrent   int
+	logger          *slog.Logger
+	tick            time.Duration
+	batchSize       int
+	backoff         model.BackoffPolicy
+	recoveryAfter   time.Duration
+	now             func() time.Time
 }
 
 func NewDispatcher(
@@ -71,14 +79,19 @@ func NewDispatcher(
 	if cfg.Tick == 0 {
 		cfg.Tick = 5 * time.Second
 	}
+	// A batch can never start more work than the concurrency cap allows, so the
+	// cap is the natural bound. It is configured, never defaulted to a literal.
 	if cfg.BatchSize == 0 {
-		cfg.BatchSize = 50
+		cfg.BatchSize = maxConcurrent
 	}
 	if cfg.BackoffBase == 0 {
 		cfg.BackoffBase = 5 * time.Second
 	}
 	if cfg.BackoffCap == 0 {
 		cfg.BackoffCap = 2 * time.Minute
+	}
+	if cfg.DispatchRecoveryAfter == 0 {
+		cfg.DispatchRecoveryAfter = 2 * time.Minute
 	}
 	return &Dispatcher{
 		db:            db,
@@ -90,6 +103,7 @@ func NewDispatcher(
 		tick:          cfg.Tick,
 		batchSize:     cfg.BatchSize,
 		backoff:       model.BackoffPolicy{Base: cfg.BackoffBase, Cap: cfg.BackoffCap},
+		recoveryAfter: cfg.DispatchRecoveryAfter,
 		now:           time.Now,
 	}
 }
@@ -111,43 +125,140 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	}
 }
 
-// ProcessBatch runs one cycle. The concurrency cap is evaluated once, then up
-// to headroom deployments are processed — each in its OWN transaction so a
-// failure on one deployment never rolls back another, and the K8s deploy holds
-// only a single row's lock. Exported for tests.
+// ProcessBatch runs one cycle: it re-drives one stranded reservation, then
+// dispatches up to batchSize deployments. Each deployment takes its slot in one
+// transaction, creates its Kubernetes Job outside any transaction, and records
+// the outcome in a second — so a slow Job create never holds a row lock, and a
+// crash between the two cannot lose track of a Job that is already running.
+// Exported for tests.
 func (d *Dispatcher) ProcessBatch(ctx context.Context) error {
-	active, err := d.deployer.CountActive(ctx)
-	if err != nil {
-		return fmt.Errorf("count active deploys: %w", err)
-	}
-	headroom := d.maxConcurrent - active
-	if headroom <= 0 {
-		d.logger.Info("Deploy cap reached — deferring pending deployments",
-			"active", active, "max_concurrent", d.maxConcurrent)
-		return nil
-	}
-	if headroom > d.batchSize {
-		headroom = d.batchSize
+	if err := d.recoverOneStaleDispatch(ctx); err != nil {
+		return fmt.Errorf("recover stale dispatch: %w", err)
 	}
 
-	for i := 0; i < headroom; i++ {
+	for i := 0; i < d.batchSize; i++ {
 		processed, err := d.processOne(ctx)
 		if err != nil {
 			return fmt.Errorf("process deployment: %w", err)
 		}
 		if !processed {
-			break // no more due deployments this cycle
+			break // no headroom, or no more due deployments this cycle
 		}
 	}
 	return nil
 }
 
-// processOne claims and processes at most one due deployment inside its own
-// transaction. It returns false when no due deployment is available.
+// recoverOneStaleDispatch re-drives a single reservation left in 'dispatching'
+// by a crash between the Job create and the transaction that records it. The
+// slot stays reserved throughout: the Job may well be running, and releasing the
+// slot to re-reserve it would let the executor start work beyond its cap in the
+// meantime. The Job create is idempotent by name, so repeating it either adopts
+// the existing Job or creates the one the crash lost.
+func (d *Dispatcher) recoverOneStaleDispatch(ctx context.Context) error {
+	dep, err := d.claimStaleDispatch(ctx)
+	if err != nil || dep == nil {
+		return err
+	}
+	d.logger.Warn("Re-driving a dispatch stranded before it was recorded",
+		"deployment_id", dep.ID(), "mode", dep.Mode())
+	return d.deployAndSettle(ctx, dep)
+}
+
+// claimStaleDispatch returns one deployment whose reservation has sat in
+// 'dispatching' past the recovery window, or nil when none has. The row lock is
+// released at commit rather than held across the Job create; two dispatchers
+// that both re-drive the same row create the same idempotent Job and apply the
+// same transition, so the race is benign.
+func (d *Dispatcher) claimStaleDispatch(ctx context.Context) (*model.Deployment, error) {
+	var dep *model.Deployment
+	err := d.inTx(ctx, func(repo repository.DeploymentRepository, _ outbox.Repository, _ repository.ValidationAggregateRepository) error {
+		var err error
+		dep, err = repo.GetStaleDispatchingForUpdate(ctx, d.now().Add(-d.recoveryAfter))
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return dep, nil
+}
+
+// processOne reserves and dispatches at most one due deployment. It returns
+// false when the executor has no spare capacity or no deployment is due.
 func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
+	dep, err := d.reserveOne(ctx)
+	if err != nil {
+		return false, err
+	}
+	if dep == nil {
+		return false, nil
+	}
+	if err := d.deployAndSettle(ctx, dep); err != nil {
+		return false, fmt.Errorf("dispatch deployment %s: %w", dep.ID(), err)
+	}
+	return true, nil
+}
+
+// reserveOne takes an execution slot for one due deployment and parks it in
+// 'dispatching'. The capacity lock is held for the whole transaction, so the
+// count it reads cannot be stale by the time the slot is taken — that
+// serialization is what keeps Jobs and worker claims from both spending the same
+// free slot. It returns nil when the cap is reached or nothing is due.
+func (d *Dispatcher) reserveOne(ctx context.Context) (*model.Deployment, error) {
+	var reserved *model.Deployment
+	err := d.inTx(ctx, func(repo repository.DeploymentRepository, _ outbox.Repository, _ repository.ValidationAggregateRepository) error {
+		if err := repo.LockCapacity(ctx); err != nil {
+			return err
+		}
+		active, err := repo.ActiveSlotCount(ctx)
+		if err != nil {
+			return fmt.Errorf("count active execution slots: %w", err)
+		}
+		if active >= d.maxConcurrent {
+			d.logger.Info("Execution cap reached — deferring pending deployments",
+				"active", active, "max_concurrent", d.maxConcurrent)
+			return nil
+		}
+		due, err := repo.GetDueJobs(ctx, 1)
+		if err != nil {
+			return fmt.Errorf("get due deployment: %w", err)
+		}
+		if len(due) == 0 {
+			return nil
+		}
+		dep := due[0]
+		if err := dep.ReserveForDispatch(d.now()); err != nil {
+			return fmt.Errorf("reserve execution slot for deployment %s: %w", dep.ID(), err)
+		}
+		if err := repo.Save(ctx, dep); err != nil {
+			return fmt.Errorf("save reserved deployment %s: %w", dep.ID(), err)
+		}
+		reserved = dep
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return reserved, nil
+}
+
+// deployAndSettle creates the deployment's Kubernetes Job outside any
+// transaction, then records the outcome in one. Every settle path releases the
+// reserved slot or leaves the Job to release it on its terminal status.
+func (d *Dispatcher) deployAndSettle(ctx context.Context, dep *model.Deployment) error {
+	return d.inTx(ctx, func(repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository) error {
+		return d.dispatchOne(ctx, repo, outboxRepo, aggRepo, dep)
+	})
+}
+
+// inTx runs fn against repositories bound to a single transaction, committing
+// when it returns nil and rolling back otherwise.
+func (d *Dispatcher) inTx(
+	ctx context.Context,
+	fn func(repository.DeploymentRepository, outbox.Repository, repository.ValidationAggregateRepository) error,
+) error {
 	tx, err := d.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return false, fmt.Errorf("begin tx: %w", err)
+		return fmt.Errorf("begin tx: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -156,31 +267,38 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 		}
 	}()
 
-	repo := d.newRepo(tx)
-	aggRepo := d.newAggRepo(tx)
-	outboxRepo := outbox.NewPostgresRepository(tx, "executor_outbox", d.logger)
-
-	due, err := repo.GetDueJobs(ctx, 1)
-	if err != nil {
-		return false, fmt.Errorf("get due deployment: %w", err)
-	}
-	if len(due) == 0 {
-		if err := tx.Commit(); err != nil {
-			return false, fmt.Errorf("commit empty tx: %w", err)
-		}
-		committed = true
-		return false, nil
-	}
-
-	if err := d.dispatchOne(ctx, repo, outboxRepo, aggRepo, due[0]); err != nil {
-		return false, fmt.Errorf("dispatch deployment %s: %w", due[0].ID(), err)
+	if err := fn(
+		d.newRepo(tx),
+		outbox.NewPostgresRepository(tx, "executor_outbox", d.logger),
+		d.newAggRepo(tx),
+	); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit tx: %w", err)
+		return fmt.Errorf("commit tx: %w", err)
 	}
 	committed = true
-	return true, nil
+	return nil
+}
+
+// jobSpec projects a production deployment onto the Deployer port's spec,
+// naming the row that holds the Job's execution slot so its terminal status can
+// release it, and pinning the command when the row already resolved one.
+func jobSpec(dep *model.Deployment) deploy.JobSpec {
+	spec := dep.Command().ToJobSpec()
+	spec.ExecutorDeploymentID = dep.ID().String()
+	spec.ResolvedArgv = dep.ResolvedArgv()
+	return spec
+}
+
+// validationJobSpec projects a validation, seed-build, or compile deployment
+// onto the Deployer port's spec, naming the row that holds the Job's execution
+// slot so its terminal status can release it.
+func validationJobSpec(dep *model.Deployment) deploy.ValidationJobSpec {
+	spec := dep.ValidationCommand().ToValidationJobSpec()
+	spec.ExecutorDeploymentID = dep.ID().String()
+	return spec
 }
 
 func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.DeploymentRepository, outboxRepo outbox.Repository, aggRepo repository.ValidationAggregateRepository, dep *model.Deployment) error {
@@ -195,7 +313,7 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	}
 
 	now := d.now()
-	isPromoteSeed := dep.Command().ToJobSpec().Mode == pkgevents.ModePromoteSeed
+	isPromoteSeed := dep.Command().Mode == pkgevents.ModePromoteSeed
 
 	// A row whose job_params could not be deserialized is unrunnable; fail it
 	// permanently with a routable announcement built from its recovered identity.
@@ -210,12 +328,16 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 		return repo.Save(ctx, dep)
 	}
 
-	deployErr := d.deployer.Deploy(ctx, dep.Command().ToJobSpec())
+	deployErr := d.deployer.Deploy(ctx, jobSpec(dep))
 	if deployErr == nil {
-		if !isPromoteSeed {
-			if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
-				return err
-			}
+		// Every mode emits the node_deployed trigger, promote_seed included:
+		// k8s-controller never polls, so without it the Job would never be
+		// status-checked and the execution slot it holds would never be
+		// released. The trigger starts observation only; the state-bound
+		// lifecycle events stay suppressed for promote_seed further down the
+		// chain, keyed off the mode this trigger carries.
+		if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
+			return err
 		}
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
@@ -268,7 +390,7 @@ func (d *Dispatcher) dispatchValidation(ctx context.Context, repo repository.Dep
 		return d.settleFailedValidation(ctx, repo, outboxRepo, aggRepo, dep, now)
 	}
 
-	deployErr := d.deployer.DeployValidation(ctx, dep.ValidationCommand().ToValidationJobSpec())
+	deployErr := d.deployer.DeployValidation(ctx, validationJobSpec(dep))
 	if deployErr == nil {
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
@@ -336,7 +458,7 @@ func (d *Dispatcher) dispatchSeedBuild(ctx context.Context, repo repository.Depl
 		return d.settleFailedSeedBuild(ctx, repo, outboxRepo, aggRepo, dep, now)
 	}
 
-	deployErr := d.deployer.DeploySeedBuild(ctx, dep.ValidationCommand().ToValidationJobSpec())
+	deployErr := d.deployer.DeploySeedBuild(ctx, validationJobSpec(dep))
 	if deployErr == nil {
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
@@ -404,7 +526,7 @@ func (d *Dispatcher) dispatchCompile(ctx context.Context, repo repository.Deploy
 		return d.settleFailedCompile(ctx, repo, outboxRepo, aggRepo, dep, now)
 	}
 
-	deployErr := d.deployer.DeployCompile(ctx, dep.ValidationCommand().ToValidationJobSpec())
+	deployErr := d.deployer.DeployCompile(ctx, validationJobSpec(dep))
 	if deployErr == nil {
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
@@ -450,13 +572,18 @@ func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo 
 	cmd := dep.Command()
 	// The deploy path emits only the node_deployed trigger that starts k8s polling.
 	// k8s-controller is the sole producer of the running/terminal pod lifecycle and
-	// announces RUNNING the first time it observes the Job running.
+	// announces RUNNING the first time it observes the Job running. The trigger
+	// names this row and its mode so the Job's terminal check can release the
+	// execution slot and route the result without re-reading the Job.
 	deployed := event.JobDeployed{
 		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
 		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName,
 		JobName: cmd.JobName, NodeType: cmd.NodeType, ImageTag: cmd.ImageTag,
-		Operation:      cmd.Operation,
-		TaskRetryCount: cmd.TaskRetryCount, MaxRetries: cmd.TaskMaxRetries,
+		Operation:            cmd.Operation,
+		ExecutorDeploymentID: dep.ID().String(),
+		Mode:                 cmd.Mode,
+		RuntimeManifestRef:   cmd.RuntimeManifestRef,
+		TaskRetryCount:       cmd.TaskRetryCount, MaxRetries: cmd.TaskMaxRetries,
 	}
 	if err := d.createOutbox(ctx, outboxRepo, dep, "node_deployed", streams.NodeDeployedV1, deployed); err != nil {
 		return fmt.Errorf("write node_deployed announcement: %w", err)
@@ -484,17 +611,19 @@ func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxR
 	vc := dep.ValidationCommand()
 	taskID, scheduleID := model.ValidationSyntheticIDs(dep.ReleaseID(), dep.NodeID())
 	deployed := event.JobDeployed{
-		TaskID:         taskID.String(),
-		ScheduleID:     scheduleID.String(),
-		ScheduleName:   "", // validation has no schedule
-		ServiceName:    vc.ServiceName,
-		SchemaName:     vc.SchemaName,
-		TableName:      vc.TableName,
-		JobName:        vc.JobName,
-		NodeType:       vc.NodeType,
-		ImageTag:       vc.ImageTag,
-		TaskRetryCount: 0,
-		MaxRetries:     0,
+		TaskID:               taskID.String(),
+		ScheduleID:           scheduleID.String(),
+		ScheduleName:         "", // validation has no schedule
+		ServiceName:          vc.ServiceName,
+		SchemaName:           vc.SchemaName,
+		TableName:            vc.TableName,
+		JobName:              vc.JobName,
+		NodeType:             vc.NodeType,
+		ImageTag:             vc.ImageTag,
+		ExecutorDeploymentID: dep.ID().String(),
+		Mode:                 string(dep.Mode()),
+		TaskRetryCount:       0,
+		MaxRetries:           0,
 	}
 	body, err := json.Marshal(deployed)
 	if err != nil {

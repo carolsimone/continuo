@@ -102,6 +102,19 @@ Production and all candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `m
 
 ### Outcome branches
 
+Routing reads the dispatch mode from the check message (`mode`), falling back to
+the Job's `mode` label when the message carries none. The message is durable: a
+Job that is TTL-reaped before its terminal is observed has no labels left, so a
+label-only read would route a candidate Job down the production path.
+
+Before any mode's routing, a settled Job writes `executor.job.terminal:v1`
+naming its `executor_deployment_id`, so executor-controller releases the
+execution slot the Job held. It is written ahead of the routing so no terminal
+branch can return without it and strand the slot. A Job is settled on any
+terminal status; for the candidate modes an `Unknown` status is not terminal —
+it re-polls — so those release nothing yet. A check that names no deployment
+(dispatched before the field existed) holds no slot and writes nothing.
+
 | Status | Action |
 |---|---|
 | **Running** | The first time an attempt is observed running (`running_announced=false`), announce `task.status.updated:v1` (RUNNING) stamped with the running attempt — suppressed for candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `mode=compile`). Always write a `check_delayed` outbox entry → re-enqueue to `check.k8s:v1` with `check_after` and `running_announced=true`, so RUNNING is announced exactly once per attempt. k8s-controller is the sole producer of the running/terminal pod lifecycle. |

@@ -10,6 +10,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
+	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -164,6 +165,11 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 			streamName: streams.CompileNodeCompletedV1,
 			payload:    []byte(`{"release_id":"rel1","node_id":"service-1","outcome":"ok"}`),
 		},
+		{
+			eventType:  event.EventTypeExecutorJobTerminal,
+			streamName: streams.ExecutorJobTerminalV1,
+			payload:    []byte(`{"executor_deployment_id":"e6b1c0a2-1f3d-4c5e-8a7b-9d0e1f2a3b4c","job_name":"j1","terminal_status":"Succeeded"}`),
+		},
 	}
 
 	for _, tc := range cases {
@@ -232,4 +238,80 @@ func TestPublisher_PayloadShapesUnmarshalSuccessfully(t *testing.T) {
 			require.NotEmpty(t, raw)
 		})
 	}
+}
+
+// TestPublisher_ExecutorJobTerminal publishes the capacity-only terminal
+// notification verbatim onto executor.job.terminal:v1, so the executor can
+// release the slot the Job held.
+func TestPublisher_ExecutorJobTerminal(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	r := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	pub := publisher.NewOutboxPublisher(r, newTestLogger())
+
+	depID := uuid.New()
+	payload := mustMarshalK8s(t, pkgevents.ExecutorJobTerminal{
+		ExecutorDeploymentID: depID.String(),
+		JobName:              "job-1",
+		TerminalStatus:       "Succeeded",
+		CompletedAt:          "2026-07-16T10:00:00Z",
+	})
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID:         uuid.New(),
+		EventType:  event.EventTypeExecutorJobTerminal,
+		StreamName: streams.ExecutorJobTerminalV1,
+		Payload:    payload,
+	}))
+
+	entries, err := r.XRange(context.Background(), streams.ExecutorJobTerminalV1, "-", "+").Result()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	var got pkgevents.ExecutorJobTerminal
+	require.NoError(t, json.Unmarshal([]byte(entries[0].Values["payload"].(string)), &got))
+	assert.Equal(t, depID.String(), got.ExecutorDeploymentID)
+	assert.Equal(t, "Succeeded", got.TerminalStatus)
+}
+
+// TestPublisher_CheckDelayedRecirculatesDurableFields keeps the self-poll loop
+// lossless: the slot owner, the dispatch mode, and the artifact pin must survive
+// every hop, or a terminal observed after the Job is TTL-reaped can neither
+// release its slot nor rebuild the retry against the right release.
+func TestPublisher_CheckDelayedRecirculatesDurableFields(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	r := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	pub := publisher.NewOutboxPublisher(r, newTestLogger())
+
+	depID := uuid.New()
+	ref := pkgmodel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://artifacts/svc/manifest.msgpack",
+		RuntimeManifestSHA256:             "9f2c1b4e7a6d5038c9b1e2f4a7d6c5b8093e1f2a4b6c8d0e2f4a6b8c0d2e4f60",
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+	}
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID:         uuid.New(),
+		EventType:  "check_delayed",
+		StreamName: streams.CheckK8sV1,
+		Payload: mustMarshalK8s(t, event.JobCheckRequest{
+			TaskID: uuid.New().String(), ScheduleID: uuid.New().String(), JobName: "j1",
+			CheckAfter: 1700000000, MaxRetries: 3,
+			ExecutorDeploymentID: depID.String(),
+			Mode:                 pkgevents.ModePromoteSeed,
+			RuntimeManifestRef:   ref,
+		}),
+	}))
+
+	entries, err := r.XRange(context.Background(), streams.CheckK8sV1, "-", "+").Result()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	var got pkgevents.CheckK8s
+	require.NoError(t, json.Unmarshal([]byte(entries[0].Values["payload"].(string)), &got))
+	assert.Equal(t, depID.String(), got.ExecutorDeploymentID)
+	assert.Equal(t, pkgevents.ModePromoteSeed, got.Mode)
+	assert.Equal(t, ref, got.RuntimeManifestRef)
 }
