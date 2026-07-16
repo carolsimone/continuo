@@ -56,11 +56,6 @@ type TableNode struct {
 	TaskID          string
 	ManifestVersion string
 	ImageTag        string
-	// DBTUniqueID is the node's dbt identity ("model.finance.orders"). Distinct
-	// from the graph's unique_id, which is "schema.table".
-	DBTUniqueID string
-	// RuntimeManifestRef is the artifact the node's current release pinned.
-	pkgModel.RuntimeManifestRef
 }
 
 type ScheduleGraph struct {
