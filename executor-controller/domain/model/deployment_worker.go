@@ -136,12 +136,19 @@ func (d *Deployment) Complete(leaseID uuid.UUID, tokenSHA256 string, result Work
 	return nil
 }
 
-// ReportFailure applies the lease holder's failed terminal report. retryable
-// selects the transition: a retryable failure parks the task for requeue after
-// backoff, a permanent one fails it and records the report for audit. Both
+// ReportFailure applies the lease holder's failed terminal report. Both
 // release the task's execution slot. A caller whose lease no longer holds the
 // task is fenced with ErrStaleLease, so a superseded worker cannot drop the
 // current holder's lease or free the slot that holder occupies.
+//
+// result.Retryable and the retryable parameter are distinct and may disagree.
+// result.Retryable is the worker's own hint, stored verbatim as part of the
+// terminal result for audit. The retryable parameter is the caller's decision
+// and alone selects the transition: true parks the task for requeue after
+// backoff, false fails it permanently and records the report. The caller
+// narrows the worker's hint against an error-class denylist and the task's
+// retry budget, so an exhausted budget fails a task permanently while the
+// stored report still shows the worker considered the failure retryable.
 func (d *Deployment) ReportFailure(
 	leaseID uuid.UUID,
 	tokenSHA256 string,

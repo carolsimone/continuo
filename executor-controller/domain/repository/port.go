@@ -81,8 +81,9 @@ type DeploymentRepository interface {
 	// in-flight load at now, so the pool reconciler can size its replicas.
 	ListPoolDemand(ctx context.Context, now time.Time) ([]model.PoolDemand, error)
 	// DemotePendingPoolToJobs converts a pool's not-yet-started work back to the
-	// Kubernetes Job path, returning how many rows moved. Leased and running
-	// work is never converted.
+	// Kubernetes Job path, returning how many rows moved. Work parked after a
+	// retryable failure keeps its backoff and serves it out on the Jobs path.
+	// Leased and running work is never converted.
 	DemotePendingPoolToJobs(ctx context.Context, poolKey string, now time.Time) (int64, error)
 	// CancelSchedule marks a schedule's not-yet-terminal Deployments cancelled
 	// and returns the leases that were active, so the caller can terminate

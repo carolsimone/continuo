@@ -557,14 +557,20 @@ func (r *deploymentsRepository) ListPoolDemand(ctx context.Context, now time.Tim
 // Kubernetes Job path, returning how many rows moved. Any argv already pinned is
 // preserved so a Job runs the same command. A row awaiting requeue after a
 // retryable failure is promoted to 'pending' as it moves, because retry_pending
-// is a worker-path state the Jobs dispatcher never reads; its recorded backoff
-// still gates it through next_attempt_at. Leased and running work is never
-// converted: it must finish, or be cancelled and fenced first.
+// is a worker-path state the Jobs dispatcher never reads; it keeps its recorded
+// next_attempt_at, so a task that just failed retryably serves out its backoff
+// on the Jobs path instead of retrying at once. A row that was already pending
+// has any future next_attempt_at pulled back to now, making it due immediately.
+// Leased and running work is never converted: it must finish, or be cancelled
+// and fenced first.
 func (r *deploymentsRepository) DemotePendingPoolToJobs(ctx context.Context, poolKey string, now time.Time) (int64, error) {
 	const query = `
 		UPDATE executor_deployments
 		SET status = 'pending', execution_mode = 'jobs', pool_key = NULL,
-		    next_attempt_at = LEAST(next_attempt_at, $2)
+		    next_attempt_at = CASE
+		        WHEN status = 'retry_pending' THEN next_attempt_at
+		        ELSE LEAST(next_attempt_at, $2)
+		    END
 		WHERE execution_mode = 'workers' AND pool_key = $1
 		  AND status IN ('pending','retry_pending')`
 	res, err := r.exec.ExecContext(ctx, query, poolKey, now)

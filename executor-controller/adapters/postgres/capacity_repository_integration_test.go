@@ -354,12 +354,13 @@ func TestDemotePendingPoolToJobs(t *testing.T) {
 	require.NoError(t, repo.Save(ctx, leased))
 
 	// A row awaiting requeue after a retryable worker failure, its backoff
-	// already elapsed.
+	// still running: it is due an hour from now.
 	retrying := addWorkerDeployment(t, db, "pool-a", now)
 	require.NoError(t, retrying.Claim(uuid.New(), tokenSHA("t2"), "w", "pod-2", "uid-2",
 		now, now.Add(time.Minute), []string{"dbt", "run"}, model.ExecutionPathNative))
-	require.NoError(t, retrying.MarkRetryPending(now.Add(-time.Hour), time.Minute))
+	require.NoError(t, retrying.MarkRetryPending(now, time.Hour))
 	require.NoError(t, repo.Save(ctx, retrying))
+	retryDueAt := retrying.NextAttemptAt()
 
 	n, err := repo.DemotePendingPoolToJobs(ctx, "pool-a", now)
 	require.NoError(t, err)
@@ -372,12 +373,15 @@ func TestDemotePendingPoolToJobs(t *testing.T) {
 
 	// A demoted retry_pending row must be served by the Jobs dispatcher, which
 	// reads only 'pending' rows; leaving it in a worker-path status would strand
-	// it between the two dispatch paths.
+	// it between the two dispatch paths. Its running backoff moves with it, so
+	// the demotion does not turn a just-failed task into an immediate retry.
 	movedRetry, err := repo.GetByID(ctx, retrying.ID())
 	require.NoError(t, err)
 	assert.Equal(t, model.ExecutionModeJobs, movedRetry.ExecutionMode())
 	assert.Equal(t, model.StatusPending, movedRetry.Status())
 	assert.Empty(t, movedRetry.PoolKey())
+	assert.WithinDuration(t, retryDueAt, movedRetry.NextAttemptAt(), time.Second,
+		"the demotion preserves the recorded backoff rather than pulling it to now")
 
 	due, err := repo.GetDueJobs(ctx, 10)
 	require.NoError(t, err)
@@ -385,8 +389,23 @@ func TestDemotePendingPoolToJobs(t *testing.T) {
 	for _, d := range due {
 		ids = append(ids, d.ID())
 	}
-	assert.Contains(t, ids, retrying.ID(), "the demoted retry backlog is claimable as a Job")
+	assert.NotContains(t, ids, retrying.ID(),
+		"a demoted row whose backoff is still running is not yet claimable")
 	assert.Contains(t, ids, pending.ID())
+
+	// Once the backoff elapses the same row is served to the Jobs dispatcher.
+	_, err = db.Exec(
+		`UPDATE executor_deployments SET next_attempt_at = $2 WHERE id = $1`,
+		retrying.ID(), now.Add(-time.Minute))
+	require.NoError(t, err)
+	due, err = repo.GetDueJobs(ctx, 10)
+	require.NoError(t, err)
+	elapsedIDs := make([]uuid.UUID, 0, len(due))
+	for _, d := range due {
+		elapsedIDs = append(elapsedIDs, d.ID())
+	}
+	assert.Contains(t, elapsedIDs, retrying.ID(),
+		"the demoted retry backlog is claimable as a Job once its backoff elapses")
 
 	stillLeased, err := repo.GetByID(ctx, leased.ID())
 	require.NoError(t, err)

@@ -79,7 +79,12 @@ type PoolDemand struct {
 // WorkerResult is a worker's terminal report for a claimed task. It is stored
 // verbatim as the deployment's terminal_result for audit.
 type WorkerResult struct {
-	Succeeded              bool    `json:"succeeded"`
+	Succeeded bool `json:"succeeded"`
+	// Retryable is the worker's hint that the failure looks transient. It is a
+	// report, not a decision: the executor narrows it against an error-class
+	// denylist and the task's retry budget, and passes the outcome to
+	// ReportFailure separately. A permanently failed task can therefore carry
+	// Retryable true, recording what the worker observed.
 	Retryable              bool    `json:"retryable"`
 	ErrorClass             string  `json:"error_class,omitempty"`
 	ErrorMessage           string  `json:"error_message,omitempty"`

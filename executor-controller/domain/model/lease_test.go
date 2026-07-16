@@ -473,6 +473,23 @@ func TestReportFailure_PermanentFailsAndRecordsResult(t *testing.T) {
 	assert.Equal(t, result, *dep.TerminalResult())
 }
 
+// TestReportFailure_PermanentDecisionOverridesWorkerHint pins that the caller's
+// decision alone selects the transition, and that the worker's disagreeing hint
+// survives verbatim in the stored report. The executor fails the final allowed
+// attempt permanently however transient the worker judged the failure to be.
+func TestReportFailure_PermanentDecisionOverridesWorkerHint(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+	result := model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"}
+
+	require.NoError(t, dep.ReportFailure(leaseID, sha256Hex(token), result, false,
+		time.Unix(90, 0), 30*time.Second))
+
+	assert.Equal(t, model.StatusFailed, dep.Status())
+	require.NotNil(t, dep.TerminalResult())
+	assert.True(t, dep.TerminalResult().Retryable,
+		"the worker's hint is recorded as observed, not rewritten to match the transition")
+}
+
 // TestReportFailure_FencesStaleLease pins the boundary a superseded worker must
 // not cross: reporting a failure on a task that was reaped and re-claimed must
 // not drop the new holder's lease or free the slot it still occupies.
