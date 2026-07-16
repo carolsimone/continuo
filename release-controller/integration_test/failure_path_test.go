@@ -22,6 +22,9 @@ func TestIntegration_FailedValidationKeepsCurrentProdUnchanged(t *testing.T) {
 		Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rFAIL", Status: "ok",
+	}))
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rFAIL", Status: "ok",
 		Topology: release.Topology{

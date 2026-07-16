@@ -14,13 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Regression for the audit's Important #1 finding: AdvanceQueue called
-// concurrently from multiple paths (HTTP POST + stream-consumer ack) must
-// not double-promote the same queued release. The tx-scoped advisory lock
-// in UnitOfWork.LockReleaseQueue serialises the critical section so that
-// for N concurrent calls against a single Received candidate, exactly one
-// promotes the release and exactly one release.requested:v1 outbox row
-// is written.
+// AdvanceQueue called concurrently from multiple paths (HTTP POST + stream-consumer
+// ack) must not double-promote the same queued release. The tx-scoped advisory lock
+// in UnitOfWork.LockReleaseQueue serialises the critical section so that for N
+// concurrent calls against a single Received candidate, exactly one activates the
+// release and exactly one compile.requested:v1 outbox row is written.
 func TestIntegration_ConcurrentAdvance_PromotesAtMostOnce(t *testing.T) {
 	_, deps, db := setup(t)
 	defer db.Close()
@@ -56,17 +54,18 @@ func TestIntegration_ConcurrentAdvance_PromotesAtMostOnce(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Exactly one outbox row for release.requested:v1 — the lock prevented
-	// duplicate promotion.
+	// Exactly one outbox row for compile.requested:v1 — the lock prevented
+	// duplicate activation.
 	var count int
 	require.NoError(t, db.Get(&count,
 		`SELECT count(*) FROM release_controller_outbox WHERE stream_name = $1`,
-		streams.ReleaseRequestedV1,
+		streams.CompileRequestedV1,
 	))
-	assert.Equal(t, 1, count, "AdvanceQueue must not write duplicate release.requested:v1 entries under concurrent invocation")
+	assert.Equal(t, 1, count, "AdvanceQueue must not write duplicate compile.requested:v1 entries under concurrent invocation")
 
-	// And the release transitioned to Parsing exactly once.
+	// And the release transitioned to Compiling exactly once: activation dispatches
+	// the compile leg, which runs before the manifest is parsed.
 	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusParsing, r.Status())
+	assert.Equal(t, release.StatusCompiling, r.Status())
 }

@@ -77,6 +77,9 @@ func TestIntegration_GetReleaseIncludesPerNode(t *testing.T) {
 		Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(ctx, deps))
+	require.NoError(t, handlers.HandleCompileResult(ctx, deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rd1", Status: "ok",
+	}))
 	require.NoError(t, handlers.HandleParsedManifest(ctx, deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rd1", Status: "ok",
 		Topology: release.Topology{

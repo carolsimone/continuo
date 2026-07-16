@@ -140,11 +140,22 @@ test-deps-up:
 test-deps-down:
 	$(DOCKER_COMPOSE) rm -fsv postgres neo4j redis $(FLYWAY_JOBS) 2>/dev/null || true
 
+# Connection parameters for the local test Postgres brought up by test-deps-up.
+# They mirror docker-compose.yml. Declared once here so every consumer below —
+# the per-service env vars and the DSN derived from them — cannot drift apart.
+PG_HOST := localhost
+PG_PORT := 5432
+PG_USER := continuo_svc
+PG_PASSWORD := continuo
+PG_SSLMODE := disable
+
 # Run go tests for one service (SERVICE=x) or all. Brings deps up first; points
-# DB-backed tests at the local Postgres/Neo4j with the FULL per-service env. The
-# Task-1 baseline proved POSTGRES_HOST alone is NOT enough — pkgconfig.LoadPostgres
-# requires POSTGRES_DB/USER/PASSWORD and defaults DB_SSLMODE; each service uses its
-# own database continuo_<svc>. Creds (continuo_svc/continuo) come from docker-compose.yml.
+# DB-backed tests at the local Postgres/Neo4j with the FULL per-service env.
+# pkgconfig.LoadPostgres requires POSTGRES_DB/USER/PASSWORD and defaults
+# DB_SSLMODE; each service uses its own database continuo_<svc>.
+# release-controller's DB-backed tests connect via a DSN instead of the discrete
+# vars, so RELEASE_TEST_PG_DSN is derived from the same parameters; without it
+# those tests skip themselves and report a green run having executed nothing.
 # Includes -tags integration (closes the coverage gap). On macOS add
 # TESTCONTAINERS_RYUK_DISABLED=true; on CI Linux runners RYUK works, so omit it.
 .PHONY: test-go
@@ -158,9 +169,10 @@ test-go: test-deps-up
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \
-	  (cd $$s && POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=$$db \
-	     POSTGRES_USER=continuo_svc POSTGRES_PASSWORD=continuo DB_SSLMODE=disable \
+	  (cd $$s && POSTGRES_HOST=$(PG_HOST) POSTGRES_PORT=$(PG_PORT) POSTGRES_DB=$$db \
+	     POSTGRES_USER=$(PG_USER) POSTGRES_PASSWORD=$(PG_PASSWORD) DB_SSLMODE=$(PG_SSLMODE) \
 	     NEO4J_HOST=localhost \
+	     RELEASE_TEST_PG_DSN="postgres://$(PG_USER):$(PG_PASSWORD)@$(PG_HOST):$(PG_PORT)/$$db?sslmode=$(PG_SSLMODE)" \
 	     go test -tags integration -count=1 ./... -timeout 20m) || rc=1; \
 	done; exit $$rc
 

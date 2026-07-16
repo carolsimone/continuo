@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -17,6 +16,7 @@ import (
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/internal/dbtest"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
@@ -28,9 +28,9 @@ import (
 
 func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 	t.Helper()
-	dsn := os.Getenv("RELEASE_TEST_PG_DSN")
+	dsn := dbtest.DSN()
 	if dsn == "" {
-		t.Skip("RELEASE_TEST_PG_DSN not set")
+		t.Skip(dbtest.DSNEnv + " not set")
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)

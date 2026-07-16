@@ -39,7 +39,8 @@ func TestIntegration_FIFO_SerializesConcurrentCandidates(t *testing.T) {
 	active, err := deps.NewUoW().ReleaseRepo().ActiveRelease(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, active, "exactly one release must be active")
-	assert.Equal(t, release.StatusParsing, active.Status())
+	// Activation dispatches the compile leg, so the active release is Compiling.
+	assert.Equal(t, release.StatusCompiling, active.Status())
 
 	// Calling AdvanceQueue again must not start a second active release
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
