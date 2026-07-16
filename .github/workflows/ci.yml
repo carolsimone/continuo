@@ -82,32 +82,20 @@ jobs:
           # so docker compose build also benefits from the buildx cache backend.
           install: true
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Pull or build base image
-        # Normally pull continuo-base from Docker Hub (published by publish-base.yml).
-        # Fall back to a local build only when Dockerfile.base itself changed in
-        # this PR, because the published image hasn't been updated yet.
+      # Normally pull continuo-base from ghcr (published by publish-base.yml,
+      # public package — anonymous pull). Fall back to a local build when the
+      # pull fails (e.g. first run or registry hiccup).
+      - name: Provide continuo-base image
         run: |
-          if git diff --name-only origin/main..HEAD | grep -q "^Dockerfile\.base$"; then
-            echo "Dockerfile.base changed in this PR — building locally..."
-            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
+          if docker pull ghcr.io/${{ github.repository_owner }}/continuo-base:v1; then
+            docker tag ghcr.io/${{ github.repository_owner }}/continuo-base:v1 continuo-base:latest
           else
-            echo "Pulling continuo-base from Docker Hub..."
-            if docker pull ${{ secrets.DOCKERHUB_USERNAME }}/continuo-base:latest; then
-              docker tag ${{ secrets.DOCKERHUB_USERNAME }}/continuo-base:latest continuo-base:latest
-            else
-              echo "Docker Hub pull failed (image may not exist yet) — building locally as fallback..."
-              DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
-            fi
+            echo "Pull failed; building continuo-base locally..."
+            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
           fi
 
       - name: Switch to docker driver for local image access
-        # The docker-container buildx driver (used above for Docker Hub pull) runs
+        # The docker-container buildx driver (used above for the ghcr pull) runs
         # in an isolated container and cannot see local daemon images.
         # The default docker driver shares the daemon's image store, so
         # "FROM continuo-base:latest" resolves correctly in docker compose build.

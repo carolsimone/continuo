@@ -9,6 +9,11 @@ global:
   imageTag: latest
   dockerHubUser: youruser
 
+  # Registry/namespace prefix for per-team dbt images (executor-controller
+  # composes "<prefix>/<service>:<tag>" for compile/seed/scheduled Jobs).
+  # Independent of dockerHubUser, which locates continuo's own images.
+  teamImagePrefix: ""
+
   env: dev
   logLevel: INFO
 
