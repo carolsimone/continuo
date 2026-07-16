@@ -36,15 +36,17 @@ spec:
           ports:
             - name: http
               containerPort: 5556
+          # Dex serves every route, including /healthz, under its issuer path
+          # (hardcoded "/dex" in continuo.auth.issuerUrl above) — not at root.
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /dex/healthz
               port: 5556
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /dex/healthz
               port: 5556
             initialDelaySeconds: 15
             periodSeconds: 10
@@ -54,6 +56,8 @@ spec:
             - name: config
               mountPath: /etc/dex/cfg
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: config
           secret:
@@ -61,4 +65,6 @@ spec:
             items:
               - key: config.yaml
                 path: config.yaml
+        - name: tmp
+          emptyDir: {}
 {{- end }}

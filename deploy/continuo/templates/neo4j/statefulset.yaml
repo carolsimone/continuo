@@ -36,13 +36,18 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
-            - name: NEO4J_PASSWORD
+            # Not NEO4J_-prefixed on purpose: the official image's entrypoint
+            # rewrites every NEO4J_<setting> env var into neo4j.conf, and with
+            # strict config validation on, an unrecognized setting like
+            # "PASSWORD" crashes the server. This var exists only to be
+            # interpolated into NEO4J_AUTH below.
+            - name: CONTINUO_NEO4J_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "continuo.secretName" (dict "root" $ "ref" "neo4j") | quote }}
                   key: {{ include "continuo.secretKey" (dict "root" $ "ref" "neo4j") | quote }}
             - name: NEO4J_AUTH
-              value: "neo4j/$(NEO4J_PASSWORD)"
+              value: "neo4j/$(CONTINUO_NEO4J_PASSWORD)"
             - name: NEO4J_server_memory_pagecache_size
               value: "512M"
             - name: NEO4J_server_memory_heap_initial__size
