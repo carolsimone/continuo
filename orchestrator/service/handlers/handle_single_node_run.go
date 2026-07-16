@@ -174,17 +174,19 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		return fmt.Errorf("compute job name: %w", err)
 	}
 	queryEvt := domain.NodeReadyForExecution{
-		ScheduleID:      cmd.RunID,
-		ScheduleName:    cmd.ScheduleName,
-		ServiceName:     cmd.ServiceName,
-		SchemaName:      cmd.SchemaName,
-		TableName:       cmd.TableName,
-		TaskID:          taskID,
-		JobName:         jobName,
-		NodeType:        nodeType,
-		ManifestVersion: manifestVersion,
-		ImageTag:        imageTag,
-		Operation:       cmd.Operation,
+		ScheduleID:         cmd.RunID,
+		ScheduleName:       cmd.ScheduleName,
+		ServiceName:        cmd.ServiceName,
+		SchemaName:         cmd.SchemaName,
+		TableName:          cmd.TableName,
+		TaskID:             taskID,
+		JobName:            jobName,
+		NodeType:           nodeType,
+		ManifestVersion:    manifestVersion,
+		ImageTag:           imageTag,
+		DBTUniqueID:        sole.DBTUniqueID,
+		RuntimeManifestRef: sole.RuntimeManifestRef,
+		Operation:          cmd.Operation,
 	}
 	queryPayload, err := json.Marshal(queryEvt)
 	if err != nil {

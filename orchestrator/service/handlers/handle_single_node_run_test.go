@@ -3,12 +3,14 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
+	pkgModel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
@@ -102,6 +104,118 @@ func TestHandleSingleNodeRun_TestOperation_StampsOperationOnQueryModel(t *testin
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
 	assert.Equal(t, "test", qevt.Operation)
 	assert.Equal(t, "t", qevt.TableName)
+}
+
+// TestHandleSingleNodeRun_PinnedNode_QueryModelCarriesRuntimeManifest asserts
+// the pin reaches the wire: when the projected task carries a dbt identity and
+// a runtime manifest reference, the emitted query.model:v1 payload must carry
+// both, so the executor routes the node to the reusable worker pool that serves
+// that artifact instead of falling back to a per-node Job.
+func TestHandleSingleNodeRun_PinnedNode_QueryModelCarriesRuntimeManifest(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	taskID := uuid.New()
+	ref := pkgModel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://artifacts/svc/partial_parse.msgpack",
+		RuntimeManifestSHA256:             strings.Repeat("a", 64),
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: strings.Repeat("b", 64),
+	}
+	snap := &fakeSnapshotService{
+		projection: []snapshot.TaskProjection{
+			{
+				TaskID:             taskID,
+				ServiceName:        "svc",
+				SchemaName:         "s",
+				TableName:          "t",
+				ScheduleName:       "daily",
+				NodeType:           "dbt-model",
+				InitialStatus:      "PENDING",
+				ImageTag:           "v1",
+				ManifestVersion:    "m1",
+				MaxRetries:         pkgEvents.DefaultTaskMaxRetries,
+				DBTUniqueID:        "model.svc.t",
+				RuntimeManifestRef: ref,
+			},
+		},
+	}
+	h := handlers.NewHandleSingleNodeRunHandler(uow, snap, newTestLogger())
+
+	cmd := domainModel.SingleNodeRunInput{
+		RunID:          uuid.New().String(),
+		ScheduleName:   "daily",
+		ServiceName:    "svc",
+		SchemaName:     "s",
+		TableName:      "t",
+		MetadataSource: "latest",
+		InitiatedBy:    "system",
+	}
+
+	err := h.Handle(ctx, cmd, "msg-1", nil)
+	require.NoError(t, err)
+
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 2, "1 dispatched + 1 query.model")
+	require.Equal(t, streams.QueryModelV1, entries[1].StreamName)
+
+	var qevt domain.NodeReadyForExecution
+	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
+	assert.Equal(t, "model.svc.t", qevt.DBTUniqueID, "dbt identity must reach query.model:v1")
+	assert.Equal(t, ref, qevt.RuntimeManifestRef, "runtime manifest pin must reach query.model:v1")
+}
+
+// TestHandleSingleNodeRun_UnpinnedNode_QueryModelOmitsRuntimeManifest guards
+// the wire-identical requirement for nodes whose release pinned no runtime
+// manifest: every pin field is omitempty, so the payload is byte-identical to a
+// dispatch from before runtime manifests existed.
+func TestHandleSingleNodeRun_UnpinnedNode_QueryModelOmitsRuntimeManifest(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	snap := &fakeSnapshotService{
+		projection: []snapshot.TaskProjection{
+			{
+				TaskID:          uuid.New(),
+				ServiceName:     "svc",
+				SchemaName:      "s",
+				TableName:       "t",
+				ScheduleName:    "daily",
+				NodeType:        "dbt-model",
+				InitialStatus:   "PENDING",
+				ImageTag:        "v1",
+				ManifestVersion: "m1",
+				MaxRetries:      pkgEvents.DefaultTaskMaxRetries,
+			},
+		},
+	}
+	h := handlers.NewHandleSingleNodeRunHandler(uow, snap, newTestLogger())
+
+	cmd := domainModel.SingleNodeRunInput{
+		RunID:          uuid.New().String(),
+		ScheduleName:   "daily",
+		ServiceName:    "svc",
+		SchemaName:     "s",
+		TableName:      "t",
+		MetadataSource: "latest",
+		InitiatedBy:    "system",
+	}
+
+	require.NoError(t, h.Handle(ctx, cmd, "msg-1", nil))
+
+	entries := uow.outboxRepo.CreatedEntries
+	require.Len(t, entries, 2)
+
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(entries[1].Payload, &raw))
+	for _, key := range []string{
+		"dbt_unique_id",
+		"runtime_manifest_uri",
+		"runtime_manifest_sha256",
+		"runtime_manifest_dbt_version",
+		"runtime_manifest_parse_context_sha256",
+	} {
+		_, present := raw[key]
+		assert.False(t, present, "unpinned dispatch must omit %q", key)
+	}
 }
 
 // TestHandleSingleNodeRun_RunOperation_QueryModelOmitsOperation guards the
