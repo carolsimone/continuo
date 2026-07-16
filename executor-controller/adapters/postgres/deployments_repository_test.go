@@ -511,7 +511,7 @@ func countValidationCompletedOutbox(t *testing.T, db *sqlx.DB, releaseID string)
 // pending==0 and the sentinel resolves it to exactly one emission. The test
 // drives that interleaving deterministically — tx_A holds the lock until a
 // barrier confirms tx_B is parked on it — and asserts EXACTLY ONE
-// validation.completed:v1 row results (never zero, never two).
+// validation terminal (kind=complete) row results (never zero, never two).
 func TestDeploymentsRepository_ListValidationByRelease_And_BlockedPending(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -750,5 +750,5 @@ func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
 	require.NoError(t, txB.Commit())
 
 	assert.Equal(t, 1, countValidationCompletedOutbox(t, db, releaseID),
-		"exactly one validation.completed:v1 row — never zero (lost) and never two (double)")
+		"exactly one validation terminal (kind=complete) row — never zero (lost) and never two (double)")
 }

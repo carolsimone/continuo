@@ -96,7 +96,7 @@ func TestValidationNodeCompletedBinding_RecordsOutcome(t *testing.T) {
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM executor_outbox WHERE stream_name = $1`,
 		streams.ValidationCompletedV1),
-		"aggregate validation.completed:v1 emitted once the only node is terminal")
+		"aggregate validation terminal (kind=complete) emitted once the only node is terminal")
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM validation_aggregates WHERE release_id = $1`, releaseID),
 		"sentinel claimed exactly once")

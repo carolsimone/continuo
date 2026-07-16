@@ -245,7 +245,7 @@ func TestValidationNodeCompletedHandler_RecordsOutcomeAndTriggersAggregate(t *te
 	require.NotNil(t, depl.saved[0].OutcomeAt())
 
 	assert.Equal(t, 1, agg.claimCalls, "aggregate gate ran once node is terminal")
-	require.Len(t, outboxRepo.created, 1, "validation.completed:v1 emitted")
+	require.Len(t, outboxRepo.created, 1, "validation terminal (kind=complete) emitted")
 	assert.Equal(t, streams.ValidationCompletedV1, outboxRepo.created[0].StreamName)
 }
 
