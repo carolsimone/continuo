@@ -447,7 +447,7 @@ sequenceDiagram
     R->>RC: consume manifest.loaded.candidate:v1 (failed)
     Note over RC: Reject(parse_failed) → release.rejected:v1 {stage not present for parse failures}, advance queue
   else parsed and uploaded ok
-    MC->>R: publish manifest.loaded.candidate:v1 {status=ok, topology[] (per node: candidate_sql_uri)}
+    MC->>R: publish manifest.loaded.candidate:v1 {status=ok, topology[] (per node: candidate_sql_uri, dbt_unique_id), runtime_manifests (per service)}
     R->>RC: consume manifest.loaded.candidate:v1 (ok)
     Note over RC: join per-service image_tags into candidate topology
   end

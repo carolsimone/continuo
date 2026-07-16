@@ -81,7 +81,10 @@ def test_parse_descriptor_rejects_foreign_artifact_uri():
 
 
 @pytest.mark.parametrize("field", ["sha256", "parse_context_sha256"])
-@pytest.mark.parametrize("value", ["A" * 64, "a" * 63, "a" * 65, "z" * 64, "sha256:" + "a" * 64])
+@pytest.mark.parametrize("value", [
+    "A" * 64, "a" * 63, "a" * 65, "z" * 64, "sha256:" + "a" * 64,
+    "a" * 64 + "\n", "a" * 64 + " ",
+])
 def test_parse_descriptor_rejects_malformed_digest(field, value):
     with pytest.raises(MalformedRuntimeManifestError, match=field):
         _parse(_descriptor(**{field: value}))

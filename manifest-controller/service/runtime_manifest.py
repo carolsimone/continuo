@@ -86,7 +86,7 @@ def parse_descriptor(
         )
 
     for field in _DIGEST_FIELDS:
-        if not _SHA256_HEX.match(descriptor[field]):
+        if not _SHA256_HEX.fullmatch(descriptor[field]):
             raise MalformedRuntimeManifestError(
                 f"runtime manifest descriptor: {field} must be lowercase SHA-256 hex"
             )
