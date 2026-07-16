@@ -1,0 +1,21 @@
+{{- if .Values.neo4j.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "continuo.neo4j.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: neo4j
+spec:
+  clusterIP: None
+  selector:
+    {{- include "continuo.selectorLabels" (dict "root" $ "service" "neo4j") | nindent 4 }}
+  ports:
+    - name: bolt
+      port: 7687
+      targetPort: 7687
+    - name: http
+      port: 7474
+      targetPort: 7474
+{{- end }}
