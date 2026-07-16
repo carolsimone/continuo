@@ -189,47 +189,42 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 
 	// promotedNodeWire is the published shape of a promoted node: release.Node's
 	// durable fields plus Changed, which exists only on the wire. The runtime
-	// manifest fields are spelled out flat so the published contract is readable
-	// in one place.
+	// manifest reference is embedded rather than restated field by field, so its
+	// fields flatten onto this shape and a field added to the reference reaches
+	// the wire instead of being silently dropped here.
 	type promotedNodeWire struct {
-		UniqueID                          string   `json:"unique_id"`
-		DBTUniqueID                       string   `json:"dbt_unique_id,omitempty"`
-		SchemaName                        string   `json:"schema_name"`
-		TableName                         string   `json:"table_name"`
-		ServiceName                       string   `json:"service_name"`
-		NodeType                          string   `json:"node_type"`
-		ContentHash                       string   `json:"content_hash"`
-		TestCount                         int      `json:"test_count"`
-		ImageTag                          string   `json:"image_tag"`
-		UpstreamUniqueIDs                 []string `json:"upstream_unique_ids"`
-		Schedule                          string   `json:"schedule"`
-		Changed                           bool     `json:"changed"`
-		OriginalFilePath                  string   `json:"original_file_path"`
-		RuntimeManifestURI                string   `json:"runtime_manifest_uri,omitempty"`
-		RuntimeManifestSHA256             string   `json:"runtime_manifest_sha256,omitempty"`
-		RuntimeManifestDBTVersion         string   `json:"runtime_manifest_dbt_version,omitempty"`
-		RuntimeManifestParseContextSHA256 string   `json:"runtime_manifest_parse_context_sha256,omitempty"`
+		UniqueID          string   `json:"unique_id"`
+		DBTUniqueID       string   `json:"dbt_unique_id,omitempty"`
+		SchemaName        string   `json:"schema_name"`
+		TableName         string   `json:"table_name"`
+		ServiceName       string   `json:"service_name"`
+		NodeType          string   `json:"node_type"`
+		ContentHash       string   `json:"content_hash"`
+		TestCount         int      `json:"test_count"`
+		ImageTag          string   `json:"image_tag"`
+		UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
+		Schedule          string   `json:"schedule"`
+		Changed           bool     `json:"changed"`
+		OriginalFilePath  string   `json:"original_file_path"`
+		pkgmodel.RuntimeManifestRef
 	}
 	wireTopo := make([]promotedNodeWire, len(promotedTopo))
 	for i, n := range promotedTopo {
 		wireTopo[i] = promotedNodeWire{
-			UniqueID:                          n.UniqueID,
-			DBTUniqueID:                       n.DBTUniqueID,
-			SchemaName:                        n.SchemaName,
-			TableName:                         n.TableName,
-			ServiceName:                       n.ServiceName,
-			NodeType:                          n.NodeType,
-			ContentHash:                       n.ContentHash,
-			TestCount:                         n.TestCount,
-			ImageTag:                          n.ImageTag,
-			UpstreamUniqueIDs:                 n.UpstreamUniqueIDs,
-			Schedule:                          n.Schedule,
-			Changed:                           changedSet[n.UniqueID],
-			OriginalFilePath:                  n.OriginalFilePath,
-			RuntimeManifestURI:                n.RuntimeManifestURI,
-			RuntimeManifestSHA256:             n.RuntimeManifestSHA256,
-			RuntimeManifestDBTVersion:         n.RuntimeManifestDBTVersion,
-			RuntimeManifestParseContextSHA256: n.RuntimeManifestParseContextSHA256,
+			UniqueID:           n.UniqueID,
+			DBTUniqueID:        n.DBTUniqueID,
+			SchemaName:         n.SchemaName,
+			TableName:          n.TableName,
+			ServiceName:        n.ServiceName,
+			NodeType:           n.NodeType,
+			ContentHash:        n.ContentHash,
+			TestCount:          n.TestCount,
+			ImageTag:           n.ImageTag,
+			UpstreamUniqueIDs:  n.UpstreamUniqueIDs,
+			Schedule:           n.Schedule,
+			Changed:            changedSet[n.UniqueID],
+			OriginalFilePath:   n.OriginalFilePath,
+			RuntimeManifestRef: n.RuntimeManifestRef,
 		}
 	}
 	payload, err := json.Marshal(map[string]any{
