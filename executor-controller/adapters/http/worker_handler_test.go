@@ -2,6 +2,8 @@ package http_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -164,6 +166,47 @@ func TestClaim_StopsAtTheConfiguredCeiling(t *testing.T) {
 	assert.Less(t, time.Since(start), 5*time.Second)
 }
 
+// TestClaim_ANonPositiveWaitDoesNotWait pins the wait's boundary: a worker
+// asking for no wait, or for a negative one, is answered by a single look for
+// work rather than held for the executor's ceiling.
+func TestClaim_ANonPositiveWaitDoesNotWait(t *testing.T) {
+	for name, body := range map[string]string{
+		"zero":     `{"wait_seconds":0}`,
+		"negative": `{"wait_seconds":-1}`,
+		"absent":   `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t)
+			// Work only ever appears after the rig's 2s ceiling, so a request
+			// that waits at all returns a grant.
+			r.grant()
+			r.leases.grantAfter = time.Now().Add(time.Hour)
+
+			start := time.Now()
+			resp := r.do(http.MethodPost, "/internal/v1/workers/claim", body)
+
+			assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+			assert.Equal(t, 1, r.leases.claims, "a non-positive wait asks for work exactly once")
+			assert.Less(t, time.Since(start), time.Second)
+		})
+	}
+}
+
+// TestClaim_AWaitTooLargeForADurationIsCappedNotWrapped keeps an absurd wait
+// from arithmetic-overflowing into a deadline in the past, which would answer a
+// worker that asked to wait as though it had asked not to.
+func TestClaim_AWaitTooLargeForADurationIsCappedNotWrapped(t *testing.T) {
+	r := newRig(t)
+	r.grant()
+	r.leases.grantAfter = time.Now().Add(600 * time.Millisecond)
+
+	resp := r.do(http.MethodPost, "/internal/v1/workers/claim",
+		fmt.Sprintf(`{"wait_seconds":%d}`, math.MaxInt64))
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Greater(t, r.leases.claims, 1, "the request waited rather than giving up at once")
+}
+
 // TestClaim_AnUnreadyPoolIsToldSoRatherThanHandedWork. A pool whose workers
 // cannot hydrate their artifact would fail every task it claimed.
 func TestClaim_AnUnreadyPoolIsToldSoRatherThanHandedWork(t *testing.T) {
@@ -291,6 +334,10 @@ func TestStart_MissingDeploymentIDIsRejected(t *testing.T) {
 // TestLeaseErrors_MapToTerminalStatuses is the mapping the whole worker loop
 // depends on. A stale lease is settled, not transient: answering 5xx would make
 // a superseded worker retry against the fence forever.
+//
+// A report about a row that does not exist is answered identically to a stale
+// lease: it is equally final, and a distinct answer would let a caller learn
+// which deployments exist.
 func TestLeaseErrors_MapToTerminalStatuses(t *testing.T) {
 	cases := []struct {
 		name string
@@ -299,6 +346,7 @@ func TestLeaseErrors_MapToTerminalStatuses(t *testing.T) {
 		body string
 	}{
 		{"stale lease", model.ErrStaleLease, http.StatusConflict, "stale_lease"},
+		{"no such deployment", lease.ErrNoSuchDeployment, http.StatusConflict, "stale_lease"},
 		{"another pool", lease.ErrPoolMismatch, http.StatusForbidden, "pool_mismatch"},
 		{"cancelled", lease.ErrCancelled, http.StatusGone, "cancelled"},
 		{"unexpected", errBoom, http.StatusInternalServerError, "internal"},

@@ -15,6 +15,12 @@ const poolKeyHeader = "X-Continuo-Pool-Key"
 // bearerScheme is the one authorization scheme the worker API accepts.
 const bearerScheme = "bearer"
 
+// maxLoggedPoolKeyBytes bounds how much of a caller-supplied pool key reaches a
+// log line. A rejected caller has proved nothing, so the key it names is
+// arbitrary text of its choosing; logging it whole would let an
+// unauthenticated caller write as much into the executor's logs as it can send.
+const maxLoggedPoolKeyBytes = 128
+
 // poolHandler is a handler that only runs for an authenticated pool. The pool
 // is a parameter rather than a context value, so a handler cannot be written
 // that forgets to authenticate: there is no way to build one without a pool.
@@ -40,7 +46,7 @@ func (s *Server) authenticate(next poolHandler) http.HandlerFunc {
 			// The pool key is safe to log; the credential is not, and is not
 			// what this line reports.
 			s.logger.Warn("rejected a worker request with no valid pool credential",
-				"pool_key", poolKey, "path", r.URL.Path)
+				"pool_key", loggedPoolKey(poolKey), "path", r.URL.Path)
 			s.writeError(w, r, http.StatusUnauthorized, "unauthenticated",
 				"a registered pool credential is required")
 			return
@@ -49,7 +55,7 @@ func (s *Server) authenticate(next poolHandler) http.HandlerFunc {
 			// The pool could not be looked up at all. That is the executor's
 			// fault, not the caller's, and the caller may retry.
 			s.logger.Error("could not authenticate a worker request",
-				"pool_key", poolKey, "path", r.URL.Path, "error", err)
+				"pool_key", loggedPoolKey(poolKey), "path", r.URL.Path, "error", err)
 			s.writeError(w, r, http.StatusInternalServerError, "internal",
 				"the request could not be authenticated")
 			return
@@ -57,6 +63,15 @@ func (s *Server) authenticate(next poolHandler) http.HandlerFunc {
 
 		next(w, r, pool)
 	}
+}
+
+// loggedPoolKey renders a pool key a caller supplied but has not proved, cut to
+// a bounded length so no one request can flood the log with a single header.
+func loggedPoolKey(poolKey string) string {
+	if len(poolKey) <= maxLoggedPoolKeyBytes {
+		return poolKey
+	}
+	return poolKey[:maxLoggedPoolKeyBytes] + "...(truncated)"
 }
 
 // bearerToken extracts the credential from an Authorization header. The scheme

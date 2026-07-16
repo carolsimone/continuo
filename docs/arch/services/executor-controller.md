@@ -240,7 +240,7 @@ cannot run until pool registration exists.
 | Endpoint | Purpose |
 |---|---|
 | `GET /internal/v1/worker/runtime` | Signed reads of the pool's runtime descriptor and artifact |
-| `POST /internal/v1/workers/claim` | Long-poll for one task in the caller's pool; `204` when none is due |
+| `POST /internal/v1/workers/claim` | Long-poll for one task in the caller's pool; `204` when none is due. `wait_seconds` of zero or less asks not to wait and is answered by one immediate look for work; anything longer is capped at `WORKER_CLAIM_WAIT` |
 | `POST /internal/v1/workers/initialization` | Record or clear the pool's initialization error |
 | `POST /internal/v1/leases/{id}/start` | The lease holder's dbt process has started |
 | `POST /internal/v1/leases/{id}/heartbeat` | Extend the lease |
@@ -256,10 +256,11 @@ an error body, or persisted.
 
 **Fencing, then ownership.** Every lease-scoped call is fenced on the lease token
 first and checked against the authenticated pool second. A caller that does not
-hold the lease is told only that its lease is stale, so it cannot use the
-distinction to discover which tasks exist; only a caller holding the genuine
-token can learn that the task belongs to another pool. The pool a claim is served
-from is read from the credential, never from the request body.
+hold the lease is told only that its lease is stale — including one naming a
+deployment that does not exist at all — so it cannot use the distinction to
+discover which tasks exist; only a caller holding the genuine token can learn
+that the task belongs to another pool. The pool a claim is served from is read
+from the credential, never from the request body.
 
 **Every rejection is settled, not transient.** A worker that gets one of these
 stops; none is a signal to retry, and answering any of them `5xx` would leave a
@@ -269,7 +270,7 @@ superseded worker retrying against the fence forever.
 |---|---|---|
 | No valid pool credential | `401` | `unauthenticated` |
 | Task belongs to another pool | `403` | `pool_mismatch` |
-| Lease no longer current (`ErrStaleLease`) | `409` | `stale_lease` |
+| Lease no longer current (`ErrStaleLease`), or naming a deployment that does not exist | `409` | `stale_lease` |
 | Pool has not hydrated its artifact | `409` | `pool_not_ready` |
 | Task was cancelled | `410` | `cancelled` |
 | Malformed body or identifier | `400` | `invalid_request` |

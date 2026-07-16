@@ -141,6 +141,29 @@ func (r *workerPoolRepository) Save(ctx context.Context, pool model.WorkerPool) 
 	return nil
 }
 
+// SaveInitializationError writes back only the columns a worker's
+// initialization report owns. The pool's credential, replica count, and runtime
+// artifact are left as the row holds them, so a report cannot carry a value
+// read before a concurrent write back over it.
+func (r *workerPoolRepository) SaveInitializationError(
+	ctx context.Context, poolKey, initializationError string, at time.Time,
+) error {
+	res, err := r.executor.ExecContext(ctx, `
+		UPDATE executor_worker_pools SET initialization_error = $2, updated_at = $3
+		WHERE pool_key = $1`, poolKey, nullString(initializationError), at)
+	if err != nil {
+		return fmt.Errorf("save worker pool %s initialization error: %w", poolKey, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("save worker pool %s initialization error: %w", poolKey, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("worker pool %s is not registered", poolKey)
+	}
+	return nil
+}
+
 func (r *workerPoolRepository) List(ctx context.Context) ([]model.WorkerPool, error) {
 	var rows []workerPoolRow
 	if err := sqlx.SelectContext(ctx, r.executor, &rows,

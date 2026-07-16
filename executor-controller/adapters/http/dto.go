@@ -16,8 +16,10 @@ type runtimeResponse struct {
 // claimRequest is a worker asking for work. The pool it claims for comes from
 // its credential, never from this body.
 type claimRequest struct {
-	// WaitSeconds is how long the worker is willing to wait for work. The
-	// executor caps it at its own configured ceiling.
+	// WaitSeconds is how long the worker is willing to wait for work. Zero or
+	// less asks not to wait at all, which is answered with whatever one
+	// immediate look for work finds. The executor caps anything longer at its
+	// own configured ceiling.
 	WaitSeconds int    `json:"wait_seconds"`
 	Owner       string `json:"owner"`
 	PodName     string `json:"pod_name"`

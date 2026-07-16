@@ -71,6 +71,42 @@ func TestPools_RecordInitializationSuccessClearsAPriorError(t *testing.T) {
 	assert.Empty(t, stored.InitializationError)
 }
 
+// TestPools_RecordInitializationDoesNotWriteBackTheRestOfThePool is the
+// boundary a worker's report must not cross. The report says only whether the
+// worker hydrated its artifact; a pool's credential is rotated by whoever
+// registers the pool. Writing the whole pool back from the read the report
+// started with would restore a retired credential digest and let it
+// authenticate again.
+func TestPools_RecordInitializationDoesNotWriteBackTheRestOfThePool(t *testing.T) {
+	repo := newFakePools()
+	repo.add(registeredPool())
+	rotated := sha256Hex("rotated-credential")
+	// The rotation lands after the report's read and before its write.
+	repo.afterGet = func() {
+		pool := repo.rows["pool-abc"]
+		pool.CredentialSHA256 = rotated
+		pool.DesiredReplicas = 7
+		repo.rows["pool-abc"] = pool
+	}
+	pools := newPools(t, repo)
+
+	err := pools.RecordInitialization(context.Background(), workerapi.InitializationReport{
+		PoolKey:   "pool-abc",
+		OK:        false,
+		ErrorCode: "artifact_rejected",
+		Message:   "sha256 mismatch",
+	})
+
+	require.NoError(t, err)
+	repo.afterGet = nil
+	stored, err := repo.Get(context.Background(), "pool-abc")
+	require.NoError(t, err)
+	assert.Equal(t, rotated, stored.CredentialSHA256, "the report must not restore the rotated-out credential")
+	assert.Equal(t, 7, stored.DesiredReplicas)
+	// The report's own field still lands.
+	assert.Equal(t, "artifact_rejected: sha256 mismatch", stored.InitializationError)
+}
+
 // TestPools_RecordInitializationForAnUnknownPool fails rather than inventing a
 // pool row from an unauthenticated-looking report.
 func TestPools_RecordInitializationForAnUnknownPool(t *testing.T) {

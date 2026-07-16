@@ -3,6 +3,7 @@ package http_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -156,6 +157,25 @@ func TestAuth_CredentialNeverReachesALogLine(t *testing.T) {
 	assert.NotContains(t, r.logs.String(), testCredential)
 	assert.NotContains(t, r.logs.String(), "not-the-credential")
 	assert.NotContains(t, r.logs.String(), "Bearer")
+}
+
+// TestAuth_ARejectedPoolKeyIsLoggedBounded keeps an unauthenticated caller from
+// writing as much as it likes into the executor's logs: the pool key it names
+// is its own text, and it is rejected before it proves anything.
+func TestAuth_ARejectedPoolKeyIsLoggedBounded(t *testing.T) {
+	r := newRig(t)
+	huge := strings.Repeat("A", 100_000)
+
+	resp := r.do(http.MethodGet, "/internal/v1/worker/runtime", "", func(req *http.Request) {
+		req.Header.Set("X-Continuo-Pool-Key", huge)
+	})
+
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	logs := r.logs.String()
+	assert.NotContains(t, logs, huge)
+	assert.Contains(t, logs, "...(truncated)")
+	// The whole line, not just the key, stays a bounded size.
+	assert.Less(t, len(logs), 1_000)
 }
 
 // TestAuth_ErrorBodyNeverEchoesTheCredential keeps the secret out of a response

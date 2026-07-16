@@ -39,6 +39,11 @@ func TestPresigner_PresignGetAddressesTheExactObject(t *testing.T) {
 
 // TestPresigner_PresignPutIsScopedToAnUploadOfTheExactObject pins that an
 // upload URL carries the write it was minted for and nothing wider.
+//
+// The signed header set is host and nothing else, which is what makes the
+// content type advisory: the store accepts an upload declaring any type. Should
+// the SDK begin signing content-type, this fails and the callers that treat it
+// as advisory have to be revisited.
 func TestPresigner_PresignPutIsScopedToAnUploadOfTheExactObject(t *testing.T) {
 	signed, err := newPresigner().PresignPut(
 		context.Background(), "s3://continuo/dbt-runs/s1/t1/l1/dbt.log", "text/plain", 15*time.Minute)
@@ -49,6 +54,7 @@ func TestPresigner_PresignPutIsScopedToAnUploadOfTheExactObject(t *testing.T) {
 	assert.Equal(t, "/continuo/dbt-runs/s1/t1/l1/dbt.log", u.Path)
 	assert.NotEmpty(t, u.Query().Get("X-Amz-Signature"))
 	assert.Equal(t, "PutObject", u.Query().Get("x-id"))
+	assert.Equal(t, "host", u.Query().Get("X-Amz-SignedHeaders"))
 }
 
 // TestPresigner_SignaturesDoNotCrossOperations pins that the HTTP method is

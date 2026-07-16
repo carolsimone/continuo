@@ -101,6 +101,72 @@ func TestWorkerPoolRepository_SaveRoundTripsTheInitializationError(t *testing.T)
 	assert.Empty(t, loaded.InitializationError)
 }
 
+// TestWorkerPoolRepository_SaveInitializationErrorLeavesTheRestOfTheRow is what
+// keeps a worker's own report inside what the report owns. A rotation of the
+// pool's credential that lands between the report's read and its write must
+// survive it: restoring a retired digest would let it authenticate again.
+func TestWorkerPoolRepository_SaveInitializationErrorLeavesTheRestOfTheRow(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewWorkerPoolRepository(db)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	require.NoError(t, repo.Add(ctx, poolFixture("pool-abc", now)))
+
+	// A rotation lands after a report has read the pool.
+	rotated := poolFixture("pool-abc", now)
+	rotated.CredentialSHA256 = "rotated-digest"
+	rotated.DesiredReplicas = 7
+	require.NoError(t, repo.Save(ctx, rotated))
+
+	later := now.Add(time.Minute)
+	require.NoError(t, repo.SaveInitializationError(ctx, "pool-abc", "artifact_rejected: sha256 mismatch", later))
+
+	loaded, err := repo.Get(ctx, "pool-abc")
+	require.NoError(t, err)
+	assert.Equal(t, "artifact_rejected: sha256 mismatch", loaded.InitializationError)
+	assert.False(t, loaded.Ready())
+	assert.Equal(t, later, loaded.UpdatedAt.UTC())
+	// Everything the report does not own is untouched.
+	assert.Equal(t, "rotated-digest", loaded.CredentialSHA256)
+	assert.Equal(t, 7, loaded.DesiredReplicas)
+	assert.Equal(t, rotated.RuntimeManifest, loaded.RuntimeManifest)
+}
+
+// TestWorkerPoolRepository_SaveInitializationErrorClearsToNull keeps a
+// recovered pool readable as ready: an empty error must reach the column as
+// NULL, which is what Ready reads back.
+func TestWorkerPoolRepository_SaveInitializationErrorClearsToNull(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewWorkerPoolRepository(db)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	require.NoError(t, repo.Add(ctx, poolFixture("pool-abc", now)))
+	require.NoError(t, repo.SaveInitializationError(ctx, "pool-abc", "artifact_rejected", now))
+
+	require.NoError(t, repo.SaveInitializationError(ctx, "pool-abc", "", now))
+
+	loaded, err := repo.Get(ctx, "pool-abc")
+	require.NoError(t, err)
+	assert.True(t, loaded.Ready())
+	assert.Empty(t, loaded.InitializationError)
+}
+
+// TestWorkerPoolRepository_SaveInitializationErrorUnknownPoolFails stops a
+// report naming a pool that was never registered from silently doing nothing.
+func TestWorkerPoolRepository_SaveInitializationErrorUnknownPoolFails(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	err := postgres.NewWorkerPoolRepository(db).SaveInitializationError(
+		context.Background(), "pool-missing", "artifact_rejected", time.Now().UTC())
+
+	require.Error(t, err)
+}
+
 // TestWorkerPoolRepository_SaveUnknownPoolFails stops a report for a pool that
 // was never registered from silently doing nothing.
 func TestWorkerPoolRepository_SaveUnknownPoolFails(t *testing.T) {

@@ -109,14 +109,24 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request, pool *model
 		newLeaseResponse(grant, grant.ExpiresAt.Format(time.RFC3339Nano)))
 }
 
-// claimDeadline caps what the worker asked for at the executor's own ceiling, so
-// no request holds a connection longer than the executor allows.
+// claimDeadline decides how long this claim may wait for work.
+//
+// A wait of zero or less is a worker asking not to wait: it is answered by one
+// look for work and whatever that finds. Anything longer is capped at the
+// executor's own ceiling, so no request holds a connection longer than the
+// executor allows — including a wait so large it does not fit a duration, which
+// is treated as asking for more than the ceiling rather than wrapping into a
+// deadline that has already passed.
 func (s *Server) claimDeadline(waitSeconds int) time.Time {
-	wait := time.Duration(waitSeconds) * time.Second
-	if wait > s.claimWait || waitSeconds < 0 {
-		wait = s.claimWait
+	now := time.Now()
+	if waitSeconds <= 0 {
+		return now
 	}
-	return time.Now().Add(wait)
+	wait := s.claimWait
+	if asked := time.Duration(waitSeconds) * time.Second; asked > 0 && asked < wait {
+		wait = asked
+	}
+	return now.Add(wait)
 }
 
 // claimUntil asks for work immediately and then keeps asking until the deadline
@@ -379,13 +389,17 @@ func (s *Server) decode(w http.ResponseWriter, r *http.Request, into any) bool {
 // that earned them: the worker is told to stop, never to try again. Answering
 // any of them 5xx would make a superseded worker retry against the fence
 // forever.
+//
+// A report naming a row that does not exist is answered as a stale lease, both
+// because it is equally final and because a distinct answer would tell a caller
+// which deployments exist.
 func (s *Server) writeLeaseOutcome(
 	w http.ResponseWriter, r *http.Request, pool *model.WorkerPool, action string, err error,
 ) {
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusOK)
-	case errors.Is(err, model.ErrStaleLease):
+	case errors.Is(err, model.ErrStaleLease), errors.Is(err, lease.ErrNoSuchDeployment):
 		s.writeError(w, r, http.StatusConflict, "stale_lease", "lease token is no longer current")
 	case errors.Is(err, lease.ErrPoolMismatch):
 		s.writeError(w, r, http.StatusForbidden, "pool_mismatch", "the task belongs to another pool")

@@ -41,6 +41,11 @@ func NewPools(pools repository.WorkerPoolRepository, clock ports.Clock, logger *
 // startup report. A failure stops the pool being handed work its workers cannot
 // run; a success clears an earlier failure, so a pool recovers on the next
 // worker that hydrates cleanly rather than waiting for an operator.
+//
+// Only the pool's initialization outcome is written back. The pool is read to
+// reject a report about a pool that is not registered and to name it in the
+// log; the rest of what that read returned is never rewritten, so a report
+// arriving alongside a credential rotation or a replica change cannot undo it.
 func (p *Pools) RecordInitialization(ctx context.Context, report InitializationReport) error {
 	pool, err := p.pools.Get(ctx, report.PoolKey)
 	if err != nil {
@@ -62,5 +67,5 @@ func (p *Pools) RecordInitialization(ctx context.Context, report InitializationR
 			"pool_key", pool.PoolKey, "service_name", pool.ServiceName,
 			"error_code", report.ErrorCode, "reason", report.Message)
 	}
-	return p.pools.Save(ctx, *pool)
+	return p.pools.SaveInitializationError(ctx, pool.PoolKey, pool.InitializationError, pool.UpdatedAt)
 }

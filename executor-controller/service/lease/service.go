@@ -42,6 +42,13 @@ const tokenBytes = 32
 // discover which tasks exist.
 var ErrPoolMismatch = errors.New("task belongs to another pool")
 
+// ErrNoSuchDeployment reports that the row a worker's report names is not
+// there. It is answered exactly as a stale lease is: a caller presenting a
+// lease for a row that does not exist holds no lease over anything, and telling
+// it apart from a caller whose lease was superseded would reveal which
+// deployments exist to anyone willing to guess an id.
+var ErrNoSuchDeployment = errors.New("executor deployment does not exist")
+
 // ErrCancelled tells the lease holder its task was cancelled and it must stop.
 // Cancelling a schedule does not reach a worker pod, so the heartbeat is the
 // only channel by which a running worker learns this; a worker that gets it
@@ -494,7 +501,7 @@ func (s *Service) load(
 		return nil, fmt.Errorf("load executor deployment %s: %w", id, err)
 	}
 	if dep == nil {
-		return nil, fmt.Errorf("executor deployment %s does not exist", id)
+		return nil, fmt.Errorf("load executor deployment %s: %w", id, ErrNoSuchDeployment)
 	}
 	return dep, nil
 }

@@ -20,13 +20,18 @@ func sha256Hex(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// fakePools is a map-backed WorkerPoolRepository.
+// fakePools is a map-backed WorkerPoolRepository. Each write models what the
+// equivalent SQL statement touches, so a test can tell a write that rewrites a
+// whole pool from one scoped to a single field.
 type fakePools struct {
 	repository.WorkerPoolRepository
 
 	rows   map[string]model.WorkerPool
 	getErr error
 	saved  []model.WorkerPool
+	// afterGet runs once a read has returned its copy of a pool, standing in
+	// for a write that lands between another caller's read and its write.
+	afterGet func()
 }
 
 func newFakePools() *fakePools {
@@ -43,11 +48,31 @@ func (p *fakePools) Get(_ context.Context, poolKey string) (*model.WorkerPool, e
 	if !ok {
 		return nil, nil
 	}
+	if p.afterGet != nil {
+		p.afterGet()
+	}
 	return &pool, nil
 }
 
+// Save replaces every column of the row, the way the UPDATE behind it does.
 func (p *fakePools) Save(_ context.Context, pool model.WorkerPool) error {
 	p.rows[pool.PoolKey] = pool
+	p.saved = append(p.saved, pool)
+	return nil
+}
+
+// SaveInitializationError writes only the two columns its UPDATE names, leaving
+// the rest of the row as stored.
+func (p *fakePools) SaveInitializationError(
+	_ context.Context, poolKey, initializationError string, at time.Time,
+) error {
+	pool, ok := p.rows[poolKey]
+	if !ok {
+		return errors.New("worker pool is not registered")
+	}
+	pool.InitializationError = initializationError
+	pool.UpdatedAt = at
+	p.rows[poolKey] = pool
 	p.saved = append(p.saved, pool)
 	return nil
 }
