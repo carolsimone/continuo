@@ -509,6 +509,131 @@ func TestComplete_WorkerHintFalseIsPermanent(t *testing.T) {
 	assert.Equal(t, 0, h.outbox.countByStream(streams.RetryTaskV1))
 }
 
+// TestComplete_DuplicatePermanentFailureSettlesTaskOnce pins that a worker's
+// terminal report reaches the executor at least once, so the same permanent
+// failure can arrive twice. The second one is acknowledged and announces
+// nothing: a second fan-out would tell the run the node failed twice.
+func TestComplete_DuplicatePermanentFailureSettlesTaskOnce(t *testing.T) {
+	h := newHarness(t, 4)
+	dep := h.seedDue(workerCmd())
+	grant := h.mustClaim(t)
+
+	in := lease.CompleteInput{
+		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
+		Result: model.WorkerResult{
+			Succeeded: false, Retryable: false,
+			ErrorClass: "dbt_compilation_error", ErrorMessage: "syntax error",
+		},
+	}
+	require.NoError(t, h.svc.Complete(context.Background(), in))
+	releasedAt := *h.repo.rows[dep.ID()].dep.SlotReleasedAt()
+
+	// The worker's terminal report is redelivered — it retried a timed-out request.
+	h.clock.now = h.clock.now.Add(5 * time.Second)
+	require.NoError(t, h.svc.Complete(context.Background(), in),
+		"a redelivered permanent failure is acknowledged, not rejected")
+
+	assert.Equal(t, model.StatusFailed, h.repo.statusOf(dep.ID()))
+	assert.Equal(t, []string{
+		streams.TaskStatusUpdatedV1, streams.TaskExecutionRecordedV1, streams.NodeUpdatedV1,
+	}, h.outbox.streamNames(), "a duplicate permanent failure settles the task exactly once")
+	assert.Equal(t, releasedAt, *h.repo.rows[dep.ID()].dep.SlotReleasedAt(),
+		"the slot is released once, at the first report")
+}
+
+// TestComplete_DuplicateRetryableFailureIsFenced pins the semantics a worker
+// sees when it redelivers a retryable failure. Parking the task for requeue
+// dropped the lease that reported, and the task may already have been re-claimed
+// at a higher attempt, so the executor cannot tell the redelivery apart from a
+// superseded worker's report: it fences both. The report was already recorded
+// and its retry already asked for, so the fenced redelivery announces nothing.
+func TestComplete_DuplicateRetryableFailureIsFenced(t *testing.T) {
+	h := newHarness(t, 4)
+	dep := h.seedDue(workerCmd())
+	grant := h.mustClaim(t)
+
+	in := lease.CompleteInput{
+		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
+		Result: model.WorkerResult{
+			Succeeded: false, Retryable: true,
+			ErrorClass: "warehouse_unavailable", ErrorMessage: "connection reset",
+		},
+	}
+	require.NoError(t, h.svc.Complete(context.Background(), in))
+	require.Equal(t, 1, h.outbox.countByStream(streams.RetryTaskV1))
+
+	// The worker's terminal report is redelivered — it retried a timed-out request.
+	h.clock.now = h.clock.now.Add(5 * time.Second)
+	err := h.svc.Complete(context.Background(), in)
+
+	require.ErrorIs(t, err, model.ErrStaleLease,
+		"the lease the report names is gone, so the report is fenced rather than re-applied")
+	row := h.repo.rows[dep.ID()].dep
+	assert.Equal(t, model.StatusRetryPending, row.Status(), "the parked task is undisturbed")
+	assert.Equal(t, 1, h.outbox.countByStream(streams.RetryTaskV1),
+		"a duplicate retryable failure asks for one retry, not two")
+	assert.Equal(t, []string{
+		streams.TaskStatusUpdatedV1, streams.TaskExecutionRecordedV1, streams.RetryTaskV1,
+	}, h.outbox.streamNames(), "the redelivery announces nothing")
+}
+
+// TestComplete_RecordsTheExecutionsTiming pins that a worker execution reports
+// when it ran, as the Jobs path does: without these the run's read model shows a
+// worker-run node with no start or finish.
+func TestComplete_RecordsTheExecutionsTiming(t *testing.T) {
+	h := newHarness(t, 4)
+	dep := h.seedDue(workerCmd())
+	grant := h.mustClaim(t)
+
+	h.clock.now = h.clock.now.Add(2 * time.Second)
+	startedAt := h.clock.now
+	require.NoError(t, h.svc.Start(context.Background(), lease.StartInput{
+		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
+	}))
+
+	h.clock.now = h.clock.now.Add(30 * time.Second)
+	completedAt := h.clock.now
+	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
+		Result: model.WorkerResult{Succeeded: true, ExecutionSeconds: 30},
+	}))
+
+	var exec pkgevents.TaskExecutionRecorded
+	require.NoError(t, json.Unmarshal(h.outbox.byStream(streams.TaskExecutionRecordedV1).Payload, &exec))
+	assert.Equal(t, startedAt.Format(time.RFC3339), exec.StartedAt,
+		"the execution starts when the worker reported its dbt process running")
+	assert.Equal(t, completedAt.Format(time.RFC3339), exec.CompletedAt)
+}
+
+// TestComplete_RetryableFailureRecordsTimingCapturedBeforeParking pins that the
+// timing survives the transition that drops the lease holding it: parking the
+// task for requeue nils the lease, so a fan-out reading it afterwards would find
+// no start to report.
+func TestComplete_RetryableFailureRecordsTimingCapturedBeforeParking(t *testing.T) {
+	h := newHarness(t, 4)
+	dep := h.seedDue(workerCmd())
+	grant := h.mustClaim(t)
+
+	h.clock.now = h.clock.now.Add(2 * time.Second)
+	startedAt := h.clock.now
+	require.NoError(t, h.svc.Start(context.Background(), lease.StartInput{
+		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
+	}))
+
+	h.clock.now = h.clock.now.Add(10 * time.Second)
+	require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{
+		DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
+		Result: model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"},
+	}))
+
+	require.Nil(t, h.repo.rows[dep.ID()].dep.ActiveLease(), "parking the task dropped the lease")
+	var exec pkgevents.TaskExecutionRecorded
+	require.NoError(t, json.Unmarshal(h.outbox.byStream(streams.TaskExecutionRecordedV1).Payload, &exec))
+	assert.Equal(t, startedAt.Format(time.RFC3339), exec.StartedAt,
+		"the start was captured from the lease before parking dropped it")
+	assert.Equal(t, h.clock.now.Format(time.RFC3339), exec.CompletedAt)
+}
+
 // TestComplete_RollsBackOnOutboxFailure pins that a report that cannot announce
 // itself does not settle the row: the transition and its announcements commit
 // together or not at all.

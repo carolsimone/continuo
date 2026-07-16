@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
@@ -16,6 +17,18 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 )
+
+// Execution is one worker's run of a task: the lease that ran it, when its dbt
+// process started, and when the executor recorded its outcome. StartedAt is nil
+// for a run whose worker failed before reporting a start; CompletedAt is nil
+// when the caller has no recorded time for the outcome. Callers assemble it
+// before the aggregate transition their report drives, because a transition may
+// drop the lease it describes.
+type Execution struct {
+	ID          uuid.UUID
+	StartedAt   *time.Time
+	CompletedAt *time.Time
+}
 
 // Fanout emits a production task's lifecycle announcements onto the outbox. It
 // holds no state: every call takes the outbox repository bound to the caller's
@@ -76,17 +89,17 @@ func (Fanout) Started(ctx context.Context, repo outbox.Repository, dep *model.De
 // for the UI, the execution is recorded, and node.updated:v1 lets the
 // orchestrator advance the schedule.
 //
-// executionID is the lease that ran this execution. Callers capture it before
-// the aggregate transition, because a transition may drop the lease.
+// exec identifies and times the worker run being announced. Callers capture it
+// before the aggregate transition, because a transition may drop the lease.
 func (Fanout) Succeeded(
 	ctx context.Context,
 	repo outbox.Repository,
 	dep *model.Deployment,
-	executionID uuid.UUID,
+	exec Execution,
 	result model.WorkerResult,
 ) error {
 	cmd := dep.Command()
-	if err := writeTerminal(ctx, repo, dep, executionID, result, "SUCCEEDED"); err != nil {
+	if err := writeTerminal(ctx, repo, dep, exec, result, "SUCCEEDED"); err != nil {
 		return fmt.Errorf("announce succeeded task %s: %w", cmd.TaskID, err)
 	}
 	return nil
@@ -96,17 +109,17 @@ func (Fanout) Succeeded(
 // either its error class is unfixable by rerunning or its retry budget is spent.
 // It settles the node so the schedule advances, and asks for no retry.
 //
-// executionID is the lease that ran this execution. Callers capture it before
-// the aggregate transition, because a transition may drop the lease.
+// exec identifies and times the worker run being announced. Callers capture it
+// before the aggregate transition, because a transition may drop the lease.
 func (Fanout) PermanentFailure(
 	ctx context.Context,
 	repo outbox.Repository,
 	dep *model.Deployment,
-	executionID uuid.UUID,
+	exec Execution,
 	result model.WorkerResult,
 ) error {
 	cmd := dep.Command()
-	if err := writeTerminal(ctx, repo, dep, executionID, result, "FAILED"); err != nil {
+	if err := writeTerminal(ctx, repo, dep, exec, result, "FAILED"); err != nil {
 		return fmt.Errorf("announce failed task %s: %w", cmd.TaskID, err)
 	}
 	return nil
@@ -118,18 +131,18 @@ func (Fanout) PermanentFailure(
 // announcing it failed would advance the schedule past a task that is about to
 // run again.
 //
-// executionID is the lease that ran this execution. Callers capture it before
-// the aggregate transition, because parking a task for retry drops its lease —
-// by the time this runs there is no lease on the aggregate to read.
+// exec identifies and times the worker run being announced. Callers capture it
+// before the aggregate transition, because parking a task for retry drops its
+// lease — by the time this runs there is no lease on the aggregate to read.
 func (Fanout) RetryableFailure(
 	ctx context.Context,
 	repo outbox.Repository,
 	dep *model.Deployment,
-	executionID uuid.UUID,
+	exec Execution,
 	result model.WorkerResult,
 ) error {
 	cmd := dep.Command()
-	if err := writeAttemptFailure(ctx, repo, dep, executionID, result); err != nil {
+	if err := writeAttemptFailure(ctx, repo, dep, exec, result); err != nil {
 		return fmt.Errorf("announce retryable task %s: %w", cmd.TaskID, err)
 	}
 	nextRetryCount := cmd.TaskRetryCount + 1
@@ -158,7 +171,7 @@ func writeTerminal(
 	ctx context.Context,
 	repo outbox.Repository,
 	dep *model.Deployment,
-	executionID uuid.UUID,
+	exec Execution,
 	result model.WorkerResult,
 	status string,
 ) error {
@@ -166,7 +179,7 @@ func writeTerminal(
 	if err := writeTaskStatus(ctx, repo, dep, status, cmd.TaskRetryCount); err != nil {
 		return err
 	}
-	if err := writeExecution(ctx, repo, dep, executionID, result); err != nil {
+	if err := writeExecution(ctx, repo, dep, exec, result); err != nil {
 		return err
 	}
 	return create(ctx, repo, dep, "node_updated", streams.NodeUpdatedV1, event.NodeUpdated{
@@ -182,13 +195,13 @@ func writeAttemptFailure(
 	ctx context.Context,
 	repo outbox.Repository,
 	dep *model.Deployment,
-	executionID uuid.UUID,
+	exec Execution,
 	result model.WorkerResult,
 ) error {
 	if err := writeTaskStatus(ctx, repo, dep, "FAILED", dep.Command().TaskRetryCount); err != nil {
 		return err
 	}
-	return writeExecution(ctx, repo, dep, executionID, result)
+	return writeExecution(ctx, repo, dep, exec, result)
 }
 
 // writeTaskStatus announces a task's status for the run's read model.
@@ -211,24 +224,36 @@ func writeTaskStatus(
 }
 
 // writeExecution records what one lease's run of a task did, identified by that
-// lease.
+// lease and timed by it. A run with no recorded start or completion omits that
+// timestamp, which the run's read model treats as unknown.
 func writeExecution(
 	ctx context.Context,
 	repo outbox.Repository,
 	dep *model.Deployment,
-	executionID uuid.UUID,
+	exec Execution,
 	result model.WorkerResult,
 ) error {
 	cmd := dep.Command()
 	return create(ctx, repo, dep, "task_execution_recorded", streams.TaskExecutionRecordedV1,
 		pkgevents.TaskExecutionRecorded{
-			ExecutionID:      executionID.String(),
+			ExecutionID:      exec.ID.String(),
 			TaskID:           cmd.TaskID,
 			JobName:          cmd.JobName,
+			StartedAt:        wireTime(exec.StartedAt),
+			CompletedAt:      wireTime(exec.CompletedAt),
 			ExecutionSeconds: result.ExecutionSeconds,
 			ErrorMessage:     result.ErrorMessage,
 			LogS3Key:         logObjectKey(result.LogS3URI),
 		})
+}
+
+// wireTime renders an execution timestamp the way the run's read model parses
+// it: RFC3339 in UTC. An absent timestamp renders empty, which the payload omits.
+func wireTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // logObjectKey extracts the object key from a worker's s3:// log URI, which is

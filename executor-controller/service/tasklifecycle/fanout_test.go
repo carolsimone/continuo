@@ -62,17 +62,25 @@ func workerCmd(taskID, scheduleID uuid.UUID) command.DeployTask {
 }
 
 // leased builds a worker deployment a worker has claimed and started, and
-// returns it with the lease that runs it.
-func leased(t *testing.T, taskID, scheduleID uuid.UUID) (*model.Deployment, uuid.UUID) {
+// returns it with the execution the lease that runs it describes.
+func leased(t *testing.T, taskID, scheduleID uuid.UUID) (*model.Deployment, tasklifecycle.Execution) {
 	t.Helper()
 	dep := model.NewWorkerDeployment(workerCmd(taskID, scheduleID), uuid.New(), "dbt:sha-abc", time.Unix(10, 0))
 	leaseID := uuid.New()
 	require.NoError(t, dep.Claim(leaseID, "digest", "worker-1", "pod-a", "uid-a",
 		time.Unix(20, 0), time.Unix(80, 0), []string{"dbt", "test"}, model.ExecutionPathNative))
-	_, err := dep.AcknowledgeStart(leaseID, "digest", time.Unix(21, 0))
+	_, err := dep.AcknowledgeStart(leaseID, "digest", startedAt)
 	require.NoError(t, err)
-	return dep, leaseID
+	started, completed := startedAt, completedAt
+	return dep, tasklifecycle.Execution{ID: leaseID, StartedAt: &started, CompletedAt: &completed}
 }
+
+// startedAt and completedAt are when the worker's dbt process started and when
+// the executor recorded its outcome.
+var (
+	startedAt   = time.Unix(21, 0).UTC()
+	completedAt = time.Unix(93, 0).UTC()
+)
 
 func succeededResult() model.WorkerResult {
 	return model.WorkerResult{
@@ -108,11 +116,11 @@ func TestFanout_StartedAnnouncesRunning(t *testing.T) {
 // schedule advances.
 func TestFanout_SucceededSettlesTaskAndNode(t *testing.T) {
 	taskID, scheduleID := uuid.New(), uuid.New()
-	dep, leaseID := leased(t, taskID, scheduleID)
+	dep, exec := leased(t, taskID, scheduleID)
 	repo := &recordingOutboxRepo{}
 
 	require.NoError(t, tasklifecycle.Fanout{}.Succeeded(
-		context.Background(), repo, dep, leaseID, succeededResult()))
+		context.Background(), repo, dep, exec, succeededResult()))
 
 	assert.Equal(t, []string{
 		streams.TaskStatusUpdatedV1, streams.TaskExecutionRecordedV1, streams.NodeUpdatedV1,
@@ -122,14 +130,17 @@ func TestFanout_SucceededSettlesTaskAndNode(t *testing.T) {
 	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskStatusUpdatedV1).Payload, &status))
 	assert.Equal(t, "SUCCEEDED", status.Status)
 
-	var exec pkgevents.TaskExecutionRecorded
-	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &exec))
-	assert.Equal(t, leaseID.String(), exec.ExecutionID, "the lease that ran it identifies the execution")
-	assert.Equal(t, taskID.String(), exec.TaskID)
-	assert.Equal(t, "dbt-public-orders", exec.JobName)
-	assert.InDelta(t, 12.5, exec.ExecutionSeconds, 0.001)
-	assert.Equal(t, "dbt-runs/daily/task-1/lease-1/dbt.log", exec.LogS3Key,
+	var execEvent pkgevents.TaskExecutionRecorded
+	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &execEvent))
+	assert.Equal(t, exec.ID.String(), execEvent.ExecutionID, "the lease that ran it identifies the execution")
+	assert.Equal(t, taskID.String(), execEvent.TaskID)
+	assert.Equal(t, "dbt-public-orders", execEvent.JobName)
+	assert.InDelta(t, 12.5, execEvent.ExecutionSeconds, 0.001)
+	assert.Equal(t, "dbt-runs/daily/task-1/lease-1/dbt.log", execEvent.LogS3Key,
 		"state stores the object key, not the s3:// URI")
+	assert.Equal(t, startedAt.Format(time.RFC3339), execEvent.StartedAt,
+		"the execution is timed by the lease that ran it")
+	assert.Equal(t, completedAt.Format(time.RFC3339), execEvent.CompletedAt)
 
 	var node map[string]string
 	require.NoError(t, json.Unmarshal(repo.byStream(streams.NodeUpdatedV1).Payload, &node))
@@ -142,13 +153,13 @@ func TestFanout_SucceededSettlesTaskAndNode(t *testing.T) {
 // re-materializing the model to recover a log would be worse than losing the log.
 func TestFanout_SucceededWithoutUploadedLogStillSettles(t *testing.T) {
 	taskID, scheduleID := uuid.New(), uuid.New()
-	dep, leaseID := leased(t, taskID, scheduleID)
+	dep, exec := leased(t, taskID, scheduleID)
 	repo := &recordingOutboxRepo{}
 
 	// The worker's dbt run succeeded but its log upload failed, so it reports no
 	// log URI.
 	result := model.WorkerResult{Succeeded: true, ExecutionSeconds: 12.5}
-	require.NoError(t, tasklifecycle.Fanout{}.Succeeded(context.Background(), repo, dep, leaseID, result))
+	require.NoError(t, tasklifecycle.Fanout{}.Succeeded(context.Background(), repo, dep, exec, result))
 
 	assert.Equal(t, []string{
 		streams.TaskStatusUpdatedV1, streams.TaskExecutionRecordedV1, streams.NodeUpdatedV1,
@@ -158,9 +169,9 @@ func TestFanout_SucceededWithoutUploadedLogStillSettles(t *testing.T) {
 	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskStatusUpdatedV1).Payload, &status))
 	assert.Equal(t, "SUCCEEDED", status.Status)
 
-	var exec pkgevents.TaskExecutionRecorded
-	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &exec))
-	assert.Empty(t, exec.LogS3Key, "no uploaded log means no key, not a failed execution")
+	var execEvent pkgevents.TaskExecutionRecorded
+	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &execEvent))
+	assert.Empty(t, execEvent.LogS3Key, "no uploaded log means no key, not a failed execution")
 }
 
 // TestFanout_RetryableFailureRequeuesWithoutSettlingNode pins that a retryable
@@ -169,7 +180,7 @@ func TestFanout_SucceededWithoutUploadedLogStillSettles(t *testing.T) {
 // to run again.
 func TestFanout_RetryableFailureRequeuesWithoutSettlingNode(t *testing.T) {
 	taskID, scheduleID := uuid.New(), uuid.New()
-	dep, leaseID := leased(t, taskID, scheduleID)
+	dep, exec := leased(t, taskID, scheduleID)
 	repo := &recordingOutboxRepo{}
 	result := model.WorkerResult{
 		Succeeded: false, Retryable: true, ErrorClass: "warehouse_unavailable",
@@ -178,7 +189,7 @@ func TestFanout_RetryableFailureRequeuesWithoutSettlingNode(t *testing.T) {
 	}
 
 	require.NoError(t, tasklifecycle.Fanout{}.RetryableFailure(
-		context.Background(), repo, dep, leaseID, result))
+		context.Background(), repo, dep, exec, result))
 
 	assert.Equal(t, []string{
 		streams.TaskStatusUpdatedV1, streams.TaskExecutionRecordedV1, streams.RetryTaskV1,
@@ -189,10 +200,10 @@ func TestFanout_RetryableFailureRequeuesWithoutSettlingNode(t *testing.T) {
 	assert.Equal(t, "FAILED", status.Status, "the attempt failed even though the task will run again")
 	assert.Equal(t, int32(1), status.RetryCount, "the attempt that failed, not the one to come")
 
-	var exec pkgevents.TaskExecutionRecorded
-	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &exec))
-	assert.Equal(t, leaseID.String(), exec.ExecutionID)
-	assert.Equal(t, "connection reset", exec.ErrorMessage)
+	var execEvent pkgevents.TaskExecutionRecorded
+	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &execEvent))
+	assert.Equal(t, exec.ID.String(), execEvent.ExecutionID)
+	assert.Equal(t, "connection reset", execEvent.ErrorMessage)
 
 	retry := repo.byStream(streams.RetryTaskV1)
 	assert.Equal(t, "task_retry", retry.EventType)
@@ -215,18 +226,18 @@ func TestFanout_RetryableFailureRequeuesWithoutSettlingNode(t *testing.T) {
 // time this runs there is no lease to read — the caller passes the one that ran.
 func TestFanout_RetryableFailureAfterLeaseDropped(t *testing.T) {
 	taskID, scheduleID := uuid.New(), uuid.New()
-	dep, leaseID := leased(t, taskID, scheduleID)
+	dep, exec := leased(t, taskID, scheduleID)
 	require.NoError(t, dep.MarkRetryPending(time.Unix(90, 0), 30*time.Second))
 	require.Nil(t, dep.ActiveLease(), "the parked task carries no lease")
 	repo := &recordingOutboxRepo{}
 
 	result := model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"}
 	require.NoError(t, tasklifecycle.Fanout{}.RetryableFailure(
-		context.Background(), repo, dep, leaseID, result))
+		context.Background(), repo, dep, exec, result))
 
-	var exec pkgevents.TaskExecutionRecorded
-	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &exec))
-	assert.Equal(t, leaseID.String(), exec.ExecutionID,
+	var execEvent pkgevents.TaskExecutionRecorded
+	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &execEvent))
+	assert.Equal(t, exec.ID.String(), execEvent.ExecutionID,
 		"the execution is identified by the lease the caller captured before the transition")
 }
 
@@ -234,7 +245,7 @@ func TestFanout_RetryableFailureAfterLeaseDropped(t *testing.T) {
 // failure settles the node so the schedule advances, and asks for no retry.
 func TestFanout_PermanentFailureSettlesNode(t *testing.T) {
 	taskID, scheduleID := uuid.New(), uuid.New()
-	dep, leaseID := leased(t, taskID, scheduleID)
+	dep, exec := leased(t, taskID, scheduleID)
 	repo := &recordingOutboxRepo{}
 	result := model.WorkerResult{
 		Succeeded: false, ErrorClass: "dbt_unique_id_not_found",
@@ -242,7 +253,7 @@ func TestFanout_PermanentFailureSettlesNode(t *testing.T) {
 	}
 
 	require.NoError(t, tasklifecycle.Fanout{}.PermanentFailure(
-		context.Background(), repo, dep, leaseID, result))
+		context.Background(), repo, dep, exec, result))
 
 	assert.Equal(t, []string{
 		streams.TaskStatusUpdatedV1, streams.TaskExecutionRecordedV1, streams.NodeUpdatedV1,
@@ -256,14 +267,60 @@ func TestFanout_PermanentFailureSettlesNode(t *testing.T) {
 	require.NoError(t, json.Unmarshal(repo.byStream(streams.NodeUpdatedV1).Payload, &node))
 	assert.Equal(t, "FAILED", node["status"])
 
-	var exec pkgevents.TaskExecutionRecorded
-	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &exec))
-	assert.Equal(t, "node orders not in manifest", exec.ErrorMessage)
+	var execEvent pkgevents.TaskExecutionRecorded
+	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &execEvent))
+	assert.Equal(t, "node orders not in manifest", execEvent.ErrorMessage)
+}
+
+// TestFanout_ExecutionTimestampsAreRenderedForTheReadModel pins the wire form of
+// an execution's timing: RFC3339 in UTC, which is what the run's read model
+// parses. A timestamp in another zone or format is discarded there.
+func TestFanout_ExecutionTimestampsAreRenderedForTheReadModel(t *testing.T) {
+	taskID, scheduleID := uuid.New(), uuid.New()
+	dep, exec := leased(t, taskID, scheduleID)
+	zone := time.FixedZone("CEST", 2*60*60)
+	started := startedAt.In(zone)
+	completed := completedAt.In(zone)
+	exec.StartedAt, exec.CompletedAt = &started, &completed
+	repo := &recordingOutboxRepo{}
+
+	require.NoError(t, tasklifecycle.Fanout{}.PermanentFailure(context.Background(), repo, dep, exec,
+		model.WorkerResult{Succeeded: false, ErrorMessage: "boom"}))
+
+	var execEvent pkgevents.TaskExecutionRecorded
+	require.NoError(t, json.Unmarshal(repo.byStream(streams.TaskExecutionRecordedV1).Payload, &execEvent))
+	assert.Equal(t, "1970-01-01T00:00:21Z", execEvent.StartedAt, "a local time is rendered in UTC")
+	assert.Equal(t, "1970-01-01T00:01:33Z", execEvent.CompletedAt)
+
+	parsedStart, err := time.Parse(time.RFC3339, execEvent.StartedAt)
+	require.NoError(t, err, "the read model parses the execution's start")
+	assert.True(t, parsedStart.Equal(startedAt), "and reads back the instant the worker started")
+}
+
+// TestFanout_ExecutionWithoutTimestampsOmitsThem pins that an execution the
+// caller could not time announces no timing rather than a zero one: a worker
+// that failed before reporting a start has no start, and a zero time would show
+// in the read model as a run in 1970.
+func TestFanout_ExecutionWithoutTimestampsOmitsThem(t *testing.T) {
+	taskID, scheduleID := uuid.New(), uuid.New()
+	dep, exec := leased(t, taskID, scheduleID)
+	exec.StartedAt, exec.CompletedAt = nil, nil
+	repo := &recordingOutboxRepo{}
+
+	require.NoError(t, tasklifecycle.Fanout{}.PermanentFailure(context.Background(), repo, dep, exec,
+		model.WorkerResult{Succeeded: false, ErrorMessage: "boom"}))
+
+	entry := repo.byStream(streams.TaskExecutionRecordedV1)
+	require.NotNil(t, entry)
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(entry.Payload, &raw))
+	assert.NotContains(t, raw, "started_at", "an untimed start is absent, not zero")
+	assert.NotContains(t, raw, "completed_at")
 }
 
 func TestFanout_TerminalVariantsPropagateOutboxErrors(t *testing.T) {
 	taskID, scheduleID := uuid.New(), uuid.New()
-	dep, leaseID := leased(t, taskID, scheduleID)
+	dep, exec := leased(t, taskID, scheduleID)
 	failed := model.WorkerResult{Succeeded: false, ErrorMessage: "boom"}
 
 	for name, write := range map[string]func(repo pkgoutbox.Repository) error{
@@ -271,13 +328,13 @@ func TestFanout_TerminalVariantsPropagateOutboxErrors(t *testing.T) {
 			return tasklifecycle.Fanout{}.Started(context.Background(), repo, dep)
 		},
 		"succeeded": func(repo pkgoutbox.Repository) error {
-			return tasklifecycle.Fanout{}.Succeeded(context.Background(), repo, dep, leaseID, succeededResult())
+			return tasklifecycle.Fanout{}.Succeeded(context.Background(), repo, dep, exec, succeededResult())
 		},
 		"retryable": func(repo pkgoutbox.Repository) error {
-			return tasklifecycle.Fanout{}.RetryableFailure(context.Background(), repo, dep, leaseID, failed)
+			return tasklifecycle.Fanout{}.RetryableFailure(context.Background(), repo, dep, exec, failed)
 		},
 		"permanent": func(repo pkgoutbox.Repository) error {
-			return tasklifecycle.Fanout{}.PermanentFailure(context.Background(), repo, dep, leaseID, failed)
+			return tasklifecycle.Fanout{}.PermanentFailure(context.Background(), repo, dep, exec, failed)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

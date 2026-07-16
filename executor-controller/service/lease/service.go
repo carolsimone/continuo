@@ -293,26 +293,39 @@ func (s *Service) succeed(
 	dep *model.Deployment,
 	in CompleteInput,
 ) error {
+	now := s.clock.Now()
 	if settled(dep) {
 		// A redelivered report of the result already recorded. The aggregate
 		// accepts it, but the task is announced once.
-		return dep.Complete(in.LeaseID, tokenHash(in.Token), in.Result, s.clock.Now())
+		return dep.Complete(in.LeaseID, tokenHash(in.Token), in.Result, now)
 	}
-	if err := dep.Complete(in.LeaseID, tokenHash(in.Token), in.Result, s.clock.Now()); err != nil {
+	exec := execution(dep, in.LeaseID, now)
+	if err := dep.Complete(in.LeaseID, tokenHash(in.Token), in.Result, now); err != nil {
 		return err
 	}
 	if err := repo.Save(ctx, dep); err != nil {
 		return err
 	}
-	return s.fanout.Succeeded(ctx, outboxRepo, dep, in.LeaseID, in.Result)
+	return s.fanout.Succeeded(ctx, outboxRepo, dep, exec, in.Result)
 }
 
 // fail applies a failed report through the fenced ReportFailure seam, which
-// releases the task's execution slot as part of the transition it selects.
+// releases the task's execution slot as part of the transition it selects. The
+// aggregate absorbs a redelivery of a permanent failure, which announces nothing
+// a second time.
 //
-// The lease is captured before that transition: parking a task for requeue drops
-// its lease, and the execution being reported is identified by the lease that ran
-// it.
+// A redelivered retryable failure returns ErrStaleLease instead: parking a task
+// for requeue drops its lease, so the redelivery arrives on a task that carries
+// no lease and may already have been re-claimed at a higher attempt. The
+// executor cannot tell that report apart from one sent by a worker whose task
+// was reaped and reassigned, so it fences both. ErrStaleLease is terminal for
+// the report: the executor has already recorded the outcome, and the worker
+// re-sending it can only be told to stop, never that the report was applied
+// again.
+//
+// The execution is captured before the transition: parking a task for requeue
+// drops the lease that identifies the execution being reported and holds when it
+// started.
 func (s *Service) fail(
 	ctx context.Context,
 	repo repository.DeploymentRepository,
@@ -320,18 +333,26 @@ func (s *Service) fail(
 	dep *model.Deployment,
 	in CompleteInput,
 ) error {
+	now := s.clock.Now()
 	retryable := s.retryable(dep, in.Result)
+	if settled(dep) {
+		// A redelivered report of the result already recorded. The aggregate
+		// accepts it, but the task is announced once.
+		return dep.ReportFailure(in.LeaseID, tokenHash(in.Token), in.Result, retryable,
+			now, s.retryBackoff)
+	}
+	exec := execution(dep, in.LeaseID, now)
 	if err := dep.ReportFailure(in.LeaseID, tokenHash(in.Token), in.Result, retryable,
-		s.clock.Now(), s.retryBackoff); err != nil {
+		now, s.retryBackoff); err != nil {
 		return err
 	}
 	if err := repo.Save(ctx, dep); err != nil {
 		return err
 	}
 	if retryable {
-		return s.fanout.RetryableFailure(ctx, outboxRepo, dep, in.LeaseID, in.Result)
+		return s.fanout.RetryableFailure(ctx, outboxRepo, dep, exec, in.Result)
 	}
-	return s.fanout.PermanentFailure(ctx, outboxRepo, dep, in.LeaseID, in.Result)
+	return s.fanout.PermanentFailure(ctx, outboxRepo, dep, exec, in.Result)
 }
 
 // retryable decides whether a failed report earns another attempt. It narrows the
@@ -354,6 +375,19 @@ func (s *Service) retryable(dep *model.Deployment, result model.WorkerResult) bo
 func settled(dep *model.Deployment) bool {
 	lease := dep.ActiveLease()
 	return lease != nil && lease.FinishedAt != nil
+}
+
+// execution describes the worker run a terminal report announces: the lease that
+// ran it, when that lease's dbt process started, and when the executor recorded
+// its outcome. It is read before the transition the report drives, because that
+// transition may drop the lease it reads from.
+func execution(dep *model.Deployment, leaseID uuid.UUID, completedAt time.Time) tasklifecycle.Execution {
+	exec := tasklifecycle.Execution{ID: leaseID, CompletedAt: &completedAt}
+	if lease := dep.ActiveLease(); lease != nil && lease.StartedAt != nil {
+		startedAt := *lease.StartedAt
+		exec.StartedAt = &startedAt
+	}
+	return exec
 }
 
 // load reads the row a worker's report names, locked for the transition this
