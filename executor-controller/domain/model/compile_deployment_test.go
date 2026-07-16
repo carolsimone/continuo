@@ -104,12 +104,15 @@ func TestReconstituteCompile_RoundTrip(t *testing.T) {
 	errMsg := "some error"
 	outcomeAt := now.Add(10 * time.Second)
 
-	d := model.ReconstituteCompile(
-		id, &msgProcID, cmd, model.StatusDeployed,
-		1, 3, now, now,
-		&deployedAt, &errMsg,
-		"ok", "s3://logs", "s3://results", &outcomeAt,
-	)
+	d := model.Reconstitute(model.ReconstituteInput{
+		ID: id, MessageProcessingID: &msgProcID, Mode: model.ModeCompile,
+		ValidationCommand: cmd, Status: model.StatusDeployed,
+		RetryCount: 1, MaxRetries: 3, NextAttemptAt: now, CreatedAt: now,
+		DeployedAt: &deployedAt, ErrorMessage: &errMsg,
+		ExecutionMode: model.ExecutionModeJobs,
+		Outcome:       "ok", DBTLogURI: "s3://logs", DBTRunResultsURI: "s3://results",
+		OutcomeAt: &outcomeAt,
+	})
 
 	assert.Equal(t, id, d.ID())
 	assert.Equal(t, model.ModeCompile, d.Mode())

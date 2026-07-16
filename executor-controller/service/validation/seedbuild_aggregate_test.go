@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/stretchr/testify/assert"
@@ -133,11 +134,13 @@ func validationDepForMode(t *testing.T, releaseID, nodeID, outcome string) *mode
 // modeScopedDepRepo serves pending-count and results per mode, asserting the
 // aggregate threads the right mode through every query.
 type modeScopedDepRepo struct {
+	// Embeds the port so operations this test never exercises need no stub.
+	repository.DeploymentRepository
 	byMode map[model.Mode][]*model.Deployment
 }
 
 func (r *modeScopedDepRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *modeScopedDepRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
+func (r *modeScopedDepRepo) GetDueJobs(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }
 func (r *modeScopedDepRepo) Save(context.Context, *model.Deployment) error { return nil }

@@ -127,7 +127,7 @@ func TestRepo_Add_PersistsPendingAggregate(t *testing.T) {
 	assert.False(t, nextAt.IsZero())
 }
 
-func TestRepo_GetDueBatch_OnlyDueRowsOldestFirst(t *testing.T) {
+func TestRepo_GetDueJobs_OnlyDueRowsOldestFirst(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
@@ -140,7 +140,7 @@ func TestRepo_GetDueBatch_OnlyDueRowsOldestFirst(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 	repo := postgres.NewDeploymentsRepository(tx, testLogger())
 
-	deployments, err := repo.GetDueBatch(context.Background(), 10)
+	deployments, err := repo.GetDueJobs(context.Background(), 10)
 	require.NoError(t, err)
 	require.Len(t, deployments, 2, "future-dated row excluded")
 	assert.Equal(t, past1, deployments[0].ID(), "oldest next_attempt_at first")
@@ -199,7 +199,7 @@ func TestRepo_Save_RescheduleAndFail(t *testing.T) {
 	assert.Equal(t, "fatal", errMsg)
 }
 
-func TestRepo_GetDueBatch_CorruptJobParamsRecoversIdentity(t *testing.T) {
+func TestRepo_GetDueJobs_CorruptJobParamsRecoversIdentity(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 
@@ -217,7 +217,7 @@ func TestRepo_GetDueBatch_CorruptJobParamsRecoversIdentity(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 	repo := postgres.NewDeploymentsRepository(tx, testLogger())
 
-	deployments, err := repo.GetDueBatch(context.Background(), 10)
+	deployments, err := repo.GetDueJobs(context.Background(), 10)
 	require.NoError(t, err)
 	require.Len(t, deployments, 1)
 
@@ -227,7 +227,7 @@ func TestRepo_GetDueBatch_CorruptJobParamsRecoversIdentity(t *testing.T) {
 	assert.Equal(t, scheduleID.String(), dep.Command().ScheduleID)
 }
 
-func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
+func TestRepo_GetDueJobs_SkipLockedDisjoint(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
 	for i := 0; i < 10; i++ {
@@ -264,7 +264,7 @@ func TestRepo_GetDueBatch_SkipLockedDisjoint(t *testing.T) {
 			}
 			startWg.Wait()
 			repo := postgres.NewDeploymentsRepository(tx, testLogger())
-			deployments, err := repo.GetDueBatch(context.Background(), 2)
+			deployments, err := repo.GetDueJobs(context.Background(), 2)
 			results[wCopy].err = err
 			for _, d := range deployments {
 				results[wCopy].ids = append(results[wCopy].ids, d.ID())

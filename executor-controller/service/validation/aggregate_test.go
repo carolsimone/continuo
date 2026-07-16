@@ -18,12 +18,14 @@ import (
 
 // fakeDepRepo is an in-memory DeploymentRepository for aggregate unit tests.
 type fakeDepRepo struct {
+	// Embeds the port so operations this test never exercises need no stub.
+	repository.DeploymentRepository
 	pending int
 	results []*model.Deployment
 }
 
 func (r *fakeDepRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *fakeDepRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
+func (r *fakeDepRepo) GetDueJobs(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }
 func (r *fakeDepRepo) Save(context.Context, *model.Deployment) error { return nil }

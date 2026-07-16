@@ -25,8 +25,8 @@ import (
 // --- fakes -----------------------------------------------------------------
 
 type fakeValidationDeployer struct {
-	deployErr      error
-	deployCalls    int
+	deployErr       error
+	deployCalls     int
 	validationCalls int
 	seedBuildCalls  int
 	compileCalls    int
@@ -53,6 +53,8 @@ func (f *fakeValidationDeployer) CountActive(context.Context) (int, error) { ret
 // fakeDeploymentRepo is an in-memory DeploymentRepository sufficient for the
 // validation dispatch/aggregate unit tests.
 type fakeDeploymentRepo struct {
+	// Embeds the port so operations this test never exercises need no stub.
+	repository.DeploymentRepository
 	saved      []*model.Deployment
 	saveErr    error
 	pending    int
@@ -65,7 +67,7 @@ type fakeDeploymentRepo struct {
 }
 
 func (r *fakeDeploymentRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *fakeDeploymentRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
+func (r *fakeDeploymentRepo) GetDueJobs(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }
 func (r *fakeDeploymentRepo) Save(_ context.Context, d *model.Deployment) error {
@@ -282,6 +284,8 @@ func indexOf(s []string, v string) int {
 // dispatch and its descendants skipped by SettleNodeTerminal are all visible to
 // the aggregate count, matching production's within-transaction consistency.
 type chainDeploymentRepo struct {
+	// Embeds the port so operations this test never exercises need no stub.
+	repository.DeploymentRepository
 	nodes map[string]*model.Deployment // keyed by nodeID
 }
 
@@ -294,7 +298,7 @@ func newChainDeploymentRepo(chain ...*model.Deployment) *chainDeploymentRepo {
 }
 
 func (r *chainDeploymentRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *chainDeploymentRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
+func (r *chainDeploymentRepo) GetDueJobs(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }
 func (r *chainDeploymentRepo) Save(_ context.Context, d *model.Deployment) error {

@@ -21,6 +21,8 @@ import (
 // within-transaction read-after-write. It records the ordered sequence of
 // mutating/reading calls so a test can assert ordering relative to the lock.
 type chainDepRepo struct {
+	// Embeds the port so operations this test never exercises need no stub.
+	repository.DeploymentRepository
 	nodes map[string]*model.Deployment // keyed by nodeID
 	calls *callLog
 }
@@ -34,7 +36,7 @@ func newChainDepRepo(log *callLog, chain ...*model.Deployment) *chainDepRepo {
 }
 
 func (r *chainDepRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *chainDepRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
+func (r *chainDepRepo) GetDueJobs(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }
 func (r *chainDepRepo) Save(_ context.Context, d *model.Deployment) error {

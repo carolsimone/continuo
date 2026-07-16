@@ -5,10 +5,13 @@ import (
 	"sync"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 )
 
 // stubDeploymentsRepo captures Add calls for assertion without a real DB.
 type stubDeploymentsRepo struct {
+	// Embeds the port so operations this test never exercises need no stub.
+	repository.DeploymentRepository
 	mu    sync.Mutex
 	added []*model.Deployment
 }
@@ -19,7 +22,7 @@ func (r *stubDeploymentsRepo) Add(_ context.Context, d *model.Deployment) error 
 	r.added = append(r.added, d)
 	return nil
 }
-func (r *stubDeploymentsRepo) GetDueBatch(_ context.Context, _ int) ([]*model.Deployment, error) {
+func (r *stubDeploymentsRepo) GetDueJobs(_ context.Context, _ int) ([]*model.Deployment, error) {
 	return nil, nil
 }
 func (r *stubDeploymentsRepo) Save(_ context.Context, _ *model.Deployment) error { return nil }

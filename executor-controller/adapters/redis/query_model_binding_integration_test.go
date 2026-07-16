@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
@@ -90,7 +91,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 func buildBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) error, *slog.Logger) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, logger)
+		return postgres.NewUnitOfWork(db, logger)
 	}
 	handler := handlers.NewQueryModelHandler(logger)
 	return executorredis.NewQueryModelBinding(uowFactory, handler, logger), logger

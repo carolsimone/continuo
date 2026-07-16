@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
@@ -47,7 +48,7 @@ func retryTaskXMessage(t *testing.T, msgID string, taskID, scheduleID uuid.UUID)
 func buildRetryBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) error, *slog.Logger) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, logger)
+		return postgres.NewUnitOfWork(db, logger)
 	}
 	handler := handlers.NewRetryTaskHandler(logger)
 	return executorredis.NewRetryTaskBinding(uowFactory, handler, logger), logger

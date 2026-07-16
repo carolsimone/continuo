@@ -160,7 +160,7 @@ func (d *Dispatcher) processOne(ctx context.Context) (bool, error) {
 	aggRepo := d.newAggRepo(tx)
 	outboxRepo := outbox.NewPostgresRepository(tx, "executor_outbox", d.logger)
 
-	due, err := repo.GetDueBatch(ctx, 1)
+	due, err := repo.GetDueJobs(ctx, 1)
 	if err != nil {
 		return false, fmt.Errorf("get due deployment: %w", err)
 	}

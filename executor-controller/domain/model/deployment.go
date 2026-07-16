@@ -13,12 +13,34 @@ import (
 type Status string
 
 const (
-	StatusPending  Status = "pending"
-	StatusBlocked  Status = "blocked"
-	StatusDeployed Status = "deployed"
-	StatusFailed   Status = "failed"
-	StatusSkipped  Status = "skipped"
+	StatusPending Status = "pending"
+	StatusBlocked Status = "blocked"
+	// StatusDispatching holds an execution slot while the Jobs dispatcher
+	// creates the Kubernetes Job, so a crash between create and commit cannot
+	// undercount capacity against an already-running Job.
+	StatusDispatching Status = "dispatching"
+	StatusDeployed    Status = "deployed"
+	// StatusLeased marks a task a worker has claimed but not yet started.
+	StatusLeased Status = "leased"
+	// StatusRunning marks a claimed task whose worker reported dbt has started.
+	StatusRunning Status = "running"
+	// StatusRetryPending marks a worker task that failed retryably and awaits
+	// requeue after its recorded backoff.
+	StatusRetryPending Status = "retry_pending"
+	StatusSucceeded    Status = "succeeded"
+	StatusFailed       Status = "failed"
+	StatusSkipped      Status = "skipped"
+	StatusCancelled    Status = "cancelled"
 )
+
+// terminal reports whether s admits no further lifecycle transition.
+func (s Status) terminal() bool {
+	switch s {
+	case StatusSucceeded, StatusFailed, StatusSkipped, StatusCancelled:
+		return true
+	}
+	return false
+}
 
 // defaultMaxRetries is the deploy-attempt budget for a new Deployment.
 const defaultMaxRetries = 3
@@ -66,6 +88,18 @@ type Deployment struct {
 	deployedAt          *time.Time
 	errorMessage        *string
 
+	// Worker-execution state. executionMode is ExecutionModeJobs for every
+	// deployment that reaches dbt through a per-task Kubernetes Job; the fields
+	// below it are populated only on the workers path, as a worker claims and
+	// runs the task.
+	executionMode  ExecutionMode
+	poolKey        string
+	resolvedArgv   []string
+	executionPath  ExecutionPath
+	reservation    Reservation
+	lease          *Lease
+	terminalResult *WorkerResult
+
 	// Validation-only terminal outcome, attached by RecordOutcome after dispatch.
 	outcome          string
 	dbtLogURI        string
@@ -73,7 +107,8 @@ type Deployment struct {
 	outcomeAt        *time.Time
 }
 
-// NewDeployment starts a fresh pending Deployment due immediately.
+// NewDeployment starts a fresh pending Deployment due immediately, executed as
+// one Kubernetes Job.
 func NewDeployment(cmd command.DeployTask, msgProcID *uuid.UUID, now time.Time) *Deployment {
 	return &Deployment{
 		id:                  uuid.New(),
@@ -84,6 +119,31 @@ func NewDeployment(cmd command.DeployTask, msgProcID *uuid.UUID, now time.Time) 
 		maxRetries:          defaultMaxRetries,
 		nextAttemptAt:       now,
 		createdAt:           now,
+		executionMode:       ExecutionModeJobs,
+	}
+}
+
+// NewWorkerDeployment starts a fresh pending production Deployment routed to a
+// worker pool: instead of getting its own Kubernetes Job, it waits to be claimed
+// under a lease by a long-lived worker pod serving poolKey. Pass uuid.Nil for
+// msgProcID when the deployment has no originating message.
+func NewWorkerDeployment(cmd command.DeployTask, msgProcID uuid.UUID, poolKey string, now time.Time) *Deployment {
+	var msgProc *uuid.UUID
+	if msgProcID != uuid.Nil {
+		id := msgProcID
+		msgProc = &id
+	}
+	return &Deployment{
+		id:                  uuid.New(),
+		messageProcessingID: msgProc,
+		mode:                ModeProduction,
+		command:             cmd,
+		status:              StatusPending,
+		maxRetries:          defaultMaxRetries,
+		nextAttemptAt:       now,
+		createdAt:           now,
+		executionMode:       ExecutionModeWorkers,
+		poolKey:             poolKey,
 	}
 }
 
@@ -106,6 +166,7 @@ func NewValidationDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.U
 		maxRetries:          defaultMaxRetries,
 		nextAttemptAt:       now,
 		createdAt:           now,
+		executionMode:       ExecutionModeJobs,
 	}
 }
 
@@ -123,6 +184,7 @@ func NewSeedBuildDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UU
 		maxRetries:          defaultMaxRetries,
 		nextAttemptAt:       now,
 		createdAt:           now,
+		executionMode:       ExecutionModeJobs,
 	}
 }
 
@@ -140,133 +202,65 @@ func NewCompileDeployment(cmd command.ValidationDeployTask, msgProcID *uuid.UUID
 		maxRetries:          defaultMaxRetries,
 		nextAttemptAt:       now,
 		createdAt:           now,
+		executionMode:       ExecutionModeJobs,
 	}
+}
+
+// ReconstituteInput carries the persisted state of a Deployment. Adapters fill
+// it from a stored row; only the fields meaningful for in.Mode need be set.
+type ReconstituteInput struct {
+	ID                  uuid.UUID
+	MessageProcessingID *uuid.UUID
+	Mode                Mode
+	Command             command.DeployTask
+	ValidationCommand   command.ValidationDeployTask
+	Status              Status
+	RetryCount          int
+	MaxRetries          int
+	NextAttemptAt       time.Time
+	CreatedAt           time.Time
+	DeployedAt          *time.Time
+	ErrorMessage        *string
+	ExecutionMode       ExecutionMode
+	PoolKey             string
+	ResolvedArgv        []string
+	ExecutionPath       ExecutionPath
+	Reservation         Reservation
+	Lease               *Lease
+	Outcome             string
+	DBTLogURI           string
+	DBTRunResultsURI    string
+	OutcomeAt           *time.Time
+	TerminalResult      *WorkerResult
 }
 
 // Reconstitute rebuilds a Deployment from persisted state. Adapters use this to
 // turn a stored row back into an aggregate.
-func Reconstitute(
-	id uuid.UUID,
-	msgProcID *uuid.UUID,
-	cmd command.DeployTask,
-	status Status,
-	retryCount, maxRetries int,
-	nextAttemptAt, createdAt time.Time,
-	deployedAt *time.Time,
-	errorMessage *string,
-) *Deployment {
+func Reconstitute(in ReconstituteInput) *Deployment {
 	return &Deployment{
-		id:                  id,
-		messageProcessingID: msgProcID,
-		mode:                ModeProduction,
-		command:             cmd,
-		status:              status,
-		retryCount:          retryCount,
-		maxRetries:          maxRetries,
-		nextAttemptAt:       nextAttemptAt,
-		createdAt:           createdAt,
-		deployedAt:          deployedAt,
-		errorMessage:        errorMessage,
-	}
-}
-
-// ReconstituteValidation rebuilds a validation-mode Deployment from persisted
-// state, including its terminal outcome columns. Adapters use this for rows
-// whose mode == validation.
-func ReconstituteValidation(
-	id uuid.UUID,
-	msgProcID *uuid.UUID,
-	cmd command.ValidationDeployTask,
-	status Status,
-	retryCount, maxRetries int,
-	nextAttemptAt, createdAt time.Time,
-	deployedAt *time.Time,
-	errorMessage *string,
-	outcome, dbtLogURI, runResultsURI string,
-	outcomeAt *time.Time,
-) *Deployment {
-	return &Deployment{
-		id:                  id,
-		messageProcessingID: msgProcID,
-		mode:                ModeValidation,
-		validationCmd:       cmd,
-		status:              status,
-		retryCount:          retryCount,
-		maxRetries:          maxRetries,
-		nextAttemptAt:       nextAttemptAt,
-		createdAt:           createdAt,
-		deployedAt:          deployedAt,
-		errorMessage:        errorMessage,
-		outcome:             outcome,
-		dbtLogURI:           dbtLogURI,
-		dbtRunResultsURI:    runResultsURI,
-		outcomeAt:           outcomeAt,
-	}
-}
-
-// ReconstituteSeedBuild rebuilds a seed-build-mode Deployment from persisted
-// state. It mirrors ReconstituteValidation but sets mode: ModeSeedBuild.
-func ReconstituteSeedBuild(
-	id uuid.UUID,
-	msgProcID *uuid.UUID,
-	cmd command.ValidationDeployTask,
-	status Status,
-	retryCount, maxRetries int,
-	nextAttemptAt, createdAt time.Time,
-	deployedAt *time.Time,
-	errorMessage *string,
-	outcome, dbtLogURI, runResultsURI string,
-	outcomeAt *time.Time,
-) *Deployment {
-	return &Deployment{
-		id:                  id,
-		messageProcessingID: msgProcID,
-		mode:                ModeSeedBuild,
-		validationCmd:       cmd,
-		status:              status,
-		retryCount:          retryCount,
-		maxRetries:          maxRetries,
-		nextAttemptAt:       nextAttemptAt,
-		createdAt:           createdAt,
-		deployedAt:          deployedAt,
-		errorMessage:        errorMessage,
-		outcome:             outcome,
-		dbtLogURI:           dbtLogURI,
-		dbtRunResultsURI:    runResultsURI,
-		outcomeAt:           outcomeAt,
-	}
-}
-
-// ReconstituteCompile rebuilds a compile-mode Deployment from persisted state.
-// It mirrors ReconstituteSeedBuild but sets mode: ModeCompile.
-func ReconstituteCompile(
-	id uuid.UUID,
-	msgProcID *uuid.UUID,
-	cmd command.ValidationDeployTask,
-	status Status,
-	retryCount, maxRetries int,
-	nextAttemptAt, createdAt time.Time,
-	deployedAt *time.Time,
-	errorMessage *string,
-	outcome, dbtLogURI, runResultsURI string,
-	outcomeAt *time.Time,
-) *Deployment {
-	return &Deployment{
-		id:                  id,
-		messageProcessingID: msgProcID,
-		mode:                ModeCompile,
-		validationCmd:       cmd,
-		status:              status,
-		retryCount:          retryCount,
-		maxRetries:          maxRetries,
-		nextAttemptAt:       nextAttemptAt,
-		createdAt:           createdAt,
-		deployedAt:          deployedAt,
-		errorMessage:        errorMessage,
-		outcome:             outcome,
-		dbtLogURI:           dbtLogURI,
-		dbtRunResultsURI:    runResultsURI,
-		outcomeAt:           outcomeAt,
+		id:                  in.ID,
+		messageProcessingID: in.MessageProcessingID,
+		mode:                in.Mode,
+		command:             in.Command,
+		validationCmd:       in.ValidationCommand,
+		status:              in.Status,
+		retryCount:          in.RetryCount,
+		maxRetries:          in.MaxRetries,
+		nextAttemptAt:       in.NextAttemptAt,
+		createdAt:           in.CreatedAt,
+		deployedAt:          in.DeployedAt,
+		errorMessage:        in.ErrorMessage,
+		executionMode:       in.ExecutionMode,
+		poolKey:             in.PoolKey,
+		resolvedArgv:        in.ResolvedArgv,
+		executionPath:       in.ExecutionPath,
+		reservation:         in.Reservation,
+		lease:               in.Lease,
+		terminalResult:      in.TerminalResult,
+		outcome:             in.Outcome,
+		dbtLogURI:           in.DBTLogURI,
+		dbtRunResultsURI:    in.DBTRunResultsURI,
+		outcomeAt:           in.OutcomeAt,
 	}
 }
 
@@ -296,9 +290,12 @@ func (d *Deployment) IsDeployable() bool {
 		d.command.NodeType != ""
 }
 
-// MarkDeployed transitions a pending Deployment to deployed.
+// MarkDeployed transitions a Deployment to deployed once its Kubernetes Job
+// exists. It accepts a row the dispatcher parked in 'dispatching' after
+// reserving an execution slot, and a 'pending' row dispatched without a
+// reservation.
 func (d *Deployment) MarkDeployed(now time.Time) error {
-	if d.status != StatusPending {
+	if d.status != StatusPending && d.status != StatusDispatching {
 		return fmt.Errorf("cannot mark deployed from status %q", d.status)
 	}
 	d.status = StatusDeployed

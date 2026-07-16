@@ -86,7 +86,7 @@ func (noopSchemaCreator) EnsureCandidateSchema(context.Context, string) error { 
 // binding over the live *sqlx.DB.
 func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XMessage) error {
 	logger := pipelineLogger()
-	uowFactory := func() uow.UnitOfWork { return uow.NewPostgresUnitOfWork(db, logger) }
+	uowFactory := func() uow.UnitOfWork { return executorpg.NewUnitOfWork(db, logger) }
 	return executorredis.NewValidationRequestedBinding(
 		uowFactory, handlers.NewValidationRequestedHandler(logger), noopSchemaCreator{}, logger)
 }
@@ -95,7 +95,7 @@ func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XM
 // binding over the live *sqlx.DB.
 func newNodeCompletedBinding(db *sqlx.DB) func(context.Context, goredis.XMessage) error {
 	logger := pipelineLogger()
-	uowFactory := func() uow.UnitOfWork { return uow.NewPostgresUnitOfWork(db, logger) }
+	uowFactory := func() uow.UnitOfWork { return executorpg.NewUnitOfWork(db, logger) }
 	return executorredis.NewValidationNodeCompletedBinding(
 		uowFactory, handlers.NewValidationNodeCompletedHandler(logger), logger)
 }
@@ -183,7 +183,7 @@ func countDeployments(t *testing.T, db *sqlx.DB, query string, args ...any) int 
 
 // waitValidationRowsDue blocks until no pending validation row for releaseID has
 // a next_attempt_at in the DB's future. next_attempt_at is stamped with the Go
-// process clock and GetDueBatch compares against the DB's NOW(); on a VM-backed
+// process clock and GetDueJobs compares against the DB's NOW(); on a VM-backed
 // Docker host those clocks can differ by tens of milliseconds, so a row enqueued
 // "now" can read as not-yet-due for a moment. Production dispatches on a 5s tick
 // where this is moot; the test dispatches immediately, so wait for the DB to
@@ -243,7 +243,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	// Step 3: dispatch the batch. Each row → a DeployValidation call + a
 	// node.deployed:v1 trigger; rows move to status=deployed; NO terminal yet.
 	// Wait for the rows to be due first: next_attempt_at is stamped with the Go
-	// process clock while GetDueBatch compares against the DB's NOW(), and on a
+	// process clock while GetDueJobs compares against the DB's NOW(), and on a
 	// VM-backed Docker host (colima) those can differ by tens of ms. Production
 	// dispatches on a 5s tick so the skew is irrelevant there; the test dispatches
 	// immediately, so wait until the DB agrees the rows are due.

@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -23,6 +24,8 @@ import (
 // GetByReleaseNode (or sql.ErrNoRows when nil), records Save calls, and serves
 // pending/results to the aggregate gate.
 type nodeCompletedDeploymentsRepo struct {
+	// Embeds the port so operations this test never exercises need no stub.
+	repository.DeploymentRepository
 	byReleaseNode *model.Deployment
 	getErr        error
 	pending       int
@@ -31,7 +34,7 @@ type nodeCompletedDeploymentsRepo struct {
 }
 
 func (r *nodeCompletedDeploymentsRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *nodeCompletedDeploymentsRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
+func (r *nodeCompletedDeploymentsRepo) GetDueJobs(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }
 func (r *nodeCompletedDeploymentsRepo) Save(_ context.Context, d *model.Deployment) error {
@@ -62,11 +65,13 @@ func (r *nodeCompletedDeploymentsRepo) ListValidationByRelease(context.Context, 
 // operate against the same nodes map, so a Save made before ListValidationByRelease
 // is always visible — matching production's within-transaction consistency.
 type chainedDeploymentsRepo struct {
+	// Embeds the port so operations this test never exercises need no stub.
+	repository.DeploymentRepository
 	nodes map[string]*model.Deployment // keyed by nodeID
 }
 
 func (r *chainedDeploymentsRepo) Add(context.Context, *model.Deployment) error { return nil }
-func (r *chainedDeploymentsRepo) GetDueBatch(context.Context, int) ([]*model.Deployment, error) {
+func (r *chainedDeploymentsRepo) GetDueJobs(context.Context, int) ([]*model.Deployment, error) {
 	return nil, nil
 }
 func (r *chainedDeploymentsRepo) Save(_ context.Context, d *model.Deployment) error {

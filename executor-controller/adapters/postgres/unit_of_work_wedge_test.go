@@ -1,4 +1,4 @@
-package uow
+package postgres
 
 import (
 	"context"
@@ -12,16 +12,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPostgresUnitOfWork_RecoversAfterFailedCommit asserts a failed Commit
+// TestUnitOfWork_RecoversAfterFailedCommit asserts a failed Commit
 // clears the transaction state so the same instance can Begin again, and that
 // a deferred Rollback after the failed Commit does not surface sql.ErrTxDone.
-func TestPostgresUnitOfWork_RecoversAfterFailedCommit(t *testing.T) {
+func TestUnitOfWork_RecoversAfterFailedCommit(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
 
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	u := NewPostgresUnitOfWork(sqlxDB, slog.Default())
+	u := NewUnitOfWork(sqlxDB, slog.Default())
 
 	mock.ExpectBegin()
 	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
@@ -37,15 +37,15 @@ func TestPostgresUnitOfWork_RecoversAfterFailedCommit(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// TestPostgresUnitOfWork_RollbackSwallowsErrTxDone asserts Rollback treats an
+// TestUnitOfWork_RollbackSwallowsErrTxDone asserts Rollback treats an
 // already-finished transaction as a successful no-op.
-func TestPostgresUnitOfWork_RollbackSwallowsErrTxDone(t *testing.T) {
+func TestUnitOfWork_RollbackSwallowsErrTxDone(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
 
 	sqlxDB := sqlx.NewDb(db, "sqlmock")
-	u := NewPostgresUnitOfWork(sqlxDB, slog.Default())
+	u := NewUnitOfWork(sqlxDB, slog.Default())
 
 	mock.ExpectBegin()
 	mock.ExpectCommit().WillReturnError(sql.ErrTxDone)

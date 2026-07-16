@@ -69,7 +69,11 @@ func TestRegisterFailure_ReschedulesWhileBudgetRemains(t *testing.T) {
 func TestRegisterFailure_FailsWhenBudgetExhausted(t *testing.T) {
 	now := time.Now()
 	// retryCount 2, maxRetries 3 => 2+1 == 3, exhausted.
-	d := model.Reconstitute(uuid.New(), nil, deployableCmd(), model.StatusPending, 2, 3, now, now, nil, nil)
+	d := model.Reconstitute(model.ReconstituteInput{
+		ID: uuid.New(), Mode: model.ModeProduction, Command: deployableCmd(),
+		Status: model.StatusPending, RetryCount: 2, MaxRetries: 3,
+		NextAttemptAt: now, CreatedAt: now, ExecutionMode: model.ExecutionModeJobs,
+	})
 	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 2 * time.Minute}
 
 	terminal := d.RegisterFailure(now, false, "boom", backoff)
@@ -190,10 +194,13 @@ func TestReconstituteValidation_RestoresOutcome(t *testing.T) {
 	now := time.Now()
 	cmd := validationCmd()
 	ts := now
-	d := model.ReconstituteValidation(
-		uuid.New(), nil, cmd, model.StatusDeployed, 0, 3, now, now, &now, nil,
-		"ok", "s3://logs/run", "run-results/run.json", &ts,
-	)
+	d := model.Reconstitute(model.ReconstituteInput{
+		ID: uuid.New(), Mode: model.ModeValidation, ValidationCommand: cmd,
+		Status: model.StatusDeployed, MaxRetries: 3, NextAttemptAt: now, CreatedAt: now,
+		DeployedAt: &now, ExecutionMode: model.ExecutionModeJobs,
+		Outcome: "ok", DBTLogURI: "s3://logs/run", DBTRunResultsURI: "run-results/run.json",
+		OutcomeAt: &ts,
+	})
 	assert.Equal(t, model.ModeValidation, d.Mode())
 	assert.Equal(t, cmd.ReleaseID, d.ReleaseID())
 	assert.Equal(t, cmd.NodeID, d.NodeID())
@@ -276,10 +283,13 @@ func TestReconstituteSeedBuild_RestoresMode(t *testing.T) {
 	cmd := command.ValidationDeployTask{ReleaseID: "r2", NodeID: "seed.b", JobName: "j2",
 		NodeType: "dbt-seed", ImageTag: "t2", CandidateSchema: "_candidate_r2"}
 	ts := now
-	d := model.ReconstituteSeedBuild(
-		uuid.New(), nil, cmd, model.StatusDeployed, 0, 3, now, now, &now, nil,
-		"ok", "s3://logs/seed", "run-results/seed.json", &ts,
-	)
+	d := model.Reconstitute(model.ReconstituteInput{
+		ID: uuid.New(), Mode: model.ModeSeedBuild, ValidationCommand: cmd,
+		Status: model.StatusDeployed, MaxRetries: 3, NextAttemptAt: now, CreatedAt: now,
+		DeployedAt: &now, ExecutionMode: model.ExecutionModeJobs,
+		Outcome: "ok", DBTLogURI: "s3://logs/seed", DBTRunResultsURI: "run-results/seed.json",
+		OutcomeAt: &ts,
+	})
 	assert.Equal(t, model.ModeSeedBuild, d.Mode())
 	assert.Equal(t, cmd, d.ValidationCommand())
 	assert.Equal(t, "r2", d.ReleaseID())
@@ -291,7 +301,11 @@ func TestBackoff_CapAndOverflow(t *testing.T) {
 	now := time.Now()
 	backoff := model.BackoffPolicy{Base: 5 * time.Second, Cap: 30 * time.Second}
 	// retryCount climbs; delay must never exceed Cap and never go negative.
-	d := model.Reconstitute(uuid.New(), nil, deployableCmd(), model.StatusPending, 0, 100, now, now, nil, nil)
+	d := model.Reconstitute(model.ReconstituteInput{
+		ID: uuid.New(), Mode: model.ModeProduction, Command: deployableCmd(),
+		Status: model.StatusPending, RetryCount: 0, MaxRetries: 100,
+		NextAttemptAt: now, CreatedAt: now, ExecutionMode: model.ExecutionModeJobs,
+	})
 	prev := now
 	for i := 0; i < 70; i++ {
 		d.RegisterFailure(now, false, "x", backoff)
