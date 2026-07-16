@@ -97,6 +97,57 @@ func TestWorkerLeaseRepository_ClaimRoundTrips(t *testing.T) {
 	assert.Equal(t, 3.5, done.TerminalResult().ExecutionSeconds)
 }
 
+// TestWorkerLeaseRepository_AttemptSurvivesRequeue pins that the attempt counter
+// round-trips through the requeue that drops the lease, so the second claim is
+// stored and reloaded as attempt 2.
+func TestWorkerLeaseRepository_AttemptSurvivesRequeue(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	dep := addWorkerDeployment(t, db, "dbt:sha-abc", now)
+	require.NoError(t, dep.Claim(uuid.New(), tokenSHA("t1"), "worker-1", "pod-a", "uid-a",
+		now, now.Add(time.Minute), []string{"dbt", "run"}, model.ExecutionPathNative))
+	require.NoError(t, repo.Save(ctx, dep))
+
+	// The retryable failure drops the lease; the attempt counter must not go
+	// with it.
+	requeued, err := repo.GetByID(ctx, dep.ID())
+	require.NoError(t, err)
+	assert.Equal(t, 1, requeued.Attempt())
+	require.NoError(t, requeued.MarkRetryPending(now, time.Minute))
+	require.NoError(t, repo.Save(ctx, requeued))
+
+	parked, err := repo.GetByID(ctx, dep.ID())
+	require.NoError(t, err)
+	require.Nil(t, parked.ActiveLease(), "the lease is dropped")
+	assert.Equal(t, 1, parked.Attempt(), "the attempt count outlives the lease")
+
+	// The parked row returns to pending once its backoff elapses, and is then
+	// served to a worker again.
+	_, err = db.Exec(`UPDATE executor_deployments SET status = 'pending' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+	parked, err = repo.GetByID(ctx, dep.ID())
+	require.NoError(t, err)
+
+	require.NoError(t, parked.Claim(uuid.New(), tokenSHA("t2"), "worker-2", "pod-b", "uid-b",
+		now.Add(2*time.Minute), now.Add(3*time.Minute), []string{"dbt", "run"}, model.ExecutionPathNative))
+	require.NoError(t, repo.Save(ctx, parked))
+
+	reclaimed, err := repo.GetByID(ctx, dep.ID())
+	require.NoError(t, err)
+	assert.Equal(t, 2, reclaimed.Attempt())
+	require.NotNil(t, reclaimed.ActiveLease())
+	assert.Equal(t, 2, reclaimed.ActiveLease().Attempt, "the lease projects the counter")
+
+	var stored int
+	require.NoError(t, db.QueryRow(
+		`SELECT attempt FROM executor_deployments WHERE id = $1`, dep.ID()).Scan(&stored))
+	assert.Equal(t, 2, stored)
+}
+
 // TestWorkerLeaseRepository_RawTokenNeverStored proves the raw lease token
 // appears in no column of the row.
 func TestWorkerLeaseRepository_RawTokenNeverStored(t *testing.T) {
@@ -302,14 +353,40 @@ func TestDemotePendingPoolToJobs(t *testing.T) {
 		now, now.Add(time.Minute), []string{"dbt", "run"}, model.ExecutionPathNative))
 	require.NoError(t, repo.Save(ctx, leased))
 
+	// A row awaiting requeue after a retryable worker failure, its backoff
+	// already elapsed.
+	retrying := addWorkerDeployment(t, db, "pool-a", now)
+	require.NoError(t, retrying.Claim(uuid.New(), tokenSHA("t2"), "w", "pod-2", "uid-2",
+		now, now.Add(time.Minute), []string{"dbt", "run"}, model.ExecutionPathNative))
+	require.NoError(t, retrying.MarkRetryPending(now.Add(-time.Hour), time.Minute))
+	require.NoError(t, repo.Save(ctx, retrying))
+
 	n, err := repo.DemotePendingPoolToJobs(ctx, "pool-a", now)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), n, "only pool-a's pending row is demoted")
+	assert.Equal(t, int64(2), n, "pool-a's pending and retry_pending rows are demoted")
 
 	moved, err := repo.GetByID(ctx, pending.ID())
 	require.NoError(t, err)
 	assert.Equal(t, model.ExecutionModeJobs, moved.ExecutionMode())
 	assert.Empty(t, moved.PoolKey())
+
+	// A demoted retry_pending row must be served by the Jobs dispatcher, which
+	// reads only 'pending' rows; leaving it in a worker-path status would strand
+	// it between the two dispatch paths.
+	movedRetry, err := repo.GetByID(ctx, retrying.ID())
+	require.NoError(t, err)
+	assert.Equal(t, model.ExecutionModeJobs, movedRetry.ExecutionMode())
+	assert.Equal(t, model.StatusPending, movedRetry.Status())
+	assert.Empty(t, movedRetry.PoolKey())
+
+	due, err := repo.GetDueJobs(ctx, 10)
+	require.NoError(t, err)
+	ids := make([]uuid.UUID, 0, len(due))
+	for _, d := range due {
+		ids = append(ids, d.ID())
+	}
+	assert.Contains(t, ids, retrying.ID(), "the demoted retry backlog is claimable as a Job")
+	assert.Contains(t, ids, pending.ID())
 
 	stillLeased, err := repo.GetByID(ctx, leased.ID())
 	require.NoError(t, err)

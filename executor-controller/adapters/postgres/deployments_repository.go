@@ -179,7 +179,7 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 		nullableStr(d.Outcome()), nullableStr(d.DBTLogURI()), d.OutcomeAt(), nullableStr(d.DBTRunResultsURI()),
 		string(d.ExecutionMode()), nullableStr(d.PoolKey()), argv, nullableStr(string(d.ExecutionPath())),
 		d.Reservation().ReservedAt, d.Reservation().ReleasedAt,
-		lease.ID, lease.TokenSHA256, lease.Owner, lease.PodName, lease.PodUID, lease.Attempt,
+		lease.ID, lease.TokenSHA256, lease.Owner, lease.PodName, lease.PodUID, d.Attempt(),
 		lease.ExpiresAt, lease.HeartbeatAt, lease.StartedAt, lease.FinishedAt,
 		terminalResult,
 	)
@@ -288,11 +288,6 @@ func (r *deploymentsRepository) ListValidationByRelease(ctx context.Context, rel
 // task/schedule identity is recovered from the dedicated columns so the
 // dispatcher can still fail the deployment with a routable announcement; the
 // aggregate's IsDeployable() will report false.
-// toAggregate reconstitutes a Deployment from a row. If job_params cannot be
-// deserialized (data corruption — it is written from a valid command) the
-// task/schedule identity is recovered from the dedicated columns so the
-// dispatcher can still fail the deployment with a routable announcement; the
-// aggregate's IsDeployable() will report false.
 func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deployment {
 	in := model.ReconstituteInput{
 		ID:                  row.ID,
@@ -312,6 +307,7 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 			ReservedAt: row.SlotReservedAt,
 			ReleasedAt: row.SlotReleasedAt,
 		},
+		Attempt:        row.Attempt,
 		Lease:          row.toLease(),
 		TerminalResult: r.decodeTerminalResult(row),
 	}
@@ -559,12 +555,16 @@ func (r *deploymentsRepository) ListPoolDemand(ctx context.Context, now time.Tim
 
 // DemotePendingPoolToJobs converts a pool's not-yet-started work back to the
 // Kubernetes Job path, returning how many rows moved. Any argv already pinned is
-// preserved so a Job runs the same command. Leased and running work is never
+// preserved so a Job runs the same command. A row awaiting requeue after a
+// retryable failure is promoted to 'pending' as it moves, because retry_pending
+// is a worker-path state the Jobs dispatcher never reads; its recorded backoff
+// still gates it through next_attempt_at. Leased and running work is never
 // converted: it must finish, or be cancelled and fenced first.
 func (r *deploymentsRepository) DemotePendingPoolToJobs(ctx context.Context, poolKey string, now time.Time) (int64, error) {
 	const query = `
 		UPDATE executor_deployments
-		SET execution_mode = 'jobs', pool_key = NULL, next_attempt_at = LEAST(next_attempt_at, $2)
+		SET status = 'pending', execution_mode = 'jobs', pool_key = NULL,
+		    next_attempt_at = LEAST(next_attempt_at, $2)
 		WHERE execution_mode = 'workers' AND pool_key = $1
 		  AND status IN ('pending','retry_pending')`
 	res, err := r.exec.ExecContext(ctx, query, poolKey, now)
@@ -617,14 +617,14 @@ func (r *deploymentsRepository) CancelSchedule(ctx context.Context, scheduleID u
 }
 
 // leaseRow is the nullable column set a Lease maps onto. A deployment with no
-// lease writes NULL to every lease column and attempt 0.
+// lease writes NULL to every lease column. The attempt column is written from
+// the Deployment's own counter, which outlives any single lease.
 type leaseRow struct {
 	ID          *uuid.UUID
 	TokenSHA256 *string
 	Owner       *string
 	PodName     *string
 	PodUID      *string
-	Attempt     int
 	ExpiresAt   *time.Time
 	HeartbeatAt *time.Time
 	StartedAt   *time.Time
@@ -642,7 +642,6 @@ func newLeaseRow(l *model.Lease) leaseRow {
 		Owner:       nullableStr(l.Owner),
 		PodName:     nullableStr(l.PodName),
 		PodUID:      nullableStr(l.PodUID),
-		Attempt:     l.Attempt,
 		ExpiresAt:   &expires,
 		HeartbeatAt: &heartbeat,
 		StartedAt:   l.StartedAt,

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorpg "github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
@@ -31,7 +30,7 @@ import (
 func buildNodeCompletedBinding(db *sqlx.DB) func(ctx context.Context, msg goredis.XMessage) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {
-		return postgres.NewUnitOfWork(db, logger)
+		return executorpg.NewUnitOfWork(db, logger)
 	}
 	handler := handlers.NewValidationNodeCompletedHandler(logger)
 	return executorredis.NewValidationNodeCompletedBinding(uowFactory, handler, logger)
