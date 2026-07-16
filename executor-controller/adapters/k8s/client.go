@@ -329,13 +329,15 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
 		Env:             mainEnv,
 	}
+	mainContainer.SecurityContext = continuoImageSecurityContext()
 
 	switch op {
 	case "clone_from_prod":
 		// No candidate SQL, no S3, single container.
 		return corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			Containers:    []corev1.Container{mainContainer},
+			RestartPolicy:  corev1.RestartPolicyNever,
+			SecurityContext: jobPodSecurityContext(),
+			Containers:     []corev1.Container{mainContainer},
 		}, nil
 
 	case "build_from_sql":
@@ -350,8 +352,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI})
 		mainContainer.Env = append(mainContainer.Env, s3CredEnvVars()...)
 		return corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			Containers:    []corev1.Container{mainContainer},
+			RestartPolicy:   corev1.RestartPolicyNever,
+			SecurityContext: jobPodSecurityContext(),
+			Containers:      []corev1.Container{mainContainer},
 		}, nil
 
 	default:
@@ -373,6 +376,38 @@ func s3SidecarImage() string {
 		}
 	}
 	return img
+}
+
+// jobPodSecurityContext returns the pod-level hardening applied to every
+// executor-created Job pod: the runtime default seccomp profile.
+func jobPodSecurityContext() *corev1.PodSecurityContext {
+	return &corev1.PodSecurityContext{
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+}
+
+// baseContainerSecurityContext hardens a container regardless of which image
+// it runs (team images included): no privilege escalation, no capabilities.
+// The container user is intentionally left to the image — team images choose
+// their own user (see the dbt image contract).
+func baseContainerSecurityContext() *corev1.SecurityContext {
+	no := false
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &no,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+}
+
+// continuoImageSecurityContext extends the base hardening with a forced
+// non-root user for containers running continuo-owned images
+// (validation-runner, s3-sidecar), which are built with uid 65532.
+func continuoImageSecurityContext() *corev1.SecurityContext {
+	sc := baseContainerSecurityContext()
+	yes := true
+	uid := int64(65532)
+	sc.RunAsNonRoot = &yes
+	sc.RunAsUser = &uid
+	return sc
 }
 
 // s3CredEnvVars returns the four S3 credential environment variables forwarded
@@ -551,7 +586,8 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodS
 	}
 
 	return corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
+		RestartPolicy:   corev1.RestartPolicyNever,
+		SecurityContext: jobPodSecurityContext(),
 		Containers: []corev1.Container{
 			{
 				Name:            "dbt-job",
@@ -559,6 +595,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodS
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         command,
 				Env:             envVars,
+				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
 	}, nil
@@ -672,8 +709,9 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	}, s3CredEnvVars()...)
 
 	return corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
-		Volumes:       []corev1.Volume{sharedEmptyDirVolume()},
+		RestartPolicy:   corev1.RestartPolicyNever,
+		SecurityContext: jobPodSecurityContext(),
+		Volumes:         []corev1.Volume{sharedEmptyDirVolume()},
 		InitContainers: []corev1.Container{
 			{
 				Name:            "compile",
@@ -683,8 +721,9 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 					"sh", "-c",
 					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json",
 				},
-				Env:          initEnvVars,
-				VolumeMounts: []corev1.VolumeMount{mount},
+				Env:             initEnvVars,
+				VolumeMounts:    []corev1.VolumeMount{mount},
+				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
 		Containers: []corev1.Container{
@@ -695,6 +734,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 				Command:         []string{"python", "/compile_uploader.py"},
 				Env:             uploadEnvVars,
 				VolumeMounts:    []corev1.VolumeMount{mount},
+				SecurityContext: continuoImageSecurityContext(),
 			},
 		},
 	}, nil
@@ -736,7 +776,8 @@ func buildPodSpec(params JobParams, command []string) (corev1.PodSpec, error) {
 	}
 
 	return corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
+		RestartPolicy:   corev1.RestartPolicyNever,
+		SecurityContext: jobPodSecurityContext(),
 		Containers: []corev1.Container{
 			{
 				Name:            "dbt-job",
@@ -744,6 +785,7 @@ func buildPodSpec(params JobParams, command []string) (corev1.PodSpec, error) {
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         command,
 				Env:             envVars,
+				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
 	}, nil
