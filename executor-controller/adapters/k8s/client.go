@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strings"
 
 	validationmodel "github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/ports"
+	"github.com/carolsimone/continuo/executor-controller/service/runtimecontext"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
 	batchv1 "k8s.io/api/batch/v1"
@@ -388,6 +390,19 @@ func s3CredEnvVars() []corev1.EnvVar {
 	}
 }
 
+const (
+	// sharedDir is where the "shared" emptyDir volume mounts in compile pods:
+	// the init container writes the release's artifacts here and the main
+	// container uploads them from here.
+	sharedDir = "/shared"
+	// sharedManifestPath is where the init container leaves manifest.json for
+	// the uploader, whatever path the team's own compile wrote it to.
+	sharedManifestPath = sharedDir + "/manifest.json"
+	// runtimeContextEnvVar carries the controller's canonical parse context
+	// into the compile init container.
+	runtimeContextEnvVar = "CONTINUO_RUNTIME_CONTEXT_JSON"
+)
+
 // sharedEmptyDirVolume returns the "shared" emptyDir volume used as the hand-off
 // point between the init container and the main container in compile pods.
 func sharedEmptyDirVolume() corev1.Volume {
@@ -398,9 +413,9 @@ func sharedEmptyDirVolume() corev1.Volume {
 }
 
 // sharedVolumeMount returns the VolumeMount for the "shared" emptyDir volume,
-// mounting it at /shared in a container.
+// mounting it at sharedDir in a container.
 func sharedVolumeMount() corev1.VolumeMount {
-	return corev1.VolumeMount{Name: "shared", MountPath: "/shared"}
+	return corev1.VolumeMount{Name: "shared", MountPath: sharedDir}
 }
 
 // validationImagePullPolicy resolves the pull policy applied to both the
@@ -593,7 +608,13 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 	}
 
 	compile := c.commands.CompileCommand(params.ServiceName)
-	podSpec, err := buildCompilePodSpec(params, compile.Argv, compile.ManifestPath)
+	controllerContext, err := runtimecontext.Build(
+		c.commands.RuntimeContext(params.ServiceName), os.Getenv)
+	if err != nil {
+		return fmt.Errorf("failed to build runtime context for service %s: %w",
+			params.ServiceName, err)
+	}
+	podSpec, err := buildCompilePodSpec(params, compile, controllerContext)
 	if err != nil {
 		return fmt.Errorf("failed to build compile pod spec: %w", err)
 	}
@@ -629,16 +650,61 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 	return c.CreateJob(ctx, job)
 }
 
+// runtimeExporterPath is where the dbt base image installs the runtime manifest
+// exporter. Team images built before it existed do not have it, so the compile
+// line tests for it rather than assuming it.
+const runtimeExporterPath = "/continuo/bin/continuo-export-runtime-manifest"
+
+// buildCompileInitCommand assembles the compile initContainer's `sh -c` line.
+// The team's own compile argv runs first and verbatim, then the manifest is
+// copied to the shared volume, then the runtime manifest artifacts are exported
+// beside it when the image ships the exporter. An image without the exporter
+// logs and succeeds, producing a manifest-only release.
+//
+// The controller context reaches the exporter through the environment rather
+// than the command line, so the line stays stable regardless of its contents.
+func buildCompileInitCommand(p ValidationJobParams, compile ports.CompileCommand) string {
+	exportArgv := []string{
+		runtimeExporterPath,
+		"--manifest", compile.ManifestPath,
+		"--partial-parse", compile.PartialParsePath,
+		"--output-dir", sharedDir,
+		"--service-name", p.ServiceName,
+		"--release-id", p.ReleaseID,
+		"--image-tag", p.ImageTag,
+		"--artifact-uri", siblingS3URI(p.ManifestS3URI, "partial_parse.msgpack"),
+	}
+	export := shellJoin(exportArgv) +
+		` --controller-context "$` + runtimeContextEnvVar + `"`
+
+	return shellJoin(compile.Argv) +
+		" && cp " + shellQuote(compile.ManifestPath) + " " + sharedManifestPath +
+		" && if [ -x " + runtimeExporterPath + " ]; then " + export + "; " +
+		"else echo " + shellQuote("runtime exporter absent; manifest-only compatibility release") + "; fi"
+}
+
+// siblingS3URI replaces the object name in uri with name, keeping the release's
+// prefix. The uploader writes the artifact set to these sibling keys.
+func siblingS3URI(uri, name string) string {
+	if i := strings.LastIndex(uri, "/"); i >= 0 {
+		return uri[:i+1] + name
+	}
+	return name
+}
+
 // buildCompilePodSpec constructs the PodSpec for a compile Job. The pod has:
 //   - a shared emptyDir volume "shared" mounted at /shared in both containers;
 //   - an initContainer "compile" using the team image (ImageTag must be
-//     non-empty) that runs the service's resolved compile command and copies
-//     the manifest from its declared path into /shared/manifest.json;
+//     non-empty) that runs the service's resolved compile command, copies the
+//     manifest from its declared path into /shared/manifest.json, and exports
+//     the runtime manifest artifacts beside it when the image ships the
+//     exporter. controllerContext reaches it as CONTINUO_RUNTIME_CONTEXT_JSON.
 //   - a main container "upload" using the shared s3-sidecar image (no dbt;
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
-//     MANIFEST_S3_URI, and the S3 credential envs forwarded from the executor-controller env.
-func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPath string) (corev1.PodSpec, error) {
+//     MANIFEST_S3_URI, the runtime artifact paths, and the S3 credential envs
+//     forwarded from the executor-controller env.
+func buildCompilePodSpec(p ValidationJobParams, compile ports.CompileCommand, controllerContext string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from compile job params for service %s",
 			events.ErrPermanent, p.ServiceName)
@@ -662,13 +728,20 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
 		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
 		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+		// The parse context the exporter stamps on the runtime manifest
+		// descriptor, so a consumer can tell what the artifact was parsed under.
+		{Name: runtimeContextEnvVar, Value: controllerContext},
 	}
 
 	// compile_uploader.py parses the bucket from MANIFEST_S3_URI; S3_BUCKET is
-	// intentionally omitted (see s3CredEnvVars).
+	// intentionally omitted (see s3CredEnvVars). The runtime artifact paths are
+	// always passed: the uploader keys off whether the exporter actually wrote
+	// them, so an image without the exporter uploads the manifest alone.
 	uploadEnvVars := append([]corev1.EnvVar{
-		{Name: "COMPILE_MANIFEST_PATH", Value: "/shared/manifest.json"},
+		{Name: "COMPILE_MANIFEST_PATH", Value: sharedManifestPath},
 		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
+		{Name: "COMPILE_PARTIAL_PARSE_PATH", Value: sharedDir + "/partial_parse.msgpack"},
+		{Name: "COMPILE_RUNTIME_DESCRIPTOR_PATH", Value: sharedDir + "/runtime-manifest.json"},
 	}, s3CredEnvVars()...)
 
 	return corev1.PodSpec{
@@ -679,10 +752,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 				Name:            "compile",
 				Image:           teamImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command: []string{
-					"sh", "-c",
-					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json",
-				},
+				Command:      []string{"sh", "-c", buildCompileInitCommand(p, compile)},
 				Env:          initEnvVars,
 				VolumeMounts: []corev1.VolumeMount{mount},
 			},

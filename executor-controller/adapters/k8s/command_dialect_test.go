@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/commandcfg"
@@ -109,7 +110,16 @@ func TestCreateCompileJob_UsesDialectAndQuotesManifestPath(t *testing.T) {
 	job := fetchJob(t, c, "default", "j4")
 	line := job.Spec.Template.Spec.InitContainers[0].Command[2]
 	assert.Equal(t,
-		"wise-dbt compile --profiles-dir /project && cp '/project/out dir/manifest.json' /shared/manifest.json",
+		"wise-dbt compile --profiles-dir /project"+
+			" && cp '/project/out dir/manifest.json' /shared/manifest.json"+
+			" && if [ -x /continuo/bin/continuo-export-runtime-manifest ]; then"+
+			" /continuo/bin/continuo-export-runtime-manifest"+
+			" --manifest '/project/out dir/manifest.json'"+
+			" --partial-parse '/project/out dir/partial_parse.msgpack'"+
+			" --output-dir /shared --service-name wise --release-id rel1 --image-tag v1"+
+			" --artifact-uri s3://b/partial_parse.msgpack"+
+			` --controller-context "$CONTINUO_RUNTIME_CONTEXT_JSON";`+
+			" else echo 'runtime exporter absent; manifest-only compatibility release'; fi",
 		line, "manifest path with a space must be shell-quoted")
 }
 
@@ -134,8 +144,21 @@ func TestCreateCompileJob_DefaultLineByteIdentical(t *testing.T) {
 		ImageTag: "v1", ManifestS3URI: "s3://b/k", Namespace: "default",
 	}))
 	job := fetchJob(t, c, "default", "j5")
+	line := job.Spec.Template.Spec.InitContainers[0].Command[2]
+	assert.True(t,
+		strings.HasPrefix(line,
+			"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json"),
+		"no config: the compile and copy must stay byte-identical to the plain-dbt form")
 	assert.Equal(t,
-		"dbt compile --profiles-dir /project && cp /project/target/manifest.json /shared/manifest.json",
-		job.Spec.Template.Spec.InitContainers[0].Command[2],
-		"no config: compile line must be byte-identical to the plain-dbt form")
+		"dbt compile --profiles-dir /project"+
+			" && cp /project/target/manifest.json /shared/manifest.json"+
+			" && if [ -x /continuo/bin/continuo-export-runtime-manifest ]; then"+
+			" /continuo/bin/continuo-export-runtime-manifest"+
+			" --manifest /project/target/manifest.json"+
+			" --partial-parse /project/target/partial_parse.msgpack"+
+			" --output-dir /shared --service-name svc --release-id rel1 --image-tag v1"+
+			" --artifact-uri s3://b/partial_parse.msgpack"+
+			` --controller-context "$CONTINUO_RUNTIME_CONTEXT_JSON";`+
+			" else echo 'runtime exporter absent; manifest-only compatibility release'; fi",
+		line)
 }

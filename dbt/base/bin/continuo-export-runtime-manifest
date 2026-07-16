@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Export a compiled dbt project's runtime artifacts into a shared directory.
+
+Runs in the compile Job's init container, after the team's own compile command.
+A nonzero exit fails the compile Job.
+"""
+import argparse
+import sys
+from pathlib import Path
+
+from continuo_dbt_runtime.export_artifacts import export_runtime_artifacts
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Export dbt runtime manifest artifacts for a release."
+    )
+    parser.add_argument("--manifest", type=Path, required=True,
+                        help="path to the manifest.json the compile wrote")
+    parser.add_argument("--partial-parse", type=Path, required=True,
+                        help="path to the partial_parse.msgpack the compile wrote")
+    parser.add_argument("--output-dir", type=Path, required=True,
+                        help="directory the uploader reads the artifact set from")
+    parser.add_argument("--service-name", required=True,
+                        help="service the artifacts belong to")
+    parser.add_argument("--release-id", required=True,
+                        help="release the artifacts were compiled for")
+    parser.add_argument("--image-tag", required=True,
+                        help="team image tag that produced the artifacts")
+    parser.add_argument("--artifact-uri", required=True,
+                        help="s3:// URI the partial parse will be uploaded to")
+    parser.add_argument("--controller-context", required=True,
+                        help="canonical JSON parse context from the controller")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        descriptor = export_runtime_artifacts(
+            manifest_path=args.manifest,
+            partial_parse_path=args.partial_parse,
+            output_dir=args.output_dir,
+            service_name=args.service_name,
+            release_id=args.release_id,
+            image_tag=args.image_tag,
+            artifact_uri=args.artifact_uri,
+            controller_context=args.controller_context,
+        )
+    except Exception as exc:
+        print(f"continuo-export-runtime-manifest: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"continuo-export-runtime-manifest: exported {descriptor['format']} "
+        f"sha256={descriptor['sha256']} -> {args.output_dir}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

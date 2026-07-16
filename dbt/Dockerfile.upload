@@ -7,6 +7,13 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir uv
 
+# pytest sits in this image's interpreter, alongside the s3-sidecar's own boto3
+# dependency, so the suite can run against the dbt-base runtime modules exactly
+# as they are installed in production team images:
+# `docker exec dbt-compile-and-load python -m pytest tests/`. This is a
+# continuo-owned test/support image; production team images stay pytest-free.
+RUN pip install --no-cache-dir pytest boto3
+
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 
@@ -15,11 +22,16 @@ COPY targets.yaml .
 # Kept so tests can be run via: docker exec dbt-compile-and-load uv run --with pytest pytest tests/
 # (covers compile_uploader, s3_common, cli, and config tests)
 COPY tests/ ./tests/
-# The two s3-sidecar scripts are copied here for TEST/integration harness use only
-# (run via `docker exec dbt-compile-and-load pytest`). In PRODUCTION each script runs
-# in the dedicated s3-sidecar image (python+boto3, no dbt), keeping S3 access entirely
-# out of any dbt image. The dbt+sidecar co-residence in this image is test-only and does
-# not violate production isolation.
+# The s3-sidecar scripts are copied here for TEST/integration harness use only
+# (run via `docker exec dbt-compile-and-load pytest`). They land twice, for the
+# two ways the suite reaches them: ./s3-sidecar/ is the path pyproject's
+# `pythonpath = [".", "s3-sidecar"]` resolves against, so unit tests import them;
+# the root copies mirror the production s3-sidecar image's layout, so the
+# integration tests exec them exactly as the compile Job does. In PRODUCTION each
+# script runs in the dedicated s3-sidecar image (python+boto3, no dbt), keeping
+# S3 access entirely out of any dbt image. The dbt+sidecar co-residence in this
+# image is test-only and does not violate production isolation.
+COPY s3-sidecar/ ./s3-sidecar/
 COPY s3-sidecar/s3_common.py /s3_common.py
 COPY s3-sidecar/compile_uploader.py /compile_uploader.py
 
