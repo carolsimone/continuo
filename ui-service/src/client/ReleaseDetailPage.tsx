@@ -52,6 +52,10 @@ export default function ReleaseDetailPage() {
   const navigate = useNavigate();
   const [rel, setRel] = useState<ReleaseDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Set only when a poll fails after we already have last-good data (as opposed
+  // to the initial load, which uses `error` above). Non-blocking: the page keeps
+  // showing `rel` and this just surfaces that a retry is pending.
+  const [pollError, setPollError] = useState<string | null>(null);
   // Per (stage, node_id) FIX-cell state, bucketed from the node's remediation
   // proposals: 'proposed' when a fix is ready to review, 'generating' while a fix
   // is still in flight. Nodes with only terminal-but-blank outcomes
@@ -66,16 +70,34 @@ export default function ReleaseDetailPage() {
     if (!id) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Local to this effect run, updated only by its own successful ticks, so a
+    // catch handler can tell an initial-load failure (no data yet) apart from a
+    // mid-poll failure (we already have something to keep showing) without
+    // racing the async setRel/setPollError state updates.
+    let lastGood: ReleaseDetail | null = null;
 
     const tick = () => {
       fetch(`/api/releases/${id}`)
         .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then((data: ReleaseDetail) => {
           if (cancelled) return;
+          lastGood = data;
           setRel(data);
+          setPollError(null);
           if (!TERMINAL_RELEASE_STATUSES.has(data.status)) timer = setTimeout(tick, POLL_INTERVAL_MS);
         })
-        .catch(e => { if (!cancelled) setError(e.message); });
+        .catch(e => {
+          if (cancelled) return;
+          if (lastGood) {
+            // Transient failure after a successful load: keep showing the
+            // last-good view, surface a non-blocking indicator, and keep
+            // retrying rather than stopping live updates.
+            setPollError(e.message);
+            if (!TERMINAL_RELEASE_STATUSES.has(lastGood.status)) timer = setTimeout(tick, POLL_INTERVAL_MS);
+          } else {
+            setError(e.message);
+          }
+        });
     };
     tick();
 
@@ -91,6 +113,16 @@ export default function ReleaseDetailPage() {
     .map(n => proposalKey(n.stage, n.node_id));
   const failedKey = failedKeys.slice().sort().join('\n');
 
+  // Proposals are produced only after a release is rejected (failure
+  // classification → LLM fix proposal runs off release.rejected:v1), so a node
+  // can already appear 'failed' in per_node_results while the release is still
+  // 'validating' (live updates land mid-run) without any proposal existing yet.
+  // Gating on rejected — and keying the effect on it — means the poll starts
+  // fresh exactly at the live transition to rejected, instead of having already
+  // started (and possibly capped out via MAX_POLLS) before there was anything
+  // to find.
+  const isRejected = rel?.status === 'rejected';
+
   // Poll for remediation proposals so the FIX cell surfaces the "Generating fix…"
   // chip and then the "Proposed fix available →" link without a manual refresh.
   // Polling runs only while a failed node has not yet reached a ready proposal,
@@ -98,7 +130,7 @@ export default function ReleaseDetailPage() {
   // (which never produce a ready proposal) do not poll forever. Errors are
   // swallowed so a transient failure never breaks the page; the next tick retries.
   useEffect(() => {
-    if (!id) return;
+    if (!id || !isRejected) return;
     const failed = failedKey ? failedKey.split('\n') : [];
 
     let cancelled = false;
@@ -155,7 +187,7 @@ export default function ReleaseDetailPage() {
     }
 
     return () => { cancelled = true; stop(); };
-  }, [id, failedKey]);
+  }, [id, isRejected, failedKey]);
 
   if (error) {
     return (
@@ -181,6 +213,12 @@ export default function ReleaseDetailPage() {
       {rel.reject_reason && (
         <div className="info-strip info-strip--error">
           <span className="info-strip__icon">⚠</span>{reasonLabel(rel.reject_reason)}
+        </div>
+      )}
+
+      {pollError && (
+        <div className="info-strip info-strip--warning">
+          <span className="info-strip__icon">⚠</span>Live updates temporarily unavailable — retrying…
         </div>
       )}
 
