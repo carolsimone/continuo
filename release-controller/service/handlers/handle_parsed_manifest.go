@@ -40,10 +40,16 @@ type HandleParsedManifestInput struct {
 // and the topology disagree about what this release contains, and silently
 // dropping the key would hide that.
 func attachRuntimeManifests(topo release.Topology, refs map[string]pkgmodel.RuntimeManifestRef) (release.Topology, error) {
+	invalid := make([]string, 0, len(refs))
 	for svc, ref := range refs {
 		if err := ref.Validate(); err != nil {
-			return nil, fmt.Errorf("runtime manifest for service %q: %w", svc, err)
+			invalid = append(invalid, svc)
 		}
+	}
+	if len(invalid) > 0 {
+		sort.Strings(invalid)
+		svc := invalid[0]
+		return nil, fmt.Errorf("runtime manifest for service %q: %w", svc, refs[svc].Validate())
 	}
 
 	services := make(map[string]bool, len(topo))

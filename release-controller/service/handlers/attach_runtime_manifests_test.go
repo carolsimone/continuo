@@ -111,6 +111,29 @@ func TestAttachRuntimeManifestsRejectsPartialRef(t *testing.T) {
 	assert.Contains(t, err.Error(), "finance")
 }
 
+func TestAttachRuntimeManifestsReportsDeterministicallyWithTwoMalformedRefs(t *testing.T) {
+	// Two malformed refs in the same map: iteration order over a Go map is
+	// randomized, so without sorting the reported service could differ from run
+	// to run even though the inputs are identical. That instability leaks into
+	// the persisted release.rejected:v1 error_detail. The lexically-first
+	// service name ("finance" < "sales") must always be the one named.
+	topo := release.Topology{
+		{UniqueID: "public.orders", ServiceName: "finance"},
+		{UniqueID: "public.leads", ServiceName: "sales"},
+	}
+	refs := map[string]pkgmodel.RuntimeManifestRef{
+		"sales":   {RuntimeManifestURI: "s3://continuo/sales/rA/manifest.msgpack"},   // partial
+		"finance": {RuntimeManifestURI: "s3://continuo/finance/rA/manifest.msgpack"}, // partial
+	}
+
+	for i := 0; i < 20; i++ {
+		_, err := attachRuntimeManifests(topo, refs)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `"finance"`, "must always name the lexically-first offending service")
+		assert.NotContains(t, err.Error(), `"sales"`)
+	}
+}
+
 func TestRuntimeManifestForServiceReturnsTheSharedRef(t *testing.T) {
 	topo := release.Topology{
 		{UniqueID: "public.orders", ServiceName: "finance", RuntimeManifestRef: completeRuntimeRef()},
