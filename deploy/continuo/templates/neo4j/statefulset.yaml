@@ -9,6 +9,8 @@ metadata:
   labels:
     {{- include "continuo.labels" . | nindent 4 }}
     app.kubernetes.io/name: neo4j
+  annotations:
+    ignore-check.kube-linter.io/no-read-only-root-fs: "neo4j entrypoint writes config at startup"
 spec:
   serviceName: {{ include "continuo.neo4j.fullname" . }}
   replicas: 1
@@ -19,8 +21,6 @@ spec:
     metadata:
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" "neo4j") | nindent 8 }}
-      annotations:
-        ignore-check.kube-linter.io/no-read-only-root-fs: "neo4j entrypoint writes config at startup"
     spec:
       securityContext:
         {{- include "continuo.podSecurityContext" . | nindent 8 }}

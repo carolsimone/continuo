@@ -6,8 +6,9 @@ metadata:
   labels:
     {{- include "continuo.labels" . | nindent 4 }}
     app.kubernetes.io/name: db-init-migrate
-  {{- if not .Values.postgresql.enabled }}
   annotations:
+    ignore-check.kube-linter.io/no-read-only-root-fs: "flyway writes reports under /flyway"
+    {{- if not .Values.postgresql.enabled }}
     # BYO database exists before install → strict pre-install/pre-upgrade
     # ordering, exactly like the previous production flow. With the bundled
     # Postgres this Job is a regular resource instead: pre-install hooks run
@@ -15,18 +16,21 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-5"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-  {{- end }}
+    {{- end }}
 spec:
   backoffLimit: 3
   {{- if .Values.postgresql.enabled }}
   ttlSecondsAfterFinished: 86400
+  {{- else }}
+  # Hook Job: helm's before-hook-creation/hook-succeeded delete policy already
+  # sweeps it on the next install and on success. This TTL is the backstop for
+  # a FAILED hook run, giving an hour to inspect logs before it is swept too.
+  ttlSecondsAfterFinished: 3600
   {{- end }}
   template:
     metadata:
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" "db-init-migrate") | nindent 8 }}
-      annotations:
-        ignore-check.kube-linter.io/no-read-only-root-fs: "flyway writes reports under /flyway"
     spec:
       restartPolicy: OnFailure
       securityContext:
@@ -82,6 +86,9 @@ spec:
                 fi
                 psql -d "${db}" -c "GRANT ALL ON SCHEMA public TO \"${PGUSER}\""
               done
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
       {{- end }}
       containers:
         - name: migrate

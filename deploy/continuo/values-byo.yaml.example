@@ -1,0 +1,60 @@
+# Example production values: every bundled datastore disabled, credentials
+# from a pre-created Secret. Copy, adapt, and pass with -f.
+global:
+  imageRegistry: ghcr.io
+  imageRepositoryPrefix: carolsimone
+  imageTag: ""              # pin to a released version
+
+postgresql:
+  enabled: false
+externalDatabase:
+  host: postgres.internal.example.com
+  port: 5432
+  username: continuo
+  existingSecret: continuo-datastores   # key: postgres-password (override with existingSecretPasswordKey)
+  existingSecretPasswordKey: postgres-password
+  sslMode: require
+
+redis:
+  enabled: false
+externalRedis:
+  host: redis.internal.example.com
+  port: 6379
+  existingSecret: continuo-datastores
+  existingSecretPasswordKey: redis-password
+
+neo4j:
+  enabled: false
+externalNeo4j:
+  uri: bolt://neo4j.internal.example.com:7687
+  username: neo4j
+  existingSecret: continuo-datastores
+  existingSecretPasswordKey: neo4j-password
+
+minio:
+  enabled: false
+s3:
+  endpointUrl: https://s3.eu-central-1.amazonaws.com
+  bucket: continuo-prod
+  region: eu-central-1
+  existingSecret: continuo-s3           # keys: access-key-id, secret-access-key
+
+dex:
+  enabled: false
+auth:
+  publicUrl: https://continuo.example.com
+  issuerUrl: https://accounts.google.com
+  clientId: your-oauth-client-id
+  existingSecret: continuo-oidc         # key: client-secret
+  operatorEmails: ops@example.com
+  viewerEmails: team@example.com
+
+databaseInit:
+  enabled: true    # set false if your DBA pre-creates the 9 databases
+
+ingress:
+  enabled: true
+  className: nginx
+  host: continuo.example.com
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
