@@ -78,84 +78,43 @@ func seedValidationNodes(t *testing.T, deps *handlers.Deps, releaseID string, no
 	}
 }
 
-// TestHandleValidationResult_IncompleteProjection_ReturnsErrorForRedelivery
-// covers the completeness barrier: when the terminal validation.completed:v1
-// arrives before every per-node projection has landed (the two events travel on
-// separate streams), the handler must return an error so the message redelivers
-// and retries once the missing per-node results are stored. Here node "b" has no
-// stored result, so the decision must defer rather than promote or reject.
-func TestHandleValidationResult_IncompleteProjection_ReturnsErrorForRedelivery(t *testing.T) {
+// TestHandleValidationResult_MissingNode_AggregateOK_Promotes covers the only
+// way a node can be absent from the store under a single in-order consumer: its
+// projection write was permanently dropped. The decision must not block or treat
+// the absent node as failing. Node "b" is never stored; because the authoritative
+// aggregate_status is "ok" (the dropped row's node actually passed), the release
+// must PROMOTE and the missing node must not be fabricated as failing.
+func TestHandleValidationResult_MissingNode_AggregateOK_Promotes(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 
-	// Only node "a" has been projected; "b" is still in flight.
+	// Only node "a" projected; "b"'s projection write was permanently dropped.
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 
-	now := deps.Clock.Now()
-
-	// Recently emitted (well within the escape grace): the barrier must defer.
-	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID:       "rA",
-		AggregateStatus: "ok",
-		EmittedAt:       now.Add(-1 * time.Minute),
-	})
-	require.Error(t, err, "barrier must defer (error) so the message redelivers until b is projected")
-
-	// A zero EmittedAt (no parseable millis prefix on the message ID) must also
-	// defer rather than escape: without a trustworthy age the barrier stays closed.
-	err = handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID:       "rA",
-		AggregateStatus: "ok",
-	})
-	require.Error(t, err, "zero EmittedAt must defer, not escape the barrier")
-
-	// The release must not have been decided while the projection is incomplete.
-	r, err := store.GetRelease("rA")
-	require.NoError(t, err)
-	assert.Equal(t, release.StatusValidating, r.Status())
-}
-
-// TestHandleValidationResult_IncompleteProjection_EscapesAfterGrace_AggregateOK_Promotes
-// is the key correctness case for the bounded barrier escape. A per-node
-// projection row for "b" was permanently lost (its outbox retries were
-// exhausted), so it is never stored. Once the terminal event is older than the
-// escape grace, the barrier stops waiting and decides from the authoritative
-// aggregate_status. Because the aggregate says "ok" (the lost row's node
-// actually passed), the release must PROMOTE — the absent display row must not
-// be treated as a failing node.
-func TestHandleValidationResult_IncompleteProjection_EscapesAfterGrace_AggregateOK_Promotes(t *testing.T) {
-	deps, store := seedToValidating(t, "rA")
-
-	// Only node "a" projected; "b"'s projection row was permanently lost.
-	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
-
-	now := deps.Clock.Now()
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
 		ReleaseID:       "rA",
 		AggregateStatus: "ok",
-		EmittedAt:       now.Add(-6 * time.Minute), // older than the escape grace
 	}))
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusPromoted, r.Status(),
-		"past the grace a missing display row must not reject a release the aggregate says passed")
+		"a missing audit row must not reject a release the aggregate says passed")
 	assert.Empty(t, r.FailingNodes(), "the missing node must not be fabricated as failing")
 }
 
-// TestHandleValidationResult_IncompleteProjection_EscapesAfterGrace_AggregateFailed_Rejects
-// verifies the escape still rejects when the authoritative aggregate_status is
-// not ok. Node "b" is missing and node "a" passed, so no present node is
-// failing; the rejection rests entirely on aggregate_status.
-func TestHandleValidationResult_IncompleteProjection_EscapesAfterGrace_AggregateFailed_Rejects(t *testing.T) {
+// TestHandleValidationResult_MissingNode_AggregateFailed_Rejects verifies that a
+// missing node does not itself count as failing, but the decision still rejects
+// when the authoritative aggregate_status is not ok. Node "b" is absent and node
+// "a" passed, so no present node is failing; the rejection rests entirely on
+// aggregate_status.
+func TestHandleValidationResult_MissingNode_AggregateFailed_Rejects(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
 
-	now := deps.Clock.Now()
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
 		ReleaseID:       "rA",
 		AggregateStatus: "failed",
-		EmittedAt:       now.Add(-6 * time.Minute),
 	}))
 
 	r, err := store.GetRelease("rA")
@@ -166,8 +125,8 @@ func TestHandleValidationResult_IncompleteProjection_EscapesAfterGrace_Aggregate
 }
 
 // TestHandleValidationResult_CompleteProjection_Promotes verifies that once every
-// expected per-node result is stored and the aggregate is ok, the barrier passes
-// and the release promotes.
+// expected per-node result is stored and the aggregate is ok, the release
+// promotes.
 func TestHandleValidationResult_CompleteProjection_Promotes(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
@@ -206,14 +165,13 @@ func TestHandleValidationResult_FailedNodeInStore_Rejects(t *testing.T) {
 	assert.Equal(t, []string{"a"}, r.FailingNodes())
 }
 
-// TestHandleValidationResult_SkippedNodeInStore_CompletesBarrierAndRejects
-// verifies that a per-node result with status "skipped" (emitted for a node whose
-// upstream failed validation, so it never ran) satisfies the completeness barrier
-// and counts as failing: the release rejects and names the skipped node. This is
-// the read-model side of the executor-controller emitting a skip projection for
-// every node its failure propagation skips — without it the barrier would wait
-// forever for that node and the release would hang in validating.
-func TestHandleValidationResult_SkippedNodeInStore_CompletesBarrierAndRejects(t *testing.T) {
+// TestHandleValidationResult_SkippedNodeInStore_Rejects verifies that a per-node
+// result with status "skipped" (emitted for a node whose upstream failed
+// validation, so it never ran) is present in the store and counts as failing:
+// the release rejects and names the skipped node. This is the read-model side of
+// the executor-controller emitting a skip projection for every node its failure
+// propagation skips, so the node is present rather than absent from the store.
+func TestHandleValidationResult_SkippedNodeInStore_Rejects(t *testing.T) {
 	deps, store := seedToValidating(t, "rA")
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
 		{NodeID: "a", Status: "failed", DBTLogURI: "s3://l"},
@@ -323,11 +281,6 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 	require.NoError(t, json.Unmarshal(topLevel["stage"], &stage))
 	assert.Equal(t, "validation", stage)
 }
-
-// A terminal event whose expected nodes are not all projected yet (the empty- or
-// partial-result cases that previously rejected) now defers via the completeness
-// barrier instead of rejecting. Those scenarios are covered by
-// TestHandleValidationResult_IncompleteProjection_ReturnsErrorForRedelivery.
 
 // seedToValidatingWithURIs is like seedToValidating but uses a two-node topology
 // where each node carries a CandidateSQLURI so the rejected payload enrichment
