@@ -19,9 +19,9 @@ import (
 // ValidationNodeCompletedHandler processes validation.node.completed:v1 events.
 // It attaches the per-node terminal outcome to the matching (release_id, node_id)
 // validation deployment, then runs the shared per-release aggregate-emit gate so
-// validation.completed:v1 fires exactly once when every node of a release is
-// terminal. The handler is pure orchestration: it never parses JSON, manages the
-// transaction, or runs dedup itself.
+// validation.result:v1 (kind=complete) fires exactly once when every node of a
+// release is terminal. The handler is pure orchestration: it never parses JSON,
+// manages the transaction, or runs dedup itself.
 type ValidationNodeCompletedHandler struct {
 	logger *slog.Logger
 }

@@ -1,6 +1,7 @@
 // Package validation holds the shared, infrastructure-free gate that emits the
-// per-release validation.completed:v1 aggregate once every mode=validation node
-// for a release has reached a terminal outcome. It is used by two call sites:
+// per-release validation.result:v1 (kind=complete) aggregate once every
+// mode=validation node for a release has reached a terminal outcome. It is
+// used by two call sites:
 // the deploy dispatcher (when a node fails AT dispatch) and the
 // validation.node.completed:v1 handler (when a node terminates after dispatch).
 // Both must run identical logic and share one immutable dedup namespace, so the
@@ -22,9 +23,10 @@ import (
 )
 
 // EventTypeValidationCompleted is the canonical outbox event_type string for
-// the validation.completed:v1 aggregate event. Defined here (service layer) so
-// both the emit site (aggregate.go) and the publisher adapter (adapters/publisher)
-// share one source of truth without requiring the service to import an adapter.
+// the validation.result:v1 (kind=complete) aggregate event. Defined here
+// (service layer) so both the emit site (aggregate.go) and the publisher
+// adapter (adapters/publisher) share one source of truth without requiring
+// the service to import an adapter.
 const EventTypeValidationCompleted = "validation_completed"
 
 // EventTypeSeedBuildCompleted is the canonical outbox event_type string for
@@ -43,7 +45,7 @@ const EventTypeCompileCompleted = "compile_completed"
 const EventTypeValidationNodeResult = "validation_node_result"
 
 // DedupNamespace seeds the deterministic aggregate_id for a release's
-// validation.completed:v1 outbox row so a re-emission (e.g. a retried batch that
+// validation.result:v1 (kind=complete) outbox row so a re-emission (e.g. a retried batch that
 // re-wins the sentinel after a crash between INSERT and commit) deduplicates to
 // one published event in the consumer. IMMUTABLE: changing it would let an
 // already-published aggregate re-publish under a new id. This is the single
@@ -100,8 +102,8 @@ var compileEmit = emitConfig{
 	mode:       model.ModeCompile,
 }
 
-// EmitValidationAggregateIfComplete emits validation.completed:v1 for releaseID
-// once every mode=validation row for that release has reached a terminal
+// EmitValidationAggregateIfComplete emits validation.result:v1 (kind=complete)
+// for releaseID once every mode=validation row for that release has reached a terminal
 // outcome. It is a no-op while any node is still pending. It first takes a
 // per-release transaction advisory lock so the count -> claim -> emit sequence
 // is serialized across concurrent transactions, then the sentinel ClaimEmission
@@ -167,7 +169,9 @@ func EmitSeedBuildAggregateIfComplete(
 // assumes the per-release advisory lock is ALREADY held (taken by the public
 // wrapper or by SettleNodeTerminal) and must never take it itself, so a settle
 // that already locked once does not double-lock. It counts pending nodes, claims
-// the emission sentinel, and writes the validation.completed:v1 outbox row.
+// the emission sentinel, and writes the outbox row for the leg's completion
+// event (validation.result:v1 kind=complete, seed.build.completed:v1, or
+// compile.completed:v1).
 func emitAggregateIfComplete(
 	ctx context.Context,
 	depRepo repository.DeploymentRepository,
