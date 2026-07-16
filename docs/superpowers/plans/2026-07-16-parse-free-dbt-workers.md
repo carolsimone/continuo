@@ -25,6 +25,7 @@
 - There is no automatic full-project parse fallback. Missing fields on historical pre-migration messages select Jobs; a migrated node with `dbt_unique_id` but an incomplete runtime reference fails worker dispatch explicitly.
 - Warehouse execution remains at-least-once.
 - Every shell command in this plan is run through `rtk` and tests run in repository Docker images/containers.
+- Go service tests are gated by `rtk make test-go SERVICE=<service>` run on the host, matching CI: it brings up the data dependencies and runs `go test -tags integration`. `rtk docker exec <service> go test ...` is for fast focused iteration only and its result is not the gate — the dev images never `COPY` `deploy/` or `config/`, so the config-dialect tests (for example `TestDeployedConfigResolvesFinanceDialect`) cannot pass in-container and only pass on the host. Python and dbt-image tests continue to run through `rtk docker exec` exactly as each task specifies.
 
 ## File structure
 
@@ -399,6 +400,9 @@ def _file_hash(value) -> dict[str, str]:
     return {"name": value.name, "checksum": value.checksum}
 
 
+PARSE_CONTEXT_ENV_KEYS: tuple[str, ...] = (...)  # fixed allowlist; see below
+
+
 def parse_context_sha256(manifest: Manifest, controller_context: str) -> str:
     controller = json.loads(controller_context)
     state = manifest.state_check
@@ -416,7 +420,7 @@ def parse_context_sha256(manifest: Manifest, controller_context: str) -> str:
         },
         "parse_env_sha256": {
             key: hashlib.sha256(os.environ.get(key, "").encode()).hexdigest()
-            for key in sorted(manifest.env_vars)
+            for key in PARSE_CONTEXT_ENV_KEYS
         },
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -424,6 +428,17 @@ def parse_context_sha256(manifest: Manifest, controller_context: str) -> str:
 ```
 
 The same function is imported by the exporter and the worker. It stores hashes, never plaintext environment values.
+
+The environment portion hashes a **fixed allowlist**, not `manifest.env_vars`. This digest is computed in the compile pod and recompared in the worker pod (Task 11 Step 4), which hard-fails startup on mismatch with no fallback — so it may only span environment variables that are provably identical in *both* pods. `manifest.env_vars` is whatever the project happened to read, which includes candidate/validation-scoped values: the compile pod runs with a candidate `DBT_TARGET_SCHEMA` and the production worker runs with the prod schema, so any project calling `env_var('DBT_TARGET_SCHEMA')` would produce a permanently unready pool.
+
+Rules for `PARSE_CONTEXT_ENV_KEYS`:
+
+- `DBT_TARGET_SCHEMA` must NOT be hashed here, nor may any other candidate/validation-scoped or otherwise schema-varying variable.
+- Determine the concrete list from evidence, not guesswork: read the compile-Job pod spec built in Task 2 Step 7 and the worker pod spec built in Task 14 Step 5, and admit a key only if both specs set it to the same value for the same release.
+- Document beside the constant why each member is invariant across the two pods.
+- Define the constant exactly once in the shared `parse_context` module and import it in both the exporter and the worker, so the two sides cannot drift.
+
+Keep the `controller` and `state_check` portions of the payload exactly as written above.
 
 - [ ] **Step 4: Implement export and descriptor validation**
 
@@ -567,7 +582,7 @@ def test_parser_preserves_dbt_unique_id(tmp_path):
 
 
 def test_publish_ok_includes_one_runtime_ref_per_service(redis):
-    publisher.publish_ok("r1", topology=[], runtime_manifests={
+    publisher.publish_ok(release_id="r1", topology=[], runtime_manifests={
         "service-1": RuntimeManifestRef(
             uri="s3://continuo/service-1/r1/partial_parse.msgpack",
             sha256="a" * 64,
@@ -578,6 +593,8 @@ def test_publish_ok_includes_one_runtime_ref_per_service(redis):
     body = json.loads(redis.last_fields["payload"])
     assert body["runtime_manifests"]["service-1"]["runtime_manifest_sha256"] == "a" * 64
 ```
+
+This test is the authority on the publisher's contract: `publish_ok` accepts `RuntimeManifestRef` objects and calls `.to_wire()` internally when serializing, so callers never pre-serialize.
 
 Also test missing descriptor → `None` for old releases, malformed descriptor → permanent `MalformedRuntimeManifest` publication, descriptor service mismatch, and descriptor path derivation.
 
@@ -654,11 +671,13 @@ self._publisher.publish_ok(
     release_id=release_id,
     topology=topology,
     runtime_manifests={
-        mf.declared_service: mf.runtime_manifest.to_wire()
+        mf.declared_service: mf.runtime_manifest
         for mf in manifests if mf.runtime_manifest is not None
     },
 )
 ```
+
+The caller passes `RuntimeManifestRef` objects; the publisher calls `.to_wire()` when it serializes the payload.
 
 The empty-topology path passes `runtime_manifests={}` explicitly.
 
@@ -843,7 +862,7 @@ Keep `release.requested:v1` manifest entries unchanged. Each unchanged service r
 
 ```bash
 rtk docker compose build release-controller
-rtk docker exec release-controller go test ./... -count=1
+rtk make test-go SERVICE=release-controller
 ```
 
 Expected: PASS.
@@ -947,7 +966,7 @@ Old rows/events omit all new fields.
 
 ```bash
 rtk docker compose build orchestrator
-rtk docker exec orchestrator go test ./... -count=1
+rtk make test-go SERVICE=orchestrator
 ```
 
 Expected: PASS, including promotion-during-run and source-pinned selector tests.
@@ -1002,6 +1021,7 @@ rtk git commit -m "feat: pin dbt runtime manifests in run snapshots"
 - Modify: `executor-controller/main.go`
 - Modify: `executor-controller/adapters/redis/{query_model,retry_task,validation_node_completed,validation_requested}_binding_integration_test.go`
 - Modify: `executor-controller/service/deployer/validation_pipeline_integration_test.go`
+- Modify: `pkg/streams/handler_imports_test.go`
 
 - [ ] **Step 1: Write aggregate transition tests**
 
@@ -1202,6 +1222,8 @@ type ReconstituteInput struct {
 
 Keep `NewDeployment` as the Jobs-compatible constructor and add `NewWorkerDeployment`. Add statuses `dispatching`, `leased`, `running`, `retry_pending`, `succeeded`, and `cancelled`.
 
+Every transition that ends a worker's hold on capacity — `Complete`, `MarkRetryPending`, `MarkFailed`, and `Cancel` — sets `Reservation.ReleasedAt` inside the aggregate transition itself. The slot release is therefore never a separate caller step, and no call site (lease completion, reaper expiry, cancellation) can forget it. The repository's `ReleaseSlot` stays in the port for the Jobs path only, where a Kubernetes Job terminal event releases a reservation with no aggregate transition of its own.
+
 - [ ] **Step 6: Extend repository ports with atomic operations**
 
 ```go
@@ -1257,6 +1279,8 @@ Change main and integration-test factories to `postgres.NewUnitOfWork`. Move the
 
 Move `CancelledSchedulesRepository` into `domain/repository/cancelled_schedules.go` in the same commit and add `var _ repository.CancelledSchedulesRepository = (*cancelledSchedulesRepository)(nil)` in the adapter; this lets the UoW interface return only inward-owned ports.
 
+After the relocation, broaden the AST guard `TestServiceHandlersDoNotImportAdapters` in `pkg/streams/handler_imports_test.go`: replace the three narrow entries `executor-controller/service/{handlers,deployer,validation}` in `handlerDirs` with the single entry `executor-controller/service`, following the existing `orchestrator/service` precedent. This guards every application package this plan adds under that tree (`lease`, `routing`, `tasklifecycle`, `pool`, `reaper`, `workerapi`, `telemetry`, `runtimecontext`, `uow`) and every future one, with no further guard edits. Broadening is only safe once this step's relocation has removed the last `adapters/postgres` import from `service/uow`; make the guard change in the same commit so the tree is green.
+
 - [ ] **Step 8: Prove concurrency against real Postgres**
 
 Start `MAX+10` application-service calls claiming across two pools and reserving Jobs. Assert:
@@ -1279,7 +1303,7 @@ Expected: PASS with no duplicate deployment and no cap overflow.
 
 ```bash
 rtk docker exec executor-controller go test ./domain/model ./adapters/postgres ./service/uow -count=1
-rtk git add db/migration/executor executor-controller/domain executor-controller/adapters/postgres executor-controller/service/uow
+rtk git add db/migration/executor executor-controller/domain executor-controller/adapters/postgres executor-controller/service/uow pkg/streams/handler_imports_test.go
 rtk git commit -m "feat: add durable worker leases and execution slots"
 ```
 
@@ -1520,10 +1544,18 @@ Remove `CountActive` from `deploy.Deployer` and the K8s adapter. Dispatcher flow
 transaction A: lock capacity -> reserve one due Jobs-mode deployment -> status dispatching -> commit
 Kubernetes: create idempotent Job outside transaction
 transaction B success: status deployed + node.deployed outbox -> commit
-transaction B failure: release slot + existing retry/failure transition -> commit
+transaction B failure: existing retry/failure transition, which releases the slot -> commit
 ```
 
-`DispatcherConfig.BatchSize == 0` resolves to `maxConcurrent`, not `50`. Before reserving new work, each dispatcher tick selects one stale `dispatching` reservation, keeps its slot reserved, repeats the idempotent Job create, and finalizes the deployed/failure transaction. This closes the create/commit crash window without temporarily undercounting an already-running Job.
+`DispatcherConfig.BatchSize == 0` resolves to `maxConcurrent`, not `50`. `main.go` currently hardcodes the other half of this literal:
+
+```go
+deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
+```
+
+Remove that `BatchSize: 50` so the construction site carries no fallback literal either; the batch size comes from configuration exactly as `MAX_CONCURRENT_EXECUTIONS` does — required, positive, and with no default baked into application logic. Passing `BatchSize: 0` and letting the dispatcher resolve it to `maxConcurrent` satisfies this; a hardcoded `50` anywhere in application logic does not.
+
+Before reserving new work, each dispatcher tick selects one stale `dispatching` reservation, keeps its slot reserved, repeats the idempotent Job create, and finalizes the deployed/failure transaction. This closes the create/commit crash window without temporarily undercounting an already-running Job.
 
 - [ ] **Step 5: Observe promote-seed Jobs too**
 
@@ -1557,7 +1589,7 @@ Wire `streams.ExecutorJobTerminalV1`/`streams.ExecutorJobTerminal` in `main.go` 
 
 ```bash
 rtk docker exec executor-controller go test ./service/deployer ./adapters/k8s ./adapters/redis ./service/handlers -count=1
-rtk docker exec k8s-controller go test ./... -count=1
+rtk make test-go SERVICE=k8s-controller
 rtk docker exec manifest-controller uv run pytest -v tests/test_streams_contract.py
 ```
 
@@ -1587,6 +1619,8 @@ rtk git commit -m "feat: enforce one execution budget across jobs and workers"
 - Modify: `k8s-controller/domain/event/event.go`
 - Modify: `k8s-controller/adapters/publisher/outbox_publisher.go` and tests
 - Modify: `pkg/streams/contract.yaml` producer descriptions for existing lifecycle streams
+- Modify: `pkg/streams/streams.gen.go`
+- Modify: `manifest-controller/streams_contract.py`
 
 - [ ] **Step 1: Write application-service tests**
 
@@ -1640,6 +1674,14 @@ retry.task:v1 producers: [k8s-controller, executor-controller]
 task.execution.recorded:v1 producers: [k8s-controller, executor-controller]
 task.status.updated:v1 producers: [executor-controller, k8s-controller, orchestrator]
 ```
+
+`contract.yaml` is the generator input, so editing it is not the end of the change. Regenerate the bindings and commit them with this task:
+
+```bash
+rtk go generate ./pkg/streams/...
+```
+
+Commit the regenerated `pkg/streams/streams.gen.go` and `manifest-controller/streams_contract.py` alongside `contract.yaml`; CI runs `go generate && git diff --exit-code` and fails on stale bindings.
 
 - [ ] **Step 4: Implement atomic claim and heartbeat**
 
@@ -1731,7 +1773,7 @@ pkgevents.TaskRetry{
 }
 ```
 
-The current row becomes `retry_pending` and releases its slot before the outbox row is written. The retry handler requeues this same row after its recorded backoff.
+`MarkRetryPending` moves the current row to `retry_pending` and releases its execution slot inside that same aggregate transition, before the outbox row is written; the service calls no separate `ReleaseSlot`. The retry handler requeues this same row after its recorded backoff.
 
 Place the three fan-out variants in `service/tasklifecycle.Fanout` so lease completion and lease-expiry recovery call the same application code:
 
@@ -1763,7 +1805,7 @@ Executor publisher handles `task_execution_recorded` and `task_retry` through sh
 ```bash
 rtk docker exec executor-controller go test ./service/lease ./service/handlers ./adapters/publisher -count=1
 rtk docker exec k8s-controller go test ./domain/event ./adapters/publisher ./service/handlers -count=1
-rtk git add pkg/events pkg/streams/contract.yaml executor-controller k8s-controller
+rtk git add pkg/events pkg/streams/contract.yaml pkg/streams/streams.gen.go manifest-controller/streams_contract.py executor-controller k8s-controller
 rtk git commit -m "feat: complete worker leases through existing lifecycle streams"
 ```
 
@@ -1922,7 +1964,7 @@ Add `S3 pkgconfig.S3Config` to executor config and construct the presigner, auth
 
 ```bash
 rtk docker compose build executor-controller
-rtk docker exec executor-controller go test ./... -count=1
+rtk make test-go SERVICE=executor-controller
 ```
 
 Modify:
@@ -2255,9 +2297,11 @@ Stream both pipes into the task log without changing bytes presented to the wrap
 Parse JSON event `info.code` values:
 
 ```python
-CACHE_ACCEPTED = {"I017"}  # no changes; parsing skipped
-CACHE_REJECTED = {"I016", "I024", "I028", "I040"}
+CACHE_ACCEPTED = {"I017", "I040"}  # no changes/parsing skipped; partial parse ran
+CACHE_REJECTED = {"I016", "I024", "I028"}
 ```
+
+I017 (no changes detected, parsing skipped) and I040 (`PartialParsingEnabled`, the partial parse ran off the reused manifest) both confirm the cached manifest was used; I016, I024, and I028 mean partial parsing failed or was disabled.
 
 For `wrapper_required`: terminate the process group immediately on a rejected code; after exit require exactly one accepted observation. Missing acceptance returns `runtime_manifest_unverified`. For `wrapper_opaque`, record observations but do not require dbt events. Neither path is labeled native.
 
@@ -2537,7 +2581,7 @@ rtk git commit -m "feat: reconcile reusable dbt worker pools"
 - [ ] **Step 1: Write failure and cancellation tests**
 
 ```text
-expired pending lease -> fence token -> request exact pod UID deletion -> release slot -> retry_pending
+expired pending lease -> fence token -> request exact pod UID deletion -> retry_pending with its slot released
 expired final attempt -> fence/delete -> permanent FAILED fan-out
 delete API failure -> transaction rolls back; no new worker can claim
 pending schedule cancellation -> cancelled without pod deletion
@@ -2579,7 +2623,7 @@ if err := terminator.DeletePod(ctx, lease.PodName, lease.PodUID); err != nil {
     return err // transaction rollback leaves current lease authoritative
 }
 if dep.Command().TaskRetryCount+1 < dep.Command().TaskMaxRetries {
-    dep.MarkRetryPending(now, backoff)
+    dep.MarkRetryPending(now, backoff) // releases the execution slot in-transition
     result := model.WorkerResult{
         Succeeded: false, Retryable: true,
         ErrorClass: "worker_lease_expired",
@@ -2589,7 +2633,7 @@ if dep.Command().TaskRetryCount+1 < dep.Command().TaskMaxRetries {
         return err
     }
 } else {
-    dep.MarkFailed(now, "worker lease expired")
+    dep.MarkFailed(now, "worker lease expired") // releases the execution slot in-transition
     result := model.WorkerResult{
         Succeeded: false, Retryable: false,
         ErrorClass: "worker_lease_expired",
@@ -2602,11 +2646,13 @@ if dep.Command().TaskRetryCount+1 < dep.Command().TaskMaxRetries {
 return repo.Save(ctx, dep)
 ```
 
+`MarkRetryPending`/`MarkFailed` release the execution slot as part of the transition (Task 6 Step 5), so the reaper never calls `ReleaseSlot` itself and an expired lease cannot leak a slot against `MAX_CONCURRENT_EXECUTIONS`. `repo.Save` persists both the transition and its `slot_released_at`.
+
 Kubernetes deletion uses a UID precondition so a recycled pod name cannot terminate a replacement.
 
 - [ ] **Step 5: Make cancellation transactional**
 
-`ScheduleCancelledHandler` begins UoW, inserts the cancellation tombstone, calls `CancelSchedule`, and for each active lease fences then deletes the exact pod before saving cancelled/releasing slot. Pending rows are marked cancelled directly. Commit only after all requested deletions are accepted; duplicate handler calls see terminal rows.
+`ScheduleCancelledHandler` begins UoW, inserts the cancellation tombstone, calls `CancelSchedule`, and for each active lease fences then deletes the exact pod before saving the row as cancelled; `Cancel` releases the execution slot in-transition, so the handler calls no separate `ReleaseSlot`. Pending rows are marked cancelled directly. Commit only after all requested deletions are accepted; duplicate handler calls see terminal rows.
 
 - [ ] **Step 6: Run tests and commit**
 
@@ -2701,7 +2747,9 @@ WORKER_CLAIM_WAIT_SECONDS: "20"
 WORKER_CONTROL_PLANE_URL: "http://executor-controller:8084"
 ```
 
-Remove deployed `MAX_CONCURRENT_JOBS`. Keep alias code for one release. For e2e canary use `{"service-1":"workers"}` only in worker-specific test setup, not the global default manifest.
+Remove deployed `MAX_CONCURRENT_JOBS`. Keep alias code for one release. For e2e canary use `{"service-1":"workers","service-3":"workers"}` only in worker-specific test setup, not the global default manifest.
+
+The canary must cover both execution paths. In `tests/e2e/k8s/executor-controller-deployment.yaml` the `dbt-commands` ConfigMap overrides only `service-1`, to the `wise-dbt` wrapper; `service-3` inherits the native `dbt` `default` block. Enabling workers for `service-1` alone would exercise zero native worker tasks, leaving the native path — the one the whole design rests on — unmeasured by Task 17 Step 4. So `service-1` supplies the wrapper samples and `service-3` supplies the native ones. Leave `service-3` out of the ConfigMap's `services:` map: its dbt-commands must stay native for this purpose. `service-2` gains no override and stays on Jobs, remaining the mixed-mode control that Task 17 Step 2 asserts still works simultaneously.
 
 - [ ] **Step 6: Extend RBAC**
 
@@ -2730,8 +2778,8 @@ Ensure both setup scripts build/load the new `dbt-base` before service images an
 ```bash
 rtk docker compose build executor-controller k8s-controller dbt-compile-and-load
 rtk docker compose up -d executor-controller k8s-controller dbt-compile-and-load
-rtk docker exec executor-controller go test ./... -count=1
-rtk docker exec k8s-controller go test ./... -count=1
+rtk make test-go SERVICE=executor-controller
+rtk make test-go SERVICE=k8s-controller
 rtk docker exec dbt-compile-and-load python -m pytest -v tests
 ```
 
@@ -2750,6 +2798,8 @@ rtk git commit -m "feat: deploy configurable dbt worker pools"
 - Create: `tests/e2e/worker_execution_test.go`
 - Create: `tests/e2e/worker_failure_test.go`
 - Create: `tests/e2e/worker_performance_test.go`
+- Create: `dbt/services/service-3/models/worker_perf.sql`
+- Modify: `tests/e2e/k8s/executor-controller-deployment.yaml`
 - Modify: `tests/e2e/helpers.go`
 - Modify: `tests/e2e/system_test.go`
 - Modify: `tests/e2e/README.md`
@@ -2781,7 +2831,10 @@ active reserved slots never exceed configured test limit
 view/table/incremental first+existing/seed/snapshot/test/build all match Job semantics
 promotion during a run leaves its pinned old pool/ref unchanged
 rerun recreates a zero-scaled old pool from its pinned image/ref
+compile pod and worker pod agree on parse_context_sha256 for the same release
 ```
+
+The last line is a cross-pod equality assertion and is not optional. `parse_context_sha256` is computed in the compile pod and recompared in the worker pod, which fails closed on mismatch; Task 17 Step 3 proves a mismatch fails closed, and this proves the happy path. For a legitimate compile→worker pair of the same release, assert that the descriptor's `parse_context_sha256` equals the value the worker recomputes, that the worker reports initialization success, and that the pool becomes ready. A permanently unready pool here means `PARSE_CONTEXT_ENV_KEYS` (Task 2 Step 3) admitted a variable that differs between the two pods.
 
 - [ ] **Step 3: Add failure/cancellation scenarios**
 
@@ -2802,7 +2855,7 @@ mode switch back to jobs is sufficient rollback
 
 - [ ] **Step 4: Add a non-flaky performance gate**
 
-Run at least 20 warm native tasks and 10 Job-path tasks on the same fixture/image/warehouse. Measure:
+Run at least 20 warm native tasks and 10 Job-path tasks on the same fixture/image/warehouse. The native samples come from `service-3`, which the Task 16 Step 5 canary enables for workers and whose dbt-commands stay native (no `services: service-3` block in the e2e ConfigMap); `service-1` remains the wrapper path. Drive the 20 warm native tasks from repeated runs of `service-3`'s dedicated `worker_perf` node so the measurement is not entangled with the other e2e DAG fixtures. Measure:
 
 ```text
 worker: lease accepted timestamp -> first dbt invocation event
@@ -2850,10 +2903,10 @@ Run a text guard proving every mentioned stream exists in `contract.yaml` and no
 - [ ] **Step 7: Run all unit/integration/lint checks in containers**
 
 ```bash
-rtk docker exec executor-controller go test ./... -count=1
-rtk docker exec k8s-controller go test ./... -count=1
-rtk docker exec orchestrator go test ./... -count=1
-rtk docker exec release-controller go test ./... -count=1
+rtk make test-go SERVICE=executor-controller
+rtk make test-go SERVICE=k8s-controller
+rtk make test-go SERVICE=orchestrator
+rtk make test-go SERVICE=release-controller
 rtk docker exec manifest-controller uv run pytest -v
 rtk docker exec dbt-compile-and-load python -m pytest -v tests
 rtk docker exec orchestrator bash /app/scripts/lint-go.sh executor-controller
