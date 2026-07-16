@@ -1,0 +1,78 @@
+{{- if .Values.minio.enabled }}
+# Quickstart object store so the install needs zero external accounts.
+# Production installs set minio.enabled=false and point s3.* at a real
+# S3-compatible endpoint.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "continuo.minio.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: minio
+spec:
+  serviceName: {{ include "continuo.minio.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "continuo.selectorLabels" (dict "root" $ "service" "minio") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "continuo.selectorLabels" (dict "root" $ "service" "minio") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "continuo.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: minio
+          image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "continuo.containerSecurityContext" . | nindent 12 }}
+          args: ["server", "/data"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.minio.fullname" . | quote }}
+                  key: access-key-id
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.minio.fullname" . | quote }}
+                  key: secret-access-key
+          ports:
+            - name: s3
+              containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with (default .Values.global.storageClass .Values.minio.persistence.storageClass) }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.minio.persistence.size }}
+{{- end }}
