@@ -757,5 +757,5 @@ func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
 	require.NoError(t, txB.Commit())
 
 	assert.Equal(t, 1, countValidationCompletedOutbox(t, db, releaseID),
-		"exactly one validation.completed:v1 row — never zero (lost) and never two (double)")
+		"exactly one validation terminal (kind=complete) row — never zero (lost) and never two (double)")
 }

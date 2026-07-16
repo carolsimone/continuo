@@ -247,7 +247,7 @@ func TestValidationNodeCompletedHandler_RecordsOutcomeAndTriggersAggregate(t *te
 	assert.Equal(t, 1, agg.claimCalls, "aggregate gate ran once node is terminal")
 	// SettleNodeTerminal writes two rows: the per-node projection for this node,
 	// then (no siblings pending) the aggregate.
-	require.Len(t, outboxRepo.created, 2, "per-node projection + validation.completed:v1 emitted")
+	require.Len(t, outboxRepo.created, 2, "per-node projection (kind=node) + validation terminal (kind=complete) emitted")
 	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[0].StreamName)
 	assert.Equal(t, streams.ValidationResultV1, outboxRepo.created[1].StreamName)
 }

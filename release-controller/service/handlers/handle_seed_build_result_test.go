@@ -314,8 +314,8 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 // seed-build leg leaves the persisted validation set equal to what the executor
 // actually emits per-node events for (the non-seed models). After the seed
 // builds ok, only the downstream model is validated, so only that node's per-node
-// result lands. The terminal validation.completed:v1 must then PROMOTE, not stall
-// on the completeness barrier waiting for a per-node result the seed never emits.
+// result lands. The validation terminal (kind=complete) must then PROMOTE, not stall
+// by rejecting over the seed, which is not part of the release's validation set.
 func TestHandleSeedBuildResult_OKThenValidationCompletePromotes(t *testing.T) {
 	deps, store := newTestDeps(t)
 	releaseID := "rel-seed-then-validate"

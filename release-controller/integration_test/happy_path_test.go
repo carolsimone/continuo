@@ -79,9 +79,9 @@ func TestIntegration_HappyPath(t *testing.T) {
 	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	assert.Equal(t, release.StatusValidating, r.Status())
 
-	// 4. Project each node's result via the per-node stream, then deliver the slim
-	// terminal decision. The terminal validation.completed:v1 no longer carries
-	// per-node content; the decision reads what the per-node stream stored.
+	// 4. Project each node's result via the kind=node messages, then deliver the
+	// terminal decision. The kind=complete terminal message carries only the
+	// decision; it reads back what the per-node messages stored.
 	for _, n := range []handlers.NodeValidationResultInput{
 		{ReleaseID: "rA", Stage: "validation", NodeID: "a", Status: "ok"},
 		{ReleaseID: "rA", Stage: "validation", NodeID: "b", Status: "ok"},

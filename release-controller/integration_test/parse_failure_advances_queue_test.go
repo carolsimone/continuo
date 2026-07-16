@@ -15,7 +15,7 @@ import (
 // Regression for parse-rejection queue-advance fix: a failed parse must unblock
 // the next queued candidate by advancing the queue after the rejection is
 // committed. Without this, queued releases stay in StatusReceived indefinitely
-// because no validation.completed:v1 ever arrives for a rejected release.
+// because no kind=complete validation terminal (on validation.result:v1) ever arrives for a rejected release.
 func TestIntegration_ParseRejection_AdvancesQueuedRelease(t *testing.T) {
 	_, deps, db := setup(t)
 	defer db.Close()
