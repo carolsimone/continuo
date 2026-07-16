@@ -355,6 +355,12 @@ func (d *Deployment) RejectBeforeExecution(reason string, now time.Time) error {
 // queue so the next claim re-attempts it on the same row, keeping its lease
 // history and attempt counter in one place. taskRetryCount and jobName are the
 // values the state service assigned to this attempt.
+//
+// A backoff the parking transition recorded is preserved: the requeue message
+// arrives moments after the failure that emitted it, so resetting the deadline to
+// now would discard the delay entirely and let a transient failure re-claim in a
+// hot loop. Only a deadline that has already elapsed is pulled forward, which
+// leaves the task due immediately rather than stranded behind a past instant.
 func (d *Deployment) Requeue(taskRetryCount int, jobName string, now time.Time) error {
 	if d.status != StatusRetryPending {
 		return fmt.Errorf("cannot requeue deployment %s from status %q", d.id, d.status)
@@ -364,7 +370,9 @@ func (d *Deployment) Requeue(taskRetryCount int, jobName string, now time.Time) 
 		d.command.JobName = jobName
 	}
 	d.status = StatusPending
-	d.nextAttemptAt = now
+	if d.nextAttemptAt.Before(now) {
+		d.nextAttemptAt = now
+	}
 	d.errorMessage = nil
 	return nil
 }

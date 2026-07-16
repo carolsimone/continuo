@@ -683,7 +683,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	}
 
 	// Row 3: task_retry → retry.task:v1
-	retryPayload, err := json.Marshal(event.TaskRetry{
+	retryPayload, err := json.Marshal(pkgevents.TaskRetry{
 		TaskID:       cmd.TaskID.String(),
 		ScheduleID:   cmd.ScheduleID.String(),
 		ScheduleName: cmd.ScheduleName,

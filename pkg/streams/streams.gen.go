@@ -12,9 +12,9 @@ const (
 	RunEntriesDispatchedV1 = "run.entries.dispatched:v1"
 	// RunEntriesDispatchFailedV1 — Run entries orchestrator failed to dispatch.
 	RunEntriesDispatchFailedV1 = "run.entries.dispatch_failed:v1"
-	// TaskStatusUpdatedV1 — Per-task status transitions emitted by executor-controller.
+	// TaskStatusUpdatedV1 — Per-task status transitions emitted by executor-controller (Kubernetes Job dispatch and worker lease reports), k8s-controller, and orchestrator.
 	TaskStatusUpdatedV1 = "task.status.updated:v1"
-	// TaskExecutionRecordedV1 — Completed task executions emitted by k8s-controller's outbox processor.
+	// TaskExecutionRecordedV1 — Completed task executions emitted by k8s-controller (observed Job status) and executor-controller (worker lease reports).
 	TaskExecutionRecordedV1 = "task.execution.recorded:v1"
 	// NodeUpdatedV1 — Node state transitions; orchestrator updates its projections.
 	NodeUpdatedV1 = "node.updated:v1"
@@ -28,7 +28,7 @@ const (
 	RunFinalizedV1 = "run.finalized:v1"
 	// QueryModelV1 — Tasks dispatched by orchestrator for the executor pool.
 	QueryModelV1 = "query.model:v1"
-	// RetryTaskV1 — Retry trigger for tasks; produced by k8s-controller, consumed by executor.
+	// RetryTaskV1 — Retry trigger for tasks; produced by k8s-controller (failed Job) and executor-controller (retryable worker failure or expired lease), consumed by executor.
 	RetryTaskV1 = "retry.task:v1"
 	// NodeDeployedV1 — Pod-deploy intent from executor; consumed by k8s-controller.
 	NodeDeployedV1 = "node.deployed:v1"

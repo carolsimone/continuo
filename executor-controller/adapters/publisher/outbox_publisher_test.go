@@ -228,6 +228,16 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 			streamName: streams.CompileCompletedV1,
 			payload:    []byte(`{"release_id":"rel1","status":"ok"}`),
 		},
+		{
+			eventType:  "task_execution_recorded",
+			streamName: streams.TaskExecutionRecordedV1,
+			payload:    mustMarshal(t, pkgevents.TaskExecutionRecorded{ExecutionID: "e1", TaskID: "t1", JobName: "j1", ExecutionSeconds: 1.0}),
+		},
+		{
+			eventType:  "task_retry",
+			streamName: streams.RetryTaskV1,
+			payload:    mustMarshal(t, pkgevents.TaskRetry{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "public", TableName: "tbl", JobName: "j1", ImageTag: "sha", RetryCount: 1, MaxRetries: 3, NodeType: "dbt-model"}),
+		},
 	}
 
 	for _, tc := range cases {

@@ -104,6 +104,20 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return e.ToMap(), nil
 
+	case "task_execution_recorded":
+		var e pkgevents.TaskExecutionRecorded
+		if err := json.Unmarshal(entry.Payload, &e); err != nil {
+			return nil, fmt.Errorf("unmarshal task_execution_recorded: %w", err)
+		}
+		return e.ToMap(), nil
+
+	case "task_retry":
+		var e pkgevents.TaskRetry
+		if err := json.Unmarshal(entry.Payload, &e); err != nil {
+			return nil, fmt.Errorf("unmarshal task_retry: %w", err)
+		}
+		return e.ToMap(), nil
+
 	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted:
 		// The three candidate-leg aggregate-completion events
 		// (validation.completed:v1 / seed.build.completed:v1 / compile.completed:v1)

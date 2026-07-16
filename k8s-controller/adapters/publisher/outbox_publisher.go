@@ -69,7 +69,7 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return e.ToMap(), nil
 
 	case "task_retry":
-		var e event.TaskRetry
+		var e pkgevents.TaskRetry
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("unmarshal task_retry: %w", err)
 		}

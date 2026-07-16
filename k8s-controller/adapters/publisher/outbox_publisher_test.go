@@ -133,7 +133,7 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 		{
 			eventType:  "task_retry",
 			streamName: streams.RetryTaskV1,
-			payload:    mustMarshalK8s(t, event.TaskRetry{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", ImageTag: "sha", RetryCount: 1, MaxRetries: 3, NodeType: "dbt-model"}),
+			payload:    mustMarshalK8s(t, pkgevents.TaskRetry{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", ImageTag: "sha", RetryCount: 1, MaxRetries: 3, NodeType: "dbt-model"}),
 		},
 		{
 			eventType:  "task_failed",

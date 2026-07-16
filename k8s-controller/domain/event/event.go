@@ -92,68 +92,6 @@ func (e TaskFailed) ToMap() map[string]interface{} {
 	}
 }
 
-// TaskRetry represents an event that a task should be retried
-type TaskRetry struct {
-	TaskID       string `json:"task_id"`
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	JobName      string `json:"job_name"`
-	ImageTag     string `json:"image_tag"`
-	RetryCount   int    `json:"retry_count"`
-	MaxRetries   int    `json:"max_retries"`
-	NodeType     string `json:"node_type"`
-	// Operation is the dbt verb the retried Job should run (e.g. "test").
-	// Empty for normal production `dbt run` retries — their wire format is
-	// unchanged. Sourced from the durable CheckJobStatus.Operation (which rides
-	// node.deployed:v1 / check.k8s:v1), never from the failed Job's labels: a
-	// TTL-reaped Job has no labels, so a retried `dbt test` Job stays `dbt test`
-	// instead of rebuilding as `dbt run`.
-	Operation string `json:"operation,omitempty"`
-	// RuntimeManifestRef pins the retry to the artifact the failed attempt ran
-	// against. Sourced from the durable check chain rather than from the Job, so
-	// a retry reproduces the original release instead of binding to whatever
-	// artifact is current when it runs.
-	pkgmodel.RuntimeManifestRef
-}
-
-func (TaskRetry) isEvent() {}
-
-// ToMap converts TaskRetry event to a map for Redis publishing.
-// Uses task_retry_count (not retry_count) to match executor-controller's consumer key.
-func (e TaskRetry) ToMap() map[string]interface{} {
-	m := map[string]interface{}{
-		"task_id":          e.TaskID,
-		"schedule_id":      e.ScheduleID,
-		"schedule_name":    e.ScheduleName,
-		"service_name":     e.ServiceName,
-		"schema_name":      e.SchemaName,
-		"table_name":       e.TableName,
-		"job_name":         e.JobName,
-		"image_tag":        e.ImageTag,
-		"task_retry_count": e.RetryCount,
-		"max_retries":      e.MaxRetries,
-		"node_type":        e.NodeType,
-	}
-	// Only stamp operation when non-empty so normal `dbt run` retries stay
-	// wire-identical to before this field existed.
-	if e.Operation != "" {
-		m["operation"] = e.Operation
-	}
-	// The four reference fields are stamped together or not at all: the consumer
-	// rejects a partial reference, so a task with no runtime manifest must emit
-	// no field rather than four empty ones.
-	if e.RuntimeManifestRef != (pkgmodel.RuntimeManifestRef{}) {
-		m["runtime_manifest_uri"] = e.RuntimeManifestURI
-		m["runtime_manifest_sha256"] = e.RuntimeManifestSHA256
-		m["runtime_manifest_dbt_version"] = e.RuntimeManifestDBTVersion
-		m["runtime_manifest_parse_context_sha256"] = e.RuntimeManifestParseContextSHA256
-	}
-	return m
-}
-
 // NodeStatusUpdated represents an event that a node's status has changed
 type NodeStatusUpdated struct {
 	TaskID       string `json:"task_id"`

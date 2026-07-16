@@ -48,8 +48,8 @@ streams:
 
   - name: task.status.updated:v1
     const: TaskStatusUpdatedV1
-    description: Per-task status transitions emitted by executor-controller.
-    producers: [executor-controller]
+    description: Per-task status transitions emitted by executor-controller (Kubernetes Job dispatch and worker lease reports), k8s-controller, and orchestrator.
+    producers: [executor-controller, k8s-controller, orchestrator]
     consumers:
       - service: state
         group: state-task-status-updated
@@ -57,8 +57,8 @@ streams:
 
   - name: task.execution.recorded:v1
     const: TaskExecutionRecordedV1
-    description: Completed task executions emitted by k8s-controller's outbox processor.
-    producers: [k8s-controller]
+    description: Completed task executions emitted by k8s-controller (observed Job status) and executor-controller (worker lease reports).
+    producers: [k8s-controller, executor-controller]
     consumers:
       - service: state
         group: state-task-execution-recorded
@@ -126,8 +126,8 @@ streams:
 
   - name: retry.task:v1
     const: RetryTaskV1
-    description: Retry trigger for tasks; produced by k8s-controller, consumed by executor.
-    producers: [k8s-controller]
+    description: Retry trigger for tasks; produced by k8s-controller (failed Job) and executor-controller (retryable worker failure or expired lease), consumed by executor.
+    producers: [k8s-controller, executor-controller]
     consumers:
       - service: executor-controller
         group: executor-retry

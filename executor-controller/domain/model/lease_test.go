@@ -518,3 +518,39 @@ func TestReportFailure_RequiresFailedResult(t *testing.T) {
 	assert.NotErrorIs(t, err, model.ErrStaleLease)
 	assert.Equal(t, model.StatusLeased, dep.Status())
 }
+
+// TestRequeue_KeepsUnelapsedBackoff pins that a requeue cannot cancel the delay a
+// retryable failure recorded. retry.task:v1 is consumed within moments of the
+// failure that emitted it, so a requeue that reset the deadline to now would make
+// the backoff dead code and let a transient failure re-claim in a hot loop.
+func TestRequeue_KeepsUnelapsedBackoff(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+	result := model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"}
+	require.NoError(t, dep.ReportFailure(leaseID, sha256Hex(token), result, true,
+		time.Unix(90, 0), 30*time.Second))
+	require.Equal(t, time.Unix(120, 0), dep.NextAttemptAt(), "the failure parked the task until 120")
+
+	// The retry message lands at 91 — a second after the failure, and 29 seconds
+	// before the task is due.
+	require.NoError(t, dep.Requeue(1, "dbt-public-orders-r1", time.Unix(91, 0)))
+
+	assert.Equal(t, model.StatusPending, dep.Status())
+	assert.Equal(t, time.Unix(120, 0), dep.NextAttemptAt(),
+		"the recorded backoff still has to elapse before the task is claimable")
+}
+
+// TestRequeue_ServesAnElapsedBackoffImmediately pins the other half: once the
+// recorded backoff has passed, a requeue leaves the task due now rather than
+// stranding it behind a deadline in the past.
+func TestRequeue_ServesAnElapsedBackoffImmediately(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+	result := model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"}
+	require.NoError(t, dep.ReportFailure(leaseID, sha256Hex(token), result, true,
+		time.Unix(90, 0), 30*time.Second))
+
+	// The retry message lands at 200, long after the backoff elapsed at 120.
+	require.NoError(t, dep.Requeue(1, "dbt-public-orders-r1", time.Unix(200, 0)))
+
+	assert.Equal(t, model.StatusPending, dep.Status())
+	assert.Equal(t, time.Unix(200, 0), dep.NextAttemptAt(), "an elapsed backoff makes the task due now")
+}

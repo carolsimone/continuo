@@ -2,7 +2,8 @@ package events
 
 // TaskStatusUpdated — stream: task.status.updated:v1
 // Published by:
-//   - executor-controller (RUNNING on deploy, FAILED on deploy failure)
+//   - executor-controller (RUNNING on deploy and on a worker's start report,
+//     FAILED on deploy failure, SUCCEEDED/FAILED from a worker's terminal report)
 //   - k8s-controller (SUCCEEDED/FAILED from observed job status)
 //   - orchestrator (SKIPPED when a node is cascade-skipped after an upstream failure)
 //
@@ -11,7 +12,7 @@ package events
 type TaskStatusUpdated struct {
 	TaskID     string `json:"task_id"`
 	ScheduleID string `json:"schedule_id"`
-	Status     string `json:"status"`      // RUNNING | SUCCEEDED | FAILED | SKIPPED
+	Status     string `json:"status"` // RUNNING | SUCCEEDED | FAILED | SKIPPED
 	RetryCount int32  `json:"retry_count"`
 }
 
@@ -26,9 +27,15 @@ func (e TaskStatusUpdated) ToMap() map[string]interface{} {
 }
 
 // TaskExecutionRecorded — stream: task.execution.recorded:v1
-// Published by: k8s-controller
+// Published by:
+//   - k8s-controller (from an observed Job's terminal status)
+//   - executor-controller (from a worker's terminal report, identified by the
+//     lease that ran it)
+//
 // Consumed by: state
 type TaskExecutionRecorded struct {
+	// ExecutionID identifies the one execution being reported. The Jobs path uses
+	// the Job's execution identity; the worker path uses the lease that ran it.
 	ExecutionID      string  `json:"execution_id"`
 	TaskID           string  `json:"task_id"`
 	JobName          string  `json:"job_name"`
