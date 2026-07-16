@@ -121,6 +121,30 @@ func TestOutboxPublisher_NodeReadyForExecution_CarriesRuntimeManifestPin(t *test
 	assert.Equal(t, "2222222222222222222222222222222222222222222222222222222222222222", vals["runtime_manifest_parse_context_sha256"])
 }
 
+func TestOutboxPublisher_NodeReadyForExecution_OmitsPartialRuntimeManifestPin(t *testing.T) {
+	// A consumer needs all four fields to fetch, verify and reuse an artifact.
+	// A reference missing any of them is emitted as no reference at all, so the
+	// node runs down the per-node Job path instead of receiving an unusable pin.
+	evt := domain.NodeReadyForExecution{
+		ScheduleID: "sched-1", ScheduleName: "daily", ServiceName: "svc",
+		SchemaName: "public", TableName: "orders", TaskID: "task-1", JobName: "job-1",
+		NodeType: "dbt-model", ImageTag: "v1", ManifestVersion: "m1",
+		RuntimeManifestRef: pkgModel.RuntimeManifestRef{
+			RuntimeManifestURI: "s3://continuo-artifacts/finance/rel-1/partial_parse.msgpack",
+		},
+	}
+	vals := payloadToValuesFor(t, makeEntry("node_ready_for_execution", mustMarshal(t, evt)))
+
+	for _, key := range []string{
+		"runtime_manifest_uri",
+		"runtime_manifest_sha256",
+		"runtime_manifest_dbt_version",
+		"runtime_manifest_parse_context_sha256",
+	} {
+		assert.NotContains(t, vals, key, "a partial reference must emit no manifest fields")
+	}
+}
+
 func TestOutboxPublisher_NodeReadyForExecution_CarriesTestOperation(t *testing.T) {
 	// The executor needs the operation on the wire to run `dbt test` instead of
 	// the default `dbt run`/`dbt seed`/`dbt snapshot` for this node type.

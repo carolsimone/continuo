@@ -135,11 +135,14 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		// The dbt identity and the runtime manifest pin are carried only for
 		// nodes whose release published them. A node with neither produces a
 		// field map identical to a dispatch from before they existed, and the
-		// executor runs it down the per-node Job path.
+		// executor runs it down the per-node Job path. The reference is carried
+		// only when every field is present: a consumer needs all four to fetch,
+		// verify and reuse the artifact, so a partial reference is emitted as
+		// none at all rather than as an unusable pin.
 		if evt.DBTUniqueID != "" {
 			values["dbt_unique_id"] = evt.DBTUniqueID
 		}
-		if evt.RuntimeManifestURI != "" {
+		if evt.Complete() {
 			values["runtime_manifest_uri"] = evt.RuntimeManifestURI
 			values["runtime_manifest_sha256"] = evt.RuntimeManifestSHA256
 			values["runtime_manifest_dbt_version"] = evt.RuntimeManifestDBTVersion
