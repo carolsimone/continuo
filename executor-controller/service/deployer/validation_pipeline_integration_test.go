@@ -174,6 +174,33 @@ func countByStream(t *testing.T, db *sqlx.DB, stream string) int {
 	return n
 }
 
+// countByStreamAndKind counts the rows on stream whose payload's "kind" field
+// matches kind. The unified validation.result:v1 stream carries two message
+// kinds — "node" (one per settled node) and "complete" (the terminal decision,
+// emitted last) — so callers that care about only one of them must filter by
+// kind rather than count every row on the stream.
+func countByStreamAndKind(t *testing.T, db *sqlx.DB, stream, kind string) int {
+	t.Helper()
+	rows, err := db.Query(`SELECT payload FROM executor_outbox WHERE stream_name=$1`, stream)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	n := 0
+	for rows.Next() {
+		var payload []byte
+		require.NoError(t, rows.Scan(&payload))
+		var v struct {
+			Kind string `json:"kind"`
+		}
+		require.NoError(t, json.Unmarshal(payload, &v))
+		if v.Kind == kind {
+			n++
+		}
+	}
+	require.NoError(t, rows.Err())
+	return n
+}
+
 func countDeployments(t *testing.T, db *sqlx.DB, query string, args ...any) int {
 	t.Helper()
 	var n int
@@ -210,10 +237,10 @@ func waitValidationRowsDue(t *testing.T, db *sqlx.DB, releaseID string) {
 // validation pipeline against testcontainer Postgres with a fake K8s deployer:
 // validation.requested:v1 → per-node deployments → dispatch (validation Jobs +
 // node.deployed:v1 triggers) → simulated per-node terminals → aggregate gating →
-// exactly-once validation.completed:v1. The validation.node.completed:v1 terminals
-// are SIMULATED here exactly as a real k8s-controller would emit them after
-// observing the node.deployed trigger; the routing itself is covered by the
-// k8s-controller's own tests. This test owns the executor side.
+// exactly-once validation.result:v1 (kind=complete). The validation.node.completed:v1
+// terminals are SIMULATED here exactly as a real k8s-controller would emit them
+// after observing the node.deployed trigger; the routing itself is covered by
+// the k8s-controller's own tests. This test owns the executor side.
 func TestValidationPipeline_EndToEnd(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -277,7 +304,7 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	assert.Equal(t, 3, countDeployments(t, db,
 		`SELECT COUNT(*) FROM executor_deployments WHERE mode='validation' AND release_id=$1 AND status='deployed'`, releaseID),
 		"all rows now deployed")
-	assert.Equal(t, 0, countByStream(t, db, streams.ValidationCompletedV1),
+	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"no aggregate yet — every node still awaits its terminal")
 
 	// Step 4: simulate k8s-controller terminals for 2 of 3 nodes (outcome=ok).
@@ -288,14 +315,14 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	assert.Equal(t, 2, countDeployments(t, db,
 		`SELECT COUNT(*) FROM executor_deployments WHERE mode='validation' AND release_id=$1 AND outcome='ok' AND outcome_at IS NOT NULL`, releaseID),
 		"two nodes recorded their outcome")
-	assert.Equal(t, 0, countByStream(t, db, streams.ValidationCompletedV1),
+	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"aggregate still gated — third node not yet terminal")
 
 	// Step 5: the third node terminates ok → aggregate fires exactly once.
 	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "402-0", releaseID, "model.shop.line_items", "ok")))
 
-	assert.Equal(t, 1, countByStream(t, db, streams.ValidationCompletedV1),
-		"validation.completed:v1 emitted exactly once when the last node terminates")
+	assert.Equal(t, 1, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
+		"validation.result:v1 (kind=complete) emitted exactly once when the last node terminates")
 	assertAggregate(t, db, releaseID, "ok", []string{
 		"model.shop.orders", "model.shop.customers", "model.shop.line_items",
 	})
@@ -303,13 +330,13 @@ func TestValidationPipeline_EndToEnd(t *testing.T) {
 	// Step 6: redelivery of the third node's terminal (fresh message_id). The
 	// sentinel was already claimed, so no second aggregate; the binding dedups/ACKs.
 	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "403-0", releaseID, "model.shop.line_items", "ok")))
-	assert.Equal(t, 1, countByStream(t, db, streams.ValidationCompletedV1),
+	assert.Equal(t, 1, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"redelivery must not emit a second aggregate")
 }
 
 // TestValidationPipeline_FailurePath drives the same pipeline on a fresh release
-// where one node terminates failed: the emitted validation.completed:v1 must
-// carry aggregate_status=failed.
+// where one node terminates failed: the emitted validation.result:v1
+// (kind=complete) must carry aggregate_status=failed.
 func TestValidationPipeline_FailurePath(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
@@ -334,28 +361,29 @@ func TestValidationPipeline_FailurePath(t *testing.T) {
 	nodeCompleted := newNodeCompletedBinding(db)
 	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "600-0", releaseID, "model.shop.orders", "ok")))
 	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "601-0", releaseID, "model.shop.customers", "failed")))
-	assert.Equal(t, 0, countByStream(t, db, streams.ValidationCompletedV1),
+	assert.Equal(t, 0, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"),
 		"still gated until every node is terminal")
 
 	require.NoError(t, nodeCompleted(ctx, nodeTerminalXMessage(t, "602-0", releaseID, "model.shop.line_items", "ok")))
 
-	assert.Equal(t, 1, countByStream(t, db, streams.ValidationCompletedV1))
+	assert.Equal(t, 1, countByStreamAndKind(t, db, streams.ValidationResultV1, "complete"))
 	assertAggregate(t, db, releaseID, "failed", []string{
 		"model.shop.orders", "model.shop.customers", "model.shop.line_items",
 	})
 }
 
-// assertAggregate reads the single validation.completed:v1 outbox row for a
-// release and asserts its slim decision payload (release_id + aggregate_status,
-// no per-node content). Per-node results reach release-controller through the
-// separate validation.node.result:v1 projection stream; this checks one such row
-// was emitted per expected node so the read model can reconstruct the set.
+// assertAggregate reads the single validation.result:v1 (kind=complete) outbox
+// row for a release and asserts its slim decision payload (release_id +
+// aggregate_status, no per-node content). Per-node results reach
+// release-controller through the same stream's (kind=node) rows; this checks
+// one such row was emitted per expected node so the read model can reconstruct
+// the set.
 func assertAggregate(t *testing.T, db *sqlx.DB, releaseID, wantStatus string, wantNodeIDs []string) {
 	t.Helper()
 	var payload []byte
 	require.NoError(t, db.QueryRow(
-		`SELECT payload FROM executor_outbox WHERE stream_name=$1 LIMIT 1`,
-		streams.ValidationCompletedV1).Scan(&payload))
+		`SELECT payload FROM executor_outbox WHERE stream_name=$1 AND payload->>'kind'='complete' LIMIT 1`,
+		streams.ValidationResultV1).Scan(&payload))
 
 	var got struct {
 		ReleaseID       string `json:"release_id"`
@@ -370,6 +398,6 @@ func assertAggregate(t *testing.T, db *sqlx.DB, releaseID, wantStatus string, wa
 	_, present := raw["per_node_results"]
 	assert.False(t, present, "terminal event must not re-carry per-node content")
 
-	assert.Equal(t, len(wantNodeIDs), countByStream(t, db, streams.ValidationNodeResultV1),
+	assert.Equal(t, len(wantNodeIDs), countByStreamAndKind(t, db, streams.ValidationResultV1, "node"),
 		"one per-node projection row emitted per settled node")
 }
