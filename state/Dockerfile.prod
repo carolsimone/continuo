@@ -39,4 +39,7 @@ COPY --from=builder /app/bin/state /usr/local/bin/state
 
 EXPOSE 8082 50051
 
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
+
 CMD ["state"]

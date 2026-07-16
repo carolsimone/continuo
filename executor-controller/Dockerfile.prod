@@ -40,4 +40,7 @@ COPY --from=builder /app/bin/executor-controller /usr/local/bin/executor-control
 
 EXPOSE 8084
 
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
+
 CMD ["executor-controller"]

@@ -43,4 +43,7 @@ COPY --from=builder /app/bin/remediation-agent /usr/local/bin/remediation-agent
 
 EXPOSE 8092
 
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
+
 CMD ["remediation-agent"]

@@ -40,4 +40,7 @@ COPY --from=builder /app/bin/orchestrator /usr/local/bin/orchestrator
 
 EXPOSE 8087 50052
 
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
+
 CMD ["orchestrator"]

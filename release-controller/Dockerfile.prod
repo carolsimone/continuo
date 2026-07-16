@@ -37,4 +37,7 @@ COPY --from=builder /app/bin/seed-service-prod /usr/local/bin/seed-service-prod
 
 EXPOSE 8088
 
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
+
 CMD ["release-controller"]

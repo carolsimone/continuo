@@ -19,4 +19,7 @@ RUN apk --no-cache add ca-certificates tzdata
 
 COPY --from=builder /app/bin/stream-reaper /usr/local/bin/stream-reaper
 
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
+
 ENTRYPOINT ["/usr/local/bin/stream-reaper"]

@@ -53,4 +53,7 @@ COPY --from=builder /app/bin/continuo /usr/local/bin/continuo
 
 EXPOSE 8091 50053
 
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
+
 CMD ["agent-runner"]

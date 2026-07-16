@@ -40,4 +40,7 @@ COPY --from=builder /app/bin/k8s-controller /usr/local/bin/k8s-controller
 
 EXPOSE 8085
 
+# Static binary; no filesystem writes at runtime — run unprivileged.
+USER 65532:65532
+
 CMD ["k8s-controller"]
