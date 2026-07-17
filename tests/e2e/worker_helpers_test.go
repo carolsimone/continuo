@@ -453,6 +453,22 @@ func scanDBTJSONLog(body []byte) (jsonEvents int, cacheCodes []string) {
 	return jsonEvents, cacheCodes
 }
 
+// queryRunExecutionMode returns the execution_mode ("workers"/"jobs") of a
+// single run's production deployment, or "" if none exists yet. Scoping by
+// schedule_id keeps it from reading a prior run's row.
+func queryRunExecutionMode(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) string {
+	t.Helper()
+	var mode string
+	err := clients.executorDB.GetContext(ctx, &mode,
+		`SELECT execution_mode FROM executor_deployments
+		  WHERE schedule_id = $1 AND mode = 'production'
+		  ORDER BY created_at DESC LIMIT 1`, runID)
+	if err != nil {
+		return ""
+	}
+	return mode
+}
+
 // queryRunLeasePod returns the worker pod name that held the lease for a single
 // run's production task, or "" if none. Scoping by schedule_id keeps one run's
 // pod from being confused with another's.

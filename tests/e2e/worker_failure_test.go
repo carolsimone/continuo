@@ -55,9 +55,25 @@ func TestE2E_WorkerFailures(t *testing.T) {
 			return ok && p.DesiredReplicas == 0, nil
 		}, "idle service-3 pool never scaled to zero replicas")
 
+		// Re-establish the canary immediately before the cold-start so a stray
+		// executor rollout earlier in a long suite cannot have left service-3 on
+		// the Jobs path: setExecutorOverrides is a no-op when the env already holds
+		// this value and re-applies it (with a rollout) if it does not, so the
+		// cold-start task is guaranteed to route to the pool rather than silently
+		// becoming a Job.
+		setExecutorOverrides(t, ctx, workerCanaryOverridesJSON)
+
 		// A new task cold-starts the pool again: it scales up, a pod hydrates and
-		// turns Ready, and the task runs.
+		// turns Ready, and the task runs. Confirm the task actually took the worker
+		// path before waiting on a worker pod, so a mis-route fails with that fact
+		// rather than an opaque pod-never-Ready timeout.
 		cold := triggerWorkerNode(t, ctx, clients, "service-3", "e2e_schema", "worker_perf")
+		var coldMode string
+		pollUntil(t, ctx, 1*time.Minute, 2*time.Second, func() (bool, error) {
+			coldMode = queryRunExecutionMode(t, ctx, clients, cold)
+			return coldMode != "", nil
+		}, "cold-start task never produced a deployment row")
+		require.Equal(t, "workers", coldMode, "the cold-start task must route to the worker pool")
 		pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
 			_, ready := countWorkerPods(t, ctx, clients, "service-3")
 			return ready >= 1, nil
