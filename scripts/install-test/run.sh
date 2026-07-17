@@ -22,7 +22,7 @@ FIXTURES=scripts/install-test
 
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 
-helm_args=(--set "global.imageTag=${IMAGE_TAG}")
+helm_args=(--set "global.imageTag=${IMAGE_TAG}" -f "${FIXTURES}/values-ci-resources.yaml")
 case "$MODE" in
   bundled) ;;
   byo-inline|byo-secret)
