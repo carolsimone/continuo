@@ -121,12 +121,11 @@ How a production record reaches dbt: `jobs` gives every task its own Kubernetes 
 | `EXECUTION_MODE_OVERRIDES_JSON` | A JSON object pinning individual services, e.g. `{"finance":"workers"}`. This is the rollout lever: with the default mode `jobs`, naming a service here runs that service — and only it — on workers. An unparseable object, or a mode that is neither `jobs` nor `workers`, is a fatal boot error rather than a silently dropped pin |
 | `MAX_CONCURRENT_EXECUTIONS` | The shared execution budget. Required and positive, with no in-code default, so an executor can never size its own concurrency from a literal that does not match its cluster. `MAX_CONCURRENT_JOBS` is read as a transition alias for a deployment still carrying the older spelling |
 | `WORKER_IDLE_TIMEOUT` | How long a pool with nothing to do keeps its pods before it is sized to zero |
-| `WORKER_LEASE_TTL` | How long a claim holds a task before the reaper may reassign it |
-| `WORKER_HEARTBEAT_INTERVAL` | How often a worker is expected to extend its lease. Three of them must fit inside `WORKER_LEASE_TTL` — a worker has to be able to lose two heartbeats without losing its task — and a value that does not is a fatal boot error |
+| `WORKER_LEASE_TTL` | How long a claim holds a task before the reaper may reassign it. It must be longer than three of the worker's heartbeats — a worker has to be able to lose two without losing its task — and a value that is not is a fatal boot error. The heartbeat cadence is not configurable: the worker pod keeps it itself (10s, `heartbeat_seconds` in `dbt/base/continuo_dbt_runtime/worker.py`) and nothing carries a different one to the pod, so the executor states it as a constant and validates the lease against the cadence a worker actually keeps |
 | `WORKER_CLAIM_WAIT` | The longest a claim request blocks waiting for work before answering empty |
 | `WORKER_CONTROL_PLANE_URL` | The base URL worker pods call to claim tasks and report outcomes, baked into every pod a pool creates. It has no default and is required whenever a pool can be created — the mode is `workers`, or a service is pinned to them — so a URL that would strand every worker fails the boot rather than the pod. A deployment routing every service to Jobs creates no pool and needs none |
 
-The four `WORKER_*` durations are Go duration strings (`60s`); a bare number is not parsed and leaves the in-code default in place. The deployed configuration is `EXECUTION_MODE=jobs` with empty overrides, so no task is routed to a worker until a service is explicitly named.
+The three `WORKER_*` durations are Go duration strings (`60s`); a bare number is not parsed and leaves the in-code default in place. The deployed configuration is `EXECUTION_MODE=jobs` with empty overrides, so no task is routed to a worker until a service is explicitly named.
 
 ### Command resolution (`dbt-commands.yaml`)
 
@@ -171,6 +170,12 @@ Alongside the argv templates, the port exposes the resolved compile leg (`Compil
 ### RBAC
 
 The executor's ServiceAccount is granted, in its own namespace: `batch/jobs` (`create`, `get`, `list`, `watch`) for the Jobs path; `apps/deployments` (`get`, `create`, `update`) and `secrets` (`get`, `create`, `update`) for the pools it reconciles; and `pods` (`get`, `list`, `watch`, `delete`) — the reads the Jobs path makes, plus the delete that stops a worker's pod when its task is taken back. Deleting a Deployment or a Secret is not granted, because the reconciler never does it: a pool with nothing to do is sized to zero replicas rather than removed. Worker pods use no Kubernetes RBAC at all — they reach the control plane over HTTP and the object store through signed URLs, and their ServiceAccount needs nothing.
+
+### Reachability
+
+The `deploy/continuo` chart default-denies ingress to every pod in the release and re-opens only the edges the service graph needs, so a worker pod's three edges are grants, not defaults: it reaches `executor-controller:8084` to claim and report, the warehouse on `5432` to run dbt, and the object store on `9000` to hydrate its artifact and upload results. All three select the pod by its `app=continuo-dbt-worker` label. `executor-controller:8084` is the only ingress the executor has at all — every other service reaches it through Redis, and the worker API is pull-only, so nothing else calls in. Nothing needs to reach a worker pod, which is why a pool has no Service.
+
+Egress is not restricted, so a deployment whose warehouse or object store sits outside the cluster needs no rule for either.
 
 ### K8s client configuration
 

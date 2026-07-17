@@ -209,7 +209,6 @@ services:
       # is discarded for the in-code default.
       - WORKER_IDLE_TIMEOUT=300s
       - WORKER_LEASE_TTL=60s
-      - WORKER_HEARTBEAT_INTERVAL=15s
       - WORKER_CLAIM_WAIT=20s
       # The base URL worker pods call back on. It is baked into every pod a pool
       # creates, so it must name the executor from inside the cluster the pods run

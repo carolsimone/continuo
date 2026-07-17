@@ -129,6 +129,15 @@ envsubst < k8s-controller-deployment.yaml | kubectl apply -f - || {
     exit 1
 }
 
+# Apply the reachability policy. It mirrors the chart's default-deny ingress plus
+# the worker-to-executor edge, so a chart that forgot that edge fails the suite
+# rather than a real install.
+log_info "Applying network policies..."
+kubectl apply -f networkpolicy.yaml || {
+    log_error "Failed to apply network policies"
+    exit 1
+}
+
 # Step 4.5: Force rollout restart to use new images
 log_info "Restarting deployments to use new images..."
 kubectl rollout restart deployment/executor-controller deployment/k8s-controller -n default || {

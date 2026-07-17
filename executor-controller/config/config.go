@@ -14,11 +14,20 @@ import (
 // executor ships routing every record to the Jobs path, and a worker canary is
 // turned on per service through EXECUTION_MODE_OVERRIDES_JSON.
 const (
-	defaultWorkerIdleTimeout       = 300 * time.Second
-	defaultWorkerLeaseTTL          = 60 * time.Second
-	defaultWorkerHeartbeatInterval = 15 * time.Second
-	defaultWorkerClaimWait         = 20 * time.Second
+	defaultWorkerIdleTimeout = 300 * time.Second
+	defaultWorkerLeaseTTL    = 60 * time.Second
+	defaultWorkerClaimWait   = 20 * time.Second
 )
+
+// WorkerHeartbeatInterval is how often a worker pod extends the lease it holds.
+//
+// It is not configurable. The worker keeps this cadence itself — heartbeat_seconds
+// in dbt/base/continuo_dbt_runtime/worker.py — and nothing carries a different
+// one to the pod, so a setting here would describe the interval without changing
+// it. It is stated because WORKER_LEASE_TTL has to accommodate the real cadence:
+// validating the lease against a number the worker does not use would check a
+// fiction. TestWorkerHeartbeatIntervalMatchesTheWorker pins the two together.
+const WorkerHeartbeatInterval = 10 * time.Second
 
 // heartbeatsPerLease is the liveness margin every lease must allow: a worker
 // gets at least three heartbeat attempts inside one lease deadline, so two lost
@@ -67,10 +76,9 @@ type Config struct {
 	// before it exits.
 	WorkerIdleTimeout time.Duration
 	// WorkerLeaseTTL is how long a claim holds a task before the reaper may
-	// reassign it.
+	// reassign it. It must leave room for the worker's own heartbeat cadence,
+	// WorkerHeartbeatInterval, which the pod keeps and this cannot change.
 	WorkerLeaseTTL time.Duration
-	// WorkerHeartbeatInterval is how often a worker extends its lease.
-	WorkerHeartbeatInterval time.Duration
 	// WorkerClaimWait is how long a claim request blocks waiting for work before
 	// it returns empty.
 	WorkerClaimWait time.Duration
@@ -92,9 +100,8 @@ type DBTWarehouse struct {
 // v accumulates missing required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator) Config {
 	leaseTTL := pkgconfig.EnvDurationOrDefault("WORKER_LEASE_TTL", defaultWorkerLeaseTTL)
-	heartbeat := pkgconfig.EnvDurationOrDefault("WORKER_HEARTBEAT_INTERVAL", defaultWorkerHeartbeatInterval)
-	if heartbeatsPerLease*heartbeat >= leaseTTL {
-		v.Add("WORKER_HEARTBEAT_INTERVAL(3x < WORKER_LEASE_TTL)")
+	if heartbeatsPerLease*WorkerHeartbeatInterval >= leaseTTL {
+		v.Add("WORKER_LEASE_TTL(> 3x the worker's heartbeat)")
 	}
 
 	mode := loadExecutionMode(v)
@@ -124,7 +131,6 @@ func Load(v *pkgconfig.Validator) Config {
 		MaxConcurrentExecutions: loadMaxConcurrentExecutions(v),
 		WorkerIdleTimeout:       pkgconfig.EnvDurationOrDefault("WORKER_IDLE_TIMEOUT", defaultWorkerIdleTimeout),
 		WorkerLeaseTTL:          leaseTTL,
-		WorkerHeartbeatInterval: heartbeat,
 		WorkerClaimWait:         pkgconfig.EnvDurationOrDefault("WORKER_CLAIM_WAIT", defaultWorkerClaimWait),
 		WorkerControlPlaneURL:   loadWorkerControlPlaneURL(v, mode, overrides),
 	}

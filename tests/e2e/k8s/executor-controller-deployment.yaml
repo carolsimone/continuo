@@ -149,8 +149,6 @@ spec:
               value: "300s"
             - name: WORKER_LEASE_TTL
               value: "60s"
-            - name: WORKER_HEARTBEAT_INTERVAL
-              value: "15s"
             - name: WORKER_CLAIM_WAIT
               value: "20s"
             # The base URL worker pods call back on, baked into every pod a pool

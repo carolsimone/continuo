@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +31,6 @@ var wantedExecutorEnv = map[string]string{
 	"MAX_CONCURRENT_EXECUTIONS":     "50",
 	"WORKER_IDLE_TIMEOUT":           "300s",
 	"WORKER_LEASE_TTL":              "60s",
-	"WORKER_HEARTBEAT_INTERVAL":     "15s",
 	"WORKER_CLAIM_WAIT":             "20s",
 	"WORKER_CONTROL_PLANE_URL":      "http://executor-controller:8084",
 }
@@ -218,9 +219,6 @@ func TestDeploymentConfig_DeployedValuesLoadAsIntended(t *testing.T) {
 			if cfg.WorkerLeaseTTL != 60*time.Second {
 				t.Errorf("%s: want a 60s lease TTL, got %s", path, cfg.WorkerLeaseTTL)
 			}
-			if cfg.WorkerHeartbeatInterval != 15*time.Second {
-				t.Errorf("%s: want a 15s heartbeat, got %s", path, cfg.WorkerHeartbeatInterval)
-			}
 			if cfg.WorkerClaimWait != 20*time.Second {
 				t.Errorf("%s: want a 20s claim wait, got %s", path, cfg.WorkerClaimWait)
 			}
@@ -248,17 +246,66 @@ func TestDeploymentConfig_NoPathBootsWithMissingVars(t *testing.T) {
 	}
 }
 
-// TestDeploymentConfig_NoPathShipsTheRetiredAlias pins that no manifest still
-// sets MAX_CONCURRENT_JOBS. The alias remains readable for a deployment that has
-// not caught up, but shipping it would let a path drift onto the old spelling
-// unnoticed — which is exactly how a variable goes missing from one manifest.
-func TestDeploymentConfig_NoPathShipsTheRetiredAlias(t *testing.T) {
+// unwantedExecutorEnv are the variables no manifest may set, and why. A variable
+// that is deployed but not read is the worst shape of configuration bug: it
+// deploys green and does nothing, and the person who set it has no way to learn
+// that. Nothing here is a variable Load reads.
+var unwantedExecutorEnv = map[string]string{
+	"MAX_CONCURRENT_JOBS": "the alias stays readable for a deployment that has not " +
+		"caught up, but deploying it would let a path drift onto the old spelling " +
+		"unnoticed; deploy MAX_CONCURRENT_EXECUTIONS",
+	"WORKER_HEARTBEAT_INTERVAL": "the worker keeps its own heartbeat cadence and " +
+		"nothing carries this to the pod, so setting it would change nothing; see " +
+		"config.WorkerHeartbeatInterval",
+}
+
+// TestDeploymentConfig_NoPathShipsAVariableNothingReads pins that no manifest
+// advertises a knob that does nothing.
+func TestDeploymentConfig_NoPathShipsAVariableNothingReads(t *testing.T) {
 	for path, env := range deploymentPaths(t) {
 		t.Run(path, func(t *testing.T) {
-			if _, ok := env["MAX_CONCURRENT_JOBS"]; ok {
-				t.Errorf("%s still sets MAX_CONCURRENT_JOBS; it deploys "+
-					"MAX_CONCURRENT_EXECUTIONS", path)
+			for key, why := range unwantedExecutorEnv {
+				if _, ok := env[key]; ok {
+					t.Errorf("%s sets %s: %s", path, key, why)
+				}
 			}
 		})
+	}
+}
+
+// TestWorkerHeartbeatIntervalMatchesTheWorker pins the executor's statement of
+// the worker's heartbeat cadence to the worker's own.
+//
+// WORKER_LEASE_TTL is validated against WorkerHeartbeatInterval, but the pod
+// keeps that cadence itself and the executor cannot change it. So the constant
+// is a mirror, and a mirror that drifts is worse than no constant at all: the
+// lease would be validated against a cadence no worker keeps, and the check
+// would pass while a real worker lost its task to the reaper.
+func TestWorkerHeartbeatIntervalMatchesTheWorker(t *testing.T) {
+	//nolint:gosec // G304: the path is repoRoot(t) (discovered by walking up for go.work) joined with a fixed literal, not external input
+	body, err := os.ReadFile(filepath.Join(
+		repoRoot(t), "dbt/base/continuo_dbt_runtime/worker.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// heartbeat_seconds: float = 10.0
+	match := regexp.MustCompile(`heartbeat_seconds:\s*float\s*=\s*([0-9.]+)`).
+		FindSubmatch(body)
+	if match == nil {
+		t.Fatal("worker.py no longer declares heartbeat_seconds; " +
+			"WorkerHeartbeatInterval mirrors it and must be re-derived")
+	}
+
+	seconds, err := strconv.ParseFloat(string(match[1]), 64)
+	if err != nil {
+		t.Fatalf("parse the worker's heartbeat_seconds %q: %v", match[1], err)
+	}
+
+	want := time.Duration(seconds * float64(time.Second))
+	if WorkerHeartbeatInterval != want {
+		t.Errorf("the worker heartbeats every %s but config states %s; "+
+			"WORKER_LEASE_TTL is validated against the wrong cadence",
+			want, WorkerHeartbeatInterval)
 	}
 }

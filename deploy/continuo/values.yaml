@@ -329,7 +329,6 @@ services:
       # is discarded for the in-code default.
       WORKER_IDLE_TIMEOUT: "300s"
       WORKER_LEASE_TTL: "60s"
-      WORKER_HEARTBEAT_INTERVAL: "15s"
       WORKER_CLAIM_WAIT: "20s"
       # The base URL worker pods call back on, baked into every pod a pool
       # creates. It resolves through the executor's own in-namespace Service.

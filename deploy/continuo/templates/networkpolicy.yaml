@@ -42,6 +42,11 @@ spec:
         - podSelector:
             matchLabels:
               app: dbt-job
+        # A worker pod runs dbt against the warehouse itself, exactly as a
+        # dbt-job pod does; only the pod's lifetime differs.
+        - podSelector:
+            matchLabels:
+              app: continuo-dbt-worker
       ports:
         - port: 5432
 {{- end }}
@@ -122,9 +127,39 @@ spec:
         - podSelector:
             matchLabels:
               app: dbt-job
+        # A worker pod holds no object-store credential, but it does the reads
+        # and writes itself: it fetches its runtime artifact and uploads each
+        # task's log and run results through URLs the executor signs.
+        - podSelector:
+            matchLabels:
+              app: continuo-dbt-worker
       ports:
         - port: 9000
 {{- end }}
+---
+# The executor's internal worker API. It is the only edge into
+# executor-controller: every other service reaches it through Redis, and the
+# transport is pull-only, so a worker pod calls in and is never called back.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" . }}-allow-executor-worker-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $instance }}
+      app.kubernetes.io/name: executor-controller
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: continuo-dbt-worker
+      ports:
+        - port: 8084
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

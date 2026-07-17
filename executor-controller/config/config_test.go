@@ -37,7 +37,6 @@ func loadEnv(t *testing.T, overrides map[string]string) (Config, *pkgconfig.Vali
 		"EXECUTION_MODE_OVERRIDES_JSON": "",
 		"WORKER_IDLE_TIMEOUT":           "",
 		"WORKER_LEASE_TTL":              "",
-		"WORKER_HEARTBEAT_INTERVAL":     "",
 		"WORKER_CLAIM_WAIT":             "",
 		"WORKER_CONTROL_PLANE_URL":      "",
 	}
@@ -72,9 +71,6 @@ func TestLoad_DefaultsAreTheJobsPath(t *testing.T) {
 	}
 	if cfg.WorkerLeaseTTL != 60*time.Second {
 		t.Errorf("want lease TTL 60s, got %s", cfg.WorkerLeaseTTL)
-	}
-	if cfg.WorkerHeartbeatInterval != 15*time.Second {
-		t.Errorf("want heartbeat interval 15s, got %s", cfg.WorkerHeartbeatInterval)
 	}
 	if cfg.WorkerClaimWait != 20*time.Second {
 		t.Errorf("want claim wait 20s, got %s", cfg.WorkerClaimWait)
@@ -280,27 +276,25 @@ func TestLoad_WorkerControlPlaneURLFromEnv(t *testing.T) {
 	}
 }
 
-// TestLoad_HeartbeatMustFitThreeTimesInTheLease pins the liveness margin: a
-// worker must be able to miss two heartbeats without its lease being reaped.
-func TestLoad_HeartbeatMustFitThreeTimesInTheLease(t *testing.T) {
-	_, v := loadEnv(t, map[string]string{
-		"WORKER_LEASE_TTL":          "30s",
-		"WORKER_HEARTBEAT_INTERVAL": "10s",
-	})
-	if !slices.Contains(v.Missing(), "WORKER_HEARTBEAT_INTERVAL(3x < WORKER_LEASE_TTL)") {
-		t.Fatalf("want a heartbeat that exactly fills the lease rejected, got %v", v.Missing())
+// TestLoad_LeaseMustHoldThreeHeartbeats pins the liveness margin: a worker must
+// be able to miss two heartbeats without its lease being reaped. The cadence is
+// the worker's own, so a lease that cannot hold three of them is rejected — the
+// lease is the only side of this an operator can set.
+func TestLoad_LeaseMustHoldThreeHeartbeats(t *testing.T) {
+	// Three 10s heartbeats exactly fill a 30s lease, leaving no margin.
+	_, v := loadEnv(t, map[string]string{"WORKER_LEASE_TTL": "30s"})
+	if !slices.Contains(v.Missing(), "WORKER_LEASE_TTL(> 3x the worker's heartbeat)") {
+		t.Fatalf("want a lease that only just holds three heartbeats rejected, got %v",
+			v.Missing())
 	}
 }
 
-func TestLoad_HeartbeatFittingThreeTimesIsAccepted(t *testing.T) {
-	cfg, v := loadEnv(t, map[string]string{
-		"WORKER_LEASE_TTL":          "31s",
-		"WORKER_HEARTBEAT_INTERVAL": "10s",
-	})
+func TestLoad_LeaseHoldingThreeHeartbeatsIsAccepted(t *testing.T) {
+	cfg, v := loadEnv(t, map[string]string{"WORKER_LEASE_TTL": "31s"})
 	if len(v.Missing()) != 0 {
 		t.Fatalf("want no missing vars, got %v", v.Missing())
 	}
-	if cfg.WorkerLeaseTTL != 31*time.Second || cfg.WorkerHeartbeatInterval != 10*time.Second {
-		t.Fatalf("want 31s/10s, got %s/%s", cfg.WorkerLeaseTTL, cfg.WorkerHeartbeatInterval)
+	if cfg.WorkerLeaseTTL != 31*time.Second {
+		t.Fatalf("want 31s, got %s", cfg.WorkerLeaseTTL)
 	}
 }

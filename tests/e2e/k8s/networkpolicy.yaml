@@ -1,0 +1,50 @@
+# Reachability, modelled after the umbrella chart's own policy set
+# (deploy/continuo/templates/networkpolicy.yaml): default-deny ingress for every
+# pod, then exactly the edges the service graph needs re-opened.
+#
+# Without this the suite could not fail on a whole category of defect. The
+# executor creates worker pods, and whether those pods can reach the control
+# plane is a property of the deployment, not of the code — so no unit test sees
+# it, and a chart that forgot the edge would look correct everywhere until a
+# pool was enabled in a real cluster.
+#
+# What this models and the chart also does: default-deny ingress, and worker
+# pods reaching the executor's internal worker API. What it does NOT model: the
+# chart's worker-to-Postgres and worker-to-object-store edges. In this
+# environment both run on the docker bridge outside the cluster, so a worker
+# reaches them by egress, which no ingress policy governs. Those two edges exist
+# only in the chart and are covered only by review.
+#
+# Kept no more permissive than the chart: an allow rule wider here than the one
+# it stands for would pass the suite and still fail a real install.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+# The executor's internal worker API. It is the only edge into
+# executor-controller: the transport is pull-only, so a worker pod calls in and
+# is never called back. Kubelet probes and `kubectl port-forward` reach a pod
+# from the node rather than from another pod, so the deny above does not govern
+# them and the suite's health checks are unaffected.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-executor-worker-api
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: executor-controller
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: continuo-dbt-worker
+      ports:
+        - port: 8084
