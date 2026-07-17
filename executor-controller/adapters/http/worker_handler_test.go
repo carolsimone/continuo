@@ -96,12 +96,14 @@ func TestClaim_ReturnsTheGrantedLease(t *testing.T) {
 		ExecutionPath string   `json:"execution_path"`
 		Argv          []string `json:"argv"`
 		Task          struct {
-			TaskID      string `json:"task_id"`
-			ScheduleID  string `json:"schedule_id"`
-			ServiceName string `json:"service_name"`
-			SchemaName  string `json:"schema_name"`
-			TableName   string `json:"table_name"`
-			DBTUniqueID string `json:"dbt_unique_id"`
+			TaskID       string `json:"task_id"`
+			ScheduleID   string `json:"schedule_id"`
+			ScheduleName string `json:"schedule_name"`
+			ServiceName  string `json:"service_name"`
+			SchemaName   string `json:"schema_name"`
+			TableName    string `json:"table_name"`
+			JobName      string `json:"job_name"`
+			DBTUniqueID  string `json:"dbt_unique_id"`
 		} `json:"task"`
 	}
 	decodeJSON(t, resp, &body)
@@ -117,6 +119,34 @@ func TestClaim_ReturnsTheGrantedLease(t *testing.T) {
 	// The lease deadline is machine-readable to the nanosecond.
 	_, err := time.Parse(time.RFC3339Nano, body.ExpiresAt)
 	assert.NoError(t, err)
+}
+
+// TestClaim_NamesTheScheduleAndJobAWrapperReads. A team's dbt wrapper may read
+// SCHEDULE_NAME and JOB_NAME out of its environment, and a worker can only set
+// them from what the grant carries. Without these the worker would have nothing
+// but the schedule's id, and a wrapper that ran under a pool would silently see
+// a UUID where a per-task Job gave it a name.
+func TestClaim_NamesTheScheduleAndJobAWrapperReads(t *testing.T) {
+	r := newRig(t)
+	r.grant()
+
+	resp := r.do(http.MethodPost, "/internal/v1/workers/claim",
+		`{"wait_seconds":0,"owner":"worker-1","pod_name":"pod-a","pod_uid":"uid-a"}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body struct {
+		Task struct {
+			ScheduleID   string `json:"schedule_id"`
+			ScheduleName string `json:"schedule_name"`
+			JobName      string `json:"job_name"`
+		} `json:"task"`
+	}
+	decodeJSON(t, resp, &body)
+
+	assert.Equal(t, "nightly-finance", body.Task.ScheduleName)
+	assert.Equal(t, "dbt-finance-orders-42", body.Task.JobName)
+	// The name is carried in addition to the id, not instead of it.
+	assert.Equal(t, "22222222-2222-2222-2222-222222222222", body.Task.ScheduleID)
 }
 
 // TestClaim_ScopesTheClaimToTheAuthenticatedPool is what stops a worker from

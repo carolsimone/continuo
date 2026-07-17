@@ -30,17 +30,14 @@ from continuo_dbt_runtime.api_client import (
 )
 from continuo_dbt_runtime.artifact_store import ArtifactStore, InitializationError
 from continuo_dbt_runtime.execution import (
+    CREDENTIAL_ENV,
     EventSink,
     ExecutionResult,
     Lease,
-    NativeExecutor,
+    executor_for,
     release_adapters,
     task_environment,
 )
-
-# The environment value the pool credential arrives in. It is popped at startup
-# and never read again.
-CREDENTIAL_ENV = "CONTINUO_POOL_CREDENTIAL"  # noqa: S105 - a variable name
 
 UPLOAD_TIMEOUT_SECONDS = 120.0
 
@@ -100,26 +97,25 @@ def take_credential() -> str:
         raise RuntimeError(f"{CREDENTIAL_ENV} is required") from None
 
 
-def task_values(lease: Lease, job_name: str, schedule_name: str,
-                task_dir: str | Path) -> dict[str, str]:
+def task_values(lease: Lease, task_dir: str | Path) -> dict[str, str]:
     """The environment one task runs under.
 
     These name the task a team's dbt project is running, plus the paths that
     keep one task's dbt output out of the next task's. The pool credential is
     never among them.
 
-    SCHEDULE_NAME carries whatever the caller passes; the lease grant names the
-    schedule only by id, so the worker passes that id and SCHEDULE_NAME reads as
-    a UUID rather than a human-readable schedule name.
+    Every name here is the one a per-task Job would have set, and carries the
+    same value: a team's wrapper reading SCHEDULE_NAME or JOB_NAME reads what it
+    has always read, so running on a pool does not change what it sees.
     """
     return {
         "TASK_ID": lease.task.task_id,
         "SCHEDULE_ID": lease.task.schedule_id,
-        "SCHEDULE_NAME": schedule_name,
+        "SCHEDULE_NAME": lease.task.schedule_name,
         "SERVICE_NAME": lease.task.service_name,
         "SCHEMA": lease.task.schema_name,
         "TABLE_NAME": lease.task.table_name,
-        "JOB_NAME": job_name,
+        "JOB_NAME": lease.task.job_name,
         "DBT_TARGET_PATH": str(Path(task_dir) / "target"),
         "DBT_LOG_PATH": str(Path(task_dir) / "logs"),
     }
@@ -218,7 +214,7 @@ class Worker:
         self._config = config
         self._client = client
         self._artifact = artifact
-        self._executor_factory = executor_factory or NativeExecutor
+        self._executor_factory = executor_factory or executor_for
         self._upload = upload or upload_bytes
         self._stop = threading.Event()
         # Set when a task leaves the process in a state it cannot trust.
@@ -281,7 +277,7 @@ class Worker:
 
     def _execute_and_report(self, lease: Lease, task_dir: Path) -> None:
         log_path = task_dir / "dbt.log"
-        executor = self._executor_factory(self._artifact, EventSink(log_path))
+        executor = self._executor_factory(lease, self._artifact, EventSink(log_path))
 
         self._client.start(lease.lease_id, lease.deployment_id, lease.token)
         beat = Heartbeat(self._client, lease, self._config.heartbeat_seconds,
@@ -289,12 +285,7 @@ class Worker:
         beat.start()
         started = time.monotonic()
         try:
-            with task_environment(task_values(
-                lease,
-                job_name=f"worker-{lease.lease_id}",
-                schedule_name=lease.task.schedule_id,
-                task_dir=task_dir,
-            )):
+            with task_environment(task_values(lease, task_dir)):
                 result = executor.execute(lease, task_dir)
         except KeyboardInterrupt:
             # The heartbeat stopped this task; the executor already knows why.
@@ -342,6 +333,8 @@ class Worker:
             "execution_seconds": execution_seconds,
             "unsafe_runtime": result.unsafe_runtime,
         }
+        if result.cache_status:
+            payload["cache_status"] = result.cache_status
         upload_started = time.monotonic()
         payload.update(
             self._upload_results(self._result_urls(lease), log_path, task_dir)

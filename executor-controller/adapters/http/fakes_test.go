@@ -106,7 +106,8 @@ func newFakeLeases() *fakeLeases {
 func testCommand() command.DeployTask {
 	return command.DeployTask{
 		TaskID: "11111111-1111-1111-1111-111111111111", ScheduleID: "22222222-2222-2222-2222-222222222222",
-		ServiceName: "finance", SchemaName: "public", TableName: "orders",
+		ScheduleName: "nightly-finance", ServiceName: "finance", SchemaName: "public",
+		TableName: "orders", JobName: "dbt-finance-orders-42",
 		NodeType: "dbt-model", ImageTag: "sha-abc", DBTUniqueID: "model.finance.orders",
 	}
 }

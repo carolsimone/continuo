@@ -4,6 +4,7 @@ The loop is exercised against a recording client rather than a socket: the HTTP
 contract itself is covered in test_worker_api_client, and what matters here is
 the order the worker reports things in and what it does when it is told to stop.
 """
+import os
 import threading
 import time
 from pathlib import Path
@@ -33,9 +34,11 @@ LEASE_PAYLOAD = {
     "task": {
         "task_id": "task-1",
         "schedule_id": "sched-1",
+        "schedule_name": "nightly-finance",
         "service_name": SERVICE_NAME,
         "schema_name": "analytics",
         "table_name": TABLE_NAME,
+        "job_name": "dbt-finance-orders-42",
         "dbt_unique_id": UNIQUE_ID,
     },
 }
@@ -235,7 +238,7 @@ def worker_for(tmp_path, client, executor, config=None, **kwargs):
         config if config is not None else config_for(tmp_path),
         client,
         artifact=None,
-        executor_factory=lambda artifact, sink: executor,
+        executor_factory=lambda lease, artifact, sink: executor,
         **kwargs,
     )
 
@@ -486,6 +489,29 @@ def test_lease_is_read_from_the_grant_verbatim():
     assert lease.token == "t-1"
     assert lease.task.dbt_unique_id == UNIQUE_ID
     assert lease.execution_path == "native"
+    assert lease.task.schedule_name == "nightly-finance"
+    assert lease.task.job_name == "dbt-finance-orders-42"
+
+
+def test_a_task_runs_under_the_names_the_grant_carried(tmp_path):
+    """The names a wrapper reads reach it from the grant, end to end.
+
+    The environment is sampled from inside the executor, which is where a task —
+    and anything it starts — actually reads it.
+    """
+    client = RecordingClient(leases=[LEASE_PAYLOAD])
+    seen = {}
+
+    class SamplingExecutor(StubExecutor):
+        def execute(self, lease, task_dir):
+            seen.update(os.environ)
+            return super().execute(lease, task_dir)
+
+    worker_for(tmp_path, client, SamplingExecutor()).run_once()
+
+    assert seen["SCHEDULE_NAME"] == "nightly-finance"
+    assert seen["JOB_NAME"] == "dbt-finance-orders-42"
+    assert seen["TABLE_NAME"] == TABLE_NAME
 
 
 def test_heartbeat_stops_the_task_when_the_executor_says_cancelled():

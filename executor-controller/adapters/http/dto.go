@@ -39,24 +39,30 @@ type leaseResponse struct {
 	Task          taskDTO  `json:"task"`
 }
 
-// taskDTO is the dbt node a lease covers.
+// taskDTO is the dbt node a lease covers. It carries every name a per-task Job
+// would have put in the pod's environment, because a team's dbt wrapper may read
+// any of them and a worker can only set them from what the grant says.
 type taskDTO struct {
-	TaskID      string `json:"task_id"`
-	ScheduleID  string `json:"schedule_id"`
-	ServiceName string `json:"service_name"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
-	DBTUniqueID string `json:"dbt_unique_id"`
+	TaskID       string `json:"task_id"`
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+	ServiceName  string `json:"service_name"`
+	SchemaName   string `json:"schema_name"`
+	TableName    string `json:"table_name"`
+	JobName      string `json:"job_name"`
+	DBTUniqueID  string `json:"dbt_unique_id"`
 }
 
 func newTaskDTO(cmd command.DeployTask) taskDTO {
 	return taskDTO{
-		TaskID:      cmd.TaskID,
-		ScheduleID:  cmd.ScheduleID,
-		ServiceName: cmd.ServiceName,
-		SchemaName:  cmd.SchemaName,
-		TableName:   cmd.TableName,
-		DBTUniqueID: cmd.DBTUniqueID,
+		TaskID:       cmd.TaskID,
+		ScheduleID:   cmd.ScheduleID,
+		ScheduleName: cmd.ScheduleName,
+		ServiceName:  cmd.ServiceName,
+		SchemaName:   cmd.SchemaName,
+		TableName:    cmd.TableName,
+		JobName:      cmd.JobName,
+		DBTUniqueID:  cmd.DBTUniqueID,
 	}
 }
 
