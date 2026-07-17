@@ -62,11 +62,23 @@ app.kubernetes.io/name: {{ .service }}
 {{- printf "%s-service-repos" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/* Truncates BASE so a "-r<N>" revision suffix always survives the 63-char
+     Kubernetes name limit. A plain `printf "%s-r%d" base rev | trunc 63` can
+     drop the suffix entirely for a long release name, letting two different
+     revisions collide on the same Job name. Truncate the base FIRST, to
+     (63 - len(suffix)), then append the suffix.
+     Call: include "continuo.revisionSuffixedName" (dict "root" $ "base" "foo") */}}
+{{- define "continuo.revisionSuffixedName" -}}
+{{- $suffix := printf "-r%d" (int .root.Release.Revision) -}}
+{{- $base := .base | trunc (int (sub 63 (len $suffix))) | trimSuffix "-" -}}
+{{- printf "%s%s" $base $suffix -}}
+{{- end -}}
+
 {{/* Migration Job name: revision-suffixed when the bundled Postgres makes it a
      regular resource (hooks would deadlock); stable when it is a hook (BYO). */}}
 {{- define "continuo.migrateJobName" -}}
 {{- if .Values.postgresql.enabled -}}
-{{- printf "%s-db-init-migrate-r%d" (include "continuo.fullname" .) (int .Release.Revision) | trunc 63 | trimSuffix "-" -}}
+{{- include "continuo.revisionSuffixedName" (dict "root" . "base" (printf "%s-db-init-migrate" (include "continuo.fullname" .))) -}}
 {{- else -}}
 {{- printf "%s-db-init-migrate" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

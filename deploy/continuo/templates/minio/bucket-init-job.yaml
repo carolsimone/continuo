@@ -2,7 +2,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ printf "%s-bucket-init-r%d" (include "continuo.minio.fullname" .) (int .Release.Revision) | trunc 63 | trimSuffix "-" }}
+  name: {{ include "continuo.revisionSuffixedName" (dict "root" . "base" (printf "%s-bucket-init" (include "continuo.minio.fullname" .))) }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "continuo.labels" . | nindent 4 }}

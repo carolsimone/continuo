@@ -60,8 +60,15 @@ spec:
             - /bin/sh
             - -c
             - |
+              set -eu
+              tries=0
               until psql -tc "SELECT 1 FROM flyway_schema_history LIMIT 1" >/dev/null 2>&1; do
-                echo "waiting for migrations on ${PGDATABASE}..."; sleep 3
+                tries=$((tries+1))
+                if [ "$tries" -gt 200 ]; then
+                  echo "FATAL: migrations never completed for ${PGDATABASE} after $((200*3))s — check the db-init-migrate Job" >&2
+                  exit 1
+                fi
+                echo "waiting for migrations on ${PGDATABASE} ($tries)..."; sleep 3
               done
           resources:
             requests: {cpu: 25m, memory: 32Mi}
