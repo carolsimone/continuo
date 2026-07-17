@@ -1,0 +1,13 @@
+# config/service_repos.yaml
+# Maps a dbt service name (orchestrator topology service_name) to its project
+# root within the source repo. The remediation agent joins <repo_path> with the
+# dbt original_file_path to read the model source from GitHub. The repo itself
+# comes from the remediation trigger. Edit this when adding a service or changing
+# a repo's layout, then restart remediation-agent.
+services:
+  core: services/core
+  finance: services/finance
+  marketing: services/marketing
+  service-1: services/service-1
+  service-2: services/service-2
+  service-3: services/service-3

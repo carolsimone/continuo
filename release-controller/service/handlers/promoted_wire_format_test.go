@@ -46,12 +46,12 @@ func TestHandleValidationResult_Promote_TopologyWireFormat(t *testing.T) {
 		},
 		RuntimeManifests: map[string]pkgmodel.RuntimeManifestRef{"svc-a": runtimeRef("a1")},
 	}))
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "public.a", Status: "ok"},
+		{NodeID: "public.legacy", Status: "ok"},
+	})
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rA",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "public.a", Status: "ok"},
-			{NodeID: "public.legacy", Status: "ok"},
-		},
+		ReleaseID:       "rA",
 		AggregateStatus: "ok",
 	}))
 

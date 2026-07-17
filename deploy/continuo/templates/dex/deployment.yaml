@@ -1,0 +1,70 @@
+{{- if .Values.dex.enabled }}
+# Quickstart-only identity provider with a static demo user. Production
+# installs set dex.enabled=false and configure a real OIDC IdP via auth.*.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "continuo.dex.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: dex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "continuo.selectorLabels" (dict "root" $ "service" "dex") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "continuo.selectorLabels" (dict "root" $ "service" "dex") | nindent 8 }}
+      annotations:
+        # Restart dex when the rendered config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/dex/secret.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        {{- include "continuo.podSecurityContext" . | nindent 8 }}
+        runAsUser: 1001
+        runAsGroup: 1001
+      containers:
+        - name: dex
+          image: "{{ .Values.dex.image.repository }}:{{ .Values.dex.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- include "continuo.containerSecurityContext" . | nindent 12 }}
+          args: ["dex", "serve", "/etc/dex/cfg/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 5556
+          # Dex serves every route, including /healthz, under its issuer path
+          # (hardcoded "/dex" in continuo.auth.issuerUrl above) — not at root.
+          readinessProbe:
+            httpGet:
+              path: /dex/healthz
+              port: 5556
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /dex/healthz
+              port: 5556
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.dex.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dex/cfg
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "continuo.dex.fullname" . }}
+            items:
+              - key: config.yaml
+                path: config.yaml
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -534,12 +534,19 @@ func runGateInTx(t *testing.T, tx *sqlx.Tx, releaseID, nodeID string, now time.T
 	)
 }
 
+// countValidationCompletedOutbox counts the terminal (kind=complete) rows for
+// releaseID on the shared validation.result:v1 stream. It filters by kind
+// because the stream also carries per-node (kind=node) rows for the same
+// release_id; callers that only exercise EmitValidationAggregateIfComplete
+// directly (never SettleNodeTerminal's per-node emission) would still get a
+// correct count without the filter, but it stays kind-scoped so this helper
+// means exactly what its name says.
 func countValidationCompletedOutbox(t *testing.T, db *sqlx.DB, releaseID string) int {
 	t.Helper()
 	var n int
 	require.NoError(t, db.QueryRow(
-		`SELECT count(*) FROM executor_outbox WHERE stream_name = $1 AND payload::jsonb->>'release_id' = $2`,
-		streams.ValidationCompletedV1, releaseID,
+		`SELECT count(*) FROM executor_outbox WHERE stream_name = $1 AND payload::jsonb->>'release_id' = $2 AND payload::jsonb->>'kind' = 'complete'`,
+		streams.ValidationResultV1, releaseID,
 	).Scan(&n))
 	return n
 }
@@ -556,7 +563,7 @@ func countValidationCompletedOutbox(t *testing.T, db *sqlx.DB, releaseID string)
 // pending==0 and the sentinel resolves it to exactly one emission. The test
 // drives that interleaving deterministically — tx_A holds the lock until a
 // barrier confirms tx_B is parked on it — and asserts EXACTLY ONE
-// validation terminal (kind=complete) row results (never zero, never two).
+// validation.result:v1 (kind=complete) row results (never zero, never two).
 func TestDeploymentsRepository_ListValidationByRelease_And_BlockedPending(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()

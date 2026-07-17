@@ -27,6 +27,13 @@ jobs:
     # default. The slow setup phase carries its own tighter cap below.
     timeout-minutes: 75
 
+    # The repo's default workflow token is restricted (contents/metadata/packages
+    # read only), which denies the pull-requests API that paths-filter uses to
+    # detect changed files on PR events — grant that scope explicitly.
+    permissions:
+      contents: read
+      pull-requests: read
+
     env:
       DOCKER_BUILDKIT: "1"
 
@@ -82,37 +89,51 @@ jobs:
           # so docker compose build also benefits from the buildx cache backend.
           install: true
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+      - name: Detect Dockerfile.base changes
+        id: basefilter
+        uses: dorny/paths-filter@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          filters: |
+            base:
+              - 'Dockerfile.base'
 
-      - name: Pull or build base image
-        # Normally pull continuo-base from Docker Hub (published by publish-base.yml).
-        # Fall back to a local build only when Dockerfile.base itself changed in
-        # this PR, because the published image hasn't been updated yet.
+      # Normally pull continuo-base from ghcr (published by publish-base.yml,
+      # public package — anonymous pull), falling back to a local build if the
+      # pull fails (e.g. first run or registry hiccup). But a PR that changes
+      # Dockerfile.base must be tested against ITS OWN base, not the published
+      # one — build locally in that case, so a broken base change fails CI
+      # instead of merging unvalidated and poisoning the published :v1 tag.
+      - name: Provide continuo-base image
         run: |
-          if git diff --name-only origin/main..HEAD | grep -q "^Dockerfile\.base$"; then
-            echo "Dockerfile.base changed in this PR — building locally..."
-            DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
+          # A PR that changes Dockerfile.base must be tested against ITS OWN
+          # base, not the published one — build locally in that case (detected
+          # via the paths-filter step; the shallow checkout has no history for
+          # a git diff). Otherwise pull the published ghcr base (public
+          # package, anonymous pull) and fall back to a local build if the
+          # pull fails.
+          # --load is required: the docker-container buildx driver set up
+          # above builds in an isolated builder and does not populate the
+          # daemon's image store on its own, so without it continuo-base
+          # would stay in the builder cache and later steps could fall back
+          # to a stale continuo-base:latest tag from a previous run.
+          if [ "${{ steps.basefilter.outputs.base }}" = "true" ]; then
+            echo "Dockerfile.base changed in this PR; building continuo-base locally..."
+            DOCKER_BUILDKIT=1 docker build --load -t continuo-base:latest -f Dockerfile.base .
+          elif docker pull ghcr.io/${{ github.repository_owner }}/continuo-base:v1; then
+            docker tag ghcr.io/${{ github.repository_owner }}/continuo-base:v1 continuo-base:latest
           else
-            echo "Pulling continuo-base from Docker Hub..."
-            if docker pull ${{ secrets.DOCKERHUB_USERNAME }}/continuo-base:latest; then
-              docker tag ${{ secrets.DOCKERHUB_USERNAME }}/continuo-base:latest continuo-base:latest
-            else
-              echo "Docker Hub pull failed (image may not exist yet) — building locally as fallback..."
-              DOCKER_BUILDKIT=1 docker build -t continuo-base:latest -f Dockerfile.base .
-            fi
+            echo "Pull failed; building continuo-base locally..."
+            DOCKER_BUILDKIT=1 docker build --load -t continuo-base:latest -f Dockerfile.base .
           fi
 
       - name: Switch to docker driver for local image access
-        # The docker-container buildx driver (used above for Docker Hub pull) runs
-        # in an isolated container and cannot see local daemon images.
-        # The default docker driver shares the daemon's image store, so
-        # "FROM continuo-base:latest" resolves correctly in docker compose build.
-        # Docker Engine 24+ (shipped on ubuntu-latest) supports type=gha cache
-        # with the default driver, so docker compose build still benefits.
+        # The docker-container buildx driver set up above (used by the buildx
+        # builds later in this job) runs in an isolated container and cannot
+        # see local daemon images. The default docker driver shares the
+        # daemon's image store, so "FROM continuo-base:latest" resolves
+        # correctly in docker compose build. Docker Engine 24+ (shipped on
+        # ubuntu-latest) supports type=gha cache with the default driver, so
+        # docker compose build still benefits.
         run: docker buildx use default
 
       - name: Set up infrastructure

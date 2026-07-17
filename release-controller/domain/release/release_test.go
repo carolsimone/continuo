@@ -178,6 +178,25 @@ func TestRecordValidationResults_RetainedAcrossPromote(t *testing.T) {
 	assert.Equal(t, []release.NodeValidationResult{{Stage: "validation", NodeID: "a", Status: "ok"}}, r.PerNodeResults())
 }
 
+func TestUpsertStageResult_AddsThenReplacesByStageAndNode(t *testing.T) {
+	r := release.New("rel-1", "svc", "t", false, "acme/demo", "deadbeef", time.Unix(0, 0).UTC())
+	r.UpsertStageResult("validation", release.NodeValidationResult{NodeID: "a", Status: "ok"})
+	r.UpsertStageResult("validation", release.NodeValidationResult{NodeID: "b", Status: "failed"})
+	// Replace a's outcome; b and stage untouched.
+	r.UpsertStageResult("validation", release.NodeValidationResult{NodeID: "a", Status: "failed", DBTLogURI: "s3://l"})
+
+	got := r.PerNodeResults()
+	require.Len(t, got, 2)
+	byNode := map[string]release.NodeValidationResult{}
+	for _, n := range got {
+		require.Equal(t, "validation", n.Stage)
+		byNode[n.NodeID] = n
+	}
+	assert.Equal(t, "failed", byNode["a"].Status)
+	assert.Equal(t, "s3://l", byNode["a"].DBTLogURI)
+	assert.Equal(t, "failed", byNode["b"].Status)
+}
+
 func TestRelease_NewCarriesProvenance(t *testing.T) {
 	r := release.New("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeefcafe", time.Unix(0, 0))
 	assert.Equal(t, "acme/demo", r.Repo())
@@ -275,9 +294,11 @@ func TestTransitionToSeedBuilding_FromParsing(t *testing.T) {
 
 func TestTransitionFromSeedBuilding_ToValidating(t *testing.T) {
 	r := newParsingRelease(t)
-	require.NoError(t, r.TransitionToSeedBuilding(release.Topology{}, nil, t0))
-	require.NoError(t, r.TransitionFromSeedBuilding(t1))
+	require.NoError(t, r.TransitionToSeedBuilding(release.Topology{}, []string{"seed.core.fx", "model.fin.report"}, t0))
+	require.NoError(t, r.TransitionFromSeedBuilding([]string{"model.fin.report"}, t1))
 	assert.Equal(t, release.StatusValidating, r.Status())
+	assert.Equal(t, []string{"model.fin.report"}, r.ValidationNodeIDs(),
+		"TransitionFromSeedBuilding narrows the persisted validation set to the filtered IDs")
 }
 
 func TestTransitionToSeedBuilding_RejectsWrongSource(t *testing.T) {

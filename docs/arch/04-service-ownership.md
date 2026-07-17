@@ -96,9 +96,9 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Durable state | `executor_deployments`, `executor_outbox`, `message_processing`, `cancelled_schedules`, `validation_aggregates`, `executor_worker_pools` |
 | gRPC server methods owned | none |
 | HTTP server routes owned | `/health`, `/ready`, plus the internal worker API on the same port: `GET /internal/v1/worker/runtime`, `POST /internal/v1/workers/{claim,initialization}`, `POST /internal/v1/leases/{id}/{start,heartbeat,result-urls,complete}`. Pull-only — worker pods call the executor, never the reverse. Authenticated per pool; with no pool registered, every internal route answers `401` |
-| Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `executor.job.terminal:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.completed:v1` |
-| Redis produces | `node.deployed:v1`, `task.status.updated:v1` (FAILED only, on the never-deployed terminal dispatch failure — k8s-controller owns RUNNING and the pod terminal), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.completed:v1` (per-release validation aggregate) |
-| External DB writes | dbt warehouse (`DBT_POSTGRES_DB`) — creates the `_candidate_<release>` schema on `validation.requested:v1` via `CandidateSchemaCreator`; drops it on `validation.completed:v1` via `CandidateSchemaCleaner` |
+| Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `executor.job.terminal:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.result:v1` (kind=complete, for candidate schema teardown) |
+| Redis produces | `node.deployed:v1`, `task.status.updated:v1` (FAILED only, on the never-deployed terminal dispatch failure — k8s-controller owns RUNNING and the pod terminal), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.result:v1` (unified validation leg: `kind=node` per-node projections as each node settles, then a trailing `kind=complete` per-release decision) |
+| External DB writes | dbt warehouse (`DBT_POSTGRES_DB`) — creates the `_candidate_<release>` schema on `validation.requested:v1` via `CandidateSchemaCreator`; drops it on `validation.result:v1` kind=complete via `CandidateSchemaCleaner` |
 | Outbound gRPC calls | none |
 
 ### Invariants
@@ -118,7 +118,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 - **Retry-exhaustion uses the same propagation.** When `retry_count + 1 >= max_retries` on a transient error, `writeFailed` is called, so transient errors that exhaust the retry budget also reach orchestrator's `HandleNodeCompleted` (via `node.updated:v1`) and state's `TaskStatusUpdatedHandler` (via `task.status.updated:v1`).
 - **Uniform outbox publisher.** The executor `OutboxPublisher` is a marshal-and-XADD; it has no `TerminalFailureHook` and carries no K8s logic. All failure signalling is performed upstream by the dispatcher.
 - **Candidate schema is created once, race-safely.** The `validation.requested:v1` binding calls `CandidateSchemaCreator.EnsureCandidateSchema` against `DBT_POSTGRES_DB` before enqueuing any node. Creation takes a transaction-scoped advisory lock (`pg_advisory_xact_lock`) on the schema name and tolerates a unique-violation, so parallel root validation Jobs — including seeds, whose `dbt seed --empty` path creates the schema non-atomically — never race `CREATE SCHEMA` on `pg_namespace`. A creation failure aborts the message before any deployment row is written, and the message is retried.
-- **Candidate schema teardown.** A dedicated consumer on `validation.completed:v1` (group `executor-validation-completed`) calls `CandidateSchemaCleaner.DropCandidateSchema` against `DBT_POSTGRES_DB`; this drops the shared `_candidate_<release>` schema regardless of pass/fail outcome.
+- **Candidate schema teardown.** A dedicated consumer on `validation.result:v1` (group `executor-validation-result-teardown`) reacts to the `kind=complete` message and calls `CandidateSchemaCleaner.DropCandidateSchema` against `DBT_POSTGRES_DB`; this drops the shared `_candidate_<release>` schema regardless of pass/fail outcome.
 
 ## `k8s-controller`
 
@@ -149,7 +149,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Durable state | Postgres `releases` (per-candidate state, `changed_service`, assembled per-service `image_tags`, candidate topology including per-node `candidate_sql_uri`, validation results, transitions, immutable provenance `repo` + `commit_sha`), `current_prod` (singleton live `topology_snapshot` + promoted `release_id`; `candidate_sql_uri` is stripped on promotion), `service_prod` (one row per dbt service: live `manifest_s3_key` + `image_tag` + `release_id`), `message_processing`, `release_controller_outbox` |
 | HTTP server | `POST /releases` (single-service candidate; requires `repo` + `commit_sha`), `GET /releases`, `GET /releases/{id}` (returns `repo` + `commit_sha`), `GET /current-prod`, `GET /healthz` |
 | gRPC server methods owned | none |
-| Redis consumes | `manifest.loaded.candidate:v1`, `validation.completed:v1` |
+| Redis consumes | `compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.result:v1` |
 | Redis produces | `release.requested:v1`, `validation.requested:v1` (per node: `candidate_sql_uri`), `release.promoted:v1`, `release.rejected:v1` (on `validation_failed`: includes top-level `repo` + `commit_sha` and per failing node `candidate_sql_uri`) |
 | S3 writes | `DeleteObjects` — prune-time delete of `candidate-sql/<release_id>/` prefix per pruned release (soft-fail; 30-day S3 lifecycle rule on `candidate-sql/` is the backstop) |
 | Outbound gRPC calls | none |

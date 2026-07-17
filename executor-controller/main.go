@@ -201,7 +201,7 @@ func main() {
 		uowFactory, compileNodeHandler, logger)
 	jobTerminalBinding := redis.NewJobTerminalBinding(
 		uowFactory, jobTerminalHandler, logger)
-	validationCompletedTeardownBinding := redis.NewValidationCompletedTeardownBinding(
+	validationResultTeardownBinding := redis.NewValidationResultTeardownBinding(
 		candidateSchemaCleaner, logger)
 	releaseRejectedTeardownBinding := redis.NewReleaseRejectedTeardownBinding(
 		candidateSchemaCleaner, logger)
@@ -272,11 +272,11 @@ func main() {
 	logger.Info("executor.job.terminal consumer initialized",
 		"stream", streams.ExecutorJobTerminalV1, "group", streams.ExecutorJobTerminal)
 
-	validationCompletedTeardownConsumer := pkgredis.NewStreamConsumer(
-		redisClient, streams.ValidationCompletedV1, streams.ExecutorValidationCompleted,
-		validationCompletedTeardownBinding, logger)
-	logger.Info("validation.completed teardown consumer initialized",
-		"stream", streams.ValidationCompletedV1, "group", streams.ExecutorValidationCompleted)
+	validationResultTeardownConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ValidationResultV1, streams.ExecutorValidationResultTeardown,
+		validationResultTeardownBinding, logger)
+	logger.Info("validation.result teardown consumer initialized",
+		"stream", streams.ValidationResultV1, "group", streams.ExecutorValidationResultTeardown)
 
 	releaseRejectedTeardownConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
@@ -454,8 +454,8 @@ func main() {
 		}
 	}()
 	go func() {
-		if err := validationCompletedTeardownConsumer.Start(ctx); err != nil {
-			logger.Error("validation.completed teardown consumer error", "error", err)
+		if err := validationResultTeardownConsumer.Start(ctx); err != nil {
+			logger.Error("validation.result teardown consumer error", "error", err)
 		}
 	}()
 	go func() {

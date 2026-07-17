@@ -78,6 +78,25 @@ func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Releas
 	return rowToRelease(row)
 }
 
+// Load returns the Release with the given ID under a row-level FOR UPDATE lock,
+// or nil if it does not exist. Callers must be inside a transaction; the lock
+// serializes the terminal handler against concurrent per-node projection upserts.
+func (r *ReleaseRepository) Load(ctx context.Context, id string) (*release.Release, error) {
+	var row releaseRow
+	err := r.q.GetContext(ctx, &row,
+		`SELECT release_id, status, image_tags, changed_service,
+		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
+		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha
+		 FROM releases WHERE release_id = $1 FOR UPDATE`, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("select release for update: %w", err)
+	}
+	return rowToRelease(row)
+}
+
 // NextQueuedRelease returns the oldest Release in StatusReceived, or nil if
 // there are none queued.
 func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Release, error) {

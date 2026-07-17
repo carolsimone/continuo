@@ -26,7 +26,7 @@ const ftableEUniqueID = "e2e_schema.ftable_e"
 //	POST /releases (service-2, ftable_e as changed node)
 //	→ validation.requested:v1 → executor/k8s run a real dbt --empty job
 //	→ ftable_e fails (references public.wrong_name which does not exist)
-//	→ validation.completed:v1 (release rejected)
+//	→ validation.result:v1 terminal (kind=complete, release rejected)
 //	→ release.rejected:v1 → remediation classifier classifies the node
 //	→ remediation.requested:v1 emitted with category=logic
 //	→ classification_decision row: source=validation, decision=emit, category=logic
@@ -109,7 +109,8 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	// 6. Assert release.rejected:v1 carries run_results_uri for the failing node.
 	//    validation_runner.py emits a structured result block (status=error,
 	//    message "...does not exist") which k8s-controller uploads to S3; the URI
-	//    threads through validation.completed:v1 → release.rejected:v1. Its presence
+	//    threads through the validation.result:v1 terminal (kind=complete) →
+	//    release.rejected:v1. Its presence
 	//    is what makes the classifier take the structured branch below.
 	var rejectedRunResultsURI string
 	pollUntil(t, ctx, 2*time.Minute, 2*time.Second, func() (bool, error) {

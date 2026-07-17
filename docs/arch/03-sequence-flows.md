@@ -505,17 +505,20 @@ sequenceDiagram
     KC->>R: publish validation.node.completed:v1 {release_id, node_id, outcome, dbt_log_uri}
     R->>EC: consume validation.node.completed:v1
     Note over EC: RecordOutcome, then gating — ok unblocks ready downstream,<br/>non-ok skips all reachable downstream
+    EC->>R: publish validation.result:v1 kind=node (per node, as it settles)<br/>{kind:"node", release_id, stage="validation", node_id, status, dbt_log_uri?, run_results_uri?}
+    R->>RC: consume kind=node → upsert per_node_results (read model)
   end
-  Note over EC: per-release advisory lock + emission sentinel (exactly-once):<br/>when no node remains pending/blocked/deployed → build aggregate
-  EC->>R: publish validation.completed:v1<br/>{per_node_results[{node_id, status, dbt_log_uri}], aggregate_status, candidate_schema}
+  Note over EC: per-release advisory lock + emission sentinel (exactly-once):<br/>when no node remains pending/blocked/deployed → build decision
+  EC->>R: publish validation.result:v1 kind=complete (emitted last; decision reads aggregate_status, order-independent)<br/>{kind:"complete", release_id, aggregate_status, candidate_schema} (decision only — no per-node array)
 
   Note over RC: Phase 5 — promote or reject
-  R->>RC: consume validation.completed:v1
-  alt aggregate_status=ok
-    Note over RC: RecordStageResults("validation", per_node_results)<br/>current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted
+  R->>RC: consume kind=complete
+  Note over RC: load release FOR UPDATE; read stored per_node_results (stage="validation")<br/>in-order delivery ⇒ store already complete; a permanently-dropped node falls back to aggregate_status
+  alt every stored node ok and aggregate_status=ok
+    Note over RC: current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted
     RC->>R: publish release.promoted:v1
-  else any node failed / missing
-    Note over RC: RecordStageResults("validation", per_node_results)<br/>Reject(validation_failed)<br/>emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri,candidate_sql_uri}], repo, commit_sha}
+  else any stored node failed / aggregate_status not ok
+    Note over RC: Reject(validation_failed) using stored per-node results<br/>emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri,candidate_sql_uri}], repo, commit_sha}
     RC->>R: publish release.rejected:v1
     R->>RM: consume release.rejected:v1
     Note over RM: stage="validation" → SourceValidation; no file_path at this layer<br/>classify + emit remediation.requested:v1 (agent resolves file_path via ancestry)
@@ -529,13 +532,13 @@ sequenceDiagram
   OR->>R: publish schedules.loaded:v1 {schedule_names, service_metadata, topology_generation}
   R->>ST: consume schedules.loaded:v1
   Note over ST: ScheduleCatalogHandler — Reconcile schedule_catalog (empty-list guard)
-  R->>EC: consume validation.completed:v1 (executor-validation-completed group)
+  R->>EC: consume validation.result:v1 kind=complete (executor-validation-result-teardown group)
   Note over EC: drop the _candidate_{release} schema (teardown)
 ```
 
 **Self-contained validation (zero model edits).** The validation build set is the changed nodes, their downstream descendants, and their *full transitive upstream closure across service boundaries*. `manifest-controller` rewrites each node's compiled SQL to the candidate schema (via sqlglot), uploads it to S3 at `candidate-sql/<release_id>/<unique_id>.sql`, and emits a per-node `candidate_sql_uri` — an `s3://` reference to that object. `executor-controller` builds every upstream as an empty table in `_candidate_<release>` in dependency order, then the changed node against them. Every validation Job is a single-container pod running the continuo-owned `validation-runner` image (`python:3.12-slim` + psycopg2 + boto3 — no dbt, no sidecar). For `build_from_sql` nodes (models and snapshots that carry candidate SQL), the container fetches its compiled SQL directly from S3 at `CANDIDATE_SQL_URI` and runs `CREATE TABLE <candidate>.<table> AS (<sql>) WITH NO DATA`; it carries the warehouse connection env plus S3 credentials. `clone_from_prod` nodes — including unchanged upstreams and seeds — run as a single container with no S3 credentials; the runner clones the prod table's shape empty. The `s3-sidecar` is used only by the compile leg (manifest upload); `dbt-base` and the team image are run only for compile, seed-build, and scheduled runs. Because the SQL's refs already point at the candidate schema, a model whose source still reads `FROM analytics.table_a` validates against the candidate copy — teams never template their schema names. Nothing in production is touched during validation, and the candidate schema is dropped after the aggregate result is consumed.
 
-**Gating and exactly-once aggregation.** Each node's `executor_deployments` row starts `blocked` if it has in-set upstreams; a node is dispatched only once all its upstreams have settled `ok` (their empty tables now exist). A non-`ok` terminal skips all reachable downstream nodes. When no node remains non-terminal, a per-release advisory lock plus an insert-once emission sentinel guarantee a single `validation.completed:v1` is produced even under redelivery or crash-retry. `aggregate_status` is `ok` iff every per-node status is `ok`.
+**Gating and exactly-once aggregation.** Each node's `executor_deployments` row starts `blocked` if it has in-set upstreams; a node is dispatched only once all its upstreams have settled `ok` (their empty tables now exist). A non-`ok` terminal skips all reachable downstream nodes. When no node remains non-terminal, a per-release advisory lock plus an insert-once emission sentinel guarantee a single `validation.result:v1` `kind=complete` is produced even under redelivery or crash-retry. `aggregate_status` is `ok` iff every per-node status is `ok`.
 
 **Reject reasons.** A release ends in `Rejected` for one of five reasons, each emitted as `release.rejected:v1`. The event is uniform across all legs: it always carries `release_id`, `stage`, `reason`, `repo`, `commit_sha`, `failing_nodes`, and `per_node[]` (each entry: `node_id`, `status`, `dbt_log_uri`, optional `run_results_uri`). The five reasons are: `compile_failed` (dbt compile job failed; `stage="compile"`), `parse_failed` (manifest malformed, an unqualified table reference, or candidate SQL S3 upload failure; no explicit stage), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology; no explicit stage), `seed_build_failed` (a candidate seed-build job failed; `stage="seed_build"`), and `validation_failed` (one or more validation jobs failed; `stage="validation"`). For `validation_failed`, per-node entries additionally carry `candidate_sql_uri`. Remediation consumes every leg's rejection and discriminates by `stage` to build `FailureEvidence` with the appropriate source (`SourceCompile`, `SourceSeed`, or `SourceValidation`); for compile and seed_build it extracts `file_path` from the dbt log so the agent can read the real source file directly.
 

@@ -145,13 +145,6 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 	results, _ := stageResults(in.PerNode)
 	r.RecordStageResults("seed_build", results)
 
-	if err := r.TransitionFromSeedBuilding(now); err != nil {
-		return fmt.Errorf("transition from seed building: %w", err)
-	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
-	}
-
 	topo := r.CandidateTopology()
 	allIDs := r.ValidationNodeIDs()
 
@@ -172,12 +165,25 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 		builtSeeds[id] = true
 	}
 
-	// Filter the recorded validation IDs to exclude the just-built seeds.
+	// Filter the recorded validation IDs to exclude the just-built seeds. This
+	// same filtered set is both persisted onto the release (below) and sent to
+	// the validation leg, keeping the release's stored validation node set equal
+	// to exactly the nodes the executor validates and emits per-node results for.
 	validationIDs := make([]string, 0, len(allIDs))
 	for _, id := range allIDs {
 		if !builtSeeds[id] {
 			validationIDs = append(validationIDs, id)
 		}
+	}
+
+	// Advance to Validating and narrow the persisted validation set to the
+	// filtered IDs. Done before the empty-set promote short-circuit, which needs
+	// the status already Validating.
+	if err := r.TransitionFromSeedBuilding(validationIDs, now); err != nil {
+		return fmt.Errorf("transition from seed building: %w", err)
+	}
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
 	}
 
 	// Edge case: excluding the built seeds leaves nothing to validate (the release

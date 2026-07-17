@@ -1,0 +1,17 @@
+{{- if .Values.dex.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "continuo.dex.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: dex
+spec:
+  selector:
+    {{- include "continuo.selectorLabels" (dict "root" $ "service" "dex") | nindent 4 }}
+  ports:
+    - name: http
+      port: 5556
+      targetPort: 5556
+{{- end }}

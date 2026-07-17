@@ -112,13 +112,15 @@ func TestCreateCompileJob_UsesDialectAndQuotesManifestPath(t *testing.T) {
 	assert.Equal(t,
 		"wise-dbt compile --profiles-dir /project"+
 			" && cp '/project/out dir/manifest.json' /shared/manifest.json"+
+			" && chmod 644 /shared/manifest.json"+
 			" && if [ -x /continuo/bin/continuo-export-runtime-manifest ]; then"+
 			" /continuo/bin/continuo-export-runtime-manifest"+
 			" --manifest '/project/out dir/manifest.json'"+
 			" --partial-parse '/project/out dir/partial_parse.msgpack'"+
 			" --output-dir /shared --service-name wise --release-id rel1 --image-tag v1"+
 			" --artifact-uri s3://b/partial_parse.msgpack"+
-			` --controller-context "$CONTINUO_RUNTIME_CONTEXT_JSON";`+
+			` --controller-context "$CONTINUO_RUNTIME_CONTEXT_JSON"`+
+			" && chmod 644 /shared/partial_parse.msgpack /shared/runtime-manifest.json;"+
 			" else echo 'runtime exporter absent; manifest-only compatibility release'; fi",
 		line, "manifest path with a space must be shell-quoted")
 }
@@ -152,13 +154,16 @@ func TestCreateCompileJob_DefaultLineByteIdentical(t *testing.T) {
 	assert.Equal(t,
 		"dbt compile --profiles-dir /project"+
 			" && cp /project/target/manifest.json /shared/manifest.json"+
+			" && chmod 644 /shared/manifest.json"+
 			" && if [ -x /continuo/bin/continuo-export-runtime-manifest ]; then"+
 			" /continuo/bin/continuo-export-runtime-manifest"+
 			" --manifest /project/target/manifest.json"+
 			" --partial-parse /project/target/partial_parse.msgpack"+
 			" --output-dir /shared --service-name svc --release-id rel1 --image-tag v1"+
 			" --artifact-uri s3://b/partial_parse.msgpack"+
-			` --controller-context "$CONTINUO_RUNTIME_CONTEXT_JSON";`+
+			` --controller-context "$CONTINUO_RUNTIME_CONTEXT_JSON"`+
+			" && chmod 644 /shared/partial_parse.msgpack /shared/runtime-manifest.json;"+
 			" else echo 'runtime exporter absent; manifest-only compatibility release'; fi",
-		line)
+		line,
+		"no config: compile line must be byte-identical to the plain-dbt form")
 }

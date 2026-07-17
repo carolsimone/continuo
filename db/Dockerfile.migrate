@@ -1,12 +1,12 @@
 FROM flyway/flyway:10
 
-USER root
-
-# migrate-all.sh provisions databases (psql) and waits for Postgres
-# (pg_isready) before running Flyway; the base image ships neither.
+# The base image runs as root and defines no non-root user. Migrations need no
+# privileges: install the tooling as root, hand /flyway (Flyway writes its
+# reports into the working directory) to an unprivileged user, then drop to it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin migrate
 
 COPY migrate-all.sh /migrate-all.sh
 RUN chmod +x /migrate-all.sh
@@ -19,5 +19,12 @@ COPY migration/release /flyway/sql/release
 COPY migration/agent /flyway/sql/agent
 COPY migration/remediation /flyway/sql/remediation
 COPY migration/remediation_agent /flyway/sql/remediation_agent
+
+# Non-recursive: only the /flyway directory entry needs to be group-writable
+# so Flyway (WORKDIR /flyway) can create its report files there. Everything
+# already copied under /flyway/sql/* is read-only input and stays root-owned.
+RUN chown 65532:0 /flyway
+
+USER 65532:65532
 
 ENTRYPOINT ["/bin/sh", "/migrate-all.sh"]

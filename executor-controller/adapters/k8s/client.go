@@ -383,13 +383,15 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
 		Env:             mainEnv,
 	}
+	mainContainer.SecurityContext = continuoImageSecurityContext()
 
 	switch op {
 	case "clone_from_prod":
 		// No candidate SQL, no S3, single container.
 		return corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			Containers:    []corev1.Container{mainContainer},
+			RestartPolicy:   corev1.RestartPolicyNever,
+			SecurityContext: jobPodSecurityContext(),
+			Containers:      []corev1.Container{mainContainer},
 		}, nil
 
 	case "build_from_sql":
@@ -404,8 +406,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI})
 		mainContainer.Env = append(mainContainer.Env, s3CredEnvVars()...)
 		return corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			Containers:    []corev1.Container{mainContainer},
+			RestartPolicy:   corev1.RestartPolicyNever,
+			SecurityContext: jobPodSecurityContext(),
+			Containers:      []corev1.Container{mainContainer},
 		}, nil
 
 	default:
@@ -427,6 +430,38 @@ func s3SidecarImage() string {
 		}
 	}
 	return img
+}
+
+// jobPodSecurityContext returns the pod-level hardening applied to every
+// executor-created Job pod: the runtime default seccomp profile.
+func jobPodSecurityContext() *corev1.PodSecurityContext {
+	return &corev1.PodSecurityContext{
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+}
+
+// baseContainerSecurityContext hardens a container regardless of which image
+// it runs (team images included): no privilege escalation, no capabilities.
+// The container user is intentionally left to the image — team images choose
+// their own user (see the dbt image contract).
+func baseContainerSecurityContext() *corev1.SecurityContext {
+	no := false
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &no,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+}
+
+// continuoImageSecurityContext extends the base hardening with a forced
+// non-root user for containers running continuo-owned images
+// (validation-runner, s3-sidecar), which are built with uid 65532.
+func continuoImageSecurityContext() *corev1.SecurityContext {
+	sc := baseContainerSecurityContext()
+	yes := true
+	uid := int64(65532)
+	sc.RunAsNonRoot = &yes
+	sc.RunAsUser = &uid
+	return sc
 }
 
 // s3CredEnvVars returns the four S3 credential environment variables forwarded
@@ -473,10 +508,10 @@ func sharedVolumeMount() corev1.VolumeMount {
 // validationImagePullPolicy resolves the pull policy applied to both the
 // validation main container and the compile leg's s3-sidecar upload container.
 //
-// The default is PullAlways so the s3-sidecar (:latest, mutable tag) is
-// re-pulled when it is re-pushed to the registry. The SHA-pinned validation
-// image just receives a cheap digest check under PullAlways rather than a full
-// layer download.
+// The default is PullAlways so that when either image reference is a mutable
+// tag (the env-unset fallbacks are validation-runner:latest / s3-sidecar:latest)
+// a re-push is picked up on the next Job. When the Helm chart pins both images
+// to the release tag, PullAlways costs only a cheap digest check.
 //
 // e2e and local clusters side-load images directly into the node's image cache
 // and have no registry to pull from, so they set VALIDATION_IMAGE_PULL_POLICY
@@ -601,7 +636,8 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodS
 	}
 
 	return corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
+		RestartPolicy:   corev1.RestartPolicyNever,
+		SecurityContext: jobPodSecurityContext(),
 		Containers: []corev1.Container{
 			{
 				Name:            "dbt-job",
@@ -609,6 +645,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodS
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         command,
 				Env:             envVars,
+				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
 	}, nil
@@ -699,6 +736,10 @@ const runtimeExporterPath = "/continuo/bin/continuo-export-runtime-manifest"
 // beside it when the image ships the exporter. An image without the exporter
 // logs and succeeds, producing a manifest-only release.
 //
+// Everything written to the shared volume is chmod'd 644, so it stays readable
+// regardless of the team image's uid/umask: the upload container that consumes
+// these files runs as a fixed, different uid.
+//
 // The controller context reaches the exporter through the environment rather
 // than the command line, so the line stays stable regardless of its contents.
 func buildCompileInitCommand(p ValidationJobParams, compile ports.CompileCommand) string {
@@ -713,10 +754,13 @@ func buildCompileInitCommand(p ValidationJobParams, compile ports.CompileCommand
 		"--artifact-uri", siblingS3URI(p.ManifestS3URI, "partial_parse.msgpack"),
 	}
 	export := shellJoin(exportArgv) +
-		` --controller-context "$` + runtimeContextEnvVar + `"`
+		` --controller-context "$` + runtimeContextEnvVar + `"` +
+		" && chmod 644 " + shellQuote(sharedDir+"/partial_parse.msgpack") +
+		" " + shellQuote(sharedDir+"/runtime-manifest.json")
 
 	return shellJoin(compile.Argv) +
 		" && cp " + shellQuote(compile.ManifestPath) + " " + sharedManifestPath +
+		" && chmod 644 " + sharedManifestPath +
 		" && if [ -x " + runtimeExporterPath + " ]; then " + export + "; " +
 		"else echo " + shellQuote("runtime exporter absent; manifest-only compatibility release") + "; fi"
 }
@@ -737,6 +781,9 @@ func siblingS3URI(uri, name string) string {
 //     manifest from its declared path into /shared/manifest.json, and exports
 //     the runtime manifest artifacts beside it when the image ships the
 //     exporter. controllerContext reaches it as CONTINUO_RUNTIME_CONTEXT_JSON.
+//     Everything it writes to /shared is chmod'd 644 so it is world-readable
+//     regardless of the team image's uid/umask (the upload container below
+//     runs as a fixed, different uid);
 //   - a main container "upload" using the shared s3-sidecar image (no dbt;
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
@@ -783,16 +830,18 @@ func buildCompilePodSpec(p ValidationJobParams, compile ports.CompileCommand, co
 	}, s3CredEnvVars()...)
 
 	return corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
-		Volumes:       []corev1.Volume{sharedEmptyDirVolume()},
+		RestartPolicy:   corev1.RestartPolicyNever,
+		SecurityContext: jobPodSecurityContext(),
+		Volumes:         []corev1.Volume{sharedEmptyDirVolume()},
 		InitContainers: []corev1.Container{
 			{
 				Name:            "compile",
 				Image:           teamImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command:      []string{"sh", "-c", buildCompileInitCommand(p, compile)},
-				Env:          initEnvVars,
-				VolumeMounts: []corev1.VolumeMount{mount},
+				Command:         []string{"sh", "-c", buildCompileInitCommand(p, compile)},
+				Env:             initEnvVars,
+				VolumeMounts:    []corev1.VolumeMount{mount},
+				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
 		Containers: []corev1.Container{
@@ -803,6 +852,7 @@ func buildCompilePodSpec(p ValidationJobParams, compile ports.CompileCommand, co
 				Command:         []string{"python", "/compile_uploader.py"},
 				Env:             uploadEnvVars,
 				VolumeMounts:    []corev1.VolumeMount{mount},
+				SecurityContext: continuoImageSecurityContext(),
 			},
 		},
 	}, nil
@@ -844,7 +894,8 @@ func buildPodSpec(params JobParams, command []string) (corev1.PodSpec, error) {
 	}
 
 	return corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
+		RestartPolicy:   corev1.RestartPolicyNever,
+		SecurityContext: jobPodSecurityContext(),
 		Containers: []corev1.Container{
 			{
 				Name:            "dbt-job",
@@ -852,6 +903,7 @@ func buildPodSpec(params JobParams, command []string) (corev1.PodSpec, error) {
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         command,
 				Env:             envVars,
+				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
 	}, nil

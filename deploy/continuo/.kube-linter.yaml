@@ -1,0 +1,81 @@
+checks:
+  addAllBuiltIn: true
+  exclude:
+    # Single-writer datastores and hook Jobs cannot be multi-replica.
+    - "no-anti-affinity"
+    - "minimum-three-replicas"
+    # This chart intentionally runs one replica per service by default.
+    - "no-rolling-update-strategy"
+
+    # --- Below: checks that are "Enabled by default: false" in kube-linter
+    # itself (opt-in policy checks, not part of its baseline security set).
+    # Real container hardening (run-as-non-root, privilege escalation,
+    # capability drops, resource requests/limits) stays fully enforced and is
+    # never excluded here; per-object exceptions to it use a scoped
+    # ignore-check.kube-linter.io/<check> annotation with a stated reason
+    # instead (see neo4j/statefulset.yaml and db-init-migrate-job.yaml for the
+    # two readOnlyRootFilesystem exceptions).
+
+    # Every object in this chart intentionally omits metadata.namespace so the
+    # same manifest installs cleanly into whatever namespace `helm install -n`
+    # names; the namespace is a release-time choice, not a chart default.
+    - "use-namespace"
+    # Organizational ownership/contact tracking these annotate for is a
+    # per-deployer policy, not something an OSS chart can bake in on behalf of
+    # every installer.
+    - "required-label-owner"
+    - "required-annotation-email"
+    # The chart must install on a single-node kind cluster as well as a real
+    # multi-node cluster (same portability reason as no-anti-affinity above);
+    # hardcoding node affinity would break the former.
+    - "no-node-affinity"
+    # DNS ndots/options tuning is cluster-resolver-specific; baking one value
+    # into every pod risks breaking clusters with a different DNS setup than
+    # the one this recommendation assumes.
+    - "dnsconfig-options"
+    # Fires only on the Job/CronJob one-shot containers (db-init-migrate,
+    # minio bucket-init, stream-reaper) — verified across all three rendered
+    # topologies. Run-to-completion containers correctly have no
+    # liveness/readiness probe; the check has no concept of that pod lifecycle
+    # and never fires on any long-running Deployment/StatefulSet here.
+    - "no-readiness-probe"
+    - "no-liveness-probe"
+    # Rendered YAML key order follows the Go template composition, not
+    # alphabetical order; this is a style preference with no functional or
+    # security effect on the manifest.
+    - "sorted-keys"
+    # executor-controller's entire job is dispatching dbt task execution as
+    # Kubernetes Jobs (see CLAUDE.md service description) — create access to
+    # `batch/jobs` is the feature, not an oversight. Its Role is scoped to
+    # `jobs` create/get/list/watch only; it has no direct `pods` create verb.
+    - "access-to-create-pods"
+    # Every service in this codebase already reads its credentials via
+    # env-var secretKeyRef (a locked, pre-existing app-code contract across
+    # all 9 backend services — see docs/arch/*). Moving to mounted secret
+    # files is an application-code change to each service, out of scope for
+    # a chart-only task; secretKeyRef env injection is still a standard,
+    # RBAC-gated Kubernetes mechanism, not a plaintext file on the image.
+    - "read-secret-from-env-var"
+    # Only ever fires on the BYO existingSecret render (values-byo.yaml.example):
+    # continuo-datastores/continuo-s3/continuo-oidc are pre-created by the
+    # operator outside this chart by design, so they are correctly absent
+    # from the single rendered manifest kube-linter inspects; a real cluster
+    # resolves them fine at admission time.
+    - "env-value-from"
+    # All 9 non-RBAC services run under the namespace's default
+    # ServiceAccount, which this chart never binds to any Role/ClusterRole —
+    # it carries zero permissions. Only executor-controller and
+    # k8s-controller need Kubernetes API access and already get a dedicated,
+    # least-privilege ServiceAccount (see rbac.yaml).
+    - "default-service-account"
+    # Kubernetes defaults an omitted Pod-template restartPolicy to "Always"
+    # for every Deployment/StatefulSet controller; the rendered manifests rely
+    # on that documented default rather than repeating it on every container.
+    - "restart-policy"
+    # allow-postgresql/allow-minio NetworkPolicies select ingress from
+    # `app: dbt-job` — the label executor-controller stamps on the dbt Job
+    # pods it creates dynamically at runtime (see CLAUDE.md executor-controller
+    # description). Those pods are never part of this chart's own rendered
+    # manifest, so kube-linter's static podSelector match always (correctly)
+    # finds nothing; the rule is validated against the live cluster instead.
+    - "dangling-networkpolicypeer-podselector"

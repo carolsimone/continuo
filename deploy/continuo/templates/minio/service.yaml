@@ -1,0 +1,18 @@
+{{- if .Values.minio.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "continuo.minio.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: minio
+spec:
+  clusterIP: None
+  selector:
+    {{- include "continuo.selectorLabels" (dict "root" $ "service" "minio") | nindent 4 }}
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+{{- end }}

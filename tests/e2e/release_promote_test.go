@@ -47,8 +47,8 @@ const probeUniqueID = "e2e_schema.rel_probe"
 //	POST /releases → release.requested:v1 → manifest-controller candidate parse
 //	→ manifest.loaded.candidate:v1 → release-controller derives the changed-node
 //	set → validation.requested:v1 → executor/k8s run a real dbt --empty job →
-//	validation.completed:v1 → release-controller promotes → release.promoted:v1
-//	→ orchestrator swaps the Neo4j topology.
+//	validation.result:v1 terminal (kind=complete) → release-controller promotes
+//	→ release.promoted:v1 → orchestrator swaps the Neo4j topology.
 //
 // The changed service is service-1 (which contains rel_probe). current_prod is
 // seeded with every node EXCEPT rel_probe, so the derived changed set is exactly
@@ -785,8 +785,9 @@ func waitForTopologySwap(t *testing.T, ctx context.Context, clients *testClients
 // assertCandidateSchemaDropped polls the dbt warehouse until the release's
 // _candidate_<sanitized releaseID> schema is absent from
 // information_schema.schemata. The executor drops the schema asynchronously on
-// validation.completed:v1, so this must poll. The schema name is computed with
-// the same sanitization release-controller applies (non-[A-Za-z0-9_] → _).
+// the validation.result:v1 terminal (kind=complete), so this must poll. The
+// schema name is computed with the same sanitization release-controller
+// applies (non-[A-Za-z0-9_] → _).
 func assertCandidateSchemaDropped(t *testing.T, ctx context.Context, clients *testClients, releaseID string, timeout time.Duration) {
 	t.Helper()
 	schema := "_candidate_" + sanitizeReleaseSchemaSuffix(releaseID)

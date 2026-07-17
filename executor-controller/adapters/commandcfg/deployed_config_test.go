@@ -8,15 +8,33 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// The shipped Helm config is the source of truth for the Hetzner ConfigMap.
-// This pins that it always loads and that finance resolves to the wise-dbt
-// dialect for every operation while other services fall back to the default.
+// deployedConfigs are the shipped Helm dbt dialects: deploy/app is the source of
+// truth for the Hetzner ConfigMap, deploy/continuo is the self-contained install.
+// Both describe the same finance team and the same wise-dbt wrapper, so both must
+// resolve identically — a block present in one and absent from the other silently
+// changes how finance runs on that install.
+var deployedConfigs = map[string]string{
+	"deploy/app":      filepath.Join("..", "..", "..", "deploy", "app", "files", "dbt-commands.yaml"),
+	"deploy/continuo": filepath.Join("..", "..", "..", "deploy", "continuo", "files", "dbt-commands.yaml"),
+}
+
+// This pins that every shipped config loads and that finance resolves to the
+// wise-dbt dialect for every operation while other services fall back to the
+// default.
 func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "deploy", "app", "files", "dbt-commands.yaml")
+	for name, path := range deployedConfigs {
+		t.Run(name, func(t *testing.T) {
+			assertFinanceDialect(t, name, path)
+		})
+	}
+}
+
+func assertFinanceDialect(t *testing.T, name, path string) {
+	t.Helper()
 
 	r, err := Load(path, testLogger())
 	if err != nil {
-		t.Fatalf("shipped deploy/app/files/dbt-commands.yaml must load: %v", err)
+		t.Fatalf("shipped %s/files/dbt-commands.yaml must load: %v", name, err)
 	}
 
 	gotRun := r.NodeCommand("finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")

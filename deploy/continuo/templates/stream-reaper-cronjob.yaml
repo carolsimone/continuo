@@ -1,0 +1,51 @@
+{{- if .Values.streamReaper.enabled }}
+# Periodically trims the continuo event streams by age (XTRIM ... MINID). Only
+# the streams in pkg/streams.All are touched; the ui-service auth session keys
+# (plain strings on the same Redis) are never affected.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "continuo.fullname" . }}-stream-reaper
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.streamReaper.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            {{- include "continuo.selectorLabels" (dict "root" $ "service" "stream-reaper") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          securityContext:
+            {{- include "continuo.podSecurityContext" . | nindent 12 }}
+            runAsUser: 65532
+            runAsGroup: 65532
+          containers:
+            - name: stream-reaper
+              image: {{ include "continuo.image" (dict "root" $ "name" "stream-reaper") | quote }}
+              imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+              securityContext:
+                {{- include "continuo.containerSecurityContext" . | nindent 16 }}
+              env:
+                - name: REDIS_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "continuo.secretName" (dict "root" $ "ref" "redis") | quote }}
+                      key: {{ include "continuo.secretKey" (dict "root" $ "ref" "redis") | quote }}
+                - name: REDIS_URL
+                  value: {{ printf "redis://:$(REDIS_PASSWORD)@%s:%s" (include "continuo.redis.host" .) (include "continuo.redis.port" .) | quote }}
+                - name: STREAM_RETENTION
+                  value: {{ .Values.streamReaper.retention | quote }}
+              resources:
+                requests: {cpu: 50m, memory: 64Mi}
+                limits: {cpu: 200m, memory: 128Mi}
+{{- end }}

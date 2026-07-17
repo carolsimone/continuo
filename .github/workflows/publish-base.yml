@@ -6,11 +6,13 @@ on:
       - main
     paths:
       - Dockerfile.base
-      - go.work
-      - go.work.sum
-      - '**/go.mod'
-      - '**/go.sum'
+      - .github/workflows/publish-base.yml
   workflow_dispatch:  # allows manual trigger from the Actions UI
+
+env:
+  # Pinned base tag consumed by every Go service's Dockerfile.prod
+  # (ARG BASE_IMAGE default). Bump both together on breaking base changes.
+  BASE_VERSION: v1
 
 jobs:
   publish:
@@ -20,6 +22,7 @@ jobs:
 
     permissions:
       contents: read
+      packages: write
 
     steps:
       - name: Checkout
@@ -28,11 +31,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push continuo-base
         uses: docker/build-push-action@v6
@@ -40,6 +44,8 @@ jobs:
           context: .
           file: Dockerfile.base
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/continuo-base:latest
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/continuo-base:${{ env.BASE_VERSION }}
+            ghcr.io/${{ github.repository_owner }}/continuo-base:${{ github.sha }}
           cache-from: type=gha,scope=continuo-base
           cache-to: type=gha,scope=continuo-base,mode=max

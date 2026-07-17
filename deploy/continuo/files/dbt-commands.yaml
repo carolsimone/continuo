@@ -1,0 +1,50 @@
+# dbt command dialect for executor-created Kubernetes Jobs (deployed via Helm
+# ConfigMap). Every configured block must be COMPLETE: `default` is required and
+# defines all seven keys; every `services.<name>` override defines all seven too.
+# No per-key fallback — an incomplete block is a fatal boot error.
+#
+# Keys: run / seed / snapshot (by node_type for operation=run), test / build
+# (node-agnostic), seed_build (candidate-schema seed leg; schema via the
+# DBT_TARGET_SCHEMA env var + generate_schema_name macro), compile.
+#
+# Optional per block: compile.partial_parse_path (absolute path where the team's
+# tool leaves dbt's partial parse; omit when it stays beside manifest.json).
+#
+# Optional per services.<name> block only: worker.wrapper_cache ("required" when
+# the wrapper reliably writes a reusable partial parse there, "opaque" when its
+# behaviour is unknown). Absent, or a worker block with no wrapper_cache, means
+# opaque: a reusable parse cache is only assumed when the owning team claims one.
+# It describes one team's wrapper, so a worker block on the `default` block
+# (which describes plain dbt) is a fatal boot error. Native dbt ignores the key.
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+
+services:
+  # Team "wise" runs finance through its own dbt CLI, wise-dbt, baked into the
+  # finance image at /usr/local/bin/wise-dbt (continuo-dbt-demo services/finance).
+  # Every key routes through the wrapper; seed_build reuses load-seed (schema via
+  # DBT_TARGET_SCHEMA). Verb map: run-model->run, load-seed->seed,
+  # capture-snapshot->snapshot, test-model->test, build-model->build,
+  # compile-project->compile.
+  finance:
+    run:        ["wise-dbt", "run-model", "{{ node }}"]
+    seed:       ["wise-dbt", "load-seed", "{{ node }}"]
+    snapshot:   ["wise-dbt", "capture-snapshot", "{{ node }}"]
+    test:       ["wise-dbt", "test-model", "{{ node }}"]
+    build:      ["wise-dbt", "build-model", "{{ node }}"]
+    seed_build: ["wise-dbt", "load-seed", "{{ node }}"]
+    compile:
+      command:       ["wise-dbt", "compile-project"]
+      manifest_path: "/project/target/manifest.json"
+    # wise-dbt leaves dbt's partial parse where dbt writes it (beside
+    # manifest.json), so partial_parse_path derives and the cache is reusable.
+    worker:
+      wrapper_cache: required

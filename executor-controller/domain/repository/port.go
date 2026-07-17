@@ -112,7 +112,7 @@ type DeploymentRepository interface {
 }
 
 // ValidationAggregateRepository guards single emission of a per-release leg
-// completion event (validation.completed:v1 / seed.build.completed:v1) via the
+// completion event (validation.result:v1 kind=complete / seed.build.completed:v1) via the
 // validation_aggregates sentinel table. Both legs share one release_id but run
 // sequentially (seed-build BEFORE validation), so the sentinel and the advisory
 // lock are keyed on (release_id, mode): the seed-build claim must NOT block the
@@ -132,6 +132,6 @@ type ValidationAggregateRepository interface {
 	// (true, nil) if this caller won the race and should emit the leg's
 	// completion event; returns (false, nil) on conflict (another caller already
 	// emitted that leg). Keying on mode lets the same release emit both
-	// seed.build.completed:v1 and validation.completed:v1.
+	// seed.build.completed:v1 and validation.result:v1 (kind=complete).
 	ClaimEmission(ctx context.Context, releaseID string, mode model.Mode, now time.Time) (bool, error)
 }

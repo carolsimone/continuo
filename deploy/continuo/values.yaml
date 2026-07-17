@@ -1,0 +1,460 @@
+global:
+  # Continuo-owned images resolve to:
+  #   <imageRegistry>/<imageRepositoryPrefix>/continuo-<name>:<imageTag>
+  # imageRegistry may be "" for images side-loaded into the cluster
+  # (then the ref is <imageRepositoryPrefix>/continuo-<name>:<imageTag>).
+  imageRegistry: ghcr.io
+  imageRepositoryPrefix: carolsimone
+  # Empty string = use the chart appVersion (set by the release flow).
+  imageTag: ""
+  imagePullPolicy: IfNotPresent
+
+  # Default StorageClass for every bundled datastore PVC. Empty = cluster
+  # default. Each datastore's persistence.storageClass overrides it.
+  storageClass: ""
+
+  env: production
+  logLevel: INFO
+
+  # Registry/namespace prefix for per-team dbt images (executor-controller
+  # composes "<prefix>/<service>:<tag>" for compile/seed/scheduled Jobs).
+  # Empty renders DOCKERHUB_USERNAME="", which executor-controller treats as
+  # unset, so team images resolve to bare unprefixed names (side-loaded).
+  teamImagePrefix: ""
+
+  stateGrpcAddr: state:50051
+  orchestratorGrpcAddr: orchestrator:50052
+  agentRunnerGrpcAddr: agent-runner:50053
+
+# ---------------------------------------------------------------------------
+# Datastores. Each has a bundled quickstart instance (enabled: true) and an
+# external* block used when the bundled one is disabled. Bundled passwords are
+# auto-generated at install and kept stable across upgrades; external
+# credentials are required fail-closed (inline value or existingSecret).
+# ---------------------------------------------------------------------------
+
+postgresql:
+  # Bundled single-instance PostgreSQL (quickstart/evaluation only — bring
+  # your own HA Postgres for production).
+  enabled: true
+  image:
+    repository: postgres
+    tag: "18.3"        # e.g. 18.3 — verified in Task 1 Step 2
+  auth:
+    username: continuo
+    # Optional pre-created Secret holding the bundled instance's password.
+    # Empty = the chart generates one and keeps it stable across upgrades.
+    existingSecret: ""
+    existingSecretPasswordKey: password
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "1", memory: 2Gi}
+
+externalDatabase:
+  # Used when postgresql.enabled=false. PostgreSQL only today; the DB-agnostic
+  # key name is deliberate (MySQL is a roadmap item).
+  host: ""
+  port: 5432
+  username: continuo
+  password: ""                   # or existingSecret
+  existingSecret: ""
+  existingSecretPasswordKey: password
+  sslMode: prefer
+
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "8.6.4"           # e.g. 8.6.2
+  persistence:
+    size: 2Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 100m, memory: 512Mi}
+    # Redis holds both the event streams and ui-service OIDC sessions; keep
+    # headroom (history: OOMKilled at 576Mi). Policy stays noeviction.
+    limits: {cpu: 500m, memory: 2Gi}
+
+externalRedis:
+  host: ""
+  port: 6379
+  password: ""
+  existingSecret: ""
+  existingSecretPasswordKey: password
+
+neo4j:
+  enabled: true
+  image:
+    repository: neo4j
+    tag: "5.26.28-community"           # e.g. 5.26.12-community
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 500m, memory: 1536Mi}
+    # heap max 1G + pagecache 512M + JVM overhead
+    limits: {cpu: "1", memory: 2560Mi}
+
+externalNeo4j:
+  uri: ""                        # e.g. bolt://neo4j.example.com:7687
+  username: neo4j
+  password: ""
+  existingSecret: ""
+  existingSecretPasswordKey: password
+
+minio:
+  # Bundled single-instance MinIO so the quickstart needs zero external
+  # accounts. Disable and fill s3.* for any real S3-compatible endpoint.
+  enabled: true
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2025-09-07T16-13-09Z"           # RELEASE.…
+  mcImage:
+    repository: minio/mc
+    tag: "RELEASE.2025-08-13T08-35-41Z"              # RELEASE.…
+  bucket: continuo
+  persistence:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 1Gi}
+
+s3:
+  # Used when minio.enabled=false: any S3-compatible endpoint.
+  endpointUrl: ""
+  bucket: ""
+  region: ""
+  accessKeyId: ""
+  secretKey: ""
+  existingSecret: ""
+  existingSecretAccessKeyIdKey: access-key-id
+  existingSecretSecretKeyKey: secret-access-key
+  # S3_ENV consumed by manifest-controller (key prefix environment).
+  env: production
+
+dex:
+  # Bundled quickstart identity provider with ONE static demo user.
+  # QUICKSTART ONLY — production installs set dex.enabled=false and provide
+  # real auth.* values for their IdP (see AUTH docs).
+  enabled: true
+  image:
+    repository: dexidp/dex
+    tag: v2.41.1
+  demoUser:
+    email: admin@example.com
+    username: admin
+    userID: 08a8684b-db88-4b73-90a9-3cd1661f5466
+    # bcrypt of the literal string "password" (dex's documented example hash).
+    # Demo credential, quickstart only; never reuse outside evaluation.
+    passwordHash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 256Mi}
+
+auth:
+  # External base URL the browser uses to reach the UI. The quickstart default
+  # matches `kubectl port-forward svc/ui-service 8090:8090`.
+  publicUrl: http://localhost:8090
+  # The following are consumed when dex.enabled=false (bring-your-own OIDC):
+  # all fail-closed — ui-service crashloops rather than serving an open UI.
+  issuerUrl: ""
+  clientId: ""
+  oidcClientSecret: ""           # or existingSecret
+  existingSecret: ""
+  existingSecretClientSecretKey: client-secret
+  # Role assignment. With dex.enabled the operator list defaults to the demo
+  # user's email; set explicitly for real IdPs.
+  operatorEmails: ""
+  viewerEmails: ""
+  roleMapping: ""
+
+llm:
+  # Optional. Empty apiKey: agent-runner/remediation-agent boot and serve, but
+  # LLM calls fail until it is set.
+  provider: anthropic
+  model: claude-haiku-4-5
+  apiKey: ""
+  existingSecret: ""
+  existingSecretApiKeyKey: api-key
+
+github:
+  # Optional. token = read-only fine-grained PAT for remediation-agent source
+  # fetch; app* = GitHub App for ui-service PR creation (503 until configured).
+  token: ""
+  appId: ""
+  installationId: ""
+  appPrivateKey: ""
+  existingSecret: ""             # may hold either or both keys below
+  existingSecretTokenKey: token
+  existingSecretAppPrivateKeyKey: app-private-key
+
+databaseInit:
+  # Idempotently creates all 9 databases (including continuo_dbt) before the
+  # Flyway migrations run. Disable when a DBA pre-creates databases; the
+  # connecting user then no longer needs CREATEDB.
+  enabled: true
+
+streamReaper:
+  enabled: true
+  schedule: "0 3 * * *"
+  retention: "72h"
+
+networkPolicy:
+  # Default-deny ingress within the release plus allow rules derived from the
+  # real service graph. Inert on CNIs that do not enforce NetworkPolicy.
+  enabled: true
+
+ingress:
+  # Front door for ui-service. Fully values-driven: no ingress class or
+  # cert-manager/ACME assumptions are baked into the template.
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls:
+    enabled: true
+    secretName: ""               # empty → <host must be set> "ui-service-tls"
+
+# Defaults applied to any service that does not override resources.
+defaultResources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: "1", memory: 512Mi}
+
+services:
+  - name: state
+    enabled: true
+    replicas: 1
+    httpPort: 8082
+    grpcPort: 50051
+    readinessPath: /ready
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: REDIS_PASSWORD, ref: redis}
+    env:
+      POSTGRES_DB: continuo_state
+      DB_POOL_SIZE: "10"
+      DB_MAX_OVERFLOW: "20"
+      HEALTH_PORT: "8082"
+      GRPC_PORT: "50051"
+      SCHEDULES_CONFIG_PATH: /etc/continuo/schedules.yaml
+    volumeMounts:
+      - {name: schedules, mountPath: /etc/continuo, readOnly: true}
+    volumes:
+      - name: schedules
+        configMap: {name: ""}
+
+  - name: orchestrator
+    enabled: true
+    replicas: 1
+    httpPort: 8087
+    grpcPort: 50052
+    readinessPath: /ready
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: NEO4J_PASSWORD, ref: neo4j}
+      - {name: REDIS_PASSWORD, ref: redis}
+    env:
+      POSTGRES_DB: continuo_orchestrator
+      GRPC_PORT: "50052"
+      HTTP_PORT: "8087"
+
+  - name: agent-runner
+    enabled: true
+    replicas: 1
+    httpPort: 8091
+    grpcPort: 50053
+    readinessPath: /ready
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: LLM_API_KEY, ref: llm}
+      # Enables the shared (global) rate limiter; required before scaling
+      # agent-runner past replicas: 1.
+      - {name: REDIS_PASSWORD, ref: redis}
+    env:
+      POSTGRES_DB: continuo_agent
+      HEALTH_PORT: "8091"
+      GRPC_PORT: "50053"
+      CONTINUO_STATE_ADDR: state:50051
+      CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
+      LLM_PROVIDER: __LLM_PROVIDER__
+      LLM_MODEL: __LLM_MODEL__
+      CHAT_MAX_CONCURRENT_SESSIONS: "100"
+
+  - name: executor-controller
+    enabled: true
+    replicas: 1
+    httpPort: 8084
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: REDIS_PASSWORD, ref: redis}
+      # Forwarded into validation/compile Job containers (boto3 + s3-sidecar).
+      - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
+      - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
+    rbac:
+      enabled: true
+      rules:
+        - apiGroups: ["batch"]
+          resources: ["jobs"]
+          verbs: ["create", "get", "list", "watch"]
+        - apiGroups: [""]
+          resources: ["pods"]
+          verbs: ["get", "list", "watch"]
+    env:
+      POSTGRES_DB: continuo_executor
+      K8S_NAMESPACE: __RELEASE_NAMESPACE__
+      MAX_CONCURRENT_EXECUTIONS: "50"
+      VALIDATION_IMAGE_PULL_POLICY: Always
+      VALIDATION_IMAGE: __VALIDATION_IMAGE__
+      S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__
+      DBT_POSTGRES_DB: continuo_dbt
+      HTTP_PORT: "8084"
+      DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__
+      # Tag for per-TEAM dbt images (not continuo images) — kept as in the
+      # previous chart; team image pinning is out of scope here.
+      IMAGE_TAG: latest
+      DBT_COMMANDS_CONFIG_PATH: /etc/continuo/dbt-commands.yaml
+    volumeMounts:
+      - {name: dbt-commands, mountPath: /etc/continuo, readOnly: true}
+    volumes:
+      - name: dbt-commands
+        configMap: {name: ""}
+
+  - name: k8s-controller
+    enabled: true
+    replicas: 1
+    httpPort: 8085
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
+      - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
+      - {name: REDIS_PASSWORD, ref: redis}
+    rbac:
+      enabled: true
+      rules:
+        - apiGroups: ["batch"]
+          resources: ["jobs"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: [""]
+          resources: ["pods", "pods/log"]
+          verbs: ["get", "list", "watch"]
+    env:
+      POSTGRES_DB: continuo_k8s
+      K8S_NAMESPACE: __RELEASE_NAMESPACE__
+      LOG_TAIL_LINES: "50"
+      K8S_CHECK_DELAY_SECONDS: "30"
+      ERROR_MESSAGE_MAX_LENGTH: "4096"
+      HTTP_PORT: "8085"
+
+  - name: ui-service
+    enabled: true
+    replicas: 1
+    httpPort: 8090
+    probePath: /healthz
+    serviceType: ClusterIP
+    secretEnv:
+      - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
+      - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
+      - {name: REDIS_PASSWORD, ref: redis}
+      - {name: AUTH_OIDC_CLIENT_SECRET, ref: authClientSecret}
+      - {name: GITHUB_APP_PRIVATE_KEY, ref: githubAppPrivateKey}
+    env:
+      PORT: "8090"
+      NODE_ENV: production
+      RELEASE_CONTROLLER_URL: http://release-controller:8088
+      CHAT_BRIDGE_ENABLED: "true"
+      # Authentication is fail-closed: ui-service crashloops when these are
+      # missing instead of serving an open UI. With dex.enabled the issuer,
+      # client id and secret resolve to the bundled Dex automatically.
+      AUTH_MODE: oidc
+      AUTH_OIDC_ISSUER_URL: __AUTH_ISSUER_URL__
+      AUTH_OIDC_CLIENT_ID: __AUTH_CLIENT_ID__
+      AUTH_PUBLIC_URL: __AUTH_PUBLIC_URL__
+      AUTH_GROUPS_CLAIM: groups
+      AUTH_ROLE_MAPPING: __AUTH_ROLE_MAPPING__
+      AUTH_OPERATOR_EMAILS: __AUTH_OPERATOR_EMAILS__
+      AUTH_VIEWER_EMAILS: __AUTH_VIEWER_EMAILS__
+      REDIS_URL: __REDIS_URL__
+      REMEDIATION_GRPC_ADDR: remediation-agent:50054
+      GITHUB_APP_ID: __GITHUB_APP_ID__
+      GITHUB_APP_INSTALLATION_ID: __GITHUB_APP_INSTALLATION_ID__
+      GITHUB_API_BASE_URL: https://api.github.com
+    volumeMounts:
+      - {name: cancel-config, mountPath: /app/config, readOnly: true}
+    volumes:
+      - name: cancel-config
+        configMap: {name: ""}
+
+  - name: manifest-controller
+    enabled: true
+    replicas: 1
+    secretEnv:
+      - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
+      - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
+      - {name: REDIS_PASSWORD, ref: redis}
+    env:
+      REDIS_URL: __REDIS_URL__
+    resources:
+      requests: {cpu: 200m, memory: 256Mi}
+      limits: {cpu: "1", memory: 1Gi}
+
+  - name: release-controller
+    enabled: true
+    replicas: 1
+    httpPort: 8088
+    probePath: /healthz
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: REDIS_PASSWORD, ref: redis}
+      - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
+      - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
+    env:
+      POSTGRES_DB: continuo_release
+      HTTP_PORT: "8088"
+
+  - name: remediation
+    enabled: true
+    replicas: 1
+    httpPort: 8090
+    probePath: /healthz
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: REDIS_PASSWORD, ref: redis}
+      - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
+      - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
+    env:
+      POSTGRES_DB: continuo_remediation
+      HTTP_PORT: "8090"
+
+  - name: remediation-agent
+    enabled: true
+    replicas: 1
+    httpPort: 8092
+    grpcPort: 50054
+    probePath: /healthz
+    secretEnv:
+      - {name: POSTGRES_PASSWORD, ref: postgres}
+      - {name: REDIS_PASSWORD, ref: redis}
+      - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
+      - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
+      - {name: LLM_API_KEY, ref: llm}
+      - {name: GITHUB_TOKEN, ref: githubToken}
+    env:
+      POSTGRES_DB: continuo_remediation_agent
+      HTTP_PORT: "8092"
+      REMEDIATION_AGENT_HTTP_PORT: "8092"
+      REMEDIATION_AGENT_GRPC_PORT: "50054"
+      CONTINUO_ORCHESTRATOR_ADDR: orchestrator:50052
+      LLM_PROVIDER: __LLM_PROVIDER__
+      LLM_MODEL: __LLM_MODEL__
+      GITHUB_BASE_URL: https://api.github.com
+      REMEDIATION_PR_POLL_INTERVAL: "60s"
+      SERVICE_REPO_MAP_PATH: /etc/continuo/service_repos.yaml
+    volumeMounts:
+      - {name: service-repos, mountPath: /etc/continuo, readOnly: true}
+    volumes:
+      - name: service-repos
+        configMap: {name: ""}

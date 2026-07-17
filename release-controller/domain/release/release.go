@@ -177,6 +177,23 @@ func (r *Release) RecordStageResults(stage string, results []NodeValidationResul
 	r.perNodeResults = kept
 }
 
+// UpsertStageResult adds or replaces a single per-node result identified by
+// (stage, node_id), leaving every other entry intact. It backs the incremental
+// projection: each kind:"node" message on validation.result:v1 upserts exactly
+// one node, so the read model fills in as nodes settle. Re-delivery or a retry
+// re-emission of the same node replaces in place (last-write), never appends a
+// duplicate.
+func (r *Release) UpsertStageResult(stage string, result NodeValidationResult) {
+	result.Stage = stage
+	for i, n := range r.perNodeResults {
+		if n.Stage == stage && n.NodeID == result.NodeID {
+			r.perNodeResults[i] = result
+			return
+		}
+	}
+	r.perNodeResults = append(r.perNodeResults, result)
+}
+
 // RecordValidationResults stores the per-node validation outcomes on the
 // aggregate. Thin wrapper around RecordStageResults("validation", results).
 // Called before the promote/reject branch so both paths persist them.
@@ -247,13 +264,19 @@ func (r *Release) TransitionToSeedBuilding(topology Topology, validationNodeIDs 
 }
 
 // TransitionFromSeedBuilding advances a SeedBuilding release to Validating once
-// candidate seeds are built. It stamps validatingStartedAt; the candidate
-// topology + validation IDs are already set by TransitionToSeedBuilding.
-func (r *Release) TransitionFromSeedBuilding(now time.Time) error {
+// candidate seeds are built. It narrows the persisted validation set to
+// validationNodeIDs — the nodes actually sent to the validation leg, which
+// excludes the just-built seeds (already materialised in the candidate schema).
+// This keeps ValidationNodeIDs() equal to what the executor validates, so the
+// terminal decision's failing/audit reflect exactly the validated nodes. It
+// also stamps validatingStartedAt; the candidate topology is already set by
+// TransitionToSeedBuilding.
+func (r *Release) TransitionFromSeedBuilding(validationNodeIDs []string, now time.Time) error {
 	if r.status != StatusSeedBuilding {
 		return fmt.Errorf("cannot transition to validating from %s", r.status)
 	}
 	r.status = StatusValidating
+	r.validationNodeIDs = validationNodeIDs
 	r.validatingStartedAt = &now
 	r.transitions = append(r.transitions, Transition{To: StatusValidating, At: now})
 	return nil

@@ -120,11 +120,17 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 
 	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted:
 		// The three candidate-leg aggregate-completion events
-		// (validation.completed:v1 / seed.build.completed:v1 / compile.completed:v1)
+		// (validation.result:v1 kind=complete / seed.build.completed:v1 / compile.completed:v1)
 		// each carry the aggregate as a single JSON "payload" field that
 		// release-controller's HandleValidationResult / HandleSeedBuildResult /
 		// HandleCompileResult decodes. The stored payload is already that body;
 		// re-emit it verbatim.
+		return map[string]interface{}{"payload": string(entry.Payload)}, nil
+
+	case validation.EventTypeValidationNodeResult:
+		// validation.result:v1 (kind=node) carries the per-node projection as a
+		// single JSON "payload" field, same shape convention as the aggregate
+		// events. Re-emit the stored payload verbatim.
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:

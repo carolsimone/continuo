@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import ReleaseDetailPage from './ReleaseDetailPage';
 import { NodeValidationResult, ReleaseDetail, ProposalDTO } from './types';
@@ -132,5 +132,190 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
     expect(screen.queryByText(/Proposed fix available/)).toBeNull();
     expect(screen.queryByText(/Generating fix/)).toBeNull();
+  });
+});
+
+describe('ReleaseDetailPage — live polling while non-terminal', () => {
+  it('polls while validating and stops once the release reaches a terminal status', async () => {
+    vi.useFakeTimers();
+    try {
+      const base = {
+        release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
+        failing_nodes: null, image_tags: {}, manifests_uri: '', bootstrap: false,
+      };
+      const responses: ReleaseDetail[] = [
+        { ...base, status: 'validating', per_node_results: [node({ stage: 'validation', node_id: 'a', status: 'ok' })] },
+        {
+          ...base, status: 'validating',
+          per_node_results: [
+            node({ stage: 'validation', node_id: 'a', status: 'ok' }),
+            node({ stage: 'validation', node_id: 'b', status: 'ok' }),
+          ],
+        },
+        {
+          ...base, status: 'promoted',
+          per_node_results: [
+            node({ stage: 'validation', node_id: 'a', status: 'ok' }),
+            node({ stage: 'validation', node_id: 'b', status: 'ok' }),
+          ],
+        },
+      ];
+      let i = 0;
+      global.fetch = vi.fn(() => Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(responses[Math.min(i++, responses.length - 1)]),
+      })) as unknown as typeof fetch;
+
+      render(
+        <MemoryRouter initialEntries={['/releases/rel-1']}>
+          <Routes><Route path="/releases/:id" element={<ReleaseDetailPage />} /></Routes>
+        </MemoryRouter>,
+      );
+
+      // Flush the initial fetch (no timer advance needed — it fires on mount).
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText('a')).toBeInTheDocument();
+      expect(screen.queryByText('b')).toBeNull();
+
+      // Still validating: the next poll tick (~5s) picks up the newly-added node.
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText('b')).toBeInTheDocument();
+
+      // This tick returns a terminal status; polling must stop.
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText('promoted')).toBeInTheDocument();
+      const callsAtTerminal = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAtTerminal).toBe(3);
+
+      // No further fetches are scheduled once terminal.
+      await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+      expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAtTerminal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('ReleaseDetailPage — resilient polling on transient errors', () => {
+  it('keeps the last-good view and keeps polling through a mid-poll fetch failure, then recovers', async () => {
+    vi.useFakeTimers();
+    try {
+      const base = {
+        release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
+        failing_nodes: null, image_tags: {}, manifests_uri: '', bootstrap: false,
+      };
+      const good1: ReleaseDetail = {
+        ...base, status: 'validating',
+        per_node_results: [node({ stage: 'validation', node_id: 'a', status: 'ok' })],
+      };
+      const good2: ReleaseDetail = {
+        ...base, status: 'validating',
+        per_node_results: [
+          node({ stage: 'validation', node_id: 'a', status: 'ok' }),
+          node({ stage: 'validation', node_id: 'b', status: 'ok' }),
+        ],
+      };
+
+      let call = 0;
+      global.fetch = vi.fn((url: string) => {
+        if (String(url).startsWith('/api/releases/rel-1')) {
+          call += 1;
+          if (call === 2) return Promise.reject(new Error('network blip'));
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(call === 1 ? good1 : good2) });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(''), json: () => Promise.resolve({}) });
+      }) as unknown as typeof fetch;
+
+      render(
+        <MemoryRouter initialEntries={['/releases/rel-1']}>
+          <Routes><Route path="/releases/:id" element={<ReleaseDetailPage />} /></Routes>
+        </MemoryRouter>,
+      );
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText('a')).toBeInTheDocument();
+
+      // Second tick fails transiently: the page must keep showing the last-good
+      // data instead of blanking to the hard error page, and a non-blocking
+      // indicator surfaces the transient failure.
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText('a')).toBeInTheDocument();
+      expect(document.querySelector('.info-strip--error')).toBeNull();
+      expect(document.querySelector('.info-strip--warning')).toBeInTheDocument();
+
+      // Third tick succeeds again: recovers, picks up node 'b', and clears the
+      // transient indicator. Three fetches total proves the failed tick still
+      // scheduled the retry.
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText('b')).toBeInTheDocument();
+      expect(document.querySelector('.info-strip--warning')).toBeNull();
+      expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the error page when the initial load fails (no last-good data to fall back on)', async () => {
+    global.fetch = vi.fn(() => Promise.reject(new Error('boom'))) as unknown as typeof fetch;
+    render(
+      <MemoryRouter initialEntries={['/releases/rel-1']}>
+        <Routes><Route path="/releases/:id" element={<ReleaseDetailPage />} /></Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('boom')).toBeInTheDocument();
+    expect(document.querySelector('.info-strip--error')).toBeInTheDocument();
+  });
+});
+
+describe('ReleaseDetailPage — proposal polling gated on rejected', () => {
+  it('does not poll proposals while validating even with a failed node, then starts fresh once the release is rejected', async () => {
+    vi.useFakeTimers();
+    try {
+      const base = {
+        release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
+        failing_nodes: null, image_tags: {}, manifests_uri: '', bootstrap: false,
+      };
+      const validatingWithFailure: ReleaseDetail = {
+        ...base, status: 'validating',
+        per_node_results: [node({ stage: 'validation', node_id: 'svc', status: 'failed' })],
+      };
+      const rejected: ReleaseDetail = {
+        ...base, status: 'rejected', reject_reason: 'validation_failed',
+        per_node_results: [node({ stage: 'validation', node_id: 'svc', status: 'failed' })],
+      };
+
+      let call = 0;
+      global.fetch = vi.fn((url: string) => {
+        if (String(url).startsWith('/api/releases/rel-1')) {
+          call += 1;
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(call === 1 ? validatingWithFailure : rejected) });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(''), json: () => Promise.resolve({}) });
+      }) as unknown as typeof fetch;
+
+      mockFetchProposals.mockResolvedValue([proposal({ source: 'validation', node_id: 'svc', status: 'proposed' })]);
+
+      render(
+        <MemoryRouter initialEntries={['/releases/rel-1']}>
+          <Routes><Route path="/releases/:id" element={<ReleaseDetailPage />} /></Routes>
+        </MemoryRouter>,
+      );
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText('svc')).toBeInTheDocument();
+      expect(mockFetchProposals).not.toHaveBeenCalled();
+
+      // The next poll transitions the release to rejected. Proposal polling
+      // must start now (not have been running all along) and surface the
+      // already-ready proposal without a manual reload. Fake timers are active,
+      // so flush the effect's immediate refresh() call directly instead of
+      // waitFor (which polls on real timers and would hang).
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(mockFetchProposals).toHaveBeenCalled();
+      expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

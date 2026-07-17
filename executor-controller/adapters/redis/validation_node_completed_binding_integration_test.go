@@ -94,9 +94,9 @@ func TestValidationNodeCompletedBinding_RecordsOutcome(t *testing.T) {
 		streams.ValidationNodeCompletedV1))
 	// Single-node release: this terminal node triggers the aggregate emission.
 	assert.Equal(t, 1, countRows(t, db,
-		`SELECT COUNT(*) FROM executor_outbox WHERE stream_name = $1`,
-		streams.ValidationCompletedV1),
-		"aggregate validation terminal (kind=complete) emitted once the only node is terminal")
+		`SELECT COUNT(*) FROM executor_outbox WHERE stream_name = $1 AND payload->>'kind' = 'complete'`,
+		streams.ValidationResultV1),
+		"aggregate validation.result:v1 (kind=complete) emitted once the only node is terminal")
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM validation_aggregates WHERE release_id = $1`, releaseID),
 		"sentinel claimed exactly once")
@@ -122,8 +122,8 @@ func TestValidationNodeCompletedBinding_RedeliveryIsDeduped(t *testing.T) {
 		`SELECT COUNT(*) FROM message_processing WHERE message_id=$1 AND stream_name=$2`,
 		msg.ID, streams.ValidationNodeCompletedV1))
 	assert.Equal(t, 1, countRows(t, db,
-		`SELECT COUNT(*) FROM executor_outbox WHERE stream_name=$1`,
-		streams.ValidationCompletedV1),
+		`SELECT COUNT(*) FROM executor_outbox WHERE stream_name=$1 AND payload->>'kind' = 'complete'`,
+		streams.ValidationResultV1),
 		"redelivery must not emit a second aggregate")
 	assert.Equal(t, 1, countRows(t, db,
 		`SELECT COUNT(*) FROM validation_aggregates WHERE release_id=$1`, releaseID))

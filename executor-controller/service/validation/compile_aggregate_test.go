@@ -133,7 +133,7 @@ func TestCompileAggregate_ScopedToMode(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, outbox2.last)
-	assert.Equal(t, streams.ValidationCompletedV1, outbox2.last.StreamName)
+	assert.Equal(t, streams.ValidationResultV1, outbox2.last.StreamName)
 	assert.NotContains(t, string(outbox2.last.Payload), "compile.svc",
 		"compile node must not leak into validation per_node_results")
 }

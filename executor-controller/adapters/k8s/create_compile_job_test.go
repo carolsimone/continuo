@@ -25,6 +25,10 @@ func TestCreateCompileJob_InitCompilesMainUploads(t *testing.T) {
 	assert.Equal(t, "carolsimone/core:abc123", spec.InitContainers[0].Image)          // team image
 	assert.Contains(t, spec.InitContainers[0].Command[2], "dbt compile")
 	assert.Contains(t, spec.InitContainers[0].Command[2], "/shared/manifest.json")
+	// handoff file must be made world-readable: the init container runs the
+	// team image (arbitrary uid/umask) but the upload container is forced to
+	// runAsUser 65532, so a restrictive-mode file would EACCES on upload.
+	assert.Contains(t, spec.InitContainers[0].Command[2], "&& chmod 644 /shared/manifest.json")
 	assert.Equal(t, "carolsimone/s3-sidecar:latest", spec.Containers[0].Image)   // upload image
 	assert.Equal(t, []string{"python", "/compile_uploader.py"}, spec.Containers[0].Command)
 	assert.Equal(t, "/shared/manifest.json", envByName(spec, "COMPILE_MANIFEST_PATH"))

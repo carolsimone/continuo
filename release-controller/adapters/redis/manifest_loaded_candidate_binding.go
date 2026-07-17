@@ -34,9 +34,10 @@ func NewManifestLoadedCandidateConsumer(
 // newManifestLoadedCandidateHandler returns a MessageHandler that decodes the
 // "payload" field of each manifest.loaded.candidate:v1 message, calls
 // handlers.HandleParsedManifest, and on success advances the release queue.
-// Advancing after a failed parse is essential: no validation.completed:v1 will
-// arrive for a rejected release, so without this call every queued candidate
-// would stay in StatusReceived indefinitely.
+// Advancing after a failed parse is essential: no kind:"complete" terminal
+// message on validation.result:v1 will arrive for a rejected release, so
+// without this call every queued candidate would stay in StatusReceived
+// indefinitely.
 func newManifestLoadedCandidateHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		var in handlers.HandleParsedManifestInput

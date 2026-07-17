@@ -33,13 +33,16 @@ func TestIntegration_FailedValidationKeepsCurrentProdUnchanged(t *testing.T) {
 		},
 	}))
 
-	// Validation fails on node b
+	// Project each node's result via the per-node stream, node b failing, then
+	// deliver the slim terminal decision.
+	for _, n := range []handlers.NodeValidationResultInput{
+		{ReleaseID: "rFAIL", Stage: "validation", NodeID: "a", Status: "ok"},
+		{ReleaseID: "rFAIL", Stage: "validation", NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/b"},
+	} {
+		require.NoError(t, handlers.HandleNodeValidationResult(context.Background(), deps, n))
+	}
 	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
-		ReleaseID: "rFAIL",
-		PerNodeResults: []handlers.NodeResult{
-			{NodeID: "a", Status: "ok"},
-			{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/b"},
-		},
+		ReleaseID:       "rFAIL",
 		AggregateStatus: "partial_failed",
 	}))
 
