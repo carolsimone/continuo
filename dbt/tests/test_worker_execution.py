@@ -344,6 +344,31 @@ def test_wrapper_receives_exact_argv_and_no_pool_secret(
     assert invocation["env"]["FAKE_WRAPPER_RECORD"] == str(record)
 
 
+def test_the_wrapper_child_reads_the_schedule_name_the_grant_carried(
+    loaded_artifact, wise_dbt, tmp_path, monkeypatch
+):
+    """The names a wrapper reads have to reach the wrapper, not just this process.
+
+    task_values builds them from the grant and task_environment applies them to
+    the worker; what settles it is the child's own record of the environment it
+    was started with, which is what a per-task Job's pod would have given it.
+    """
+    task_dir = tmp_path / "task"
+    record = tmp_path / "invocation.json"
+    monkeypatch.setenv("FAKE_WRAPPER_RECORD", str(record))
+    monkeypatch.setenv("FAKE_WRAPPER_CODES", "I040")
+    lease = wrapper_lease([str(wise_dbt), "run"])
+
+    with task_environment(task_values(lease, task_dir=str(task_dir))):
+        result = run_wrapper(loaded_artifact, lease, task_dir)
+
+    invocation = json.loads(record.read_text())
+    assert result.succeeded
+    assert invocation["env"]["SCHEDULE_NAME"] == "nightly-finance"
+    assert invocation["env"]["JOB_NAME"] == "dbt-finance-orders-42"
+    assert invocation["env"]["TABLE_NAME"] == TABLE_NAME
+
+
 def test_wrapper_reads_its_cache_from_a_task_local_copy(
     loaded_artifact, wise_dbt, tmp_path, monkeypatch
 ):
@@ -405,6 +430,52 @@ def test_wrapper_failure_is_reported_from_its_exit_status(
     assert not result.succeeded
     assert result.error_class == "wrapper_failed"
     assert not result.unsafe_runtime
+
+
+def test_a_required_cache_wrapper_that_crashed_is_reported_as_having_crashed(
+    loaded_artifact, wise_dbt, tmp_path, monkeypatch
+):
+    """A wrapper that fell over before dbt ran withheld no evidence.
+
+    Both readings refuse the task permanently, so the outcome is the same either
+    way; the difference is what an operator is pointed at. Reading the silence as
+    an unproven cache would send them to a cache the wrapper never reached, when
+    what happened is that it exited 1.
+    """
+    task_dir = tmp_path / "task"
+    monkeypatch.setenv("FAKE_WRAPPER_CODES", "")
+    monkeypatch.setenv("FAKE_WRAPPER_EXIT", "1")
+
+    result = run_wrapper(loaded_artifact, wrapper_lease([str(wise_dbt), "run"]), task_dir)
+
+    assert not result.succeeded
+    assert result.error_class == "wrapper_failed"
+    assert "1" in result.error_message
+    # The cache was still never proved; it is reported, not diagnosed from.
+    assert result.cache_status == "unknown"
+    assert not result.retryable
+
+
+@pytest.mark.parametrize("code", sorted(CACHE_REJECTED))
+def test_a_stated_rejection_outranks_the_code_a_wrapper_exited_with(
+    loaded_artifact, wise_dbt, tmp_path, monkeypatch, code
+):
+    """A wrapper that said it did not use the cache said so, exit code aside.
+
+    A rejection stops the run, so the wrapper is always going to exit non-zero
+    on this path. Diagnosing that as a plain crash would bury the one thing the
+    wrapper actually told us.
+    """
+    task_dir = tmp_path / "task"
+    monkeypatch.setenv("FAKE_WRAPPER_CODES", code)
+    monkeypatch.setenv("FAKE_WRAPPER_EXIT", "1")
+
+    result = run_wrapper(loaded_artifact, wrapper_lease([str(wise_dbt), "run"]), task_dir)
+
+    assert not result.succeeded
+    assert result.error_class == "runtime_manifest_unverified"
+    assert code in result.error_message
+    assert result.cache_status == "rejected"
 
 
 @pytest.mark.parametrize("code", sorted(CACHE_ACCEPTED))

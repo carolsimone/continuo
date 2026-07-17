@@ -381,12 +381,17 @@ class WrapperExecutor:
         It is this process's environment, so the wrapper reads everything a
         per-task Job gave it, plus the cache and paths that keep one task's dbt
         output out of the next task's, minus what speaks for this pool.
+
+        The log settings below are the one part a wrapper can tell apart from
+        the environment a per-task Job gave it: the dbt the wrapper spawns logs
+        JSON at debug level, so a wrapper that reads dbt's stdout reads JSON
+        here. They are set because dbt's structured log is the only channel that
+        carries the cache-evidence codes, and a wrapper declared as reusing the
+        promoted cache is held to showing that it did.
         """
         env = os.environ.copy()
         env.update({
             "DBT_PARTIAL_PARSE_FILE_PATH": str(task_cache),
-            # dbt's own structured log, which is the only account of the cache
-            # that does not depend on parsing a wrapper's prose.
             "DBT_LOG_FORMAT": "json",
             "DBT_LOG_LEVEL": "debug",
             "DBT_TARGET_PATH": str(task_dir / "target"),
@@ -438,16 +443,30 @@ class WrapperExecutor:
 
     def _result(self, exit_code: int, evidence: CacheEvidence) -> ExecutionResult:
         status = evidence.status()
-        if self.required_cache and status != "accepted":
-            # The team said their wrapper reuses the cache and this run does not
-            # show it, so what it did to the warehouse cannot be attributed to
-            # the pinned manifest. No retry changes that.
+        if self.required_cache and status == "rejected":
+            # The team said their wrapper reuses the cache and the wrapper said
+            # outright that it did not, so what it did to the warehouse cannot be
+            # attributed to the pinned manifest. That reading stands whatever the
+            # exit code says, because the run is stopped the moment a rejection
+            # is seen and the code it exits with is that stop. No retry changes
+            # it.
             return ExecutionResult.permanent(
                 "runtime_manifest_unverified", evidence.explain(), cache_status=status
             )
         if exit_code != 0:
+            # A wrapper that exited non-zero without saying anything about the
+            # cache failed; it did not withhold evidence. Reading the silence as
+            # unverified first would point an operator at a cache the wrapper
+            # never got as far as using.
             return ExecutionResult.permanent(
                 "wrapper_failed", f"the wrapper exited {exit_code}", cache_status=status
+            )
+        if self.required_cache and status != "accepted":
+            # The wrapper ran to a clean exit and still never showed it read the
+            # cache. Silence is not evidence: it may have reparsed the project
+            # the pool exists to parse once.
+            return ExecutionResult.permanent(
+                "runtime_manifest_unverified", evidence.explain(), cache_status=status
             )
         return ExecutionResult(succeeded=True, cache_status=status)
 
