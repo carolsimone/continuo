@@ -3,3 +3,4 @@ FROM carolsimone/dbt-base:latest
 COPY dbt_project.yml profiles.yml ./
 COPY models/ ./models/
 COPY seeds/ ./seeds/
+COPY snapshots/ ./snapshots/

@@ -35,3 +35,18 @@ models:
       +tags: ["rel-probe"]
     rel_probe_down:
       +tags: ["rel-probe"]
+    worker_incremental:
+      +tags: ["worker-runtime"]
+    worker_view:
+      +tags: ["worker-runtime"]
+
+# The worker-runtime fixtures cover the materializations a reusable worker must
+# reproduce from a hydrated manifest: an incremental model, a view built on it,
+# and a snapshot of it. A node's first tag names the schedule it belongs to, so
+# the dedicated worker-runtime tag keeps them off every other schedule.
+snapshots:
+  service_1:
+    +tags: ["worker-runtime"]
+    +meta:
+      owner: "test"
+      criticality: "CORE"

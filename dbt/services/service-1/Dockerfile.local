@@ -7,3 +7,4 @@ RUN ln -s "$(command -v dbt)" /usr/local/bin/wise-dbt
 COPY dbt_project.yml profiles.yml ./
 COPY models/ ./models/
 COPY seeds/ ./seeds/
+COPY snapshots/ ./snapshots/
