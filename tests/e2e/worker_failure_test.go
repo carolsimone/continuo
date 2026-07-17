@@ -74,10 +74,14 @@ func TestE2E_WorkerFailures(t *testing.T) {
 			return coldMode != "", nil
 		}, "cold-start task never produced a deployment row")
 		require.Equal(t, "workers", coldMode, "the cold-start task must route to the worker pool")
-		pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
-			_, ready := countWorkerPods(t, ctx, clients, "service-3")
-			return ready >= 1, nil
-		}, "idle-retired pool never cold-started a Ready worker for the next task")
+
+		// The proof the retired pool cold-started is that this worker task ran to
+		// success: a task only settles succeeded on the worker path if the pool
+		// scaled a pod up from zero, the pod hydrated its artifact, claimed the
+		// lease, and ran dbt. Asserting the task outcome is both stronger and
+		// race-free — polling for a live Ready pod would miss the window, since
+		// worker_perf finishes in a second or two and the revived pool can begin
+		// idling back down before a snapshot catches its pod.
 		verifySchedulerSucceeded(t, ctx, clients, cold)
 		crow := findDeploymentRow(t, queryDeploymentsByService(t, ctx, clients, "service-3"), "worker_perf")
 		assert.Equal(t, "workers", crow.ExecutionMode, "the cold-started task must run on the worker path")
