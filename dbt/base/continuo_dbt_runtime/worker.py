@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import _thread
 import os
+import shutil
 import signal
 import tempfile
 import threading
@@ -102,9 +103,13 @@ def task_values(lease: Lease, job_name: str, schedule_name: str,
                 task_dir: str | Path) -> dict[str, str]:
     """The environment one task runs under.
 
-    These are the fields the Job contract already exposes to a team's dbt
-    project, plus the paths that keep one task's dbt output out of the next
-    task's. The pool credential is never among them.
+    These name the task a team's dbt project is running, plus the paths that
+    keep one task's dbt output out of the next task's. The pool credential is
+    never among them.
+
+    SCHEDULE_NAME carries whatever the caller passes; the lease grant names the
+    schedule only by id, so the worker passes that id and SCHEDULE_NAME reads as
+    a UUID rather than a human-readable schedule name.
     """
     return {
         "TASK_ID": lease.task.task_id,
@@ -217,6 +222,8 @@ class Worker:
         self._stop = threading.Event()
         # Set when a task leaves the process in a state it cannot trust.
         self.unsafe = False
+        # The settled refusal that stopped this worker claiming, if one did.
+        self.claim_refusal: TerminalError | None = None
 
     def shutdown(self) -> None:
         """Stop claiming new work."""
@@ -227,26 +234,51 @@ class Worker:
             try:
                 self.run_once()
             except TerminalError:
-                # The lease was settled under this worker. Ask for the next one.
+                # A lease-scoped call was refused: the hold this worker had is
+                # settled, so there is nothing left to report against it. Claim
+                # the next task. A refusal of the claim itself does not reach
+                # here; run_once stops the worker on those.
                 continue
 
     def run_once(self) -> bool:
         """Claim and run one task. False when there was nothing to do."""
         if self._stop.is_set():
             return False
-        payload = self._client.claim(
-            wait_seconds=self._config.claim_wait_seconds,
-            owner=self._config.pod_name or self._config.pool_key,
-            pod_name=self._config.pod_name,
-            pod_uid=self._config.pod_uid,
-        )
+        try:
+            payload = self._client.claim(
+                wait_seconds=self._config.claim_wait_seconds,
+                owner=self._config.pod_name or self._config.pool_key,
+                pod_name=self._config.pod_name,
+                pod_uid=self._config.pod_uid,
+            )
+        except TerminalError as refusal:
+            # The claim itself was refused, which is settled: this pod does not
+            # belong to this pool, so no later claim can be answered either.
+            # Stop and go unready rather than re-ask at full speed forever.
+            self._refuse_claims(refusal)
+            return False
         if payload is None:
             return False
         self._run_task(Lease.from_response(payload))
         return True
 
+    def _refuse_claims(self, refusal: TerminalError) -> None:
+        """Stop claiming, and stop answering ready, for the life of this pod."""
+        self.claim_refusal = refusal
+        self._stop.set()
+        self._config.ready_file.unlink(missing_ok=True)
+
     def _run_task(self, lease: Lease) -> None:
         task_dir = Path(tempfile.mkdtemp(prefix="continuo-task-"))
+        try:
+            self._execute_and_report(lease, task_dir)
+        finally:
+            # Each task leaves a dbt log, run results, and a target tree behind.
+            # A worker runs tasks for the life of its pod, so what one task wrote
+            # goes before the next one starts.
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+    def _execute_and_report(self, lease: Lease, task_dir: Path) -> None:
         log_path = task_dir / "dbt.log"
         executor = self._executor_factory(self._artifact, EventSink(log_path))
 
@@ -279,7 +311,9 @@ class Worker:
         self.unsafe = self.unsafe or result.unsafe_runtime
 
         if beat.cancelled:
-            # The task is already settled; reporting it would only be refused.
+            # The task is already settled, so nothing is reported and nothing is
+            # uploaded: the partial dbt log this task wrote is discarded with the
+            # task directory. Reporting it would only be refused.
             return
         self._report(lease, result, log_path, task_dir, execution_seconds)
 
@@ -292,6 +326,13 @@ class Worker:
 
     def _report(self, lease: Lease, result: ExecutionResult, log_path: Path,
                 task_dir: Path, execution_seconds: float) -> None:
+        """Settle the lease, whatever the artifacts did.
+
+        complete is the call that must land: dbt has already touched the
+        warehouse, so a lease left unsettled is re-run somewhere else. Artifacts
+        are best effort, and a task whose result is SUCCEEDED stays SUCCEEDED
+        even when nothing could be uploaded to describe it.
+        """
         payload = {
             "succeeded": result.succeeded,
             "retryable": result.retryable,
@@ -301,16 +342,34 @@ class Worker:
             "unsafe_runtime": result.unsafe_runtime,
         }
         upload_started = time.monotonic()
-        urls = self._client.result_urls(lease.lease_id, lease.deployment_id, lease.token)
-        payload.update(self._upload_results(urls, log_path, task_dir))
+        payload.update(
+            self._upload_results(self._result_urls(lease), log_path, task_dir)
+        )
         payload["upload_seconds"] = time.monotonic() - upload_started
         self._client.complete(lease.lease_id, lease.deployment_id, lease.token, payload)
 
+    def _result_urls(self, lease: Lease) -> dict:
+        """The locations to upload to, or none when the executor issued none.
+
+        A terminal refusal is raised: the lease is settled, so completing it is
+        refused too and there is nothing to upload against.
+        """
+        try:
+            return self._client.result_urls(
+                lease.lease_id, lease.deployment_id, lease.token
+            )
+        except TerminalError:
+            raise
+        except Exception:
+            return {}
+
     def _upload_results(self, urls: dict, log_path: Path, task_dir: Path) -> dict:
-        """Upload what the task produced, reporting only what was written.
+        """Upload what the task produced, reporting only what landed.
 
         A task that failed before writing a file reports no location for it,
-        which is how the executor tells "nothing to read" from "read this".
+        which is how the executor tells "nothing to read" from "read this". An
+        upload that fails reports no location for the same reason: the object is
+        not there to be read, and the task's own outcome does not change.
         """
         objects = {
             "log_s3_uri": (urls.get("log"), log_path, "text/plain"),
@@ -320,9 +379,12 @@ class Worker:
         }
         reported = {}
         for field, (signed, path, content_type) in objects.items():
-            if not signed or not path.exists():
+            if not signed or not signed.get("url") or not path.exists():
                 continue
-            self._upload(signed["url"], path.read_bytes(), content_type)
+            try:
+                self._upload(signed["url"], path.read_bytes(), content_type)
+            except Exception:
+                continue
             reported[field] = signed["s3_uri"]
         return reported
 
