@@ -62,14 +62,38 @@ app.kubernetes.io/name: {{ .service }}
 {{- printf "%s-service-repos" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/* Job/Secret name carrying a fixed discriminator (what the object IS, e.g.
+     "-db-init-migrate") and, optionally, a "-r<N>" revision suffix. Builds
+     the FULL suffix (discriminator, or discriminator+revision) FIRST and
+     truncates the base fullname to (63 - len(fullSuffix)) before
+     concatenating — reserving room for BOTH parts, not just the revision.
+     A plain `printf base+discriminator | trunc 63` (or truncating the
+     revision alone against an already-discriminated base) can drop the
+     discriminator for a long release name, letting two differently-named
+     Jobs (e.g. db-init-migrate and minio-bucket-init) collide on the same
+     truncated name. trimSuffix "-" on the truncated base avoids a stray "--".
+     Call: include "continuo.jobName" (dict "root" $ "discriminator" "-db-init-migrate" "revisioned" true) */}}
+{{- define "continuo.jobName" -}}
+{{- $suffix := .discriminator -}}
+{{- if .revisioned -}}
+{{- $suffix = printf "%s-r%d" .discriminator (int .root.Release.Revision) -}}
+{{- end -}}
+{{- $base := include "continuo.fullname" .root | trunc (int (sub 63 (len $suffix))) | trimSuffix "-" -}}
+{{- printf "%s%s" $base $suffix -}}
+{{- end -}}
+
 {{/* Migration Job name: revision-suffixed when the bundled Postgres makes it a
      regular resource (hooks would deadlock); stable when it is a hook (BYO). */}}
 {{- define "continuo.migrateJobName" -}}
-{{- if .Values.postgresql.enabled -}}
-{{- printf "%s-db-init-migrate-r%d" (include "continuo.fullname" .) (int .Release.Revision) | trunc 63 | trimSuffix "-" -}}
-{{- else -}}
-{{- printf "%s-db-init-migrate" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- include "continuo.jobName" (dict "root" . "discriminator" "-db-init-migrate" "revisioned" .Values.postgresql.enabled) -}}
 {{- end -}}
+
+{{/* Hook Secret carrying the migrate Job's inline postgres password (see
+     templates/db-init-migrate-hook-secret.yaml); always stable-named, since
+     it is deleted (hook-succeeded) rather than accumulated across revisions
+     like the revision-suffixed bundled-Postgres migrate Job is. */}}
+{{- define "continuo.migrateHookSecretName" -}}
+{{- include "continuo.jobName" (dict "root" . "discriminator" "-db-init-migrate-creds" "revisioned" false) -}}
 {{- end -}}
 
 {{/* ------- datastore names & endpoints ------- */}}
@@ -216,7 +240,7 @@ capabilities:
   {{- end -}}
 {{- else if eq .ref "redis" -}}
   {{- if $v.redis.enabled -}}
-    {{- include "continuo.redis.fullname" .root -}}
+    {{- default (include "continuo.redis.fullname" .root) $v.redis.auth.existingSecret -}}
   {{- else if $v.externalRedis.existingSecret -}}
     {{- $v.externalRedis.existingSecret -}}
   {{- else -}}
@@ -224,7 +248,7 @@ capabilities:
   {{- end -}}
 {{- else if eq .ref "neo4j" -}}
   {{- if $v.neo4j.enabled -}}
-    {{- include "continuo.neo4j.fullname" .root -}}
+    {{- default (include "continuo.neo4j.fullname" .root) $v.neo4j.auth.existingSecret -}}
   {{- else if $v.externalNeo4j.existingSecret -}}
     {{- $v.externalNeo4j.existingSecret -}}
   {{- else -}}
@@ -232,7 +256,7 @@ capabilities:
   {{- end -}}
 {{- else if or (eq .ref "s3AccessKeyId") (eq .ref "s3SecretAccessKey") -}}
   {{- if $v.minio.enabled -}}
-    {{- include "continuo.minio.fullname" .root -}}
+    {{- default (include "continuo.minio.fullname" .root) $v.minio.auth.existingSecret -}}
   {{- else if $v.s3.existingSecret -}}
     {{- $v.s3.existingSecret -}}
   {{- else -}}
@@ -265,19 +289,23 @@ capabilities:
     {{- $v.externalDatabase.existingSecretPasswordKey -}}
   {{- else -}}postgres-password{{- end -}}
 {{- else if eq .ref "redis" -}}
-  {{- if $v.redis.enabled -}}password
+  {{- if $v.redis.enabled -}}
+    {{- if $v.redis.auth.existingSecret -}}{{ $v.redis.auth.existingSecretPasswordKey }}{{- else -}}password{{- end -}}
   {{- else if $v.externalRedis.existingSecret -}}{{ $v.externalRedis.existingSecretPasswordKey }}
   {{- else -}}redis-password{{- end -}}
 {{- else if eq .ref "neo4j" -}}
-  {{- if $v.neo4j.enabled -}}password
+  {{- if $v.neo4j.enabled -}}
+    {{- if $v.neo4j.auth.existingSecret -}}{{ $v.neo4j.auth.existingSecretPasswordKey }}{{- else -}}password{{- end -}}
   {{- else if $v.externalNeo4j.existingSecret -}}{{ $v.externalNeo4j.existingSecretPasswordKey }}
   {{- else -}}neo4j-password{{- end -}}
 {{- else if eq .ref "s3AccessKeyId" -}}
-  {{- if $v.minio.enabled -}}access-key-id
+  {{- if $v.minio.enabled -}}
+    {{- if $v.minio.auth.existingSecret -}}{{ $v.minio.auth.existingSecretAccessKeyIdKey }}{{- else -}}access-key-id{{- end -}}
   {{- else if $v.s3.existingSecret -}}{{ $v.s3.existingSecretAccessKeyIdKey }}
   {{- else -}}s3-access-key-id{{- end -}}
 {{- else if eq .ref "s3SecretAccessKey" -}}
-  {{- if $v.minio.enabled -}}secret-access-key
+  {{- if $v.minio.enabled -}}
+    {{- if $v.minio.auth.existingSecret -}}{{ $v.minio.auth.existingSecretSecretKeyKey }}{{- else -}}secret-access-key{{- end -}}
   {{- else if $v.s3.existingSecret -}}{{ $v.s3.existingSecretSecretKeyKey }}
   {{- else -}}s3-secret-access-key{{- end -}}
 {{- else if eq .ref "authClientSecret" -}}

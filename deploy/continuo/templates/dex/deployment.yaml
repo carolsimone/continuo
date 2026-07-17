@@ -19,7 +19,13 @@ spec:
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" "dex") | nindent 8 }}
       annotations:
-        # Restart dex when the rendered config changes.
+        # Restart dex when the rendered config changes. This re-renders
+        # dex/secret.yaml (including its lookup-guarded client secret), so on
+        # a first install / `helm template` (no live Secret to look up) the
+        # hash is a fresh random value every time — harmless, since there is
+        # no prior revision to compare against yet. On real upgrades the
+        # lookup returns the stable existing secret, so the hash only changes
+        # when the rendered config actually does.
         checksum/config: {{ include (print $.Template.BasePath "/dex/secret.yaml") . | sha256sum }}
     spec:
       securityContext:

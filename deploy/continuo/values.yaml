@@ -1,3 +1,8 @@
+# Override the chart name / the release's derived resource-name prefix.
+# Empty (default) lets _helpers.tpl derive both from Chart.Name/Release.Name.
+nameOverride: ""
+fullnameOverride: ""
+
 global:
   # Continuo-owned images resolve to:
   #   <imageRegistry>/<imageRepositoryPrefix>/continuo-<name>:<imageTag>
@@ -39,7 +44,7 @@ postgresql:
   enabled: true
   image:
     repository: postgres
-    tag: "18.3"        # e.g. 18.3 — verified in Task 1 Step 2
+    tag: "18.3"
   auth:
     username: continuo
     # Optional pre-created Secret holding the bundled instance's password.
@@ -68,7 +73,12 @@ redis:
   enabled: true
   image:
     repository: redis
-    tag: "8.6.4"           # e.g. 8.6.2
+    tag: "8.6.4"
+  auth:
+    # Optional pre-created Secret holding the bundled instance's password.
+    # Empty = the chart generates one and keeps it stable across upgrades.
+    existingSecret: ""
+    existingSecretPasswordKey: password
   persistence:
     size: 2Gi
     storageClass: ""
@@ -81,6 +91,10 @@ redis:
 externalRedis:
   host: ""
   port: 6379
+  # Synthesized into redis://:$(REDIS_PASSWORD)@host:port for ui-service,
+  # manifest-controller, and stream-reaper. A password containing URL-reserved
+  # characters (@, :, /) breaks that URL; use a URL-safe password, or set
+  # existingSecret with a URL-safe value instead.
   password: ""
   existingSecret: ""
   existingSecretPasswordKey: password
@@ -90,6 +104,11 @@ neo4j:
   image:
     repository: neo4j
     tag: "5.26.28-community"           # e.g. 5.26.12-community
+  auth:
+    # Optional pre-created Secret holding the bundled instance's password.
+    # Empty = the chart generates one and keeps it stable across upgrades.
+    existingSecret: ""
+    existingSecretPasswordKey: password
   persistence:
     size: 10Gi
     storageClass: ""
@@ -111,10 +130,18 @@ minio:
   enabled: true
   image:
     repository: minio/minio
-    tag: "RELEASE.2025-09-07T16-13-09Z"           # RELEASE.…
+    tag: "RELEASE.2025-09-07T16-13-09Z"
   mcImage:
     repository: minio/mc
-    tag: "RELEASE.2025-08-13T08-35-41Z"              # RELEASE.…
+    tag: "RELEASE.2025-08-13T08-35-41Z"
+  auth:
+    # Optional pre-created Secret holding the bundled instance's root user AND
+    # password — BOTH keys below must be present in it, unlike the other
+    # datastores' single-key existingSecret. Empty = the chart generates the
+    # password (root user "continuo") and keeps it stable across upgrades.
+    existingSecret: ""
+    existingSecretAccessKeyIdKey: access-key-id
+    existingSecretSecretKeyKey: secret-access-key
   bucket: continuo
   persistence:
     size: 10Gi
@@ -124,7 +151,8 @@ minio:
     limits: {cpu: 500m, memory: 1Gi}
 
 s3:
-  # Used when minio.enabled=false: any S3-compatible endpoint.
+  # endpointUrl/bucket/region/accessKeyId/secretKey/existingSecret are used
+  # only when minio.enabled=false: any S3-compatible endpoint.
   endpointUrl: ""
   bucket: ""
   region: ""
@@ -133,7 +161,8 @@ s3:
   existingSecret: ""
   existingSecretAccessKeyIdKey: access-key-id
   existingSecretSecretKeyKey: secret-access-key
-  # S3_ENV consumed by manifest-controller (key prefix environment).
+  # S3_ENV consumed by manifest-controller (key prefix environment). Unlike
+  # the fields above, this is read in EVERY mode, bundled MinIO included.
   env: production
 
 dex:

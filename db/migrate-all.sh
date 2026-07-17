@@ -7,6 +7,14 @@ set -eu
 
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
+# Optional. Empty (default) leaves the JDBC URL exactly as before — required
+# for byte-identical behavior against the existing Hetzner/deploy-app path.
+# Set (e.g. "require") to append "?sslmode=..." for a BYO Postgres that
+# enforces TLS (RDS, Azure Database for PostgreSQL, etc.); psql/libpq in the
+# db-init step already defaults to sslmode=prefer, but the flyway JDBC driver
+# does not negotiate SSL unless the URL says so.
+DB_SSLMODE="${DB_SSLMODE:-}"
+
 # Single source of truth: every database this job owns. The same list drives
 # both the create-loop and the flyway-loop below, so they cannot drift.
 DATABASES="state executor orchestrator k8s release agent remediation remediation_agent"
@@ -48,9 +56,13 @@ for db in ${DATABASES}; do
 done
 
 for db in ${DATABASES}; do
+  jdbc_url="jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/continuo_${db}"
+  if [ -n "${DB_SSLMODE}" ]; then
+    jdbc_url="${jdbc_url}?sslmode=${DB_SSLMODE}"
+  fi
   echo "Running migrations for continuo_${db}..."
   flyway \
-    -url="jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/continuo_${db}" \
+    -url="${jdbc_url}" \
     -user="${POSTGRES_USER}" \
     -password="${POSTGRES_PASSWORD}" \
     -locations="filesystem:/flyway/sql/${db}" \
