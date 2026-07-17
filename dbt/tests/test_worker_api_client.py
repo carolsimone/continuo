@@ -119,14 +119,22 @@ def test_gives_up_after_max_attempts_on_a_persistent_5xx(fake_executor):
 
 
 def test_a_connection_error_is_retried_then_reported(fake_executor):
+    """An unreached executor holds no opinion, so the attempt is owed a retry.
+
+    Asserted on the backoff as well as the exception: raising RequestFailed
+    without ever having tried again would pass on the exception alone.
+    """
     fake_executor.stop()
+    slept = []
     client = ExecutorClient(
         fake_executor.base_url, POOL_KEY, CREDENTIAL, max_attempts=2,
-        sleep=lambda _s: None,
+        sleep=slept.append,
     )
 
     with pytest.raises(RequestFailed):
         client.heartbeat(LEASE_ID, DEPLOYMENT_ID, "t")
+
+    assert len(slept) == 1
 
 
 @pytest.mark.parametrize(
