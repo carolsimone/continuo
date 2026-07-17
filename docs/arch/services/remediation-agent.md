@@ -413,7 +413,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `LLM_BASE_URL` | conditional | `""` | Base URL; required when `LLM_PROVIDER=openai-compatible` |
 | `LLM_CACHE_TTL` | no | `1h` | Per-entry TTL for cached LLM propose results (Go duration). Only needs to cover the same-trigger redelivery window; kept short to bound memory on the shared `noeviction` Redis. A non-positive value is clamped to the `1h` default. |
 | `GITHUB_TOKEN` | no | `""` | Read-only fine-grained PAT with `Contents: Read` and `Pull requests: Read` on the dbt repo. In Helm, sourced from `global.github.token` in the chart-managed secret `continuo-app-credentials`. When empty, requests to the Contents API are sent unauthenticated (subject to GitHub's lower unauthenticated rate limit) rather than failing outright. |
-| `SERVICE_REPO_MAP_PATH` | no | `""` | Path to `service_repos.yaml`, which maps each dbt service name to its project root within the source repo. In Helm, set to `/etc/continuo/service_repos.yaml` and backed by the `continuo-app-service-repos` ConfigMap (built from `deploy/app/files/service_repos.yaml`). In docker-compose (dev/e2e), bind-mounted from `remediation-agent/config/service_repos.yaml`. Empty (or a service name absent from the map) means every fixer's source read has no repo path to resolve: compile and seed proposals are skipped, and validation's Step 2 degrades to the Step-1 candidate proposal. |
+| `SERVICE_REPO_MAP_PATH` | no | `""` | Path to `service_repos.yaml`, which maps each dbt service name to its project root within the source repo. In Helm, set to `/etc/continuo/service_repos.yaml` and backed by the `continuo-app-service-repos` ConfigMap (built from `deploy/continuo/files/service_repos.yaml`). In docker-compose (dev/e2e), bind-mounted from `remediation-agent/config/service_repos.yaml`. Empty (or a service name absent from the map) means every fixer's source read has no repo path to resolve: compile and seed proposals are skipped, and validation's Step 2 degrades to the Step-1 candidate proposal. |
 | `GITHUB_BASE_URL` | no | `https://api.github.com` | GitHub REST API root; override for e2e stub (`stub-github`) |
 | `CONTINUO_ORCHESTRATOR_ADDR` | no | `orchestrator:50052` | Orchestrator gRPC endpoint |
 | `REMEDIATION_AGENT_HTTP_PORT` | no | `8092` | `/healthz` port |
@@ -444,7 +444,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | GitHub read-only PR status reader (Pulls API) | `remediation-agent/adapters/github/pr_status.go` |
 | Service→repo map config loader | `remediation-agent/config.go` (reads `SERVICE_REPO_MAP_PATH`, parses `service_repos.yaml`) |
 | Service→repo map file (dev + e2e) | `remediation-agent/config/service_repos.yaml` |
-| Service→repo map file (Helm chart) | `deploy/app/files/service_repos.yaml` (rendered into `continuo-app-service-repos` ConfigMap, mounted at `/etc/continuo`) |
+| Service→repo map file (Helm chart) | `deploy/continuo/files/service_repos.yaml` (rendered into `continuo-app-service-repos` ConfigMap, mounted at `/etc/continuo`) |
 | Anthropic LLM adapter | `remediation-agent/adapters/llm/anthropic.go` |
 | OpenAI-compatible LLM adapter | `remediation-agent/adapters/llm/openai.go` |
 | Best-effort LLM response caching decorator | `remediation-agent/service/llmcache/caching_provider.go` |

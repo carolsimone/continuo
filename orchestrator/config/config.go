@@ -48,7 +48,7 @@ type Config struct {
 
 	// State gRPC endpoint (host:port). Reuses the established
 	// STATE_GRPC_ADDR convention exposed globally by the Helm
-	// configmap (deploy/app/templates/configmap.yaml), so every
+	// configmap (deploy/continuo/templates/configmap.yaml), so every
 	// service that consumes the global configmap automatically gets
 	// it populated — no per-service Helm wiring is required.
 	StateGRPCAddr string

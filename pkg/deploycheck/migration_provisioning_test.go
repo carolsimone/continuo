@@ -178,27 +178,50 @@ func TestMigrateAllProvisionsEveryDatabaseItMigrates(t *testing.T) {
 			"the same DATABASES list it creates")
 	}
 
-	// Every migrated database must also be provisioned by the infra chart's
-	// initdb list, so fresh clusters and the migration job stay consistent.
-	infraPath := filepath.Join(root, "deploy", "infra", "values.yaml")
-	infraRaw, err := os.ReadFile(infraPath) //nolint:gosec // G304: infraPath is repoRoot(t) joined with fixed literal segments, not external input
+	// Every migrated database must also be provisioned by the chart's db-init
+	// initContainer, so fresh clusters and the migration job stay consistent.
+	// db-init-migrate-job.yaml's `for db in ...; do` loop is its own hardcoded
+	// list (not derived from db/migrate-all.sh — it also provisions
+	// continuo_dbt, the dbt warehouse database that Flyway never migrates), so
+	// it can drift independently and needs its own cross-check.
+	jobPath := filepath.Join(root, "deploy", "continuo", "templates", "db-init-migrate-job.yaml")
+	jobRaw, err := os.ReadFile(jobPath) //nolint:gosec // G304: jobPath is repoRoot(t) joined with fixed literal segments, not external input
 	if err != nil {
-		t.Fatalf("read %s: %v", infraPath, err)
+		t.Fatalf("read %s: %v", jobPath, err)
 	}
-	infraDBs := databasesAssignment(t, string(infraRaw), "deploy/infra/values.yaml")
-	infraSet := toSet(infraDBs)
+	jobDBs := dbInitLoopDatabases(t, string(jobRaw), "deploy/continuo/templates/db-init-migrate-job.yaml")
+	jobSet := toSet(jobDBs)
 
 	var missing []string
 	for _, db := range dbs {
 		full := "continuo_" + db
-		if !infraSet[full] {
+		if !jobSet[full] {
 			missing = append(missing, full)
 		}
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		t.Errorf("databases migrated by db/migrate-all.sh but absent from the "+
-			"deploy/infra/values.yaml initdb DATABASES list: %v — fresh clusters "+
-			"would never create them", missing)
+			"deploy/continuo/templates/db-init-migrate-job.yaml db-init `for db in "+
+			"...; do` list: %v — fresh clusters would never create them", missing)
 	}
+}
+
+// dbInitLoopDatabases extracts the whitespace-separated (and possibly
+// backslash-line-continued) token list from the db-init initContainer's
+// `for db in <tokens>; do` shell loop in the given content.
+func dbInitLoopDatabases(t *testing.T, content, where string) []string {
+	t.Helper()
+	re := regexp.MustCompile(`(?s)for db in (.*?);\s*do`)
+	m := re.FindStringSubmatch(content)
+	if m == nil {
+		t.Fatalf("no `for db in ...; do` loop found in %s — the db-init "+
+			"database list must stay a single shell for-loop so this check can "+
+			"parse it", where)
+	}
+	tokens := strings.Fields(strings.ReplaceAll(m[1], "\\", " "))
+	if len(tokens) == 0 {
+		t.Fatalf("`for db in ...; do` loop in %s has no databases", where)
+	}
+	return tokens
 }
