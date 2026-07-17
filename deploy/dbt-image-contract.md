@@ -41,11 +41,13 @@ Database (every Job):
 | `DBT_POSTGRES_DB` | warehouse database (`continuo_dbt`) |
 | `DBT_POSTGRES_USER` / `DBT_POSTGRES_PASSWORD` | warehouse credentials |
 
-Run context (scheduled runs): `TASK_ID`, `SCHEDULE_ID`, `SCHEDULE_NAME`,
-`SERVICE_NAME`, `SCHEMA`, `TABLE_NAME`, `JOB_NAME`.
+Run context (scheduled runs only): `TASK_ID`, `SCHEDULE_ID`,
+`SCHEDULE_NAME`, `SERVICE_NAME`, `SCHEMA`, `TABLE_NAME`, `JOB_NAME`.
 
-Release legs (seed-build): additionally `RELEASE_ID`, `NODE_ID`, and
-`DBT_TARGET_SCHEMA` — the candidate schema for blue/green validation.
+Release legs (seed-build) receive `SERVICE_NAME`, `SCHEMA`, `TABLE_NAME`,
+`JOB_NAME` — not `TASK_ID`/`SCHEDULE_ID`/`SCHEDULE_NAME` — plus
+`RELEASE_ID`, `NODE_ID`, and `DBT_TARGET_SCHEMA` (the candidate schema for
+blue/green validation).
 
 Your image never receives S3 credentials. Compile-time manifest upload is
 performed by a Continuo-owned sidecar container in the same Job (it reads
