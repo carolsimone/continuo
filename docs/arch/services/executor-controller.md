@@ -332,6 +332,18 @@ handed no work until a later worker reports a clean hydration, which clears it.
 Hydration duration is logged as an observation of one pod's startup and is not
 stored — it is not part of the pool's state.
 
+**Scaling.** Each reconcile pass sizes a pool to the work it has: the desired
+replica count rises to cover the pool's pending and active tasks (bounded by the
+share of `MAX_CONCURRENT_EXECUTIONS` the pool is allocated), so a task waiting on
+an empty pool cold-starts a pod and a busier pool grows to match. The count is
+never taken below the pool's active leases, so resizing never removes a pod that
+is still running a task. A pool with no pending or active work keeps its pods
+until `WORKER_IDLE_TIMEOUT` elapses since its last activity, then is sized to zero
+replicas — retired, not deleted — and cold-starts again from its stored identity
+when the next task for it arrives. A pool whose workers cannot hydrate is treated
+as ineligible and is given no new capacity, but is still never sized below the
+leases it already holds.
+
 ### Per-release aggregate gate
 
 The aggregate gate is mode-parametrized. Each mode has its own helper invoked from the same two call sites (dispatcher and node-completed handler), both running inside their own transaction:
