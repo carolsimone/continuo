@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,14 @@ from continuo_dbt_runtime.execution import (
 )
 
 UPLOAD_TIMEOUT_SECONDS = 120.0
+
+# How long a task's whole result upload may take, retries included. The lease is
+# held throughout, so this bounds how long a settled task keeps a worker busy.
+UPLOAD_WINDOW_SECONDS = 60.0
+
+# How long to wait before re-attempting an upload that failed for a reason
+# another attempt could survive. It doubles per attempt, inside the window.
+UPLOAD_RETRY_BACKOFF_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -150,10 +159,19 @@ def bootstrap(config: WorkerConfig, client, *, store=None,
 
 
 class Heartbeat:
-    """Holds a lease while its task runs, and stops the task when it cannot.
+    """Holds a lease until its task is settled, and stops the task when it cannot.
+
+    The lease is held until complete lands, not until dbt finishes, because the
+    lease is what says this worker still owns the task. A beat that stopped when
+    dbt did would let the lease expire while the result was still being
+    uploaded, and the task would be handed to a worker that re-ran a model which
+    had already touched the warehouse.
 
     A 410 is the only way a worker learns its task was cancelled: cancelling
     neither deletes the Job nor fences the pod, so this is what stops dbt.
+
+    Stopping the task and holding the lease are separate jobs, and only the
+    first has a deadline: see hold_only.
     """
 
     def __init__(self, client, lease: Lease, interval: float, on_stop):
@@ -163,11 +181,33 @@ class Heartbeat:
         self._on_stop = on_stop
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # Whether stopping the task is still something worth doing. Guarded so a
+        # beat cannot decide to stop the task while hold_only is retiring that
+        # power out from under it.
+        self._may_stop_task = True
+        self._stop_task_lock = threading.Lock()
         self.cancelled = False
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._beat, daemon=True)
         self._thread.start()
+
+    def hold_only(self) -> None:
+        """Keep holding the lease, but stop being able to stop the task.
+
+        Once dbt has finished, the warehouse has already been mutated and the
+        only thing left to do is settle the lease. Stopping the task then would
+        gain nothing and could lose complete, which is the one call that must
+        never be skipped, so from here a cancellation is recorded and the lease
+        is released, but the task is left to finish reporting.
+        """
+        with self._stop_task_lock:
+            self._may_stop_task = False
+
+    def _stop_task(self) -> None:
+        with self._stop_task_lock:
+            if self._may_stop_task:
+                self._on_stop()
 
     def _beat(self) -> None:
         while not self._stop.wait(self._interval):
@@ -178,13 +218,13 @@ class Heartbeat:
             except CancelledError:
                 self.cancelled = True
                 self._stop.set()
-                self._on_stop()
+                self._stop_task()
                 return
             except TerminalError:
                 # The hold is gone: superseded, or moved to another pool. Either
                 # way this worker must stop, and must not ask again.
                 self._stop.set()
-                self._on_stop()
+                self._stop_task()
                 return
             except ExecutorError:
                 # The executor could not answer. The lease is still ours until it
@@ -195,6 +235,21 @@ class Heartbeat:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
+
+
+def _worth_retrying(exc: Exception) -> bool:
+    """Whether another attempt at the same upload could land.
+
+    A bucket that refused a signed URL refused it for a reason another attempt
+    does not change, so re-asking would only spend the window on it. A
+    connection that dropped, or a bucket that answered for itself with a 5xx,
+    may well answer the next one.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    # HTTPError is itself an OSError, so this is reached only by the transport
+    # errors urllib raises: a refused connection, a reset, a timeout.
+    return isinstance(exc, OSError)
 
 
 def upload_bytes(url: str, data: bytes, content_type: str) -> None:
@@ -210,12 +265,14 @@ class Worker:
     """Claims one task at a time and runs it to a terminal report."""
 
     def __init__(self, config: WorkerConfig, client, artifact, *,
-                 executor_factory=None, upload=None):
+                 executor_factory=None, upload=None,
+                 upload_window_seconds: float = UPLOAD_WINDOW_SECONDS):
         self._config = config
         self._client = client
         self._artifact = artifact
         self._executor_factory = executor_factory or executor_for
         self._upload = upload or upload_bytes
+        self._upload_window_seconds = upload_window_seconds
         self._stop = threading.Event()
         # Set when a task leaves the process in a state it cannot trust.
         self.unsafe = False
@@ -285,29 +342,36 @@ class Worker:
         beat.start()
         started = time.monotonic()
         try:
-            with task_environment(task_values(lease, task_dir)):
-                result = executor.execute(lease, task_dir)
-        except KeyboardInterrupt:
-            # The heartbeat stopped this task; the executor already knows why.
-            result = ExecutionResult.permanent("cancelled", "the task was cancelled")
-        except Exception as exc:
-            result = ExecutionResult.unsafe("worker_exception", str(exc))
+            try:
+                with task_environment(task_values(lease, task_dir)):
+                    result = executor.execute(lease, task_dir)
+            except KeyboardInterrupt:
+                # The heartbeat stopped this task; the executor already knows why.
+                result = ExecutionResult.permanent("cancelled", "the task was cancelled")
+            except Exception as exc:
+                result = ExecutionResult.unsafe("worker_exception", str(exc))
+            finally:
+                # The warehouse work is over. From here the lease is held only so
+                # the result can be reported, and nothing may cut that short.
+                beat.hold_only()
+            execution_seconds = time.monotonic() - started
+
+            if not self._release_runtime():
+                result = ExecutionResult.unsafe(
+                    "adapter_cleanup_failed",
+                    "warehouse connections could not be released",
+                )
+            self.unsafe = self.unsafe or result.unsafe_runtime
+
+            if beat.cancelled:
+                # The task is already settled, so nothing is reported and nothing
+                # is uploaded: the partial dbt log this task wrote is discarded
+                # with the task directory. Reporting it would only be refused.
+                return
+            self._report(lease, result, log_path, task_dir, execution_seconds)
         finally:
+            # The lease is released once the task is settled, however it settled.
             beat.stop()
-        execution_seconds = time.monotonic() - started
-
-        if not self._release_runtime():
-            result = ExecutionResult.unsafe(
-                "adapter_cleanup_failed", "warehouse connections could not be released"
-            )
-        self.unsafe = self.unsafe or result.unsafe_runtime
-
-        if beat.cancelled:
-            # The task is already settled, so nothing is reported and nothing is
-            # uploaded: the partial dbt log this task wrote is discarded with the
-            # task directory. Reporting it would only be refused.
-            return
-        self._report(lease, result, log_path, task_dir, execution_seconds)
 
     def _release_runtime(self) -> bool:
         try:
@@ -377,21 +441,41 @@ class Worker:
                 urls.get("run_results"), task_dir / "run_results.json", "application/json"
             ),
         }
+        # One window covers every object, so a task cannot spend a whole window
+        # per file and hold its lease for a multiple of what was budgeted.
+        deadline = time.monotonic() + self._upload_window_seconds
         reported = {}
         for field, (signed, path, content_type) in objects.items():
             if not signed or not signed.get("url") or not path.exists():
                 continue
-            try:
-                self._upload(signed["url"], path.read_bytes(), content_type)
-            except Exception as exc:
-                # Same redaction as above: an HTTP client's exception text
-                # routinely embeds the signed URL it was given, so only the
-                # field that failed to upload and the exception class name are
-                # safe to put on stderr.
-                print(f"upload failed for {field}: {exc.__class__.__name__}", file=sys.stderr)
-                continue
-            reported[field] = signed["s3_uri"]
+            if self._upload_object(field, signed["url"], path, content_type, deadline):
+                reported[field] = signed["s3_uri"]
         return reported
+
+    def _upload_object(self, field: str, url: str, path: Path, content_type: str,
+                       deadline: float) -> bool:
+        """Put one object, re-attempting what another attempt could survive.
+
+        True when it landed. The task's own outcome never depends on this: a
+        model that ran is reported as having run whether or not its log arrived.
+        """
+        data = path.read_bytes()
+        backoff = UPLOAD_RETRY_BACKOFF_SECONDS
+        while True:
+            try:
+                self._upload(url, data, content_type)
+                return True
+            except Exception as exc:
+                remaining = deadline - time.monotonic()
+                if not _worth_retrying(exc) or remaining <= 0:
+                    # An HTTP client's exception text routinely embeds the signed
+                    # URL it was given, so only the field that failed and the
+                    # exception's class name are safe to put on stderr.
+                    print(f"upload failed for {field}: {exc.__class__.__name__}",
+                          file=sys.stderr)
+                    return False
+                time.sleep(min(backoff, remaining))
+                backoff *= 2
 
 
 def main() -> int:

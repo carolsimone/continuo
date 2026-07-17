@@ -7,6 +7,7 @@ the order the worker reports things in and what it does when it is told to stop.
 import os
 import threading
 import time
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -234,6 +235,9 @@ class CancelledExecutor:
 
 def worker_for(tmp_path, client, executor, config=None, **kwargs):
     kwargs.setdefault("upload", lambda url, data, content_type: None)
+    # The window bounds every retry, so a test that fails an upload on purpose
+    # waits this long rather than the minute a pod would spend on it.
+    kwargs.setdefault("upload_window_seconds", 0.05)
     return Worker(
         config if config is not None else config_for(tmp_path),
         client,
@@ -473,6 +477,118 @@ def test_an_upload_failure_reports_only_the_field_and_exception_class(tmp_path, 
     assert "log_s3_uri" in captured.err
     assert "http://s3/log" not in captured.err
     assert "http://s3/rr" not in captured.err
+
+
+# --- holding the lease until the result is settled -------------------------
+
+
+class CancellingMidUploadClient(RecordingClient):
+    """Cancels the task only once its result is already being uploaded."""
+
+    def __init__(self, leases):
+        super().__init__(leases=leases)
+        self.upload_started = threading.Event()
+        self.cancel_delivered = threading.Event()
+
+    def heartbeat(self, lease_id, deployment_id, lease_token):
+        self.calls.append("heartbeat")
+        if not self.upload_started.is_set():
+            return
+        self.cancel_delivered.set()
+        raise CancelledError(410, "cancelled", "the task was cancelled")
+
+
+def test_the_lease_is_held_while_a_slow_upload_runs(tmp_path):
+    """The beat tracks the lease, not dbt.
+
+    The lease is held until complete lands, and uploading a large log can take
+    longer than the lease's own TTL. A beat that stopped when dbt did would let
+    the lease expire mid-upload, and the task would be handed to another worker
+    that re-ran a model which had already touched the warehouse.
+    """
+    client = RecordingClient(leases=[LEASE_PAYLOAD])
+    beats_during_upload = []
+
+    def slow_upload(url, data, content_type):
+        before = client.calls.count("heartbeat")
+        deadline = time.monotonic() + 5
+        while client.calls.count("heartbeat") == before and time.monotonic() < deadline:
+            time.sleep(0.01)
+        beats_during_upload.append(client.calls.count("heartbeat") - before)
+
+    worker_for(
+        tmp_path, client, StubExecutor(), upload=slow_upload,
+        config=config_for(tmp_path, heartbeat_seconds=0.01),
+    ).run_once()
+
+    assert beats_during_upload[0] >= 1, "the lease went unheld while the upload ran"
+    assert client.calls[-1] == "complete"
+
+
+def test_a_cancel_during_an_upload_does_not_lose_the_completion(tmp_path):
+    """By upload time the warehouse has already been mutated.
+
+    Stopping the task then gains nothing and risks losing complete, which is the
+    one call that must never be skipped, so a cancellation arriving while the
+    result is uploaded holds the lease and lets the upload finish.
+    """
+    client = CancellingMidUploadClient(leases=[LEASE_PAYLOAD])
+    finished = []
+
+    # Nothing is asserted in here: an upload runs inside the per-object handler
+    # that swallows failures, so an assertion raised here would be swallowed
+    # with them and the test would pass having proved nothing.
+    def upload(url, data, content_type):
+        client.upload_started.set()
+        client.cancel_delivered.wait(5)
+        finished.append(url)
+
+    worker_for(
+        tmp_path, client, StubExecutor(), upload=upload,
+        config=config_for(tmp_path, heartbeat_seconds=0.01),
+    ).run_once()
+
+    assert client.cancel_delivered.is_set(), "no beat reached the executor mid-upload"
+    # The upload ran to its end rather than being cut short by the cancellation.
+    assert "http://s3/log" in finished
+    assert "complete" in client.calls
+    assert client.completions[0]["succeeded"] is True
+
+
+def test_a_transport_failure_is_retried_inside_the_upload_window(tmp_path):
+    """A connection that dropped may well answer the next attempt."""
+    client = RecordingClient(leases=[LEASE_PAYLOAD])
+    attempts = []
+
+    def flaky_upload(url, data, content_type):
+        attempts.append(url)
+        if attempts.count(url) == 1:
+            raise OSError("connection reset")
+
+    worker_for(tmp_path, client, StubExecutor(), upload=flaky_upload).run_once()
+
+    assert attempts.count("http://s3/log") == 2
+    assert client.completions[0]["log_s3_uri"] == "s3://b/log"
+
+
+def test_an_upload_the_bucket_refused_is_not_retried(tmp_path):
+    """A refused signed URL is refused for a reason another attempt cannot change.
+
+    Re-asking would only spend the window that the object which might still land
+    is owed.
+    """
+    client = RecordingClient(leases=[LEASE_PAYLOAD])
+    attempts = []
+
+    def refused_upload(url, data, content_type):
+        attempts.append(url)
+        raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+
+    worker_for(tmp_path, client, StubExecutor(), upload=refused_upload).run_once()
+
+    assert attempts.count("http://s3/log") == 1
+    assert "log_s3_uri" not in client.completions[0]
+    assert client.completions[0]["succeeded"] is True
 
 
 # --- heartbeat and cancellation -------------------------------------------
