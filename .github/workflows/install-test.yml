@@ -1,0 +1,79 @@
+name: install-test
+
+# Chart install gate for deploy/continuo: lints the chart across every
+# supported values topology, then installs it on a throwaway kind cluster in
+# bundled and BYO (inline + existingSecret) modes and verifies health.
+#
+# Runs on PRs that touch the chart or this harness, and as a callable gate
+# for the release workflow (which passes the release image tag). PR runs
+# install the latest published main-branch images from ghcr — this proves the
+# install path; ci.yml's e2e suite proves the code.
+#
+# Always GitHub-hosted: needs no repo secrets (the ghcr images are public),
+# so it is fork-safe and never routes to the self-hosted box.
+#
+# Known limitation: kind's default CNI does not enforce NetworkPolicies, so
+# the chart's policies are rendered and applied but not behaviorally tested.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'deploy/continuo/**'
+      - 'scripts/install-test/**'
+      - '.github/workflows/install-test.yml'
+  workflow_call:
+    inputs:
+      image_tag:
+        description: Tag of the published continuo images the chart installs.
+        required: true
+        type: string
+
+concurrency:
+  group: install-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        # lint.sh executes kube-linter through a version-pinned `go run`, so
+        # besides the runner's preinstalled helm it only needs Go.
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+
+      - name: Lint chart across values topologies
+        run: bash scripts/install-test/lint.sh
+
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [bundled, byo-inline, byo-secret]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: install-test
+
+      - name: Install and verify (${{ matrix.mode }})
+        # inputs.image_tag is empty on pull_request events (the inputs
+        # context only exists for workflow_call) — default to the latest
+        # published main-branch images.
+        run: bash scripts/install-test/run.sh "${{ matrix.mode }}" "${{ inputs.image_tag || 'latest' }}"
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: bash scripts/install-test/diagnose.sh
