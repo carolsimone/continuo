@@ -74,6 +74,11 @@ redis:
   image:
     repository: redis
     tag: "8.6.4"
+  auth:
+    # Optional pre-created Secret holding the bundled instance's password.
+    # Empty = the chart generates one and keeps it stable across upgrades.
+    existingSecret: ""
+    existingSecretPasswordKey: password
   persistence:
     size: 2Gi
     storageClass: ""
@@ -99,6 +104,11 @@ neo4j:
   image:
     repository: neo4j
     tag: "5.26.28-community"           # e.g. 5.26.12-community
+  auth:
+    # Optional pre-created Secret holding the bundled instance's password.
+    # Empty = the chart generates one and keeps it stable across upgrades.
+    existingSecret: ""
+    existingSecretPasswordKey: password
   persistence:
     size: 10Gi
     storageClass: ""
@@ -124,6 +134,14 @@ minio:
   mcImage:
     repository: minio/mc
     tag: "RELEASE.2025-08-13T08-35-41Z"
+  auth:
+    # Optional pre-created Secret holding the bundled instance's root user AND
+    # password — BOTH keys below must be present in it, unlike the other
+    # datastores' single-key existingSecret. Empty = the chart generates the
+    # password (root user "continuo") and keeps it stable across upgrades.
+    existingSecret: ""
+    existingSecretAccessKeyIdKey: access-key-id
+    existingSecretSecretKeyKey: secret-access-key
   bucket: continuo
   persistence:
     size: 10Gi

@@ -58,9 +58,23 @@ plain reinstall then generates brand-new random passwords while the old PVCs'
 data directories still hold the previous ones, and every bundled datastore
 crashloops on auth. For a full reset, delete the release's PVCs before
 reinstalling (`kubectl -n <namespace> delete pvc -l app.kubernetes.io/instance=<release>`).
-To reinstall while keeping existing data, pre-create the datastore Secrets
-with the old passwords first (or point at them with `postgresql.auth.existingSecret`
-and the equivalent `existingSecret` field for each other bundled datastore).
+
+To reinstall while keeping existing data, pre-create a Secret with the old
+password(s) for every bundled datastore still enabled and point the chart at
+it before reinstalling:
+
+| Datastore | Values field | Secret key(s) |
+|---|---|---|
+| PostgreSQL | `postgresql.auth.existingSecret` (+ `existingSecretPasswordKey`) | `password` by default |
+| Redis | `redis.auth.existingSecret` (+ `existingSecretPasswordKey`) | `password` by default |
+| Neo4j | `neo4j.auth.existingSecret` (+ `existingSecretPasswordKey`) | `password` by default |
+| MinIO | `minio.auth.existingSecret` (+ `existingSecretAccessKeyIdKey` / `existingSecretSecretKeyKey`) | `access-key-id` **and** `secret-access-key` — MinIO's Secret must carry both the root user and its password, unlike the single-key password Secrets above |
+
+Helm silently accepts any of these fields even while the matching `*.enabled`
+stays `true` — there is no validation step tying them together — so a typo'd
+field name or a Secret missing a key fails at Pod start (`CreateContainer
+ConfigError`), not at `helm install` time; double-check the Secret's keys
+against the table above before reinstalling.
 
 ## 2. Production (bring your own datastores)
 
@@ -155,6 +169,7 @@ Every container in this chart, bundled or not, gets:
 | `global.teamImagePrefix` | Registry/namespace prefix executor-controller uses to compose per-team dbt images for compile/seed/scheduled Jobs (unrelated to `global.imageRepositoryPrefix`, which names Continuo's own images). |
 | `global.storageClass` | Default `StorageClass` for every bundled datastore PVC (Persistent Volume Claim); each datastore's own `persistence.storageClass` overrides it. |
 | `postgresql.enabled` / `redis.enabled` / `neo4j.enabled` / `minio.enabled` / `dex.enabled` | Toggle the bundled quickstart instance of each datastore/identity-provider off to bring your own. |
+| `postgresql.auth.existingSecret` / `redis.auth.existingSecret` / `neo4j.auth.existingSecret` / `minio.auth.existingSecret` | Pre-created Secret for the *bundled* instance's credentials (see the reinstall table above for keys), instead of letting the chart generate one. Empty (default) = generate and keep stable across upgrades. |
 | `externalDatabase.*` / `externalRedis.*` / `externalNeo4j.*` / `s3.*` / `auth.*` (issuer/client fields) | Connection details used when the matching `*.enabled` above is `false`. |
 | `externalDatabase.existingSecret` (+ `existingSecretPasswordKey`) | Pre-created Secret holding the Postgres password, instead of `externalDatabase.password` inline. Same pattern for `externalRedis.existingSecret`, `externalNeo4j.existingSecret` (all key `password` by default), `s3.existingSecret` (keys `access-key-id` / `secret-access-key`), and `auth.existingSecret` (key `client-secret`). |
 | `databaseInit.enabled` | Idempotently creates all 9 databases (the 8 Flyway-migrated service databases plus `continuo_dbt`) before migrations run. Requires the connecting user to have `CREATEDB`; disable when a DBA pre-creates them. |
