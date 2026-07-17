@@ -35,30 +35,10 @@ func TestE2E_WorkerFailures(t *testing.T) {
 	enableWorkerCanary(t, ctx)
 	ensureService3WorkerReleased(t, ctx, clients)
 
-	t.Run("mode_switch_to_jobs_is_sufficient_rollback", func(t *testing.T) {
-		// With the canary on, the node runs on a worker.
-		onWorkers := triggerWorkerNode(t, ctx, clients, "service-3", "e2e_schema", "worker_perf")
-		verifySchedulerSucceeded(t, ctx, clients, onWorkers)
-		wrow := findDeploymentRow(t, queryDeploymentsByService(t, ctx, clients, "service-3"), "worker_perf")
-		require.Equal(t, "workers", wrow.ExecutionMode, "with the canary on the node must run on a worker")
-
-		// Rolling the override back to jobs is the whole rollback: the very next
-		// run of the same node takes the Jobs path, with no redeploy or artifact
-		// change.
-		setExecutorOverrides(t, ctx, "{}")
-		t.Cleanup(func() {
-			cctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-			defer cancel()
-			setExecutorOverrides(t, cctx, workerCanaryOverridesJSON)
-		})
-
-		onJobs := triggerWorkerNode(t, ctx, clients, "service-3", "e2e_schema", "worker_perf")
-		verifySchedulerSucceeded(t, ctx, clients, onJobs)
-		jrow := findDeploymentRow(t, queryDeploymentsByService(t, ctx, clients, "service-3"), "worker_perf")
-		assert.Equal(t, "jobs", jrow.ExecutionMode,
-			"after the override is cleared the node must run as a Job — mode switch alone is the rollback")
-	})
-
+	// The idle/cold-start subtest runs first, on an executor that no sibling
+	// subtest has restarted: the mode-switch subtest below toggles the shared
+	// executor's canary env, which rolls the Deployment, so running it first would
+	// leave the pool reconciler churning under the idle subtest's long waits.
 	t.Run("idle_pool_scales_to_zero_then_cold_starts", func(t *testing.T) {
 		// A run brings the pool up.
 		warm := triggerWorkerNode(t, ctx, clients, "service-3", "e2e_schema", "worker_perf")
@@ -86,5 +66,30 @@ func TestE2E_WorkerFailures(t *testing.T) {
 		crow := findDeploymentRow(t, queryDeploymentsByService(t, ctx, clients, "service-3"), "worker_perf")
 		assert.Equal(t, "workers", crow.ExecutionMode, "the cold-started task must run on the worker path")
 		assert.Equal(t, "succeeded", crow.Status)
+	})
+
+	t.Run("mode_switch_to_jobs_is_sufficient_rollback", func(t *testing.T) {
+		// With the canary on, the node runs on a worker.
+		onWorkers := triggerWorkerNode(t, ctx, clients, "service-3", "e2e_schema", "worker_perf")
+		verifySchedulerSucceeded(t, ctx, clients, onWorkers)
+		wrow := findDeploymentRow(t, queryDeploymentsByService(t, ctx, clients, "service-3"), "worker_perf")
+		require.Equal(t, "workers", wrow.ExecutionMode, "with the canary on the node must run on a worker")
+
+		// Rolling the override back to jobs is the whole rollback: the very next
+		// run of the same node takes the Jobs path, with no redeploy or artifact
+		// change. The executor rolls when its env changes, so re-establish health
+		// before triggering the Jobs-path run.
+		setExecutorOverrides(t, ctx, "{}")
+		t.Cleanup(func() {
+			cctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			setExecutorOverrides(t, cctx, workerCanaryOverridesJSON)
+		})
+
+		onJobs := triggerWorkerNode(t, ctx, clients, "service-3", "e2e_schema", "worker_perf")
+		verifySchedulerSucceeded(t, ctx, clients, onJobs)
+		jrow := findDeploymentRow(t, queryDeploymentsByService(t, ctx, clients, "service-3"), "worker_perf")
+		assert.Equal(t, "jobs", jrow.ExecutionMode,
+			"after the override is cleared the node must run as a Job — mode switch alone is the rollback")
 	})
 }
