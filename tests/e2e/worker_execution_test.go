@@ -208,13 +208,20 @@ func TestE2E_WorkerWrapper(t *testing.T) {
 	require.Equal(t, "succeeded", row.Status,
 		"a required-cache wrapper task succeeds only if its dbt reported reusing the promoted parse cache")
 
+	// The required-cache wrapper task succeeds only if its dbt reported reusing the
+	// promoted parse cache, so cache_status is the worker's own verdict on the
+	// forced-log-format evidence.
+	term, ok := queryWorkerTerminalResult(t, ctx, clients, runID)
+	require.True(t, ok, "the worker must report a terminal result")
+	require.Equal(t, "accepted", term.CacheStatus,
+		"a required-cache wrapper must observe the promoted parse cache being reused")
+
 	// Read the uploaded task log and observe what the forced log vars produced:
 	// well-formed JSON dbt events (DBT_LOG_FORMAT=json), including at least one
 	// partial-parse cache-reuse code (I017 or I040) that DBT_LOG_LEVEL=debug
 	// surfaces. This is the direct empirical answer to the fidelity-delta question.
-	logURI := queryWorkerLogURI(t, ctx, clients, runID)
-	require.NotEmpty(t, logURI, "the worker must upload a task log")
-	logBody := getS3Object(t, ctx, clients, s3KeyFromURI(t, logURI))
+	require.NotEmpty(t, term.LogS3URI, "the worker must upload a task log")
+	logBody := getS3Object(t, ctx, clients, s3KeyFromURI(t, term.LogS3URI))
 	jsonEvents, cacheCodes := scanDBTJSONLog(logBody)
 	require.Positive(t, jsonEvents,
 		"forced DBT_LOG_FORMAT=json must make the wrapper's dbt emit JSON events; found none in the task log")

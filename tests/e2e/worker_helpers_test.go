@@ -389,18 +389,31 @@ func releaseIDFromArtifactURI(t *testing.T, uri string) string {
 // shortID returns a short random suffix for a release ID.
 func shortID() string { return uuid.NewString()[:8] }
 
-// queryWorkerLogURI returns the s3 URI of the dbt log a run's worker uploaded.
-func queryWorkerLogURI(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) string {
+// workerTerminalResult is the JSON a worker reported on Complete, stored in
+// executor_deployments.terminal_result. The uploaded log URI and the parse-cache
+// verdict live here rather than in dedicated columns.
+type workerTerminalResult struct {
+	Succeeded   bool   `json:"succeeded"`
+	LogS3URI    string `json:"log_s3_uri"`
+	CacheStatus string `json:"cache_status"`
+}
+
+// queryWorkerTerminalResult returns the terminal result a run's worker reported.
+func queryWorkerTerminalResult(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) (workerTerminalResult, bool) {
 	t.Helper()
-	var uri *string
-	err := clients.executorDB.GetContext(ctx, &uri,
-		`SELECT dbt_log_uri FROM executor_deployments
+	var raw []byte
+	err := clients.executorDB.GetContext(ctx, &raw,
+		`SELECT terminal_result FROM executor_deployments
 		  WHERE schedule_id = $1 AND mode = 'production'
 		  ORDER BY created_at DESC LIMIT 1`, runID)
-	if err != nil || uri == nil {
-		return ""
+	if err != nil || len(raw) == 0 {
+		return workerTerminalResult{}, false
 	}
-	return *uri
+	var res workerTerminalResult
+	if json.Unmarshal(raw, &res) != nil {
+		return workerTerminalResult{}, false
+	}
+	return res, true
 }
 
 // s3KeyFromURI strips the s3://<bucket>/ prefix from a URI, returning the key.
