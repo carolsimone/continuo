@@ -528,6 +528,26 @@ func TestComplete_AcceptsTheURIsItIssued(t *testing.T) {
 	assert.Equal(t, expectedLog, r.leases.lastDone.Result.LogS3URI)
 }
 
+// TestComplete_CarriesTheCacheVerdictAWrapperObserved pins the seam a wrapper's
+// account of the promoted parse cache crosses. Nothing rejects a report that
+// omits it and nothing else in the request names it, so a report body that
+// decoded into no field for it would be accepted and the verdict lost without a
+// trace.
+func TestComplete_CarriesTheCacheVerdictAWrapperObserved(t *testing.T) {
+	for _, status := range []string{"accepted", "rejected", "unknown"} {
+		t.Run(status, func(t *testing.T) {
+			r := newRig(t)
+
+			resp := r.do(http.MethodPost, leasePath+"/complete",
+				`{"deployment_id":"33333333-3333-3333-3333-333333333333",
+				  "result":{"succeeded":true,"cache_status":"`+status+`"}}`)
+
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			assert.Equal(t, status, r.leases.lastDone.Result.CacheStatus)
+		})
+	}
+}
+
 // TestComplete_RejectsAURIItNeverIssued stops a worker recording someone else's
 // object — or an arbitrary one — as this task's evidence.
 func TestComplete_RejectsAURIItNeverIssued(t *testing.T) {

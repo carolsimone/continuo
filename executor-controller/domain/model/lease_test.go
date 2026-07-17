@@ -3,6 +3,7 @@ package model_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -244,6 +245,40 @@ func TestComplete_RecordsTerminalResultAndReleasesSlot(t *testing.T) {
 	assert.Equal(t, time.Unix(30, 0), *dep.SlotReleasedAt())
 	require.NotNil(t, dep.TerminalResult())
 	assert.Equal(t, result, *dep.TerminalResult())
+}
+
+// TestWorkerResult_KeepsACacheVerdictUnderTheKeyAWorkerWritesIt pins the name
+// the wrapper's cache verdict travels and rests under. The report is decoded
+// from a worker's JSON and stored as the JSON of this struct, so the tag is the
+// whole contract: rename it and a worker still reports, the executor still
+// accepts, and the verdict is read back as nothing.
+func TestWorkerResult_KeepsACacheVerdictUnderTheKeyAWorkerWritesIt(t *testing.T) {
+	reported := []byte(`{"succeeded":true,"cache_status":"accepted"}`)
+
+	var decoded model.WorkerResult
+	require.NoError(t, json.Unmarshal(reported, &decoded))
+	require.Equal(t, "accepted", decoded.CacheStatus)
+
+	stored, err := json.Marshal(decoded)
+	require.NoError(t, err)
+	assert.Contains(t, string(stored), `"cache_status":"accepted"`)
+
+	var read model.WorkerResult
+	require.NoError(t, json.Unmarshal(stored, &read))
+	assert.Equal(t, decoded, read)
+}
+
+// TestComplete_RecordsTheCacheVerdictItWasReported reads the verdict back off
+// the aggregate that stores it, which is where an audit of what a wrapper did
+// with the promoted cache reads it from.
+func TestComplete_RecordsTheCacheVerdictItWasReported(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+	result := model.WorkerResult{Succeeded: true, CacheStatus: "accepted"}
+
+	require.NoError(t, dep.Complete(leaseID, sha256Hex(token), result, time.Unix(30, 0)))
+
+	require.NotNil(t, dep.TerminalResult())
+	assert.Equal(t, "accepted", dep.TerminalResult().CacheStatus)
 }
 
 func TestComplete_DuplicateWithSameResultIsIdempotent(t *testing.T) {
