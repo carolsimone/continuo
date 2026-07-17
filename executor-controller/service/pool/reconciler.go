@@ -186,8 +186,9 @@ func (r *Reconciler) registerNewPools(ctx context.Context, now time.Time) (map[s
 // A pool is skipped when its service has been turned back to jobs — it is not
 // allowed to run that work any more — and when its workers cannot initialize,
 // because pods that can execute nothing would hold capacity away from pools
-// whose pods can. Both keep their leases and drain through reconcilePool; what
-// they do not get is anything new.
+// whose pods can. Both keep their leases and drain through reconcilePool, which
+// never sizes a pool below the leases it holds; what they do not get is anything
+// new.
 func (r *Reconciler) eligible(pools []model.WorkerPool, byKey map[string]model.PoolDemand) []model.PoolDemand {
 	out := make([]model.PoolDemand, 0, len(pools))
 	for _, p := range pools {

@@ -181,9 +181,9 @@ func (w *WorkerPools) poolAnnotations(spec ports.WorkerPoolSpec) map[string]stri
 }
 
 // buildDeployment renders the pool's Deployment.
+// Every map it hangs on the object is built for the field it goes in, so no two
+// fields share one instance.
 func (w *WorkerPools) buildDeployment(spec ports.WorkerPoolSpec) *appsv1.Deployment {
-	labels := w.poolLabels(spec)
-	annotations := w.poolAnnotations(spec)
 	replicas := spec.DesiredReplicas
 	maxUnavailable := intstr.FromInt32(0)
 	maxSurge := intstr.FromInt32(1)
@@ -192,12 +192,12 @@ func (w *WorkerPools) buildDeployment(spec ports.WorkerPoolSpec) *appsv1.Deploym
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        poolResourceName(spec.PoolKey),
 			Namespace:   w.namespace,
-			Labels:      labels,
-			Annotations: annotations,
+			Labels:      w.poolLabels(spec),
+			Annotations: w.poolAnnotations(spec),
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Selector: &metav1.LabelSelector{MatchLabels: w.poolLabels(spec)},
 			// A worker holds a lease while it runs dbt, so a replacement must be
 			// serving before its predecessor is taken away: maxUnavailable 0 keeps
 			// the pool from dipping below its replica count mid-rollout.
@@ -209,8 +209,11 @@ func (w *WorkerPools) buildDeployment(spec ports.WorkerPoolSpec) *appsv1.Deploym
 				},
 			},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
-				Spec:       w.buildWorkerPodSpec(spec),
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      w.poolLabels(spec),
+					Annotations: w.poolAnnotations(spec),
+				},
+				Spec: w.buildWorkerPodSpec(spec),
 			},
 		},
 	}

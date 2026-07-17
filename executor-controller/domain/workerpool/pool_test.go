@@ -139,6 +139,32 @@ func TestDesiredReplicasCapsAPoolThatCannotInitialize(t *testing.T) {
 	assert.Equal(t, 1, got, "a failed pool is capped at one diagnostic pod")
 }
 
+// TestDesiredReplicasDoesNotCapAFailedPoolBelowItsLeases proves the diagnostic
+// cap withdraws capacity a pool cannot use, never a pod that is working: a pool
+// is marked failed by any one worker that could not hydrate, so a pool serving
+// leases can be marked failed while its other pods run dbt. Capping it to the
+// diagnostic would drop those pods and strand their work.
+func TestDesiredReplicasDoesNotCapAFailedPoolBelowItsLeases(t *testing.T) {
+	got := workerpool.DesiredReplicas(workerpool.ScaleInput{
+		CurrentReplicas: 5, ActiveLeases: 2, AllocatedPending: 0,
+		LastActivityAt: at(0), Now: at(10), IdleTimeout: time.Minute,
+		InitializationFailed: true,
+	})
+	assert.Equal(t, 5, got, "a failed pool holding leases keeps the pods running its dbt")
+}
+
+// TestDesiredReplicasCapsAFailedPoolOnceItsLeasesDrain proves the cap is only
+// deferred while a failed pool is working, not abandoned: the tick that finds it
+// holding nothing withdraws its capacity.
+func TestDesiredReplicasCapsAFailedPoolOnceItsLeasesDrain(t *testing.T) {
+	got := workerpool.DesiredReplicas(workerpool.ScaleInput{
+		CurrentReplicas: 5, ActiveLeases: 0, AllocatedPending: 0,
+		LastActivityAt: at(0), Now: at(10), IdleTimeout: time.Minute,
+		InitializationFailed: true,
+	})
+	assert.Equal(t, 1, got, "the leases are gone, so the pool winds down to its diagnostic pod")
+}
+
 // TestDesiredReplicasStillRetiresAnIdleFailedPool proves the diagnostic cap is a
 // ceiling and not a floor: a failed pool nobody is waiting on scales to zero
 // like any other idle pool.

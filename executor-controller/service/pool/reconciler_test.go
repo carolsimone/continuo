@@ -2,6 +2,7 @@ package pool_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -159,20 +160,42 @@ func (f *fakeDeployments) GetStaleDispatchingForUpdate(context.Context, time.Tim
 	panic("unused")
 }
 
-// fakeRuntime records what the reconciler asked the cluster for.
+// fakeRuntime records what the reconciler asked the cluster for. It keeps every
+// spec handed to Ensure, not just the last one per pool, so a test can assert on
+// what was actually asked for rather than on what survived being asked twice.
 type fakeRuntime struct {
-	ensured map[string]ports.WorkerPoolSpec
+	ensured []ports.WorkerPoolSpec
 	calls   []string
 	status  map[string]ports.PoolStatus
 	deleted []string
 }
 
 func newFakeRuntime() *fakeRuntime {
-	return &fakeRuntime{ensured: map[string]ports.WorkerPoolSpec{}, status: map[string]ports.PoolStatus{}}
+	return &fakeRuntime{status: map[string]ports.PoolStatus{}}
+}
+
+// specsFor is every spec one pool was ensured with, in the order they were made.
+func (f *fakeRuntime) specsFor(key string) []ports.WorkerPoolSpec {
+	var out []ports.WorkerPoolSpec
+	for _, spec := range f.ensured {
+		if spec.PoolKey == key {
+			out = append(out, spec)
+		}
+	}
+	return out
+}
+
+// lastSpec is the spec a pool ends the tick with, and fails the test if the pool
+// was never ensured at all.
+func (f *fakeRuntime) lastSpec(t *testing.T, key string) ports.WorkerPoolSpec {
+	t.Helper()
+	specs := f.specsFor(key)
+	require.NotEmpty(t, specs, "pool %s was never reconciled into the cluster", key)
+	return specs[len(specs)-1]
 }
 
 func (f *fakeRuntime) Ensure(_ context.Context, spec ports.WorkerPoolSpec) error {
-	f.ensured[spec.PoolKey] = spec
+	f.ensured = append(f.ensured, spec)
 	f.calls = append(f.calls, spec.PoolKey)
 	// A pool that is ensured now has its Secret, as the real runtime would.
 	s := f.status[spec.PoolKey]
@@ -292,8 +315,7 @@ func TestReconcileRegistersAPoolItsWaitingWorkNeeds(t *testing.T) {
 	assert.Equal(t, financeRef(), got.RuntimeManifest)
 	assert.NotEmpty(t, got.CredentialSHA256, "the pool has a credential")
 
-	spec, ok := h.runtime.ensured[financePool]
-	require.True(t, ok, "the pool is reconciled into the cluster")
+	spec := h.runtime.lastSpec(t, financePool)
 	assert.EqualValues(t, 3, spec.DesiredReplicas, "it is sized for its backlog")
 }
 
@@ -307,15 +329,18 @@ func TestReconcileStoresOnlyTheCredentialsDigest(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	raw := h.runtime.ensured[financePool].Credential
+	raw := h.runtime.lastSpec(t, financePool).Credential
 	require.NotEmpty(t, raw, "the Secret is given the raw credential")
 
 	// EVERY value handed to the repository is checked, not just the one that
 	// survived: a write that carried the raw credential and was later corrected
-	// still put it in the database.
+	// still put it in the database. Each write is checked whole rather than field
+	// by field, because the credential must not reach the repository in any field.
 	require.NotEmpty(t, h.pools.written)
 	for i, w := range h.pools.written {
-		assert.NotEqual(t, raw, w.CredentialSHA256,
+		written, err := json.Marshal(w)
+		require.NoError(t, err)
+		assert.NotContains(t, string(written), raw,
 			"write %d handed the repository the raw credential", i)
 		assert.Equal(t, workerapi.HashCredential(raw), w.CredentialSHA256,
 			"write %d must carry the credential's digest", i)
@@ -339,7 +364,7 @@ func TestReconcileNeverLogsTheRawCredential(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	raw := h.runtime.ensured[financePool].Credential
+	raw := h.runtime.lastSpec(t, financePool).Credential
 	require.NotEmpty(t, raw)
 	assert.NotContains(t, h.logs.String(), raw, "the raw credential must never be logged")
 }
@@ -358,8 +383,8 @@ func TestReconcileMintsADistinctCredentialPerPool(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	a := h.runtime.ensured[financePool].Credential
-	b := h.runtime.ensured[other].Credential
+	a := h.runtime.lastSpec(t, financePool).Credential
+	b := h.runtime.lastSpec(t, other).Credential
 	require.NotEmpty(t, a)
 	require.NotEmpty(t, b)
 	assert.NotEqual(t, a, b, "each pool gets its own credential")
@@ -379,8 +404,15 @@ func TestReconcileDoesNotRotateAPoolWhoseSecretIsIntact(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	assert.Empty(t, h.runtime.ensured[financePool].Credential,
-		"a reconcile with an intact Secret carries no credential")
+	// EVERY spec the pool was ensured with is checked, not just the one that
+	// survived: a spec that carried a credential and was later replaced by one
+	// that did not still handed the credential to the cluster.
+	specs := h.runtime.specsFor(financePool)
+	require.NotEmpty(t, specs, "the pool is reconciled into the cluster")
+	for i, spec := range specs {
+		assert.Empty(t, spec.Credential,
+			"ensure %d of a pool with an intact Secret carried a credential", i)
+	}
 	after, _ := h.pools.Get(context.Background(), financePool)
 	assert.Equal(t, before.CredentialSHA256, after.CredentialSHA256, "the digest is unchanged")
 }
@@ -396,7 +428,7 @@ func TestReconcileRotatesAPoolWhoseSecretWentMissing(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	raw := h.runtime.ensured[financePool].Credential
+	raw := h.runtime.lastSpec(t, financePool).Credential
 	require.NotEmpty(t, raw, "the Secret is rewritten")
 	after, _ := h.pools.Get(context.Background(), financePool)
 	assert.NotEqual(t, before.CredentialSHA256, after.CredentialSHA256, "the digest rotated with it")
@@ -420,8 +452,8 @@ func TestReconcileSharesCapacityOldestFirstAcrossPools(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	assert.EqualValues(t, 2, h.runtime.ensured[old].DesiredReplicas, "the oldest work takes the free slots")
-	assert.EqualValues(t, 0, h.runtime.ensured[recent].DesiredReplicas)
+	assert.EqualValues(t, 2, h.runtime.lastSpec(t, old).DesiredReplicas, "the oldest work takes the free slots")
+	assert.EqualValues(t, 0, h.runtime.lastSpec(t, recent).DesiredReplicas)
 }
 
 // TestReconcileNeverOversubscribesTheConfiguredLimit proves worker pods are
@@ -435,7 +467,7 @@ func TestReconcileNeverOversubscribesTheConfiguredLimit(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	assert.EqualValues(t, 0, h.runtime.ensured[financePool].DesiredReplicas,
+	assert.EqualValues(t, 0, h.runtime.lastSpec(t, financePool).DesiredReplicas,
 		"no slot is free, so no worker starts")
 }
 
@@ -453,7 +485,7 @@ func TestReconcileKeepsABusyPoolWhileItsServiceIsTurnedBackToJobs(t *testing.T) 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
 	assert.EqualValues(t, 4, h.deps.demoted[financePool], "the pending work moved to the Jobs path")
-	assert.EqualValues(t, 3, h.runtime.ensured[financePool].DesiredReplicas,
+	assert.EqualValues(t, 3, h.runtime.lastSpec(t, financePool).DesiredReplicas,
 		"the pods holding leases are not taken away")
 }
 
@@ -466,7 +498,7 @@ func TestReconcileGivesNoNewCapacityToADemotedPool(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	assert.EqualValues(t, 0, h.runtime.ensured[financePool].DesiredReplicas,
+	assert.EqualValues(t, 0, h.runtime.lastSpec(t, financePool).DesiredReplicas,
 		"a demoted pool is never scaled up for work it will not run")
 }
 
@@ -495,8 +527,53 @@ func TestReconcileWithdrawsCapacityFromAFailedPoolButKeepsOneDiagnostic(t *testi
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	assert.EqualValues(t, 1, h.runtime.ensured[financePool].DesiredReplicas,
+	assert.EqualValues(t, 1, h.runtime.lastSpec(t, financePool).DesiredReplicas,
 		"a pool that cannot initialize runs one diagnostic pod")
+}
+
+// TestReconcileKeepsAFailedPoolsPodsWhileItHoldsLeases proves the diagnostic cap
+// does not strand running dbt. A pool is marked failed by any single worker that
+// could not hydrate, so a pool serving leases that surges one pod which fails to
+// hydrate is a failed pool with work in flight. Capping it would delete pods
+// mid-task: dropping one does not stop its dbt, it abandons it.
+func TestReconcileKeepsAFailedPoolsPodsWhileItHoldsLeases(t *testing.T) {
+	h := newHarness(t, nil)
+	p := h.registered(financePool, finance, 5, h.clock.now)
+	p.RecordInitializationFailure("runtime_manifest_rejected", "digest mismatch", h.clock.now)
+	h.pools.registered[financePool] = p
+	h.deps.demand = []model.PoolDemand{{
+		PoolKey: financePool, Pending: 9, ActiveLeases: 2, OldestReadyAt: h.clock.now,
+	}}
+
+	require.NoError(t, h.rec.Reconcile(context.Background()))
+
+	assert.EqualValues(t, 5, h.runtime.lastSpec(t, financePool).DesiredReplicas,
+		"a failed pool holding leases keeps the pods running its dbt")
+	after, _ := h.pools.Get(context.Background(), financePool)
+	assert.Equal(t, 5, after.DesiredReplicas, "the row agrees with what the cluster was asked for")
+}
+
+// TestReconcileCapsAFailedPoolOnceItsLeasesDrain proves the cap is deferred while
+// a failed pool works, not abandoned: the tick that finds its leases gone
+// withdraws its capacity down to the diagnostic pod.
+func TestReconcileCapsAFailedPoolOnceItsLeasesDrain(t *testing.T) {
+	h := newHarness(t, nil)
+	p := h.registered(financePool, finance, 5, h.clock.now)
+	p.RecordInitializationFailure("runtime_manifest_rejected", "digest mismatch", h.clock.now)
+	h.pools.registered[financePool] = p
+	h.deps.demand = []model.PoolDemand{{
+		PoolKey: financePool, Pending: 9, ActiveLeases: 2, OldestReadyAt: h.clock.now,
+	}}
+	require.NoError(t, h.rec.Reconcile(context.Background()))
+
+	// The tasks the pool held have settled; its backlog has not moved.
+	h.deps.demand = []model.PoolDemand{{
+		PoolKey: financePool, Pending: 9, ActiveLeases: 0, OldestReadyAt: h.clock.now,
+	}}
+	require.NoError(t, h.rec.Reconcile(context.Background()))
+
+	assert.EqualValues(t, 1, h.runtime.lastSpec(t, financePool).DesiredReplicas,
+		"the leases are gone, so the pool winds down to its diagnostic pod")
 }
 
 // TestReconcileDoesNotLetAFailedPoolStarveAHealthyOne proves the executor's
@@ -522,9 +599,9 @@ func TestReconcileDoesNotLetAFailedPoolStarveAHealthyOne(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	assert.EqualValues(t, 2, h.runtime.ensured[healthy].DesiredReplicas,
+	assert.EqualValues(t, 2, h.runtime.lastSpec(t, healthy).DesiredReplicas,
 		"the healthy pool gets the free capacity")
-	assert.EqualValues(t, 1, h.runtime.ensured[financePool].DesiredReplicas,
+	assert.EqualValues(t, 1, h.runtime.lastSpec(t, financePool).DesiredReplicas,
 		"the broken pool is capped at its diagnostic pod")
 }
 
@@ -536,7 +613,7 @@ func TestReconcileRetiresAnIdlePool(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	assert.EqualValues(t, 0, h.runtime.ensured[financePool].DesiredReplicas)
+	assert.EqualValues(t, 0, h.runtime.lastSpec(t, financePool).DesiredReplicas)
 }
 
 // TestReconcileKeepsAnActivePoolsIdleClockMoving proves work resets the idle
@@ -579,7 +656,7 @@ func TestReconcilePersistsTheReplicaCountItAskedFor(t *testing.T) {
 
 	after, _ := h.pools.Get(context.Background(), financePool)
 	assert.Equal(t, 3, after.DesiredReplicas)
-	assert.EqualValues(t, 3, h.runtime.ensured[financePool].DesiredReplicas)
+	assert.EqualValues(t, 3, h.runtime.lastSpec(t, financePool).DesiredReplicas)
 }
 
 // TestReconcileCarriesEachPoolsOwnRuntimeManifest proves two pools are never
@@ -600,9 +677,9 @@ func TestReconcileCarriesEachPoolsOwnRuntimeManifest(t *testing.T) {
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
 
-	assert.Equal(t, financeSHA, h.runtime.ensured[financePool].RuntimeManifest.RuntimeManifestSHA256)
-	assert.Equal(t, "man-2", h.runtime.ensured[other].RuntimeManifest.RuntimeManifestSHA256)
-	assert.Equal(t, `{"service":"finance"}`, h.runtime.ensured[financePool].ControllerContextJSON)
+	assert.Equal(t, financeSHA, h.runtime.lastSpec(t, financePool).RuntimeManifest.RuntimeManifestSHA256)
+	assert.Equal(t, "man-2", h.runtime.lastSpec(t, other).RuntimeManifest.RuntimeManifestSHA256)
+	assert.Equal(t, `{"service":"finance"}`, h.runtime.lastSpec(t, financePool).ControllerContextJSON)
 }
 
 // TestReconcileIsIdempotent proves a second tick over an unchanged world does
@@ -614,11 +691,11 @@ func TestReconcileIsIdempotent(t *testing.T) {
 	h.deps.demand = []model.PoolDemand{{PoolKey: financePool, Pending: 2, OldestReadyAt: h.clock.now}}
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
-	first := h.runtime.ensured[financePool]
+	first := h.runtime.lastSpec(t, financePool)
 	h.pools.unregistered = nil // the pool is registered now
 
 	require.NoError(t, h.rec.Reconcile(context.Background()))
-	second := h.runtime.ensured[financePool]
+	second := h.runtime.lastSpec(t, financePool)
 
 	assert.Equal(t, first.DesiredReplicas, second.DesiredReplicas)
 	assert.Empty(t, second.Credential, "the second tick does not rotate the credential")

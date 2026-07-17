@@ -14,9 +14,10 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 )
 
-// diagnosticReplicas is the most a pool whose workers cannot initialize may run.
-// Its pods can execute nothing, so more of them reproduce one failure many times
-// over; one pod keeps the failure inspectable without paying for the rest.
+// diagnosticReplicas is the most a pool whose workers cannot initialize may run
+// once it holds no leases. Such a pod can execute nothing, so more of them
+// reproduce one failure many times over; one pod keeps the failure inspectable
+// without paying for the rest.
 const diagnosticReplicas = 1
 
 // ScaleInput is one pool's state at a reconcile tick.
@@ -35,7 +36,8 @@ type ScaleInput struct {
 	Now            time.Time
 	IdleTimeout    time.Duration
 	// InitializationFailed reports that the pool's workers cannot hydrate their
-	// runtime artifact, which caps the pool at a single diagnostic pod.
+	// runtime artifact, which caps the pool at a single diagnostic pod once it
+	// holds no leases.
 	InitializationFailed bool
 }
 
@@ -50,9 +52,16 @@ type ScaleInput struct {
 // either, it keeps its warm pods until the idle timeout elapses and then
 // releases them, so a pause costs nothing but a lull does not force the next
 // task to pay a cold start.
+//
+// A pool whose workers cannot initialize is capped at one diagnostic pod, but
+// only once it holds no leases. The cap withdraws capacity a pool cannot use;
+// it does not take back a pod that is working. A pool learns it cannot
+// initialize from any one of its workers, so a pool serving leases can be
+// marked failed by a single pod that could not hydrate — it drains its leases at
+// full size first, and the tick that finds it idle caps it.
 func DesiredReplicas(in ScaleInput) int {
 	desired := desiredReplicas(in)
-	if in.InitializationFailed && desired > diagnosticReplicas {
+	if in.InitializationFailed && in.ActiveLeases == 0 && desired > diagnosticReplicas {
 		return diagnosticReplicas
 	}
 	return desired
