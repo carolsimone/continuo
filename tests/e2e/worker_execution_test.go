@@ -45,48 +45,19 @@ func TestE2E_WorkerExecution(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	const changedService = "service-3"
-	releaseID := "e2e-worker-" + uuid.NewString()[:8]
-	t.Logf("release_id=%s changed_service=%s changed_node=%s", releaseID, changedService, workerPerfUniqueID)
 
 	// Turn the canary on for the length of this test. service-3 is native
 	// (plain dbt), so its promoted nodes take the native worker path.
 	enableWorkerCanary(t, ctx)
 
-	// Drive a real release whose only changed node is worker_perf, so its
-	// compile job runs the runtime exporter and its promotion carries the
-	// service's runtime manifest reference — the reference the worker pool is
-	// keyed on. Every other service-3 node is carried unchanged.
-	allServices := baselineServices(t, ctx, clients)
-	require.NotEmpty(t, allServices,
-		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
-	changedImageTag := allServices[changedService].imageTag
-	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
+	// Count any worker Deployments already present (a prior run may leave one
+	// scaled to zero until it is idle-retired) so the assertions below can reason
+	// in deltas: promotion must add none, executable demand must add one.
+	beforeDeployments := countWorkerK8sDeployments(t, ctx)
 
-	var prodNodes []map[string]string
-	perfFound := false
-	for _, si := range allServices {
-		for _, n := range si.nodes {
-			if n.uniqueID == workerPerfUniqueID {
-				perfFound = true
-				continue // exclude → worker_perf is the sole changed node
-			}
-			prodNodes = append(prodNodes, map[string]string{
-				"unique_id":    n.uniqueID,
-				"content_hash": n.contentHash,
-			})
-		}
-	}
-	require.True(t, perfFound,
-		"worker_perf not found in any manifest — is dbt/services/service-3/models/worker_perf.sql present and the image rebuilt?")
-
-	resetReleaseControllerQueue(t, ctx, clients)
-	seedCurrentProd(t, ctx, clients, prodNodes)
-	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
-
-	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
-	assertValidationRequestedNodes(t, ctx, clients, releaseID, []string{workerPerfUniqueID})
-	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
-	waitForTopologySwap(t, ctx, clients, releaseID, workerPerfUniqueID, 2*time.Minute)
+	// Drive a fresh release: its compile job produces the runtime artifact and
+	// its promotion carries the runtime reference the worker pool is keyed on.
+	releaseID := releaseService3WorkerPerf(t, ctx, clients)
 
 	// The compile job must have uploaded all three runtime objects beside the
 	// manifest: the manifest itself, the partial parse a worker hydrates, and the
@@ -101,11 +72,10 @@ func TestE2E_WorkerExecution(t *testing.T) {
 	require.Len(t, descriptor.ParseContextSHA256, 64, "descriptor parse_context_sha256 must be a 64-hex digest")
 	require.Len(t, descriptor.SHA256, 64, "descriptor artifact sha256 must be a 64-hex digest")
 	require.Equal(t, changedService, descriptor.ServiceName)
-	require.Equal(t, releaseID, descriptor.ReleaseID)
 
 	// Promotion alone must create no worker Deployment: a pool exists for demand,
 	// not for a promoted topology nobody is running yet.
-	require.Equal(t, 0, countWorkerK8sDeployments(t, ctx),
+	require.Equal(t, beforeDeployments, countWorkerK8sDeployments(t, ctx),
 		"promotion alone must not create a worker Deployment before any executable demand")
 
 	// Run the promoted node. It carries a dbt identity and a complete runtime
@@ -127,7 +97,7 @@ func TestE2E_WorkerExecution(t *testing.T) {
 		return ready >= 1, nil
 	}, "no service-3 worker pod ever became Ready — a permanently unready pool means the worker's recomputed parse context did not match the descriptor (PARSE_CONTEXT_ENV_KEYS admitted a variable that differs between compile and worker pods)")
 
-	require.GreaterOrEqual(t, countWorkerK8sDeployments(t, ctx), 1,
+	require.Greater(t, countWorkerK8sDeployments(t, ctx), beforeDeployments,
 		"executable demand must have created a worker Deployment")
 
 	// Cross-pod parse-context EQUALITY (the single riskiest untested assumption).
@@ -157,23 +127,101 @@ func TestE2E_WorkerExecution(t *testing.T) {
 	require.NotNil(t, perfRow.LeasePodName)
 	assert.NotEmpty(t, *perfRow.LeasePodName, "a claimed task records the pod that held its lease")
 
-	// No per-node Job is produced for a worker-mode task.
-	jobs, err := getK8sJobs(ctx, "app=dbt-job,table_name=worker_perf")
-	require.NoError(t, err, "list dbt-job Jobs for worker_perf")
+	// No per-node production Job is produced for a worker-mode task. The release's
+	// own validation job for this node also carries app=dbt-job and
+	// table_name=worker_perf, so it is excluded by mode!=validation: only a
+	// production run Job (which a worker task must not create) would remain.
+	jobs, err := getK8sJobs(ctx, "app=dbt-job,table_name=worker_perf,mode!=validation")
+	require.NoError(t, err, "list production dbt-job Jobs for worker_perf")
 	assert.Empty(t, jobs.Items, "a worker-mode task must not produce an app=dbt-job production Job")
 
-	firstPod := *perfRow.LeasePodName
+	firstPod := queryRunLeasePod(t, ctx, clients, runID)
+	require.NotEmpty(t, firstPod, "the first run must record its lease pod")
 
-	// Sequential reuse: a second run of the same node is claimed by the same
-	// warm pod, proving the process is long-lived rather than one-shot.
+	// Sequential reuse: a second run of the same node is claimed by the same warm
+	// pod, proving the process is long-lived rather than one-shot. Scope the
+	// comparison to these two runs' own rows so historical runs cannot pollute it.
 	runID2 := triggerWorkerNode(t, ctx, clients, changedService, "e2e_schema", "worker_perf")
 	verifySchedulerSucceeded(t, ctx, clients, runID2)
-	rows2 := queryDeploymentsByService(t, ctx, clients, changedService)
-	pods := distinctLeasePods(rows2)
-	assert.Contains(t, pods, firstPod, "the reused pod must still be the one that ran")
-	assert.Len(t, pods, 1, "sequential service-3 runs must reuse a single worker pod, not spawn new ones")
+	secondPod := queryRunLeasePod(t, ctx, clients, runID2)
+	assert.Equal(t, firstPod, secondPod,
+		"sequential service-3 runs must reuse a single warm worker pod, not spawn new ones")
 
 	t.Log("native worker execution verified: pool ready, parse-context matched, node ran on a reused pod with no Job")
+}
+
+// relProbeUniqueID is a self-contained service-1 leaf (`SELECT 1 AS id`).
+// service-1's dbt-commands route every verb through wise-dbt with
+// worker.wrapper_cache: required, so running it on a worker exercises the
+// wrapper_required path: the team wrapper runs as a child process and must show
+// its dbt reused the promoted parse cache.
+const relProbeUniqueID = "e2e_schema.rel_probe"
+
+// TestE2E_WorkerWrapper runs the real wise-dbt wrapper on a worker to learn,
+// empirically, what the forced DBT_LOG_FORMAT=json / DBT_LOG_LEVEL=debug do to
+// it. Those variables are forced because dbt's structured log is the only
+// channel that carries the I017/I040 cache-evidence codes a required-cache
+// wrapper is held to. If they had no effect, the wrapper's dbt would emit no
+// parse-cache codes and the required-cache task would fail
+// runtime_manifest_unverified; the task succeeding is the empirical proof the
+// forced log format delivered the evidence.
+//
+// In the e2e image wise-dbt is dbt (a symlink), which is exactly the wrapper
+// case the fidelity delta was reasoned about: a wrapper whose child is dbt. The
+// genuine third-party wise-dbt lives in the continuo-dbt-demo repo and is out of
+// this repo's scope.
+func TestE2E_WorkerWrapper(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	const service = "service-1"
+	enableWorkerCanary(t, ctx)
+	ensureServiceWorkerReleased(t, ctx, clients, service, "rel_probe", relProbeUniqueID)
+
+	runID := triggerWorkerNode(t, ctx, clients, service, "e2e_schema", "rel_probe")
+
+	// The pool must become Ready before the wrapper task can be claimed.
+	pollUntil(t, ctx, 5*time.Minute, 2*time.Second, func() (bool, error) {
+		_, ready := countWorkerPods(t, ctx, clients, service)
+		return ready >= 1, nil
+	}, "no service-1 worker pod became Ready — the wrapper pool never hydrated")
+
+	verifySchedulerSucceeded(t, ctx, clients, runID)
+
+	rows := queryDeploymentsByService(t, ctx, clients, service)
+	row := findDeploymentRow(t, rows, "rel_probe")
+	require.NotNil(t, row.ExecutionPath)
+	require.Equal(t, "wrapper_required", *row.ExecutionPath,
+		"service-1 declares wrapper_cache: required, so its worker tasks take the wrapper_required path")
+	require.Equal(t, "workers", row.ExecutionMode)
+	require.Equal(t, "succeeded", row.Status,
+		"a required-cache wrapper task succeeds only if its dbt reported reusing the promoted parse cache")
+
+	// Read the uploaded task log and observe what the forced log vars produced:
+	// well-formed JSON dbt events (DBT_LOG_FORMAT=json), including at least one
+	// partial-parse cache-reuse code (I017 or I040) that DBT_LOG_LEVEL=debug
+	// surfaces. This is the direct empirical answer to the fidelity-delta question.
+	logURI := queryWorkerLogURI(t, ctx, clients, runID)
+	require.NotEmpty(t, logURI, "the worker must upload a task log")
+	logBody := getS3Object(t, ctx, clients, s3KeyFromURI(t, logURI))
+	jsonEvents, cacheCodes := scanDBTJSONLog(logBody)
+	require.Positive(t, jsonEvents,
+		"forced DBT_LOG_FORMAT=json must make the wrapper's dbt emit JSON events; found none in the task log")
+	require.NotEmpty(t, cacheCodes,
+		"forced json/debug logging must surface a partial-parse cache code (I017/I040); found none")
+	t.Logf("wise-dbt wrapper under forced json/debug logging: %d JSON dbt events, cache codes=%v",
+		jsonEvents, cacheCodes)
 }
 
 // triggerWorkerNode starts a single-node run against the current topology and

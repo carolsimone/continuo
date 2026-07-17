@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -181,8 +184,10 @@ type workerDeploymentRow struct {
 }
 
 // queryDeploymentsByService returns every executor_deployments row for a
-// service's non-validation work, newest first. Task identity lives in the
-// job_params JSON, so service and table are read out of it.
+// service's production run work, newest first. Task identity lives in the
+// job_params JSON, so service and table are read out of it. mode='production'
+// selects the run dispatch and excludes the release's own validation/compile
+// rows for the same service.
 func queryDeploymentsByService(t *testing.T, ctx context.Context, clients *testClients, service string) []workerDeploymentRow {
 	t.Helper()
 	var rows []workerDeploymentRow
@@ -192,7 +197,7 @@ func queryDeploymentsByService(t *testing.T, ctx context.Context, clients *testC
 		        COALESCE(job_params->>'table_name', '') AS table_name
 		   FROM executor_deployments
 		  WHERE job_params->>'service_name' = $1
-		    AND mode = 'run'
+		    AND mode = 'production'
 		  ORDER BY created_at DESC`, service)
 	require.NoError(t, err, "query executor_deployments for service %s", service)
 	return rows
@@ -251,14 +256,202 @@ func countWorkerK8sDeployments(t *testing.T, ctx context.Context) int {
 	return len(depList.Items)
 }
 
-// distinctLeasePods returns the set of worker pod names that held a lease across
-// the given deployment rows, ignoring rows that never leased.
-func distinctLeasePods(rows []workerDeploymentRow) map[string]bool {
-	pods := map[string]bool{}
-	for _, r := range rows {
-		if r.LeasePodName != nil && *r.LeasePodName != "" {
-			pods[*r.LeasePodName] = true
+// waitForValidationRequestedContains polls until the validation.requested:v1
+// message for releaseID names node in its ordered node set. It asserts the node
+// this test cares about is validated, without over-coupling to the full
+// change-detector derivation (which release_promote_test owns): a service
+// release validates every node whose content hash differs from prod, which can
+// legitimately include sibling nodes of the same or other services.
+func waitForValidationRequestedContains(t *testing.T, ctx context.Context, clients *testClients, releaseID, node string) {
+	t.Helper()
+	var got []string
+	pollUntil(t, ctx, 8*time.Minute, 1*time.Second, func() (bool, error) {
+		msgs, err := clients.redisClient.XRange(ctx, streams.ValidationRequestedV1, "-", "+").Result()
+		if err != nil {
+			return false, nil
+		}
+		for _, msg := range msgs {
+			payload, _ := msg.Values["payload"].(string)
+			if payload == "" {
+				continue
+			}
+			var p struct {
+				ReleaseID      string   `json:"release_id"`
+				NodeIDsInOrder []string `json:"node_ids_in_order"`
+			}
+			if json.Unmarshal([]byte(payload), &p) != nil || p.ReleaseID != releaseID {
+				continue
+			}
+			got = p.NodeIDsInOrder
+			for _, n := range got {
+				if n == node {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}, fmt.Sprintf("validation.requested:v1 for release %s never named %s (got %v)", releaseID, node, got))
+}
+
+// ensureService3WorkerReleased makes service-3 worker-eligible and returns the
+// descriptor the compile pod wrote for it. It is idempotent: if the current
+// topology already carries a runtime reference for worker_perf (a prior worker
+// test in the same run drove the release), it reuses that release rather than
+// paying the validation cost again. Only when no reference is present — the
+// first worker test, or after a seedTopology-based test overwrote the topology —
+// does it drive a fresh release.
+//
+// The returned descriptor is read from S3, i.e. straight from the compile pod's
+// own output, so a later parse-context equality check compares the pool against
+// an independent source rather than against the same promotion the pool came
+// from.
+func ensureService3WorkerReleased(t *testing.T, ctx context.Context, clients *testClients) runtimeDescriptor {
+	t.Helper()
+	return ensureServiceWorkerReleased(t, ctx, clients, "service-3", "worker_perf", workerPerfUniqueID)
+}
+
+// releaseService3WorkerPerf drives a fresh service-3 release changing worker_perf.
+func releaseService3WorkerPerf(t *testing.T, ctx context.Context, clients *testClients) string {
+	t.Helper()
+	return releaseServiceWithChangedLeaf(t, ctx, clients, "service-3", "worker_perf", workerPerfUniqueID)
+}
+
+// ensureServiceWorkerReleased makes a service worker-eligible via a leaf node and
+// returns the descriptor the compile pod wrote. It reuses an existing release
+// when the leaf already carries a runtime reference in the current topology, and
+// drives a fresh one otherwise. See ensureService3WorkerReleased for the rationale.
+func ensureServiceWorkerReleased(t *testing.T, ctx context.Context, clients *testClients, service, leafTable, leafUniqueID string) runtimeDescriptor {
+	t.Helper()
+	uri := neo4jScalarString(ctx, clients,
+		`MATCH (t:Table {table_name:$name}) RETURN COALESCE(t.runtime_manifest_uri, '') AS v`,
+		map[string]any{"name": leafTable})
+	if uri != "" {
+		releaseID := releaseIDFromArtifactURI(t, uri)
+		t.Logf("%s already worker-eligible (release %s) — reusing", service, releaseID)
+		return getRuntimeDescriptor(t, ctx, clients, service, releaseID)
+	}
+	releaseID := releaseServiceWithChangedLeaf(t, ctx, clients, service, leafTable, leafUniqueID)
+	return getRuntimeDescriptor(t, ctx, clients, service, releaseID)
+}
+
+// releaseServiceWithChangedLeaf drives a real release whose changed set includes
+// a self-contained leaf, so its compile job produces the runtime artifact and
+// its promotion carries the runtime reference. Sibling nodes whose content hash
+// differs from prod may also validate; the fixtures this is used with are all
+// self-contained, so the release still promotes. Returns the release ID.
+func releaseServiceWithChangedLeaf(t *testing.T, ctx context.Context, clients *testClients, service, leafTable, leafUniqueID string) string {
+	t.Helper()
+	releaseID := "e2e-worker-" + shortID()
+
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices,
+		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	imageTag := allServices[service].imageTag
+	require.NotEmpty(t, imageTag, "image_tag missing for %s", service)
+
+	var prodNodes []map[string]string
+	leafFound := false
+	for _, si := range allServices {
+		for _, n := range si.nodes {
+			if n.uniqueID == leafUniqueID {
+				leafFound = true
+				continue // exclude → the leaf is a changed node
+			}
+			prodNodes = append(prodNodes, map[string]string{
+				"unique_id":    n.uniqueID,
+				"content_hash": n.contentHash,
+			})
 		}
 	}
-	return pods
+	require.True(t, leafFound,
+		"%s not found in any manifest — is the model present and the image rebuilt?", leafUniqueID)
+
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProdExcept(t, ctx, clients, allServices, service)
+
+	postRelease(t, clients, service, releaseID, imageTag, false)
+	waitForValidationRequestedContains(t, ctx, clients, releaseID, leafUniqueID)
+	waitForReleasePromoted(t, ctx, clients, releaseID, 12*time.Minute)
+	waitForTopologySwap(t, ctx, clients, releaseID, leafUniqueID, 2*time.Minute)
+	return releaseID
+}
+
+// releaseIDFromArtifactURI parses the release segment out of a runtime artifact
+// URI of the form s3://<bucket>/<service>/<release>/partial_parse.msgpack.
+func releaseIDFromArtifactURI(t *testing.T, uri string) string {
+	t.Helper()
+	parts := strings.Split(strings.TrimPrefix(uri, "s3://"), "/")
+	require.GreaterOrEqual(t, len(parts), 3, "unexpected artifact URI %q", uri)
+	return parts[len(parts)-2]
+}
+
+// shortID returns a short random suffix for a release ID.
+func shortID() string { return uuid.NewString()[:8] }
+
+// queryWorkerLogURI returns the s3 URI of the dbt log a run's worker uploaded.
+func queryWorkerLogURI(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) string {
+	t.Helper()
+	var uri *string
+	err := clients.executorDB.GetContext(ctx, &uri,
+		`SELECT dbt_log_uri FROM executor_deployments
+		  WHERE schedule_id = $1 AND mode = 'production'
+		  ORDER BY created_at DESC LIMIT 1`, runID)
+	if err != nil || uri == nil {
+		return ""
+	}
+	return *uri
+}
+
+// s3KeyFromURI strips the s3://<bucket>/ prefix from a URI, returning the key.
+func s3KeyFromURI(t *testing.T, uri string) string {
+	t.Helper()
+	rest := strings.TrimPrefix(uri, "s3://")
+	i := strings.IndexByte(rest, '/')
+	require.Positive(t, i, "malformed s3 URI %q", uri)
+	return rest[i+1:]
+}
+
+// scanDBTJSONLog counts well-formed JSON dbt event lines in a task log and
+// collects the partial-parse cache-evidence codes among them (I017/I040 accepted,
+// I016/I024/I028 rejected). A wrapper writes its child's stdout verbatim, so with
+// DBT_LOG_FORMAT=json the log is JSON lines; a plain-text log yields zero.
+func scanDBTJSONLog(body []byte) (jsonEvents int, cacheCodes []string) {
+	accepted := map[string]bool{"I017": true, "I040": true}
+	rejected := map[string]bool{"I016": true, "I024": true, "I028": true}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event struct {
+			Info struct {
+				Code string `json:"code"`
+			} `json:"info"`
+		}
+		if json.Unmarshal([]byte(line), &event) != nil {
+			continue
+		}
+		jsonEvents++
+		if accepted[event.Info.Code] || rejected[event.Info.Code] {
+			cacheCodes = append(cacheCodes, event.Info.Code)
+		}
+	}
+	return jsonEvents, cacheCodes
+}
+
+// queryRunLeasePod returns the worker pod name that held the lease for a single
+// run's production task, or "" if none. Scoping by schedule_id keeps one run's
+// pod from being confused with another's.
+func queryRunLeasePod(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) string {
+	t.Helper()
+	var pod *string
+	err := clients.executorDB.GetContext(ctx, &pod,
+		`SELECT lease_pod_name FROM executor_deployments
+		  WHERE schedule_id = $1 AND mode = 'production'
+		  ORDER BY created_at DESC LIMIT 1`, runID)
+	if err != nil || pod == nil {
+		return ""
+	}
+	return *pod
 }
