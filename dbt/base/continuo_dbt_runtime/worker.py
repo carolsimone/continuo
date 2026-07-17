@@ -14,6 +14,7 @@ import _thread
 import os
 import shutil
 import signal
+import sys
 import tempfile
 import threading
 import time
@@ -360,7 +361,13 @@ class Worker:
             )
         except TerminalError:
             raise
-        except Exception:
+        except Exception as exc:
+            # The exception from a signed-URL request routinely carries the URL
+            # itself, which is a capability token, so only its class reaches
+            # stderr. A pod's stderr is the diagnostic surface here; without
+            # this a systematic failure to fetch result URLs looks, from the
+            # executor's side, identical to a worker that simply wrote nothing.
+            print(f"result_urls failed: {exc.__class__.__name__}", file=sys.stderr)
             return {}
 
     def _upload_results(self, urls: dict, log_path: Path, task_dir: Path) -> dict:
@@ -383,7 +390,12 @@ class Worker:
                 continue
             try:
                 self._upload(signed["url"], path.read_bytes(), content_type)
-            except Exception:
+            except Exception as exc:
+                # Same redaction as above: an HTTP client's exception text
+                # routinely embeds the signed URL it was given, so only the
+                # field that failed to upload and the exception class name are
+                # safe to put on stderr.
+                print(f"upload failed for {field}: {exc.__class__.__name__}", file=sys.stderr)
                 continue
             reported[field] = signed["s3_uri"]
         return reported

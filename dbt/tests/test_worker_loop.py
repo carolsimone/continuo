@@ -433,6 +433,45 @@ def test_a_result_urls_failure_still_completes_the_lease(tmp_path):
     assert client.completions[0]["succeeded"] is True
 
 
+def test_a_result_urls_failure_reports_only_the_exception_class(tmp_path, capsys):
+    """The diagnostic never repeats what the exception says, only what it is.
+
+    An executor error's message can itself echo back request details, so the
+    stderr line must carry the exception's class and nothing from its text.
+    """
+    client = RecordingClient(leases=[LEASE_PAYLOAD])
+    client.result_urls_error = RequestFailed(
+        0, "unreachable", "no route to http://s3/log?sig=redacted-me"
+    )
+
+    worker_for(tmp_path, client, StubExecutor()).run_once()
+
+    captured = capsys.readouterr()
+    assert "RequestFailed" in captured.err
+    assert "http://s3/log" not in captured.err
+
+
+def test_an_upload_failure_reports_only_the_field_and_exception_class(tmp_path, capsys):
+    """A signed URL is a capability token, so it must never reach stderr.
+
+    The exception a real HTTP client raises for a failed PUT routinely embeds
+    the URL it was given, which is why only the field name and the exception's
+    class name are safe to print.
+    """
+    client = RecordingClient(leases=[LEASE_PAYLOAD])
+
+    def failing_upload(url, data, content_type):
+        raise OSError(f"connection reset while PUTting to {url}")
+
+    worker_for(tmp_path, client, StubExecutor(), upload=failing_upload).run_once()
+
+    captured = capsys.readouterr()
+    assert "OSError" in captured.err
+    assert "log_s3_uri" in captured.err
+    assert "http://s3/log" not in captured.err
+    assert "http://s3/rr" not in captured.err
+
+
 # --- heartbeat and cancellation -------------------------------------------
 
 
