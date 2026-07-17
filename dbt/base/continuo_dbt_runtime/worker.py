@@ -42,8 +42,13 @@ from continuo_dbt_runtime.execution import (
 
 UPLOAD_TIMEOUT_SECONDS = 120.0
 
-# How long a task's whole result upload may take, retries included. The lease is
-# held throughout, so this bounds how long a settled task keeps a worker busy.
+# How long a settled task may keep re-attempting its result upload. It is
+# consulted only once an attempt has failed: it decides whether another is worth
+# starting and caps the wait before it, so it bounds re-attempts rather than any
+# single one. An attempt already under way runs to its own
+# UPLOAD_TIMEOUT_SECONDS, which is the only bound on one request. The lease is
+# held by the heartbeat throughout either way, so overrunning this costs a
+# worker's time and never the task's result.
 UPLOAD_WINDOW_SECONDS = 60.0
 
 # How long to wait before re-attempting an upload that failed for a reason
@@ -441,8 +446,8 @@ class Worker:
                 urls.get("run_results"), task_dir / "run_results.json", "application/json"
             ),
         }
-        # One window covers every object, so a task cannot spend a whole window
-        # per file and hold its lease for a multiple of what was budgeted.
+        # One re-attempt window covers every object, so a task cannot spend a
+        # whole window of retries per file.
         deadline = time.monotonic() + self._upload_window_seconds
         reported = {}
         for field, (signed, path, content_type) in objects.items():
@@ -459,7 +464,17 @@ class Worker:
         True when it landed. The task's own outcome never depends on this: a
         model that ran is reported as having run whether or not its log arrived.
         """
-        data = path.read_bytes()
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            # The file existed a moment ago, when the object was selected for
+            # upload; reading it is what says whether it is still there and
+            # readable. An unreadable artifact is a failed upload like any
+            # other, and reports the same redacted diagnostic, because raising
+            # from here would skip the complete that settles the lease.
+            print(f"upload failed for {field}: {exc.__class__.__name__}",
+                  file=sys.stderr)
+            return False
         backoff = UPLOAD_RETRY_BACKOFF_SECONDS
         while True:
             try:

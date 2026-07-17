@@ -216,6 +216,26 @@ class StubExecutor:
         return self._result
 
 
+class UnreadableArtifactExecutor:
+    """Leaves one artifact readable and one that exists but cannot be read.
+
+    The worker checks a path exists and then reads it, so a path can stop being
+    readable between the two. A directory standing where the file should be
+    raises from read_bytes the way a permission or IO failure does, without
+    depending on the test process's own privileges: running as root, a file with
+    no permission bits set is still readable.
+    """
+
+    def __init__(self):
+        self.task_dirs: list[Path] = []
+
+    def execute(self, lease, task_dir):
+        self.task_dirs.append(Path(task_dir))
+        (task_dir / "dbt.log").write_text("{}")
+        (task_dir / "run_results.json").mkdir()
+        return ExecutionResult(succeeded=True)
+
+
 class CancelledExecutor:
     """Runs until the heartbeat interrupts the main thread, as dbt would.
 
@@ -414,6 +434,37 @@ def test_an_upload_failure_still_completes_the_lease(tmp_path):
     assert "run_results_s3_uri" not in result
 
 
+def test_an_artifact_that_cannot_be_read_still_completes_the_lease(tmp_path, capsys):
+    """Reading an artifact is part of uploading it, and uploads are best effort.
+
+    The file is checked for existence and read a moment later, so an artifact can
+    exist at the check and not be readable at the read. dbt has already touched
+    the warehouse by then, so that must report a missing object like any other
+    failed upload rather than escape and skip the complete that settles the
+    lease.
+    """
+    client = RecordingClient(leases=[LEASE_PAYLOAD])
+    attempted = []
+
+    def upload(url, data, content_type):
+        attempted.append(url)
+
+    worker_for(tmp_path, client, UnreadableArtifactExecutor(), upload=upload).run_once()
+
+    assert client.calls[-1] == "complete"
+    result = client.completions[0]
+    assert result["succeeded"] is True
+    # The readable artifact is unaffected by the unreadable one.
+    assert result["log_s3_uri"] == "s3://b/log"
+    assert attempted == ["http://s3/log"]
+    # No location is reported for an object whose bytes were never read.
+    assert "run_results_s3_uri" not in result
+    captured = capsys.readouterr()
+    assert "IsADirectoryError" in captured.err
+    assert "run_results_s3_uri" in captured.err
+    assert "http://s3/rr" not in captured.err
+
+
 def test_locations_that_did_upload_are_still_reported(tmp_path):
     """One object failing does not hide another that landed."""
     client = RecordingClient(leases=[LEASE_PAYLOAD])
@@ -565,7 +616,12 @@ def test_a_transport_failure_is_retried_inside_the_upload_window(tmp_path):
         if attempts.count(url) == 1:
             raise OSError("connection reset")
 
-    worker_for(tmp_path, client, StubExecutor(), upload=flaky_upload).run_once()
+    # A re-attempt is only started while the window has time left, so this test
+    # asks for a window that outlasts the work it does rather than the default's
+    # 50ms, which a loaded host can spend before the first attempt fails. The
+    # retry lands immediately, so the window is never waited out.
+    worker_for(tmp_path, client, StubExecutor(), upload=flaky_upload,
+               upload_window_seconds=5).run_once()
 
     assert attempts.count("http://s3/log") == 2
     assert client.completions[0]["log_s3_uri"] == "s3://b/log"
