@@ -40,8 +40,9 @@ mapping `continuo-dex` to `127.0.0.1`. That is the smallest bridge between
 "browser-reachable" and "matches the issuer identity ui-service already
 trusts"; anything else (a second Dex listener, a reverse proxy) is more
 moving parts for the same result. `curl --resolve continuo-dex:5556:127.0.0.1
-https://continuo-dex:5556/dex/.well-known/openid-configuration` verifies the
-port-forward without touching `/etc/hosts` at all.
+http://continuo-dex:5556/dex/.well-known/openid-configuration` verifies the
+port-forward without touching `/etc/hosts` at all (bundled Dex serves plain
+HTTP, not HTTPS).
 
 The bundled datastores and the Dex demo user (`admin@example.com` /
 `password`, a bcrypt hash lifted verbatim from Dex's own example config) are
@@ -49,6 +50,17 @@ for evaluation only. Passwords for bundled datastores are generated on first
 install and kept stable across upgrades (see Security defaults below), but
 none of this is meant to hold real data or face real users — there is no
 backup story, no HA, and one static login.
+
+**Reinstalling on top of old data.** `helm uninstall` deletes the release's
+generated Secrets, but the bundled datastores' `volumeClaimTemplates` PVCs
+(Persistent Volume Claims) are not owned by the release and survive it. A
+plain reinstall then generates brand-new random passwords while the old PVCs'
+data directories still hold the previous ones, and every bundled datastore
+crashloops on auth. For a full reset, delete the release's PVCs before
+reinstalling (`kubectl -n <namespace> delete pvc -l app.kubernetes.io/instance=<release>`).
+To reinstall while keeping existing data, pre-create the datastore Secrets
+with the old passwords first (or point at them with `postgresql.auth.existingSecret`
+and the equivalent `existingSecret` field for each other bundled datastore).
 
 ## 2. Production (bring your own datastores)
 
@@ -88,7 +100,12 @@ Notes that matter before you commit to this path:
   hook: pre-install hooks run before *any* release resource exists, so a hook
   Job could never reach a Postgres that Helm hasn't created yet. That path
   runs the migration as a regular, revision-suffixed resource instead, with
-  Postgres-backed services gating on it via an init container.)
+  Postgres-backed services gating on it via an init container.) In bundled
+  mode, expect new pods to briefly crashloop-converge on an upgrade: the
+  `wait-for-migrations` init container only gates on `flyway_schema_history`
+  existing in the target database, not on the specific migration the upgrade
+  ships being applied yet, so a pod can start before that migration Job has
+  finished.
 
 ## 3. Security defaults
 
