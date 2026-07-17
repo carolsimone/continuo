@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "continuo.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+data:
+  POSTGRES_HOST: {{ include "continuo.postgresql.host" . | quote }}
+  POSTGRES_PORT: {{ include "continuo.postgresql.port" . | quote }}
+  POSTGRES_USER: {{ include "continuo.postgresql.username" . | quote }}
+  DB_SSLMODE: {{ include "continuo.db.sslMode" . | quote }}
+  REDIS_HOST: {{ include "continuo.redis.host" . | quote }}
+  REDIS_PORT: {{ include "continuo.redis.port" . | quote }}
+  REDIS_ADDR: {{ printf "%s:%s" (include "continuo.redis.host" .) (include "continuo.redis.port" .) | quote }}
+  NEO4J_URI: {{ include "continuo.neo4j.uri" . | quote }}
+  NEO4J_USER: {{ include "continuo.neo4j.username" . | quote }}
+  STATE_GRPC_ADDR: {{ .Values.global.stateGrpcAddr | quote }}
+  ORCHESTRATOR_GRPC_ADDR: {{ .Values.global.orchestratorGrpcAddr | quote }}
+  AGENT_RUNNER_GRPC_ADDR: {{ .Values.global.agentRunnerGrpcAddr | quote }}
+  STATE_SERVICE_GRPC_ADDR: {{ .Values.global.stateGrpcAddr | quote }}
+  S3_ENDPOINT_URL: {{ include "continuo.s3.endpointUrl" . | quote }}
+  S3_BUCKET: {{ include "continuo.s3.bucket" . | quote }}
+  S3_ENV: {{ include "continuo.s3.env" . | quote }}
+  AWS_DEFAULT_REGION: {{ include "continuo.s3.region" . | quote }}
+  ENV: {{ .Values.global.env | quote }}
+  LOG_LEVEL: {{ .Values.global.logLevel | quote }}

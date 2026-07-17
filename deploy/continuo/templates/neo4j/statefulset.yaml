@@ -1,0 +1,94 @@
+{{- if .Values.neo4j.enabled }}
+# Quickstart Neo4j Community: single instance. The entrypoint rewrites config
+# at startup, so the root filesystem stays writable (annotated for kube-linter).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "continuo.neo4j.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+    app.kubernetes.io/name: neo4j
+  annotations:
+    ignore-check.kube-linter.io/no-read-only-root-fs: "neo4j entrypoint writes config at startup"
+spec:
+  serviceName: {{ include "continuo.neo4j.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "continuo.selectorLabels" (dict "root" $ "service" "neo4j") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "continuo.selectorLabels" (dict "root" $ "service" "neo4j") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- include "continuo.podSecurityContext" . | nindent 8 }}
+        runAsUser: 7474
+        runAsGroup: 7474
+        fsGroup: 7474
+      containers:
+        - name: neo4j
+          image: "{{ .Values.neo4j.image.repository }}:{{ .Values.neo4j.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # Not NEO4J_-prefixed on purpose: the official image's entrypoint
+            # rewrites every NEO4J_<setting> env var into neo4j.conf, and with
+            # strict config validation on, an unrecognized setting like
+            # "PASSWORD" crashes the server. This var exists only to be
+            # interpolated into NEO4J_AUTH below.
+            - name: CONTINUO_NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "neo4j") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "neo4j") | quote }}
+            - name: NEO4J_AUTH
+              value: "neo4j/$(CONTINUO_NEO4J_PASSWORD)"
+            - name: NEO4J_server_memory_pagecache_size
+              value: "512M"
+            - name: NEO4J_server_memory_heap_initial__size
+              value: "512M"
+            - name: NEO4J_server_memory_heap_max__size
+              value: "1G"
+          ports:
+            - name: bolt
+              containerPort: 7687
+            - name: http
+              containerPort: 7474
+          readinessProbe:
+            tcpSocket:
+              port: 7687
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: 7687
+            initialDelaySeconds: 90
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.neo4j.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: logs
+              mountPath: /logs
+      volumes:
+        - name: logs
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with (default .Values.global.storageClass .Values.neo4j.persistence.storageClass) }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.neo4j.persistence.size }}
+{{- end }}

@@ -1,0 +1,12 @@
+apiVersion: v2
+name: continuo
+description: >-
+  Continuo — event-driven dbt orchestration platform. Installs all services plus
+  optional bundled quickstart datastores (PostgreSQL, Redis, Neo4j, MinIO, Dex).
+  Production installs bring their own datastores via external*/existingSecret values.
+type: application
+version: 0.1.0
+# Overridden at release time by the chart-publish flow; local installs pass
+# global.imageTag explicitly.
+appVersion: "0.0.0-dev"
+kubeVersion: ">=1.27.0-0"
