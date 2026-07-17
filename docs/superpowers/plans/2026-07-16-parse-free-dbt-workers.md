@@ -2539,6 +2539,7 @@ spec:
             - {name: CONTINUO_POOL_KEY, value: <full pool key>}
             - {name: CONTINUO_SERVICE_NAME, value: <service>}
             - {name: CONTINUO_IMAGE_TAG, value: <image tag>}
+            - {name: CONTINUO_RUNTIME_MANIFEST_SHA256, value: <pool's runtime_manifest_sha256>}
             - {name: CONTINUO_RUNTIME_CONTEXT_JSON, value: <canonical JSON>}
             - name: CONTINUO_POOL_CREDENTIAL
               valueFrom:
@@ -2550,6 +2551,8 @@ spec:
 ```
 
 Also pass the same warehouse environment as current production Jobs. Add labels `app=continuo-dbt-worker` and truncated pool key; store the full key/ref in annotations. Do not create a Service.
+
+`CONTINUO_RUNTIME_MANIFEST_SHA256` carries the pool's own `runtime_manifest_sha256`. The worker compares the descriptor it downloads against this value and rejects a mismatch as `runtime_manifest_rejected`. It is what binds a hydrated Manifest to the pool the pod belongs to: without it the worker's validation is self-consistent but not pool-bound, so a valid descriptor and artifact published for the same service and image tag — a different release — would satisfy every other check. Reject a mismatch; never fall back to a full-project parse.
 
 - [ ] **Step 6: Reconcile credentials safely**
 
