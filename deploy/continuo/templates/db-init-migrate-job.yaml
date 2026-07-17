@@ -18,6 +18,19 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
     {{- end }}
 spec:
+  {{- /* When postgresql.enabled=false and there is no existingSecret, the
+       postgres credential resolves to the chart's OWN credentials Secret
+       (templates/credentials-secret.yaml), which is a regular resource Helm
+       only creates AFTER pre-install/pre-upgrade hooks finish. A secretKeyRef
+       to it here would deadlock this hook pod (CreateContainerConfigError
+       until install/upgrade timeout). Render the password as an inline
+       literal instead in that one case; bundled and existingSecret
+       resolutions keep the secretKeyRef via the dispatcher helpers, matching
+       deploy/app/templates/migrations.yaml's precedent for the same
+       ordering problem. This is not a new secrecy exposure: the value is
+       already present in the release manifest via the credentials Secret's
+       own stringData. */}}
+  {{- $inlinePostgresPassword := and (not .Values.postgresql.enabled) (not .Values.externalDatabase.existingSecret) }}
   backoffLimit: 3
   {{- if .Values.postgresql.enabled }}
   ttlSecondsAfterFinished: 86400
@@ -58,12 +71,18 @@ spec:
             - name: PGUSER
               value: {{ include "continuo.postgresql.username" . | quote }}
             - name: PGPASSWORD
+              {{- if $inlinePostgresPassword }}
+              value: {{ .Values.externalDatabase.password | quote }}
+              {{- else }}
               valueFrom:
                 secretKeyRef:
                   name: {{ include "continuo.secretName" (dict "root" $ "ref" "postgres") | quote }}
                   key: {{ include "continuo.secretKey" (dict "root" $ "ref" "postgres") | quote }}
+              {{- end }}
             - name: PGDATABASE
               value: postgres
+            - name: DB_SSLMODE
+              value: {{ include "continuo.db.sslMode" . | quote }}
           command:
             - /bin/sh
             - -c
@@ -82,7 +101,7 @@ spec:
                   echo "database ${db} already exists"
                 else
                   echo "creating database ${db}"
-                  psql -c "CREATE DATABASE ${db}"
+                  psql -c "CREATE DATABASE \"${db}\""
                 fi
                 psql -d "${db}" -c "GRANT ALL ON SCHEMA public TO \"${PGUSER}\""
               done
@@ -106,10 +125,16 @@ spec:
             - name: POSTGRES_USER
               value: {{ include "continuo.postgresql.username" . | quote }}
             - name: POSTGRES_PASSWORD
+              {{- if $inlinePostgresPassword }}
+              value: {{ .Values.externalDatabase.password | quote }}
+              {{- else }}
               valueFrom:
                 secretKeyRef:
                   name: {{ include "continuo.secretName" (dict "root" $ "ref" "postgres") | quote }}
                   key: {{ include "continuo.secretKey" (dict "root" $ "ref" "postgres") | quote }}
+              {{- end }}
+            - name: DB_SSLMODE
+              value: {{ include "continuo.db.sslMode" . | quote }}
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {cpu: 500m, memory: 512Mi}
