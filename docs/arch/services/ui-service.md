@@ -118,9 +118,9 @@ Deployment surfaces:
 
 - The docker-compose `ui` service runs `AUTH_MODE=dev`.
 - The `auth-e2e` compose profile (dex + `ui-auth`) runs the real OIDC flow for the dedicated e2e suite (`tests/e2e/auth_oidc_test.go`).
-- Helm (`deploy/app`) runs `AUTH_MODE=oidc`. Per-deployment identity settings (issuer URL, client ID, public URL, operator/viewer email allowlists, role mapping) come from `global.auth.*`, which the deployment template expands into the `AUTH_*` env via sentinels; the committed defaults are empty so a deploy fails closed until they are set in the on-box secret values file. The client secret lands in the chart credentials Secret via `global.auth.oidcClientSecret`, and `REDIS_URL` expands from `__REDIS_URL_FROM_AUTH__`. Kubernetes probes target `/healthz`.
+- Helm (`deploy/continuo`) runs `AUTH_MODE=oidc`. Per-deployment identity settings (issuer URL, client ID, public URL, operator/viewer email allowlists, role mapping) come from `auth.*`, which the deployment template expands into the `AUTH_*` env via sentinels; the committed defaults are empty so a deploy fails closed until they are set in the on-box secret values file. The client secret lands in the chart credentials Secret via `auth.oidcClientSecret`, and `REDIS_URL` expands from `__REDIS_URL_FROM_AUTH__`. Kubernetes probes target `/healthz`.
 
-Operator setup, including configuring an identity provider and a no-domain Google loopback flow for testing, is documented in `deploy/app/AUTH.md`.
+Operator setup, including configuring an identity provider and a no-domain Google loopback flow for testing, is documented in `deploy/AUTH.md`.
 
 ## Chat Relay
 
