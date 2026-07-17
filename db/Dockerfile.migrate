@@ -20,7 +20,10 @@ COPY migration/agent /flyway/sql/agent
 COPY migration/remediation /flyway/sql/remediation
 COPY migration/remediation_agent /flyway/sql/remediation_agent
 
-RUN chown -R 65532:0 /flyway
+# Non-recursive: only the /flyway directory entry needs to be group-writable
+# so Flyway (WORKDIR /flyway) can create its report files there. Everything
+# already copied under /flyway/sql/* is read-only input and stays root-owned.
+RUN chown 65532:0 /flyway
 
 USER 65532:65532
 
