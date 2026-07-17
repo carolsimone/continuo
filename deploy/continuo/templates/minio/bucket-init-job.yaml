@@ -2,7 +2,10 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "continuo.revisionSuffixedName" (dict "root" . "base" (printf "%s-bucket-init" (include "continuo.minio.fullname" .))) }}
+  # Discriminator reserved against the chart fullname (not minio.fullname),
+  # so this Job's name never collides with db-init-migrate's under a long
+  # release name — see continuo.jobName in _helpers.tpl.
+  name: {{ include "continuo.jobName" (dict "root" . "discriminator" "-minio-bucket-init" "revisioned" true) }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "continuo.labels" . | nindent 4 }}
@@ -32,13 +35,13 @@ spec:
             - name: MINIO_ROOT_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "continuo.minio.fullname" . | quote }}
-                  key: access-key-id
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "s3AccessKeyId") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "s3AccessKeyId") | quote }}
             - name: MINIO_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "continuo.minio.fullname" . | quote }}
-                  key: secret-access-key
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "s3SecretAccessKey") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "s3SecretAccessKey") | quote }}
           command:
             - /bin/sh
             - -c
