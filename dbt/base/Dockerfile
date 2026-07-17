@@ -15,13 +15,16 @@ WORKDIR /project
 COPY macros/ /project/macros/
 
 # Continuo's dbt runtime support, importable by every team image. It exports a
-# release's runtime manifest artifacts after the team's own compile command runs.
+# release's runtime manifest artifacts after the team's own compile command runs,
+# and hydrates that artifact in the worker pods that execute the release.
 # PYTHONPATH is set rather than pip-installing so the modules stay readable and
 # no team image gains a build dependency on them.
 COPY continuo_dbt_runtime/ /opt/continuo/continuo_dbt_runtime/
 COPY bin/continuo-export-runtime-manifest /continuo/bin/continuo-export-runtime-manifest
+COPY bin/continuo-dbt-worker /continuo/bin/continuo-dbt-worker
 ENV PYTHONPATH="/opt/continuo"
 RUN chmod 0555 /continuo/bin/continuo-export-runtime-manifest
+RUN chmod 0555 /continuo/bin/continuo-dbt-worker
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

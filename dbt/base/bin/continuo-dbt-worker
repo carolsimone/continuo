@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""The worker pod's command.
+
+Hydrates one dbt Manifest from the release-pinned artifact and then runs the
+pool's tasks against it, one at a time, for the life of the pod.
+"""
+import sys
+
+from continuo_dbt_runtime.worker import main
+
+if __name__ == "__main__":
+    sys.exit(main())
