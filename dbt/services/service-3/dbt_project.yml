@@ -29,3 +29,8 @@ models:
       +tags: ["e2e-schedule-failure"]
     xprobe_up:
       +tags: ["xprobe"]
+    # The performance gate's native sample. A node's first tag names the schedule
+    # it belongs to, so its own tag keeps repeated timing runs off every other
+    # schedule.
+    worker_perf:
+      +tags: ["worker-perf"]
