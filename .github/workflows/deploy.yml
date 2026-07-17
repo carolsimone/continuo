@@ -286,24 +286,11 @@ jobs:
 
             kubectl create namespace continuo --dry-run=client -o yaml | kubectl apply -f -
 
-            helm repo add bitnami https://charts.bitnami.com/bitnami
-            helm repo add neo4j https://helm.neo4j.com/neo4j
-            helm repo update
-
-            helm dependency build deploy/infra
-
-            helm upgrade --install continuo-infra deploy/infra \
-              -f deploy/infra/values.yaml \
+            # Infra (Postgres/Redis/Neo4j) is managed manually from the
+            # private continuo-infra repo's runbook; this workflow deploys
+            # only the application chart against it (BYO mode).
+            helm upgrade --install continuo-app deploy/continuo \
               -f /root/continuo-values.secret.yaml \
-              -n continuo \
-              --wait \
-              --timeout 10m
-
-            helm upgrade --install continuo-app deploy/app \
-              -f deploy/app/values.yaml \
-              -f /root/continuo-values.secret.yaml \
-              --set global.dockerHubUser=ghcr.io/${{ github.repository_owner }} \
-              --set global.teamImagePrefix=carolsimone \
               --set global.imageTag=${{ github.sha }} \
               -n continuo \
               --wait \
