@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"path"
 	"strings"
@@ -114,17 +115,23 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request, pool *model
 // A wait of zero or less is a worker asking not to wait: it is answered by one
 // look for work and whatever that finds. Anything longer is capped at the
 // executor's own ceiling, so no request holds a connection longer than the
-// executor allows — including a wait so large it does not fit a duration, which
-// is treated as asking for more than the ceiling rather than wrapping into a
-// deadline that has already passed.
+// executor allows — including a wait so large that converting it to seconds
+// of nanoseconds would overflow an int64, which is held at the ceiling
+// without ever performing that multiplication.
 func (s *Server) claimDeadline(waitSeconds int) time.Time {
 	now := time.Now()
 	if waitSeconds <= 0 {
 		return now
 	}
 	wait := s.claimWait
-	if asked := time.Duration(waitSeconds) * time.Second; asked > 0 && asked < wait {
-		wait = asked
+	// maxSeconds is the largest second count that fits in an int64 duration
+	// once multiplied by time.Second; anything past it cannot be converted
+	// without overflowing, so it is left at the ceiling instead of converted.
+	const maxSeconds = int64(math.MaxInt64) / int64(time.Second)
+	if int64(waitSeconds) <= maxSeconds {
+		if asked := time.Duration(waitSeconds) * time.Second; asked < wait {
+			wait = asked
+		}
 	}
 	return now.Add(wait)
 }

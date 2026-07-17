@@ -207,6 +207,24 @@ func TestClaim_AWaitTooLargeForADurationIsCappedNotWrapped(t *testing.T) {
 	assert.Greater(t, r.leases.claims, 1, "the request waited rather than giving up at once")
 }
 
+// TestClaim_AWaitThatWrapsPositiveIsStillCappedNotWrapped pins a crafted
+// second count whose nanosecond conversion overflows int64 all the way back
+// around to a small positive value (20211507185753197 * time.Second mod 2^64
+// is 512ns), rather than merely going negative. A worker asking to wait for
+// roughly 640 million years must still be held at the executor's ceiling, not
+// answered in 512ns as though it had asked for almost nothing.
+func TestClaim_AWaitThatWrapsPositiveIsStillCappedNotWrapped(t *testing.T) {
+	r := newRig(t)
+	r.grant()
+	r.leases.grantAfter = time.Now().Add(600 * time.Millisecond)
+
+	resp := r.do(http.MethodPost, "/internal/v1/workers/claim",
+		`{"wait_seconds":20211507185753197}`)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Greater(t, r.leases.claims, 1, "the request waited rather than giving up at once")
+}
+
 // TestClaim_AnUnreadyPoolIsToldSoRatherThanHandedWork. A pool whose workers
 // cannot hydrate their artifact would fail every task it claimed.
 func TestClaim_AnUnreadyPoolIsToldSoRatherThanHandedWork(t *testing.T) {
