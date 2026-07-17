@@ -8,8 +8,11 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -204,4 +207,162 @@ func TestWorkerPoolRepository_ListEmptyIsNotAnError(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Empty(t, pools)
+}
+
+// workerDeploymentFixture is a worker-mode task naming poolKey, carrying the
+// runtime manifest a pool registered from it must serve.
+func workerDeploymentFixture(poolKey, service, imageTag, manifestSHA string) command.DeployTask {
+	cmd := validCmd()
+	cmd.ServiceName = service
+	cmd.ImageTag = imageTag
+	cmd.DBTUniqueID = "model." + service + ".orders"
+	cmd.RuntimeManifestRef = pkgmodel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo/artifacts/" + service + "/partial_parse.msgpack",
+		RuntimeManifestSHA256:             manifestSHA,
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "ctx-" + manifestSHA,
+	}
+	return cmd
+}
+
+// addWorkerTask enqueues one worker-mode task against poolKey.
+func addWorkerTask(t *testing.T, db *sqlx.DB, poolKey string, cmd command.DeployTask) *model.Deployment {
+	t.Helper()
+	dep := model.NewWorkerDeployment(cmd, uuid.Nil, poolKey, time.Now().UTC())
+	require.NoError(t, postgres.NewDeploymentsRepository(db, testLogger()).
+		Add(context.Background(), dep))
+	return dep
+}
+
+// TestWorkerPoolRepository_ListUnregisteredDiscoversAPoolFromItsWaitingWork is
+// how a pool ever comes to exist: nothing declares pools, so the work already
+// routed to one is what says the pool must be registered.
+func TestWorkerPoolRepository_ListUnregisteredDiscoversAPoolFromItsWaitingWork(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	poolKey := pkgmodel.WorkerPoolKey("finance", "sha-abc", "man-1")
+	addWorkerTask(t, db, poolKey, workerDeploymentFixture(poolKey, "finance", "sha-abc", "man-1"))
+
+	got, err := postgres.NewWorkerPoolRepository(db).ListUnregistered(ctx)
+
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, poolKey, got[0].PoolKey)
+	assert.Equal(t, "finance", got[0].ServiceName)
+	assert.Equal(t, "sha-abc", got[0].ImageTag)
+	assert.Equal(t, pkgmodel.RuntimeManifestRef{
+		RuntimeManifestURI:                "s3://continuo/artifacts/finance/partial_parse.msgpack",
+		RuntimeManifestSHA256:             "man-1",
+		RuntimeManifestDBTVersion:         "1.12.0b1",
+		RuntimeManifestParseContextSHA256: "ctx-man-1",
+	}, got[0].RuntimeManifest, "the pool serves the artifact its work names")
+}
+
+// TestWorkerPoolRepository_ListUnregisteredSkipsARegisteredPool keeps a tick
+// from re-registering — and so re-credentialing — a pool that already exists.
+func TestWorkerPoolRepository_ListUnregisteredSkipsARegisteredPool(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := postgres.NewWorkerPoolRepository(db)
+
+	poolKey := pkgmodel.WorkerPoolKey("finance", "sha-abc", "man-1")
+	addWorkerTask(t, db, poolKey, workerDeploymentFixture(poolKey, "finance", "sha-abc", "man-1"))
+	require.NoError(t, repo.Add(ctx, poolFixture(poolKey, time.Now().UTC())))
+
+	got, err := repo.ListUnregistered(ctx)
+
+	require.NoError(t, err)
+	assert.Empty(t, got, "a pool that exists is not discovered again")
+}
+
+// TestWorkerPoolRepository_ListUnregisteredCollapsesAPoolsManyTasks proves the
+// read is about pools, not tasks: a backlog of a thousand tasks is one pool.
+func TestWorkerPoolRepository_ListUnregisteredCollapsesAPoolsManyTasks(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	poolKey := pkgmodel.WorkerPoolKey("finance", "sha-abc", "man-1")
+	for i := 0; i < 3; i++ {
+		addWorkerTask(t, db, poolKey, workerDeploymentFixture(poolKey, "finance", "sha-abc", "man-1"))
+	}
+
+	got, err := postgres.NewWorkerPoolRepository(db).ListUnregistered(context.Background())
+
+	require.NoError(t, err)
+	assert.Len(t, got, 1, "many tasks of one pool discover one pool")
+}
+
+// TestWorkerPoolRepository_ListUnregisteredSeparatesPoolsOfOneService proves a
+// service running two image tags or two runtime manifests needs two pools: a
+// worker can only serve the exact artifact it hydrated.
+func TestWorkerPoolRepository_ListUnregisteredSeparatesPoolsOfOneService(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	newImage := pkgmodel.WorkerPoolKey("finance", "sha-xyz", "man-1")
+	newManifest := pkgmodel.WorkerPoolKey("finance", "sha-abc", "man-2")
+	addWorkerTask(t, db, newImage, workerDeploymentFixture(newImage, "finance", "sha-xyz", "man-1"))
+	addWorkerTask(t, db, newManifest, workerDeploymentFixture(newManifest, "finance", "sha-abc", "man-2"))
+
+	got, err := postgres.NewWorkerPoolRepository(db).ListUnregistered(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, got, 2, "one service, two pools")
+	byKey := map[string]model.PoolIdentity{got[0].PoolKey: got[0], got[1].PoolKey: got[1]}
+	assert.Equal(t, "sha-xyz", byKey[newImage].ImageTag)
+	assert.Equal(t, "man-2", byKey[newManifest].RuntimeManifest.RuntimeManifestSHA256)
+}
+
+// TestWorkerPoolRepository_ListUnregisteredIgnoresJobsModeWork proves the Jobs
+// path never conjures a pool. Every record on a jobs-mode executor is one of
+// these, so a pool discovered from one would be a pool nothing could ever use.
+func TestWorkerPoolRepository_ListUnregisteredIgnoresJobsModeWork(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	require.NoError(t, postgres.NewDeploymentsRepository(db, testLogger()).Add(
+		context.Background(), model.NewDeployment(validCmd(), nil, time.Now().UTC())))
+
+	got, err := postgres.NewWorkerPoolRepository(db).ListUnregistered(context.Background())
+
+	require.NoError(t, err)
+	assert.Empty(t, got, "a Jobs-mode record implies no pool")
+}
+
+// TestWorkerPoolRepository_ListUnregisteredDiscoversAPoolForParkedRetries proves
+// a task waiting out its retry backoff still holds its pool open. It is going to
+// run, so retiring the pool underneath it would strand it.
+func TestWorkerPoolRepository_ListUnregisteredDiscoversAPoolForParkedRetries(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	poolKey := pkgmodel.WorkerPoolKey("finance", "sha-abc", "man-1")
+	dep := addWorkerTask(t, db, poolKey, workerDeploymentFixture(poolKey, "finance", "sha-abc", "man-1"))
+	_, err := db.Exec(`UPDATE executor_deployments SET status = 'retry_pending' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+
+	got, err := postgres.NewWorkerPoolRepository(db).ListUnregistered(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, got, 1, "a task parked for retry still needs its pool")
+}
+
+// TestWorkerPoolRepository_ListUnregisteredIgnoresSettledWork proves a pool is
+// not resurrected by history: work that has already finished needs no worker.
+func TestWorkerPoolRepository_ListUnregisteredIgnoresSettledWork(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	poolKey := pkgmodel.WorkerPoolKey("finance", "sha-abc", "man-1")
+	dep := addWorkerTask(t, db, poolKey, workerDeploymentFixture(poolKey, "finance", "sha-abc", "man-1"))
+	_, err := db.Exec(`UPDATE executor_deployments SET status = 'succeeded' WHERE id = $1`, dep.ID())
+	require.NoError(t, err)
+
+	got, err := postgres.NewWorkerPoolRepository(db).ListUnregistered(context.Background())
+
+	require.NoError(t, err)
+	assert.Empty(t, got, "a settled task does not keep a pool alive")
 }

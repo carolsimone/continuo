@@ -37,6 +37,20 @@ type WorkerPool struct {
 // Ready reports whether this pool's workers can execute tasks.
 func (p *WorkerPool) Ready() bool { return p.InitializationError == "" }
 
+// PoolIdentity is the (service, image, runtime manifest) triple a pool key
+// digests — everything about a pool except the credential its pods hold and the
+// size the reconciler gives it.
+//
+// A task routed to workers names the pool it needs by key, whether or not that
+// pool has ever been registered. This is what a pool is registered FROM: the
+// identity its waiting work already implies.
+type PoolIdentity struct {
+	PoolKey         string
+	ServiceName     string
+	ImageTag        string
+	RuntimeManifest pkgmodel.RuntimeManifestRef
+}
+
 // RecordInitializationFailure marks the pool unable to run work, keeping the
 // reported code and message together so an operator sees both what failed and
 // why.

@@ -6,8 +6,10 @@ package workerapi
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -49,6 +51,39 @@ func (a *Authenticator) Authenticate(ctx context.Context, poolKey, credential st
 	return pool, nil
 }
 
+// credentialBytes is how much entropy a pool credential carries. 32 bytes is
+// 256 bits, which is not guessable and not worth trying to guess.
+const credentialBytes = 32
+
+// NewCredential mints a pool credential.
+//
+// It is base64url-encoded so the value is safe to carry in an HTTP header and in
+// an environment variable without any escaping, which is where it travels: the
+// pod reads it from its environment and presents it as a bearer token.
+//
+// The raw value is returned to exactly one caller, which places it in the pool's
+// Secret and forgets it. Only HashCredential's digest is ever stored, so the
+// value this returns is the only copy that will exist outside the cluster's
+// Secret — it must never be logged or written anywhere else.
+func NewCredential() (string, error) {
+	buf := make([]byte, credentialBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate pool credential: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// HashCredential digests a raw pool credential into the value a pool row stores.
+//
+// It is the single definition of that mapping: whoever mints a credential and
+// whoever verifies one both come through here, so the stored digest and the
+// check against it cannot drift into disagreeing — which would present as every
+// worker in a pool failing to authenticate.
+func HashCredential(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
 // VerifyCredential reports whether raw is the credential whose digest a pool
 // stores. Only the digest is ever stored, so a read of the pool row yields
 // nothing that authenticates. The comparison is constant time, so a rejected
@@ -60,7 +95,5 @@ func VerifyCredential(raw string, expectedSHA string) bool {
 	if expectedSHA == "" {
 		return false
 	}
-	sum := sha256.Sum256([]byte(raw))
-	actual := hex.EncodeToString(sum[:])
-	return subtle.ConstantTimeCompare([]byte(actual), []byte(expectedSHA)) == 1
+	return subtle.ConstantTimeCompare([]byte(HashCredential(raw)), []byte(expectedSHA)) == 1
 }

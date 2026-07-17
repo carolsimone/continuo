@@ -32,4 +32,17 @@ type WorkerPoolRepository interface {
 	SaveInitializationError(ctx context.Context, poolKey, initializationError string, at time.Time) error
 	// List returns every registered pool, ordered by pool key.
 	List(ctx context.Context) ([]model.WorkerPool, error)
+	// ListUnregistered returns the identity of every pool that has worker-mode
+	// work waiting on it but no pool row of its own, ordered by pool key.
+	//
+	// A task routed to workers is enqueued against the pool key its runtime
+	// manifest implies, whether or not that pool exists yet — the routing
+	// decision and the pool's registration are separate events, and the task
+	// records the first. This is what closes that gap: the work already names the
+	// pool it needs, so the pools that must exist are read from the work waiting
+	// for them rather than declared anywhere.
+	//
+	// A pool with no waiting work is not returned. Registration follows demand,
+	// so a pool is created when something needs it and not before.
+	ListUnregistered(ctx context.Context) ([]model.PoolIdentity, error)
 }

@@ -57,6 +57,18 @@ func (p Policy) Validate(serviceName, dispatchMode, dbtUniqueID string, ref pkgm
 	return ref.Validate()
 }
 
+// ModeFor returns the mode configured for serviceName, regardless of any one
+// record.
+//
+// Resolve answers for a record, which can be forced onto the Jobs path by what
+// it is; this answers for the service, which is what the configuration actually
+// says. A pool serves a service rather than a record, so the pool reconciler
+// asks this: a service turned back to jobs must stop being given workers even
+// though no individual record says so.
+func (p Policy) ModeFor(serviceName string) model.ExecutionMode {
+	return p.modeFor(serviceName)
+}
+
 // modeFor returns the mode configured for serviceName.
 func (p Policy) modeFor(serviceName string) model.ExecutionMode {
 	if mode, ok := p.overrides[serviceName]; ok {
