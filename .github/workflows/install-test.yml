@@ -26,12 +26,22 @@ on:
       - 'deploy/continuo/**'
       - 'scripts/install-test/**'
       - '.github/workflows/install-test.yml'
+      # release.yml and the scripts it drives have no other CI gate — this
+      # is the only workflow that parses and exercises them (run.sh sources
+      # common.sh, and install-test is the callable gate release.yml runs
+      # against a live tag).
+      - 'scripts/release/**'
+      - '.github/workflows/release.yml'
+      - 'scripts/lib/common.sh'
   workflow_call:
     inputs:
       image_tag:
         description: Tag of the published continuo images the chart installs.
         required: true
         type: string
+
+permissions:
+  contents: read
 
 concurrency:
   group: install-test-${{ github.ref }}

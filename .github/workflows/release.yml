@@ -94,4 +94,6 @@ jobs:
           mkdir -p /tmp/chart-verify
           helm pull "oci://ghcr.io/${{ github.repository_owner }}/charts/continuo" \
             --version "${VERSION}" -d /tmp/chart-verify
-          helm show chart "/tmp/chart-verify/continuo-${VERSION}.tgz" | grep -E "^(version|appVersion):"
+          helm show chart "/tmp/chart-verify/continuo-${VERSION}.tgz" > /tmp/chart-verify/chart-meta.yaml
+          grep -qx "version: ${VERSION}" /tmp/chart-verify/chart-meta.yaml
+          grep -qx "appVersion: ${GITHUB_REF_NAME}" /tmp/chart-verify/chart-meta.yaml

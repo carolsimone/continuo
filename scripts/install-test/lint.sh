@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Chart lint gate for deploy/continuo: helm lint + helm template across every
-# supported values topology, then kube-linter over each rendered manifest.
-# Runs identically in CI (install-test.yml) and locally; needs helm and Go.
+# supported values topology, then kube-linter over each rendered manifest,
+# plus a bash -n syntax check on the release-flow scripts (they have no
+# other CI gate). Runs identically in CI (install-test.yml) and locally;
+# needs helm and Go.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -40,5 +42,8 @@ for entry in "${renders[@]}"; do
   echo "--- kube-linter (${name})"
   "${KUBE_LINTER[@]}" lint --config "${CHART}/.kube-linter.yaml" "${tmp}/${name}.yaml"
 done
+
+echo "--- bash -n (release scripts)"
+bash -n scripts/release/retag-images.sh
 
 echo "Chart lint OK across ${#renders[@]} topologies."

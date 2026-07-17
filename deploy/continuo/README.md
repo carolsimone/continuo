@@ -226,3 +226,8 @@ Pushing a `vX.Y.Z` git tag runs `release.yml`:
 ghcr packages created by CI start private, and GitHub has no API for
 container-package visibility — the first publish needs a one-time manual flip
 to public in the package's UI settings (Package settings → Change visibility).
+
+ghcr OCI tags are mutable: re-pushing an existing `vX.Y.Z` git tag re-runs
+this whole flow and silently overwrites both the retagged images and the
+published chart version, so treat release tags as immutable by convention —
+never force-push or reuse one.

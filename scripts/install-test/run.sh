@@ -59,9 +59,9 @@ helm install "$RELEASE" "$CHART" -n "$NS" "${helm_args[@]}" \
 
 kubectl -n "$NS" get pods
 
-# Every pod must be Running or Succeeded (completed Jobs). Anything Pending/
-# Failed/CrashLoopBackOff at this point is an install failure --wait let slip
-# through (e.g. an unschedulable extra replica).
+# Every pod must be Running or Succeeded (completed Jobs). Anything Pending
+# or Failed at this point slipped through --wait; crashlooping pods keep
+# phase=Running and are caught earlier by --wait's readiness gate.
 not_healthy="$(kubectl -n "$NS" get pods \
   --field-selector=status.phase!=Running,status.phase!=Succeeded \
   --no-headers 2>/dev/null || true)"
@@ -93,7 +93,7 @@ trap 'kill "$pf_ui" "$pf_dex" 2>/dev/null || true' EXIT
 
 wait_for_http_host http://127.0.0.1:18090/healthz 15 2
 wait_for_http_host http://127.0.0.1:15556/dex/.well-known/openid-configuration 15 2
-curl -sf http://127.0.0.1:15556/dex/.well-known/openid-configuration \
-  | grep -q "\"issuer\": *\"http://${RELEASE}-dex:5556/dex\""
+grep -q "\"issuer\": *\"http://${RELEASE}-dex:5556/dex\"" \
+  <<<"$(curl -sf http://127.0.0.1:15556/dex/.well-known/openid-configuration)"
 
 log_info "install-test (${MODE}) OK"
