@@ -11,6 +11,19 @@ pass `--kube-version 1.29.0` (or your real cluster's version) when rendering
 outside a live cluster — otherwise Helm rejects the chart's `kubeVersion` gate
 before it ever reads a template.
 
+Released versions are published as an OCI chart, so an install needs no repo
+clone at all:
+
+```bash
+helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
+  --version <X.Y.Z> -n continuo --create-namespace
+```
+
+No `--set global.imageTag` here: the published chart's `appVersion` is the
+release tag (`v<X.Y.Z>`), which pins every continuo image to that release.
+Repo-clone installs (the rest of this README) keep passing `global.imageTag`
+explicitly because the in-repo `appVersion` is a dev placeholder.
+
 ## 1. Quickstart (bundled everything)
 
 ```bash
@@ -180,3 +193,44 @@ Every container in this chart, bundled or not, gets:
 | `github.token` / `github.appId` / `github.installationId` / `github.appPrivateKey` (or `github.existingSecret`) | Optional. `token` is a read-only PAT (Personal Access Token) remediation-agent uses to fetch source; the `app*` fields are a GitHub App ui-service uses to open fix PRs (Pull Requests) — Create-PR returns `503` until they're set. |
 | `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | CronJob that trims old Redis Stream entries. |
 | `services[].resources` / `defaultResources` | Per-service CPU/memory requests and limits; any service without its own `resources` block falls back to `defaultResources`. |
+
+## 5. Release flow and CI gates
+
+Every PR that touches this chart (or the install-test harness under
+`scripts/install-test/`) runs `install-test.yml`: `helm lint` +
+`helm template` + kube-linter across four values topologies (defaults,
+`values-byo.yaml.example`, BYO-inline, BYO-existingSecret), then three real
+kind installs — bundled, BYO with inline credentials, and BYO with a
+pre-created Secret — each verified for completed migrations, healthy pods,
+and answering ui-service/Dex endpoints. Install jobs also layer on a CI-only
+low-CPU-request values override so the chart fits the runner's 2 vCPUs. PR
+installs use the latest published main-branch images, so they prove the
+install path; the e2e suite in `ci.yml` proves the code. The kind cluster
+these jobs create enforces `NetworkPolicy`, so the chart's default-deny and
+allow policies are behaviorally exercised here, not just rendered — the BYO
+fixture datastores need their own explicit ingress-allow policies precisely
+because the chart's default-deny would otherwise block them.
+
+Pushing a `vX.Y.Z` git tag runs `release.yml`:
+
+1. `release.yml` first refuses any tag whose commit is not an ancestor of
+   `origin/main` — a release ships exactly what main ships. Every published
+   image is then retagged from the tagged commit's `:<git-sha>` to
+   `:vX.Y.Z`. The tag must point at a main commit whose push ran
+   `deploy.yml`'s build-publish job; otherwise the release fails closed with
+   remediation instructions
+   (`gh workflow run deploy.yml --ref main -f force_publish=true`, then tag
+   that head).
+2. The same install test runs against the `:vX.Y.Z` images and gates the
+   publish.
+3. The chart is packaged with `version: X.Y.Z` and `appVersion: vX.Y.Z` and
+   pushed to `oci://ghcr.io/carolsimone/charts/continuo`.
+
+ghcr packages created by CI start private, and GitHub has no API for
+container-package visibility — the first publish needs a one-time manual flip
+to public in the package's UI settings (Package settings → Change visibility).
+
+ghcr OCI tags are mutable: re-pushing an existing `vX.Y.Z` git tag re-runs
+this whole flow and silently overwrites both the retagged images and the
+published chart version, so treat release tags as immutable by convention —
+never force-push or reuse one.

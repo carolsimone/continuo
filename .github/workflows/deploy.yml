@@ -5,6 +5,14 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_publish:
+        description: >-
+          Publish :<git-sha> images for the current commit even when no
+          release paths changed (used to backfill images before tagging a
+          release). Skips the Hetzner deploy step.
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-main
@@ -168,7 +176,10 @@ jobs:
           echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
 
   build-publish:
-    if: needs.detect-changes.outputs.release == 'true'
+    # force_publish backfills :<git-sha> images on a manual dispatch even
+    # when no release path changed (inputs is empty on push, so this
+    # reduces to today's behavior there).
+    if: needs.detect-changes.outputs.release == 'true' || inputs.force_publish == true
     needs: detect-changes
     # GitHub-hosted on purpose: this is a matrix (one job per service) that runs
     # in parallel here for free. On the single self-hosted runner the jobs
@@ -238,7 +249,9 @@ jobs:
           fi
 
   deploy:
-    if: needs.detect-changes.outputs.release == 'true'
+    # force_publish is a backfill-only run (see build-publish above); it
+    # never deploys, so it never touches the Hetzner box.
+    if: needs.detect-changes.outputs.release == 'true' && inputs.force_publish != true
     needs:
       - detect-changes
       - build-publish
