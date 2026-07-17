@@ -12,8 +12,11 @@ name: install-test
 # Always GitHub-hosted: needs no repo secrets (the ghcr images are public),
 # so it is fork-safe and never routes to the self-hosted box.
 #
-# Known limitation: kind's default CNI does not enforce NetworkPolicies, so
-# the chart's policies are rendered and applied but not behaviorally tested.
+# The kind cluster created by helm/kind-action enforces NetworkPolicies, so
+# the chart's default-deny and allow policies are behaviorally exercised
+# here, not just rendered: the BYO fixtures need their own explicit
+# ingress-allow policies precisely because the default-deny blocks them
+# otherwise.
 
 on:
   pull_request:
