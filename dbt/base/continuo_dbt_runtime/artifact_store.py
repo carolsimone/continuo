@@ -75,7 +75,7 @@ def download_bytes(url: str) -> bytes:
     try:
         with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
             return response.read()
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
         reason = getattr(exc, "code", None) or getattr(exc, "reason", exc.__class__.__name__)
         raise RuntimeError(f"download failed for {_redacted(url)}: {reason}") from None
 
