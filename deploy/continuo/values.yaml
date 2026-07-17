@@ -304,7 +304,7 @@ services:
         # taken back, so delete joins the reads the Jobs path already makes.
         - apiGroups: [""]
           resources: ["pods"]
-          verbs: ["get", "list", "watch", "delete"]
+          verbs: ["get", "list", "delete"]
         # A worker pool is a Deployment the reconciler creates and resizes.
         - apiGroups: ["apps"]
           resources: ["deployments"]

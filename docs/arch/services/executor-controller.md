@@ -127,6 +127,8 @@ How a production record reaches dbt: `jobs` gives every task its own Kubernetes 
 
 The three `WORKER_*` durations are Go duration strings (`60s`); a bare number is not parsed and leaves the in-code default in place. The deployed configuration is `EXECUTION_MODE=jobs` with empty overrides, so no task is routed to a worker until a service is explicitly named.
 
+Worker pools emit no metrics. Pool size, claim latency, lease expiry, and reaped pods are visible only in the executor's logs and in the `executor_deployments` rows themselves, so a service pinned to `workers` is observed by querying that table or reading logs rather than from a dashboard.
+
 ### Command resolution (`dbt-commands.yaml`)
 
 Container commands for production runs, seed-build, and compile Jobs are resolved through the `ports.CommandResolver` port rather than a hardcoded dbt invocation. `adapters/commandcfg.Resolver` implements the port by loading an optional `dbt-commands.yaml` file at the path given by the `DBT_COMMANDS_CONFIG_PATH` environment variable. The file covers seven operations — `run`, `seed`, `snapshot`, `seed_build`, `test`, `build`, `compile`. When a file is present, the `default` block is required and must define all seven, and every `services.<name>` override must define all seven too; a service never falls through to `default` or a built-in for a missing key. An incomplete or missing block is a fatal boot error. With no file, the built-in complete plain-dbt default is used for every service:

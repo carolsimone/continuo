@@ -152,6 +152,36 @@ func TestRBAC_EveryDeployedRoleCoversWhatTheRuntimeCalls(t *testing.T) {
 	}
 }
 
+// TestRBAC_EveryDeployedRoleGrantsTheSame pins that the three manifests are
+// three spellings of one Role. The tests around this one bound each manifest
+// from below (every call the runtime makes is granted) and from above (over the
+// resources the pools own), which between them leave a verb like watch on pods
+// free to differ per manifest: unused by the runtime, so no lower bound reaches
+// it, and outside poolOwnedResources, so no upper bound does either. A Role that
+// is stricter in one environment than another fails only where it is stricter,
+// which is the environment least likely to be the one under test.
+func TestRBAC_EveryDeployedRoleGrantsTheSame(t *testing.T) {
+	reference := rbacManifests[0]
+	expected := executorRBAC(t, reference)
+	for _, manifest := range rbacManifests[1:] {
+		t.Run(manifest, func(t *testing.T) {
+			actual := executorRBAC(t, manifest)
+			for call := range actual {
+				if !expected[call] {
+					t.Errorf("%s allows %s on %q (apiGroup %q), which %s does not",
+						manifest, call.verb, call.resource, call.apiGroup, reference)
+				}
+			}
+			for call := range expected {
+				if !actual[call] {
+					t.Errorf("%s does not allow %s on %q (apiGroup %q), which %s does",
+						manifest, call.verb, call.resource, call.apiGroup, reference)
+				}
+			}
+		})
+	}
+}
+
 // poolOwnedResources are the resources only the worker pools use. Jobs and pods
 // are left out because the Jobs path reads them too, so a verb there is not the
 // pool runtime's to justify.

@@ -56,4 +56,12 @@ log_info "Deleting dbt worker pools..."
 kubectl delete deployment,secret,pod -n default \
     -l app=continuo-dbt-worker --ignore-not-found=true || true
 
+# Delete the reachability policies. The cluster is shared and long-lived, so a
+# default-deny left in the namespace would outlive the suite and silently govern
+# every pod any other workflow puts there, with no manifest outside this suite
+# to explain it.
+log_info "Deleting network policies..."
+kubectl delete networkpolicy default-deny-ingress allow-executor-worker-api \
+    -n default --ignore-not-found=true || true
+
 log_info "Cleanup complete!"
