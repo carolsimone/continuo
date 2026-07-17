@@ -509,27 +509,38 @@ func baselineServices(t *testing.T, ctx context.Context, clients *testClients) m
 	// Re-establish the per-service image pointers a prior blue/green test may
 	// have mutated, so readServiceImageTag below sees the full baseline.
 	seedBaselineServiceProd(t, ctx, clients)
-	// Discover all services by listing objects under their baseline prefix.
-	out, err := clients.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(e2eS3Bucket),
-	})
-	require.NoError(t, err, "list S3 objects for baseline discovery")
-
+	// Discover all services by listing objects under their baseline prefix. The
+	// listing MUST paginate: ListObjectsV2 returns at most 1000 keys per page, and
+	// a long-lived stack accumulates far more than that in per-run dbt logs under
+	// dbt-runs/, so a single un-paginated page can miss the e2e-baseline manifests
+	// entirely and silently report "no baseline manifests".
 	services := map[string]serviceInfo{}
-	for _, obj := range out.Contents {
-		key := aws.ToString(obj.Key)
-		// Match <service>/e2e-baseline/manifest.json
-		suffix := "/" + e2eBaselineReleaseID + "/manifest.json"
-		if !strings.HasSuffix(key, suffix) {
-			continue
+	suffix := "/" + e2eBaselineReleaseID + "/manifest.json"
+	var token *string
+	for {
+		out, err := clients.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(e2eS3Bucket),
+			ContinuationToken: token,
+		})
+		require.NoError(t, err, "list S3 objects for baseline discovery")
+		for _, obj := range out.Contents {
+			key := aws.ToString(obj.Key)
+			// Match <service>/e2e-baseline/manifest.json
+			if !strings.HasSuffix(key, suffix) {
+				continue
+			}
+			service := strings.TrimSuffix(key, suffix)
+			if strings.Contains(service, "/") {
+				continue // skip keys with extra path segments
+			}
+			nodes := parseManifestNodes(t, getS3Object(t, ctx, clients, key))
+			imageTag := readServiceImageTag(t, ctx, clients, service)
+			services[service] = serviceInfo{imageTag: imageTag, nodes: nodes}
 		}
-		service := strings.TrimSuffix(key, suffix)
-		if strings.Contains(service, "/") {
-			continue // skip keys with extra path segments
+		if out.IsTruncated == nil || !*out.IsTruncated {
+			break
 		}
-		nodes := parseManifestNodes(t, getS3Object(t, ctx, clients, key))
-		imageTag := readServiceImageTag(t, ctx, clients, service)
-		services[service] = serviceInfo{imageTag: imageTag, nodes: nodes}
+		token = out.NextContinuationToken
 	}
 	return services
 }
