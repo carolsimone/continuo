@@ -11,11 +11,11 @@ import (
 // This pins that it always loads and that finance resolves to the wise-dbt
 // dialect for every operation while other services fall back to the default.
 func TestDeployedConfigResolvesFinanceDialect(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "deploy", "app", "files", "dbt-commands.yaml")
+	path := filepath.Join("..", "..", "..", "deploy", "continuo", "files", "dbt-commands.yaml")
 
 	r, err := Load(path, testLogger())
 	if err != nil {
-		t.Fatalf("shipped deploy/app/files/dbt-commands.yaml must load: %v", err)
+		t.Fatalf("shipped deploy/continuo/files/dbt-commands.yaml must load: %v", err)
 	}
 
 	gotRun := r.NodeCommand("finance", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "fx_transactions_eur")

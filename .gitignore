@@ -58,12 +58,6 @@ ui-service/.superpowers*
 docs/superpowers/*
 docs/future-dev/*
 
-# Helm chart dependencies
-deploy/infra/charts/
-deploy/app/charts/
-deploy/app/values.secret.yaml
-deploy/infra/values.secret.yaml
-
 # CLAUDE
 .claude/settings.json
 .claude/settings.local.json
