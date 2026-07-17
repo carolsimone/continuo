@@ -77,10 +77,10 @@ func TestAuthorize_StaleLeaseDominatesPoolMismatch(t *testing.T) {
 	assert.NotErrorIs(t, err, lease.ErrPoolMismatch)
 }
 
-// TestHeartbeat_OnACancelledTaskTellsTheWorkerToStop. Cancelling a schedule
-// does not reach the worker pod, so the heartbeat is the only channel by which
-// a worker learns its task was cancelled. It must say so unambiguously rather
-// than fail as an unexpected status.
+// TestHeartbeat_OnACancelledTaskTellsTheWorkerToStop. Cancelling keeps the lease
+// on the task, so a worker that outlives its pod's termination grace period and
+// heartbeats once more still authorizes. It must be told its task was cancelled
+// unambiguously rather than fail as an unexpected status.
 func TestHeartbeat_OnACancelledTaskTellsTheWorkerToStop(t *testing.T) {
 	h := newHarness(t, 10)
 	ctx := context.Background()
@@ -114,6 +114,69 @@ func TestHeartbeat_OnACancelledTaskStillFencesAStranger(t *testing.T) {
 
 	err = h.svc.Heartbeat(ctx, lease.HeartbeatInput{
 		PoolKey: poolKey, DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: "guessed-token",
+	})
+
+	assert.ErrorIs(t, err, model.ErrStaleLease)
+	assert.NotErrorIs(t, err, lease.ErrCancelled)
+}
+
+// TestComplete_OnACancelledTaskTellsTheWorkerToStop. Cancelling keeps the lease
+// on the task, so a worker that finishes its dbt run inside its pod's
+// termination grace period still authorizes. Its report must be answered
+// "cancelled" — which the worker treats as final — rather than reaching the
+// aggregate's status guard and coming back as a fault the worker would retry
+// against for the life of its pod.
+func TestComplete_OnACancelledTaskTellsTheWorkerToStop(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result model.WorkerResult
+	}{
+		{"success", model.WorkerResult{Succeeded: true}},
+		{"failure", model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "boom"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, 10)
+			ctx := context.Background()
+			dep := h.seedDue(workerCmd())
+			grant := h.mustClaim(t)
+
+			loaded, err := h.repo.GetByID(ctx, dep.ID())
+			require.NoError(t, err)
+			require.NoError(t, loaded.Cancel("schedule cancelled", h.clock.now))
+			require.NoError(t, h.repo.Save(ctx, loaded))
+
+			err = h.svc.Complete(ctx, lease.CompleteInput{
+				PoolKey: poolKey, DeploymentID: dep.ID(), LeaseID: grant.LeaseID,
+				Token: grant.Token, Result: tc.result,
+			})
+
+			assert.ErrorIs(t, err, lease.ErrCancelled)
+			// The cancelled task is what it was: a late report settles nothing and
+			// announces nothing.
+			assert.Equal(t, model.StatusCancelled, h.repo.statusOf(dep.ID()))
+			assert.Empty(t, h.outbox.entries)
+		})
+	}
+}
+
+// TestComplete_OnACancelledTaskStillFencesAStranger keeps cancellation from
+// leaking to a caller that does not hold the lease, exactly as the heartbeat
+// path does: the fence runs first, so a guessed token learns only that its lease
+// is stale and never that the task exists.
+func TestComplete_OnACancelledTaskStillFencesAStranger(t *testing.T) {
+	h := newHarness(t, 10)
+	ctx := context.Background()
+	dep := h.seedDue(workerCmd())
+	grant := h.mustClaim(t)
+
+	loaded, err := h.repo.GetByID(ctx, dep.ID())
+	require.NoError(t, err)
+	require.NoError(t, loaded.Cancel("schedule cancelled", h.clock.now))
+	require.NoError(t, h.repo.Save(ctx, loaded))
+
+	err = h.svc.Complete(ctx, lease.CompleteInput{
+		PoolKey: poolKey, DeploymentID: dep.ID(), LeaseID: grant.LeaseID,
+		Token: "guessed-token", Result: model.WorkerResult{Succeeded: true},
 	})
 
 	assert.ErrorIs(t, err, model.ErrStaleLease)

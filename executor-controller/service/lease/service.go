@@ -50,9 +50,10 @@ var ErrPoolMismatch = errors.New("task belongs to another pool")
 var ErrNoSuchDeployment = errors.New("executor deployment does not exist")
 
 // ErrCancelled tells the lease holder its task was cancelled and it must stop.
-// Cancelling a schedule does not reach a worker pod, so the heartbeat is the
-// only channel by which a running worker learns this; a worker that gets it
-// abandons the task rather than retrying.
+// Cancelling a task deletes the pod running it, so a worker sees this only by
+// outliving the deletion's termination grace period and reporting once more. It
+// is terminal for that report: a worker that gets it abandons the task rather
+// than retrying.
 var ErrCancelled = errors.New("task was cancelled")
 
 // unretryableErrorClasses are the failures no rerun can fix: the task's runtime
@@ -341,8 +342,10 @@ func (s *Service) Start(ctx context.Context, in StartInput) error {
 // fenced, so it cannot keep a reassigned task's lease alive.
 //
 // A heartbeat on a cancelled task returns ErrCancelled to the holder. Cancelling
-// a task releases its slot but does not stop the pod running it, so this is the
-// worker's only notice that its work is no longer wanted.
+// a task deletes the pod running it, which Kubernetes serves with a termination
+// grace period; this answers the worker that outlives that period and reports
+// once more, telling it to abandon the task rather than failing as an unexpected
+// status it would retry against.
 func (s *Service) Heartbeat(ctx context.Context, in HeartbeatInput) error {
 	return s.withTx(ctx, func(repo repository.DeploymentRepository, _ outbox.Repository) error {
 		dep, err := s.load(ctx, repo, in.DeploymentID)
@@ -367,6 +370,15 @@ func (s *Service) Heartbeat(ctx context.Context, in HeartbeatInput) error {
 // A success settles the task; a failure is classified and either parked for
 // requeue or failed permanently. The transition and its announcements commit
 // together, so a task never settles silently.
+//
+// A terminal report on a cancelled task returns ErrCancelled, as a heartbeat on
+// one does. Cancelling keeps the lease, so a worker that finishes its dbt run
+// inside the deletion's grace period still authorizes; without this it would
+// reach the aggregate's status guard and be answered a fault it would retry
+// against for as long as its pod lived. The check follows the lease fence for
+// the same reason Heartbeat's does: a caller that does not hold the lease is
+// told only that its lease is stale, and cannot learn from a distinct answer
+// that the task it guessed at exists and was cancelled.
 func (s *Service) Complete(ctx context.Context, in CompleteInput) error {
 	return s.withTx(ctx, func(repo repository.DeploymentRepository, outboxRepo outbox.Repository) error {
 		dep, err := s.load(ctx, repo, in.DeploymentID)
@@ -375,6 +387,9 @@ func (s *Service) Complete(ctx context.Context, in CompleteInput) error {
 		}
 		if err := s.authorize(dep, in.LeaseID, in.Token, in.PoolKey); err != nil {
 			return err
+		}
+		if dep.Status() == model.StatusCancelled {
+			return ErrCancelled
 		}
 		if in.Result.Succeeded {
 			return s.succeed(ctx, repo, outboxRepo, dep, in)

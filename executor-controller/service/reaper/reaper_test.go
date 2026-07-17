@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
+	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	"github.com/carolsimone/continuo/executor-controller/service/reaper"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -154,6 +155,14 @@ type harness struct {
 }
 
 func newHarness(dep *model.Deployment, pods *recordingTerminator) *harness {
+	h := newHarnessWithPods(dep, pods)
+	h.pods = pods
+	return h
+}
+
+// newHarnessWithPods wires a Reaper to any pod terminator, for the tests that
+// need one the reaper's own recording stub does not model.
+func newHarnessWithPods(dep *model.Deployment, pods ports.PodTerminator) *harness {
 	repo := &stubDeployments{expired: dep}
 	out := &stubOutbox{}
 	u := &uow.FakeUnitOfWork{Deployments: repo, Outbox: out}
@@ -167,7 +176,6 @@ func newHarness(dep *model.Deployment, pods *recordingTerminator) *harness {
 		}),
 		repo:   repo,
 		outbox: out,
-		pods:   pods,
 	}
 }
 
@@ -344,6 +352,58 @@ func TestReapOne_StopsThePodOfAWorkerThatNeverStarted(t *testing.T) {
 	var rec pkgevents.TaskExecutionRecorded
 	require.NoError(t, json.Unmarshal(h.outbox.entry(t, "task_execution_recorded").Payload, &rec))
 	assert.Empty(t, rec.StartedAt, "a worker that never reported a start timed nothing")
+}
+
+// strictTerminator rejects a deletion that names no pod, as the Kubernetes API
+// does: a resource name is required, so a delete by an empty name is a request
+// error rather than a no-op.
+type strictTerminator struct {
+	recordingTerminator
+}
+
+func (t *strictTerminator) DeletePod(ctx context.Context, podName, podUID string) error {
+	if podName == "" || podUID == "" {
+		return errors.New(`resource name may not be empty`)
+	}
+	return t.recordingTerminator.DeletePod(ctx, podName, podUID)
+}
+
+// leasedTaskWithoutPod builds an expired leased task whose lease names no pod.
+func leasedTaskWithoutPod(t *testing.T) (*model.Deployment, uuid.UUID) {
+	t.Helper()
+	dep := model.NewWorkerDeployment(command.DeployTask{
+		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
+		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public", TableName: "orders",
+		JobName: "dbt-public-orders", NodeType: "dbt-model", ImageTag: "sha-abc",
+		TaskRetryCount: 0, TaskMaxRetries: 3,
+	}, uuid.Nil, "pool-abc", time.Unix(90, 0))
+	leaseID := uuid.New()
+	require.NoError(t, dep.Claim(leaseID, "digest", "worker-1", "", "",
+		time.Unix(100, 0), time.Unix(150, 0), []string{"dbt", "run"}, model.ExecutionPathNative))
+	return dep, leaseID
+}
+
+// TestReapOne_RecoversALeaseThatNamedNoPod pins that a lease carrying no pod
+// identity does not strand its task's execution slot. The pod cannot be stopped
+// by UID and a delete by an empty name is rejected by the API every time, so
+// attempting one would fail the recovery on every tick: the task would keep its
+// slot for good and the run would wait forever on a node no worker will report
+// on. The recovery goes ahead instead, which still fences the lease.
+func TestReapOne_RecoversALeaseThatNamedNoPod(t *testing.T) {
+	dep, leaseID := leasedTaskWithoutPod(t)
+	running(t, dep, leaseID)
+	term := &strictTerminator{}
+	h := newHarnessWithPods(dep, term)
+
+	found, err := h.reaper.ReapOne(context.Background())
+
+	require.NoError(t, err, "a lease that named no pod must not stall the reaper")
+	assert.True(t, found)
+	assert.Empty(t, term.calls(), "no pod identity, nothing to ask the runtime for")
+	assert.Equal(t, model.StatusRetryPending, dep.Status(), "the task is still recovered")
+	require.NotNil(t, dep.SlotReleasedAt(), "and its execution slot comes back")
+	assert.Nil(t, dep.ActiveLease(), "the lease is still fenced")
+	assert.Len(t, h.repo.saved, 1)
 }
 
 // unleasedDeployments serves whatever row it is given, with no regard for

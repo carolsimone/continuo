@@ -159,12 +159,6 @@ func (r *Reaper) recover(
 	}
 
 	cmd := dep.Command()
-	result := model.WorkerResult{
-		Succeeded:    false,
-		Retryable:    true,
-		ErrorClass:   expiredErrorClass,
-		ErrorMessage: expiredErrorMessage,
-	}
 	if cmd.TaskRetryCount+1 < cmd.TaskMaxRetries {
 		if err := dep.MarkRetryPending(now, r.retryBackoff); err != nil {
 			return fmt.Errorf("park expired deployment %s for retry: %w", dep.ID(), err)
@@ -175,7 +169,7 @@ func (r *Reaper) recover(
 		r.logger.Warn("Worker lease expired — the task will be offered again",
 			"deployment_id", dep.ID(), "task_id", cmd.TaskID, "lease_id", lease.ID,
 			"owner", lease.Owner, "attempt", lease.Attempt)
-		return r.fanout.RetryableFailure(ctx, outboxRepo, dep, exec, result)
+		return r.fanout.RetryableFailure(ctx, outboxRepo, dep, exec, expiredResult(true))
 	}
 
 	// The task's last allowed attempt is the one that went silent: nothing is
@@ -189,7 +183,21 @@ func (r *Reaper) recover(
 	r.logger.Error("Worker lease expired with no attempts left — failing the task",
 		"deployment_id", dep.ID(), "task_id", cmd.TaskID, "lease_id", lease.ID,
 		"owner", lease.Owner, "attempt", lease.Attempt)
-	return r.fanout.PermanentFailure(ctx, outboxRepo, dep, exec, result)
+	return r.fanout.PermanentFailure(ctx, outboxRepo, dep, exec, expiredResult(false))
+}
+
+// expiredResult describes the failure an expired lease is announced as. retryable
+// states whether the task has an attempt left, so the announced result agrees
+// with the transition the recovery made: a task parked for requeue is reported
+// retryable, and one that has exhausted its attempts is reported as the permanent
+// failure it settled as.
+func expiredResult(retryable bool) model.WorkerResult {
+	return model.WorkerResult{
+		Succeeded:    false,
+		Retryable:    retryable,
+		ErrorClass:   expiredErrorClass,
+		ErrorMessage: expiredErrorMessage,
+	}
 }
 
 // stopPod stops the pod that held the expired lease. A lease that never named

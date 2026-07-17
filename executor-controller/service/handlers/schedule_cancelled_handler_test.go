@@ -351,6 +351,49 @@ func TestScheduleCancelledHandler_RedeliveryFencesNoPod(t *testing.T) {
 	assert.Len(t, repo.saved, 1)
 }
 
+// strictTerminator rejects a deletion that names no pod, as the Kubernetes API
+// does: a resource name is required, so a delete by an empty name is a request
+// error rather than a no-op.
+type strictTerminator struct {
+	recordingTerminator
+}
+
+func (t *strictTerminator) DeletePod(ctx context.Context, podName, podUID string) error {
+	if podName == "" || podUID == "" {
+		return errors.New(`resource name may not be empty`)
+	}
+	return t.recordingTerminator.DeletePod(ctx, podName, podUID)
+}
+
+// TestScheduleCancelledHandler_CancelsALeaseThatNamedNoPod pins that a lease
+// carrying no pod identity does not wedge the cancel consumer. The pod cannot be
+// fenced by UID and a delete by an empty name is rejected by the API every time,
+// so attempting one would fail the handler, roll the tombstone back, and have the
+// redelivered message fail again — the schedule could never settle and the
+// consumer would spin on it forever. The row goes terminal instead, which fences
+// every report its holder sends.
+func TestScheduleCancelledHandler_CancelsALeaseThatNamedNoPod(t *testing.T) {
+	scheduleID := uuid.New()
+	now := time.Now()
+
+	leased := leasedWorkerDeployment(t, scheduleID, "", "", now)
+	repo := &stubDeploymentsRepo{
+		bySchedule: map[uuid.UUID][]*model.Deployment{scheduleID: {leased}},
+	}
+	term := &strictTerminator{}
+	u := newFakeUoW(repo, &recordingCancelledRepo{})
+
+	h := handlers.NewScheduleCancelledHandler(cancelTestLogger(), term)
+	err := h.Handle(context.Background(), u,
+		events.ScheduleCancelled{ScheduleID: scheduleID}, uuid.New())
+
+	require.NoError(t, err, "a lease that named no pod must not wedge the cancellation")
+	assert.Empty(t, term.calls(), "no pod identity, nothing to ask the runtime for")
+	assert.Equal(t, model.StatusCancelled, leased.Status(), "the row still settles")
+	assert.NotNil(t, leased.SlotReleasedAt(), "and returns its execution slot")
+	assert.Len(t, repo.saved, 1)
+}
+
 // TestScheduleCancelledHandler_KeepsTheLeaseSoItsWorkerIsToldItWasCancelled pins
 // that cancelling does not drop the lease. Deleting a pod is a request
 // Kubernetes serves with a termination grace period, so a worker can outlive it

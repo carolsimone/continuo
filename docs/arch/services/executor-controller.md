@@ -276,9 +276,13 @@ superseded worker retrying against the fence forever.
 | Task was cancelled | `410` | `cancelled` |
 | Malformed body or identifier | `400` | `invalid_request` |
 
-`410 cancelled` on heartbeat is the only channel by which a running worker learns
-its task was cancelled: cancelling a task releases its slot but does not stop the
-pod, so the worker is told at its next heartbeat and abandons the task.
+`410 cancelled` answers a heartbeat and a terminal report alike. Cancelling a task
+releases its slot and deletes the pod running it, which Kubernetes serves with a
+termination grace period; a worker that outlives that period still holds the lease
+— cancelling keeps it — so whichever call it makes next is answered `410` and it
+abandons the task. Both calls are checked after the lease fence, so a caller that
+does not hold the lease is answered `409 stale_lease` and learns nothing about the
+task.
 
 **Signed URLs are capabilities.** A worker holds no object-store credential. It
 reads its artifact and writes its results through URLs the executor signs, each
