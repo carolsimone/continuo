@@ -85,12 +85,18 @@ func TestE2E_WorkerPerformance(t *testing.T) {
 	for attempt := 0; attempt < wantJob+8 && len(jobMS) < wantJob; attempt++ {
 		run := triggerWorkerNode(t, ctx, clients, "service-3", "e2e_schema", "worker_perf")
 		verifySchedulerSucceeded(t, ctx, clients, run)
-		reserved, taskID, mode, ok := jobReservationTiming(t, ctx, clients, run)
+		reserved, jobName, mode, ok := jobReservationTiming(t, ctx, clients, run)
 		require.True(t, ok, "no job deployment row for run %s", run)
 		require.Equal(t, "jobs", mode, "rollback sample must have run on the Jobs path")
-		started, ok := stateTaskStartedAt(t, ctx, clients, taskID)
+		// The Job's dbt process start is the container's kubelet-observed start
+		// time. Reservation (executor clock) to container start (kubelet clock)
+		// crosses clocks, but a Job's reservation→dbt-start is seconds (pod
+		// schedule + container boot), so the tens-of-milliseconds host clock skew
+		// that made a worker's sub-20ms cross-clock number meaningless is immaterial
+		// here.
+		started, ok := jobContainerStart(t, ctx, jobName)
 		if !ok {
-			t.Logf("run %s has no recorded dbt start yet — skipping as a timing sample", run)
+			t.Logf("run %s job pod start not yet observable — skipping as a timing sample", run)
 			continue
 		}
 		jobMS = append(jobMS, started.Sub(reserved).Seconds()*1000)
@@ -139,36 +145,69 @@ func workerTiming(t *testing.T, ctx context.Context, clients *testClients, runID
 	return *row.StartedAt, *row.SlotReservedAt, row.ExecutionMode, true
 }
 
-// jobReservationTiming returns the slot reservation time and task_id of the Job
+// jobReservationTiming returns the slot reservation time and job name of the Job
 // deployment for a run, plus its execution mode.
-func jobReservationTiming(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) (reservedAt time.Time, taskID uuid.UUID, mode string, found bool) {
+func jobReservationTiming(t *testing.T, ctx context.Context, clients *testClients, runID uuid.UUID) (reservedAt time.Time, jobName string, mode string, found bool) {
 	t.Helper()
 	var row struct {
 		SlotReservedAt *time.Time `db:"slot_reserved_at"`
-		TaskID         uuid.UUID  `db:"task_id"`
+		JobName        string     `db:"job_name"`
 		ExecutionMode  string     `db:"execution_mode"`
 	}
 	err := clients.executorDB.GetContext(ctx, &row,
-		`SELECT slot_reserved_at, task_id, execution_mode
+		`SELECT slot_reserved_at, COALESCE(job_params->>'job_name','') AS job_name, execution_mode
 		   FROM executor_deployments
 		  WHERE schedule_id = $1 AND mode = 'production'
 		  ORDER BY created_at DESC LIMIT 1`, runID)
 	if err != nil || row.SlotReservedAt == nil {
-		return time.Time{}, uuid.Nil, "", false
+		return time.Time{}, "", "", false
 	}
-	return *row.SlotReservedAt, row.TaskID, row.ExecutionMode, true
+	return *row.SlotReservedAt, row.JobName, row.ExecutionMode, true
 }
 
-// stateTaskStartedAt returns the dbt-start timestamp state recorded for a task.
-func stateTaskStartedAt(t *testing.T, ctx context.Context, clients *testClients, taskID uuid.UUID) (time.Time, bool) {
+// jobContainerStart returns the kubelet-observed start time of a Job's dbt-job
+// container. The Job completes quickly, so the container is read from either its
+// running or terminated state.
+func jobContainerStart(t *testing.T, ctx context.Context, jobName string) (time.Time, bool) {
 	t.Helper()
-	var started *time.Time
-	err := clients.stateDB.GetContext(ctx, &started,
-		`SELECT started_at FROM task_execution WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`, taskID)
-	if err != nil || started == nil {
+	if jobName == "" {
 		return time.Time{}, false
 	}
-	return *started, true
+	var podList struct {
+		Items []struct {
+			Status struct {
+				ContainerStatuses []struct {
+					Name  string `json:"name"`
+					State struct {
+						Running    *struct {
+							StartedAt time.Time `json:"startedAt"`
+						} `json:"running"`
+						Terminated *struct {
+							StartedAt time.Time `json:"startedAt"`
+						} `json:"terminated"`
+					} `json:"state"`
+				} `json:"containerStatuses"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := kubectlJSON(t, ctx, &podList,
+		"get", "pods", "-n", "default", "-l", "job-name="+jobName, "-o", "json"); err != nil {
+		return time.Time{}, false
+	}
+	for _, p := range podList.Items {
+		for _, cs := range p.Status.ContainerStatuses {
+			if cs.Name != "dbt-job" {
+				continue
+			}
+			if cs.State.Terminated != nil && !cs.State.Terminated.StartedAt.IsZero() {
+				return cs.State.Terminated.StartedAt, true
+			}
+			if cs.State.Running != nil && !cs.State.Running.StartedAt.IsZero() {
+				return cs.State.Running.StartedAt, true
+			}
+		}
+	}
+	return time.Time{}, false
 }
 
 // nearestRankP95 returns the nearest-rank 95th percentile of the samples in
