@@ -52,7 +52,9 @@ jobs:
           # commits that are not ancestors of origin/main.
           git fetch --no-tags origin main
           if ! git merge-base --is-ancestor "$commit" origin/main; then
-            echo "::error::${GITHUB_REF_NAME} points at ${commit}, which is not reachable from origin/main; only main commits can be released." >&2
+            # Workflow commands are parsed from stdout only; stderr would
+            # log the text but never render the ::error:: annotation.
+            echo "::error::${GITHUB_REF_NAME} points at ${commit}, which is not reachable from origin/main; only main commits can be released."
             exit 1
           fi
 
