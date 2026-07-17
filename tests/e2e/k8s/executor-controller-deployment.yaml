@@ -48,6 +48,19 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create", "get", "list", "watch"]
+  # A worker pool is a Deployment the reconciler creates and resizes.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "create", "update"]
+  # Each pool's credential lives in its own Secret, written before the Deployment
+  # that mounts it and rewritten when the pool is rotated.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update"]
+  # A worker pod is stopped by name when the task it holds is taken back.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -120,6 +133,32 @@ spec:
               value: "s3-sidecar:latest"
             - name: MAX_CONCURRENT_EXECUTIONS
               value: "50"
+            # How production records reach dbt. jobs gives every task its own K8s
+            # Job; workers has tasks claimed from a pool of reusable pods. The
+            # overrides pin individual services: with the default jobs and an
+            # empty map, no task is routed to workers, so no pool is registered
+            # and no worker pod runs. The worker canary sets the overrides in its
+            # own test setup rather than here.
+            - name: EXECUTION_MODE
+              value: "jobs"
+            - name: EXECUTION_MODE_OVERRIDES_JSON
+              value: "{}"
+            # Worker pool tuning. The durations are Go duration strings; a bare
+            # number is discarded for the in-code default.
+            - name: WORKER_IDLE_TIMEOUT
+              value: "300s"
+            - name: WORKER_LEASE_TTL
+              value: "60s"
+            - name: WORKER_HEARTBEAT_INTERVAL
+              value: "15s"
+            - name: WORKER_CLAIM_WAIT
+              value: "20s"
+            # The base URL worker pods call back on, baked into every pod a pool
+            # creates. Unlike the S3 endpoint below, this one is reached from
+            # inside the cluster, so it resolves through the executor's own
+            # ClusterIP Service rather than the docker bridge.
+            - name: WORKER_CONTROL_PLANE_URL
+              value: "http://executor-controller:8084"
             - name: HTTP_PORT
               value: "8084"
             - name: ENV

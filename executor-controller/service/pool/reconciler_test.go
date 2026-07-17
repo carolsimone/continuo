@@ -35,6 +35,9 @@ type fakePools struct {
 	addErr       error
 	// written records every pool value the reconciler passed to Add or Save.
 	written []model.WorkerPool
+	// passes is signalled at the start of each reconcile pass. It is the only
+	// field a test may touch while the reconciler runs.
+	passes chan struct{}
 }
 
 func newFakePools() *fakePools {
@@ -94,6 +97,15 @@ func (f *fakePools) List(_ context.Context) ([]model.WorkerPool, error) {
 }
 
 func (f *fakePools) ListUnregistered(_ context.Context) ([]model.PoolIdentity, error) {
+	// Every reconcile pass starts here, so signalling it lets a test wait for
+	// passes to happen instead of sleeping for them. The send never blocks: a
+	// test that has stopped counting must not stall the loop it is observing.
+	if f.passes != nil {
+		select {
+		case f.passes <- struct{}{}:
+		default:
+		}
+	}
 	return f.unregistered, nil
 }
 
@@ -249,6 +261,15 @@ type harness struct {
 // newHarness wires a reconciler over fakes, with workers the default mode.
 func newHarness(t *testing.T, overrides map[string]model.ExecutionMode) *harness {
 	t.Helper()
+	return newHarnessTicking(t, overrides, 0)
+}
+
+// newHarnessTicking is newHarness with an explicit reconcile interval, for the
+// tests that drive the loop rather than a single pass.
+func newHarnessTicking(
+	t *testing.T, overrides map[string]model.ExecutionMode, tick time.Duration,
+) *harness {
+	t.Helper()
 	h := &harness{
 		pools:   newFakePools(),
 		deps:    newFakeDeployments(),
@@ -269,8 +290,22 @@ func newHarness(t *testing.T, overrides map[string]model.ExecutionMode) *harness
 	}, pool.Config{
 		MaxConcurrentExecutions: 10,
 		IdleTimeout:             idleTimeout,
+		Tick:                    tick,
 	})
 	return h
+}
+
+// awaitPasses waits for n reconcile passes, failing rather than hanging if the
+// loop stops making them.
+func (h *harness) awaitPasses(t *testing.T, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		select {
+		case <-h.pools.passes:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("want %d reconcile passes, the loop stopped after %d", n, i)
+		}
+	}
 }
 
 // wanted makes the reconciler discover a pool from waiting work.
@@ -724,4 +759,70 @@ func TestReconcileWithNoPoolsDoesNothing(t *testing.T) {
 
 	assert.Empty(t, h.runtime.ensured, "nothing is created")
 	assert.Empty(t, h.runtime.calls)
+}
+
+// ---- the reconcile loop ---------------------------------------------------
+
+// TestRun_ReconcilesOnEveryTick pins that the loop keeps reconciling rather than
+// making a single pass: a pool the work implies is registered by a tick, with
+// nothing but the ticker driving it.
+func TestRun_ReconcilesOnEveryTick(t *testing.T) {
+	h := newHarnessTicking(t, nil, time.Millisecond)
+	h.pools.passes = make(chan struct{}, 64)
+	h.wanted(financePool, finance, financeTag, financeRef())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.rec.Run(ctx) }()
+
+	h.awaitPasses(t, 3)
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled, "the loop ends with its context")
+
+	// Read the fakes only now the loop has stopped touching them.
+	assert.Contains(t, h.pools.registered, financePool, "a tick registered the pool")
+	assert.NotEmpty(t, h.runtime.ensured, "a tick told the runtime")
+}
+
+// TestRun_KeepsTickingAfterAFailedPass pins that one bad pass does not end the
+// loop. A reconcile failure is transient by nature — a lost database connection,
+// a Kubernetes API blip — and a loop that exited on the first one would leave
+// every pool frozen at its last size until the process was restarted.
+func TestRun_KeepsTickingAfterAFailedPass(t *testing.T) {
+	h := newHarnessTicking(t, nil, time.Millisecond)
+	h.pools.passes = make(chan struct{}, 64)
+	h.pools.addErr = errors.New("registering the pool failed")
+	h.wanted(financePool, finance, financeTag, financeRef())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.rec.Run(ctx) }()
+
+	// Every pass fails, so passes past the first prove the failure did not end
+	// the loop.
+	h.awaitPasses(t, 3)
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+
+	assert.NotContains(t, h.pools.registered, financePool, "the failing pass registered nothing")
+	assert.Contains(t, h.logs.String(), "registering the pool failed",
+		"the failure is reported, not swallowed")
+}
+
+// TestRun_StopsWhenItsContextIsCancelled pins the shutdown path: the loop stops
+// on cancellation and says so, rather than outliving the process's other work.
+func TestRun_StopsWhenItsContextIsCancelled(t *testing.T) {
+	h := newHarnessTicking(t, nil, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- h.rec.Run(ctx) }()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return when its context was cancelled")
+	}
 }

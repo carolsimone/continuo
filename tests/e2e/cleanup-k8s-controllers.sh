@@ -47,4 +47,13 @@ kubectl delete rolebinding k8s-controller -n default --ignore-not-found=true
 log_info "Deleting test jobs..."
 kubectl delete jobs -n default -l schedule=e2e-schedule --ignore-not-found=true || true
 
+# Delete the worker pools the executor created. A pool owns a Deployment, the
+# Secret holding its credential, and the pods the Deployment runs; all three
+# carry the same app label whichever pool they belong to. They outlive the
+# executor that made them, so a run that left pools behind would hand the next
+# one pods holding credentials no live pool row can authenticate.
+log_info "Deleting dbt worker pools..."
+kubectl delete deployment,secret,pod -n default \
+    -l app=continuo-dbt-worker --ignore-not-found=true || true
+
 log_info "Cleanup complete!"

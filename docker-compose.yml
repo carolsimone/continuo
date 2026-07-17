@@ -197,6 +197,24 @@ services:
       - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
       - K8S_NAMESPACE=default
       - MAX_CONCURRENT_EXECUTIONS=50
+      # How production records reach dbt. jobs gives every task its own K8s Job;
+      # workers has tasks claimed from a pool of reusable pods. The overrides pin
+      # individual services, and are the rollout lever: with the default jobs and
+      # an empty map, no task is routed to workers, so no pool is ever registered
+      # and no worker pod runs. Worker pools are created in Kubernetes only —
+      # Compose runs no worker process.
+      - EXECUTION_MODE=jobs
+      - EXECUTION_MODE_OVERRIDES_JSON={}
+      # Worker pool tuning. The durations are Go duration strings; a bare number
+      # is discarded for the in-code default.
+      - WORKER_IDLE_TIMEOUT=300s
+      - WORKER_LEASE_TTL=60s
+      - WORKER_HEARTBEAT_INTERVAL=15s
+      - WORKER_CLAIM_WAIT=20s
+      # The base URL worker pods call back on. It is baked into every pod a pool
+      # creates, so it must name the executor from inside the cluster the pods run
+      # in, not from this process's own network.
+      - WORKER_CONTROL_PLANE_URL=http://executor-controller:8084
       # Validation Job images are side-loaded into the local kind node cache and
       # the mutable service tags exist in no registry, so validation pods must use
       # the cached image. PullAlways would fail with ErrImagePull locally;

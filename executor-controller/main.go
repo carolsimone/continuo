@@ -21,9 +21,11 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/lease"
+	"github.com/carolsimone/continuo/executor-controller/service/pool"
 	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	"github.com/carolsimone/continuo/executor-controller/service/reaper"
 	"github.com/carolsimone/continuo/executor-controller/service/routing"
+	"github.com/carolsimone/continuo/executor-controller/service/runtimecontext"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/carolsimone/continuo/executor-controller/service/workerapi"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -158,6 +160,7 @@ func main() {
 	// ========================================================================
 
 	cancelledSchedulesRepo := postgres.NewCancelledSchedulesRepository(pgDB)
+	workerPoolsRepo := postgres.NewWorkerPoolRepository(pgDB)
 
 	// ========================================================================
 	// INITIALIZE UOW FACTORY + HANDLERS + BINDINGS
@@ -342,6 +345,38 @@ func main() {
 	}()
 
 	// ========================================================================
+	// WORKER POOL RECONCILER
+	// ========================================================================
+
+	// Pools follow the work: nothing declares one. A task routed to workers names
+	// the pool it needs, the reconciler registers it, sizes it against the
+	// executor's shared budget, and asks the runtime for its pods. With every
+	// service on the jobs path no task ever names a pool, so this finds nothing to
+	// do on every tick.
+	poolReconciler := pool.NewReconciler(pool.Deps{
+		Pools:       workerPoolsRepo,
+		Deployments: postgres.NewDeploymentsRepository(pgDB, logger),
+		Runtime:     workerPods,
+		Policy:      executionRouting,
+		// A pool's workers are pinned to the conditions the controller resolved
+		// for their service, and reject an artifact parsed under any other.
+		ControllerContext: func(serviceName string) (string, error) {
+			return runtimecontext.Build(cmdResolver.RuntimeContext(serviceName), os.Getenv)
+		},
+		Clock:  ports.SystemClock{},
+		Logger: logger,
+	}, pool.Config{
+		MaxConcurrentExecutions: cfg.MaxConcurrentExecutions,
+		IdleTimeout:             cfg.WorkerIdleTimeout,
+	})
+
+	go func() {
+		if err := poolReconciler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Worker pool reconciler exited", "error", err)
+		}
+	}()
+
+	// ========================================================================
 	// WORKER LEASE REAPER
 	// ========================================================================
 
@@ -401,7 +436,6 @@ func main() {
 		RetryBackoff:            workerRetryBackoff,
 		Logger:                  logger,
 	})
-	workerPoolsRepo := postgres.NewWorkerPoolRepository(pgDB)
 	httpServer := http.NewServer(cfg.HTTPPort, http.WorkerAPIConfig{
 		Leases: leaseService,
 		Auth:   workerapi.NewAuthenticator(workerPoolsRepo),

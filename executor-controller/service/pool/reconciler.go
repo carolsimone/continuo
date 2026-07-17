@@ -52,7 +52,14 @@ type Config struct {
 	MaxConcurrentExecutions int
 	// IdleTimeout is how long a pool with nothing to do keeps its pods.
 	IdleTimeout time.Duration
+	// Tick is how often the pools are reconciled; default 5s.
+	Tick time.Duration
 }
+
+// defaultTick is how often Run reconciles when Config leaves it unset. It paces
+// the reconciler with the executor's other periodic work, so a pool's pods are
+// asked for in the same beat as the tasks waiting for them.
+const defaultTick = 5 * time.Second
 
 // Reconciler brings the worker pools into line with the work waiting for them.
 type Reconciler struct {
@@ -66,6 +73,7 @@ type Reconciler struct {
 	credential  CredentialFunc
 	limit       int
 	idleTimeout time.Duration
+	tick        time.Duration
 }
 
 // NewReconciler constructs the pool reconciler.
@@ -73,6 +81,10 @@ func NewReconciler(deps Deps, cfg Config) *Reconciler {
 	credential := deps.Credential
 	if credential == nil {
 		credential = workerapi.NewCredential
+	}
+	tick := cfg.Tick
+	if tick <= 0 {
+		tick = defaultTick
 	}
 	return &Reconciler{
 		pools:       deps.Pools,
@@ -85,6 +97,31 @@ func NewReconciler(deps Deps, cfg Config) *Reconciler {
 		credential:  credential,
 		limit:       cfg.MaxConcurrentExecutions,
 		idleTimeout: cfg.IdleTimeout,
+		tick:        tick,
+	}
+}
+
+// Run reconciles the pools on every tick until ctx is cancelled.
+//
+// A failed pass is logged and the loop goes on. Reconciling is a repair against
+// the current state, not a step in a sequence: the next pass reads the world
+// afresh and makes good whatever the failed one left undone. Exiting instead
+// would freeze every pool at its last size, and the tasks routed to workers
+// would wait for pods nothing was left to ask for.
+func (r *Reconciler) Run(ctx context.Context) error {
+	ticker := time.NewTicker(r.tick)
+	defer ticker.Stop()
+	r.logger.Info("Starting worker pool reconciler", "tick", r.tick)
+	for {
+		select {
+		case <-ctx.Done():
+			r.logger.Info("Worker pool reconciler stopped")
+			return ctx.Err()
+		case <-ticker.C:
+			if err := r.Reconcile(ctx); err != nil {
+				r.logger.Error("Reconciling worker pools failed", "error", err)
+			}
+		}
 	}
 }
 

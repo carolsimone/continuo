@@ -300,13 +300,40 @@ services:
         - apiGroups: ["batch"]
           resources: ["jobs"]
           verbs: ["create", "get", "list", "watch"]
+        # A worker pool's pods are stopped by name when the task they hold is
+        # taken back, so delete joins the reads the Jobs path already makes.
         - apiGroups: [""]
           resources: ["pods"]
-          verbs: ["get", "list", "watch"]
+          verbs: ["get", "list", "watch", "delete"]
+        # A worker pool is a Deployment the reconciler creates and resizes.
+        - apiGroups: ["apps"]
+          resources: ["deployments"]
+          verbs: ["get", "create", "update"]
+        # Each pool's credential lives in its own Secret, written before the
+        # Deployment that mounts it and rewritten when the pool is rotated.
+        - apiGroups: [""]
+          resources: ["secrets"]
+          verbs: ["get", "create", "update"]
     env:
       POSTGRES_DB: continuo_executor
       K8S_NAMESPACE: __RELEASE_NAMESPACE__
       MAX_CONCURRENT_EXECUTIONS: "50"
+      # How production records reach dbt. jobs gives every task its own K8s Job;
+      # workers has tasks claimed from a pool of reusable pods. The overrides pin
+      # individual services, and are the rollout lever: with the default jobs and
+      # an empty map, no task is routed to workers, so no pool is ever registered
+      # and no worker pod runs.
+      EXECUTION_MODE: "jobs"
+      EXECUTION_MODE_OVERRIDES_JSON: "{}"
+      # Worker pool tuning. The durations are Go duration strings; a bare number
+      # is discarded for the in-code default.
+      WORKER_IDLE_TIMEOUT: "300s"
+      WORKER_LEASE_TTL: "60s"
+      WORKER_HEARTBEAT_INTERVAL: "15s"
+      WORKER_CLAIM_WAIT: "20s"
+      # The base URL worker pods call back on, baked into every pod a pool
+      # creates. It resolves through the executor's own in-namespace Service.
+      WORKER_CONTROL_PLANE_URL: "http://executor-controller:8084"
       VALIDATION_IMAGE_PULL_POLICY: Always
       VALIDATION_IMAGE: __VALIDATION_IMAGE__
       S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__

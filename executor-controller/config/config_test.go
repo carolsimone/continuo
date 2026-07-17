@@ -168,7 +168,12 @@ func TestLoad_MaxConcurrentExecutionsWinsOverTheAlias(t *testing.T) {
 }
 
 func TestLoad_ExecutionModeWorkers(t *testing.T) {
-	cfg, v := loadEnv(t, map[string]string{"EXECUTION_MODE": "workers"})
+	// Enabling workers makes the control-plane URL required, so this supplies one:
+	// the subject here is the mode, not the URL rule.
+	cfg, v := loadEnv(t, map[string]string{
+		"EXECUTION_MODE":           "workers",
+		"WORKER_CONTROL_PLANE_URL": "http://executor-controller:8084",
+	})
 	if len(v.Missing()) != 0 {
 		t.Fatalf("want no missing vars, got %v", v.Missing())
 	}
@@ -185,8 +190,11 @@ func TestLoad_UnknownExecutionModeIsRejected(t *testing.T) {
 }
 
 func TestLoad_ExecutionModeOverridesParse(t *testing.T) {
+	// Pinning finance to workers makes the control-plane URL required, so this
+	// supplies one: the subject here is the override map, not the URL rule.
 	cfg, v := loadEnv(t, map[string]string{
 		"EXECUTION_MODE_OVERRIDES_JSON": `{"finance":"workers","legacy":"jobs"}`,
+		"WORKER_CONTROL_PLANE_URL":      "http://executor-controller:8084",
 	})
 	if len(v.Missing()) != 0 {
 		t.Fatalf("want no missing vars, got %v", v.Missing())
@@ -216,6 +224,59 @@ func TestLoad_UnknownModeInOverridesIsRejected(t *testing.T) {
 	_, v := loadEnv(t, map[string]string{"EXECUTION_MODE_OVERRIDES_JSON": `{"finance":"lambdas"}`})
 	if !slices.Contains(v.Missing(), "EXECUTION_MODE_OVERRIDES_JSON(jobs|workers)") {
 		t.Fatalf("want unknown override mode rejected, got %v", v.Missing())
+	}
+}
+
+// TestLoad_WorkerControlPlaneURLIsRequiredWhenTheDefaultModeIsWorkers pins the
+// fail-closed boot: the URL is baked into every pod a pool creates, so an empty
+// one yields workers that can never reach the control plane. It is caught before
+// a pool can be created, not after.
+func TestLoad_WorkerControlPlaneURLIsRequiredWhenTheDefaultModeIsWorkers(t *testing.T) {
+	_, v := loadEnv(t, map[string]string{
+		"EXECUTION_MODE":           "workers",
+		"WORKER_CONTROL_PLANE_URL": "",
+	})
+	if !slices.Contains(v.Missing(), "WORKER_CONTROL_PLANE_URL") {
+		t.Fatalf("want WORKER_CONTROL_PLANE_URL reported missing, got %v", v.Missing())
+	}
+}
+
+// TestLoad_WorkerControlPlaneURLIsRequiredWhenAnOverrideEnablesWorkers pins that
+// the canary lever carries the same requirement: naming one service on workers
+// is enough to create a pool, so it is enough to demand the URL.
+func TestLoad_WorkerControlPlaneURLIsRequiredWhenAnOverrideEnablesWorkers(t *testing.T) {
+	_, v := loadEnv(t, map[string]string{
+		"EXECUTION_MODE_OVERRIDES_JSON": `{"finance":"workers"}`,
+		"WORKER_CONTROL_PLANE_URL":      "",
+	})
+	if !slices.Contains(v.Missing(), "WORKER_CONTROL_PLANE_URL") {
+		t.Fatalf("want WORKER_CONTROL_PLANE_URL reported missing, got %v", v.Missing())
+	}
+}
+
+// TestLoad_WorkerControlPlaneURLIsNotRequiredOnTheJobsPath pins the other side of
+// the rule: a deployment that routes every service to Jobs never creates a pool,
+// so it must not be forced to configure a URL nothing would use.
+func TestLoad_WorkerControlPlaneURLIsNotRequiredOnTheJobsPath(t *testing.T) {
+	_, v := loadEnv(t, map[string]string{
+		"EXECUTION_MODE_OVERRIDES_JSON": `{"legacy":"jobs"}`,
+		"WORKER_CONTROL_PLANE_URL":      "",
+	})
+	if slices.Contains(v.Missing(), "WORKER_CONTROL_PLANE_URL") {
+		t.Fatalf("want the jobs path to boot without a control-plane URL, got %v", v.Missing())
+	}
+}
+
+func TestLoad_WorkerControlPlaneURLFromEnv(t *testing.T) {
+	cfg, v := loadEnv(t, map[string]string{
+		"EXECUTION_MODE":           "workers",
+		"WORKER_CONTROL_PLANE_URL": "http://executor-controller:8084",
+	})
+	if len(v.Missing()) != 0 {
+		t.Fatalf("want no missing vars, got %v", v.Missing())
+	}
+	if cfg.WorkerControlPlaneURL != "http://executor-controller:8084" {
+		t.Fatalf("want the configured URL, got %q", cfg.WorkerControlPlaneURL)
 	}
 }
 

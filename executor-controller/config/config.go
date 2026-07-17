@@ -97,6 +97,9 @@ func Load(v *pkgconfig.Validator) Config {
 		v.Add("WORKER_HEARTBEAT_INTERVAL(3x < WORKER_LEASE_TTL)")
 	}
 
+	mode := loadExecutionMode(v)
+	overrides := loadExecutionModeOverrides(v)
+
 	return Config{
 		Redis:    pkgconfig.LoadRedis(v),
 		Postgres: pkgconfig.LoadPostgres(v),
@@ -116,15 +119,48 @@ func Load(v *pkgconfig.Validator) Config {
 		HTTPPort:     envInt("HTTP_PORT", 8084),
 		K8sNamespace: v.Require("K8S_NAMESPACE"),
 
-		ExecutionMode:           loadExecutionMode(v),
-		ExecutionModeOverrides:  loadExecutionModeOverrides(v),
+		ExecutionMode:           mode,
+		ExecutionModeOverrides:  overrides,
 		MaxConcurrentExecutions: loadMaxConcurrentExecutions(v),
 		WorkerIdleTimeout:       pkgconfig.EnvDurationOrDefault("WORKER_IDLE_TIMEOUT", defaultWorkerIdleTimeout),
 		WorkerLeaseTTL:          leaseTTL,
 		WorkerHeartbeatInterval: heartbeat,
 		WorkerClaimWait:         pkgconfig.EnvDurationOrDefault("WORKER_CLAIM_WAIT", defaultWorkerClaimWait),
-		WorkerControlPlaneURL:   pkgconfig.EnvOrDefault("WORKER_CONTROL_PLANE_URL", ""),
+		WorkerControlPlaneURL:   loadWorkerControlPlaneURL(v, mode, overrides),
 	}
+}
+
+// loadWorkerControlPlaneURL reads the base URL worker pods call to claim tasks
+// and report outcomes. It has no default: the value is baked into every pod a
+// pool creates, so an empty one would produce workers that can reach nothing and
+// fail only once they are already running. It is required exactly when a pool can
+// be created — the default mode is workers, or a service is pinned to them —
+// which puts the failure at boot, before any pool exists. A deployment routing
+// every service to Jobs creates no pool and needs no URL.
+func loadWorkerControlPlaneURL(
+	v *pkgconfig.Validator,
+	mode model.ExecutionMode,
+	overrides map[string]model.ExecutionMode,
+) string {
+	url := os.Getenv("WORKER_CONTROL_PLANE_URL")
+	if url == "" && workersReachable(mode, overrides) {
+		v.Add("WORKER_CONTROL_PLANE_URL")
+	}
+	return url
+}
+
+// workersReachable reports whether any service can route to a worker pool under
+// this configuration.
+func workersReachable(mode model.ExecutionMode, overrides map[string]model.ExecutionMode) bool {
+	if mode == model.ExecutionModeWorkers {
+		return true
+	}
+	for _, serviceMode := range overrides {
+		if serviceMode == model.ExecutionModeWorkers {
+			return true
+		}
+	}
+	return false
 }
 
 // loadMaxConcurrentExecutions reads the executor's shared capacity budget. It is

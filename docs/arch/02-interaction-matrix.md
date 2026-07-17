@@ -121,9 +121,12 @@ the raw lease token in `X-Continuo-Lease-Token`.
 |---|---|
 | worker pod | `GET /internal/v1/worker/runtime`, `POST /internal/v1/workers/claim`, `POST /internal/v1/workers/initialization`, `POST /internal/v1/leases/{id}/{start,heartbeat,result-urls,complete}` |
 
-No component registers a worker pool, so `executor_worker_pools` is empty, no
-caller can authenticate, and every one of these routes answers `401`. No worker
-pod runs.
+The pools these callers authenticate against are registered by the executor's own
+pool reconciler, for the work routed to workers. With the deployed default —
+`EXECUTION_MODE=jobs` and no service pinned in `EXECUTION_MODE_OVERRIDES_JSON` —
+nothing is routed to a worker, so `executor_worker_pools` is empty, every one of
+these routes answers `401`, and no worker pod runs. Naming a service in the
+overrides is what starts a pool, and only for that service.
 
 ## S3 Matrix
 
