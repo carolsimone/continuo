@@ -40,16 +40,11 @@ type DeploymentRepository interface {
 	// slot forever. Must be called inside the transaction that transitions them.
 	//
 	// The lookup does not filter execution_mode, so it returns worker-mode rows
-	// in 'leased' and 'running' alongside Jobs-mode rows. Cancelling those rows
-	// through Deployment.Cancel releases their execution slots but does not fence
-	// the pod holding the lease: the pod is not told to stop and its writes are
-	// not rejected. Reporting the leases that were active is a read, satisfied by
-	// a lease-reporting query over these same rows and their lease columns; the
-	// cancellation itself stays on Cancel, so slot release remains inside the
-	// aggregate transition. Enabling the worker execution path and fencing those
-	// pods are therefore one change, not two: a worker pool serving cancellable
-	// schedules without that query cancels leased work while its pod keeps
-	// running.
+	// in 'leased' and 'running' alongside Jobs-mode rows, and reconstitutes each
+	// row's lease from its lease columns. The lease is what identifies the pod
+	// running the task: the caller reads it to stop that pod before the row's
+	// Cancel releases the execution slot, so the slot is never handed to other
+	// work while the pod that held it is still running dbt.
 	GetNonTerminalByScheduleForUpdate(ctx context.Context, scheduleID uuid.UUID) ([]*model.Deployment, error)
 	// GetByReleaseNode returns the (mode, release_id, node_id) Deployment, or
 	// sql.ErrNoRows when none exists. mode scopes the lookup so the validation

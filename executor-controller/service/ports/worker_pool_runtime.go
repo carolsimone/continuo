@@ -55,10 +55,6 @@ type WorkerPoolRuntime interface {
 	// never yet reconciled, and one whose Deployment an operator removed, both
 	// answer this way.
 	Status(ctx context.Context, poolKey string) (PoolStatus, bool, error)
-	// DeletePod removes one worker pod, but only if it is still the pod that
-	// podUID identifies. A pod name is reused as a Deployment replaces its pods,
-	// so deleting by name alone could take out a healthy successor; naming the
-	// UID makes a delete that arrives late a no-op instead. A pod that is
-	// already gone is not an error — its absence is the outcome asked for.
-	DeletePod(ctx context.Context, podName, podUID string) error
+	// PodTerminator stops a single pod of a pool this runtime runs.
+	PodTerminator
 }

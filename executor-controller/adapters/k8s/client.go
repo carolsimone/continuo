@@ -81,6 +81,11 @@ type K8sClient struct {
 	commands  ports.CommandResolver
 }
 
+// Clientset exposes the Kubernetes API this client is connected to, so the
+// adapters that manage worker pools share its connection and its bounded request
+// timeout rather than opening one of their own.
+func (c *K8sClient) Clientset() kubernetes.Interface { return c.clientset }
+
 // NewK8sClient creates a new K8sClient.
 // Uses KUBECONFIG when set (local/docker-compose), otherwise falls back to
 // in-cluster config (K8s pod with a ServiceAccount). commands resolves the

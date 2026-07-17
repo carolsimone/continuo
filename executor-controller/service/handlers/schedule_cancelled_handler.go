@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
+	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/google/uuid"
 )
@@ -20,7 +22,8 @@ const cancelReason = "schedule cancelled"
 //
 // It inserts a row into cancelled_schedules so the deploy bindings drop
 // subsequent query.model / retry.task messages whose schedule_id matches, and
-// cancels the deployments the schedule already has in flight. Cancelling them is
+// cancels the deployments the schedule already has in flight, stopping the
+// worker pod of every one a worker is holding under a lease. Cancelling them is
 // what returns their execution slots: a deployment holds its slot until a
 // transition releases it, and a cancelled schedule's Kubernetes Job result is
 // absorbed without ever reporting the Job terminal, so no later event would free
@@ -36,11 +39,12 @@ const cancelReason = "schedule cancelled"
 // the schedule is either cancelled here or never created.
 type ScheduleCancelledHandler struct {
 	logger *slog.Logger
+	pods   ports.PodTerminator
 }
 
 // NewScheduleCancelledHandler constructs the handler.
-func NewScheduleCancelledHandler(logger *slog.Logger) *ScheduleCancelledHandler {
-	return &ScheduleCancelledHandler{logger: logger}
+func NewScheduleCancelledHandler(logger *slog.Logger, pods ports.PodTerminator) *ScheduleCancelledHandler {
+	return &ScheduleCancelledHandler{logger: logger, pods: pods}
 }
 
 // Handle records the cancelled schedule and cancels its in-flight deployments.
@@ -68,6 +72,9 @@ func (h *ScheduleCancelledHandler) Handle(
 
 	now := time.Now()
 	for _, dep := range deps {
+		if err := h.fencePod(ctx, dep); err != nil {
+			return err
+		}
 		if err := dep.Cancel(cancelReason, now); err != nil {
 			return fmt.Errorf("cancel deployment %s: %w", dep.ID(), err)
 		}
@@ -80,5 +87,42 @@ func (h *ScheduleCancelledHandler) Handle(
 		h.logger.Info("Cancelled a schedule's in-flight deployments and released their execution slots",
 			"schedule_id", evt.ScheduleID, "deployments", len(deps))
 	}
+	return nil
+}
+
+// fencePod stops the worker pod running dep, if a worker holds it at all. A row
+// no worker has claimed — a pending worker task, or any Kubernetes Job — carries
+// no lease and has no pod of a pool to stop.
+//
+// The deletion is requested before the row is cancelled, and its failure fails
+// the whole cancellation: the handler runs inside the transaction its binding
+// commits, so a rollback leaves the lease authoritative and its slot held, and
+// the redelivered message tries again. The alternative is the one outcome that
+// must not commit — a slot handed to other work while the pod that held it still
+// runs dbt.
+//
+// The lease survives the cancellation, so a worker that outlives the deletion's
+// grace period and heartbeats once more is told its task was cancelled rather
+// than fenced with a fault it cannot interpret.
+func (h *ScheduleCancelledHandler) fencePod(ctx context.Context, dep *model.Deployment) error {
+	lease := dep.ActiveLease()
+	if lease == nil {
+		return nil
+	}
+	if lease.PodName == "" || lease.PodUID == "" {
+		// A lease that never named its pod cannot be fenced by UID, and a delete
+		// by an empty name would fail every redelivery, wedging the schedule's
+		// cancellation on a row that can never settle. The task still goes
+		// terminal, which fences every report its holder sends.
+		h.logger.Warn("Cancelled a leased task whose worker named no pod — its pod cannot be stopped",
+			"deployment_id", dep.ID(), "lease_id", lease.ID, "owner", lease.Owner)
+		return nil
+	}
+	if err := h.pods.DeletePod(ctx, lease.PodName, lease.PodUID); err != nil {
+		return fmt.Errorf("stop worker pod %s of cancelled deployment %s: %w",
+			lease.PodName, dep.ID(), err)
+	}
+	h.logger.Info("Stopped the worker pod of a cancelled task",
+		"deployment_id", dep.ID(), "pod_name", lease.PodName, "pod_uid", lease.PodUID)
 	return nil
 }

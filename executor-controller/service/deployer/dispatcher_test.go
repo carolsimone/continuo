@@ -728,7 +728,7 @@ func cancelSchedule(t *testing.T, db *sqlx.DB, scheduleID uuid.UUID) {
 	t.Helper()
 	u := postgres.NewUnitOfWork(db, testLogger())
 	require.NoError(t, u.Begin(context.Background()))
-	err := handlers.NewScheduleCancelledHandler(testLogger()).Handle(
+	err := handlers.NewScheduleCancelledHandler(testLogger(), unusedPodTerminator{t: t}).Handle(
 		context.Background(), u, events.ScheduleCancelled{ScheduleID: scheduleID}, uuid.Nil)
 	require.NoError(t, err)
 	require.NoError(t, u.Commit())
@@ -783,4 +783,15 @@ func TestDispatcher_CancelBetweenReserveAndSettleIsNotResurrected(t *testing.T) 
 		`SELECT COUNT(*) FROM executor_deployments WHERE slot_reserved_at IS NOT NULL AND slot_released_at IS NULL`).
 		Scan(&held))
 	assert.Equal(t, 0, held, "cancelling returns the whole budget")
+}
+
+// unusedPodTerminator fails the test if a pod deletion is ever requested. The
+// cancellations exercised here are of Kubernetes Jobs, which no worker holds
+// under a lease: there is no worker pod to stop, and asking a pool runtime to
+// delete one would name a pod that does not exist.
+type unusedPodTerminator struct{ t *testing.T }
+
+func (p unusedPodTerminator) DeletePod(_ context.Context, podName, _ string) error {
+	p.t.Fatalf("no worker pod should be deleted for a Jobs-path cancellation, got %q", podName)
+	return nil
 }

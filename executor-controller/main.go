@@ -22,6 +22,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/lease"
 	"github.com/carolsimone/continuo/executor-controller/service/ports"
+	"github.com/carolsimone/continuo/executor-controller/service/reaper"
 	"github.com/carolsimone/continuo/executor-controller/service/routing"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/carolsimone/continuo/executor-controller/service/workerapi"
@@ -172,9 +173,16 @@ func main() {
 	// its own Kubernetes Job or waits to be claimed by a worker pool.
 	executionRouting := routing.NewPolicy(cfg.ExecutionMode, cfg.ExecutionModeOverrides)
 
+	// workerPods is the runtime the worker pools run on. The paths that take a
+	// task away from a worker still holding it — a cancelled schedule and an
+	// expired lease — stop its pod through this, so the dbt process cannot keep
+	// running against the warehouse once the task's execution slot is handed on.
+	workerPods := k8s.NewWorkerPools(
+		k8sClient.Clientset(), cfg.K8sNamespace, cfg.WorkerControlPlaneURL, logger)
+
 	queryHandler := handlers.NewQueryModelHandler(executionRouting, logger)
 	retryHandler := handlers.NewRetryTaskHandler(executionRouting, logger)
-	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger)
+	scheduleCancelledHandler := handlers.NewScheduleCancelledHandler(logger, workerPods)
 	validationReqHandler := handlers.NewValidationRequestedHandler(logger)
 	validationNodeHandler := handlers.NewValidationNodeCompletedHandler(logger)
 	seedBuildReqHandler := handlers.NewSeedBuildRequestedHandler(logger)
@@ -330,6 +338,28 @@ func main() {
 	go func() {
 		if err := deployDispatcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("Deploy dispatcher exited", "error", err)
+		}
+	}()
+
+	// ========================================================================
+	// WORKER LEASE REAPER
+	// ========================================================================
+
+	// A worker that stops reporting has to have its task taken back: its lease
+	// holds an execution slot, and nothing else would ever release it or tell the
+	// run the node is not coming. The reaper stops the pod that went silent
+	// before it hands the task on.
+	leaseReaper := reaper.NewReaper(reaper.Config{
+		UnitOfWork:   uowFactory,
+		Pods:         workerPods,
+		Clock:        ports.SystemClock{},
+		RetryBackoff: workerRetryBackoff,
+		Logger:       logger,
+	})
+
+	go func() {
+		if err := leaseReaper.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Worker lease reaper exited", "error", err)
 		}
 	}()
 

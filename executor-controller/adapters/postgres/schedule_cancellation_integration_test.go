@@ -75,7 +75,7 @@ func TestScheduleCancelled_ReleasesEveryInFlightJobSlot(t *testing.T) {
 
 	u := postgres.NewUnitOfWork(db, testLogger())
 	require.NoError(t, u.Begin(ctx))
-	require.NoError(t, handlers.NewScheduleCancelledHandler(testLogger()).Handle(
+	require.NoError(t, handlers.NewScheduleCancelledHandler(testLogger(), unusedPodTerminator{t: t}).Handle(
 		ctx, u, events.ScheduleCancelled{ScheduleID: scheduleID}, uuid.Nil))
 	require.NoError(t, u.Commit())
 
@@ -162,7 +162,7 @@ func TestScheduleCancelled_ReachesADeploymentEnqueuedConcurrently(t *testing.T) 
 			cancelled <- err
 			return
 		}
-		if err := handlers.NewScheduleCancelledHandler(testLogger()).Handle(
+		if err := handlers.NewScheduleCancelledHandler(testLogger(), unusedPodTerminator{t: t}).Handle(
 			ctx, u, events.ScheduleCancelled{ScheduleID: scheduleID}, uuid.Nil); err != nil {
 			_ = u.Rollback()
 			cancelled <- err
@@ -195,7 +195,7 @@ func TestQueryModel_DropsAScheduleCancelledFirst(t *testing.T) {
 
 	cancel := postgres.NewUnitOfWork(db, testLogger())
 	require.NoError(t, cancel.Begin(ctx))
-	require.NoError(t, handlers.NewScheduleCancelledHandler(testLogger()).Handle(
+	require.NoError(t, handlers.NewScheduleCancelledHandler(testLogger(), unusedPodTerminator{t: t}).Handle(
 		ctx, cancel, events.ScheduleCancelled{ScheduleID: scheduleID}, uuid.Nil))
 	require.NoError(t, cancel.Commit())
 
@@ -235,4 +235,15 @@ func TestGetNonTerminalByScheduleForUpdate_ExcludesSettledRows(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, live.ID(), got[0].ID())
+}
+
+// unusedPodTerminator fails the test if a pod deletion is ever requested. The
+// cancellations exercised here are of Kubernetes Jobs, which no worker holds
+// under a lease: there is no worker pod to stop, and asking a pool runtime to
+// delete one would name a pod that does not exist.
+type unusedPodTerminator struct{ t *testing.T }
+
+func (p unusedPodTerminator) DeletePod(_ context.Context, podName, _ string) error {
+	p.t.Fatalf("no worker pod should be deleted for a Jobs-path cancellation, got %q", podName)
+	return nil
 }

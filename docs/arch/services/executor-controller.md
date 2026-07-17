@@ -35,7 +35,7 @@ It is responsible for:
 |---|---|---|
 | `query.model:v1` | `executor-query-model` | Primary dispatch: new node ready for execution |
 | `retry.task:v1` | `executor-retry` | Retry dispatch: re-attempt a failed node |
-| `schedule.cancelled:v1` | `executor-schedule-cancelled` | Schedule cancellation: suppress future deployments for the schedule and cancel the ones already in flight, releasing their execution slots |
+| `schedule.cancelled:v1` | `executor-schedule-cancelled` | Schedule cancellation: suppress future deployments for the schedule and cancel the ones already in flight, releasing their execution slots and stopping the worker pod of every one a worker holds under a lease |
 | `executor.job.terminal:v1` | `executor-job-terminal` | A dispatched Kubernetes Job has settled; releases the execution slot it held |
 | `validation.requested:v1` | `executor-validation-requested` | Candidate-release validation request: enqueue one `mode=validation` deployment per node |
 | `validation.node.completed:v1` | `executor-validation-node-completed` | Per-node validation Job terminal status from k8s-controller; records the node outcome, unblocks or skips in-set downstreams, and runs the per-release aggregate-emit gate |
@@ -330,6 +330,7 @@ On XADD failure:
 | Redis consumers | Reads `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `executor.job.terminal:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.result:v1` (`kind=complete`, for candidate schema teardown), `seed.build.requested:v1`, `seed.build.node.completed:v1`, `compile.requested:v1`, and `compile.node.completed:v1` via `pkg/redis.StreamConsumer`; crash-recovery for pending messages on startup |
 | Deploy dispatcher (`deployer.Dispatcher`) | Polls `executor_deployments` every 5 seconds; creates K8s Jobs and writes outbox announcement rows, capped by `MAX_CONCURRENT_EXECUTIONS` |
 | Outbox processor (`pkg/outbox.Processor`) | Polls `executor_outbox` every 5 seconds; processes up to 100 entries per batch via `OutboxPublisher` (uniform marshal-and-XADD) |
+| Worker lease reaper (`reaper.Reaper`) | Polls `executor_deployments` every 10 seconds for `leased`/`running` rows whose `lease_expires_at` has passed; deletes the pod that held each expired lease, drops the lease, and either parks the task for another attempt or fails it permanently |
 
 ## Reliability Patterns
 
@@ -340,6 +341,8 @@ On XADD failure:
 - **K8s idempotency**: `CreateQueryJob` treats already-exists as success; a dispatcher restart or crash after K8s success but before commit will re-attempt safely
 - **Dispatch crash recovery**: a crash between reserving a slot and recording the Job leaves the row in `dispatching` still holding its slot — deliberately, because its Job may be running. Each tick re-drives one such row past a 2-minute recovery window, repeating the idempotent create and finishing the transition; the slot is never released to be re-reserved while the Job it accounts for may still be live
 - **Dispatcher backoff**: transient K8s failures reschedule the row via `next_attempt_at` with exponential backoff (base 5s, cap 2 min); the row stays `pending` and is retried on the next tick when due
+- **Worker crash recovery**: a lease is a worker's promise to keep heartbeating. When the deadline passes, the reaper deletes the pod by name *and* UID (so a pod the pool has already replaced under the same name is untouched), drops the lease, and applies the transition — `retry_pending` when the task has attempts left, `failed` when its last attempt was the one that went silent. The transition releases the execution slot, so a crashed pod cannot cost the executor a slot permanently. The pod deletion is requested inside the transaction and its failure rolls the recovery back: the lease it could not fence stays authoritative, no other worker can claim the task, and the next tick tries again
+- **Worker fencing**: the paths that take a task away from a live worker stop its pod as well as fence its reports. A reaped lease is dropped, so every later report from that worker is answered `409 stale_lease`; a cancelled task keeps its lease, so a worker outliving the pod deletion's grace period is answered `410 cancelled` on its next heartbeat, which is its notice to abandon the task. Both are terminal for the worker, which never retries against either
 - **Terminal failure propagation**: on `ErrPermanent` or retry-budget exhaustion, the dispatcher writes `task_status_updated` FAILED + `node_updated` FAILED as ordinary `executor_outbox` rows before marking the deployment `failed` — ensuring orchestrator and state always learn of the terminal outcome
 - **Uniform outbox publisher**: the executor `OutboxPublisher` is a plain marshal-and-XADD; it carries no K8s deploy logic and has no `TerminalFailureHook`; all failure signalling is handled upstream by the dispatcher
 - **No state gRPC dependency**: executor-controller does not call state gRPC; task status updates flow via `task.status.updated:v1`

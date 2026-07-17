@@ -651,3 +651,56 @@ func TestRequeue_ServesAnElapsedBackoffImmediately(t *testing.T) {
 	assert.Equal(t, model.StatusPending, dep.Status())
 	assert.Equal(t, time.Unix(200, 0), dep.NextAttemptAt(), "an elapsed backoff makes the task due now")
 }
+
+// TestExpireLease_FencesTheWorkerThatHeldIt pins the fence a reaped lease must
+// leave behind. Failing a task permanently keeps its lease, because a worker's
+// own report is finished on the lease that sent it and a redelivery must be
+// absorbed. An expiry has no such report: the worker is unreachable and may yet
+// send one, so the lease has to go — otherwise that late report authorizes, is
+// rejected only by the status check, and the worker is answered a fault of the
+// executor's own rather than told its lease is gone.
+func TestExpireLease_FencesTheWorkerThatHeldIt(t *testing.T) {
+	dep, token, leaseID := claimed(t)
+
+	require.NoError(t, dep.ExpireLease(leaseID))
+
+	assert.Nil(t, dep.ActiveLease(), "the expired lease is dropped")
+	assert.ErrorIs(t, dep.Complete(leaseID, sha256Hex(token),
+		model.WorkerResult{Succeeded: true}, time.Unix(90, 0)), model.ErrStaleLease,
+		"the fenced worker's late report drives nothing")
+	assert.ErrorIs(t, dep.Heartbeat(leaseID, sha256Hex(token),
+		time.Unix(90, 0), time.Unix(150, 0)), model.ErrStaleLease,
+		"the fenced worker cannot keep its lease alive")
+}
+
+// TestExpireLease_LeavesTheSlotToTheTransition pins that the fence alone settles
+// nothing: it drops the lease and no more, so the caller's transition remains the
+// one thing that releases the execution slot.
+func TestExpireLease_LeavesTheSlotToTheTransition(t *testing.T) {
+	dep, _, leaseID := claimed(t)
+
+	require.NoError(t, dep.ExpireLease(leaseID))
+
+	assert.Equal(t, model.StatusLeased, dep.Status(), "the fence decides no outcome")
+	assert.Nil(t, dep.SlotReleasedAt(), "the slot is still held until a transition releases it")
+}
+
+// TestExpireLease_RejectsALeaseTheTaskNoLongerHolds pins that a reaper acting on
+// a lease it read before another transaction replaced it cannot drop the lease
+// the task now holds, which would fence a live worker mid-run.
+func TestExpireLease_RejectsALeaseTheTaskNoLongerHolds(t *testing.T) {
+	dep, _, _ := claimed(t)
+
+	assert.ErrorIs(t, dep.ExpireLease(uuid.New()), model.ErrStaleLease)
+	require.NotNil(t, dep.ActiveLease(), "the current lease survives")
+	assert.Equal(t, "worker-1", dep.ActiveLease().Owner)
+}
+
+// TestExpireLease_RejectsATaskWithNoLease pins that expiring a lease that is not
+// there is an error rather than a silent no-op: the caller read a lease to expire,
+// so finding none means it is acting on state it no longer knows.
+func TestExpireLease_RejectsATaskWithNoLease(t *testing.T) {
+	dep := model.NewWorkerDeployment(deployableCmd(), uuid.Nil, poolFixture(), time.Unix(10, 0))
+
+	assert.ErrorIs(t, dep.ExpireLease(uuid.New()), model.ErrStaleLease)
+}

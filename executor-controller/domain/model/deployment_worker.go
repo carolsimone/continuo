@@ -189,6 +189,24 @@ func (d *Deployment) ReportFailure(
 	return nil
 }
 
+// ExpireLease drops the lease whose deadline has passed, fencing the worker that
+// held it: with no lease on the task, a report that worker sends afterwards
+// authorizes nobody and is answered ErrStaleLease instead of driving a
+// transition. leaseID names the lease being expired, so a caller acting on a
+// lease the task no longer holds is rejected rather than dropping the lease a
+// live worker is running under.
+//
+// It settles nothing else. The caller applies the transition that decides the
+// task's fate and releases its execution slot, so slot release stays where every
+// other worker path keeps it.
+func (d *Deployment) ExpireLease(leaseID uuid.UUID) error {
+	if d.lease == nil || d.lease.ID != leaseID {
+		return ErrStaleLease
+	}
+	d.lease = nil
+	return nil
+}
+
 // MarkRetryPending parks a worker task that failed retryably, or whose lease
 // expired, for requeue after backoff and releases its execution slot in the same
 // transition. The lease is dropped so the next attempt claims a fresh one. It is
