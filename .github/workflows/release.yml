@@ -33,6 +33,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history: ancestry-checking the tagged commit against
+          # origin/main below needs commits this tag's shallow default
+          # clone would otherwise omit.
+          fetch-depth: 0
 
       - name: Resolve release metadata
         id: meta
@@ -42,6 +47,14 @@ jobs:
           commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
           echo "commit=${commit}" >> "$GITHUB_OUTPUT"
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+          # A release must ship exactly what main ships: refuse tags on
+          # commits that are not ancestors of origin/main.
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at ${commit}, which is not reachable from origin/main; only main commits can be released." >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -54,11 +67,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Retag images to the release tag
-        run: >
-          bash scripts/release/retag-images.sh
-          "${{ steps.meta.outputs.commit }}"
-          "${{ github.ref_name }}"
-          "${{ github.repository_owner }}"
+        # Every expression this job needs in a run: step is routed through
+        # env: rather than interpolated into the script text. GitHub expands
+        # ${{ }} before bash ever sees the line, so an expression inlined
+        # into run: — including a hostile tag name like `v$(cmd)`, which is
+        # a valid v* ref — becomes live shell text in a job holding
+        # packages: write. Routed through env:, the same value is just a
+        # variable's contents.
+        env:
+          COMMIT: ${{ steps.meta.outputs.commit }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/release/retag-images.sh "$COMMIT" "$RELEASE_TAG" "$OWNER"
 
   install-test:
     needs: retag-images
@@ -82,17 +102,24 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Log in to GitHub Container Registry (helm)
-        run: helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin <<< "${{ secrets.GITHUB_TOKEN }}"
+        env:
+          HELM_USER: ${{ github.actor }}
+          HELM_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: helm registry login ghcr.io -u "$HELM_USER" --password-stdin <<< "$HELM_PASSWORD"
 
       - name: Package and push chart
+        env:
+          OWNER: ${{ github.repository_owner }}
         run: |
           helm package deploy/continuo --version "${VERSION}" --app-version "${GITHUB_REF_NAME}"
-          helm push "continuo-${VERSION}.tgz" "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          helm push "continuo-${VERSION}.tgz" "oci://ghcr.io/${OWNER}/charts"
 
       - name: Verify the published chart pulls back
+        env:
+          OWNER: ${{ github.repository_owner }}
         run: |
           mkdir -p /tmp/chart-verify
-          helm pull "oci://ghcr.io/${{ github.repository_owner }}/charts/continuo" \
+          helm pull "oci://ghcr.io/${OWNER}/charts/continuo" \
             --version "${VERSION}" -d /tmp/chart-verify
           helm show chart "/tmp/chart-verify/continuo-${VERSION}.tgz" > /tmp/chart-verify/chart-meta.yaml
           grep -qx "version: ${VERSION}" /tmp/chart-verify/chart-meta.yaml

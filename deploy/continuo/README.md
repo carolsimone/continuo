@@ -213,11 +213,14 @@ because the chart's default-deny would otherwise block them.
 
 Pushing a `vX.Y.Z` git tag runs `release.yml`:
 
-1. Every published image is retagged from the tagged commit's `:<git-sha>`
-   to `:vX.Y.Z`. The tag must point at a main commit whose push ran
+1. `release.yml` first refuses any tag whose commit is not an ancestor of
+   `origin/main` — a release ships exactly what main ships. Every published
+   image is then retagged from the tagged commit's `:<git-sha>` to
+   `:vX.Y.Z`. The tag must point at a main commit whose push ran
    `deploy.yml`'s build-publish job; otherwise the release fails closed with
-   remediation instructions (`gh workflow run deploy.yml --ref main`, then
-   tag that head).
+   remediation instructions
+   (`gh workflow run deploy.yml --ref main -f force_publish=true`, then tag
+   that head).
 2. The same install test runs against the `:vX.Y.Z` images and gates the
    publish.
 3. The chart is packaged with `version: X.Y.Z` and `appVersion: vX.Y.Z` and

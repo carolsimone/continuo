@@ -34,9 +34,11 @@ if [ "${#missing[@]}" -gt 0 ]; then
     echo
     echo "A release tag must point at a main commit whose push ran deploy.yml's"
     echo "build-publish job (a docs/CI-only commit does not). Fix: run"
-    echo "  gh workflow run deploy.yml --ref main"
-    echo "wait for it to finish (it publishes :<sha> for the current main head,"
-    echo "reusing :latest for unchanged services), then tag that main head."
+    echo "  gh workflow run deploy.yml --ref main -f force_publish=true"
+    echo "A plain dispatch re-runs the paths filter, finds no changes, and skips"
+    echo "build-publish; the force flag skips that filter so unchanged services"
+    echo "get their :latest retagged to :<sha> for the current main head. Wait"
+    echo "for it to finish, then tag that main head."
   } >&2
   exit 1
 fi

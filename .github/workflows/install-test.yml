@@ -84,8 +84,14 @@ jobs:
       - name: Install and verify (${{ matrix.mode }})
         # inputs.image_tag is empty on pull_request events (the inputs
         # context only exists for workflow_call) — default to the latest
-        # published main-branch images.
-        run: bash scripts/install-test/run.sh "${{ matrix.mode }}" "${{ inputs.image_tag || 'latest' }}"
+        # published main-branch images. It is routed through env: rather
+        # than interpolated into the script text because release.yml feeds
+        # it github.ref_name (a tag name), which must never become live
+        # shell text in a run: step. matrix.mode is a static value from the
+        # matrix list above, not an untrusted expression, so it stays inline.
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag || 'latest' }}
+        run: bash scripts/install-test/run.sh "${{ matrix.mode }}" "$IMAGE_TAG"
 
       - name: Diagnostics on failure
         if: failure()
