@@ -33,7 +33,7 @@ func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
 			TableName: tt.tableName,
 			ImageTag:  "test-tag",
 		}
-		spec, err := buildPodSpec(params, tt.nodeType.Command(tt.tableName))
+		spec, err := buildPodSpec(params, tt.nodeType.Command(tt.tableName), "")
 		require.NoError(t, err)
 		require.Len(t, spec.Containers, 1)
 		assert.Equal(t, tt.wantCommand, spec.Containers[0].Command,
@@ -44,7 +44,7 @@ func TestBuildPodSpec_CommandPerNodeType(t *testing.T) {
 func TestBuildPodSpec_ImageRef(t *testing.T) {
 	t.Run("no DOCKERHUB_USERNAME uses service name directly", func(t *testing.T) {
 		t.Setenv("DOCKERHUB_USERNAME", "")
-		spec, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "some-tag", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"))
+		spec, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "some-tag", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
 		require.NoError(t, err)
 		require.Len(t, spec.Containers, 1)
 		assert.Equal(t, "service-1:some-tag", spec.Containers[0].Image)
@@ -52,9 +52,9 @@ func TestBuildPodSpec_ImageRef(t *testing.T) {
 
 	t.Run("with DOCKERHUB_USERNAME each service gets its own image", func(t *testing.T) {
 		t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
-		specA, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"))
+		specA, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
 		require.NoError(t, err)
-		specB, err := buildPodSpec(JobParams{ServiceName: "service-2", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"))
+		specB, err := buildPodSpec(JobParams{ServiceName: "service-2", ImageTag: "latest", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
 		require.NoError(t, err)
 		require.Len(t, specA.Containers, 1)
 		require.Len(t, specB.Containers, 1)
@@ -64,7 +64,7 @@ func TestBuildPodSpec_ImageRef(t *testing.T) {
 
 	t.Run("with DOCKERHUB_USERNAME uses params.ImageTag", func(t *testing.T) {
 		t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
-		spec, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "v1.2.3", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"))
+		spec, err := buildPodSpec(JobParams{ServiceName: "service-1", ImageTag: "v1.2.3", NodeType: pkg_model.NodeTypeDbtModel, TableName: "t"}, pkg_model.NodeTypeDbtModel.Command("t"), "")
 		require.NoError(t, err)
 		require.Len(t, spec.Containers, 1)
 		assert.Equal(t, "carolsimone/service-1:v1.2.3", spec.Containers[0].Image)
@@ -79,7 +79,7 @@ func TestBuildPodSpec_UsesImageTagFromParams(t *testing.T) {
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "users",
 	}
-	spec, err := buildPodSpec(params, params.NodeType.Command(params.TableName))
+	spec, err := buildPodSpec(params, params.NodeType.Command(params.TableName), "")
 	require.NoError(t, err)
 	require.Len(t, spec.Containers, 1)
 	assert.Equal(t, "service-1:abc123-1714300000", spec.Containers[0].Image)
@@ -92,7 +92,7 @@ func TestBuildPodSpec_RefusesEmptyImageTag(t *testing.T) {
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "users",
 	}
-	_, err := buildPodSpec(params, params.NodeType.Command(params.TableName))
+	_, err := buildPodSpec(params, params.NodeType.Command(params.TableName), "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "image_tag missing")
 	// Wrapping events.ErrPermanent lets the outbox processor classify this
@@ -113,7 +113,7 @@ func TestBuildPodSpec_NoCandidateSchemaEnv(t *testing.T) {
 		ImageTag:    "tag",
 		NodeType:    pkg_model.NodeTypeDbtModel,
 		TableName:   "users",
-	}, pkg_model.NodeTypeDbtModel.Command("users"))
+	}, pkg_model.NodeTypeDbtModel.Command("users"), "")
 	require.NoError(t, err)
 	require.Len(t, spec.Containers, 1)
 	assert.Empty(t, envByName(spec, "DBT_TARGET_SCHEMA"),

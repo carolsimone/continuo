@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"regexp"
 
+	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	validationmodel "github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -143,7 +145,8 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 
 	// Step 2: Build Job spec
 	podSpec, err := buildPodSpec(params,
-		c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName))
+		c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName),
+		c.commands.PartialParsePath(params.ServiceName))
 	if err != nil {
 		return fmt.Errorf("failed to build pod spec: %w", err)
 	}
@@ -446,6 +449,33 @@ func dbtConnectionEnvVars() []corev1.EnvVar {
 	}
 }
 
+// parseCacheInitContainer returns the s3-sidecar initContainer + emptyDir
+// volume + team-container mount that hydrate a dbt Job with the release-proven
+// partial-parse artifact. The fetcher NEVER fails the Job: a missing or
+// unfetchable artifact degrades to a full parse (logged + termination message
+// "degraded:<reason>", exit 0). targetDir is where the team's dbt looks for
+// partial_parse.msgpack (dirname of the resolved partial-parse path).
+func parseCacheInitContainer(cacheURI, targetDir string) (corev1.Container, corev1.Volume, corev1.VolumeMount) {
+	vol := corev1.Volume{
+		Name:         "parse-cache",
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+	teamMount := corev1.VolumeMount{Name: "parse-cache", MountPath: targetDir}
+	init := corev1.Container{
+		Name:            "hydrate-parse-cache",
+		Image:           s3SidecarImage(),
+		ImagePullPolicy: validationImagePullPolicy(),
+		Command:         []string{"python", "/parse_cache_fetcher.py"},
+		Env: append([]corev1.EnvVar{
+			{Name: "PARSE_CACHE_S3_URI", Value: cacheURI},
+			{Name: "PARSE_CACHE_DEST", Value: "/parse-cache/partial_parse.msgpack"},
+		}, s3CredEnvVars()...),
+		VolumeMounts:    []corev1.VolumeMount{{Name: "parse-cache", MountPath: "/parse-cache"}},
+		SecurityContext: continuoImageSecurityContext(),
+	}
+	return init, vol, teamMount
+}
+
 // buildParseExportCommand returns the sh script for one parse-export/rehearsal
 // initContainer. It runs the team's parse argv cold (export), fails loudly if
 // no partial_parse.msgpack appears (partial parsing disabled in the project),
@@ -565,7 +595,8 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 	}
 
 	podSpec, err := buildSeedBuildPodSpec(params,
-		c.commands.SeedBuildCommand(params.ServiceName, params.TableName, params.CandidateSchema))
+		c.commands.SeedBuildCommand(params.ServiceName, params.TableName, params.CandidateSchema),
+		c.commands.PartialParsePath(params.ServiceName))
 	if err != nil {
 		return fmt.Errorf("failed to build seed-build pod spec: %w", err)
 	}
@@ -608,7 +639,12 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
 // generate_schema_name macro materializes the seed into the candidate schema.
 // ImageTag must be non-empty — the team image must be explicitly versioned.
-func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodSpec, error) {
+// When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
+// that pre-seeds the candidate-context partial-parse artifact (see
+// parseCacheInitContainer); partialParsePath is the service's resolved
+// partial_parse.msgpack path, used only to derive the team container's mount
+// directory.
+func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParsePath string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from seed-build job params for service %s",
 			events.ErrPermanent, p.ServiceName)
@@ -630,7 +666,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodS
 	}
 	envVars = append(envVars, dbtConnectionEnvVars()...)
 
-	return corev1.PodSpec{
+	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
 		SecurityContext: jobPodSecurityContext(),
 		Containers: []corev1.Container{
@@ -643,7 +679,17 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodS
 				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
-	}, nil
+	}
+
+	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
+		uri := deploy.ParseCacheCandidateURI(bucket, p.ServiceName, p.ReleaseID)
+		init, vol, teamMount := parseCacheInitContainer(uri, path.Dir(partialParsePath))
+		spec.InitContainers = []corev1.Container{init}
+		spec.Volumes = []corev1.Volume{vol}
+		spec.Containers[0].VolumeMounts = []corev1.VolumeMount{teamMount}
+	}
+
+	return spec, nil
 }
 
 // CreateCompileJob builds and creates a mode=compile K8s Job (idempotent by
@@ -836,7 +882,12 @@ func (c *K8sClient) setClientsetForTest(cs kubernetes.Interface) { c.clientset =
 // own environment so dbt pods can reach the same database.
 // Returns an error if ImageTag is empty — content-addressed tags must be explicit;
 // falling back to "latest" is intentionally refused.
-func buildPodSpec(params JobParams, command []string) (corev1.PodSpec, error) {
+// When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
+// that pre-seeds the prod-context partial-parse artifact (see
+// parseCacheInitContainer); partialParsePath is the service's resolved
+// partial_parse.msgpack path, used only to derive the team container's mount
+// directory.
+func buildPodSpec(params JobParams, command []string, partialParsePath string) (corev1.PodSpec, error) {
 	if params.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for service %s",
 			events.ErrPermanent, params.ServiceName)
@@ -858,7 +909,7 @@ func buildPodSpec(params JobParams, command []string) (corev1.PodSpec, error) {
 	}
 	envVars = append(envVars, dbtConnectionEnvVars()...)
 
-	return corev1.PodSpec{
+	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
 		SecurityContext: jobPodSecurityContext(),
 		Containers: []corev1.Container{
@@ -871,5 +922,15 @@ func buildPodSpec(params JobParams, command []string) (corev1.PodSpec, error) {
 				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
-	}, nil
+	}
+
+	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
+		uri := deploy.ParseCacheProdURI(bucket, params.ServiceName, params.ImageTag)
+		init, vol, teamMount := parseCacheInitContainer(uri, path.Dir(partialParsePath))
+		spec.InitContainers = []corev1.Container{init}
+		spec.Volumes = []corev1.Volume{vol}
+		spec.Containers[0].VolumeMounts = []corev1.VolumeMount{teamMount}
+	}
+
+	return spec, nil
 }

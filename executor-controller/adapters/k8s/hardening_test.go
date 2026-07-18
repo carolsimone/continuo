@@ -37,7 +37,7 @@ func TestBuildPodSpecHardening(t *testing.T) {
 	spec, err := buildPodSpec(JobParams{
 		JobName: "j", TaskID: "t", ServiceName: "svc", SchemaName: "s",
 		TableName: "tbl", Namespace: "default", ImageTag: "abc",
-	}, []string{"dbt", "run"})
+	}, []string{"dbt", "run"}, "")
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
 	// Team image: hardened, but the user is the team's choice (dbt image
@@ -48,7 +48,7 @@ func TestBuildPodSpecHardening(t *testing.T) {
 
 func TestBuildSeedBuildPodSpecHardening(t *testing.T) {
 	p := validationParams()
-	spec, err := buildSeedBuildPodSpec(p, []string{"dbt", "seed"})
+	spec, err := buildSeedBuildPodSpec(p, []string{"dbt", "seed"}, "")
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
 	assertBaseHardening(t, spec.Containers[0].SecurityContext)
