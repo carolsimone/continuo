@@ -103,6 +103,11 @@ Please read: `tests/e2e/README.md`.
   * run e2e tests (read tests/e2e/README.md for how to do that).
   * update `docs/arch/*` documentations.
   * whenever you find edge cases on the logic and you solve the problem, let's build a proper test to avoid this issue will resurface again.
+* Before pushing a branch or opening a PR, reproduce the FULL CI gate locally — a green partial run is not a green PR. CI runs every check; a subset does not represent it:
+  * Run **all** Go services, not just the ones you think you touched: `make test-go` (no `SERVICE=`). CI runs the whole suite, and cross-service/cross-test interference (e.g. one test leaking Neo4j/Postgres rows that another asserts against) only appears in the full run.
+  * Integration tests share one Neo4j/Postgres. Run them against a **clean** database — a locally-polluted DB (e.g. left populated by a prior e2e run) masks tests that depend on residual state or that leak state across the shared suite. Passing on your dirty local DB is NOT evidence CI will pass on fresh infra; wipe shared state first and re-run the whole service suite.
+  * Lint and render the Helm chart the way CI does: `helm lint`/`helm template` plus `kube-linter` on `deploy/continuo`, and confirm the chart-install workflow. New OSS chart checks gate the PR even when Go tests are green.
+  * After pushing, check `gh pr checks <n>` and read the logs of any failure — do not assume a local green means a green PR.
 * Comments in the code must be reflecting what the code does, not referring to PRs, deprecated features, or other irrelevant information. A new user reading the code must understand what the code does without having prior knowledge.
 
 <!-- rtk-instructions v2 -->
