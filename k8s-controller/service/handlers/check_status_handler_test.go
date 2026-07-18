@@ -1913,3 +1913,93 @@ func TestHandle_PromoteSeedMode_RunningJob_SuppressesRunningAnnouncement(t *test
 // Compile-time interface checks.
 var _ ports.LogUploader = (*fakeLogUploader)(nil)
 var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)
+
+// TestHandleSucceeded_ParseCache verifies that writeTaskExecutionRecordedWithLogS3Key
+// correctly maps the hydrate-parse-cache initContainer's termination messages to
+// parse_cache and parse_cache_reason fields, including the default branch where
+// the message is neither "hydrated" nor "degraded:"-prefixed.
+func TestHandleSucceeded_ParseCache(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		initMessages   map[string]string
+		wantParseCache string
+		wantReason     string
+		wantOmitted    bool
+	}{
+		{
+			name:           "hydrated",
+			initMessages:   map[string]string{"hydrate-parse-cache": "hydrated"},
+			wantParseCache: "hydrated",
+			wantReason:     "",
+		},
+		{
+			name:           "degraded",
+			initMessages:   map[string]string{"hydrate-parse-cache": "degraded:artifact missing"},
+			wantParseCache: "degraded",
+			wantReason:     "artifact missing",
+		},
+		{
+			name:         "container absent",
+			initMessages: nil,
+			wantOmitted:  true,
+		},
+		{
+			name:           "unknown (corrupted-gibberish)",
+			initMessages:   map[string]string{"hydrate-parse-cache": "corrupted-gibberish"},
+			wantParseCache: "unknown",
+			wantReason:     "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outbox := &fakeOutboxRepo{}
+			result := &model.K8sPodResult{
+				Status:                  model.JobStatusSucceeded,
+				InitTerminationMessages: tc.initMessages,
+				ExecutionSeconds:        1.0,
+			}
+			handler := newHandler(&fakeK8sClient{status: result}, noopCancelledRepo(), 3)
+
+			cmd := command.CheckJobStatus{
+				TaskID:     uuid.New(),
+				ScheduleID: uuid.New(),
+				JobName:    "job-parse-cache-" + tc.name,
+				MaxRetries: 3,
+			}
+
+			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+
+			execEntry := findEntryByEventType(outbox.entries, "task_execution_recorded")
+			if execEntry == nil {
+				t.Fatalf("expected a task_execution_recorded entry, got %v", eventTypesOf(outbox.entries))
+			}
+
+			var payload map[string]any
+			if err := json.Unmarshal(execEntry.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal task_execution_recorded: %v", err)
+			}
+
+			if tc.wantOmitted {
+				if _, present := payload["parse_cache"]; present {
+					t.Errorf("expected parse_cache to be omitted, got %v", payload["parse_cache"])
+				}
+				if _, present := payload["parse_cache_reason"]; present {
+					t.Errorf("expected parse_cache_reason to be omitted, got %v", payload["parse_cache_reason"])
+				}
+				return
+			}
+
+			if payload["parse_cache"] != tc.wantParseCache {
+				t.Errorf("expected parse_cache=%q, got %v", tc.wantParseCache, payload["parse_cache"])
+			}
+			if tc.wantReason == "" {
+				if _, present := payload["parse_cache_reason"]; present {
+					t.Errorf("expected parse_cache_reason to be omitted, got %v", payload["parse_cache_reason"])
+				}
+			} else if payload["parse_cache_reason"] != tc.wantReason {
+				t.Errorf("expected parse_cache_reason=%q, got %v", tc.wantReason, payload["parse_cache_reason"])
+			}
+		})
+	}
+}
