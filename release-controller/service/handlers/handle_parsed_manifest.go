@@ -409,8 +409,16 @@ var nonAlphanumUnderscore = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
 // sanitizeSchemaSuffix replaces any character that is not [a-zA-Z0-9_] with _.
 // Used to derive a safe Postgres schema name suffix from a release_id.
-func sanitizeSchemaSuffix(s string) string {
+// SanitizeSchemaSuffix converts a release ID into a dbt schema-name suffix by
+// replacing all non-alphanumeric characters (except underscore) with underscores.
+// This is used to construct the candidate schema name: "_candidate_" + SanitizeSchemaSuffix(releaseID).
+func SanitizeSchemaSuffix(s string) string {
 	return nonAlphanumUnderscore.ReplaceAllString(s, "_")
+}
+
+// sanitizeSchemaSuffix is a backward-compatibility alias for SanitizeSchemaSuffix.
+func sanitizeSchemaSuffix(s string) string {
+	return SanitizeSchemaSuffix(s)
 }
 
 // unionSorted merges two ID slices into a deduplicated, lexically-sorted slice.
