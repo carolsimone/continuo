@@ -87,16 +87,16 @@ const selectColumns = `
 
 func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) error {
 	var (
-		jobParams          []byte
 		taskID, scheduleID uuid.UUID
 		releaseID, nodeID  *string
 		err                error
 	)
+	jobParams, err := marshalJobParams(d)
+	if err != nil {
+		return err
+	}
 	if d.Mode() == model.ModeValidation || d.Mode() == model.ModeSeedBuild || d.Mode() == model.ModeCompile {
 		vcmd := d.ValidationCommand()
-		if jobParams, err = json.Marshal(vcmd); err != nil {
-			return fmt.Errorf("marshal validation deploy command: %w", err)
-		}
 		// task_id/schedule_id are NOT NULL but validation rows have no real
 		// task/schedule identity; derive stable synthetic UUIDs from (release_id,
 		// node_id) so re-adds map to the same row.
@@ -104,11 +104,7 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 		rid, nid := vcmd.ReleaseID, vcmd.NodeID
 		releaseID, nodeID = &rid, &nid
 	} else {
-		cmd := d.Command()
-		if jobParams, err = json.Marshal(cmd); err != nil {
-			return fmt.Errorf("marshal deploy command: %w", err)
-		}
-		if taskID, scheduleID, err = commandIDs(cmd); err != nil {
+		if taskID, scheduleID, err = commandIDs(d.Command()); err != nil {
 			return err
 		}
 	}
@@ -162,11 +158,18 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
 	}
 	lease := newLeaseRow(d.ActiveLease())
+	jobParams, err := marshalJobParams(d)
+	if err != nil {
+		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
+	}
 
-	// resolved_argv and execution_path are write-once: they record what a task was
-	// actually attempted with, so once stored they must survive every later Save.
-	// COALESCE keeps the first non-NULL value, which means a config reload cannot
-	// change the argv or path of a task that has already been resolved.
+	// job_params is rewritten every Save because a requeue mutates the command it
+	// holds (the attempt's retry count and job name), and the next claim
+	// reconstructs Command() from this column. resolved_argv and execution_path
+	// stay write-once: they record what a task was actually attempted with, so
+	// once stored they must survive every later Save. COALESCE keeps the first
+	// non-NULL value, which means a config reload cannot change the argv or path
+	// of a task that has already been resolved.
 	const query = `
 		UPDATE executor_deployments
 		SET status = $2, retry_count = $3, next_attempt_at = $4, deployed_at = $5, error_message = $6,
@@ -177,7 +180,7 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 		    lease_id = $17, lease_token_sha256 = $18, lease_owner = $19,
 		    lease_pod_name = $20, lease_pod_uid = $21, attempt = $22,
 		    lease_expires_at = $23, heartbeat_at = $24, started_at = $25, finished_at = $26,
-		    terminal_result = $27
+		    terminal_result = $27, job_params = $28
 		WHERE id = $1`
 	res, err := r.exec.ExecContext(ctx, query,
 		d.ID(), string(d.Status()), d.RetryCount(), d.NextAttemptAt(), d.DeployedAt(), d.ErrorMessage(),
@@ -186,7 +189,7 @@ func (r *deploymentsRepository) Save(ctx context.Context, d *model.Deployment) e
 		d.Reservation().ReservedAt, d.Reservation().ReleasedAt,
 		lease.ID, lease.TokenSHA256, lease.Owner, lease.PodName, lease.PodUID, d.Attempt(),
 		lease.ExpiresAt, lease.HeartbeatAt, lease.StartedAt, lease.FinishedAt,
-		terminalResult,
+		terminalResult, jobParams,
 	)
 	if err != nil {
 		return fmt.Errorf("save deployment %s: %w", d.ID(), err)
@@ -665,6 +668,29 @@ func newLeaseRow(l *model.Lease) leaseRow {
 		HeartbeatAt: &heartbeat,
 		StartedAt:   l.StartedAt,
 		FinishedAt:  l.FinishedAt,
+	}
+}
+
+// marshalJobParams serializes the command a deployment carries into the
+// job_params column. Validation, seed-build, and compile rows store the
+// ValidationDeployTask shape; every other mode stores the production DeployTask.
+// It is written on Add and rewritten on every Save so a requeue's updated
+// command (its attempt retry count and job name) survives to the next claim,
+// which reconstructs Command() from this column.
+func marshalJobParams(d *model.Deployment) ([]byte, error) {
+	switch d.Mode() {
+	case model.ModeValidation, model.ModeSeedBuild, model.ModeCompile:
+		b, err := json.Marshal(d.ValidationCommand())
+		if err != nil {
+			return nil, fmt.Errorf("marshal validation deploy command: %w", err)
+		}
+		return b, nil
+	default:
+		b, err := json.Marshal(d.Command())
+		if err != nil {
+			return nil, fmt.Errorf("marshal deploy command: %w", err)
+		}
+		return b, nil
 	}
 }
 

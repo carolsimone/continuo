@@ -192,6 +192,38 @@ func TestRepo_Save_ResolvedExecutionIsWriteOnce(t *testing.T) {
 	assert.Equal(t, string(model.ExecutionPathNative), *path, "execution_path is write-once")
 }
 
+func TestRepo_Save_RequeuePersistsUpdatedCommand(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	ctx := context.Background()
+
+	now := time.Now()
+	cmd := validCmd()
+	cmd.JobName = "dbt-job-attempt-0"
+	cmd.TaskRetryCount = 0
+	cmd.TaskMaxRetries = 2
+	dep := model.NewWorkerDeployment(cmd, uuid.Nil, "pool-abc", now)
+	require.NoError(t, repo.Add(ctx, dep))
+
+	// A claim, a retryable failure that parks the row for requeue, then the
+	// requeue itself with the next attempt's count and job name.
+	require.NoError(t, dep.Claim(uuid.New(), "tok-sha", "owner", "pod-1", "uid-1",
+		now, now.Add(time.Minute), []string{"dbt", "run"}, model.ExecutionPathNative))
+	require.NoError(t, repo.Save(ctx, dep))
+	require.NoError(t, dep.MarkRetryPending(now, time.Second))
+	require.NoError(t, repo.Save(ctx, dep))
+	require.NoError(t, dep.Requeue(1, "dbt-job-attempt-1", now.Add(2*time.Second)))
+	require.NoError(t, repo.Save(ctx, dep))
+
+	// The next claim reconstructs Command() from the persisted job_params, so a
+	// fresh read must carry the incremented retry count and the new job name.
+	reloaded, err := repo.GetByID(ctx, dep.ID())
+	require.NoError(t, err)
+	assert.Equal(t, 1, reloaded.Command().TaskRetryCount, "requeued retry count must persist")
+	assert.Equal(t, "dbt-job-attempt-1", reloaded.Command().JobName, "requeued job name must persist")
+}
+
 func TestRepo_Save_MarkDeployed(t *testing.T) {
 	db, cleanup := setupPostgres(t)
 	defer cleanup()
