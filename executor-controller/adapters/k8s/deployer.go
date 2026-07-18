@@ -101,19 +101,31 @@ func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJo
 // DeployCompile maps the domain ValidationJobSpec to K8s compile job params
 // and creates the Job (idempotent by job name). The compile Job runs `dbt
 // compile` in the team image (init container) and uploads the resulting
-// manifest.json to S3 (main container). An unparseable node type is NOT an
-// error here — compile Jobs do not use NodeType (they compile the full service
-// manifest, not a single dbt node). We still forward the field for symmetry.
+// manifest.json to S3 (main container).
 func (d *Deployer) DeployCompile(ctx context.Context, spec deploy.ValidationJobSpec) error {
+	params, err := compileParamsFromSpec(spec, d.namespace)
+	if err != nil {
+		return err
+	}
+	return d.client.CreateCompileJob(ctx, params)
+}
+
+// compileParamsFromSpec maps the domain ValidationJobSpec to K8s
+// ValidationJobParams for a compile Job. An unparseable node type is NOT an
+// error here — compile Jobs do not use NodeType (they compile the full
+// service manifest, not a single dbt node). We still forward the field for
+// symmetry. Extracted from DeployCompile so the field-by-field mapping is
+// directly unit-testable without a K8s client.
+func compileParamsFromSpec(spec deploy.ValidationJobSpec, namespace string) (ValidationJobParams, error) {
 	var nodeType pkg_model.NodeType
 	if spec.NodeType != "" {
 		var err error
 		nodeType, err = pkg_model.ParseNodeType(spec.NodeType)
 		if err != nil {
-			return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
+			return ValidationJobParams{}, fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
 		}
 	}
-	return d.client.CreateCompileJob(ctx, ValidationJobParams{
+	return ValidationJobParams{
 		JobName:             spec.JobName,
 		ReleaseID:           spec.ReleaseID,
 		NodeID:              spec.NodeID,
@@ -124,8 +136,8 @@ func (d *Deployer) DeployCompile(ctx context.Context, spec deploy.ValidationJobS
 		CandidateSchema:     spec.CandidateSchema,
 		ParseProdS3URI:      spec.ParseProdS3URI,
 		ParseCandidateS3URI: spec.ParseCandidateS3URI,
-		Namespace:           d.namespace,
-	})
+		Namespace:           namespace,
+	}, nil
 }
 
 // CountActive returns the number of executor dbt Jobs currently running.
