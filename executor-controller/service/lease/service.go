@@ -473,6 +473,13 @@ func (s *Service) fail(
 // worker's hint: the worker reports what it observed, but the executor owns the
 // error-class policy and the retry budget. The final allowed attempt is permanent
 // however transient the worker judged the failure.
+//
+// TaskMaxRetries counts retries, so a task runs its initial attempt plus up to
+// that many more: TaskRetryCount is the current attempt's zero-based index, and
+// another attempt is earned while it is below the retry budget. This mirrors the
+// Jobs path, where k8s-controller retries a failed Job while retry_count <
+// max_retries, so a task settles after the same total number of attempts on
+// either path.
 func (s *Service) retryable(dep *model.Deployment, result model.WorkerResult) bool {
 	if !result.Retryable {
 		return false
@@ -481,7 +488,7 @@ func (s *Service) retryable(dep *model.Deployment, result model.WorkerResult) bo
 		return false
 	}
 	cmd := dep.Command()
-	return cmd.TaskRetryCount+1 < cmd.TaskMaxRetries
+	return cmd.TaskRetryCount < cmd.TaskMaxRetries
 }
 
 // settled reports whether this task already recorded a terminal result, which is

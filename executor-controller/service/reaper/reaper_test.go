@@ -209,7 +209,9 @@ func TestReapOne_ParksARetryableTaskAndStopsItsPod(t *testing.T) {
 // left to try, so it settles FAILED — node.updated:v1 is what lets the run
 // advance past a node no worker will ever report on.
 func TestReapOne_FailsATaskOutOfAttemptsAndStopsItsPod(t *testing.T) {
-	dep, leaseID := leasedTask(t, 2, 3)
+	// TaskMaxRetries counts retries, so the final allowed attempt is the initial
+	// one plus that many: TaskRetryCount 3 out of TaskMaxRetries 3 has nothing left.
+	dep, leaseID := leasedTask(t, 3, 3)
 	running(t, dep, leaseID)
 	h := newHarness(dep, &recordingTerminator{})
 
@@ -230,6 +232,23 @@ func TestReapOne_FailsATaskOutOfAttemptsAndStopsItsPod(t *testing.T) {
 	assert.Equal(t, "FAILED", node.Status)
 }
 
+// TestReapOne_ParksAtTheLastRetryBoundary pins the total-attempts contract at the
+// boundary: with TaskMaxRetries 3 an attempt whose zero-based index is 2 is still
+// below the retry budget, so an expired lease there parks the task for one more
+// try rather than failing it — the same total number of attempts the Jobs path
+// gives with retry_count < max_retries.
+func TestReapOne_ParksAtTheLastRetryBoundary(t *testing.T) {
+	dep, leaseID := leasedTask(t, 2, 3)
+	running(t, dep, leaseID)
+	h := newHarness(dep, &recordingTerminator{})
+
+	found, err := h.reaper.ReapOne(context.Background())
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, model.StatusRetryPending, dep.Status(),
+		"an attempt below the retry budget is offered again, not failed")
+}
+
 // TestReapOne_FencesTheWorkerOnEitherPath pins that the reaped worker can no
 // longer drive its task. It is the whole point of reaping: the task is about to
 // be given to somebody else, and a late report from the pod that lost it must be
@@ -241,7 +260,7 @@ func TestReapOne_FencesTheWorkerOnEitherPath(t *testing.T) {
 		retryCount, maxRetries int
 	}{
 		{"attempts left", 0, 3},
-		{"out of attempts", 2, 3},
+		{"out of attempts", 3, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dep, leaseID := leasedTask(t, tc.retryCount, tc.maxRetries)

@@ -440,7 +440,9 @@ func TestComplete_RetryableFailureParksAndAsksForRetry(t *testing.T) {
 func TestComplete_FinalAttemptIsPermanentDespiteWorkerHint(t *testing.T) {
 	h := newHarness(t, 4)
 	cmd := workerCmd()
-	cmd.TaskRetryCount = 2 // attempt 3 of 3 — the final allowed attempt
+	// TaskMaxRetries counts retries, so the budget is the initial attempt plus 3
+	// more; TaskRetryCount 3 is that final allowed attempt.
+	cmd.TaskRetryCount = 3
 	cmd.TaskMaxRetries = 3
 	dep := h.seedDue(cmd)
 	grant := h.mustClaim(t)
@@ -459,6 +461,40 @@ func TestComplete_FinalAttemptIsPermanentDespiteWorkerHint(t *testing.T) {
 	require.NotNil(t, row.TerminalResult())
 	assert.True(t, row.TerminalResult().Retryable,
 		"the worker's hint is recorded as observed, not rewritten to match the decision")
+}
+
+// TestComplete_RetryBudgetMatchesTheJobsPath pins that a worker task settles
+// after the same total number of attempts as the equivalent Kubernetes Job.
+// TaskMaxRetries counts retries beyond the initial attempt, so a failed attempt
+// whose zero-based index is below the budget parks for another try and the one
+// at the budget fails permanently. For TaskMaxRetries=2 that is the initial
+// attempt plus two retries — three in all — the same total the Jobs path reaches
+// with retry_count < max_retries.
+func TestComplete_RetryBudgetMatchesTheJobsPath(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		retryCount int
+		wantStatus model.Status
+	}{
+		{"initial attempt parks for retry", 0, model.StatusRetryPending},
+		{"first retry parks for retry", 1, model.StatusRetryPending},
+		{"final retry fails permanently", 2, model.StatusFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, 4)
+			cmd := workerCmd()
+			cmd.TaskRetryCount = tc.retryCount
+			cmd.TaskMaxRetries = 2
+			dep := h.seedDue(cmd)
+			grant := h.mustClaim(t)
+
+			require.NoError(t, h.svc.Complete(context.Background(), lease.CompleteInput{PoolKey: poolKey,
+				DeploymentID: dep.ID(), LeaseID: grant.LeaseID, Token: grant.Token,
+				Result: model.WorkerResult{Succeeded: false, Retryable: true, ErrorMessage: "connection reset"},
+			}))
+			assert.Equal(t, tc.wantStatus, h.repo.statusOf(dep.ID()))
+		})
+	}
 }
 
 // TestComplete_UnfixableErrorClassesAreNeverRetried pins the classes no rerun can

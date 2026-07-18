@@ -158,8 +158,13 @@ func (r *Reaper) recover(
 		return fmt.Errorf("fence expired lease of deployment %s: %w", dep.ID(), err)
 	}
 
+	// TaskMaxRetries counts retries beyond the initial attempt; TaskRetryCount is
+	// the zero-based index of the attempt that went silent, so another attempt is
+	// offered while it is below the budget. This matches both the worker's own
+	// Complete path and the Jobs path's retry_count < max_retries, so a task gets
+	// the same total number of attempts however it ran and however it failed.
 	cmd := dep.Command()
-	if cmd.TaskRetryCount+1 < cmd.TaskMaxRetries {
+	if cmd.TaskRetryCount < cmd.TaskMaxRetries {
 		if err := dep.MarkRetryPending(now, r.retryBackoff); err != nil {
 			return fmt.Errorf("park expired deployment %s for retry: %w", dep.ID(), err)
 		}
