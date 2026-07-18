@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
@@ -88,4 +89,54 @@ func TestCompileRequestedHandler_JobNameDeterministic(t *testing.T) {
 	// Verify job name matches BuildValidationJobName(releaseID, service)
 	expected := handlers.BuildValidationJobName("rel-abc", "shop")
 	assert.Equal(t, expected, depl.added[0].ValidationCommand().JobName)
+}
+
+func TestCompileRequestedHandler_ThreadsCandidateSchemaAndParseCacheURIs(t *testing.T) {
+	depl := &stubDeploymentsRepo{}
+	u := &uow.FakeUnitOfWork{Deployments: depl}
+
+	evt := events.CompileRequested{
+		ReleaseID:       "rel-parse-1",
+		Service:         "finance",
+		ImageTag:        "sha-parse-1",
+		Bucket:          "my-artifacts-bucket",
+		CandidateSchema: "_candidate_rel_parse_1",
+	}
+
+	h := handlers.NewCompileRequestedHandler(discardLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.Nil))
+	require.Len(t, depl.added, 1)
+
+	cmd := depl.added[0].ValidationCommand()
+	assert.Equal(t, "_candidate_rel_parse_1", cmd.CandidateSchema)
+	assert.Equal(t,
+		deploy.ParseCacheProdURI(evt.Bucket, evt.Service, evt.ImageTag),
+		cmd.ParseProdS3URI,
+	)
+	assert.Equal(t,
+		deploy.ParseCacheCandidateURI(evt.Bucket, evt.Service, evt.ReleaseID),
+		cmd.ParseCandidateS3URI,
+	)
+}
+
+func TestCompileRequestedHandler_EmptyCandidateSchemaDisablesParseCacheLeg(t *testing.T) {
+	depl := &stubDeploymentsRepo{}
+	u := &uow.FakeUnitOfWork{Deployments: depl}
+
+	evt := events.CompileRequested{
+		ReleaseID: "rel-parse-2",
+		Service:   "finance",
+		ImageTag:  "sha-parse-2",
+		Bucket:    "my-artifacts-bucket",
+		// CandidateSchema deliberately absent: older compile.requested wire format.
+	}
+
+	h := handlers.NewCompileRequestedHandler(discardLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.Nil))
+	require.Len(t, depl.added, 1)
+
+	cmd := depl.added[0].ValidationCommand()
+	assert.Empty(t, cmd.CandidateSchema, "no candidate_schema on the wire means the parse-export leg stays off")
+	assert.Empty(t, cmd.ParseProdS3URI)
+	assert.Empty(t, cmd.ParseCandidateS3URI)
 }

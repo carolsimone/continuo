@@ -213,6 +213,13 @@ type ValidationJobParams struct {
 	// compiled manifest.json. Populated only for mode=compile Jobs.
 	ManifestS3URI string
 
+	// ParseProdS3URI / ParseCandidateS3URI are the S3 destinations for the
+	// compile Job's exported partial-parse artifacts. Empty (older
+	// compile.requested messages without candidate_schema) disables the
+	// parse-export leg for this release.
+	ParseProdS3URI      string
+	ParseCandidateS3URI string
+
 	Namespace string
 }
 

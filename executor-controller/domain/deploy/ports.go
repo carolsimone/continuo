@@ -52,6 +52,12 @@ type ValidationJobSpec struct {
 	// compiled manifest.json. Populated only for mode=compile dispatches; empty
 	// for validation and seed-build dispatches.
 	ManifestS3URI string
+	// ParseProdS3URI / ParseCandidateS3URI are the S3 destinations for the
+	// compile Job's exported partial-parse artifacts. Empty (older
+	// compile.requested messages without candidate_schema) disables the
+	// parse-export leg for this release.
+	ParseProdS3URI      string
+	ParseCandidateS3URI string
 }
 
 // Deployer is the driven port the dispatcher uses to deploy work and observe

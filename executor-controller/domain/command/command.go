@@ -47,20 +47,27 @@ func (DeployTask) isCommand() {}
 // dispatch of this node. It is persisted in job_params and read back by the
 // dispatcher to evaluate whether all upstreams have completed successfully.
 type ValidationDeployTask struct {
-	ReleaseID        string   `json:"release_id"`
-	NodeID           string   `json:"node_id"`
-	ServiceName      string   `json:"service_name"`
-	SchemaName       string   `json:"schema_name"`
-	TableName        string   `json:"table_name"`
-	NodeType         string   `json:"node_type"`
-	ImageTag         string   `json:"image_tag"`
-	JobName          string   `json:"job_name"`
-	CandidateSchema  string   `json:"candidate_schema"`
-	CandidateSQLURI  string   `json:"candidate_sql_uri"`
-	ValidationOp     string   `json:"validation_op"`
-	ProdSchema       string   `json:"prod_schema"`
-	UpstreamNodeIDs  []string `json:"upstream_node_ids"`
-	ManifestS3URI    string   `json:"manifest_s3_uri"`
+	ReleaseID       string   `json:"release_id"`
+	NodeID          string   `json:"node_id"`
+	ServiceName     string   `json:"service_name"`
+	SchemaName      string   `json:"schema_name"`
+	TableName       string   `json:"table_name"`
+	NodeType        string   `json:"node_type"`
+	ImageTag        string   `json:"image_tag"`
+	JobName         string   `json:"job_name"`
+	CandidateSchema string   `json:"candidate_schema"`
+	CandidateSQLURI string   `json:"candidate_sql_uri"`
+	ValidationOp    string   `json:"validation_op"`
+	ProdSchema      string   `json:"prod_schema"`
+	UpstreamNodeIDs []string `json:"upstream_node_ids"`
+	ManifestS3URI   string   `json:"manifest_s3_uri"`
+	// ParseProdS3URI / ParseCandidateS3URI are the S3 destinations for the
+	// compile Job's exported partial-parse artifacts. Empty (older
+	// compile.requested messages without candidate_schema) disables the
+	// parse-export leg for this release. omitempty keeps pre-feature
+	// job_params JSON byte-identical.
+	ParseProdS3URI      string `json:"parse_prod_s3_uri,omitempty"`
+	ParseCandidateS3URI string `json:"parse_candidate_s3_uri,omitempty"`
 }
 
 func (ValidationDeployTask) isCommand() {}
@@ -90,18 +97,20 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 // dispatcher, not in the K8s Job pod.
 func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 	return deploy.ValidationJobSpec{
-		JobName:         c.JobName,
-		ReleaseID:       c.ReleaseID,
-		NodeID:          c.NodeID,
-		ServiceName:     c.ServiceName,
-		SchemaName:      c.SchemaName,
-		TableName:       c.TableName,
-		NodeType:        c.NodeType,
-		ImageTag:        c.ImageTag,
-		CandidateSchema: c.CandidateSchema,
-		CandidateSQLURI: c.CandidateSQLURI,
-		ValidationOp:    c.ValidationOp,
-		ProdSchema:      c.ProdSchema,
-		ManifestS3URI:   c.ManifestS3URI,
+		JobName:             c.JobName,
+		ReleaseID:           c.ReleaseID,
+		NodeID:              c.NodeID,
+		ServiceName:         c.ServiceName,
+		SchemaName:          c.SchemaName,
+		TableName:           c.TableName,
+		NodeType:            c.NodeType,
+		ImageTag:            c.ImageTag,
+		CandidateSchema:     c.CandidateSchema,
+		CandidateSQLURI:     c.CandidateSQLURI,
+		ValidationOp:        c.ValidationOp,
+		ProdSchema:          c.ProdSchema,
+		ManifestS3URI:       c.ManifestS3URI,
+		ParseProdS3URI:      c.ParseProdS3URI,
+		ParseCandidateS3URI: c.ParseCandidateS3URI,
 	}
 }

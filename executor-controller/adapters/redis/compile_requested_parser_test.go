@@ -100,3 +100,18 @@ func TestParseCompileRequested_MissingBucket(t *testing.T) {
 	_, err := ParseCompileRequested(compileRequestedMsg(t, p, ""))
 	require.Error(t, err)
 }
+
+func TestParseCompileRequested_CandidateSchemaPresent(t *testing.T) {
+	p := compileRequestedPayload()
+	p["candidate_schema"] = "_candidate_x"
+	evt, err := ParseCompileRequested(compileRequestedMsg(t, p, ""))
+	require.NoError(t, err)
+	assert.Equal(t, "_candidate_x", evt.CandidateSchema)
+}
+
+func TestParseCompileRequested_CandidateSchemaAbsentIsEmpty(t *testing.T) {
+	p := compileRequestedPayload()
+	evt, err := ParseCompileRequested(compileRequestedMsg(t, p, ""))
+	require.NoError(t, err)
+	assert.Equal(t, "", evt.CandidateSchema)
+}

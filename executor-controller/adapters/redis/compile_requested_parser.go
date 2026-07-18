@@ -13,10 +13,11 @@ import (
 // compileRequestedDTO mirrors the flat JSON body release-controller emits in
 // the "payload" field of a compile.requested:v1 message.
 type compileRequestedDTO struct {
-	ReleaseID string `json:"release_id"`
-	Service   string `json:"service"`
-	ImageTag  string `json:"image_tag"`
-	Bucket    string `json:"bucket"`
+	ReleaseID       string `json:"release_id"`
+	Service         string `json:"service"`
+	ImageTag        string `json:"image_tag"`
+	Bucket          string `json:"bucket"`
+	CandidateSchema string `json:"candidate_schema"`
 }
 
 // ParseCompileRequested translates a compile.requested:v1 XMessage into a
@@ -58,10 +59,11 @@ func ParseCompileRequested(msg goredis.XMessage) (events.CompileRequested, error
 	}
 
 	return events.CompileRequested{
-		OutboxEntryID: outboxEntryID,
-		ReleaseID:     dto.ReleaseID,
-		Service:       dto.Service,
-		ImageTag:      dto.ImageTag,
-		Bucket:        dto.Bucket,
+		OutboxEntryID:   outboxEntryID,
+		ReleaseID:       dto.ReleaseID,
+		Service:         dto.Service,
+		ImageTag:        dto.ImageTag,
+		Bucket:          dto.Bucket,
+		CandidateSchema: dto.CandidateSchema,
 	}, nil
 }

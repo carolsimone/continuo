@@ -114,14 +114,17 @@ func (d *Deployer) DeployCompile(ctx context.Context, spec deploy.ValidationJobS
 		}
 	}
 	return d.client.CreateCompileJob(ctx, ValidationJobParams{
-		JobName:       spec.JobName,
-		ReleaseID:     spec.ReleaseID,
-		NodeID:        spec.NodeID,
-		ServiceName:   spec.ServiceName,
-		NodeType:      nodeType,
-		ImageTag:      spec.ImageTag,
-		ManifestS3URI: spec.ManifestS3URI,
-		Namespace:     d.namespace,
+		JobName:             spec.JobName,
+		ReleaseID:           spec.ReleaseID,
+		NodeID:              spec.NodeID,
+		ServiceName:         spec.ServiceName,
+		NodeType:            nodeType,
+		ImageTag:            spec.ImageTag,
+		ManifestS3URI:       spec.ManifestS3URI,
+		CandidateSchema:     spec.CandidateSchema,
+		ParseProdS3URI:      spec.ParseProdS3URI,
+		ParseCandidateS3URI: spec.ParseCandidateS3URI,
+		Namespace:           d.namespace,
 	})
 }
 
