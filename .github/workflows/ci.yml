@@ -194,6 +194,10 @@ jobs:
             sh -c "uv sync --frozen --extra dev && uv run pytest -v"
 
       - name: Test dbt compile + S3 upload (integration)
+        # Runs every @pytest.mark.integration test under dbt/tests (test_upload.py's
+        # compile+S3 round trip and test_parse_rehearsal.py's real-dbt partial-parse
+        # rehearsal + fetcher round trip), not just one file, so a new integration
+        # test module is picked up here automatically.
         run: |
           docker exec \
             -e AWS_ACCESS_KEY_ID=test \
@@ -202,7 +206,7 @@ jobs:
             -e S3_ENDPOINT_URL=http://localstack:4566 \
             -e S3_BUCKET=continuo \
             dbt-compile-and-load \
-            uv run --with pytest pytest tests/test_upload.py -v -m integration
+            uv run --with pytest pytest tests/ -v -m integration
 
       - name: Verify ui-service proto is in sync with canonical
         # Drift in ui-service/proto/state.proto silently drops fields on the
