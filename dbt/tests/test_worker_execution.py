@@ -418,6 +418,27 @@ def test_wrapper_captures_both_pipes_into_the_task_log(
     assert "a warning from the wrapper" in log
 
 
+def test_wrapper_run_results_are_surfaced_where_the_uploader_looks(
+    loaded_artifact, wise_dbt, tmp_path, monkeypatch
+):
+    """A wrapper's dbt writes run_results.json under DBT_TARGET_PATH; the uploader
+    probes the task-dir root, the same place the native executor writes it. The
+    wrapper path must surface it there so a wrapper run reports its run-results
+    URI."""
+    task_dir = tmp_path / "task"
+    monkeypatch.setenv("FAKE_WRAPPER_CODES", "I040")
+    monkeypatch.setenv("FAKE_WRAPPER_RUN_RESULTS", '{"results": []}')
+
+    result = run_wrapper(loaded_artifact, wrapper_lease([str(wise_dbt), "run"]), task_dir)
+
+    assert result.succeeded
+    assert (task_dir / "target" / "run_results.json").exists(), \
+        "the wrapper's dbt wrote run_results.json under DBT_TARGET_PATH"
+    surfaced = task_dir / "run_results.json"
+    assert surfaced.exists(), "it must be surfaced at the root the uploader probes"
+    assert json.loads(surfaced.read_text()) == {"results": []}
+
+
 def test_wrapper_failure_is_reported_from_its_exit_status(
     loaded_artifact, wise_dbt, tmp_path, monkeypatch
 ):

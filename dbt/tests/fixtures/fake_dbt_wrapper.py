@@ -18,6 +18,9 @@ proved the worker scrubs what it means to scrub and nothing else.
   FAKE_WRAPPER_HANG     When set, sleep forever after emitting, so a test can
                         prove the worker terminates the process group.
   FAKE_WRAPPER_EXIT     The exit status to return. Defaults to 0.
+  FAKE_WRAPPER_RUN_RESULTS
+                        When set, its value is written as run_results.json into
+                        DBT_TARGET_PATH, mirroring where a real dbt writes it.
 """
 import json
 import os
@@ -44,6 +47,13 @@ def main() -> int:
 
     for code in filter(None, os.environ.get("FAKE_WRAPPER_CODES", "").split(",")):
         emit(code)
+
+    run_results = os.environ.get("FAKE_WRAPPER_RUN_RESULTS")
+    target = os.environ.get("DBT_TARGET_PATH")
+    if run_results and target:
+        os.makedirs(target, exist_ok=True)
+        with open(os.path.join(target, "run_results.json"), "w", encoding="utf-8") as handle:
+            handle.write(run_results)
 
     stderr_line = os.environ.get("FAKE_WRAPPER_STDERR")
     if stderr_line:

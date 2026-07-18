@@ -357,7 +357,23 @@ class WrapperExecutor:
             raise
         for pump in pumps:
             pump.join(timeout=TERMINATE_GRACE_SECONDS)
+        self._collect_run_results(task_dir)
         return self._result(exit_code, evidence)
+
+    @staticmethod
+    def _collect_run_results(task_dir: Path) -> None:
+        """Surface the wrapper's run_results.json where the uploader looks.
+
+        The wrapper's dbt writes run_results.json under DBT_TARGET_PATH
+        (task_dir/target); the uploader probes task_dir/run_results.json, the same
+        root the native executor writes to. Copy it up so a wrapper run reports its
+        run-results URI exactly as a native run does. A run that produced none — a
+        wrapper that failed before dbt wrote results — leaves nothing to copy and
+        reports no URI.
+        """
+        produced = task_dir / "target" / "run_results.json"
+        if produced.exists():
+            shutil.copyfile(produced, task_dir / "run_results.json")
 
     def _wait_interruptibly(self, process) -> int:
         """Wait for the wrapper, staying reachable by an interrupt while it runs.
