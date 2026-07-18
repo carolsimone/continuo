@@ -12,8 +12,8 @@ def resolve_upstream_deps(
         return []
 
     try:
-        parsed = sqlglot.parse_one(node.compiled_sql)
-    except sqlglot.errors.ParseError as exc:
+        parsed = sqlglot.parse_one(node.compiled_sql, dialect="postgres")
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
         raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=str(exc)) from exc
 
     cte_names = {cte.alias.lower() for cte in parsed.find_all(exp.CTE)}

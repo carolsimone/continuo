@@ -101,7 +101,9 @@ Failure-handling distinction: a parse or resolve failure that re-delivery cannot
 | Table not in registry | Skipped (external/source table) |
 | Table in registry | Resolved as `UpstreamDep` |
 | dbt seed reference | Resolved as `UpstreamDep` (seeds are registered in pass 2) |
-| `compiled_sql` does not parse as SQL (e.g. an un-suppressed Jinja expression leaking literal text, such as a trailing comma inside `{{ config(...) }}` rendering as `('',)`) | `InvalidCompiledSqlError` raised → node fails to load |
+| `compiled_sql` does not parse as PostgreSQL (e.g. an un-suppressed Jinja expression leaking literal text, such as a trailing comma inside `{{ config(...) }}` rendering as `('',)`, or an unterminated string literal failing the tokenizer) | `InvalidCompiledSqlError` raised → node fails to load |
+
+Both the dependency resolver and the candidate-schema rewriter parse `compiled_sql` with sqlglot's `postgres` dialect — the only warehouse this system targets — so postgres-specific syntax (e.g. `ARRAY[...] @> ARRAY[...]`) resolves normally.
 
 ## S3 Behavior
 
