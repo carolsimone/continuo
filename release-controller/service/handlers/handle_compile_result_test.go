@@ -90,6 +90,113 @@ func TestHandleCompileResult_FailedRejects(t *testing.T) {
 	assert.Equal(t, streams.ReleaseRejectedV1, lastOutbox(t, fakes).StreamName)
 }
 
+// TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
+// verifies that a compile-leg failure attributed to the parse-prod or
+// parse-candidate container is reported as parse_rehearsal_failed, not
+// compile_failed — the failure is continuo's parse-export leg, not a dbt SQL
+// error, and must not mislead the remediation agent into proposing a model fix.
+func TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed(t *testing.T) {
+	for _, container := range []string{"parse-prod", "parse-candidate"} {
+		t.Run(container, func(t *testing.T) {
+			d, fakes := newTestDeps(t)
+			releaseID := "rel-parse-" + container
+			putCompilingRelease(t, fakes, d, releaseID)
+
+			in := handlers.HandleCompileResultInput{
+				ReleaseID:   releaseID,
+				Status:      "failed",
+				PerNode:     []handlers.NodeResult{{NodeID: "core", Status: "failed", FailedContainer: container}},
+				ErrorClass:  "compilation_error",
+				ErrorDetail: "some dbt compile detail that should be overridden",
+			}
+			require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
+
+			r := mustGetRelease(t, fakes, releaseID)
+			assert.Equal(t, release.StatusRejected, r.Status())
+			assert.Equal(t, "parse_rehearsal_failed", r.RejectReason())
+
+			e := lastOutbox(t, fakes)
+			assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+			p := decodeJSON(t, e.Payload)
+			assert.Equal(t, "compile", p["stage"])
+			assert.Equal(t, "parse_rehearsal_failed", p["reason"])
+			assert.Equal(t, "parse_rehearsal_failed", p["error_class"])
+			detail, _ := p["error_detail"].(string)
+			assert.Contains(t, detail, "not a SQL error")
+			assert.Contains(t, detail, "env_var()")
+		})
+	}
+}
+
+// TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFailed
+// verifies that a compile-leg failure attributed to the upload container is
+// reported as artifact_upload_failed — an internal publication failure, not
+// something any dbt project change can fix.
+func TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFailed(t *testing.T) {
+	d, fakes := newTestDeps(t)
+	releaseID := "rel-upload"
+	putCompilingRelease(t, fakes, d, releaseID)
+
+	in := handlers.HandleCompileResultInput{
+		ReleaseID:   releaseID,
+		Status:      "failed",
+		PerNode:     []handlers.NodeResult{{NodeID: "core", Status: "failed", FailedContainer: "upload"}},
+		ErrorClass:  "compilation_error",
+		ErrorDetail: "some dbt compile detail that should be overridden",
+	}
+	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
+
+	r := mustGetRelease(t, fakes, releaseID)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "artifact_upload_failed", r.RejectReason())
+
+	e := lastOutbox(t, fakes)
+	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+	p := decodeJSON(t, e.Payload)
+	assert.Equal(t, "compile", p["stage"])
+	assert.Equal(t, "artifact_upload_failed", p["reason"])
+	assert.Equal(t, "artifact_upload_failed", p["error_class"])
+	detail, _ := p["error_detail"].(string)
+	assert.Contains(t, detail, "no change to the dbt project will fix this")
+}
+
+// TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged
+// verifies that a compile failure with no failed_container (or "compile")
+// keeps the plain compile_failed reason and passes through the producer's
+// error_class/error_detail unchanged.
+func TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged(t *testing.T) {
+	for _, container := range []string{"", "compile"} {
+		t.Run("failed_container="+container, func(t *testing.T) {
+			d, fakes := newTestDeps(t)
+			releaseID := "rel-compile-" + container
+			if container == "" {
+				releaseID = "rel-compile-empty"
+			}
+			putCompilingRelease(t, fakes, d, releaseID)
+
+			in := handlers.HandleCompileResultInput{
+				ReleaseID:   releaseID,
+				Status:      "failed",
+				PerNode:     []handlers.NodeResult{{NodeID: "core", Status: "failed", FailedContainer: container}},
+				ErrorClass:  "compilation_error",
+				ErrorDetail: "Compilation Error in model daily_transactions",
+			}
+			require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
+
+			r := mustGetRelease(t, fakes, releaseID)
+			assert.Equal(t, release.StatusRejected, r.Status())
+			assert.Equal(t, "compile_failed", r.RejectReason())
+
+			e := lastOutbox(t, fakes)
+			p := decodeJSON(t, e.Payload)
+			assert.Equal(t, "compile", p["stage"])
+			assert.Equal(t, "compile_failed", p["reason"])
+			assert.Equal(t, "compilation_error", p["error_class"])
+			assert.Equal(t, "Compilation Error in model daily_transactions", p["error_detail"])
+		})
+	}
+}
+
 func TestHandleCompileResult_UnknownReleaseDropped(t *testing.T) {
 	d, fakes := newTestDeps(t)
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{

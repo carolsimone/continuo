@@ -35,6 +35,25 @@ type releaseRequestedPayload struct {
 	ManifestKeys []manifestKeyDTO `json:"manifest_keys"`
 }
 
+// compileRejection maps the compile Job's failed container to the reject
+// reason and the operator/remediation-facing detail. The parse and upload
+// containers are continuo's parse-export leg — their failures must never be
+// presented as dbt SQL errors, or the remediation agent is misled into
+// proposing a model fix for a problem no model change can solve.
+func compileRejection(perNode []NodeResult) (reason, errorClass, errorDetail string) {
+	for _, n := range perNode {
+		switch n.FailedContainer {
+		case "parse-prod", "parse-candidate":
+			return "parse_rehearsal_failed", "parse_rehearsal_failed",
+				"the project re-parses under run-pod conditions — typically an env_var() read at parse time whose value differs between compile and run pods, or partial parse disabled in the project (flags: partial_parse: false / --no-partial-parse); this is not a SQL error"
+		case "upload":
+			return "artifact_upload_failed", "artifact_upload_failed",
+				"internal artifact publication failed; no change to the dbt project will fix this"
+		}
+	}
+	return "compile_failed", "", ""
+}
+
 // HandleCompileResult advances a Compiling release once the dbt compile job
 // finishes.
 //
@@ -43,7 +62,9 @@ type releaseRequestedPayload struct {
 // manifest_keys — payload shape identical to the pre-compile-leg behaviour so
 // manifest-controller requires no change.
 //
-// failed path: TransitionToRejected("compile_failed"), emits release.rejected:v1.
+// failed path: TransitionToRejected with a reason derived from the per-node
+// failed_container attribution (compile_failed, parse_rehearsal_failed, or
+// artifact_upload_failed — see compileRejection), emits release.rejected:v1.
 //
 // unknown release: drops the message (ack).
 func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInput) error {
@@ -75,8 +96,13 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			d.Logger.Warn("compile failed with no per-node results; release rejected without a remediation trigger",
 				"release_id", in.ReleaseID)
 		}
+		reason, errorClass, errorDetail := compileRejection(in.PerNode)
+		if errorClass == "" {
+			errorClass, errorDetail = in.ErrorClass, in.ErrorDetail
+		}
+
 		r.RecordStageResults("compile", results)
-		if err := r.TransitionToRejected("compile_failed", failing, now); err != nil {
+		if err := r.TransitionToRejected(reason, failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
 		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
@@ -103,15 +129,15 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		}
 
 		payload, err := json.Marshal(map[string]any{
-			"release_id":   in.ReleaseID,
-			"stage":        "compile",
-			"reason":       "compile_failed",
-			"error_class":  in.ErrorClass,
-			"error_detail": in.ErrorDetail,
+			"release_id":    in.ReleaseID,
+			"stage":         "compile",
+			"reason":        reason,
+			"error_class":   errorClass,
+			"error_detail":  errorDetail,
 			"failing_nodes": failing,
-			"per_node":     perNode,
-			"repo":         r.Repo(),
-			"commit_sha":   r.CommitSHA(),
+			"per_node":      perNode,
+			"repo":          r.Repo(),
+			"commit_sha":    r.CommitSHA(),
 		})
 		if err != nil {
 			return fmt.Errorf("marshal payload: %w", err)
@@ -132,7 +158,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "compile_failed", failing)
+		d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, reason, failing)
 		return nil
 	}
 
