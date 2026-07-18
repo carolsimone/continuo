@@ -17,6 +17,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -456,5 +457,58 @@ func TestDeletePodNamesTheUIDItIntendsToDelete(t *testing.T) {
 // claims to implement.
 func TestWorkerPoolsSatisfiesItsPort(t *testing.T) {
 	var _ ports.WorkerPoolRuntime = (*WorkerPools)(nil)
+	var _ ports.PodVerifier = (*WorkerPools)(nil)
 	assert.True(t, strings.HasPrefix(poolResourceName(testPoolKey), "dbt-worker-"))
+}
+
+// workerPod builds a pod carrying the labels a real worker of testPoolKey wears.
+func workerPod(name, uid string) *corev1.Pod {
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name:      name,
+		Namespace: testNamespace,
+		UID:       types.UID(uid),
+		Labels: map[string]string{
+			"app":        workerAppLabel,
+			poolKeyLabel: poolKeyLabelValue(testPoolKey),
+		},
+	}}
+}
+
+// TestVerifyPodAcceptsAPoolsOwnWorker is the confused-deputy guard's accept side:
+// a real pod of the authenticated pool, named with its true UID, is bound.
+func TestVerifyPodAcceptsAPoolsOwnWorker(t *testing.T) {
+	w, _ := newTestWorkerPools(workerPod("dbt-worker-abc-1", "uid-1"))
+	assert.NoError(t, w.VerifyPod(context.Background(), testPoolKey, "dbt-worker-abc-1", "uid-1"))
+}
+
+// TestVerifyPodRejectsAnythingItCannotVouchFor pins every way a claimed pod
+// identity fails to prove itself the pool's own: without this, a caller holding
+// the pool credential could bind another pod's identity to its lease and have
+// reaping delete it, or omit its identity to escape fencing.
+func TestVerifyPodRejectsAnythingItCannotVouchFor(t *testing.T) {
+	otherPoolKey := pkgmodel.WorkerPoolKey("finance", "xyz789", "cafebabe")
+	otherPoolPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "dbt-worker-other-1", Namespace: testNamespace, UID: types.UID("uid-other"),
+		Labels: map[string]string{"app": workerAppLabel, poolKeyLabel: poolKeyLabelValue(otherPoolKey)},
+	}}
+	nonWorkerPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "some-other-pod", Namespace: testNamespace, UID: types.UID("uid-x"),
+		Labels: map[string]string{"app": "postgres"},
+	}}
+	w, _ := newTestWorkerPools(workerPod("dbt-worker-abc-1", "uid-1"), otherPoolPod, nonWorkerPod)
+
+	for _, tc := range []struct {
+		name, podName, podUID string
+	}{
+		{"a nonexistent pod", "dbt-worker-ghost", "uid-1"},
+		{"a UID that does not match the live pod", "dbt-worker-abc-1", "uid-stale"},
+		{"a pod of another pool", "dbt-worker-other-1", "uid-other"},
+		{"a pod that is not a worker", "some-other-pod", "uid-x"},
+		{"no pod name", "", "uid-1"},
+		{"no pod uid", "dbt-worker-abc-1", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Error(t, w.VerifyPod(context.Background(), testPoolKey, tc.podName, tc.podUID))
+		})
+	}
 }

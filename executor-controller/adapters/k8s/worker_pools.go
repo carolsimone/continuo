@@ -75,7 +75,10 @@ type WorkerPools struct {
 	logger          *slog.Logger
 }
 
-var _ ports.WorkerPoolRuntime = (*WorkerPools)(nil)
+var (
+	_ ports.WorkerPoolRuntime = (*WorkerPools)(nil)
+	_ ports.PodVerifier       = (*WorkerPools)(nil)
+)
 
 // NewWorkerPools creates the Kubernetes worker-pool runtime. controlPlaneURL is
 // the address the pool's workers call to claim tasks and report outcomes.
@@ -160,15 +163,21 @@ func (w *WorkerPools) ensureDeployment(ctx context.Context, spec ports.WorkerPoo
 
 // poolLabels are the labels every resource of a pool carries.
 func (w *WorkerPools) poolLabels(spec ports.WorkerPoolSpec) map[string]string {
-	key := spec.PoolKey
-	if len(key) > poolKeyNameBytes {
-		key = key[:poolKeyNameBytes]
-	}
 	return map[string]string{
 		"app":          workerAppLabel,
-		poolKeyLabel:   key,
+		poolKeyLabel:   poolKeyLabelValue(spec.PoolKey),
 		"service_name": sanitizeK8sLabel(spec.ServiceName),
 	}
+}
+
+// poolKeyLabelValue is the pool-key label a pool's pods carry. A label value
+// cannot hold a whole hex SHA-256, so it holds the same truncated prefix the
+// pool's resource names use.
+func poolKeyLabelValue(poolKey string) string {
+	if len(poolKey) > poolKeyNameBytes {
+		return poolKey[:poolKeyNameBytes]
+	}
+	return poolKey
 }
 
 // poolAnnotations carry the pool's full identity, which does not fit in labels.
@@ -357,6 +366,37 @@ func (w *WorkerPools) secretExists(ctx context.Context, name string) (bool, erro
 		return false, fmt.Errorf("get worker pool secret %s: %w", name, err)
 	}
 	return true, nil
+}
+
+// VerifyPod confirms that podName/podUID is a live pod of poolKey before a lease
+// binds to it. The worker names its own pod through the downward API; this is
+// what makes that name trustworthy enough to later delete by. A pod is accepted
+// only when it exists in the pool's namespace, its UID matches the one claimed,
+// and it carries the worker app label and this pool's key label — so a caller
+// naming another pool's pod, a pod that is not a worker, a stale UID, or no pod
+// at all is rejected rather than bound.
+func (w *WorkerPools) VerifyPod(ctx context.Context, poolKey, podName, podUID string) error {
+	if podName == "" || podUID == "" {
+		return fmt.Errorf("worker named no pod identity")
+	}
+	pod, err := w.clientset.CoreV1().Pods(w.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return fmt.Errorf("no pod %q in namespace %q", podName, w.namespace)
+	}
+	if err != nil {
+		return fmt.Errorf("get worker pod %q: %w", podName, err)
+	}
+	if string(pod.UID) != podUID {
+		return fmt.Errorf("pod %q uid does not match the claimed identity", podName)
+	}
+	labels := pod.GetLabels()
+	if labels["app"] != workerAppLabel {
+		return fmt.Errorf("pod %q is not a continuo dbt worker", podName)
+	}
+	if labels[poolKeyLabel] != poolKeyLabelValue(poolKey) {
+		return fmt.Errorf("pod %q does not belong to pool %q", podName, poolKey)
+	}
+	return nil
 }
 
 // DeletePod removes one worker pod, but only while it is still the pod podUID

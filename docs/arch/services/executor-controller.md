@@ -295,6 +295,18 @@ discover which tasks exist; only a caller holding the genuine token can learn
 that the task belongs to another pool. The pool a claim is served from is read
 from the credential, never from the request body.
 
+**Claim identity, verified against the cluster.** A worker sends the pod name and
+UID it reads from the downward API (`CONTINUO_POD_NAME`/`CONTINUO_POD_UID`) when it
+claims. Before any task is bound, the executor confirms that identity against the
+live cluster: the named pod must exist in the pool's namespace, its UID must match,
+and it must carry the `app=continuo-dbt-worker` label and this pool's `pool-key`
+label. The pod identity a claim binds is the one cancellation and lease-expiry
+reaping later delete by, so an unverified name would let a caller holding the pool
+credential aim a delete at a pod it does not own, or omit its identity so its own
+process could never be fenced. Verification runs once per claim request, before the
+long-poll and outside the capacity-locked claim transaction, so the cluster lookup
+never blocks the shared budget; a claim it rejects is answered `403 pod_not_verified`.
+
 **Every rejection is settled, not transient.** A worker that gets one of these
 stops; none is a signal to retry, and answering any of them `5xx` would leave a
 superseded worker retrying against the fence forever.
@@ -302,6 +314,7 @@ superseded worker retrying against the fence forever.
 | Condition | Status | Code |
 |---|---|---|
 | No valid pool credential | `401` | `unauthenticated` |
+| Claiming pod not verifiable as the pool's own | `403` | `pod_not_verified` |
 | Task belongs to another pool | `403` | `pool_mismatch` |
 | Lease no longer current (`ErrStaleLease`), or naming a deployment that does not exist | `409` | `stale_lease` |
 | Pool has not hydrated its artifact | `409` | `pool_not_ready` |

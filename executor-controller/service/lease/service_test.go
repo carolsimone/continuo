@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -34,6 +35,7 @@ type harness struct {
 	outbox   *recordingOutbox
 	commands *fakeCommands
 	clock    *fakeClock
+	verifier *fakePodVerifier
 }
 
 func newHarness(t *testing.T, maxConcurrent int) *harness {
@@ -43,6 +45,7 @@ func newHarness(t *testing.T, maxConcurrent int) *harness {
 		outbox:   &recordingOutbox{},
 		commands: &fakeCommands{argv: []string{"dbt", "run", "--select", "orders"}},
 		clock:    &fakeClock{now: time.Unix(1000, 0).UTC()},
+		verifier: &fakePodVerifier{},
 	}
 	h.svc = lease.NewService(lease.Config{
 		UnitOfWork: func() uow.UnitOfWork {
@@ -50,6 +53,7 @@ func newHarness(t *testing.T, maxConcurrent int) *harness {
 		},
 		Commands:                h.commands,
 		Clock:                   h.clock,
+		PodVerifier:             h.verifier,
 		MaxConcurrentExecutions: maxConcurrent,
 		LeaseTTL:                leaseTTL,
 		RetryBackoff:            retryDelay,
@@ -93,6 +97,27 @@ func (h *harness) mustClaim(t *testing.T) *lease.Grant {
 }
 
 // --- claim -----------------------------------------------------------------
+
+func TestVerifyClaimant_AcceptsAVerifiedPodAndRejectsAnUnverifiedOne(t *testing.T) {
+	t.Run("accepts a pod the cluster confirms", func(t *testing.T) {
+		h := newHarness(t, 4)
+		require.NoError(t, h.svc.VerifyClaimant(context.Background(), claimInput()))
+		assert.Equal(t, 1, h.verifier.calls)
+		assert.Equal(t, poolKey, h.verifier.lastPool)
+		assert.Equal(t, "pod-a", h.verifier.lastName)
+		assert.Equal(t, "uid-a", h.verifier.lastPodUID)
+	})
+
+	t.Run("rejects a pod the cluster cannot vouch for", func(t *testing.T) {
+		h := newHarness(t, 4)
+		h.verifier.err = errors.New(`pod "pod-a" does not belong to pool`)
+
+		err := h.svc.VerifyClaimant(context.Background(), claimInput())
+		require.Error(t, err)
+		assert.ErrorIs(t, err, lease.ErrPodNotVerified,
+			"the rejection is terminal for the claim, distinct from a transient fault")
+	})
+}
 
 func TestClaim_GrantsDueTaskAndPinsItsCommand(t *testing.T) {
 	h := newHarness(t, 4)

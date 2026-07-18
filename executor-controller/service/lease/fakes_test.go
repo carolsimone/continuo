@@ -41,6 +41,24 @@ func (c *fakeCommands) WrapperCachePolicy(string) ports.WrapperCachePolicy {
 
 var _ ports.CommandResolver = (*fakeCommands)(nil)
 
+// fakePodVerifier stands in for the cluster lookup that confirms a claiming
+// worker's pod. It records the identity it was asked about and answers with err.
+type fakePodVerifier struct {
+	err        error
+	calls      int
+	lastPool   string
+	lastName   string
+	lastPodUID string
+}
+
+func (v *fakePodVerifier) VerifyPod(_ context.Context, poolKey, podName, podUID string) error {
+	v.calls++
+	v.lastPool, v.lastName, v.lastPodUID = poolKey, podName, podUID
+	return v.err
+}
+
+var _ ports.PodVerifier = (*fakePodVerifier)(nil)
+
 // fakeDeployments is a map-backed DeploymentRepository. Save writes back into the
 // same map the reads are served from, matching production's within-transaction
 // read-after-write.

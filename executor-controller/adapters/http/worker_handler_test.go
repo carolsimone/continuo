@@ -121,6 +121,42 @@ func TestClaim_ReturnsTheGrantedLease(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// TestClaim_RejectsAWorkerWhosePodDoesNotVerify is the confused-deputy guard: a
+// caller holding the pool credential still cannot bind a pod identity the cluster
+// will not vouch for, so it can neither point reaping at a victim pod nor omit its
+// own identity to escape fencing. The claim is refused before any work is bound.
+func TestClaim_RejectsAWorkerWhosePodDoesNotVerify(t *testing.T) {
+	r := newRig(t)
+	r.grant() // work is available; the claim is refused on identity, not scarcity
+	r.leases.verifyErr = fmt.Errorf("%w: pod does not belong to pool", lease.ErrPodNotVerified)
+
+	resp := r.do(http.MethodPost, "/internal/v1/workers/claim",
+		`{"wait_seconds":0,"owner":"worker-1","pod_name":"victim-pod","pod_uid":"victim-uid"}`)
+
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	var body errorBody
+	decodeJSON(t, resp, &body)
+	assert.Equal(t, "pod_not_verified", body.Error.Code)
+	assert.Equal(t, 0, r.leases.claims, "no task is bound to a pod that did not verify")
+}
+
+// TestClaim_VerifiesTheClaimantBeforeGrantingWork pins that a legitimate worker's
+// own pod is verified and then granted work: verification runs once, carries the
+// pod identity the worker sent, and the claim proceeds.
+func TestClaim_VerifiesTheClaimantBeforeGrantingWork(t *testing.T) {
+	r := newRig(t)
+	r.grant()
+
+	resp := r.do(http.MethodPost, "/internal/v1/workers/claim",
+		`{"wait_seconds":0,"owner":"worker-1","pod_name":"pod-a","pod_uid":"uid-a"}`)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 1, r.leases.verifies)
+	assert.Equal(t, "pod-a", r.leases.lastVerify.PodName)
+	assert.Equal(t, "uid-a", r.leases.lastVerify.PodUID)
+	assert.Equal(t, testPoolKey, r.leases.lastVerify.PoolKey)
+}
+
 // TestClaim_NamesTheScheduleAndJobAWrapperReads. A team's dbt wrapper may read
 // SCHEDULE_NAME and JOB_NAME out of its environment, and a worker can only set
 // them from what the grant carries. Without these the worker would have nothing

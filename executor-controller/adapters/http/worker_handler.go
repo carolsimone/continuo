@@ -97,6 +97,22 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request, pool *model
 		PodName: req.PodName,
 		PodUID:  req.PodUID,
 	}
+	// The pod a worker names is trusted only once the cluster confirms it: a
+	// caller holding the pool credential could otherwise bind a victim pod's
+	// identity to its lease and have reaping delete it, or send none so its own
+	// process could never be fenced. Verified once, before the long-poll, so the
+	// cluster lookup stays out of the claim transaction.
+	if err := s.leases.VerifyClaimant(r.Context(), in); err != nil {
+		if errors.Is(err, lease.ErrPodNotVerified) {
+			s.logger.Warn("rejected a claim whose pod identity did not verify",
+				"pool_key", pool.PoolKey, "error", err)
+			s.writeError(w, r, http.StatusForbidden, "pod_not_verified",
+				"the worker pod could not be verified against its pool")
+			return
+		}
+		s.internal(w, r, "verify a claiming worker", pool.PoolKey, err)
+		return
+	}
 	grant, err := s.claimUntil(r.Context(), in, s.claimDeadline(req.WaitSeconds))
 	if err != nil {
 		s.internal(w, r, "claim a task", pool.PoolKey, err)

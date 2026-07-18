@@ -31,6 +31,7 @@ const readHeaderTimeout = 5 * time.Second
 
 // leaseService is the lease lifecycle this transport exposes.
 type leaseService interface {
+	VerifyClaimant(ctx context.Context, in lease.ClaimInput) error
 	Claim(ctx context.Context, in lease.ClaimInput) (*lease.Grant, error)
 	Start(ctx context.Context, in lease.StartInput) error
 	Heartbeat(ctx context.Context, in lease.HeartbeatInput) error

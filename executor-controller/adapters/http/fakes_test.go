@@ -84,6 +84,9 @@ type fakeLeases struct {
 	claimErr   error
 	claims     int
 	lastClaim  lease.ClaimInput
+	verifyErr  error
+	verifies   int
+	lastVerify lease.ClaimInput
 
 	startErr  error
 	starts    int
@@ -110,6 +113,14 @@ func testCommand() command.DeployTask {
 		TableName: "orders", JobName: "dbt-finance-orders-42",
 		NodeType: "dbt-model", ImageTag: "sha-abc", DBTUniqueID: "model.finance.orders",
 	}
+}
+
+func (l *fakeLeases) VerifyClaimant(_ context.Context, in lease.ClaimInput) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.verifies++
+	l.lastVerify = in
+	return l.verifyErr
 }
 
 func (l *fakeLeases) Claim(_ context.Context, in lease.ClaimInput) (*lease.Grant, error) {

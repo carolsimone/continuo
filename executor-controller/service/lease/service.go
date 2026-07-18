@@ -68,6 +68,13 @@ var unretryableErrorClasses = map[string]bool{
 	"dbt_selector_not_unique":     true,
 }
 
+// ErrPodNotVerified rejects a claim whose pod identity the executor could not
+// confirm against the cluster: the named pod does not exist, its UID does not
+// match, it belongs to another pool, or the worker sent no identity at all. It
+// is terminal for the claim — the caller is not a worker of this pool acting as
+// itself, so no later claim from it can be answered either.
+var ErrPodNotVerified = errors.New("worker pod identity could not be verified")
+
 // ClaimInput identifies the worker asking for work and the pool it serves.
 type ClaimInput struct {
 	PoolKey string
@@ -139,6 +146,9 @@ type Config struct {
 	UnitOfWork func() uow.UnitOfWork
 	Commands   ports.CommandResolver
 	Clock      ports.Clock
+	// PodVerifier confirms a claiming worker's pod against the cluster before any
+	// task is bound to it.
+	PodVerifier ports.PodVerifier
 	// MaxConcurrentExecutions is the executor's shared execution budget. Worker
 	// claims and Kubernetes Job dispatch draw on the same slots.
 	MaxConcurrentExecutions int
@@ -156,6 +166,7 @@ type Service struct {
 	newUoW                  func() uow.UnitOfWork
 	commands                ports.CommandResolver
 	clock                   ports.Clock
+	podVerifier             ports.PodVerifier
 	fanout                  tasklifecycle.Fanout
 	maxConcurrentExecutions int
 	leaseTTL                time.Duration
@@ -169,11 +180,29 @@ func NewService(cfg Config) *Service {
 		newUoW:                  cfg.UnitOfWork,
 		commands:                cfg.Commands,
 		clock:                   cfg.Clock,
+		podVerifier:             cfg.PodVerifier,
 		maxConcurrentExecutions: cfg.MaxConcurrentExecutions,
 		leaseTTL:                cfg.LeaseTTL,
 		retryBackoff:            cfg.RetryBackoff,
 		logger:                  cfg.Logger,
 	}
+}
+
+// VerifyClaimant confirms the pod a worker claims under is a real pod of the
+// authenticated pool before any task is bound to it. A worker sends the pod name
+// and UID it reads from the downward API; the executor binds them to the lease,
+// where cancellation and lease-expiry reaping later delete by them, so it must
+// first confirm the pod exists in the pool and carries the claimed UID. A claim
+// naming another pool's pod, a nonexistent one, a stale UID, or no pod at all is
+// rejected with ErrPodNotVerified.
+//
+// It is called once per claim request, outside the claim transaction, so the
+// cluster lookup never runs while the shared capacity lock is held.
+func (s *Service) VerifyClaimant(ctx context.Context, in ClaimInput) error {
+	if err := s.podVerifier.VerifyPod(ctx, in.PoolKey, in.PodName, in.PodUID); err != nil {
+		return fmt.Errorf("%w: %w", ErrPodNotVerified, err)
+	}
+	return nil
 }
 
 // Claim gives one due task in poolKey to the asking worker, under an exclusive

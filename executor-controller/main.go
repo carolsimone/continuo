@@ -431,6 +431,7 @@ func main() {
 		UnitOfWork:              uowFactory,
 		Commands:                cmdResolver,
 		Clock:                   ports.SystemClock{},
+		PodVerifier:             workerPods,
 		MaxConcurrentExecutions: cfg.MaxConcurrentExecutions,
 		LeaseTTL:                cfg.WorkerLeaseTTL,
 		RetryBackoff:            workerRetryBackoff,
