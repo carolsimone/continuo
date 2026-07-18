@@ -975,6 +975,12 @@ func TestHandleSucceeded_ParseCache(t *testing.T) {
 			wantReason:     "artifact missing",
 		},
 		{
+			name:           "unknown",
+			initMessages:   map[string]string{"hydrate-parse-cache": "corrupted-gibberish"},
+			wantParseCache: "unknown",
+			wantReason:     "",
+		},
+		{
 			name:         "container absent",
 			initMessages: nil,
 			wantOmitted:  true,

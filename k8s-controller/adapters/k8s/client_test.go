@@ -351,7 +351,9 @@ func TestGetJobStatus_FailedContainer_InitContainerFailureWinsAndCapturesInitMes
 	require.NoError(t, err)
 	assert.Equal(t, "parse-prod", result.FailedContainer)
 	assert.Equal(t, "hydrated", result.InitTerminationMessages["hydrate-parse-cache"])
-	assert.Equal(t, "", result.InitTerminationMessages["parse-prod"], "terminated init container with no message keeps empty string")
+	msg, ok := result.InitTerminationMessages["parse-prod"]
+	assert.True(t, ok, "terminated init container must be captured even with an empty message")
+	assert.Equal(t, "", msg)
 }
 
 // TestGetJobStatus_FailedContainer_MainContainerFailure verifies that when all
