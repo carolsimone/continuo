@@ -40,6 +40,15 @@ type releaseRequestedPayload struct {
 // containers are continuo's parse-export leg — their failures must never be
 // presented as dbt SQL errors, or the remediation agent is misled into
 // proposing a model fix for a problem no model change can solve.
+//
+// The compile leg enqueues exactly one compile Deployment per release (one
+// node, named for the service), and that pod's initContainers run
+// sequentially — the first failure terminates the pod, so the "upload" main
+// container never runs. A compile pod therefore reports at most one failed
+// container, so perNode carries at most one entry with FailedContainer set;
+// this loop returning on the first match is not order-dependent in practice.
+// The iteration remains defensive for malformed or future multi-entry
+// payloads.
 func compileRejection(perNode []NodeResult) (reason, errorClass, errorDetail string) {
 	for _, n := range perNode {
 		switch n.FailedContainer {

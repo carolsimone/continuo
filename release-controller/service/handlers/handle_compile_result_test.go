@@ -197,6 +197,41 @@ func TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged(t
 	}
 }
 
+// TestHandleCompileResult_MixedPerNode_PinsFirstMatchDeterminism pins the
+// deterministic first-match behaviour of compileRejection for defensive
+// handling of a malformed multi-entry per_node payload. In practice the
+// compile leg enqueues exactly one compile Deployment per release, and that
+// pod's initContainers run sequentially so at most one entry ever carries a
+// failed_container; this test only guards against a future/malformed payload
+// where more than one entry does, asserting the outcome does not depend on
+// iteration order.
+func TestHandleCompileResult_MixedPerNode_PinsFirstMatchDeterminism(t *testing.T) {
+	d, fakes := newTestDeps(t)
+	releaseID := "rel-mixed-per-node"
+	putCompilingRelease(t, fakes, d, releaseID)
+
+	in := handlers.HandleCompileResultInput{
+		ReleaseID: releaseID,
+		Status:    "failed",
+		PerNode: []handlers.NodeResult{
+			{NodeID: "core", Status: "failed", FailedContainer: "parse-candidate"},
+			{NodeID: "core", Status: "failed", FailedContainer: "upload"},
+		},
+		ErrorClass:  "compilation_error",
+		ErrorDetail: "some dbt compile detail that should be overridden",
+	}
+	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
+
+	r := mustGetRelease(t, fakes, releaseID)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "parse_rehearsal_failed", r.RejectReason())
+
+	e := lastOutbox(t, fakes)
+	p := decodeJSON(t, e.Payload)
+	assert.Equal(t, "parse_rehearsal_failed", p["reason"])
+	assert.Equal(t, "parse_rehearsal_failed", p["error_class"])
+}
+
 func TestHandleCompileResult_UnknownReleaseDropped(t *testing.T) {
 	d, fakes := newTestDeps(t)
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
