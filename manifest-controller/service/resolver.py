@@ -1,6 +1,6 @@
 import sqlglot
 from sqlglot import exp
-from domain.exceptions import UnqualifiedTableReferenceError
+from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from domain.model import ManifestNode, NodeRegistryEntry, UpstreamDep
 
 
@@ -11,7 +11,10 @@ def resolve_upstream_deps(
     if not node.compiled_sql:
         return []
 
-    parsed = sqlglot.parse_one(node.compiled_sql)
+    try:
+        parsed = sqlglot.parse_one(node.compiled_sql)
+    except sqlglot.errors.ParseError as exc:
+        raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=str(exc)) from exc
 
     cte_names = {cte.alias.lower() for cte in parsed.find_all(exp.CTE)}
 

@@ -9,3 +9,10 @@ class UnqualifiedTableReferenceError(ValueError):
             f"Unqualified table reference '{table_name}' in node '{node_table_name}'"
             " — all tables must use schema.table form"
         )
+
+
+class InvalidCompiledSqlError(ValueError):
+    def __init__(self, node_table_name: str, detail: str) -> None:
+        self.node_table_name = node_table_name
+        self.detail = detail
+        super().__init__(f"Invalid compiled SQL in node '{node_table_name}': {detail}")

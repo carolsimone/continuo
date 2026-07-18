@@ -74,6 +74,7 @@ Pass 2 — Build registry (in memory only; no CSV persisted)
 Pass 3 — Resolve deps, rewrite SQL, upload to S3, and shape candidate topology
   For each node: resolve_upstream_deps(node, lookup) (sqlglot rules below)
     UnqualifiedTableReferenceError → publish status=failed (error_class=UnqualifiedTableReference), ACK
+    InvalidCompiledSqlError (compiled_sql does not parse as SQL) → publish status=failed (error_class=InvalidCompiledSql), ACK
   For each node: rewrite_to_candidate_schema(compiled_sql, lookup, candidate_schema)
     Rewrites every schema-qualified reference whose (schema, table) pair is in the registry
     to the candidate schema using sqlglot; CTE aliases, unqualified refs, and tables
@@ -88,7 +89,7 @@ Publish manifest.loaded.candidate:v1 status=ok with the topology, ACK
 
 The flow leaves `image_tag` empty by design (`release-controller` joins the per-service tags it assembled for the release onto the candidate topology); it builds its registry in memory and persists nothing; and it reports parse/resolve failures back as a `status=failed` business signal rather than failing silently.
 
-Failure-handling distinction: a parse or resolve failure that re-delivery cannot fix (malformed manifest JSON or node shape, an empty or wrong-service manifest, an unresolvable reference) is published as `status=failed` and the message is ACKed — replaying it would not help. A transient infrastructure failure (S3 read error, Redis publish error) propagates so the message is **not ACKed**; it stays in the group PEL and is retried by the reclaim sweep (see Consumer Reliability).
+Failure-handling distinction: a parse or resolve failure that re-delivery cannot fix (malformed manifest JSON or node shape, an empty or wrong-service manifest, an unresolvable reference, compiled SQL that does not parse) is published as `status=failed` and the message is ACKed — replaying it would not help. A transient infrastructure failure (S3 read error, Redis publish error) propagates so the message is **not ACKed**; it stays in the group PEL and is retried by the reclaim sweep (see Consumer Reliability).
 
 ### Dependency resolution rules (sqlglot)
 
@@ -100,6 +101,7 @@ Failure-handling distinction: a parse or resolve failure that re-delivery cannot
 | Table not in registry | Skipped (external/source table) |
 | Table in registry | Resolved as `UpstreamDep` |
 | dbt seed reference | Resolved as `UpstreamDep` (seeds are registered in pass 2) |
+| `compiled_sql` does not parse as SQL (e.g. an un-suppressed Jinja expression leaking literal text, such as a trailing comma inside `{{ config(...) }}` rendering as `('',)`) | `InvalidCompiledSqlError` raised → node fails to load |
 
 ## S3 Behavior
 
@@ -133,5 +135,6 @@ None -- manifest-controller is not called via gRPC by any service.
 - No local outbox -- if the Redis publish of `manifest.loaded.candidate:v1` fails, the message is not ACKed and the entire load is replayed.
 - The candidate flow has no per-message dedup store. A `release.requested:v1` redelivered after a successful publish causes a second `manifest.loaded.candidate:v1`; `release-controller` handles this idempotently (the candidate transition only applies while the release is still parsing, and a duplicate is logged and ACKed).
 - An unresolvable reference in pass 3 aborts the load: it is reported as `status=failed` and ACKed, since replaying it would not help.
+- Compiled SQL that fails to parse (`sqlglot.errors.ParseError`) in pass 3 is likewise a permanent failure: it is reported as `status=failed` (error_class=InvalidCompiledSql) and ACKed rather than left for the reclaim sweep, which is reserved for transient infrastructure failures.
 - An S3 upload failure in pass 3 is also fatal: it is reported as `status=failed` and ACKed. No partial URI is ever emitted — either all nodes' SQL objects are uploaded and the topology carries complete `candidate_sql_uri` values, or the entire load is aborted.
 - Releases enter through `release-controller`'s `POST /releases`, which emits `release.requested:v1` for this service to parse.

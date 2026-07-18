@@ -3,7 +3,7 @@ import logging
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.sources import ManifestSource
-from domain.exceptions import UnqualifiedTableReferenceError
+from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from domain.model import NodeRegistry, NodeRegistryEntry
 from service.parser import parse_manifest
 from service.resolver import resolve_upstream_deps
@@ -127,6 +127,13 @@ class CandidateManifestHandler:
                 self._publisher.publish_failed(
                     release_id=release_id,
                     error_class="UnqualifiedTableReference",
+                    error_detail=str(exc),
+                )
+                return
+            except InvalidCompiledSqlError as exc:
+                self._publisher.publish_failed(
+                    release_id=release_id,
+                    error_class="InvalidCompiledSql",
                     error_detail=str(exc),
                 )
                 return
