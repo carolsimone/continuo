@@ -99,7 +99,7 @@ func TestSeedBuildNodeCompletedHandler_UnknownReleaseNodeIsAcked(t *testing.T) {
 func TestSeedBuildNodeCompletedHandler_RedeliveryIsNoOp(t *testing.T) {
 	dep := deployedSeedBuildNode(t, "rel-1", "seed.shop.fx")
 	now := time.Now()
-	require.NoError(t, dep.RecordOutcome("ok", "s3://logs/fx", "", now))
+	require.NoError(t, dep.RecordOutcome("ok", "s3://logs/fx", "", "", now))
 
 	depl := &nodeCompletedDeploymentsRepo{
 		byReleaseNode: dep,

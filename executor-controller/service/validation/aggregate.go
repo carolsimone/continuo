@@ -215,6 +215,9 @@ func emitAggregateIfComplete(
 		if uri := r.DBTRunResultsURI(); uri != "" { // omitempty: absent when no structured block
 			node["run_results_uri"] = uri
 		}
+		if fc := r.FailedContainer(); fc != "" { // omitempty: only the compile leg ever sets this
+			node["failed_container"] = fc
+		}
 		perNode = append(perNode, node)
 		if r.Outcome() != "ok" {
 			aggregate = "failed"

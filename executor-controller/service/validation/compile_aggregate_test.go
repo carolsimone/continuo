@@ -28,7 +28,7 @@ func compileDep(t *testing.T, releaseID, nodeID, outcome string) *model.Deployme
 	}
 	dep := model.NewCompileDeployment(cmd, nil, time.Now())
 	require.NoError(t, dep.MarkDeployed(time.Now()))
-	require.NoError(t, dep.RecordOutcome(outcome, "", "", time.Now()))
+	require.NoError(t, dep.RecordOutcome(outcome, "", "", "", time.Now()))
 	return dep
 }
 
@@ -77,6 +77,51 @@ func TestSettleCompileNode_Failed_EmitsStatusFailed(t *testing.T) {
 	require.NotNil(t, outboxRepo.last)
 	assert.Equal(t, streams.CompileCompletedV1, outboxRepo.last.StreamName)
 	assert.Contains(t, string(outboxRepo.last.Payload), `"status":"failed"`)
+}
+
+// TestSettleCompileNode_FailedWithContainer_IncludesFailedContainer verifies
+// the per-node compile.completed:v1 entry carries "failed_container" when the
+// settled compile deployment recorded one — release-controller (Task 9) reads
+// this key to attribute the failure to a specific pod container.
+func TestSettleCompileNode_FailedWithContainer_IncludesFailedContainer(t *testing.T) {
+	cmd := command.ValidationDeployTask{
+		ReleaseID: "rel", NodeID: "compile.svc", JobName: "compile-compile.svc",
+		NodeType: "dbt-model", ImageTag: "t",
+	}
+	dep := model.NewCompileDeployment(cmd, nil, time.Now())
+	require.NoError(t, dep.MarkDeployed(time.Now()))
+	require.NoError(t, dep.RecordOutcome("failed", "", "", "parse-prod", time.Now()))
+
+	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
+	outboxRepo := &captureOutbox{}
+	aggRepo := &fakeAggRepo{won: true}
+
+	err := validation.SettleCompileNodeTerminal(
+		context.Background(), depRepo, outboxRepo, aggRepo,
+		"rel", "compile.svc", "failed", time.Now(),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, outboxRepo.last)
+	assert.Contains(t, string(outboxRepo.last.Payload), `"failed_container":"parse-prod"`)
+}
+
+// TestSettleCompileNode_AllOk_OmitsFailedContainer verifies a successful
+// compile node's per-node entry omits the failed_container key entirely
+// (compileDep records "" via RecordOutcome, matching the ok-outcome wire path).
+func TestSettleCompileNode_AllOk_OmitsFailedContainer(t *testing.T) {
+	dep := compileDep(t, "rel", "compile.svc", "ok")
+	depRepo := &fakeDepRepo{pending: 0, results: []*model.Deployment{dep}}
+	outboxRepo := &captureOutbox{}
+	aggRepo := &fakeAggRepo{won: true}
+
+	err := validation.SettleCompileNodeTerminal(
+		context.Background(), depRepo, outboxRepo, aggRepo,
+		"rel", "compile.svc", "ok", time.Now(),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, outboxRepo.last)
+	assert.NotContains(t, string(outboxRepo.last.Payload), "failed_container",
+		"ok outcome must omit failed_container")
 }
 
 // TestCompileAggregate_UsesDistinctNamespace asserts the compile dedup namespace

@@ -108,7 +108,7 @@ func TestReconstituteCompile_RoundTrip(t *testing.T) {
 		id, &msgProcID, cmd, model.StatusDeployed,
 		1, 3, now, now,
 		&deployedAt, &errMsg,
-		"ok", "s3://logs", "s3://results", &outcomeAt,
+		"failed", "s3://logs", "s3://results", "parse-prod", &outcomeAt,
 	)
 
 	assert.Equal(t, id, d.ID())
@@ -116,9 +116,10 @@ func TestReconstituteCompile_RoundTrip(t *testing.T) {
 	assert.Equal(t, model.StatusDeployed, d.Status())
 	assert.Equal(t, 1, d.RetryCount())
 	assert.Equal(t, 3, d.MaxRetries())
-	assert.Equal(t, "ok", d.Outcome())
+	assert.Equal(t, "failed", d.Outcome())
 	assert.Equal(t, "s3://logs", d.DBTLogURI())
 	assert.Equal(t, "s3://results", d.DBTRunResultsURI())
+	assert.Equal(t, "parse-prod", d.FailedContainer(), "failed_container round-trips")
 	require.NotNil(t, d.OutcomeAt())
 	assert.Equal(t, outcomeAt, *d.OutcomeAt())
 

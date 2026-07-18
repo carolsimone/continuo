@@ -41,6 +41,26 @@ func TestParseCompileNodeCompleted_RunResultsURIOptional(t *testing.T) {
 	assert.Equal(t, uuid.Nil, evt.OutboxEntryID)
 }
 
+// TestParseCompileNodeCompleted_FailedContainer verifies the optional
+// failed_container field (added by k8s-controller for compile-leg failure
+// attribution) is read into the event when present.
+func TestParseCompileNodeCompleted_FailedContainer(t *testing.T) {
+	p := nodeCompletedPayload()
+	p["outcome"] = "failed"
+	p["failed_container"] = "parse-prod"
+	evt, err := ParseCompileNodeCompleted(nodeCompletedMsg(t, p, ""))
+	require.NoError(t, err)
+	assert.Equal(t, "parse-prod", evt.FailedContainer)
+}
+
+// TestParseCompileNodeCompleted_FailedContainerOptional verifies a payload
+// without failed_container (e.g. any "ok" outcome) parses to "".
+func TestParseCompileNodeCompleted_FailedContainerOptional(t *testing.T) {
+	evt, err := ParseCompileNodeCompleted(nodeCompletedMsg(t, nodeCompletedPayload(), ""))
+	require.NoError(t, err)
+	assert.Equal(t, "", evt.FailedContainer)
+}
+
 func TestParseCompileNodeCompleted_Errors(t *testing.T) {
 	// missing payload
 	_, err := ParseCompileNodeCompleted(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{}})

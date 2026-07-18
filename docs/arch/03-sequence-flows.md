@@ -426,7 +426,7 @@ sequenceDiagram
   Note over EC,RC: Phase 1b — compile (changed service's manifest is compiled first)
   R->>EC: consume compile.requested:v1
   Note over EC: CreateCompileJob (two-container: initContainer runs the resolved compile command + s3-sidecar upload)<br/>emits compile.node.completed:v1 via k8s-controller → aggregate compile.completed:v1
-  EC->>R: publish compile.completed:v1 {release_id, status, per_node[{node_id, status, dbt_log_uri}]}
+  EC->>R: publish compile.completed:v1 {release_id, status, per_node[{node_id, status, dbt_log_uri, failed_container?}]}
   R->>RC: consume compile.completed:v1
   alt compile failed
     Note over RC: RecordStageResults("compile") + Reject(compile_failed)<br/>emit release.rejected:v1 {release_id, stage="compile", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri}], repo, commit_sha}

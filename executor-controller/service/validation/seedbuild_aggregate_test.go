@@ -26,7 +26,7 @@ func seedBuildDep(t *testing.T, releaseID, nodeID, outcome string) *model.Deploy
 	}
 	dep := model.NewSeedBuildDeployment(cmd, nil, time.Now())
 	require.NoError(t, dep.MarkDeployed(time.Now()))
-	require.NoError(t, dep.RecordOutcome(outcome, "", "", time.Now()))
+	require.NoError(t, dep.RecordOutcome(outcome, "", "", "", time.Now()))
 	return dep
 }
 
@@ -126,7 +126,7 @@ func validationDepForMode(t *testing.T, releaseID, nodeID, outcome string) *mode
 	}
 	dep := model.NewValidationDeployment(cmd, nil, time.Now(), false)
 	require.NoError(t, dep.MarkDeployed(time.Now()))
-	require.NoError(t, dep.RecordOutcome(outcome, "", "", time.Now()))
+	require.NoError(t, dep.RecordOutcome(outcome, "", "", "", time.Now()))
 	return dep
 }
 

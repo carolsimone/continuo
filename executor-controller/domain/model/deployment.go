@@ -70,6 +70,7 @@ type Deployment struct {
 	outcome          string
 	dbtLogURI        string
 	dbtRunResultsURI string
+	failedContainer  string
 	outcomeAt        *time.Time
 }
 
@@ -182,7 +183,7 @@ func ReconstituteValidation(
 	nextAttemptAt, createdAt time.Time,
 	deployedAt *time.Time,
 	errorMessage *string,
-	outcome, dbtLogURI, runResultsURI string,
+	outcome, dbtLogURI, runResultsURI, failedContainer string,
 	outcomeAt *time.Time,
 ) *Deployment {
 	return &Deployment{
@@ -200,6 +201,7 @@ func ReconstituteValidation(
 		outcome:             outcome,
 		dbtLogURI:           dbtLogURI,
 		dbtRunResultsURI:    runResultsURI,
+		failedContainer:     failedContainer,
 		outcomeAt:           outcomeAt,
 	}
 }
@@ -215,7 +217,7 @@ func ReconstituteSeedBuild(
 	nextAttemptAt, createdAt time.Time,
 	deployedAt *time.Time,
 	errorMessage *string,
-	outcome, dbtLogURI, runResultsURI string,
+	outcome, dbtLogURI, runResultsURI, failedContainer string,
 	outcomeAt *time.Time,
 ) *Deployment {
 	return &Deployment{
@@ -233,6 +235,7 @@ func ReconstituteSeedBuild(
 		outcome:             outcome,
 		dbtLogURI:           dbtLogURI,
 		dbtRunResultsURI:    runResultsURI,
+		failedContainer:     failedContainer,
 		outcomeAt:           outcomeAt,
 	}
 }
@@ -248,7 +251,7 @@ func ReconstituteCompile(
 	nextAttemptAt, createdAt time.Time,
 	deployedAt *time.Time,
 	errorMessage *string,
-	outcome, dbtLogURI, runResultsURI string,
+	outcome, dbtLogURI, runResultsURI, failedContainer string,
 	outcomeAt *time.Time,
 ) *Deployment {
 	return &Deployment{
@@ -266,6 +269,7 @@ func ReconstituteCompile(
 		outcome:             outcome,
 		dbtLogURI:           dbtLogURI,
 		dbtRunResultsURI:    runResultsURI,
+		failedContainer:     failedContainer,
 		outcomeAt:           outcomeAt,
 	}
 }
@@ -329,7 +333,7 @@ func (d *Deployment) RegisterFailure(now time.Time, permanent bool, reason strin
 // seed.build.node.completed:v1 / compile.node.completed:v1). Production
 // deployments announce their result through a different path and are rejected.
 // Only "ok" and "failed" are accepted.
-func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI string, now time.Time) error {
+func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI, failedContainer string, now time.Time) error {
 	if d.mode != ModeValidation && d.mode != ModeSeedBuild && d.mode != ModeCompile {
 		return fmt.Errorf("RecordOutcome called on non-validation/seed-build/compile deployment %s", d.id)
 	}
@@ -345,6 +349,7 @@ func (d *Deployment) RecordOutcome(outcome, logURI, runResultsURI string, now ti
 	d.outcome = outcome
 	d.dbtLogURI = logURI
 	d.dbtRunResultsURI = runResultsURI
+	d.failedContainer = failedContainer
 	ts := now
 	d.outcomeAt = &ts
 	return nil
@@ -481,4 +486,5 @@ func (d *Deployment) ErrorMessage() *string    { return d.errorMessage }
 func (d *Deployment) Outcome() string          { return d.outcome }
 func (d *Deployment) DBTLogURI() string        { return d.dbtLogURI }
 func (d *Deployment) DBTRunResultsURI() string { return d.dbtRunResultsURI }
+func (d *Deployment) FailedContainer() string  { return d.failedContainer }
 func (d *Deployment) OutcomeAt() *time.Time    { return d.outcomeAt }

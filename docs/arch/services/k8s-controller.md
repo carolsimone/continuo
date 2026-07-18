@@ -146,6 +146,8 @@ All three outbox rows carry `{release_id, node_id, outcome}` as their core paylo
 
 For `mode=validation` the handler additionally uploads pod logs (soft-fail) and extracts a structured result block if present. The validation pod prints a result block (`===CONTINUO_VALIDATION_RESULT_BEGIN===` … `===CONTINUO_VALIDATION_RESULT_END===`) as its last stdout; the handler splits it out, uploads it under the `run-results/` key, strips it from the text log before uploading that, and sets `run_results_uri` on the row (omitted when no block is present — old image or non-validation Job).
 
+For `mode=compile`, `handleCompileTerminal` additionally adds `failed_container` to the payload when the terminal `K8sPodResult` carries one — the name of the first pod container (init or main) that terminated non-zero. The key is omitted entirely on a successful compile. `executor-controller` reads it to attribute a compile failure to a specific stage (`compile` / `parse-prod` / `parse-candidate` / `upload`).
+
 Each completed row's `aggregate_id` is a deterministic UUIDv5 over an immutable namespace and `release:<release_id>`, so a re-observed terminal Job maps to the same aggregate for downstream dedup.
 
 ## S3 Log Behavior

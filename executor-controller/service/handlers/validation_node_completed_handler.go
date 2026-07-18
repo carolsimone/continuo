@@ -64,7 +64,7 @@ func (h *ValidationNodeCompletedHandler) Handle(
 	}
 
 	now := time.Now()
-	if err := dep.RecordOutcome(evt.Outcome, evt.DBTLogURI, evt.RunResultsURI, now); err != nil {
+	if err := dep.RecordOutcome(evt.Outcome, evt.DBTLogURI, evt.RunResultsURI, "", now); err != nil {
 		return fmt.Errorf("record outcome: %w", err)
 	}
 	if err := u.DeploymentsRepo().Save(ctx, dep); err != nil {

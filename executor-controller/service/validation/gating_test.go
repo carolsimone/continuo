@@ -157,7 +157,7 @@ func validationNode(t *testing.T, releaseID, nodeID string, status model.Status,
 // markOk drives a deployed node to a terminal ok outcome (records it back).
 func markOk(t *testing.T, d *model.Deployment) {
 	t.Helper()
-	require.NoError(t, d.RecordOutcome("ok", "", "", time.Now()))
+	require.NoError(t, d.RecordOutcome("ok", "", "", "", time.Now()))
 }
 
 // --- tests -----------------------------------------------------------------
@@ -251,7 +251,7 @@ func TestSettleNodeTerminal_MultiUpstreamConvergesSequentially(t *testing.T) {
 func TestSettleNodeTerminal_EmitsPerNodeProjectionRow(t *testing.T) {
 	log := &callLog{}
 	a := validationNode(t, "rel-1", "node.a", model.StatusDeployed)
-	require.NoError(t, a.RecordOutcome("ok", "s3://logs/a.txt", "", time.Now()))
+	require.NoError(t, a.RecordOutcome("ok", "s3://logs/a.txt", "", "", time.Now()))
 	b := validationNode(t, "rel-1", "node.b", model.StatusPending)
 	repo := newChainDepRepo(log, a, b)
 	outboxRepo := &captureOutbox{}
