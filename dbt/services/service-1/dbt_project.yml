@@ -40,13 +40,11 @@ models:
     worker_view:
       +tags: ["worker-runtime"]
 
-# The worker-runtime fixtures cover the materializations a reusable worker must
-# reproduce from a hydrated manifest: an incremental model, a view built on it,
-# and a snapshot of it. A node's first tag names the schedule it belongs to, so
-# the dedicated worker-runtime tag keeps them off every other schedule.
-snapshots:
-  service_1:
-    +tags: ["worker-runtime"]
-    +meta:
-      owner: "test"
-      criticality: "CORE"
+# worker_incremental and worker_view are the release-routed worker-runtime
+# fixtures: an incremental model and a view built on it, covering materializations
+# a reusable worker reproduces from a hydrated manifest. A node's first tag names
+# the schedule it belongs to, so the dedicated worker-runtime tag keeps them off
+# every other schedule. worker_snapshot (snapshots/worker_snapshot.sql) exercises
+# snapshot materialization in the in-process worker qualification only and is
+# selected there by name; it is deliberately given no owner or tags so the
+# manifest parser drops it and it is never routed into a release.
