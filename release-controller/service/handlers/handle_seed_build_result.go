@@ -113,7 +113,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		"per_node":         perNode,
 		"repo":             r.Repo(),
 		"commit_sha":       r.CommitSHA(),
-		"candidate_schema": "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID),
+		"candidate_schema": "_candidate_" + SanitizeSchemaSuffix(in.ReleaseID),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -206,7 +206,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 	for _, id := range validationIDs {
 		inSet[id] = true
 	}
-	candidateSchema := "_candidate_" + sanitizeSchemaSuffix(in.ReleaseID)
+	candidateSchema := "_candidate_" + SanitizeSchemaSuffix(in.ReleaseID)
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,
 		"mode":              "validation",
