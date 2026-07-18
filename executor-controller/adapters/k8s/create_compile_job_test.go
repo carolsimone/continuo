@@ -105,9 +105,13 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 		assert.Contains(t, line, "exit 42")
 		assert.Contains(t, line, "exit 43")
 		assert.Contains(t, line, "exit 44")
-		assert.Contains(t, line, "partial parsing appears DISABLED")
+		assert.Contains(t, line, "exit 45")
+		assert.Contains(t, line, "exit 46")
+		assert.Contains(t, line, "partial parsing is DISABLED in this project")
 		assert.Contains(t, line, "continuo parse-rehearsal FAILED")
 		assert.Contains(t, line, "chmod 755")
+		assert.Contains(t, line, "DBT_LOG_LEVEL=debug")
+		assert.Contains(t, line, "skipping partial parsing")
 	}
 
 	require.Len(t, spec.Containers, 1)

@@ -477,10 +477,30 @@ func parseCacheInitContainer(cacheURI, targetDir string) (corev1.Container, core
 }
 
 // buildParseExportCommand returns the sh script for one parse-export/rehearsal
-// initContainer. It runs the team's parse argv cold (export), fails loudly if
-// no partial_parse.msgpack appears (partial parsing disabled in the project),
-// re-runs the argv (rehearsal) and fails on dbt's partial-parse miss marker,
-// then hands the artifact to the upload container via /shared.
+// initContainer. It runs the team's parse argv cold (export), then re-runs the
+// same argv at DBT_LOG_LEVEL=debug (rehearsal) and greps the debug log for one
+// of three mutually exclusive dbt markers, empirically pinned against real dbt
+// (dbt-core==1.12.0b1) in dbt/tests/test_parse_rehearsal.py:
+//
+//   - "Partial parsing not enabled": partial parsing is DISABLED for this
+//     project (flags.partial_parse: false or --no-partial-parse) — the run
+//     pods can never use the exported cache. exit 43.
+//   - "Unable to do partial parsing": the project re-parses under run-pod
+//     conditions, typically an env_var() read at parse time (e.g.
+//     DBT_TARGET_SCHEMA) whose value differs between compile and run pods.
+//     exit 42.
+//   - neither marker present and "skipping partial parsing" is ALSO absent:
+//     the rehearsal did not report a clean partial-parse hit for a reason
+//     this gate does not recognize. exit 45.
+//
+// dbt writes partial_parse.msgpack unconditionally on every successful parse
+// regardless of the partial_parse flag — the flag only suppresses *reading*
+// an existing cache, never *writing* one — so a missing msgpack after run 1
+// is never a disabled-project signal; it means the parse command did not
+// write to the configured target-path at all, and the script fails loudly
+// (exit 46) before ever reaching the rehearsal. Only a run 2 that hits none
+// of the three markers' failure conditions hands the exported artifact to
+// the upload container via /shared.
 func buildParseExportCommand(parseArgv []string, partialParsePath, ctx string) string {
 	dir := "/shared/parse/" + ctx
 	parse := shellJoin(parseArgv)
@@ -489,15 +509,20 @@ func buildParseExportCommand(parseArgv []string, partialParsePath, ctx string) s
 		"mkdir -p " + dir + "\n" +
 		"chmod 755 " + dir + "\n" +
 		parse + "\n" +
-		"if [ ! -f " + pp + " ]; then\n" +
-		"  echo 'continuo parse-export: no partial_parse.msgpack was written — partial parsing appears DISABLED in this project (flags.partial_parse=false or --no-partial-parse in the parse command). This is not a SQL error.' >&2\n" +
+		"[ -f " + pp + " ] || { echo 'continuo parse-export: the parse command completed without writing partial_parse.msgpack at " + pp + " — check compile.partial_parse_path in dbt-commands.yaml.' >&2; exit 46; }\n" +
+		"DBT_LOG_LEVEL=debug " + parse + " > " + dir + "/rehearse.log 2>&1 || { cat " + dir + "/rehearse.log >&2; exit 44; }\n" +
+		"if grep -q 'Partial parsing not enabled' " + dir + "/rehearse.log; then\n" +
+		"  cat " + dir + "/rehearse.log >&2\n" +
+		"  echo 'continuo parse-rehearsal FAILED (" + ctx + "): partial parsing is DISABLED in this project (flags: partial_parse: false or --no-partial-parse in the parse command) — the run pods can never use the exported cache. This is not a SQL error.' >&2\n" +
 		"  exit 43\n" +
-		"fi\n" +
-		parse + " > " + dir + "/rehearse.log 2>&1 || { cat " + dir + "/rehearse.log >&2; exit 44; }\n" +
-		"if grep -q 'Unable to do partial parsing' " + dir + "/rehearse.log; then\n" +
+		"elif grep -q 'Unable to do partial parsing' " + dir + "/rehearse.log; then\n" +
 		"  cat " + dir + "/rehearse.log >&2\n" +
 		"  echo 'continuo parse-rehearsal FAILED (" + ctx + "): the project re-parses under run-pod conditions — typically an env_var() read at parse time whose value differs between compile and run pods. This is not a SQL error.' >&2\n" +
 		"  exit 42\n" +
+		"elif ! grep -q 'skipping partial parsing' " + dir + "/rehearse.log; then\n" +
+		"  cat " + dir + "/rehearse.log >&2\n" +
+		"  echo 'continuo parse-rehearsal FAILED (" + ctx + "): the second parse did not report a clean partial-parse hit. This is not a SQL error.' >&2\n" +
+		"  exit 45\n" +
 		"fi\n" +
 		"cp " + pp + " " + dir + "/partial_parse.msgpack\n" +
 		"chmod 644 " + dir + "/partial_parse.msgpack\n"
