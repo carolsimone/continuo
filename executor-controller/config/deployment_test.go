@@ -13,9 +13,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The executor is deployed from four independent manifests, and a variable
+// The executor is deployed from three independent manifests, and a variable
 // missing from any one of them is a real defect: the deployment that lacks it
-// silently runs on in-code defaults. These tests read all four and hold them to
+// silently runs on in-code defaults. These tests read all three and hold them to
 // the same configuration.
 //
 // They assert the variable NAMES as well as the values, because a name Load does
@@ -168,13 +168,12 @@ func deploymentPaths(t *testing.T) map[string]map[string]string {
 	t.Helper()
 	return map[string]map[string]string{
 		"docker-compose.yml":                                composeEnv(t),
-		"deploy/app/values.yaml":                            helmEnv(t, "deploy/app/values.yaml"),
 		"deploy/continuo/values.yaml":                       helmEnv(t, "deploy/continuo/values.yaml"),
 		"tests/e2e/k8s/executor-controller-deployment.yaml": e2eEnv(t),
 	}
 }
 
-// TestDeploymentConfig_EveryPathCarriesTheExecutorEnvironment pins that all four
+// TestDeploymentConfig_EveryPathCarriesTheExecutorEnvironment pins that all three
 // manifests configure the executor identically, by the names Load reads.
 func TestDeploymentConfig_EveryPathCarriesTheExecutorEnvironment(t *testing.T) {
 	for path, env := range deploymentPaths(t) {

@@ -1,0 +1,34 @@
+# Install-test fixture: dial CPU requests down to fit a throwaway kind
+# cluster on a standard GitHub-hosted runner (2 vCPU total, and kube-system's
+# own static pods — apiserver, etcd, controller-manager, scheduler, kube-proxy,
+# coredns, kindnet — already claim roughly half of that before the chart's
+# pods are even considered). deploy/continuo's shipped defaults are sized for
+# real capacity planning and sum to ~2.1 CPU requests across 10 services + 4
+# bundled datastores, so the scheduler rejects them outright ("Insufficient
+# cpu") before the release ever comes up. Applied on every mode (bundled and
+# BYO alike): it's the request budget, not the datastore topology, that blocks
+# scheduling. Memory is left untouched — the same runs never showed a memory
+# shortfall (original request sum is ~4.3Gi against a 7Gi runner).
+defaultResources:
+  requests: {cpu: 15m, memory: 128Mi}
+  limits: {cpu: "1", memory: 512Mi}
+postgresql:
+  resources:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {cpu: "1", memory: 2Gi}
+redis:
+  resources:
+    requests: {cpu: 30m, memory: 512Mi}
+    limits: {cpu: 500m, memory: 2Gi}
+neo4j:
+  resources:
+    requests: {cpu: 150m, memory: 1536Mi}
+    limits: {cpu: "1", memory: 2560Mi}
+minio:
+  resources:
+    requests: {cpu: 30m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 1Gi}
+dex:
+  resources:
+    requests: {cpu: 15m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 256Mi}

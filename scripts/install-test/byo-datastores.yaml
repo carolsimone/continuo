@@ -1,0 +1,187 @@
+# Throwaway "existing infrastructure" for the BYO install-test modes: plain
+# single-replica datastores the chart is pointed at via external* values.
+# CI-only fixture with CI-only throwaway credentials; not a production
+# template (no persistence, no hardening — that is the chart's job, not the
+# fixture's). Image tags match the chart's bundled defaults so both modes
+# exercise the same datastore versions.
+#
+# A real BYO datastore lives outside the cluster, so the chart's
+# default-deny-ingress NetworkPolicy (podSelector: {} — every pod in the
+# release namespace) never applies to it: egress from the release is left
+# open. This fixture simulates "external" infra by running it IN the same
+# namespace instead, which puts it squarely inside that podSelector: {} with
+# no matching allow-rule (the chart only renders allow-redis/allow-neo4j when
+# the bundled instance is enabled, which it isn't here) — so each fixture
+# needs its own explicit ingress-allow to be reachable at all.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: byo-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: byo-postgres
+  template:
+    metadata:
+      labels:
+        app: byo-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18.3
+          env:
+            - name: POSTGRES_USER
+              value: continuo
+            - name: POSTGRES_PASSWORD
+              value: ci-postgres-pw
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "continuo"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          volumeMounts:
+            # postgres:18 keeps PGDATA under /var/lib/postgresql; mounting the
+            # parent keeps the image's own layout regardless of minor version.
+            - name: data
+              mountPath: /var/lib/postgresql
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: byo-postgres
+spec:
+  selector:
+    app: byo-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: byo-postgres-allow-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: byo-postgres
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: byo-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: byo-redis
+  template:
+    metadata:
+      labels:
+        app: byo-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:8.6.4
+          args: ["redis-server", "--requirepass", "ci-redis-pw"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 2
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: byo-redis
+spec:
+  selector:
+    app: byo-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: byo-redis-allow-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: byo-redis
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - port: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: byo-neo4j
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: byo-neo4j
+  template:
+    metadata:
+      labels:
+        app: byo-neo4j
+    spec:
+      containers:
+        - name: neo4j
+          image: neo4j:5.26.28-community
+          env:
+            - name: NEO4J_AUTH
+              value: neo4j/ci-neo4j-pw
+          ports:
+            - containerPort: 7687
+          readinessProbe:
+            tcpSocket:
+              port: 7687
+            # Neo4j takes ~30-60s to open bolt; probe patiently instead of
+            # failing the rollout on a slow JVM start.
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: byo-neo4j
+spec:
+  selector:
+    app: byo-neo4j
+  ports:
+    - port: 7687
+      targetPort: 7687
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: byo-neo4j-allow-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: byo-neo4j
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - port: 7687

@@ -26,7 +26,6 @@ type grant struct{ apiGroup, resource, verb string }
 // rbacManifests are the manifests carrying the executor's Role, and how to find
 // its rules in each.
 var rbacManifests = []string{
-	"deploy/app/values.yaml",
 	"deploy/continuo/values.yaml",
 	"tests/e2e/k8s/executor-controller-deployment.yaml",
 }
@@ -152,8 +151,8 @@ func TestRBAC_EveryDeployedRoleCoversWhatTheRuntimeCalls(t *testing.T) {
 	}
 }
 
-// TestRBAC_EveryDeployedRoleGrantsTheSame pins that the three manifests are
-// three spellings of one Role. The tests around this one bound each manifest
+// TestRBAC_EveryDeployedRoleGrantsTheSame pins that the deployed manifests are
+// spellings of one Role. The tests around this one bound each manifest
 // from below (every call the runtime makes is granted) and from above (over the
 // resources the pools own), which between them leave a verb like watch on pods
 // free to differ per manifest: unused by the runtime, so no lower bound reaches

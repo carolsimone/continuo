@@ -5,6 +5,14 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_publish:
+        description: >-
+          Publish :<git-sha> images for the current commit even when no
+          release paths changed (used to backfill images before tagging a
+          release). Skips the Hetzner deploy step.
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-main
@@ -168,7 +176,10 @@ jobs:
           echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
 
   build-publish:
-    if: needs.detect-changes.outputs.release == 'true'
+    # force_publish backfills :<git-sha> images on a manual dispatch even
+    # when no release path changed (inputs is empty on push, so this
+    # reduces to today's behavior there).
+    if: needs.detect-changes.outputs.release == 'true' || inputs.force_publish == true
     needs: detect-changes
     # GitHub-hosted on purpose: this is a matrix (one job per service) that runs
     # in parallel here for free. On the single self-hosted runner the jobs
@@ -238,7 +249,9 @@ jobs:
           fi
 
   deploy:
-    if: needs.detect-changes.outputs.release == 'true'
+    # force_publish is a backfill-only run (see build-publish above); it
+    # never deploys, so it never touches the Hetzner box.
+    if: needs.detect-changes.outputs.release == 'true' && inputs.force_publish != true
     needs:
       - detect-changes
       - build-publish
@@ -273,24 +286,11 @@ jobs:
 
             kubectl create namespace continuo --dry-run=client -o yaml | kubectl apply -f -
 
-            helm repo add bitnami https://charts.bitnami.com/bitnami
-            helm repo add neo4j https://helm.neo4j.com/neo4j
-            helm repo update
-
-            helm dependency build deploy/infra
-
-            helm upgrade --install continuo-infra deploy/infra \
-              -f deploy/infra/values.yaml \
+            # Infra (Postgres/Redis/Neo4j) is managed manually from the
+            # private continuo-infra repo's runbook; this workflow deploys
+            # only the application chart against it (BYO mode).
+            helm upgrade --install continuo-app deploy/continuo \
               -f /root/continuo-values.secret.yaml \
-              -n continuo \
-              --wait \
-              --timeout 10m
-
-            helm upgrade --install continuo-app deploy/app \
-              -f deploy/app/values.yaml \
-              -f /root/continuo-values.secret.yaml \
-              --set global.dockerHubUser=ghcr.io/${{ github.repository_owner }} \
-              --set global.teamImagePrefix=carolsimone \
               --set global.imageTag=${{ github.sha }} \
               -n continuo \
               --wait \

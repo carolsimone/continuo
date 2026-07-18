@@ -1,0 +1,98 @@
+name: install-test
+
+# Chart install gate for deploy/continuo: lints the chart across every
+# supported values topology, then installs it on a throwaway kind cluster in
+# bundled and BYO (inline + existingSecret) modes and verifies health.
+#
+# Runs on PRs that touch the chart or this harness, and as a callable gate
+# for the release workflow (which passes the release image tag). PR runs
+# install the latest published main-branch images from ghcr — this proves the
+# install path; ci.yml's e2e suite proves the code.
+#
+# Always GitHub-hosted: needs no repo secrets (the ghcr images are public),
+# so it is fork-safe and never routes to the self-hosted box.
+#
+# The kind cluster created by helm/kind-action enforces NetworkPolicies, so
+# the chart's default-deny and allow policies are behaviorally exercised
+# here, not just rendered: the BYO fixtures need their own explicit
+# ingress-allow policies precisely because the default-deny blocks them
+# otherwise.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'deploy/continuo/**'
+      - 'scripts/install-test/**'
+      - '.github/workflows/install-test.yml'
+      # release.yml and the scripts it drives have no other CI gate — this
+      # is the only workflow that parses and exercises them (run.sh sources
+      # common.sh, and install-test is the callable gate release.yml runs
+      # against a live tag).
+      - 'scripts/release/**'
+      - '.github/workflows/release.yml'
+      - 'scripts/lib/common.sh'
+  workflow_call:
+    inputs:
+      image_tag:
+        description: Tag of the published continuo images the chart installs.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        # lint.sh executes kube-linter through a version-pinned `go run`, so
+        # besides the runner's preinstalled helm it only needs Go.
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+
+      - name: Lint chart across values topologies
+        run: bash scripts/install-test/lint.sh
+
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [bundled, byo-inline, byo-secret]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.12.0
+        with:
+          cluster_name: install-test
+
+      - name: Install and verify (${{ matrix.mode }})
+        # inputs.image_tag is empty on pull_request events (the inputs
+        # context only exists for workflow_call) — default to the latest
+        # published main-branch images. It is routed through env: rather
+        # than interpolated into the script text because release.yml feeds
+        # it github.ref_name (a tag name), which must never become live
+        # shell text in a run: step. matrix.mode is a static value from the
+        # matrix list above, not an untrusted expression, so it stays inline.
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag || 'latest' }}
+        run: bash scripts/install-test/run.sh "${{ matrix.mode }}" "$IMAGE_TAG"
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: bash scripts/install-test/diagnose.sh

@@ -8,13 +8,12 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// deployedConfigs are the shipped Helm dbt dialects: deploy/app is the source of
-// truth for the Hetzner ConfigMap, deploy/continuo is the self-contained install.
-// Both describe the same finance team and the same wise-dbt wrapper, so both must
-// resolve identically — a block present in one and absent from the other silently
-// changes how finance runs on that install.
+// deployedConfigs are the shipped Helm dbt dialects. deploy/continuo is the
+// self-contained install and the single source of truth for the dbt-commands
+// ConfigMap; it describes the finance team and the wise-dbt wrapper, and the
+// deployed config must resolve exactly as the in-repo dialect does — a block
+// present in the repo but absent from the chart silently changes how finance runs.
 var deployedConfigs = map[string]string{
-	"deploy/app":      filepath.Join("..", "..", "..", "deploy", "app", "files", "dbt-commands.yaml"),
 	"deploy/continuo": filepath.Join("..", "..", "..", "deploy", "continuo", "files", "dbt-commands.yaml"),
 }
 

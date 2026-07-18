@@ -1,0 +1,26 @@
+# Install-test fixture: BYO datastores with INLINE credentials. This mode
+# exercises the migrate hook's dedicated hook Secret (a regular chart Secret
+# does not exist yet while pre-install hooks run), so it must stay in the CI
+# matrix alongside the existingSecret mode.
+# MinIO and Dex stay bundled: this leg isolates the three BYO datastores.
+postgresql:
+  enabled: false
+externalDatabase:
+  host: byo-postgres
+  port: 5432
+  username: continuo
+  password: ci-postgres-pw
+  # The fixture Postgres has no TLS configured.
+  sslMode: disable
+redis:
+  enabled: false
+externalRedis:
+  host: byo-redis
+  port: 6379
+  password: ci-redis-pw
+neo4j:
+  enabled: false
+externalNeo4j:
+  uri: bolt://byo-neo4j:7687
+  username: neo4j
+  password: ci-neo4j-pw

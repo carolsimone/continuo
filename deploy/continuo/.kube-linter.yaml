@@ -62,7 +62,7 @@ checks:
     # from the single rendered manifest kube-linter inspects; a real cluster
     # resolves them fine at admission time.
     - "env-value-from"
-    # All 9 non-RBAC services run under the namespace's default
+    # All 8 non-RBAC services run under the namespace's default
     # ServiceAccount, which this chart never binds to any Role/ClusterRole —
     # it carries zero permissions. Only executor-controller and
     # k8s-controller need Kubernetes API access and already get a dedicated,
