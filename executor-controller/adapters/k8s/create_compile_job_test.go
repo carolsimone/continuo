@@ -102,6 +102,12 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 		assert.Contains(t, line, partialParsePath)
 		assert.Contains(t, line, "Unable to do partial parsing")
 		assert.Contains(t, line, "/shared/parse/"+ctx)
+		assert.Contains(t, line, "exit 42")
+		assert.Contains(t, line, "exit 43")
+		assert.Contains(t, line, "exit 44")
+		assert.Contains(t, line, "partial parsing appears DISABLED")
+		assert.Contains(t, line, "continuo parse-rehearsal FAILED")
+		assert.Contains(t, line, "chmod 755")
 	}
 
 	require.Len(t, spec.Containers, 1)
@@ -110,11 +116,9 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 	assert.Equal(t, "/shared/parse/candidate/partial_parse.msgpack", envByName(spec, "PARSE_CANDIDATE_LOCAL_PATH"))
 	assert.Equal(t, p.ParseCandidateS3URI, envByName(spec, "PARSE_CANDIDATE_S3_URI"))
 }
-
 // TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty verifies that
-// with no CandidateSchema (older compile.requested messages predating the
-// parse-free feature) the pod stays byte-identical in structure to the
-// pre-feature two-container pod: a single "compile" initContainer and an
+// when CandidateSchema is empty the parse-export leg is disabled and the pod
+// keeps the two-container layout: a single "compile" initContainer and an
 // upload container carrying no PARSE_* env.
 func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 	p := ValidationJobParams{

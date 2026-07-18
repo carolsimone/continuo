@@ -457,6 +457,7 @@ func buildParseExportCommand(parseArgv []string, partialParsePath, ctx string) s
 	pp := shellQuote(partialParsePath)
 	return "set -e\n" +
 		"mkdir -p " + dir + "\n" +
+		"chmod 755 " + dir + "\n" +
 		parse + "\n" +
 		"if [ ! -f " + pp + " ]; then\n" +
 		"  echo 'continuo parse-export: no partial_parse.msgpack was written — partial parsing appears DISABLED in this project (flags.partial_parse=false or --no-partial-parse in the parse command). This is not a SQL error.' >&2\n" +
@@ -729,9 +730,8 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //     service's partial-parse cache under prod and candidate connection
 //     contexts respectively (see buildParseExportCommand) into
 //     /shared/parse/<ctx>/partial_parse.msgpack; when CandidateSchema is
-//     empty (older compile.requested messages predating the parse-free
-//     feature) neither container is added and the pod is byte-identical in
-//     structure to the plain compile-and-upload pod;
+//     empty the parse-export leg is disabled and the pod keeps the
+//     two-container layout (compile initContainer + upload main container);
 //   - a main container "upload" using the shared s3-sidecar image (no dbt;
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
