@@ -325,6 +325,12 @@ services:
       - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
     rbac:
       enabled: true
+      annotations:
+        # The reconciler writes and reads each worker pool's own Secret
+        # (adapters/k8s/worker_pools.go: Create/Update/Get). That is the worker
+        # feature, not credential exfiltration, and the Role stays namespace-scoped
+        # to this release, so exempt only this binding from access-to-secrets.
+        ignore-check.kube-linter.io/access-to-secrets: "worker-pool lifecycle creates/updates/reads the pool's own Secret; namespace-scoped Role"
       rules:
         - apiGroups: ["batch"]
           resources: ["jobs"]

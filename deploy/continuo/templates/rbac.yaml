@@ -18,6 +18,10 @@ metadata:
   labels:
     {{- include "continuo.labels" $ | nindent 4 }}
     app.kubernetes.io/name: {{ $svc.name }}
+  {{- with $svc.rbac.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 rules:
   {{- toYaml ($svc.rbac.rules | default (list)) | nindent 2 }}
 ---
@@ -29,6 +33,10 @@ metadata:
   labels:
     {{- include "continuo.labels" $ | nindent 4 }}
     app.kubernetes.io/name: {{ $svc.name }}
+  {{- with $svc.rbac.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 subjects:
   - kind: ServiceAccount
     name: {{ $svc.name }}
