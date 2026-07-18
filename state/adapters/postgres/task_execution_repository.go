@@ -41,12 +41,12 @@ func (r *taskExecutionRepository) Create(ctx context.Context, execution *TaskExe
 			id, task_id, created_at, started_at, completed_at,
 			execution_time_seconds, executor_id, k8s_job_name,
 			error_message, cancelled_at, cancelled_by, cancellation_reason,
-			log_s3_key
+			log_s3_key, parse_cache, parse_cache_reason
 		) VALUES (
 			:id, :task_id, :created_at, :started_at, :completed_at,
 			:execution_time_seconds, :executor_id, :k8s_job_name,
 			:error_message, :cancelled_at, :cancelled_by, :cancellation_reason,
-			:log_s3_key
+			:log_s3_key, :parse_cache, :parse_cache_reason
 		)
 	`
 
@@ -92,12 +92,12 @@ func (r *taskExecutionRepository) CreateTx(ctx context.Context, tx *sqlx.Tx, exe
 			id, task_id, created_at, started_at, completed_at,
 			execution_time_seconds, executor_id, k8s_job_name,
 			error_message, cancelled_at, cancelled_by, cancellation_reason,
-			log_s3_key
+			log_s3_key, parse_cache, parse_cache_reason
 		) VALUES (
 			:id, :task_id, NOW(), :started_at, :completed_at,
 			:execution_time_seconds, :executor_id, :k8s_job_name,
 			:error_message, :cancelled_at, :cancelled_by, :cancellation_reason,
-			:log_s3_key
+			:log_s3_key, :parse_cache, :parse_cache_reason
 		)
 		ON CONFLICT (id) DO NOTHING
 	`, execution)
@@ -129,6 +129,8 @@ func rowFromEvent(evt events.TaskExecutionRecorded) *TaskExecution {
 		K8sJobName:           evt.JobName,
 		ErrorMessage:         evt.ErrorMessage,
 		LogS3Key:             evt.LogS3Key,
+		ParseCache:           evt.ParseCache,
+		ParseCacheReason:     evt.ParseCacheReason,
 	}
 }
 
@@ -163,7 +165,7 @@ func (r *taskExecutionRepository) GetByID(ctx context.Context, id uuid.UUID) (*T
 			id, task_id, created_at, started_at, completed_at,
 			execution_time_seconds, executor_id, k8s_job_name,
 			error_message, cancelled_at, cancelled_by, cancellation_reason,
-			log_s3_key
+			log_s3_key, parse_cache, parse_cache_reason
 		FROM task_execution
 		WHERE id = $1
 	`
@@ -209,7 +211,7 @@ func (r *taskExecutionRepository) ListByScheduleID(ctx context.Context, schedule
 		SELECT te.id, te.task_id, te.created_at, te.started_at, te.completed_at,
 		       te.execution_time_seconds, te.executor_id, te.k8s_job_name,
 		       te.error_message, te.cancelled_at, te.cancelled_by, te.cancellation_reason,
-		       te.log_s3_key
+		       te.log_s3_key, te.parse_cache, te.parse_cache_reason
 		FROM task_execution te
 		JOIN task_tracker t ON t.task_id = te.task_id
 		WHERE t.schedule_id = $1

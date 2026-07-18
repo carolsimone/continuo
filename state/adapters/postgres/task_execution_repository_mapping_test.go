@@ -23,6 +23,8 @@ func TestRowFromEvent(t *testing.T) {
 		execTime := 60.5
 		errMsg := "something went wrong"
 		s3Key := "logs/run-abc/task.log"
+		parseCache := "degraded"
+		parseCacheReason := "fetch failed"
 
 		evt := events.TaskExecutionRecorded{
 			ExecutionID:          executionID,
@@ -33,6 +35,8 @@ func TestRowFromEvent(t *testing.T) {
 			ExecutionTimeSeconds: &execTime,
 			ErrorMessage:         &errMsg,
 			LogS3Key:             &s3Key,
+			ParseCache:           &parseCache,
+			ParseCacheReason:     &parseCacheReason,
 		}
 
 		row := rowFromEvent(evt)
@@ -46,6 +50,8 @@ func TestRowFromEvent(t *testing.T) {
 		assert.Equal(t, &jobName, row.K8sJobName)
 		assert.Equal(t, &errMsg, row.ErrorMessage)
 		assert.Equal(t, &s3Key, row.LogS3Key)
+		assert.Equal(t, &parseCache, row.ParseCache)
+		assert.Equal(t, &parseCacheReason, row.ParseCacheReason)
 		// ExecutorID must always be nil: the event carries no executor id.
 		assert.Nil(t, row.ExecutorID)
 		// CreatedAt is left zero: CreateTx stamps it with the DB clock (NOW()),
@@ -66,6 +72,8 @@ func TestRowFromEvent(t *testing.T) {
 			ExecutionTimeSeconds: nil,
 			ErrorMessage:         nil,
 			LogS3Key:             nil,
+			ParseCache:           nil,
+			ParseCacheReason:     nil,
 		}
 
 		row := rowFromEvent(evt)
@@ -79,6 +87,8 @@ func TestRowFromEvent(t *testing.T) {
 		assert.Nil(t, row.K8sJobName)
 		assert.Nil(t, row.ErrorMessage)
 		assert.Nil(t, row.LogS3Key)
+		assert.Nil(t, row.ParseCache)
+		assert.Nil(t, row.ParseCacheReason)
 		// ExecutorID must always be nil.
 		assert.Nil(t, row.ExecutorID)
 		// CreatedAt is left zero: CreateTx stamps it with the DB clock (NOW()).
