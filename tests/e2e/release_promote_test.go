@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -579,8 +582,15 @@ func getS3Object(t *testing.T, ctx context.Context, clients *testClients, key st
 }
 
 // parseManifestNodes extracts the model/seed/snapshot nodes from a dbt
-// manifest.json, mirroring manifest-controller's identity derivation:
-// unique_id = "<schema>.<name>" and content_hash = checksum.checksum.
+// manifest.json and derives each node's identity exactly as manifest-controller
+// does: unique_id = "<schema>.<name>" and content_hash = the macro-aware
+// fingerprint computed by macroAwareContentHash. Seeding current_prod with this
+// same fingerprint is what lets a re-released, unmodified node match production.
+// A node whose hash folds in macro sources — an incremental model reaches
+// is_incremental — would otherwise never equal a raw dbt checksum and would be
+// derived as perpetually changed, dragging its downstream into validation. The
+// baseline manifest keeps the full `macros` map (filter_manifest prunes only
+// nodes), so the macro bodies needed for the fold are present here.
 func parseManifestNodes(t *testing.T, body []byte) []manifestNode {
 	t.Helper()
 	var manifest struct {
@@ -591,9 +601,27 @@ func parseManifestNodes(t *testing.T, body []byte) []manifestNode {
 			Checksum     struct {
 				Checksum string `json:"checksum"`
 			} `json:"checksum"`
+			DependsOn struct {
+				Macros []string `json:"macros"`
+			} `json:"depends_on"`
 		} `json:"nodes"`
+		Macros map[string]struct {
+			MacroSQL  string `json:"macro_sql"`
+			DependsOn struct {
+				Macros []string `json:"macros"`
+			} `json:"depends_on"`
+		} `json:"macros"`
 	}
 	require.NoError(t, json.Unmarshal(body, &manifest), "parse manifest.json")
+
+	// macroDeps maps every macro id to its own direct macro dependencies (the
+	// edge set the transitive walk follows); macroSQL holds each macro's source.
+	macroDeps := make(map[string][]string, len(manifest.Macros))
+	macroSQL := make(map[string]string, len(manifest.Macros))
+	for id, m := range manifest.Macros {
+		macroDeps[id] = m.DependsOn.Macros
+		macroSQL[id] = m.MacroSQL
+	}
 
 	supported := map[string]bool{"model": true, "seed": true, "snapshot": true}
 	var nodes []manifestNode
@@ -603,10 +631,59 @@ func parseManifestNodes(t *testing.T, body []byte) []manifestNode {
 		}
 		nodes = append(nodes, manifestNode{
 			uniqueID:    n.Schema + "." + n.Name,
-			contentHash: n.Checksum.Checksum,
+			contentHash: macroAwareContentHash(n.Checksum.Checksum, n.DependsOn.Macros, macroDeps, macroSQL),
 		})
 	}
 	return nodes
+}
+
+// transitiveMacroIDs resolves the transitive closure of a node's macro
+// dependencies, mirroring manifest-controller's _transitive_macro_ids: it walks
+// macro->macro edges so a change to a macro reached only through another macro
+// still re-fingerprints the node. Ids absent from the macro map stay in the
+// closure but expand no further (and contribute no source hash later).
+func transitiveMacroIDs(direct []string, macroDeps map[string][]string) map[string]bool {
+	seen := map[string]bool{}
+	stack := append([]string(nil), direct...)
+	for len(stack) > 0 {
+		mid := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[mid] {
+			continue
+		}
+		seen[mid] = true
+		if deps, ok := macroDeps[mid]; ok {
+			stack = append(stack, deps...)
+		}
+	}
+	return seen
+}
+
+// macroAwareContentHash reproduces manifest-controller's _content_hash
+// byte-for-byte: the node's base source hash (its dbt checksum here), then —
+// only when the node has transitive macro dependencies present in the manifest —
+// the base concatenated with the sorted sha256 hex of each such macro's source,
+// re-hashed under a "sha256:" prefix. A node with no macro dependencies keeps
+// its base unchanged. The concatenation order (base first, then the ascending
+// macro hashes joined with no separator) and the empty-macro-source-as-"" rule
+// must match the Python exactly, or a macro node stays perpetually changed.
+func macroAwareContentHash(base string, directMacros []string, macroDeps map[string][]string, macroSQL map[string]string) string {
+	ids := transitiveMacroIDs(directMacros, macroDeps)
+	var macroHashes []string
+	for id := range ids {
+		sql, ok := macroSQL[id]
+		if !ok {
+			continue
+		}
+		sum := sha256.Sum256([]byte(sql))
+		macroHashes = append(macroHashes, hex.EncodeToString(sum[:]))
+	}
+	if len(macroHashes) == 0 {
+		return base
+	}
+	sort.Strings(macroHashes)
+	folded := sha256.Sum256([]byte(base + strings.Join(macroHashes, "")))
+	return "sha256:" + hex.EncodeToString(folded[:])
 }
 
 // resetReleaseControllerQueue clears any release left mid-flight by a prior run
