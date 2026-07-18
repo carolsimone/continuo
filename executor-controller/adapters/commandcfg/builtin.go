@@ -22,5 +22,6 @@ func builtinDefault() *opSet {
 			Command:      []string{"dbt", "compile", "--profiles-dir", "/project"},
 			ManifestPath: "/project/target/manifest.json",
 		},
+		Parse: []string{"dbt", "parse"},
 	}
 }

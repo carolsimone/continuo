@@ -32,6 +32,7 @@ default:
   test:       ["dbt", "test", "--select", "{{ node }}"]
   build:      ["dbt", "build", "--select", "{{ node }}"]
   seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
   compile:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
@@ -61,6 +62,7 @@ services:
     test:       ["wise-dbt", "test", "--select", "{{ node }}"]
     build:      ["wise-dbt", "build", "--select", "{{ node }}"]
     seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+    parse:      ["wise-dbt", "parse"]
     compile:
       command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/target/manifest.json"
@@ -116,6 +118,47 @@ services:
 	assert.Contains(t, err.Error(), "compile")
 	assert.Contains(t, err.Error(), "snapshot")
 	assert.Contains(t, err.Error(), "seed_build")
+	assert.Contains(t, err.Error(), "parse")
+}
+
+func TestLoad_MissingParseKeyIsFatal(t *testing.T) {
+	// The default block defines the seven old keys but no parse; parse is now
+	// required, so this must fail completeness with the missing key named.
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing [parse]")
+}
+
+func TestLoad_PartialParsePathMustBeAbsolute(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
+  compile:
+    command:             ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path:       "/p/target/manifest.json"
+    partial_parse_path:  "relative/path"
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be an absolute path")
 }
 
 func TestLoad_ValidationErrors(t *testing.T) {

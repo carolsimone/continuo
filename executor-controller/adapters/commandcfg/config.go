@@ -11,6 +11,10 @@ import "regexp"
 type compileSpec struct {
 	Command      []string `yaml:"command"`
 	ManifestPath string   `yaml:"manifest_path"`
+	// PartialParsePath is the absolute path where the team's dbt writes
+	// partial_parse.msgpack. Empty defaults to
+	// dirname(ManifestPath)/partial_parse.msgpack.
+	PartialParsePath string `yaml:"partial_parse_path"`
 }
 
 // opSet is one command set covering the operations continuo can dispatch.
@@ -23,6 +27,7 @@ type opSet struct {
 	Test      []string     `yaml:"test"`
 	Build     []string     `yaml:"build"`
 	Compile   *compileSpec `yaml:"compile"`
+	Parse     []string     `yaml:"parse"`
 }
 
 // fileConfig is the root dbt-commands.yaml document.
@@ -61,6 +66,9 @@ func (o *opSet) missingKeys() []string {
 	}
 	if o.Compile == nil {
 		missing = append(missing, "compile")
+	}
+	if o.Parse == nil {
+		missing = append(missing, "parse")
 	}
 	return missing
 }

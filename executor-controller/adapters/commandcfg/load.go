@@ -103,6 +103,12 @@ func validateOpSet(path string, ops *opSet) error {
 			return err
 		}
 	}
+	if ops.Parse != nil {
+		if err := validateTemplate(path+".parse", ops.Parse,
+			map[string]bool{}, nil); err != nil {
+			return err
+		}
+	}
 	if ops.Compile != nil {
 		if err := validateTemplate(path+".compile.command", ops.Compile.Command,
 			map[string]bool{}, nil); err != nil {
@@ -116,6 +122,14 @@ func validateOpSet(path string, ops *opSet) error {
 			return fmt.Errorf("%s.compile.manifest_path: placeholders are not allowed", path)
 		case !strings.HasPrefix(mp, "/"):
 			return fmt.Errorf("%s.compile.manifest_path: must be an absolute path, got %q", path, mp)
+		}
+		if pp := ops.Compile.PartialParsePath; pp != "" {
+			switch {
+			case placeholderRe.MatchString(pp):
+				return fmt.Errorf("%s.compile.partial_parse_path: placeholders are not allowed", path)
+			case !strings.HasPrefix(pp, "/"):
+				return fmt.Errorf("%s.compile.partial_parse_path: must be an absolute path, got %q", path, pp)
+			}
 		}
 	}
 	return nil

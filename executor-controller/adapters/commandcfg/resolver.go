@@ -1,6 +1,8 @@
 package commandcfg
 
 import (
+	"path"
+
 	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
@@ -76,6 +78,27 @@ func (r *Resolver) CompileCommand(serviceName string) ([]string, string) {
 	}
 	d := r.cfg.Default.Compile
 	return append([]string(nil), d.Command...), d.ManifestPath
+}
+
+// ParseCommand resolves the argv that runs the team's dbt parse. The default
+// block is always complete, so a parse template is always present.
+func (r *Resolver) ParseCommand(serviceName string) []string {
+	t := r.template(serviceName, func(o *opSet) []string { return o.Parse })
+	return append([]string(nil), t...)
+}
+
+// PartialParsePath resolves the absolute path where the service's dbt writes
+// partial_parse.msgpack. An explicit compile.partial_parse_path wins; otherwise
+// it is the manifest_path's directory + "/partial_parse.msgpack".
+func (r *Resolver) PartialParsePath(serviceName string) string {
+	spec := r.cfg.Default.Compile
+	if ops := r.cfg.Services[serviceName]; ops != nil && ops.Compile != nil {
+		spec = ops.Compile
+	}
+	if spec.PartialParsePath != "" {
+		return spec.PartialParsePath
+	}
+	return path.Dir(spec.ManifestPath) + "/partial_parse.msgpack"
 }
 
 // substitute replaces {{ name }} tokens in each argv element with vals[name].

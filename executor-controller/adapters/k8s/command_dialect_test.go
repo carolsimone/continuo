@@ -42,6 +42,7 @@ default:
   test:       ["dbt", "test", "--select", "{{ node }}"]
   build:      ["dbt", "build", "--select", "{{ node }}"]
   seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
   compile:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
@@ -53,6 +54,7 @@ services:
     test:       ["wise-dbt", "test", "--select", "{{ node }}"]
     build:      ["wise-dbt", "build", "--select", "{{ node }}"]
     seed_build: ["wise-dbt", "seed", "--select", "{{ node }}", "--schema", "{{ target_schema }}"]
+    parse:      ["wise-dbt", "parse"]
     compile:
       command: ["wise-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/out dir/manifest.json"
