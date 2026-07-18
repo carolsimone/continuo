@@ -1,5 +1,5 @@
 import pytest
-from domain.exceptions import UnqualifiedTableReferenceError
+from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from domain.model import ManifestNode, NodeRegistry, NodeRegistryEntry
 from service.resolver import resolve_upstream_deps
 
@@ -119,3 +119,35 @@ def test_schema_mismatch_returns_no_dep():
     node = _make_node("summary", "SELECT id FROM billing.orders")
     deps = resolve_upstream_deps(node, registry)
     assert deps == []
+
+
+def test_unparseable_sql_raises_invalid_compiled_sql_error():
+    # A stray Jinja-tuple artifact (e.g. a trailing comma inside a {{ config(...) }}
+    # call rendering as "('',)") produces text sqlglot cannot parse as SQL.
+    registry = _make_registry("users")
+    node = _make_node("orders", "('',)\nSELECT id FROM public.users")
+    with pytest.raises(InvalidCompiledSqlError) as exc_info:
+        resolve_upstream_deps(node, registry)
+    assert exc_info.value.node_table_name == "orders"
+
+
+def test_untokenizable_sql_raises_invalid_compiled_sql_error():
+    # An unterminated string literal fails sqlglot's tokenizer (TokenError,
+    # a sibling of ParseError) — it must surface as the same domain error,
+    # not escape as an infrastructure exception.
+    registry = _make_registry("users")
+    node = _make_node("orders", "SELECT 'unterminated FROM public.users")
+    with pytest.raises(InvalidCompiledSqlError) as exc_info:
+        resolve_upstream_deps(node, registry)
+    assert exc_info.value.node_table_name == "orders"
+
+
+def test_postgres_dialect_sql_resolves():
+    # Compiled SQL is PostgreSQL (the only warehouse this system targets);
+    # postgres-specific operators like ARRAY[...] @> ARRAY[...] parse only
+    # under the postgres dialect and must not be rejected as invalid SQL.
+    registry = _make_registry("users")
+    node = _make_node("orders", "SELECT id FROM public.users WHERE ARRAY[1] @> ARRAY[1]")
+    deps = resolve_upstream_deps(node, registry)
+    assert len(deps) == 1
+    assert deps[0].table_name == "users"

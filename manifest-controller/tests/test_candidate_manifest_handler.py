@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, create_autospec
 import pytest
 from adapters.sources import ManifestSource
 from domain.model import ManifestFile
-from domain.exceptions import UnqualifiedTableReferenceError
+from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service.candidate_manifest_handler import CandidateManifestHandler
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -114,6 +114,26 @@ def test_handle_publishes_failed_on_unqualified_reference(monkeypatch):
     publisher.publish_failed.assert_called_once()
     assert publisher.publish_failed.call_args.kwargs["error_class"] == "UnqualifiedTableReference"
     assert "orders" in publisher.publish_failed.call_args.kwargs["error_detail"]
+    publisher.publish_ok.assert_not_called()
+
+
+def test_handle_publishes_failed_on_invalid_compiled_sql(monkeypatch):
+    def _raise(node, lookup):
+        raise InvalidCompiledSqlError(node_table_name="table_gg", detail="Invalid expression / Unexpected token.")
+
+    monkeypatch.setattr(
+        "service.candidate_manifest_handler.resolve_upstream_deps", _raise
+    )
+
+    source = _make_source(("manifest_service1.json", "v1"))
+    publisher = MagicMock()
+
+    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler.handle(release_id="rel-fail")  # must NOT raise
+
+    publisher.publish_failed.assert_called_once()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "InvalidCompiledSql"
+    assert "table_gg" in publisher.publish_failed.call_args.kwargs["error_detail"]
     publisher.publish_ok.assert_not_called()
 
 
