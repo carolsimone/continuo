@@ -1,22 +1,37 @@
 """Integration tests that pin the compile-pod parse-rehearsal markers against a
-REAL dbt (not mocks). These tests exist to empirically prove three assumptions
+REAL dbt (not mocks). These tests exist to empirically prove the assumptions
 that executor-controller's buildParseExportCommand (adapters/k8s/client.go)
-hard-codes as shell logic for the rehearsal initContainer:
+hard-codes as shell logic for the rehearsal initContainer. The rehearsal (run
+2) is invoked as `DBT_LOG_LEVEL=debug <parse argv> > rehearse.log 2>&1`, and
+the gate greps rehearse.log for two independent markers:
 
-  1. A second `dbt parse` into the same --target-path hits the partial-parse
-     cache (does not reprint "Unable to do partial parsing") once the first
-     run has written partial_parse.msgpack.
+  1. A second `dbt parse` into the same --target-path, with an unchanged env,
+     hits the partial-parse cache: it reprints neither "Unable to do partial
+     parsing" (env-invalidation marker, exit 42) nor "Partial parsing not
+     enabled" (disabled-project marker, exit 43).
   2. An env_var() read at parse time that changes between the two runs (the
      real-world case: DBT_TARGET_SCHEMA differing between the compile pod's
      prod and candidate rehearsal legs) invalidates the cache and DOES print
      "Unable to do partial parsing" on the second run.
-  3. The DEPLOYED s3-sidecar scripts (/compile_uploader.py, /parse_cache_fetcher.py)
+  3. A project with partial parsing disabled (flags.partial_parse: false)
+     prints "Partial parsing not enabled" on the (debug-level) second run,
+     even though it does NOT print "Unable to do partial parsing" — the two
+     markers detect two distinct conditions and neither one covers the other.
+  4. The DEPLOYED s3-sidecar scripts (/compile_uploader.py, /parse_cache_fetcher.py)
      round-trip a partial_parse.msgpack byte-for-byte through S3.
 
 If any of these fail against the pinned dbt version (dbt-core==1.12.0b1,
 dbt-postgres==1.10.0), Task 5's shell script markers are wrong and must be
 corrected — this suite is the empirical source of truth for that shell logic,
 not the other way around.
+
+History: an earlier version of this suite (and of Task 5's gate) treated a
+missing partial_parse.msgpack after run 1 as the disabled-project signal.
+Empirically, dbt writes that file unconditionally on every successful parse
+regardless of the partial_parse flag — the flag only suppresses *reading* an
+existing cache, never *writing* one. The disabled-project signal that DOES
+distinguish the two conditions is the debug-level "Partial parsing not
+enabled" log line on run 2, which is what tests 1 and 3 below pin.
 
 Run inside the dbt-compile-and-load image (bakes the pinned dbt + the
 deployed s3-sidecar scripts at /compile_uploader.py, /parse_cache_fetcher.py,
@@ -37,6 +52,7 @@ import boto3
 import pytest
 
 PARTIAL_PARSE_MARKER = "Unable to do partial parsing"
+DISABLED_PARSE_MARKER = "Partial parsing not enabled"
 
 SERVICE_FIXTURE_DIR = "/app/services/service-1"
 # Baked into every dbt project image (dbt-base's Dockerfile COPYs macros/ here);
@@ -88,8 +104,11 @@ def _base_env():
 
 @pytest.mark.integration
 def test_second_parse_hits_cache(tmp_path):
-    """Pins invariant 1: a same-env second `dbt parse` into the same
-    --target-path hits the partial-parse cache written by the first run."""
+    """Pins invariant 1: a same-env second `dbt parse` (run at debug level,
+    matching the production rehearsal leg's `DBT_LOG_LEVEL=debug`) into the
+    same --target-path hits the partial-parse cache written by the first
+    run — neither the env-invalidation marker nor the disabled-project marker
+    fires when nothing changed."""
     project_dir = _fixture_project(tmp_path)
     target = tmp_path / "target"
     env = _base_env()
@@ -102,12 +121,23 @@ def test_second_parse_hits_cache(tmp_path):
         "disabled for this dbt version/project or the fixture project setup is wrong"
     )
 
-    run2 = _run_parse(project_dir, target, env)
+    # Rehearsal (run 2) matches the production script: DBT_LOG_LEVEL=debug so
+    # the disabled-project marker ("Partial parsing not enabled") is visible
+    # in the log if it fires; run 1 stays at the default log level, matching
+    # the production parse-export leg.
+    debug_env = dict(env)
+    debug_env["DBT_LOG_LEVEL"] = "debug"
+    run2 = _run_parse(project_dir, target, debug_env)
     assert run2.returncode == 0, f"run2 dbt parse failed:\nstdout={run2.stdout}\nstderr={run2.stderr}"
     combined = run2.stdout + run2.stderr
     assert PARTIAL_PARSE_MARKER not in combined, (
         f"run2 unexpectedly reprinted the partial-parse-miss marker with an "
         f"unchanged env; Task 5's cache-hit assumption is WRONG.\ncombined output:\n{combined}"
+    )
+    assert DISABLED_PARSE_MARKER not in combined, (
+        f"run2 unexpectedly reprinted the disabled-partial-parse marker with an "
+        f"unchanged env and partial parsing enabled; setting DBT_LOG_LEVEL=debug "
+        f"only on run2 must not itself invalidate the cache.\ncombined output:\n{combined}"
     )
 
 
@@ -116,7 +146,11 @@ def test_env_change_invalidates_cache(tmp_path):
     """Pins invariant 2: changing DBT_TARGET_SCHEMA between two parses into the
     same --target-path (the real prod-vs-candidate rehearsal condition —
     generate_schema_name.sql reads it via env_var() at parse time) invalidates
-    dbt's partial-parse cache and reprints the marker Task 5 greps for."""
+    dbt's partial-parse cache and reprints the marker Task 5 greps for. Run 2
+    uses DBT_LOG_LEVEL=debug for symmetry with the production rehearsal leg,
+    which always runs at debug level so the disabled-project marker is also
+    observable; that marker is not asserted here since it targets a different
+    condition (see test_disabled_partial_parse_is_detected)."""
     project_dir = _fixture_project(tmp_path)
     target = tmp_path / "target"
     env = _base_env()
@@ -127,6 +161,7 @@ def test_env_change_invalidates_cache(tmp_path):
 
     env2 = dict(env)
     env2["DBT_TARGET_SCHEMA"] = "_candidate_x"
+    env2["DBT_LOG_LEVEL"] = "debug"
     run2 = _run_parse(project_dir, target, env2)
     # dbt still exits 0 even when it falls back to a full (non-partial) parse.
     assert run2.returncode == 0, f"run2 dbt parse failed:\nstdout={run2.stdout}\nstderr={run2.stderr}"
@@ -134,6 +169,39 @@ def test_env_change_invalidates_cache(tmp_path):
     assert PARTIAL_PARSE_MARKER in combined, (
         f"run2 (with DBT_TARGET_SCHEMA changed) did NOT print the partial-parse-miss "
         f"marker; Task 5's cache-invalidation assumption is WRONG.\ncombined output:\n{combined}"
+    )
+
+
+@pytest.mark.integration
+def test_disabled_partial_parse_is_detected(tmp_path):
+    """Pins invariant 3: a project with partial parsing disabled
+    (flags.partial_parse: false in dbt_project.yml — the config-level
+    equivalent of --no-partial-parse) prints the debug-level marker "Partial
+    parsing not enabled" on run 2, but does NOT print "Unable to do partial
+    parsing" — proving the two markers are independent and the gate must grep
+    for both (exit 42 vs exit 43), since neither one covers the other."""
+    project_dir = _fixture_project(tmp_path)
+    with open(project_dir / "dbt_project.yml", "a") as f:
+        f.write("\nflags:\n  partial_parse: false\n")
+    target = tmp_path / "target"
+    env = _base_env()
+
+    run1 = _run_parse(project_dir, target, env)
+    assert run1.returncode == 0, f"run1 dbt parse failed:\nstdout={run1.stdout}\nstderr={run1.stderr}"
+
+    debug_env = dict(env)
+    debug_env["DBT_LOG_LEVEL"] = "debug"
+    run2 = _run_parse(project_dir, target, debug_env)
+    assert run2.returncode == 0, f"run2 dbt parse failed:\nstdout={run2.stdout}\nstderr={run2.stderr}"
+    combined = run2.stdout + run2.stderr
+    assert DISABLED_PARSE_MARKER in combined, (
+        f"run2 (partial parsing disabled) did NOT print the disabled-project marker "
+        f"at debug level; the corrected exit-43 detection is WRONG.\ncombined output:\n{combined}"
+    )
+    assert PARTIAL_PARSE_MARKER not in combined, (
+        f"run2 (partial parsing disabled) unexpectedly printed the env-invalidation "
+        f"marker too; this would make exit 42 and exit 43 indistinguishable by this "
+        f"marker alone.\ncombined output:\n{combined}"
     )
 
 
