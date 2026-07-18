@@ -396,6 +396,9 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 	if runResultsS3Key != "" {
 		payloadMap["run_results_uri"] = runResultsS3Key
 	}
+	if result.FailedContainer != "" {
+		payloadMap["failed_container"] = result.FailedContainer
+	}
 	payload, err := json.Marshal(payloadMap)
 	if err != nil {
 		return fmt.Errorf("marshal compile_node_completed payload: %w", err)
@@ -787,6 +790,24 @@ func (h *CheckStatusHandler) writeTaskStatusUpdated(
 	})
 }
 
+// parseCacheFromResult derives the parse_cache observability fields from the
+// hydrate-parse-cache initContainer's termination message. Absent container
+// (pre-feature Jobs, validation Jobs) -> ("",""): the fields are omitted.
+func parseCacheFromResult(result *model.K8sPodResult) (state, reason string) {
+	msg, ok := result.InitTerminationMessages["hydrate-parse-cache"]
+	if !ok {
+		return "", ""
+	}
+	switch {
+	case msg == "hydrated":
+		return "hydrated", ""
+	case strings.HasPrefix(msg, "degraded:"):
+		return "degraded", strings.TrimPrefix(msg, "degraded:")
+	default:
+		return "unknown", ""
+	}
+}
+
 // writeTaskExecutionRecordedWithLogS3Key writes a task_execution_recorded canonical outbox row.
 func (h *CheckStatusHandler) writeTaskExecutionRecordedWithLogS3Key(
 	ctx context.Context,
@@ -810,6 +831,7 @@ func (h *CheckStatusHandler) writeTaskExecutionRecordedWithLogS3Key(
 	if result.CompletedAt != nil {
 		exec.CompletedAt = result.CompletedAt.UTC().Format(time.RFC3339)
 	}
+	exec.ParseCache, exec.ParseCacheReason = parseCacheFromResult(result)
 
 	payload, err := json.Marshal(exec)
 	if err != nil {

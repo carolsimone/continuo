@@ -11,7 +11,7 @@ package events
 type TaskStatusUpdated struct {
 	TaskID     string `json:"task_id"`
 	ScheduleID string `json:"schedule_id"`
-	Status     string `json:"status"`      // RUNNING | SUCCEEDED | FAILED | SKIPPED
+	Status     string `json:"status"` // RUNNING | SUCCEEDED | FAILED | SKIPPED
 	RetryCount int32  `json:"retry_count"`
 }
 
@@ -37,6 +37,11 @@ type TaskExecutionRecorded struct {
 	ExecutionSeconds float64 `json:"execution_seconds"`
 	ErrorMessage     string  `json:"error_message,omitempty"`
 	LogS3Key         string  `json:"log_s3_key,omitempty"`
+	// ParseCache reports whether the Job's team container ran with the
+	// hydrated partial-parse cache: "hydrated" | "degraded" | "unknown";
+	// empty (omitted) for Jobs without a hydrate initContainer.
+	ParseCache       string `json:"parse_cache,omitempty"`
+	ParseCacheReason string `json:"parse_cache_reason,omitempty"`
 }
 
 // ToMap converts TaskExecutionRecorded to a flat map for Redis stream publishing.
@@ -60,6 +65,12 @@ func (e TaskExecutionRecorded) ToMap() map[string]interface{} {
 	}
 	if e.LogS3Key != "" {
 		m["log_s3_key"] = e.LogS3Key
+	}
+	if e.ParseCache != "" {
+		m["parse_cache"] = e.ParseCache
+	}
+	if e.ParseCacheReason != "" {
+		m["parse_cache_reason"] = e.ParseCacheReason
 	}
 	return m
 }

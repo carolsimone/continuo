@@ -128,7 +128,7 @@ func TestGetJobStatus_DbtNoop_ReturnsJobStatusFailed(t *testing.T) {
 		},
 	}
 	pod := &corev1.Pod{
-		TypeMeta:   metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
+		TypeMeta: metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-job-pod",
 			Namespace: "default",
@@ -161,7 +161,7 @@ func TestGetJobStatus_DbtSuccess_ReturnsJobStatusSucceeded(t *testing.T) {
 		},
 	}
 	pod := &corev1.Pod{
-		TypeMeta:   metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
+		TypeMeta: metav1.TypeMeta{Kind: "Pod", APIVersion: "v1"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-job-pod",
 			Namespace: "default",
@@ -307,6 +307,94 @@ func TestGetPodLogs_FallsBackToInitContainerWhenMainLogEmpty(t *testing.T) {
 	fullLog, _, err := client.GetPodLogs(context.Background(), "default", "test-job", 10)
 	require.NoError(t, err)
 	assert.Contains(t, fullLog, "S3 upload")
+}
+
+// TestGetJobStatus_FailedContainer_InitContainerFailureWinsAndCapturesInitMessages
+// verifies that a failed init container (parse-prod, exit 42) is attributed as
+// FailedContainer, and that InitTerminationMessages captures every terminated init
+// container's message — including the hydrate-parse-cache initContainer's
+// "hydrated" outcome — regardless of whether that container failed.
+func TestGetJobStatus_FailedContainer_InitContainerFailureWinsAndCapturesInitMessages(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-job", Namespace: "default"},
+		Status:     batchv1.JobStatus{Failed: 1},
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-job-abc",
+			Namespace: "default",
+			Labels:    map[string]string{"job-name": "test-job"},
+		},
+		Status: corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "parse-prod",
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{ExitCode: 42},
+					},
+				},
+				{
+					Name: "hydrate-parse-cache",
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Message: "hydrated"},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(job, pod)
+	client := &K8sClient{clientset: fakeClient, logger: slog.Default()}
+
+	result, err := client.GetJobStatus(context.Background(), "default", "test-job")
+	require.NoError(t, err)
+	assert.Equal(t, "parse-prod", result.FailedContainer)
+	assert.Equal(t, "hydrated", result.InitTerminationMessages["hydrate-parse-cache"])
+	assert.Equal(t, "", result.InitTerminationMessages["parse-prod"], "terminated init container with no message keeps empty string")
+}
+
+// TestGetJobStatus_FailedContainer_MainContainerFailure verifies that when all
+// init containers exit cleanly but a main container (upload) fails, FailedContainer
+// is attributed to the main container.
+func TestGetJobStatus_FailedContainer_MainContainerFailure(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-job", Namespace: "default"},
+		Status:     batchv1.JobStatus{Failed: 1},
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-job-abc",
+			Namespace: "default",
+			Labels:    map[string]string{"job-name": "test-job"},
+		},
+		Status: corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "compile",
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{ExitCode: 0},
+					},
+				},
+			},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "upload",
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{ExitCode: 4},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(job, pod)
+	client := &K8sClient{clientset: fakeClient, logger: slog.Default()}
+
+	result, err := client.GetJobStatus(context.Background(), "default", "test-job")
+	require.NoError(t, err)
+	assert.Equal(t, "upload", result.FailedContainer)
 }
 
 // newClientServingLogs creates a K8sClient backed by an httptest.Server that serves

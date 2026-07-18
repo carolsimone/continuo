@@ -20,4 +20,13 @@ type K8sPodResult struct {
 	StartedAt        *time.Time
 	CompletedAt      *time.Time
 	ExecutionSeconds float64
+	// FailedContainer is the name of the first container (init or main)
+	// that terminated non-zero. Empty on success or when pod details are
+	// unavailable. Drives failure attribution (compile leg containers map
+	// to distinct release-reject reasons).
+	FailedContainer string
+	// InitTerminationMessages maps init-container name -> termination
+	// message for terminated init containers. Carries the
+	// hydrate-parse-cache outcome ("hydrated" / "degraded:<reason>").
+	InitTerminationMessages map[string]string
 }

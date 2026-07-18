@@ -185,6 +185,36 @@ func TestTaskExecutionRecordedToMap_OmitsEmptyOptionalFields(t *testing.T) {
 	require.Contains(t, m, "execution_seconds")
 }
 
+// TestTaskExecutionRecordedToMap_ParseCache verifies that ParseCache and
+// ParseCacheReason are emitted under their wire keys (parse_cache /
+// parse_cache_reason) when set, and omitted (both, independently) when zero-valued —
+// state's execution-record parser depends on these exact keys.
+func TestTaskExecutionRecordedToMap_ParseCache(t *testing.T) {
+	in := events.TaskExecutionRecorded{
+		ExecutionID:      "exec-3",
+		TaskID:           "task-3",
+		JobName:          "job-3",
+		ExecutionSeconds: 2.0,
+		ParseCache:       "degraded",
+		ParseCacheReason: "x",
+	}
+	m := in.ToMap()
+	require.Equal(t, "degraded", m["parse_cache"])
+	require.Equal(t, "x", m["parse_cache_reason"])
+}
+
+func TestTaskExecutionRecordedToMap_ParseCache_OmitsZeroValues(t *testing.T) {
+	in := events.TaskExecutionRecorded{
+		ExecutionID:      "exec-4",
+		TaskID:           "task-4",
+		JobName:          "job-4",
+		ExecutionSeconds: 2.0,
+	}
+	m := in.ToMap()
+	require.NotContains(t, m, "parse_cache")
+	require.NotContains(t, m, "parse_cache_reason")
+}
+
 // TestNodeDeployed_OmitsEmptyOperation verifies a normal `dbt run` (empty
 // Operation) stays wire-identical: no operation key is emitted.
 func TestNodeDeployed_OmitsEmptyOperation(t *testing.T) {
