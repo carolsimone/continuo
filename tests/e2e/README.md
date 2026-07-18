@@ -203,6 +203,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | `seed_topology_test.go` | `seedTopology` helper — publishes `release.promoted:v1` to establish the e2e DAG in Neo4j (the kept production path) |
 | `ui_http_test.go` | HTTP assertions against the ui-service (`verifyUIService`) |
 | `auth_oidc_test.go` | `TestAuthOIDC` — real OIDC login flow against Dex (auth-e2e profile); skipped unless `UI_AUTH_HTTP_BASE` is set |
+| `worker_execution_test.go`, `worker_failure_test.go`, `worker_performance_test.go`, `worker_helpers_test.go` | Worker acceptance suite (`TestE2E_Worker*`) — gated behind the `e2e_worker` build tag; see [Worker Acceptance Suite](#worker-acceptance-suite) |
 | `verify.go` | DAG-level assertions (executor jobs, k8s jobs, dependency unlocking, failure helpers) |
 | `clients.go` | gRPC, Redis, Postgres, Neo4j, S3, and release-controller client setup |
 | `helpers.go` | `pollUntil`, k8s job helpers, `containsAll` |
@@ -236,6 +237,27 @@ Run only the blue/green tests:
 docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
   go test -v -count=1 -timeout 25m -run 'TestE2E_ReleasePromote' /app/tests/e2e/...
 ```
+
+## Worker Acceptance Suite
+
+The reusable-worker acceptance tests (`TestE2E_WorkerExecution`, `TestE2E_WorkerWrapper`, `TestE2E_WorkerFailures`, `TestE2E_WorkerPerformance`) live in `worker_*_test.go` and are compiled **only** under the `e2e_worker` build tag. The standard suite (`go test /app/tests/e2e/...`) does not build or run them.
+
+They are gated for two reasons: they add ~20 minutes (real worker Deployments and validation Jobs in kind), and they toggle the shared executor's worker canary env, which destabilizes neighboring tests if interleaved. Keeping them out of the standard build lets `go test /app/tests/e2e/...` stay comfortably under the 25-minute package timeout.
+
+Run only the worker suite (requires the standard blank-state harness to be up):
+
+```bash
+docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
+  go test -v -count=1 -timeout 25m -tags e2e_worker -run 'TestE2E_Worker' /app/tests/e2e/...
+```
+
+Or via the Makefile (provisions the K8s env, runs the suite, then cleans up):
+
+```bash
+make e2e-worker-test
+```
+
+The `-tags e2e_worker` flag is required to compile the files; `-run 'TestE2E_Worker'` selects the worker tests (the tag also compiles the rest of the suite, so the `-run` filter keeps the run scoped to the worker acceptance tests). The perf gate's native service is `service-3` (`worker_perf`).
 
 ## Failure Path Test
 

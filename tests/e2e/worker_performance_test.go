@@ -1,3 +1,5 @@
+//go:build e2e_worker
+
 package e2e
 
 import (

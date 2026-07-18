@@ -74,6 +74,17 @@ e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-s
 	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 25m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
+# The worker acceptance suite (TestE2E_Worker*) is compiled only under the
+# e2e_worker build tag and excluded from the standard suite above. These tests
+# toggle the shared executor's worker canary and must run serially, and they add
+# ~20 min, so they run as their own gated target to keep the standard suite under
+# its 25m timeout.
+.PHONY: e2e-worker-test
+e2e-worker-test: e2e-setup  ## Run the gated worker acceptance E2E suite (TestE2E_Worker*)
+	@echo "Running worker acceptance E2E tests..."
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 25m -tags e2e_worker -run 'TestE2E_Worker' /app/tests/e2e/...
+	@$(MAKE) e2e-cleanup
+
 .PHONY: e2e-cleanup
 e2e-cleanup:  ## Cleanup K8s controllers
 	@echo "Cleaning up K8s controllers..."
