@@ -430,6 +430,48 @@ func s3CredEnvVars() []corev1.EnvVar {
 	}
 }
 
+// dbtConnectionEnvVars is the release-independent dbt profile env every
+// dbt-running container receives. It is the ONLY env the parse rehearsal can
+// legitimately depend on: per-node vars (TASK_ID, TABLE_NAME, SCHEMA, ...) are
+// not rehearsable and DBT_TARGET_SCHEMA is added per candidate context. The
+// parse containers and the run pods MUST build from this same function — env
+// drift between them silently invalidates every hydrated cache.
+func dbtConnectionEnvVars() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
+		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
+		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
+		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
+		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+	}
+}
+
+// buildParseExportCommand returns the sh script for one parse-export/rehearsal
+// initContainer. It runs the team's parse argv cold (export), fails loudly if
+// no partial_parse.msgpack appears (partial parsing disabled in the project),
+// re-runs the argv (rehearsal) and fails on dbt's partial-parse miss marker,
+// then hands the artifact to the upload container via /shared.
+func buildParseExportCommand(parseArgv []string, partialParsePath, ctx string) string {
+	dir := "/shared/parse/" + ctx
+	parse := shellJoin(parseArgv)
+	pp := shellQuote(partialParsePath)
+	return "set -e\n" +
+		"mkdir -p " + dir + "\n" +
+		parse + "\n" +
+		"if [ ! -f " + pp + " ]; then\n" +
+		"  echo 'continuo parse-export: no partial_parse.msgpack was written — partial parsing appears DISABLED in this project (flags.partial_parse=false or --no-partial-parse in the parse command). This is not a SQL error.' >&2\n" +
+		"  exit 43\n" +
+		"fi\n" +
+		parse + " > " + dir + "/rehearse.log 2>&1 || { cat " + dir + "/rehearse.log >&2; exit 44; }\n" +
+		"if grep -q 'Unable to do partial parsing' " + dir + "/rehearse.log; then\n" +
+		"  cat " + dir + "/rehearse.log >&2\n" +
+		"  echo 'continuo parse-rehearsal FAILED (" + ctx + "): the project re-parses under run-pod conditions — typically an env_var() read at parse time whose value differs between compile and run pods. This is not a SQL error.' >&2\n" +
+		"  exit 42\n" +
+		"fi\n" +
+		"cp " + pp + " " + dir + "/partial_parse.msgpack\n" +
+		"chmod 644 " + dir + "/partial_parse.msgpack\n"
+}
+
 // sharedEmptyDirVolume returns the "shared" emptyDir volume used as the hand-off
 // point between the init container and the main container in compile pods.
 func sharedEmptyDirVolume() corev1.Volume {
@@ -584,13 +626,8 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodS
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
-		// dbt profile connection — forwarded from executor-controller environment
-		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
-		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
-		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
-		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
-		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
 	}
+	envVars = append(envVars, dbtConnectionEnvVars()...)
 
 	return corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
@@ -610,14 +647,19 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string) (corev1.PodS
 
 // CreateCompileJob builds and creates a mode=compile K8s Job (idempotent by
 // job name). The Job pod has a shared emptyDir volume "shared" mounted at
-// /shared in both containers:
+// /shared in every container:
 //   - initContainer "compile": team image runs the service's resolved compile
 //     command and copies the manifest from its declared path into
 //     /shared/manifest.json, with the standard DBT_POSTGRES_* warehouse envs.
+//   - when params.CandidateSchema is set, two more team-image initContainers,
+//     "parse-prod" and "parse-candidate", export and rehearse the service's
+//     partial-parse cache (see buildParseExportCommand) into
+//     /shared/parse/<prod|candidate>/partial_parse.msgpack.
 //   - main container "upload": the shared s3-sidecar image (S3_SIDECAR_IMAGE
 //     env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest) runs
 //     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH +
-//     MANIFEST_S3_URI + the S3 credential envs.
+//     MANIFEST_S3_URI + the S3 credential envs, plus the four PARSE_* envs
+//     when the parse-export leg ran.
 //
 // The mode=compile label lets k8s-controller route its terminal status to
 // compile.node.completed:v1. release-id/node-id annotations carry the
@@ -637,7 +679,9 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 	}
 
 	compileArgv, manifestPath := c.commands.CompileCommand(params.ServiceName)
-	podSpec, err := buildCompilePodSpec(params, compileArgv, manifestPath)
+	parseArgv := c.commands.ParseCommand(params.ServiceName)
+	partialParsePath := c.commands.PartialParsePath(params.ServiceName)
+	podSpec, err := buildCompilePodSpec(params, compileArgv, manifestPath, parseArgv, partialParsePath)
 	if err != nil {
 		return fmt.Errorf("failed to build compile pod spec: %w", err)
 	}
@@ -674,23 +718,33 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 }
 
 // buildCompilePodSpec constructs the PodSpec for a compile Job. The pod has:
-//   - a shared emptyDir volume "shared" mounted at /shared in both containers;
+//   - a shared emptyDir volume "shared" mounted at /shared in every container;
 //   - an initContainer "compile" using the team image (ImageTag must be
 //     non-empty) that runs the service's resolved compile command, copies
 //     the manifest from its declared path into /shared/manifest.json, and
 //     chmods it 644 so it is world-readable regardless of the team image's
 //     uid/umask (the upload container below runs as a fixed, different uid);
+//   - when p.CandidateSchema is non-empty, two more team-image initContainers,
+//     "parse-prod" and "parse-candidate", that export and rehearse the
+//     service's partial-parse cache under prod and candidate connection
+//     contexts respectively (see buildParseExportCommand) into
+//     /shared/parse/<ctx>/partial_parse.msgpack; when CandidateSchema is
+//     empty (older compile.requested messages predating the parse-free
+//     feature) neither container is added and the pod is byte-identical in
+//     structure to the plain compile-and-upload pod;
 //   - a main container "upload" using the shared s3-sidecar image (no dbt;
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
-//     MANIFEST_S3_URI, and the S3 credential envs forwarded from the executor-controller env.
-func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPath string) (corev1.PodSpec, error) {
+//     MANIFEST_S3_URI, and the S3 credential envs forwarded from the
+//     executor-controller env, plus the four PARSE_* envs (local paths +
+//     S3 destinations) when the parse-export leg ran.
+func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPath string, parseArgv []string, partialParsePath string) (corev1.PodSpec, error) {
 	if p.ImageTag == "" {
 		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from compile job params for service %s",
 			events.ErrPermanent, p.ServiceName)
 	}
 
-	// Team image for the init (compile) container.
+	// Team image for the init (compile, parse-prod, parse-candidate) containers.
 	teamImage := p.ServiceName + ":" + p.ImageTag
 	if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
 		teamImage = user + "/" + teamImage
@@ -701,15 +755,6 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 
 	mount := sharedVolumeMount()
 
-	initEnvVars := []corev1.EnvVar{
-		// dbt profile connection — forwarded from executor-controller environment
-		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
-		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
-		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
-		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
-		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
-	}
-
 	// compile_uploader.py parses the bucket from MANIFEST_S3_URI; S3_BUCKET is
 	// intentionally omitted (see s3CredEnvVars).
 	uploadEnvVars := append([]corev1.EnvVar{
@@ -717,7 +762,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
 	}, s3CredEnvVars()...)
 
-	return corev1.PodSpec{
+	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
 		SecurityContext: jobPodSecurityContext(),
 		Volumes:         []corev1.Volume{sharedEmptyDirVolume()},
@@ -731,7 +776,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json" +
 						" && chmod 644 /shared/manifest.json",
 				},
-				Env:             initEnvVars,
+				Env:             dbtConnectionEnvVars(),
 				VolumeMounts:    []corev1.VolumeMount{mount},
 				SecurityContext: baseContainerSecurityContext(),
 			},
@@ -747,7 +792,40 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 				SecurityContext: continuoImageSecurityContext(),
 			},
 		},
-	}, nil
+	}
+
+	if p.CandidateSchema != "" {
+		prodEnv := dbtConnectionEnvVars()
+		candEnv := append(dbtConnectionEnvVars(),
+			corev1.EnvVar{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema})
+		spec.InitContainers = append(spec.InitContainers,
+			corev1.Container{
+				Name:            "parse-prod",
+				Image:           teamImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "prod")},
+				Env:             prodEnv,
+				VolumeMounts:    []corev1.VolumeMount{mount},
+				SecurityContext: baseContainerSecurityContext(),
+			},
+			corev1.Container{
+				Name:            "parse-candidate",
+				Image:           teamImage,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "candidate")},
+				Env:             candEnv,
+				VolumeMounts:    []corev1.VolumeMount{mount},
+				SecurityContext: baseContainerSecurityContext(),
+			})
+		spec.Containers[0].Env = append(spec.Containers[0].Env,
+			corev1.EnvVar{Name: "PARSE_PROD_LOCAL_PATH", Value: "/shared/parse/prod/partial_parse.msgpack"},
+			corev1.EnvVar{Name: "PARSE_PROD_S3_URI", Value: p.ParseProdS3URI},
+			corev1.EnvVar{Name: "PARSE_CANDIDATE_LOCAL_PATH", Value: "/shared/parse/candidate/partial_parse.msgpack"},
+			corev1.EnvVar{Name: "PARSE_CANDIDATE_S3_URI", Value: p.ParseCandidateS3URI},
+		)
+	}
+
+	return spec, nil
 }
 
 // setClientsetForTest swaps the clientset for a fake in unit tests.
@@ -777,13 +855,8 @@ func buildPodSpec(params JobParams, command []string) (corev1.PodSpec, error) {
 		{Name: "SCHEMA", Value: params.SchemaName},
 		{Name: "TABLE_NAME", Value: params.TableName},
 		{Name: "JOB_NAME", Value: params.JobName},
-		// dbt profile connection — forwarded from executor-controller environment
-		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
-		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
-		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
-		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
-		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
 	}
+	envVars = append(envVars, dbtConnectionEnvVars()...)
 
 	return corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,

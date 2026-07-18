@@ -79,7 +79,8 @@ func TestBuildValidationPodSpecBuildFromSQLHardening(t *testing.T) {
 func TestBuildCompilePodSpecHardening(t *testing.T) {
 	p := validationParams()
 	p.ManifestS3URI = "s3://bucket/svc/rel/manifest.json"
-	spec, err := buildCompilePodSpec(p, []string{"dbt", "compile"}, "target/manifest.json")
+	spec, err := buildCompilePodSpec(p, []string{"dbt", "compile"}, "target/manifest.json",
+		[]string{"dbt", "parse"}, "target/partial_parse.msgpack")
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
 	// init "compile" runs the team image: base hardening only.
