@@ -185,7 +185,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 		return fmt.Errorf("save release: %w", err)
 	}
 
-	candidateSchema := "_candidate_" + SanitizeSchemaSuffix(in.ReleaseID)
+	candidateSchema := CandidateSchemaFor(in.ReleaseID)
 
 	inSet := make(map[string]bool, len(validationIDs))
 	for _, id := range validationIDs {
@@ -285,7 +285,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		return fmt.Errorf("save release: %w", err)
 	}
 
-	candidateSchema := "_candidate_" + SanitizeSchemaSuffix(releaseID)
+	candidateSchema := CandidateSchemaFor(releaseID)
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        releaseID,
 		"mode":              "seed_build",
@@ -409,7 +409,7 @@ var nonAlphanumUnderscore = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
 // SanitizeSchemaSuffix converts a release ID into a dbt schema-name suffix by
 // replacing all non-alphanumeric characters (except underscore) with underscores.
-// It is used to construct the candidate schema name: "_candidate_" + SanitizeSchemaSuffix(releaseID).
+// It is used by CandidateSchemaFor to construct the candidate schema name.
 func SanitizeSchemaSuffix(s string) string {
 	return nonAlphanumUnderscore.ReplaceAllString(s, "_")
 }

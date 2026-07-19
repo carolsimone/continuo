@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
+	"github.com/carolsimone/continuo/executor-controller/service/artifacts"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,7 +62,7 @@ func TestBuildPodSpec_HydratesProdParseCache(t *testing.T) {
 	assert.Equal(t, s3SidecarImage(), init.Image)
 	assert.Equal(t, []string{"python", "/parse_cache_fetcher.py"}, init.Command)
 
-	wantURI := deploy.ParseCacheProdURI("continuo", "service-1", "abc123")
+	wantURI := artifacts.ParseCacheProdURI("continuo", "service-1", "abc123")
 	gotInitEnv := envVarsByName(init.Env)
 	assert.Equal(t, wantURI, gotInitEnv["PARSE_CACHE_S3_URI"])
 	assert.Equal(t, "/parse-cache/partial_parse.msgpack", gotInitEnv["PARSE_CACHE_DEST"])
@@ -154,7 +154,7 @@ func TestBuildSeedBuildPodSpec_HydratesCandidateParseCache(t *testing.T) {
 	assert.Equal(t, s3SidecarImage(), init.Image)
 	assert.Equal(t, []string{"python", "/parse_cache_fetcher.py"}, init.Command)
 
-	wantURI := deploy.ParseCacheCandidateURI("continuo", "service-1", "rel123")
+	wantURI := artifacts.ParseCacheCandidateURI("continuo", "service-1", "rel123")
 	gotInitEnv := envVarsByName(init.Env)
 	assert.Equal(t, wantURI, gotInitEnv["PARSE_CACHE_S3_URI"])
 	assert.Equal(t, "/parse-cache/partial_parse.msgpack", gotInitEnv["PARSE_CACHE_DEST"])

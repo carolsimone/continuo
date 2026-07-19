@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
-	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/service/artifacts"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/google/uuid"
 )
@@ -46,15 +46,15 @@ func (h *CompileRequestedHandler) Handle(
 		ServiceName:   evt.Service,
 		ImageTag:      evt.ImageTag,
 		JobName:       BuildValidationJobName(evt.ReleaseID, evt.Service),
-		ManifestS3URI: "s3://" + evt.Bucket + "/" + evt.Service + "/" + evt.ReleaseID + "/manifest.json",
+		ManifestS3URI: artifacts.ManifestURI(evt.Bucket, evt.Service, evt.ReleaseID),
 		// Compile tasks have no candidate SQL URI, upstreams, validation op, or prod schema.
 	}
 	// The parse-export leg needs the candidate schema at parse time; an older
 	// compile.requested without candidate_schema disables the leg entirely.
 	if evt.CandidateSchema != "" {
 		cmd.CandidateSchema = evt.CandidateSchema
-		cmd.ParseProdS3URI = deploy.ParseCacheProdURI(evt.Bucket, evt.Service, evt.ImageTag)
-		cmd.ParseCandidateS3URI = deploy.ParseCacheCandidateURI(evt.Bucket, evt.Service, evt.ReleaseID)
+		cmd.ParseProdS3URI = artifacts.ParseCacheProdURI(evt.Bucket, evt.Service, evt.ImageTag)
+		cmd.ParseCandidateS3URI = artifacts.ParseCacheCandidateURI(evt.Bucket, evt.Service, evt.ReleaseID)
 	}
 	var procID *uuid.UUID
 	if msgProcID != uuid.Nil {

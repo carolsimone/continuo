@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/service/artifacts"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/google/uuid"
@@ -110,11 +110,11 @@ func TestCompileRequestedHandler_ThreadsCandidateSchemaAndParseCacheURIs(t *test
 	cmd := depl.added[0].ValidationCommand()
 	assert.Equal(t, "_candidate_rel_parse_1", cmd.CandidateSchema)
 	assert.Equal(t,
-		deploy.ParseCacheProdURI(evt.Bucket, evt.Service, evt.ImageTag),
+		artifacts.ParseCacheProdURI(evt.Bucket, evt.Service, evt.ImageTag),
 		cmd.ParseProdS3URI,
 	)
 	assert.Equal(t,
-		deploy.ParseCacheCandidateURI(evt.Bucket, evt.Service, evt.ReleaseID),
+		artifacts.ParseCacheCandidateURI(evt.Bucket, evt.Service, evt.ReleaseID),
 		cmd.ParseCandidateS3URI,
 	)
 }

@@ -8,11 +8,12 @@ import (
 	"path"
 	"regexp"
 
-	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	validationmodel "github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/carolsimone/continuo/executor-controller/service/artifacts"
 	"github.com/carolsimone/continuo/executor-controller/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/events"
+	"github.com/carolsimone/continuo/pkg/parsecache"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -253,7 +254,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 	backoffLimit := int32(0)
 	labels := map[string]string{
 		"app":          "dbt-job",
-		"mode":         "validation",
+		"mode":         events.ModeValidation,
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
@@ -462,7 +463,7 @@ func parseCacheInitContainer(cacheURI, targetDir string) (corev1.Container, core
 	}
 	teamMount := corev1.VolumeMount{Name: "parse-cache", MountPath: targetDir}
 	init := corev1.Container{
-		Name:            "hydrate-parse-cache",
+		Name:            parsecache.ContainerName,
 		Image:           s3SidecarImage(),
 		ImagePullPolicy: validationImagePullPolicy(),
 		Command:         []string{"python", "/parse_cache_fetcher.py"},
@@ -629,7 +630,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 	backoffLimit := int32(0)
 	labels := map[string]string{
 		"app":          "dbt-job",
-		"mode":         "seed_build",
+		"mode":         events.ModeSeedBuild,
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
@@ -707,7 +708,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 	}
 
 	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
-		uri := deploy.ParseCacheCandidateURI(bucket, p.ServiceName, p.ReleaseID)
+		uri := artifacts.ParseCacheCandidateURI(bucket, p.ServiceName, p.ReleaseID)
 		init, vol, teamMount := parseCacheInitContainer(uri, path.Dir(partialParsePath))
 		spec.InitContainers = []corev1.Container{init}
 		spec.Volumes = []corev1.Volume{vol}
@@ -761,7 +762,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 	backoffLimit := int32(0)
 	labels := map[string]string{
 		"app":          "dbt-job",
-		"mode":         "compile",
+		"mode":         events.ModeCompile,
 		"release-id":   sanitizeK8sLabel(params.ReleaseID),
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
@@ -950,7 +951,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 	}
 
 	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
-		uri := deploy.ParseCacheProdURI(bucket, params.ServiceName, params.ImageTag)
+		uri := artifacts.ParseCacheProdURI(bucket, params.ServiceName, params.ImageTag)
 		init, vol, teamMount := parseCacheInitContainer(uri, path.Dir(partialParsePath))
 		spec.InitContainers = []corev1.Container{init}
 		spec.Volumes = []corev1.Volume{vol}

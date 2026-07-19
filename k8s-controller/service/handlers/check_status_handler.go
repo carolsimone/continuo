@@ -18,6 +18,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/parsecache"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
@@ -156,15 +157,15 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 		return fmt.Errorf("fetch job meta: %w", err)
 	}
 
-	if labels["mode"] == "validation" {
+	if labels["mode"] == pkgevents.ModeValidation {
 		return h.handleValidationTerminal(ctx, u, cmd, result, annotations)
 	}
 
-	if labels["mode"] == "seed_build" {
+	if labels["mode"] == pkgevents.ModeSeedBuild {
 		return h.handleSeedBuildTerminal(ctx, u, cmd, result, annotations)
 	}
 
-	if labels["mode"] == "compile" {
+	if labels["mode"] == pkgevents.ModeCompile {
 		return h.handleCompileTerminal(ctx, u, cmd, result, annotations)
 	}
 
@@ -651,7 +652,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 		if err != nil {
 			return fmt.Errorf("fetch job meta for running announcement: %w", err)
 		}
-		if labels["mode"] != "validation" && labels["mode"] != "seed_build" && labels["mode"] != "compile" && labels["mode"] != pkgevents.ModePromoteSeed {
+		if labels["mode"] != pkgevents.ModeValidation && labels["mode"] != pkgevents.ModeSeedBuild && labels["mode"] != pkgevents.ModeCompile && labels["mode"] != pkgevents.ModePromoteSeed {
 			if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "RUNNING", cmd.RetryCount); err != nil {
 				return fmt.Errorf("task_status_updated RUNNING: %w", err)
 			}
@@ -794,15 +795,15 @@ func (h *CheckStatusHandler) writeTaskStatusUpdated(
 // hydrate-parse-cache initContainer's termination message. Absent container
 // (pre-feature Jobs, validation Jobs) -> ("",""): the fields are omitted.
 func parseCacheFromResult(result *model.K8sPodResult) (state, reason string) {
-	msg, ok := result.InitTerminationMessages["hydrate-parse-cache"]
+	msg, ok := result.InitTerminationMessages[parsecache.ContainerName]
 	if !ok {
 		return "", ""
 	}
 	switch {
-	case msg == "hydrated":
-		return "hydrated", ""
-	case strings.HasPrefix(msg, "degraded:"):
-		return "degraded", strings.TrimPrefix(msg, "degraded:")
+	case msg == parsecache.Hydrated:
+		return parsecache.Hydrated, ""
+	case strings.HasPrefix(msg, parsecache.DegradedPrefix):
+		return "degraded", strings.TrimPrefix(msg, parsecache.DegradedPrefix)
 	default:
 		return "unknown", ""
 	}

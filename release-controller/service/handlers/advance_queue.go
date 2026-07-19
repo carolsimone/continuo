@@ -116,7 +116,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		Service:         next.ChangedService(),
 		ImageTag:        imageTag,
 		Bucket:          d.Bucket,
-		CandidateSchema: "_candidate_" + SanitizeSchemaSuffix(next.ID()),
+		CandidateSchema: CandidateSchemaFor(next.ID()),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

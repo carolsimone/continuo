@@ -46,6 +46,11 @@ func (DeployTask) isCommand() {}
 // UpstreamNodeIDs lists the dbt unique_ids of intra-service nodes that gate
 // dispatch of this node. It is persisted in job_params and read back by the
 // dispatcher to evaluate whether all upstreams have completed successfully.
+//
+// Every field carries a json tag because the whole struct is marshalled
+// verbatim into the executor_deployments.job_params JSONB column and
+// unmarshalled back on dispatch — this is the same repo-wide, recorded
+// domain/command serialization debt as DeployTask.Mode, not a new one.
 type ValidationDeployTask struct {
 	ReleaseID       string   `json:"release_id"`
 	NodeID          string   `json:"node_id"`

@@ -50,7 +50,7 @@ func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *t
 
 	var candidateSchema string
 	require.NoError(t, json.Unmarshal(payload["candidate_schema"], &candidateSchema))
-	assert.Equal(t, "_candidate_"+handlers.SanitizeSchemaSuffix(releaseID), candidateSchema)
+	assert.Equal(t, handlers.CandidateSchemaFor(releaseID), candidateSchema)
 
 	_, hasManifestKeys := payload["manifest_keys"]
 	assert.False(t, hasManifestKeys, "manifest_keys must not appear in compile.requested payload")
