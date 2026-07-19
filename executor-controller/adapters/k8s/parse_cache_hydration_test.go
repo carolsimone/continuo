@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
@@ -129,8 +130,22 @@ func TestBuildSeedBuildPodSpec_HydratesCandidateParseCache(t *testing.T) {
 	p := validationParams()
 	p.ReleaseID = "rel123"
 	p.ServiceName = "service-1"
+	command := []string{"dbt", "seed", "--select", p.TableName}
+	wantCommand := append([]string(nil), command...)
+	// Team container env/command must stay exactly what buildSeedBuildPodSpec
+	// produced before this feature: the ValidationJobParams-derived vars plus
+	// DBT_TARGET_SCHEMA and dbtConnectionEnvVars().
+	wantEnv := append([]corev1.EnvVar{
+		{Name: "RELEASE_ID", Value: p.ReleaseID},
+		{Name: "NODE_ID", Value: p.NodeID},
+		{Name: "SERVICE_NAME", Value: p.ServiceName},
+		{Name: "SCHEMA", Value: p.SchemaName},
+		{Name: "TABLE_NAME", Value: p.TableName},
+		{Name: "JOB_NAME", Value: p.JobName},
+		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
+	}, dbtConnectionEnvVars()...)
 
-	spec, err := buildSeedBuildPodSpec(p, []string{"dbt", "seed", "--select", p.TableName}, "/project/target/partial_parse.msgpack")
+	spec, err := buildSeedBuildPodSpec(p, command, "/project/target/partial_parse.msgpack")
 	require.NoError(t, err)
 
 	require.Len(t, spec.InitContainers, 1)
@@ -143,6 +158,15 @@ func TestBuildSeedBuildPodSpec_HydratesCandidateParseCache(t *testing.T) {
 	gotInitEnv := envVarsByName(init.Env)
 	assert.Equal(t, wantURI, gotInitEnv["PARSE_CACHE_S3_URI"])
 	assert.Equal(t, "/parse-cache/partial_parse.msgpack", gotInitEnv["PARSE_CACHE_DEST"])
+	for _, e := range s3CredEnvVars() {
+		assert.Equal(t, e.Value, gotInitEnv[e.Name], "init container must forward s3CredEnvVars()")
+	}
+	// S3 creds must NEVER land on the team container.
+	teamEnv := envVarsByName(spec.Containers[0].Env)
+	for name := range teamEnv {
+		assert.False(t, strings.HasPrefix(name, "AWS_") || strings.HasPrefix(name, "S3_"),
+			"team container must not receive S3/AWS env var %s", name)
+	}
 
 	require.Len(t, spec.Volumes, 1)
 	assert.Equal(t, "parse-cache", spec.Volumes[0].Name)
@@ -152,6 +176,10 @@ func TestBuildSeedBuildPodSpec_HydratesCandidateParseCache(t *testing.T) {
 	require.Len(t, spec.Containers[0].VolumeMounts, 1)
 	assert.Equal(t, "parse-cache", spec.Containers[0].VolumeMounts[0].Name)
 	assert.Equal(t, "/project/target", spec.Containers[0].VolumeMounts[0].MountPath)
+
+	// Team container command/env unchanged from today's pre-feature spec.
+	assert.Equal(t, wantCommand, spec.Containers[0].Command)
+	assert.Equal(t, wantEnv, spec.Containers[0].Env)
 }
 
 // TestBuildSeedBuildPodSpec_NoHydrationWithoutBucket mirrors the prod

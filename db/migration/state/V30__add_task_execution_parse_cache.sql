@@ -3,4 +3,4 @@
 -- degrade reason. NULL for executions that predate hydration or have no
 -- hydrate initContainer.
 ALTER TABLE task_execution ADD COLUMN parse_cache VARCHAR(16);
-ALTER TABLE task_execution ADD COLUMN parse_cache_reason VARCHAR(500);
+ALTER TABLE task_execution ADD COLUMN parse_cache_reason TEXT;

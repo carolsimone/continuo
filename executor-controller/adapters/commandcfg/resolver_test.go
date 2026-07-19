@@ -51,7 +51,7 @@ func TestDefaults_CompileCommand(t *testing.T) {
 
 func TestParseCommand_DefaultAndOverride(t *testing.T) {
 	r := Defaults()
-	assert.Equal(t, []string{"dbt", "parse"}, r.ParseCommand("any-service"))
+	assert.Equal(t, []string{"dbt", "parse", "--profiles-dir", "/project"}, r.ParseCommand("any-service"))
 }
 
 func TestPartialParsePath_DefaultsToManifestSibling(t *testing.T) {

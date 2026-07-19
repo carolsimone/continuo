@@ -81,8 +81,8 @@ func TestSettleCompileNode_Failed_EmitsStatusFailed(t *testing.T) {
 
 // TestSettleCompileNode_FailedWithContainer_IncludesFailedContainer verifies
 // the per-node compile.completed:v1 entry carries "failed_container" when the
-// settled compile deployment recorded one — release-controller (Task 9) reads
-// this key to attribute the failure to a specific pod container.
+// settled compile deployment recorded one — release-controller reads this key
+// to attribute the failure to a specific pod container.
 func TestSettleCompileNode_FailedWithContainer_IncludesFailedContainer(t *testing.T) {
 	cmd := command.ValidationDeployTask{
 		ReleaseID: "rel", NodeID: "compile.svc", JobName: "compile-compile.svc",

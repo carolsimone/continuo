@@ -21,12 +21,12 @@ the gate greps rehearse.log for two independent markers:
      round-trip a partial_parse.msgpack byte-for-byte through S3.
 
 If any of these fail against the pinned dbt version (dbt-core==1.12.0b1,
-dbt-postgres==1.10.0), Task 5's shell script markers are wrong and must be
-corrected — this suite is the empirical source of truth for that shell logic,
-not the other way around.
+dbt-postgres==1.10.0), the rehearsal initContainer's shell script markers are
+wrong and must be corrected — this suite is the empirical source of truth for
+that shell logic, not the other way around.
 
-History: an earlier version of this suite (and of Task 5's gate) treated a
-missing partial_parse.msgpack after run 1 as the disabled-project signal.
+History: an earlier version of this suite (and of the rehearsal gate) treated
+a missing partial_parse.msgpack after run 1 as the disabled-project signal.
 Empirically, dbt writes that file unconditionally on every successful parse
 regardless of the partial_parse flag — the flag only suppresses *reading* an
 existing cache, never *writing* one. The disabled-project signal that DOES
@@ -53,6 +53,7 @@ import pytest
 
 PARTIAL_PARSE_MARKER = "Unable to do partial parsing"
 DISABLED_PARSE_MARKER = "Partial parsing not enabled"
+CLEAN_HIT_MARKER = "skipping partial parsing"
 
 SERVICE_FIXTURE_DIR = "/app/services/service-1"
 # Baked into every dbt project image (dbt-base's Dockerfile COPYs macros/ here);
@@ -132,12 +133,19 @@ def test_second_parse_hits_cache(tmp_path):
     combined = run2.stdout + run2.stderr
     assert PARTIAL_PARSE_MARKER not in combined, (
         f"run2 unexpectedly reprinted the partial-parse-miss marker with an "
-        f"unchanged env; Task 5's cache-hit assumption is WRONG.\ncombined output:\n{combined}"
+        f"unchanged env; the cache-hit assumption is WRONG.\ncombined output:\n{combined}"
     )
     assert DISABLED_PARSE_MARKER not in combined, (
         f"run2 unexpectedly reprinted the disabled-partial-parse marker with an "
         f"unchanged env and partial parsing enabled; setting DBT_LOG_LEVEL=debug "
         f"only on run2 must not itself invalidate the cache.\ncombined output:\n{combined}"
+    )
+    assert CLEAN_HIT_MARKER in combined, (
+        f"run2 did not print the clean partial-parse-hit marker "
+        f"({CLEAN_HIT_MARKER!r}); the production script's exit-45 fallback "
+        f"(neither failure marker present, but no clean-hit marker either) "
+        f"treats this as an unrecognized state and fails the compile pod.\n"
+        f"combined output:\n{combined}"
     )
 
 
@@ -146,11 +154,11 @@ def test_env_change_invalidates_cache(tmp_path):
     """Pins invariant 2: changing DBT_TARGET_SCHEMA between two parses into the
     same --target-path (the real prod-vs-candidate rehearsal condition —
     generate_schema_name.sql reads it via env_var() at parse time) invalidates
-    dbt's partial-parse cache and reprints the marker Task 5 greps for. Run 2
-    uses DBT_LOG_LEVEL=debug for symmetry with the production rehearsal leg,
-    which always runs at debug level so the disabled-project marker is also
-    observable; that marker is not asserted here since it targets a different
-    condition (see test_disabled_partial_parse_is_detected)."""
+    dbt's partial-parse cache and reprints the marker the rehearsal gate greps
+    for. Run 2 uses DBT_LOG_LEVEL=debug for symmetry with the production
+    rehearsal leg, which always runs at debug level so the disabled-project
+    marker is also observable; that marker is not asserted here since it
+    targets a different condition (see test_disabled_partial_parse_is_detected)."""
     project_dir = _fixture_project(tmp_path)
     target = tmp_path / "target"
     env = _base_env()
@@ -168,7 +176,7 @@ def test_env_change_invalidates_cache(tmp_path):
     combined = run2.stdout + run2.stderr
     assert PARTIAL_PARSE_MARKER in combined, (
         f"run2 (with DBT_TARGET_SCHEMA changed) did NOT print the partial-parse-miss "
-        f"marker; Task 5's cache-invalidation assumption is WRONG.\ncombined output:\n{combined}"
+        f"marker; the cache-invalidation assumption is WRONG.\ncombined output:\n{combined}"
     )
 
 

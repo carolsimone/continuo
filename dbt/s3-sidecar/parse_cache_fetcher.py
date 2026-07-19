@@ -49,6 +49,10 @@ def main() -> None:
         with open(dest, "wb") as f:
             f.write(body)
     except OSError as exc:
+        try:
+            os.unlink(dest)
+        except OSError:
+            pass  # best-effort cleanup of a partially-written dest file
         _degrade(f"write {dest} failed: {exc}")
     print(f"parse_cache_fetcher: hydrated {dest} from s3://{bucket}/{key} ({len(body)} bytes)")
     _terminate("hydrated")

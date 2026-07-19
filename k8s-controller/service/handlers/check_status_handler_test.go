@@ -1654,8 +1654,8 @@ func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *test
 
 // TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet verifies that
 // handleCompileTerminal adds a failed_container key to the compile_node_completed
-// payload when K8sPodResult.FailedContainer is set — Task 8's parser uses it to map
-// compile-leg containers (compile/parse-prod/parse-candidate/upload) to distinct
+// payload when K8sPodResult.FailedContainer is set — downstream consumers use it to
+// map compile-leg containers (compile/parse-prod/parse-candidate/upload) to distinct
 // release-reject reasons.
 func TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet(t *testing.T) {
 	outbox := &fakeOutboxRepo{}

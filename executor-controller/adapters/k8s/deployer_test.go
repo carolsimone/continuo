@@ -90,7 +90,8 @@ func TestCompileParamsFromSpec_InvalidNodeTypeErrors(t *testing.T) {
 // already wired into the pod spec — see client.go buildCompilePodSpec) proves
 // ManifestS3URI threads all the way from spec to the created Job.
 // CandidateSchema/ParseProdS3URI/ParseCandidateS3URI are asserted at the
-// params-mapping level above; their pod-spec wiring is Task 5's concern.
+// params-mapping level above; their pod-spec wiring is covered separately
+// in the buildCompilePodSpec tests.
 func TestDeployCompile_CreatesJobWithMappedFields(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	client := newValidationTestClient()

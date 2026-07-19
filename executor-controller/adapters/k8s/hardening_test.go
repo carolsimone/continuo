@@ -83,9 +83,13 @@ func TestBuildCompilePodSpecHardening(t *testing.T) {
 		[]string{"dbt", "parse"}, "target/partial_parse.msgpack")
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
-	// init "compile" runs the team image: base hardening only.
-	assertBaseHardening(t, spec.InitContainers[0].SecurityContext)
-	assert.Nil(t, spec.InitContainers[0].SecurityContext.RunAsNonRoot)
+	// every initContainer (compile, and — since CandidateSchema is set —
+	// parse-prod/parse-candidate) runs the team image: base hardening only.
+	require.NotEmpty(t, spec.InitContainers)
+	for _, init := range spec.InitContainers {
+		assertBaseHardening(t, init.SecurityContext)
+		assert.Nil(t, init.SecurityContext.RunAsNonRoot, "initContainer %s must not force runAsNonRoot", init.Name)
+	}
 	// main "upload" runs the continuo-owned s3-sidecar: non-root forced.
 	assertNonRoot(t, spec.Containers[0].SecurityContext)
 }
