@@ -55,7 +55,7 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 | Column | Type | Purpose |
 |---|---|---|
 | `parse_cache` | `varchar(16)` NULL | Whether the executing Job's team container ran with the hydrated partial-parse cache: `hydrated` / `degraded` / `unknown`. NULL for executions that predate hydration or whose Job had no `hydrate-parse-cache` initContainer (e.g. `S3_BUCKET` unset). Persisted verbatim from the `parse_cache` field on `task.execution.recorded:v1`, which k8s-controller derives from that initContainer's termination message. Migration: V30. |
-| `parse_cache_reason` | `varchar(500)` NULL | The degrade reason, set only when `parse_cache='degraded'` (e.g. an S3 fetch failure). NULL otherwise. Migration: V30. |
+| `parse_cache_reason` | `text` NULL | The degrade reason, set only when `parse_cache='degraded'` (e.g. an S3 fetch failure). NULL otherwise. Migration: V30. |
 
 ### `scheduler_tracker` indexes for schedule_name access
 
