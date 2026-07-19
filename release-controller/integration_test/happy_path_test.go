@@ -12,6 +12,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/liveness"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -41,7 +42,7 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 		Logger:    slog.Default(),
 		Bucket:    "test-bucket",
 	}
-	srv := httpinfra.NewServer(deps, "0", slog.Default())
+	srv := httpinfra.NewServer(deps, liveness.NewRegistry(), "0", slog.Default())
 	return srv, deps, db
 }
 

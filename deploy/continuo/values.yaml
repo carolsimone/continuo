@@ -317,6 +317,12 @@ services:
     enabled: true
     replicas: 1
     httpPort: 8084
+    # /ready is backed by the liveness registry (consumer-goroutine-exit +
+    # Redis/Postgres probes + per-consumer read-loop heartbeat), unlike the
+    # hardcoded-200 /health default — see adapters/http/health.go. Both probes
+    # point at it so a wedged or exited consumer actually restarts the pod.
+    readinessPath: /ready
+    livenessPath: /ready
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: REDIS_PASSWORD, ref: redis}
@@ -356,6 +362,12 @@ services:
     enabled: true
     replicas: 1
     httpPort: 8085
+    # /ready is backed by the liveness registry (consumer-goroutine-exit +
+    # Redis/Postgres probes + per-consumer read-loop heartbeat), unlike the
+    # hardcoded-200 /health default — see adapters/http/health.go. Both probes
+    # point at it so a wedged or exited consumer actually restarts the pod.
+    readinessPath: /ready
+    livenessPath: /ready
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}

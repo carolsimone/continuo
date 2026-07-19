@@ -2,9 +2,11 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -41,8 +43,11 @@ func (p *releaseOutboxPublisher) Publish(ctx context.Context, entry *pkgoutbox.E
 // StartOutboxPublisher constructs a pkgoutbox.Processor backed by
 // release_controller_outbox and starts its poll loop in a goroutine. The loop
 // runs until ctx is cancelled. Errors are logged; the caller does not need to
-// handle the returned error (the goroutine blocks until ctx.Done).
-func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, logger *slog.Logger) {
+// handle the returned error (the goroutine blocks until ctx.Done). It is
+// registered with liveReg (RegisterWorker before launch, WorkerExited on
+// return) so a genuine unhandled exit — not the processor's own retry loop,
+// which already survives transient Redis/Postgres errors — flips /ready.
+func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, liveReg *liveness.Registry, logger *slog.Logger) {
 	publisher := &releaseOutboxPublisher{redis: rc, logger: logger}
 	processor := pkgoutbox.NewProcessor(
 		db,
@@ -55,8 +60,14 @@ func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, 
 			BatchSize: 64,
 		},
 	)
+	liveReg.RegisterWorker("outbox_publisher")
 	go func() {
-		if err := processor.Run(ctx); err != nil && ctx.Err() == nil {
+		err := processor.Run(ctx)
+		if errors.Is(err, context.Canceled) {
+			err = nil
+		}
+		liveReg.WorkerExited("outbox_publisher", err)
+		if err != nil {
 			logger.Error("outbox publisher stopped unexpectedly", "error", err)
 		}
 	}()

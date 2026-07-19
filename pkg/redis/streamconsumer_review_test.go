@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,4 +154,137 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 	require.Eventually(t, func() bool {
 		return len(pendingIDs()) == 0
 	}, 5*time.Second, 50*time.Millisecond, "slow lane ACKs once released")
+}
+
+// ── Read-loop / startup resilience (incident: consumer goroutines that die
+// silently on a Redis blip and are never restarted) ────────────────────────
+
+// TestStreamConsumer_Healthy_ReflectsHeartbeatFreshness is a pure unit test
+// (no Redis needed) for the Healthy staleness check that backs the liveness
+// probe: fresh activity reads healthy, activity older than maxStale reads
+// unhealthy with a descriptive error, and a never-started consumer (no
+// activity recorded at all) also reads unhealthy rather than nil-panicking.
+func TestStreamConsumer_Healthy_ReflectsHeartbeatFreshness(t *testing.T) {
+	c := NewStreamConsumer(goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:1"}),
+		"stream", "group", func(context.Context, goredis.XMessage) error { return nil }, discardLog())
+
+	assert.NoError(t, c.Healthy(time.Minute), "freshly constructed consumer must read healthy")
+
+	c.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	err := c.Healthy(time.Minute)
+	require.Error(t, err, "activity older than maxStale must read unhealthy")
+	assert.Contains(t, err.Error(), "stalled")
+
+	c.lastActivity.Store(time.Now().UnixNano())
+	assert.NoError(t, c.Healthy(time.Minute), "a fresh heartbeat must clear the unhealthy state")
+
+	var neverStarted StreamConsumer
+	err = neverStarted.Healthy(time.Minute)
+	require.Error(t, err, "a consumer with no recorded activity must read unhealthy, not panic")
+	assert.Contains(t, err.Error(), "has not started")
+}
+
+// TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting is the
+// regression test for the incident: a StreamConsumer pointed at an
+// unreachable Redis address must keep retrying — logging and backing off —
+// rather than returning from Start and leaving nothing to restart it. This
+// covers both halves of the loop the incident exposed: the startup
+// ensureConsumerGroup bootstrap, and (via the heartbeat) the read loop
+// proper. No REDIS_ADDR is needed: the address is deliberately unreachable.
+func TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting(t *testing.T) {
+	unreachable := goredis.NewClient(&goredis.Options{
+		Addr:        "127.0.0.1:1", // nothing listens here; every call fails fast
+		DialTimeout: 200 * time.Millisecond,
+	})
+	t.Cleanup(func() { unreachable.Close() })
+
+	c := NewStreamConsumer(unreachable, "stream", "group",
+		func(context.Context, goredis.XMessage) error { return nil }, discardLog())
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- c.Start(runCtx) }()
+
+	// Let it fail and retry the startup bootstrap a few times.
+	time.Sleep(1500 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("Start exited on a transient connection error (err=%v); it must retry indefinitely instead", err)
+	default:
+		// still running — correct.
+	}
+	assert.NoError(t, c.Healthy(2*time.Second),
+		"the retry loop must keep advancing its heartbeat even while every attempt fails")
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err, "Start must return cleanly on context cancellation")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start did not return promptly after ctx cancellation — the retry loop is not honoring ctx.Done()")
+	}
+}
+
+// TestStreamConsumer_Start_RetriesStartupObstruction_ThenResumes proves the
+// specific bug fixed here: previously, Start returned immediately (and for
+// good — nothing in this repo calls Start a second time) if
+// ensureConsumerGroup failed even once at startup. We simulate a startup
+// obstruction deterministically (the stream key pre-exists as the wrong Redis
+// type, so XGroupCreateMkStream fails every attempt with WRONGTYPE, standing
+// in for "Redis is transiently refusing requests"), confirm the consumer
+// keeps retrying rather than exiting, then clear the obstruction and confirm
+// it picks up and delivers a message afterwards — i.e. it resumes once the
+// underlying problem clears, with no restart.
+func TestStreamConsumer_Start_RetriesStartupObstruction_ThenResumes(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx := context.Background()
+
+	stream := fmt.Sprintf("test-stream-startup-retry-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+
+	// Wrong-typed key: XGroupCreateMkStream on it fails deterministically.
+	require.NoError(t, rc.Set(ctx, stream, "not-a-stream", 0).Err())
+
+	var received atomic.Int32
+	handler := func(_ context.Context, _ goredis.XMessage) error {
+		received.Add(1)
+		return nil
+	}
+	c := NewStreamConsumer(rc, stream, group, handler, discardLog())
+
+	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- c.Start(runCtx) }()
+
+	// Give it time to hit the obstruction and retry at least once (retry
+	// backoff is 3s) before we lift it.
+	time.Sleep(2 * time.Second)
+	select {
+	case err := <-done:
+		t.Fatalf("Start exited while the startup obstruction was still in place (err=%v); "+
+			"a transient startup failure must not kill the consumer", err)
+	default:
+	}
+	require.NoError(t, c.Healthy(5*time.Second), "the startup-retry loop must still be iterating")
+
+	// Clear the obstruction ("Redis recovers") and give the consumer a message
+	// to prove it actually resumes rather than staying wedged on its first
+	// (now historical) failure.
+	require.NoError(t, rc.Del(ctx, stream).Err())
+	_, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]interface{}{"k": "v"}}).Result()
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return received.Load() > 0
+	}, 8*time.Second, 200*time.Millisecond,
+		"consumer must resume and deliver messages once the startup obstruction clears")
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start did not return after context cancellation")
+	}
 }

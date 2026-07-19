@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/events"
@@ -44,6 +45,18 @@ type StreamConsumer struct {
 	// real XACK) and is a seam so the lane-scheduling logic can be unit-tested
 	// without a live Redis connection.
 	ackFn func(ctx context.Context, id string)
+
+	// lastActivity is the unix-nano timestamp of the most recent read-loop
+	// iteration, stored via atomic.Int64 so Healthy can be polled from the HTTP
+	// health handler's goroutine without racing Start's loop. It advances once
+	// per iteration regardless of outcome — including a failed read during a
+	// Redis outage — because the point is distinguishing "the loop is alive and
+	// retrying" from "the loop is wedged or has exited," not "the last read
+	// succeeded." A Redis outage alone must never read as unhealthy here: the
+	// read loop already retries indefinitely, so flagging that as unhealthy
+	// would just add readiness-flap noise on top of a condition the consumer is
+	// already handling correctly.
+	lastActivity atomic.Int64
 }
 
 // ConsumerOption tunes optional behaviour on a StreamConsumer.
@@ -124,6 +137,11 @@ func NewStreamConsumer(
 	if c.workerCount < 1 {
 		c.workerCount = 1
 	}
+	// Seed lastActivity at construction time (rather than leaving it zero until
+	// the first loop iteration) so a health probe that fires in the window
+	// between construction and the Start goroutine actually being scheduled
+	// sees "just started," not "stalled since the epoch."
+	c.lastActivity.Store(time.Now().UnixNano())
 	return c
 }
 
@@ -204,8 +222,27 @@ func (c *StreamConsumer) invokeWithRetry(ctx context.Context, msg goredis.XMessa
 
 // Start begins consuming messages from the Redis stream until the context is cancelled
 func (c *StreamConsumer) Start(ctx context.Context) error {
-	if err := c.ensureConsumerGroup(ctx); err != nil {
-		return err
+	// Bootstrap the consumer group with the same "log and retry" resilience as
+	// the read loop below, rather than returning on the first failure. Without
+	// this, a Redis outage that happens to overlap process startup (a pod boots
+	// while Redis is mid-restart, or a rollout races a brief Redis blip) makes
+	// Start return a single error and exit for good — every caller in this repo
+	// launches Start once in a goroutine and never calls it again on failure, so
+	// that one-shot failure would permanently kill the consumer even though the
+	// read loop it never reached is fully capable of surviving that same outage.
+	for {
+		c.lastActivity.Store(time.Now().UnixNano())
+		err := c.ensureConsumerGroup(ctx)
+		if err == nil {
+			break
+		}
+		c.logger.Error("Failed to ensure consumer group at startup — retrying",
+			"stream", c.streamName, "group", c.consumerGroup, "error", err)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(3 * time.Second):
+		}
 	}
 	c.logger.Info("Starting consumer",
 		"stream", c.streamName,
@@ -226,6 +263,14 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 	defer reclaimTicker.Stop()
 
 	for {
+		// Recorded once per iteration, before the blocking work below, and
+		// regardless of what that work returns. A failed read during a Redis
+		// outage still advances this — the loop attempting and logging the
+		// failure *is* the liveness signal; Healthy only needs to distinguish
+		// that from a goroutine that stopped iterating altogether (wedged in a
+		// call that never returns, or exited without going through Start's
+		// normal ctx.Done() path).
+		c.lastActivity.Store(time.Now().UnixNano())
 		select {
 		case <-ctx.Done():
 			return nil
@@ -241,6 +286,30 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// Healthy reports whether the read loop has iterated within maxStale. It
+// returns nil whenever the loop is cycling — including throughout a Redis
+// outage, since the loop's own retry-with-backoff already handles that case
+// and a transient dial error is not itself a liveness failure. A non-nil
+// error means the goroutine has stopped making progress: wedged in a call
+// that never returns control (no context deadline on the path that hung), or
+// it exited some way other than Start's normal ctx.Done() return. That is
+// exactly the failure mode an HTTP liveness probe cannot see on its own — the
+// process and its HTTP server stay up while a consumer goroutine is dead — so
+// callers should wire this into a liveness/readiness registry probe (see
+// pkg/liveness) rather than relying on "is the HTTP server up."
+func (c *StreamConsumer) Healthy(maxStale time.Duration) error {
+	last := c.lastActivity.Load()
+	if last == 0 {
+		return fmt.Errorf("stream consumer %q/%q: read loop has not started", c.streamName, c.consumerGroup)
+	}
+	lastAt := time.Unix(0, last)
+	if age := time.Since(lastAt); age > maxStale {
+		return fmt.Errorf("stream consumer %q/%q: read loop stalled — no activity for %s (last at %s)",
+			c.streamName, c.consumerGroup, age.Round(time.Second), lastAt.Format(time.RFC3339))
+	}
+	return nil
 }
 
 func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {

@@ -7,27 +7,45 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/liveness"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
 
 // Server is the HTTP server for the release-controller. It exposes a REST API
 // for CI to submit release candidates and for operators to inspect release state.
 type Server struct {
-	deps *handlers.Deps
-	port string
-	srv  *http.Server
-	log  *slog.Logger
+	deps     *handlers.Deps
+	registry *liveness.Registry
+	port     string
+	srv      *http.Server
+	log      *slog.Logger
 }
 
-// NewServer creates a new Server. Call Start to begin listening.
-func NewServer(deps *handlers.Deps, port string, log *slog.Logger) *Server {
-	return &Server{deps: deps, port: port, log: log}
+// NewServer creates a new Server. Call Start to begin listening. /healthz is
+// backed by registry — deploy config points both the readiness AND liveness
+// Kubernetes probes at it (probePath: /healthz in deploy/continuo/values.yaml)
+// — so a consumer that exits, or whose read-loop heartbeat goes stale, is
+// reflected here and actually restarts the pod, instead of leaving a dead
+// background loop running silently inside a 1/1 pod.
+func NewServer(deps *handlers.Deps, registry *liveness.Registry, port string, log *slog.Logger) *Server {
+	return &Server{deps: deps, registry: registry, port: port, log: log}
 }
 
 // Routes registers all HTTP routes and returns the handler tree.
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		failures := s.registry.Check(r.Context())
+		if len(failures) == 0 {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		for _, f := range failures {
+			s.log.Warn("Readiness check failed", "component", f.Name, "error", f.Err)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprintf(w, "NOT READY: %d component(s) unhealthy", len(failures))
+	})
 	mux.HandleFunc("POST /releases", s.handleReceiveCandidate)
 	mux.HandleFunc("GET /releases/{id}", s.handleGetRelease)
 	mux.HandleFunc("GET /releases", s.handleListReleases)

@@ -155,7 +155,14 @@ spec:
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: {{ default "/health" $svc.probePath }}
+              # livenessPath defaults the same way readinessPath does, so a
+              # service can point BOTH probes at a consumer-heartbeat-backed
+              # endpoint instead of the hardcoded-200 default. This closes the
+              # gap that let five services sit at 1/1 Running with fully dead
+              # Redis consumers for ~30 minutes during the Redis blip
+              # incident: their liveness probe never reflected consumer
+              # health, so nothing ever restarted them.
+              path: {{ default (default "/health" $svc.probePath) $svc.livenessPath }}
               port: {{ $svc.httpPort }}
             initialDelaySeconds: 15
             periodSeconds: 10
