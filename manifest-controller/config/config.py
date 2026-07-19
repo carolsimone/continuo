@@ -8,6 +8,12 @@ from streams_contract import (
 
 REDIS_URL       = os.environ.get("REDIS_URL", "")
 
+# Serves /health and /ready for the k8s liveness/readiness probes (see
+# deploy/continuo/templates/deployment.yaml and values.yaml's
+# manifest-controller.httpPort). Not in _REQUIRED: an operational default is
+# fine, unlike REDIS_URL/S3_* which must be explicitly wired per environment.
+HTTP_PORT       = int(os.environ.get("HTTP_PORT", "8086"))
+
 S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "")
 S3_BUCKET       = os.environ.get("S3_BUCKET", "")
 S3_ENV          = os.environ.get("S3_ENV", "")

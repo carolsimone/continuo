@@ -50,4 +50,6 @@ RUN useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
 # Reads code from the image, writes only to stdout — run unprivileged.
 USER 65532:65532
 
+EXPOSE 8086
+
 CMD ["python", "main.py"]
