@@ -46,18 +46,34 @@ def main() -> None:
         _degrade(f"fetch s3://{bucket}/{key} failed: {exc}")
     try:
         dest_dir = os.path.dirname(dest)
+        dest_dir_preexisting = os.path.isdir(dest_dir)
         os.makedirs(dest_dir, exist_ok=True)
         with open(dest, "wb") as f:
             f.write(body)
         # The team container runs as its own image's uid (not this sidecar's
         # 65532), and dbt rewrites partial_parse.msgpack in place with 'wb'
         # whenever it invalidates/updates the cache. A default-umask 0644 file
-        # owned by 65532 would EACCES that rewrite, so widen both the file and
-        # the directory this sidecar created to world-writable. The emptyDir
-        # mount root is already world-writable; this only matters for nested
-        # PARSE_CACHE_DEST values whose parent directory we just created.
+        # owned by 65532 would EACCES that rewrite, so widen the file this
+        # sidecar just wrote to world-writable — chmod on a file succeeds for
+        # its owner regardless of capabilities, and this sidecar owns it.
+        #
+        # The directory is a different story: in every real deployment
+        # dest_dir IS the "parse-cache" emptyDir's mount root (PARSE_CACHE_DEST
+        # is always "<mount-root>/partial_parse.msgpack" — see
+        # parseCacheInitContainer), which kubelet creates before this
+        # container starts and already leaves world-writable so arbitrary
+        # non-root uids can create files in it (proven by the write above
+        # having just succeeded with no prior chmod). This sidecar does not
+        # own that directory and runs with every Linux capability dropped, so
+        # chmod on it fails with EPERM (no CAP_FOWNER) — os.makedirs(...,
+        # exist_ok=True) is a silent no-op against a directory that already
+        # exists, it does not confer ownership. Only widen dest_dir when this
+        # call actually created it (a nested PARSE_CACHE_DEST, which no
+        # current caller produces but the code does not forbid): a directory
+        # this process just created is one it owns, so chmod on it succeeds.
         os.chmod(dest, 0o666)
-        os.chmod(dest_dir, 0o777)
+        if not dest_dir_preexisting:
+            os.chmod(dest_dir, 0o777)
     except OSError as exc:
         try:
             os.unlink(dest)

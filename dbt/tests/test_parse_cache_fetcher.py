@@ -37,6 +37,45 @@ def test_hydrates_dest_and_writes_termination_message(tmp_path, monkeypatch):
     assert stat.S_IMODE(os.stat(dest.parent).st_mode) == 0o777
 
 
+def test_hydrates_when_dest_dir_preexists_and_is_not_owned(tmp_path, monkeypatch):
+    """Regression test for the production layout: PARSE_CACHE_DEST's directory
+    is always the "parse-cache" emptyDir's mount root (see
+    parseCacheInitContainer/CreateQueryJob), which kubelet creates — and
+    already leaves world-writable — before this container starts. This
+    sidecar does not own that directory and runs with every Linux capability
+    dropped, so a chmod attempt against it fails with EPERM (os.makedirs(...,
+    exist_ok=True) against an already-existing directory does not confer
+    ownership). Prior to this fix the fetcher chmod'd dest_dir unconditionally
+    and that EPERM degraded every single hydrate attempt in production,
+    without any local test catching it (the other tests here all use a fresh
+    tmp_path subdirectory the fetcher itself creates, which it does own)."""
+    dest_dir = tmp_path / "mount-root"
+    dest_dir.mkdir()  # pre-exists, like the kubelet-created emptyDir mount root
+    dest = dest_dir / "partial_parse.msgpack"
+    term = tmp_path / "term"
+    monkeypatch.setenv("PARSE_CACHE_S3_URI", "s3://continuo/svc/parse-cache/team-x/partial_parse.msgpack")
+    monkeypatch.setenv("PARSE_CACHE_DEST", str(dest))
+    monkeypatch.setattr(parse_cache_fetcher, "TERMINATION_LOG", str(term))
+    fake = mock.MagicMock()
+    fake.get_object.return_value = {"Body": io.BytesIO(b"BYTES")}
+    monkeypatch.setattr(s3_common.boto3, "client", lambda *a, **k: fake)
+
+    real_chmod = os.chmod
+
+    def chmod_denying_dir(path, mode, *args, **kwargs):
+        if str(path) == str(dest_dir):
+            raise PermissionError(1, "Operation not permitted")
+        return real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "chmod", chmod_denying_dir)
+
+    parse_cache_fetcher.main()
+
+    assert dest.read_bytes() == b"BYTES"
+    assert term.read_text() == "hydrated"
+    assert stat.S_IMODE(os.stat(dest).st_mode) == 0o666
+
+
 def test_degrades_on_missing_object(tmp_path, monkeypatch):
     dest = tmp_path / "target" / "partial_parse.msgpack"
     term = tmp_path / "term"
