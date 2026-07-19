@@ -50,7 +50,7 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 | `inherited_from_task_id` | `uuid` NULL | Lineage pointer for rebase-projected rows. `NULL` = a real execution (cron/trigger/rerun/rebased/single-node). Non-NULL = projected inherit from a rebase parent run; the row was never executed in this run, only carried forward from a SUCCEEDED ancestor. **Resolve-to-root semantics:** the value always points to the ROOT executed `task_id` — chain depth is bounded at 1 forever, including rebase-of-rebase (the projector resolves transitively at write time). Not a foreign key — the referenced row may eventually be sweep-deleted; orphan inherits are tolerated by readers. Migration: V17. |
 | `operation` | `varchar(10)` NOT NULL DEFAULT `'run'`, CHECK `IN ('run','test','build')` | The dbt verb this task ran — `run` (model), `test`, or `build`. Denormalized from the owning run's `scheduler_tracker.operation` when the task row is created (`RunEntriesDispatchedHandler`, at dispatch); immutable thereafter. Every `ListNodes`/`ListNodeRuns` query filters on this column, so a node's model-run stats and test-run stats never blend. Migration: V28. |
 
-### New columns on `task_execution`
+### Parse-cache columns on `task_execution`
 
 | Column | Type | Purpose |
 |---|---|---|
