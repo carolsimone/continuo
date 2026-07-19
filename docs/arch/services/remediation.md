@@ -24,7 +24,7 @@ The `classification_decision` table is append-only and auditable: it contains ev
 
 | Stream | Group | Description |
 |---|---|---|
-| `release.rejected:v1` | `remediation-release-rejected` | Emitted by release-controller when a release fails at any pipeline stage (compile, seed_build, or validation). The `stage` field in the payload determines how each failing node is classified. Each message carries one or more failing nodes (one for compile, one per seed for seed_build, one per model for validation); the handler processes each node independently. |
+| `release.rejected:v1` | `remediation-release-rejected` | Emitted by release-controller when a release fails at any pipeline stage (compile, seed_build, or validation). The `stage` field in the payload determines how each failing node is classified. Each message carries one or more failing nodes (one for compile, one per seed for seed_build, one per model for validation); the handler processes each node independently. A `reason` of `parse_rehearsal_failed` or `artifact_upload_failed` (both `stage="compile"`) is excluded entirely at the inbound adapter, before any evidence is built — see "Parse-export-leg exclusion" below. |
 
 ## Outbound Interfaces
 
@@ -68,9 +68,15 @@ After stripping, it folds the category with the normalized error text and return
 
 ## Key Flows
 
+### Parse-export-leg exclusion
+
+Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_binding.go::evidenceFromRejected`) checks the payload's `reason`: `parse_rehearsal_failed` and `artifact_upload_failed` both short-circuit to an empty evidence list, so the consumer ACKs the message having produced nothing at all — no `classification_decision` row, no `remediation.requested:v1` trigger. Both reasons are `stage="compile"`, but neither is a model defect: a parse-rehearsal miss is a project *property* (partial parsing disabled, or an `env_var()` read at parse time that differs between compile and run pods) and an artifact-upload failure is continuo-internal: no change to the dbt project fixes either, so proposing a heal would misdirect the agent onto SQL that was never the problem. All other reasons (`compile_failed`, `seed_build_failed`, `validation_failed`, and the stage-less `parse_failed`/`unbuildable_cross_service_upstream`) proceed to `sourceFromPayload` as before.
+
 ### On `release.rejected:v1` — per failing node
 
 ```
+0. Exclude reason=parse_rehearsal_failed / artifact_upload_failed entirely
+   (see "Parse-export-leg exclusion" above) — ACK with no evidence built.
 1. Parse the event; extract stage ("compile" | "seed_build" | "validation") and,
    for each entry in per_node where status="failed":
    build FailureEvidence {source (derived from stage), release_id, node_id,
