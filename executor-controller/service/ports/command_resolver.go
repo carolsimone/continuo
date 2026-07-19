@@ -23,4 +23,11 @@ type CommandResolver interface {
 	// CompileCommand returns the compile argv and the absolute path where
 	// the service's tool writes manifest.json after compiling.
 	CompileCommand(serviceName string) (argv []string, manifestPath string)
+	// ParseCommand returns the argv that runs the team's dbt parse for the
+	// compile Job's parse-export/rehearsal containers.
+	ParseCommand(serviceName string) []string
+	// PartialParsePath returns the absolute in-container path where the
+	// service's dbt writes partial_parse.msgpack (explicit
+	// compile.partial_parse_path, else the manifest_path's directory).
+	PartialParsePath(serviceName string) string
 }

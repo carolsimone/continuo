@@ -129,6 +129,57 @@ func TestEvidenceFromRejected_Compile(t *testing.T) {
 	})
 }
 
+// TestEvidenceFromRejected_ParseExportLegRejections verifies that the two
+// parse-export-leg rejection reasons — parse_rehearsal_failed and
+// artifact_upload_failed — produce no FailureEvidence even though they carry
+// stage:"compile" and a failed per_node entry. Neither is fixable by a model
+// change (a rehearsal miss is a project property; an upload failure is
+// continuo-internal), so no heal trigger must be produced. A compile_failed
+// rejection on the same stage must still yield evidence.
+func TestEvidenceFromRejected_ParseExportLegRejections(t *testing.T) {
+	t.Run("parse_rehearsal_failed yields no evidence", func(t *testing.T) {
+		raw := []byte(`{"release_id":"rel-10","stage":"compile","reason":"parse_rehearsal_failed",
+		  "repo":"o/r","commit_sha":"sha","failing_nodes":["core"],
+		  "per_node":[{"node_id":"core","status":"failed","dbt_log_uri":"s3://c.log"}]}`)
+		evs, err := evidenceFromRejected(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if evs != nil {
+			t.Fatalf("want nil evidence, got %+v", evs)
+		}
+	})
+
+	t.Run("artifact_upload_failed yields no evidence", func(t *testing.T) {
+		raw := []byte(`{"release_id":"rel-11","stage":"compile","reason":"artifact_upload_failed",
+		  "repo":"o/r","commit_sha":"sha","failing_nodes":["core"],
+		  "per_node":[{"node_id":"core","status":"failed","dbt_log_uri":"s3://c.log"}]}`)
+		evs, err := evidenceFromRejected(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if evs != nil {
+			t.Fatalf("want nil evidence, got %+v", evs)
+		}
+	})
+
+	t.Run("compile_failed still yields evidence", func(t *testing.T) {
+		raw := []byte(`{"release_id":"rel-12","stage":"compile","reason":"compile_failed",
+		  "repo":"o/r","commit_sha":"sha","failing_nodes":["core"],
+		  "per_node":[{"node_id":"core","status":"failed","dbt_log_uri":"s3://c.log"}]}`)
+		evs, err := evidenceFromRejected(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 1 {
+			t.Fatalf("want 1 evidence, got %d", len(evs))
+		}
+		if evs[0].Source != failure.SourceCompile {
+			t.Errorf("Source = %q, want %q", evs[0].Source, failure.SourceCompile)
+		}
+	})
+}
+
 // TestEvidenceFromRejected_SeedFilePathAndService verifies that when the
 // release.rejected:v1 payload carries file_path and service on a seed_build
 // per-node entry, evidenceFromRejected threads them into FailureEvidence so

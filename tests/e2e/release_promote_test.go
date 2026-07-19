@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/pkg/streams"
+	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
@@ -55,14 +56,20 @@ const probeUniqueID = "e2e_schema.rel_probe"
 // {rel_probe}: one known-good node that validates without touching any
 // production table. service_prod is seeded for the other services so that
 // assembly can reconstruct the full manifest list at advance-time.
+//
+// After promotion, the test also drives two real production runs of rel_probe
+// via TriggerSingleNodeRun to prove the parse-cache hydrate/degrade invariants
+// end-to-end: the first run must hydrate from the artifact the compile leg
+// just uploaded for (service-1, changedImageTag); deleting that artifact and
+// rerunning must still succeed, recording parse_cache='degraded'.
 func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
 	// additive polls: assertValidationRequestedNodes(8m) + waitForReleasePromoted(10m)
-	// + waitForTopologySwap(2m) = 20m; bumped from 15m to match Gated tests.
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	// + waitForTopologySwap(2m) + 2x(verifySchedulerSucceeded 2m + waitForParseCache 3m) = 30m.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -129,6 +136,67 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	//    validation results (with a dbt log URI) retrievable through the UI BFF.
 	assertReleaseHistoryAndPerNodeLog(t, ctx, clients, releaseID, probeUniqueID)
 	t.Log("✅ release validated, promoted, and Neo4j topology swapped to the new release")
+
+	// 9. The compile leg that just validated rel_probe uploaded the prod-context
+	//    partial-parse artifact for (service-1, changedImageTag). The topology
+	//    swap (step 7) stamped rel_probe's :Table node with that same image_tag,
+	//    so the first production run of rel_probe after promotion must hydrate
+	//    from that artifact via the hydrate-parse-cache initContainer.
+	firstRunID, firstScheduleName := triggerRelProbeRun(t, ctx, clients)
+	defer cleanupSingleNodeRun(t, ctx, clients, firstRunID, firstScheduleName)
+	verifySchedulerSucceeded(t, ctx, clients, firstRunID)
+	waitForParseCache(t, ctx, clients.stateDB, firstRunID, "hydrated", 3*time.Minute)
+	t.Log("✅ post-promote run hydrated from the parse cache")
+
+	// 10. Deleting the prod artifact must degrade gracefully: the hydrate
+	//     initContainer's fetch fails, but the run still succeeds (exit 0) and
+	//     records parse_cache='degraded' rather than failing the Job.
+	deleteParseCacheProdArtifact(t, ctx, clients, changedService, changedImageTag)
+	secondRunID, secondScheduleName := triggerRelProbeRun(t, ctx, clients)
+	defer cleanupSingleNodeRun(t, ctx, clients, secondRunID, secondScheduleName)
+	verifySchedulerSucceeded(t, ctx, clients, secondRunID)
+	waitForParseCache(t, ctx, clients.stateDB, secondRunID, "degraded", 3*time.Minute)
+	t.Log("✅ exit-0 degrade proven: rerun succeeded without the parse cache artifact")
+}
+
+// triggerRelProbeRun triggers a "latest"-mode single-node run of rel_probe
+// (service-1/e2e_schema/rel_probe) via TriggerSingleNodeRun and returns the
+// synthesised run_id and schedule_name. It does not wait for completion or
+// register cleanup — callers do both, mirroring TestSingleNodeRunLatest.
+func triggerRelProbeRun(t *testing.T, ctx context.Context, clients *testClients) (uuid.UUID, string) {
+	t.Helper()
+	resp, err := clients.stateClient.TriggerSingleNodeRun(ctx, &statev1.TriggerSingleNodeRunRequest{
+		ServiceName:    "service-1",
+		SchemaName:     "e2e_schema",
+		TableName:      "rel_probe",
+		MetadataSource: "latest",
+	})
+	require.NoError(t, err, "TriggerSingleNodeRun(rel_probe) failed")
+	require.NotEmpty(t, resp.RunId, "TriggerSingleNodeRun must return a non-empty run_id")
+	require.NotEmpty(t, resp.ScheduleName, "TriggerSingleNodeRun must return a non-empty schedule_name")
+
+	runID, err := uuid.Parse(resp.RunId)
+	require.NoError(t, err, "run_id must be a valid UUID")
+	t.Logf("triggered rel_probe run: run_id=%s schedule_name=%s", runID, resp.ScheduleName)
+	return runID, resp.ScheduleName
+}
+
+// deleteParseCacheProdArtifact removes the prod-context partial-parse artifact
+// for (service, imageTag) from LocalStack, mirroring the canonical key the
+// executor's compile leg writes to and the hydrate-parse-cache initContainer
+// reads from: s3://<bucket>/<service>/parse-cache/<image_tag>/partial_parse.msgpack
+// (see executor-controller/service/artifacts.ParseCacheProdURI). Deleting it proves
+// the degrade path end-to-end: a run Job that can no longer fetch the artifact
+// must still succeed, recording parse_cache='degraded'.
+func deleteParseCacheProdArtifact(t *testing.T, ctx context.Context, clients *testClients, service, imageTag string) {
+	t.Helper()
+	key := fmt.Sprintf("%s/parse-cache/%s/partial_parse.msgpack", service, imageTag)
+	_, err := clients.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(e2eS3Bucket),
+		Key:    aws.String(key),
+	})
+	require.NoError(t, err, "delete parse cache prod artifact s3://%s/%s", e2eS3Bucket, key)
+	t.Logf("deleted parse cache prod artifact s3://%s/%s", e2eS3Bucket, key)
 }
 
 // probeUpUniqueID and probeDownUniqueID are the unique_ids manifest-controller

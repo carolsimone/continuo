@@ -76,7 +76,7 @@ Production and all candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `m
 
 | System | Operation |
 |---|---|
-| Kubernetes API | `GetJobStatus` — read job/pod status and termination message |
+| Kubernetes API | `GetJobStatus` — read job/pod status; the main container's termination message and exit code; the name of the first container (init or main) that terminated non-zero (`FailedContainer`, drives compile-leg failure attribution); and, per terminated init container, its termination message (`InitTerminationMessages`, carries the `hydrate-parse-cache` initContainer's `"hydrated"` / `"degraded:<reason>"` outcome) |
 | Kubernetes API | `GetPodLogs` — fetch full log + configurable tail (default configured) |
 | S3 | `PutObject` — upload full pod log; key format: `logs/task-executions/{service_name}/{schema_name}/{table_name}/{execution_id}.log`. For validation Jobs whose pod emitted a structured result block, a second `PutObject` uploads that JSON under the parallel key `run-results/task-executions/{service_name}/{schema_name}/{table_name}/{execution_id}.json`. |
 
@@ -146,6 +146,8 @@ All three outbox rows carry `{release_id, node_id, outcome}` as their core paylo
 
 For `mode=validation` the handler additionally uploads pod logs (soft-fail) and extracts a structured result block if present. The validation pod prints a result block (`===CONTINUO_VALIDATION_RESULT_BEGIN===` … `===CONTINUO_VALIDATION_RESULT_END===`) as its last stdout; the handler splits it out, uploads it under the `run-results/` key, strips it from the text log before uploading that, and sets `run_results_uri` on the row (omitted when no block is present — old image or non-validation Job).
 
+For `mode=compile`, `handleCompileTerminal` additionally adds `failed_container` to the payload when the terminal `K8sPodResult` carries one — the name of the first pod container (init or main) that terminated non-zero. The key is omitted entirely on a successful compile. `executor-controller` reads it to attribute a compile failure to a specific stage (`compile` / `parse-prod` / `parse-candidate` / `upload`).
+
 Each completed row's `aggregate_id` is a deterministic UUIDv5 over an immutable namespace and `release:<release_id>`, so a re-observed terminal Job maps to the same aggregate for downstream dedup.
 
 ## S3 Log Behavior
@@ -172,7 +174,7 @@ Each completed row's `aggregate_id` is a deterministic UUIDv5 over an immutable 
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `status`, `retry_count`
 
 ### `task.execution.recorded:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `execution_id`, `started_at` (job-level → pod-level → container-level priority), `finished_at`, `status`, `error_message`, `s3_log_key`
+`execution_id`, `task_id`, `job_name`, `execution_seconds`, `started_at` (job-level → pod-level → container-level priority; omitted if unset), `completed_at` (omitted if unset), `error_message` (omitted if empty), `log_s3_key` (omitted if empty), `parse_cache` (omitted if empty; one of `hydrated` / `degraded` / `unknown`, derived from the `hydrate-parse-cache` initContainer's termination message via `parseCacheFromResult` — absent entirely for Jobs with no such initContainer, e.g. `S3_BUCKET` unset), `parse_cache_reason` (omitted if empty; the degrade reason, set only when `parse_cache=degraded`)
 
 ### `node.updated:v1`
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `status`

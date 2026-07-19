@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Hydrate a per-node dbt Job with the release-proven partial-parse cache.
+
+Runs as the `hydrate-parse-cache` initContainer (s3-sidecar image). Downloads
+PARSE_CACHE_S3_URI into PARSE_CACHE_DEST (an emptyDir the team container mounts
+over its dbt target dir). NEVER fails the Job: any problem logs a loud
+`degraded:<reason>` line, writes the same to the container termination message,
+and exits 0 — the node then runs with a full parse (correct but slow). Success
+writes `hydrated` to the termination message.
+"""
+import os
+import sys
+
+import s3_common
+
+TERMINATION_LOG = os.environ.get("TERMINATION_LOG_PATH", "/dev/termination-log")
+
+
+def _terminate(message: str) -> None:
+    try:
+        with open(TERMINATION_LOG, "w") as f:
+            f.write(message[:4000])
+    except OSError as exc:
+        print(f"parse_cache_fetcher: cannot write termination message: {exc}", file=sys.stderr)
+
+
+def _degrade(reason: str) -> None:
+    print(f"parse_cache_fetcher: degraded:{reason} — node will run WITHOUT the parse cache (full parse)", file=sys.stderr)
+    _terminate(f"degraded:{reason}")
+    sys.exit(0)
+
+
+def main() -> None:
+    uri = os.environ.get("PARSE_CACHE_S3_URI", "")
+    dest = os.environ.get("PARSE_CACHE_DEST", "")
+    if not uri or not dest:
+        _degrade("missing PARSE_CACHE_S3_URI/PARSE_CACHE_DEST configuration")
+    try:
+        bucket, key = s3_common.parse_s3_uri(uri)
+    except ValueError as exc:
+        _degrade(f"invalid PARSE_CACHE_S3_URI: {exc}")
+    try:
+        s3 = s3_common.make_s3_client()
+        body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+    except Exception as exc:  # noqa: BLE001 - every fetch failure degrades
+        _degrade(f"fetch s3://{bucket}/{key} failed: {exc}")
+    try:
+        dest_dir = os.path.dirname(dest)
+        dest_dir_preexisting = os.path.isdir(dest_dir)
+        os.makedirs(dest_dir, exist_ok=True)
+        with open(dest, "wb") as f:
+            f.write(body)
+        # The team container runs as its own image's uid (not this sidecar's
+        # 65532), and dbt rewrites partial_parse.msgpack in place with 'wb'
+        # whenever it invalidates/updates the cache. A default-umask 0644 file
+        # owned by 65532 would EACCES that rewrite, so widen the file this
+        # sidecar just wrote to world-writable — chmod on a file succeeds for
+        # its owner regardless of capabilities, and this sidecar owns it.
+        #
+        # The directory is a different story: in every real deployment
+        # dest_dir IS the "parse-cache" emptyDir's mount root (PARSE_CACHE_DEST
+        # is always "<mount-root>/partial_parse.msgpack" — see
+        # parseCacheInitContainer), which kubelet creates before this
+        # container starts and already leaves world-writable so arbitrary
+        # non-root uids can create files in it (proven by the write above
+        # having just succeeded with no prior chmod). This sidecar does not
+        # own that directory and runs with every Linux capability dropped, so
+        # chmod on it fails with EPERM (no CAP_FOWNER) — os.makedirs(...,
+        # exist_ok=True) is a silent no-op against a directory that already
+        # exists, it does not confer ownership. Only widen dest_dir when this
+        # call actually created it (a nested PARSE_CACHE_DEST, which no
+        # current caller produces but the code does not forbid): a directory
+        # this process just created is one it owns, so chmod on it succeeds.
+        os.chmod(dest, 0o666)
+        if not dest_dir_preexisting:
+            os.chmod(dest_dir, 0o777)
+    except OSError as exc:
+        try:
+            os.unlink(dest)
+        except OSError:
+            pass  # best-effort cleanup of a partially-written dest file
+        _degrade(f"write {dest} failed: {exc}")
+    print(f"parse_cache_fetcher: hydrated {dest} from s3://{bucket}/{key} ({len(body)} bytes)")
+    _terminate("hydrated")
+
+
+if __name__ == "__main__":
+    main()

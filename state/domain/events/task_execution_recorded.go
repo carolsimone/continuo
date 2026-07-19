@@ -17,4 +17,6 @@ type TaskExecutionRecorded struct {
 	ExecutionTimeSeconds *float64
 	ErrorMessage         *string
 	LogS3Key             *string
+	ParseCache           *string
+	ParseCacheReason     *string
 }

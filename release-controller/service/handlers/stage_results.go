@@ -15,6 +15,11 @@ type NodeResult struct {
 	DBTLogURI     string `json:"dbt_log_uri,omitempty"`
 	RunResultsURI string `json:"run_results_uri,omitempty"`
 	DurationMS    int64  `json:"duration_ms,omitempty"`
+
+	// FailedContainer attributes a compile-leg failure to the pod container
+	// that failed (compile | parse-prod | parse-candidate | upload). Empty
+	// for successes, non-compile legs, and pre-attribution producers.
+	FailedContainer string `json:"failed_container,omitempty"`
 }
 
 // stageResults converts the inbound per-node wire results of a compile or

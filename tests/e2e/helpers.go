@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -159,6 +160,69 @@ func pollUntil(
 			}
 			if time.Since(lastProgress) >= progressInterval {
 				t.Logf("Still waiting... (%.0fs elapsed) — %s", time.Since(start).Seconds(), timeoutMsg)
+				lastProgress = time.Now()
+			}
+		}
+	}
+}
+
+// waitForParseCache polls state's task_execution rows for the given
+// schedule's latest execution until parse_cache equals want ("hydrated" or
+// "degraded"). task_execution has no schedule_id column of its own — it joins
+// through task_tracker (task_execution.task_id -> task_tracker.task_id ->
+// task_tracker.schedule_id) to scope the query to a single triggered run.
+// parse_cache_reason (only ever populated alongside "degraded") is polled
+// alongside parse_cache and logged on every change and in the timeout failure
+// message, so a degrade's cause is visible in CI output without a manual DB
+// query. This does not use the shared pollUntil helper: pollUntil's
+// timeoutMsg is a plain string evaluated once at the call site, before any
+// polling happens, so it cannot carry the last-observed reason — that is
+// only known once polling has run.
+func waitForParseCache(t *testing.T, ctx context.Context, db *sqlx.DB, scheduleID uuid.UUID, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	start := time.Now()
+	progressInterval := 30 * time.Second
+	lastProgress := time.Now()
+	var last, lastReason sql.NullString
+
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("parse_cache never became %q for schedule %s (last observed: parse_cache=%q parse_cache_reason=%q)",
+				want, scheduleID, last.String, lastReason.String)
+		case <-ticker.C:
+			var got, reason sql.NullString
+			err := db.QueryRowx(`
+				SELECT te.parse_cache, te.parse_cache_reason
+				  FROM task_execution te
+				  JOIN task_tracker t ON t.task_id = te.task_id
+				 WHERE t.schedule_id = $1
+				 ORDER BY te.created_at DESC
+				 LIMIT 1`, scheduleID).Scan(&got, &reason)
+			if err != nil {
+				if err == sql.ErrNoRows {
+					// No task_execution row written yet — keep polling.
+					continue
+				}
+				t.Logf("Poll condition error (will retry): %v", err)
+				continue
+			}
+			if got != last || reason != lastReason {
+				t.Logf("parse_cache for schedule %s: %q (reason=%q)", scheduleID, got.String, reason.String)
+				last = got
+				lastReason = reason
+			}
+			if got.Valid && got.String == want {
+				t.Logf("✅ parse_cache=%q for schedule %s", want, scheduleID)
+				return
+			}
+			if time.Since(lastProgress) >= progressInterval {
+				t.Logf("Still waiting... (%.0fs elapsed) — parse_cache never became %q for schedule %s (last observed: parse_cache=%q parse_cache_reason=%q)",
+					time.Since(start).Seconds(), want, scheduleID, last.String, lastReason.String)
 				lastProgress = time.Now()
 			}
 		}

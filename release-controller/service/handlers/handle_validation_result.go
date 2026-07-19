@@ -195,7 +195,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		"repo":             r.Repo(),
 		"commit_sha":       r.CommitSHA(),
 		"promoted_at":      now.UTC(),
-		"candidate_schema": "_candidate_" + sanitizeSchemaSuffix(releaseID),
+		"candidate_schema": CandidateSchemaFor(releaseID),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

@@ -19,7 +19,7 @@ import (
 type rejectedPayload struct {
 	ReleaseID string `json:"release_id"`
 	Stage     string `json:"stage"`  // "compile" | "seed_build" | "validation"; absent in older payloads
-	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed"
+	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed"
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
 	PerNode   []struct {
@@ -75,6 +75,14 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	var p rejectedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal release.rejected payload: %w", err)
+	}
+
+	// Parse-export-leg rejections are not model failures: a rehearsal miss is
+	// a project *property* (env_var() at parse time / partial parse disabled)
+	// and an upload failure is continuo-internal. Neither is fixable by a
+	// model change, so no heal evidence is produced for them.
+	if p.Reason == "parse_rehearsal_failed" || p.Reason == "artifact_upload_failed" {
+		return nil, nil
 	}
 
 	src, ok := sourceFromPayload(p.Stage, p.Reason)

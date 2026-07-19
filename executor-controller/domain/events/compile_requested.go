@@ -16,4 +16,9 @@ type CompileRequested struct {
 	Service       string
 	ImageTag      string
 	Bucket        string
+	// CandidateSchema is the release's candidate schema, echoed by
+	// release-controller for the parse-export leg of the compile Job. Absent on
+	// the wire (older messages) parses to empty, and the compile Job runs
+	// without parse-export containers.
+	CandidateSchema string
 }

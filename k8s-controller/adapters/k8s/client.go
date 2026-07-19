@@ -173,6 +173,27 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 					break
 				}
 			}
+
+			for _, ics := range pod.Status.InitContainerStatuses {
+				if ics.State.Terminated == nil {
+					continue
+				}
+				if result.InitTerminationMessages == nil {
+					result.InitTerminationMessages = map[string]string{}
+				}
+				result.InitTerminationMessages[ics.Name] = ics.State.Terminated.Message
+				if ics.State.Terminated.ExitCode != 0 && result.FailedContainer == "" {
+					result.FailedContainer = ics.Name
+				}
+			}
+			if result.FailedContainer == "" {
+				for _, cs := range pod.Status.ContainerStatuses {
+					if cs.State.Terminated != nil && cs.State.Terminated.ExitCode != 0 {
+						result.FailedContainer = cs.Name
+						break
+					}
+				}
+			}
 		}
 
 		// When pods were GC'd before polling, compute duration from the job-level

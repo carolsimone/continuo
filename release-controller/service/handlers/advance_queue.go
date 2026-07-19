@@ -105,16 +105,18 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	}
 
 	type compileRequestedPayload struct {
-		ReleaseID string `json:"release_id"`
-		Service   string `json:"service"`
-		ImageTag  string `json:"image_tag"`
-		Bucket    string `json:"bucket"`
+		ReleaseID       string `json:"release_id"`
+		Service         string `json:"service"`
+		ImageTag        string `json:"image_tag"`
+		Bucket          string `json:"bucket"`
+		CandidateSchema string `json:"candidate_schema"`
 	}
 	payload, err := json.Marshal(compileRequestedPayload{
-		ReleaseID: next.ID(),
-		Service:   next.ChangedService(),
-		ImageTag:  imageTag,
-		Bucket:    d.Bucket,
+		ReleaseID:       next.ID(),
+		Service:         next.ChangedService(),
+		ImageTag:        imageTag,
+		Bucket:          d.Bucket,
+		CandidateSchema: CandidateSchemaFor(next.ID()),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

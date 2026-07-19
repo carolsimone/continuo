@@ -1,15 +1,18 @@
 # dbt command dialect for executor-created Kubernetes Jobs.
 #
 # Every configured block must be COMPLETE: the `default` block is required and
-# must define all seven command keys, and every `services.<name>` override must
-# define all seven too. There is no per-key fallback — a team that overrides its
+# must define all eight command keys, and every `services.<name>` override must
+# define all eight too. There is no per-key fallback — a team that overrides its
 # CLI declares the full set so no job can fall through to a command its image
 # cannot run. An incomplete block is a fatal boot error.
 #
 # Keys: run / seed / snapshot (selected by node_type for operation=run),
 # test / build (node-agnostic operations), seed_build (candidate-schema seed leg;
 # schema routed via the DBT_TARGET_SCHEMA env var + generate_schema_name macro),
-# compile (validation-pipeline leg: command + absolute manifest_path).
+# compile (validation-pipeline leg: command + absolute manifest_path, plus optional
+# partial_parse_path — must live in the same directory as manifest_path, since the
+# executor mounts the parse-cache volume at that directory in the team container),
+# parse (parse-export/rehearsal leg; no placeholders).
 # Placeholders: {{ node }} (required in run/seed/snapshot/test/build/seed_build),
 # {{ target_schema }} (seed_build only).
 default:
@@ -19,6 +22,7 @@ default:
   test:       ["dbt", "test", "--select", "{{ node }}"]
   build:      ["dbt", "build", "--select", "{{ node }}"]
   seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
   compile:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"

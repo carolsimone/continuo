@@ -1,11 +1,16 @@
 # dbt command dialect for executor-created Kubernetes Jobs (deployed via Helm
 # ConfigMap). Every configured block must be COMPLETE: `default` is required and
-# defines all seven keys; every `services.<name>` override defines all seven too.
+# defines all eight keys; every `services.<name>` override defines all eight too.
 # No per-key fallback — an incomplete block is a fatal boot error.
 #
 # Keys: run / seed / snapshot (by node_type for operation=run), test / build
 # (node-agnostic), seed_build (candidate-schema seed leg; schema via the
-# DBT_TARGET_SCHEMA env var + generate_schema_name macro), compile.
+# DBT_TARGET_SCHEMA env var + generate_schema_name macro), compile (command +
+# absolute manifest_path, plus optional partial_parse_path — defaults to
+# manifest_path's directory + /partial_parse.msgpack; when set it must live in
+# the same directory as manifest_path, since the executor mounts the
+# parse-cache volume at that directory in the team container), parse
+# (parse-export/rehearsal leg; no placeholders).
 default:
   run:        ["dbt", "run", "--select", "{{ node }}"]
   seed:       ["dbt", "seed", "--select", "{{ node }}"]
@@ -13,6 +18,7 @@ default:
   test:       ["dbt", "test", "--select", "{{ node }}"]
   build:      ["dbt", "build", "--select", "{{ node }}"]
   seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
   compile:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
@@ -23,7 +29,7 @@ services:
   # Every key routes through the wrapper; seed_build reuses load-seed (schema via
   # DBT_TARGET_SCHEMA). Verb map: run-model->run, load-seed->seed,
   # capture-snapshot->snapshot, test-model->test, build-model->build,
-  # compile-project->compile.
+  # compile-project->compile, parse-project->parse.
   finance:
     run:        ["wise-dbt", "run-model", "{{ node }}"]
     seed:       ["wise-dbt", "load-seed", "{{ node }}"]
@@ -31,6 +37,7 @@ services:
     test:       ["wise-dbt", "test-model", "{{ node }}"]
     build:      ["wise-dbt", "build-model", "{{ node }}"]
     seed_build: ["wise-dbt", "load-seed", "{{ node }}"]
+    parse:      ["wise-dbt", "parse-project"]
     compile:
       command:       ["wise-dbt", "compile-project"]
       manifest_path: "/project/target/manifest.json"

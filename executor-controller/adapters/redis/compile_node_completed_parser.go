@@ -15,11 +15,12 @@ import (
 // to the seed.build.node.completed:v1 body — both legs report a per-node
 // terminal outcome the same way.
 type compileNodeCompletedDTO struct {
-	ReleaseID     string `json:"release_id"`
-	NodeID        string `json:"node_id"`
-	Outcome       string `json:"outcome"`
-	DBTLogURI     string `json:"dbt_log_uri"`
-	RunResultsURI string `json:"run_results_uri"`
+	ReleaseID       string `json:"release_id"`
+	NodeID          string `json:"node_id"`
+	Outcome         string `json:"outcome"`
+	DBTLogURI       string `json:"dbt_log_uri"`
+	RunResultsURI   string `json:"run_results_uri"`
+	FailedContainer string `json:"failed_container"`
 }
 
 // ParseCompileNodeCompleted translates a compile.node.completed:v1 XMessage
@@ -65,11 +66,12 @@ func ParseCompileNodeCompleted(msg goredis.XMessage) (events.CompileNodeComplete
 	}
 
 	return events.CompileNodeCompleted{
-		OutboxEntryID: outboxEntryID,
-		ReleaseID:     dto.ReleaseID,
-		NodeID:        dto.NodeID,
-		Outcome:       dto.Outcome,
-		DBTLogURI:     dto.DBTLogURI,
-		RunResultsURI: dto.RunResultsURI,
+		OutboxEntryID:   outboxEntryID,
+		ReleaseID:       dto.ReleaseID,
+		NodeID:          dto.NodeID,
+		Outcome:         dto.Outcome,
+		DBTLogURI:       dto.DBTLogURI,
+		RunResultsURI:   dto.RunResultsURI,
+		FailedContainer: dto.FailedContainer,
 	}, nil
 }

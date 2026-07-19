@@ -949,6 +949,97 @@ func TestHandleSucceeded(t *testing.T) {
 	}
 }
 
+// TestHandleSucceeded_ParseCache verifies that writeTaskExecutionRecordedWithLogS3Key
+// derives ParseCache/ParseCacheReason from the hydrate-parse-cache initContainer's
+// termination message: "hydrated" -> state hydrated/no reason; "degraded:<reason>"
+// -> state degraded/reason; and an absent hydrate-parse-cache entry (pre-feature
+// Jobs, validation Jobs) omits both fields from the wire payload entirely.
+func TestHandleSucceeded_ParseCache(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		initMessages   map[string]string
+		wantParseCache string
+		wantReason     string
+		wantOmitted    bool
+	}{
+		{
+			name:           "hydrated",
+			initMessages:   map[string]string{"hydrate-parse-cache": "hydrated"},
+			wantParseCache: "hydrated",
+			wantReason:     "",
+		},
+		{
+			name:           "degraded",
+			initMessages:   map[string]string{"hydrate-parse-cache": "degraded:artifact missing"},
+			wantParseCache: "degraded",
+			wantReason:     "artifact missing",
+		},
+		{
+			name:           "unknown",
+			initMessages:   map[string]string{"hydrate-parse-cache": "corrupted-gibberish"},
+			wantParseCache: "unknown",
+			wantReason:     "",
+		},
+		{
+			name:         "container absent",
+			initMessages: nil,
+			wantOmitted:  true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outbox := &fakeOutboxRepo{}
+			result := &model.K8sPodResult{
+				Status:                  model.JobStatusSucceeded,
+				InitTerminationMessages: tc.initMessages,
+				ExecutionSeconds:        1.0,
+			}
+			handler := newHandler(&fakeK8sClient{status: result}, noopCancelledRepo(), 3)
+
+			cmd := command.CheckJobStatus{
+				TaskID:     uuid.New(),
+				ScheduleID: uuid.New(),
+				JobName:    "job-parse-cache-" + tc.name,
+				MaxRetries: 3,
+			}
+
+			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+
+			execEntry := findEntryByEventType(outbox.entries, "task_execution_recorded")
+			if execEntry == nil {
+				t.Fatalf("expected a task_execution_recorded entry, got %v", eventTypesOf(outbox.entries))
+			}
+
+			var payload map[string]any
+			if err := json.Unmarshal(execEntry.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal task_execution_recorded: %v", err)
+			}
+
+			if tc.wantOmitted {
+				if _, present := payload["parse_cache"]; present {
+					t.Errorf("expected parse_cache to be omitted, got %v", payload["parse_cache"])
+				}
+				if _, present := payload["parse_cache_reason"]; present {
+					t.Errorf("expected parse_cache_reason to be omitted, got %v", payload["parse_cache_reason"])
+				}
+				return
+			}
+
+			if payload["parse_cache"] != tc.wantParseCache {
+				t.Errorf("expected parse_cache=%q, got %v", tc.wantParseCache, payload["parse_cache"])
+			}
+			if tc.wantReason == "" {
+				if _, present := payload["parse_cache_reason"]; present {
+					t.Errorf("expected parse_cache_reason to be omitted, got %v", payload["parse_cache_reason"])
+				}
+			} else if payload["parse_cache_reason"] != tc.wantReason {
+				t.Errorf("expected parse_cache_reason=%q, got %v", tc.wantReason, payload["parse_cache_reason"])
+			}
+		})
+	}
+}
+
 // TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly verifies
 // that a succeeded Job carrying mode=validation emits exactly one
 // validation_node_completed row (outcome=ok, release_id/node_id from labels) and
@@ -1558,6 +1649,92 @@ func TestHandle_CompileModeLabel_WritesCompileNodeCompletedOutboxRowOnly(t *test
 				t.Errorf("expected outcome=%s, got %v", tc.expectedOutcome, payload["outcome"])
 			}
 		})
+	}
+}
+
+// TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet verifies that
+// handleCompileTerminal adds a failed_container key to the compile_node_completed
+// payload when K8sPodResult.FailedContainer is set — downstream consumers use it to
+// map compile-leg containers (compile/parse-prod/parse-candidate/upload) to distinct
+// release-reject reasons.
+func TestHandle_CompileModeLabel_PayloadIncludesFailedContainerWhenSet(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusFailed, FailedContainer: "parse-prod"},
+			labels: map[string]string{"mode": "compile"},
+			annotations: map[string]string{
+				pkgmodel.AnnotationReleaseID: "rel-compile-2",
+				pkgmodel.AnnotationNodeID:    "compile-node-def",
+			},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "compile-node-def",
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly 1 outbox entry, got %d: %v", len(entries), eventTypesOf(entries))
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal compile_node_completed: %v", err)
+	}
+	if payload["failed_container"] != "parse-prod" {
+		t.Errorf("expected failed_container=parse-prod, got %v", payload["failed_container"])
+	}
+}
+
+// TestHandle_CompileModeLabel_PayloadOmitsFailedContainerWhenEmpty verifies that
+// handleCompileTerminal omits the failed_container key entirely when
+// K8sPodResult.FailedContainer is empty (e.g. a succeeded compile Job).
+func TestHandle_CompileModeLabel_PayloadOmitsFailedContainerWhenEmpty(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			labels: map[string]string{"mode": "compile"},
+			annotations: map[string]string{
+				pkgmodel.AnnotationReleaseID: "rel-compile-3",
+				pkgmodel.AnnotationNodeID:    "compile-node-ghi",
+			},
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID:     uuid.New(),
+		ScheduleID: uuid.New(),
+		JobName:    "compile-node-ghi",
+		MaxRetries: 3,
+	}
+
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entries := outbox.entries
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly 1 outbox entry, got %d: %v", len(entries), eventTypesOf(entries))
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal compile_node_completed: %v", err)
+	}
+	if _, present := payload["failed_container"]; present {
+		t.Errorf("expected failed_container key to be omitted, got %v", payload["failed_container"])
 	}
 }
 

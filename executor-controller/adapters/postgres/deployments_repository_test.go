@@ -383,7 +383,7 @@ func TestPendingValidationCount_PendingDeployedDoneMix(t *testing.T) {
 	done := model.NewValidationDeployment(validValidationCmd("rel-3", "n3"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, done))
 	require.NoError(t, done.MarkDeployed(now))
-	require.NoError(t, done.RecordOutcome("ok", "s3://logs/n3", "", now))
+	require.NoError(t, done.RecordOutcome("ok", "s3://logs/n3", "", "", now))
 	require.NoError(t, repo.Save(ctx, done))
 
 	// a different release's pending row must not leak into the count
@@ -406,14 +406,14 @@ func TestListValidationResults_OnlyOutcomedRows(t *testing.T) {
 	okDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n1"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, okDep))
 	require.NoError(t, okDep.MarkDeployed(now))
-	require.NoError(t, okDep.RecordOutcome("ok", "s3://logs/n1", "", now))
+	require.NoError(t, okDep.RecordOutcome("ok", "s3://logs/n1", "", "", now))
 	require.NoError(t, repo.Save(ctx, okDep))
 
 	// outcomed failed (later outcome_at so it orders second)
 	failDep := model.NewValidationDeployment(validValidationCmd("rel-4", "n2"), nil, now, false)
 	require.NoError(t, repo.Add(ctx, failDep))
 	require.NoError(t, failDep.MarkDeployed(now))
-	require.NoError(t, failDep.RecordOutcome("failed", "s3://logs/n2", "run-results/n2.json", now.Add(time.Second)))
+	require.NoError(t, failDep.RecordOutcome("failed", "s3://logs/n2", "run-results/n2.json", "", now.Add(time.Second)))
 	require.NoError(t, repo.Save(ctx, failDep))
 
 	// pending, no outcome — excluded
@@ -475,7 +475,7 @@ func runGateInTx(t *testing.T, tx *sqlx.Tx, releaseID, nodeID string, now time.T
 	depRepo := postgres.NewDeploymentsRepository(tx, logger)
 	dep, err := depRepo.GetByReleaseNode(context.Background(), releaseID, nodeID, model.ModeValidation)
 	require.NoError(t, err)
-	require.NoError(t, dep.RecordOutcome("ok", "", "", now))
+	require.NoError(t, dep.RecordOutcome("ok", "", "", "", now))
 	require.NoError(t, depRepo.Save(context.Background(), dep))
 
 	return validation.EmitValidationAggregateIfComplete(
@@ -626,7 +626,7 @@ func TestCrossModeIsolation_SameReleaseID(t *testing.T) {
 	seed := model.NewSeedBuildDeployment(validSeedBuildCmd(releaseID, "seed.fx"), nil, now)
 	require.NoError(t, repo.Add(ctx, seed))
 	require.NoError(t, seed.MarkDeployed(now))
-	require.NoError(t, seed.RecordOutcome("ok", "", "", now))
+	require.NoError(t, seed.RecordOutcome("ok", "", "", "", now))
 	require.NoError(t, repo.Save(ctx, seed))
 
 	// One still-pending validation row for the SAME release.
@@ -697,7 +697,7 @@ func TestSeedBuildAggregateGate_EmitsCompletion(t *testing.T) {
 	txRepo := postgres.NewDeploymentsRepository(tx, logger)
 	dep, err := txRepo.GetByReleaseNode(ctx, releaseID, "seed.fx", model.ModeSeedBuild)
 	require.NoError(t, err)
-	require.NoError(t, dep.RecordOutcome("ok", "", "", now))
+	require.NoError(t, dep.RecordOutcome("ok", "", "", "", now))
 	require.NoError(t, txRepo.Save(ctx, dep))
 	require.NoError(t, validation.SettleSeedBuildNodeTerminal(
 		ctx, txRepo,
@@ -758,4 +758,67 @@ func TestAggregateGate_ConcurrentLastNodes_EmitsExactlyOnce(t *testing.T) {
 
 	assert.Equal(t, 1, countValidationCompletedOutbox(t, db, releaseID),
 		"exactly one validation terminal (kind=complete) row — never zero (lost) and never two (double)")
+}
+
+// TestMigration_ExecutorDeploymentsHasFailedContainerColumn asserts flyway
+// migration V21 ran and created the failed_container column on
+// executor_deployments (the table the mode CHECK constraint targets).
+func TestMigration_ExecutorDeploymentsHasFailedContainerColumn(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+
+	var dataType string
+	err := db.QueryRow(
+		`SELECT data_type FROM information_schema.columns
+		 WHERE table_name = 'executor_deployments' AND column_name = 'failed_container'`,
+	).Scan(&dataType)
+	require.NoError(t, err, "V21 must add executor_deployments.failed_container")
+	assert.Equal(t, "text", dataType)
+}
+
+func validCompileCmd(releaseID, nodeID string) command.ValidationDeployTask {
+	return command.ValidationDeployTask{
+		ReleaseID: releaseID, NodeID: nodeID,
+		ServiceName: "dbt", ImageTag: "sha-compile",
+		JobName: "compile-" + nodeID, ManifestS3URI: "s3://bucket/" + releaseID + "/manifest.json",
+	}
+}
+
+// TestAdd_CompileRow_FailedContainer_RoundTrip verifies failed_container
+// persists through Save and rehydrates via GetByReleaseNode: absent by
+// default, and carrying the failing container's name once RecordOutcome
+// records one.
+func TestAdd_CompileRow_FailedContainer_RoundTrip(t *testing.T) {
+	db, cleanup := setupPostgres(t)
+	defer cleanup()
+	repo := postgres.NewDeploymentsRepository(db, testLogger())
+	ctx := context.Background()
+	now := time.Now()
+
+	dep := model.NewCompileDeployment(validCompileCmd("rel-fc", "compile.svc"), nil, now)
+	require.NoError(t, repo.Add(ctx, dep))
+	require.NoError(t, dep.MarkDeployed(now))
+	require.NoError(t, repo.Save(ctx, dep))
+
+	// Before RecordOutcome, failed_container reads back empty.
+	pending, err := repo.GetByReleaseNode(ctx, "rel-fc", "compile.svc", model.ModeCompile)
+	require.NoError(t, err)
+	assert.Equal(t, "", pending.FailedContainer(), "no outcome recorded yet")
+
+	require.NoError(t, dep.RecordOutcome("failed", "s3://logs/compile.svc", "", "parse-prod", now))
+	require.NoError(t, repo.Save(ctx, dep))
+
+	got, err := repo.GetByReleaseNode(ctx, "rel-fc", "compile.svc", model.ModeCompile)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", got.Outcome())
+	assert.Equal(t, "parse-prod", got.FailedContainer(), "failed_container round-trips through Save/GetByReleaseNode")
+
+	// Raw column check: confirms the value actually landed in the new column,
+	// not just in job_params.
+	var raw sql.NullString
+	require.NoError(t, db.QueryRow(
+		`SELECT failed_container FROM executor_deployments WHERE id=$1`, dep.ID(),
+	).Scan(&raw))
+	require.True(t, raw.Valid)
+	assert.Equal(t, "parse-prod", raw.String)
 }

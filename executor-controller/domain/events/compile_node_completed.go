@@ -17,11 +17,16 @@ import "github.com/google/uuid"
 // did not carry the field.
 //
 // Outcome is the terminal node status, one of "ok" or "failed".
+//
+// FailedContainer is the name of the pod container that terminated non-zero
+// (compile | parse-prod | parse-candidate | upload), carried by k8s-controller
+// only on a failed outcome; "" when absent (including every "ok" outcome).
 type CompileNodeCompleted struct {
-	OutboxEntryID uuid.UUID
-	ReleaseID     string
-	NodeID        string
-	Outcome       string
-	DBTLogURI     string
-	RunResultsURI string // S3 key of the structured result; "" when absent
+	OutboxEntryID   uuid.UUID
+	ReleaseID       string
+	NodeID          string
+	Outcome         string
+	DBTLogURI       string
+	RunResultsURI   string // S3 key of the structured result; "" when absent
+	FailedContainer string
 }

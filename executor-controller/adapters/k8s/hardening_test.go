@@ -37,7 +37,7 @@ func TestBuildPodSpecHardening(t *testing.T) {
 	spec, err := buildPodSpec(JobParams{
 		JobName: "j", TaskID: "t", ServiceName: "svc", SchemaName: "s",
 		TableName: "tbl", Namespace: "default", ImageTag: "abc",
-	}, []string{"dbt", "run"})
+	}, []string{"dbt", "run"}, "")
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
 	// Team image: hardened, but the user is the team's choice (dbt image
@@ -48,7 +48,7 @@ func TestBuildPodSpecHardening(t *testing.T) {
 
 func TestBuildSeedBuildPodSpecHardening(t *testing.T) {
 	p := validationParams()
-	spec, err := buildSeedBuildPodSpec(p, []string{"dbt", "seed"})
+	spec, err := buildSeedBuildPodSpec(p, []string{"dbt", "seed"}, "")
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
 	assertBaseHardening(t, spec.Containers[0].SecurityContext)
@@ -79,12 +79,17 @@ func TestBuildValidationPodSpecBuildFromSQLHardening(t *testing.T) {
 func TestBuildCompilePodSpecHardening(t *testing.T) {
 	p := validationParams()
 	p.ManifestS3URI = "s3://bucket/svc/rel/manifest.json"
-	spec, err := buildCompilePodSpec(p, []string{"dbt", "compile"}, "target/manifest.json")
+	spec, err := buildCompilePodSpec(p, []string{"dbt", "compile"}, "target/manifest.json",
+		[]string{"dbt", "parse"}, "target/partial_parse.msgpack")
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
-	// init "compile" runs the team image: base hardening only.
-	assertBaseHardening(t, spec.InitContainers[0].SecurityContext)
-	assert.Nil(t, spec.InitContainers[0].SecurityContext.RunAsNonRoot)
+	// every initContainer (compile, and — since CandidateSchema is set —
+	// parse-prod/parse-candidate) runs the team image: base hardening only.
+	require.NotEmpty(t, spec.InitContainers)
+	for _, init := range spec.InitContainers {
+		assertBaseHardening(t, init.SecurityContext)
+		assert.Nil(t, init.SecurityContext.RunAsNonRoot, "initContainer %s must not force runAsNonRoot", init.Name)
+	}
 	// main "upload" runs the continuo-owned s3-sidecar: non-root forced.
 	assertNonRoot(t, spec.Containers[0].SecurityContext)
 }

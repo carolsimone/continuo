@@ -297,7 +297,7 @@ func TestValidationNodeCompletedHandler_RedeliveryIsNoOp(t *testing.T) {
 	// redelivery. The handler must ACK (nil) without re-recording or re-emitting.
 	dep := deployedValidationNode(t, "rel-1", "model.shop.orders")
 	now := time.Now()
-	require.NoError(t, dep.RecordOutcome("ok", "s3://logs/orders", "", now))
+	require.NoError(t, dep.RecordOutcome("ok", "s3://logs/orders", "", "", now))
 
 	depl := &nodeCompletedDeploymentsRepo{
 		byReleaseNode: dep,

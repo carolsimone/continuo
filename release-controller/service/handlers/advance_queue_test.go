@@ -48,6 +48,10 @@ func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *t
 	require.NoError(t, json.Unmarshal(payload["bucket"], &bucket))
 	assert.Equal(t, "my-bucket", bucket)
 
+	var candidateSchema string
+	require.NoError(t, json.Unmarshal(payload["candidate_schema"], &candidateSchema))
+	assert.Equal(t, handlers.CandidateSchemaFor(releaseID), candidateSchema)
+
 	_, hasManifestKeys := payload["manifest_keys"]
 	assert.False(t, hasManifestKeys, "manifest_keys must not appear in compile.requested payload")
 	_, hasManifestsURI := payload["manifests_uri"]

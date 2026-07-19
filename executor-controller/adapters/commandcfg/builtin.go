@@ -22,5 +22,11 @@ func builtinDefault() *opSet {
 			Command:      []string{"dbt", "compile", "--profiles-dir", "/project"},
 			ManifestPath: "/project/target/manifest.json",
 		},
+		// No --profiles-dir here: run/seed/snapshot/test/build/seed_build above
+		// don't carry it either (dbt falls back to the CWD, /project, via the
+		// image's WORKDIR), and parse must carry the exact same parse-affecting
+		// flags as those six ops or the compile rehearsal validates a context
+		// the runtime dispatch never reproduces (see validateParseContext).
+		Parse: []string{"dbt", "parse"},
 	}
 }

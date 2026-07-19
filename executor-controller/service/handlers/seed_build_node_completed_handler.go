@@ -66,7 +66,7 @@ func (h *SeedBuildNodeCompletedHandler) Handle(
 	}
 
 	now := time.Now()
-	if err := dep.RecordOutcome(evt.Outcome, evt.DBTLogURI, evt.RunResultsURI, now); err != nil {
+	if err := dep.RecordOutcome(evt.Outcome, evt.DBTLogURI, evt.RunResultsURI, "", now); err != nil {
 		return fmt.Errorf("record seed-build outcome: %w", err)
 	}
 	if err := u.DeploymentsRepo().Save(ctx, dep); err != nil {

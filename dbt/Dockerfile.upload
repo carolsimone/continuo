@@ -22,5 +22,6 @@ COPY tests/ ./tests/
 # not violate production isolation.
 COPY s3-sidecar/s3_common.py /s3_common.py
 COPY s3-sidecar/compile_uploader.py /compile_uploader.py
+COPY s3-sidecar/parse_cache_fetcher.py /parse_cache_fetcher.py
 
 CMD ["tail", "-f", "/dev/null"]

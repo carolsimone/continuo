@@ -49,7 +49,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 
 | Stream | Consumed by | Emitted when |
 |---|---|---|
-| `compile.requested:v1` | executor-controller | A new release activates; the changed service's dbt compile is needed to produce a fresh manifest. |
+| `compile.requested:v1` | executor-controller | A new release activates; the changed service's dbt compile is needed to produce a fresh manifest. Payload: `{release_id, service, image_tag, bucket, candidate_schema}` — `candidate_schema` (`"_candidate_" + SanitizeSchemaSuffix(release_id)`) is always set, driving the compile Job's parse-export/rehearsal gate (see the executor-controller doc's `CreateCompileJob`). |
 | `release.requested:v1` | manifest-controller | A release transitions from Compiling to Parsing; carries the re-assembled `manifest_keys` set (the changed service plus every other service's current prod manifest) to parse. |
 | `seed.build.requested:v1` | executor-controller | A parsed release has new/changed dbt-seed nodes that need building into the candidate schema before validation. |
 | `validation.requested:v1` | executor-controller | A candidate has changed nodes to validate. |
@@ -78,9 +78,19 @@ Before a release activates, the queue advance verifies that every service live i
 status=failed:
   decode per_node (one entry per compile unit; node_id = service name)
   RecordStageResults("compile", per_node results)
-  Reject(reason=compile_failed, failing_nodes=[node_id of failed entries])
+  reason = compileRejection(per_node):
+     any entry's failed_container ∈ {parse-prod, parse-candidate} → "parse_rehearsal_failed"
+     any entry's failed_container == "upload" → "artifact_upload_failed"
+     otherwise (failed_container empty or "compile") → "compile_failed"
+  Reject(reason, failing_nodes=[node_id of failed entries])
   emit release.rejected:v1 {release_id, stage="compile", reason, failing_nodes,
        per_node[{node_id, status, dbt_log_uri, run_results_uri}], repo, commit_sha}
+       (stage stays "compile" for all three reasons; the failed_container
+        attribution is what discriminates parse_rehearsal_failed and
+        artifact_upload_failed — continuo-internal, never a model defect — from
+        compile_failed. remediation excludes both from heal evidence: a
+        rehearsal-gate miss is a project *property*, not something a model
+        edit can fix, and an artifact-upload failure is continuo-internal.)
   advance queue
 status=ok:
   RecordStageResults("compile", per_node results)

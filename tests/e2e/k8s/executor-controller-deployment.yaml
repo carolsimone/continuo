@@ -12,6 +12,7 @@ data:
       test:       ["dbt", "test", "--select", "{{ node }}"]
       build:      ["dbt", "build", "--select", "{{ node }}"]
       seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+      parse:      ["dbt", "parse"]
       compile:
         command:       ["dbt", "compile", "--profiles-dir", "/project"]
         manifest_path: "/project/target/manifest.json"
@@ -25,6 +26,7 @@ data:
         # seed_build reuses seed: plain dbt has no schema flag, so the always-set
         # DBT_TARGET_SCHEMA env var routes the candidate schema, not the argv.
         seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+        parse:      ["wise-dbt", "parse"]
         compile:
           command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
           manifest_path: "/project/target/manifest.json"

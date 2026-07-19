@@ -1,6 +1,10 @@
 // Package commandcfg resolves the container argv for every dbt operation the
 // executor dispatches, from an optional deploy-time dbt-commands.yaml. A
-// missing file yields the built-in plain-dbt commands; an invalid file is a
+// missing file yields the built-in plain-dbt commands. A field this build
+// doesn't recognize is logged as a warning and ignored (so a config that has
+// grown a new key a rolling-deploy binary doesn't know about yet, or vice
+// versa, doesn't crash-loop); any other invalid file — malformed YAML, an
+// unrecognised placeholder, an incomplete command block, and so on — is a
 // startup error.
 package commandcfg
 
@@ -11,6 +15,15 @@ import "regexp"
 type compileSpec struct {
 	Command      []string `yaml:"command"`
 	ManifestPath string   `yaml:"manifest_path"`
+	// PartialParsePath is the absolute path where the team's dbt writes
+	// partial_parse.msgpack. Empty defaults to
+	// dirname(ManifestPath)/partial_parse.msgpack. When set, it must live in
+	// the same directory as ManifestPath: the executor mounts the parse-cache
+	// volume at dirname(PartialParsePath) in every run/seed/build pod for this
+	// team's image, and a directory that differs from the --target-path
+	// dbt writes both artifacts into would shadow the team's actual project
+	// files instead of just the disposable target dir.
+	PartialParsePath string `yaml:"partial_parse_path"`
 }
 
 // opSet is one command set covering the operations continuo can dispatch.
@@ -23,6 +36,7 @@ type opSet struct {
 	Test      []string     `yaml:"test"`
 	Build     []string     `yaml:"build"`
 	Compile   *compileSpec `yaml:"compile"`
+	Parse     []string     `yaml:"parse"`
 }
 
 // fileConfig is the root dbt-commands.yaml document.
@@ -61,6 +75,9 @@ func (o *opSet) missingKeys() []string {
 	}
 	if o.Compile == nil {
 		missing = append(missing, "compile")
+	}
+	if o.Parse == nil {
+		missing = append(missing, "parse")
 	}
 	return missing
 }

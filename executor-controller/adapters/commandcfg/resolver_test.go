@@ -49,6 +49,20 @@ func TestDefaults_CompileCommand(t *testing.T) {
 	assert.Equal(t, "/project/target/manifest.json", manifestPath)
 }
 
+func TestParseCommand_DefaultAndOverride(t *testing.T) {
+	r := Defaults()
+	// No --profiles-dir: the built-in parse argv must carry the same
+	// parse-affecting flags as run/seed/snapshot/test/build/seed_build (none),
+	// per validateParseContext.
+	assert.Equal(t, []string{"dbt", "parse"}, r.ParseCommand("any-service"))
+}
+
+func TestPartialParsePath_DefaultsToManifestSibling(t *testing.T) {
+	r := Defaults()
+	// builtin manifest_path is /project/target/manifest.json
+	assert.Equal(t, "/project/target/partial_parse.msgpack", r.PartialParsePath("any-service"))
+}
+
 // loadTestConfig loads a Resolver from inline YAML via a temp file.
 func loadTestConfig(t *testing.T, content string) *Resolver {
 	t.Helper()
@@ -69,6 +83,7 @@ default:
   test:       ["default-dbt", "test", "--select", "{{ node }}"]
   build:      ["default-dbt", "build", "--select", "{{ node }}"]
   seed_build: ["default-dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["default-dbt", "parse"]
   compile:
     command:       ["default-dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"
@@ -80,6 +95,7 @@ services:
     test:       ["wise-dbt", "test", "--select", "{{ node }}"]
     build:      ["wise-dbt", "build", "--select", "{{ node }}"]
     seed_build: ["wise-dbt", "seed", "--select", "{{ node }}", "--schema", "{{ target_schema }}"]
+    parse:      ["wise-dbt", "parse"]
     compile:
       command:       ["wise-dbt", "compile", "--profiles-dir", "/project"]
       manifest_path: "/project/out/manifest.json"
@@ -138,6 +154,7 @@ default:
   test:       ["wise-dbt", "test", "--select", "{{ node }}"]
   build:      ["wise-dbt", "build", "--select", "{{ node }}"]
   seed_build: ["wise-dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["wise-dbt", "parse"]
   compile:
     command:       ["wise-dbt", "compile"]
     manifest_path: "/p/m.json"

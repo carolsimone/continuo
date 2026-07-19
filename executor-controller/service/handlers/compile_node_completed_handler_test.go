@@ -60,6 +60,33 @@ func TestCompileNodeCompletedHandler_RecordsOutcomeAndTriggersAggregate(t *testi
 	require.Len(t, outboxRepo.created, 1, "compile.completed:v1 emitted")
 }
 
+// TestCompileNodeCompletedHandler_RecordsFailedContainer verifies the
+// handler threads evt.FailedContainer into RecordOutcome so the saved
+// deployment (and, via the aggregate gate, the emitted compile.completed:v1
+// per-node entry) carries the failing container's name.
+func TestCompileNodeCompletedHandler_RecordsFailedContainer(t *testing.T) {
+	dep := deployedCompileNode(t, "rel-3", "model.shop.fx")
+	depl := &nodeCompletedDeploymentsRepo{
+		byReleaseNode: dep,
+		pending:       0,
+		results:       []*model.Deployment{dep},
+	}
+	agg := &fakeAggRepo{won: true}
+	outboxRepo := &fakeOutboxRepo{}
+	u := &uow.FakeUnitOfWork{Deployments: depl, Outbox: outboxRepo, ValidationAggregate: agg}
+
+	evt := events.CompileNodeCompleted{
+		ReleaseID: "rel-3", NodeID: "model.shop.fx",
+		Outcome: "failed", DBTLogURI: "s3://logs/fx", FailedContainer: "parse-prod",
+	}
+
+	h := handlers.NewCompileNodeCompletedHandler(discardLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.New()))
+
+	require.Len(t, depl.saved, 1)
+	assert.Equal(t, "parse-prod", depl.saved[0].FailedContainer())
+}
+
 func TestCompileNodeCompletedHandler_FailedOutcomeStillEmitsAggregate(t *testing.T) {
 	dep := deployedCompileNode(t, "rel-2", "model.shop.fx")
 	depl := &nodeCompletedDeploymentsRepo{
@@ -105,7 +132,7 @@ func TestCompileNodeCompletedHandler_UnknownReleaseNodeIsAcked(t *testing.T) {
 func TestCompileNodeCompletedHandler_RedeliveryIsNoOp(t *testing.T) {
 	dep := deployedCompileNode(t, "rel-1", "model.shop.fx")
 	now := time.Now()
-	require.NoError(t, dep.RecordOutcome("ok", "s3://logs/fx", "", now))
+	require.NoError(t, dep.RecordOutcome("ok", "s3://logs/fx", "", "", now))
 
 	depl := &nodeCompletedDeploymentsRepo{
 		byReleaseNode: dep,

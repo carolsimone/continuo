@@ -92,4 +92,6 @@ type TaskExecution struct {
 	CancelledBy          *string    `json:"cancelled_by,omitempty" db:"cancelled_by"`
 	CancellationReason   *string    `json:"cancellation_reason,omitempty" db:"cancellation_reason"`
 	LogS3Key             *string    `json:"log_s3_key,omitempty" db:"log_s3_key"`
+	ParseCache           *string    `json:"parse_cache,omitempty" db:"parse_cache"`
+	ParseCacheReason     *string    `json:"parse_cache_reason,omitempty" db:"parse_cache_reason"`
 }
