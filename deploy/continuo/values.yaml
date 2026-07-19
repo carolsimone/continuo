@@ -420,12 +420,19 @@ services:
   - name: manifest-controller
     enabled: true
     replicas: 1
+    httpPort: 8086
+    # No dedicated probePath override: both readiness and liveness fall back
+    # to the template default (/health), which is intentional here — this
+    # service serves no application traffic through this port, so liveness
+    # is wired to the same consumer-heartbeat check as readiness rather than
+    # the Go services' hardcoded-200 liveness. See adapters/health/server.py.
     secretEnv:
       - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
       - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
       - {name: REDIS_PASSWORD, ref: redis}
     env:
       REDIS_URL: __REDIS_URL__
+      HTTP_PORT: "8086"
     resources:
       requests: {cpu: 200m, memory: 256Mi}
       limits: {cpu: "1", memory: 1Gi}

@@ -25,6 +25,11 @@ class Consumer:
         self._group = group_name
         self._name = f"consumer-{uuid.uuid4().hex[:8]}"
         self._message_handler = message_handler
+        # Stamped at the end of every start() loop pass (success or handled
+        # failure) so a health check can tell "retrying through a Redis
+        # outage" (heartbeat keeps advancing) apart from "the loop stopped
+        # running" (heartbeat goes and stays stale) — see adapters/health.
+        self.last_heartbeat = time.monotonic()
         self._create_group()
 
     def _create_group(self) -> None:
@@ -103,8 +108,30 @@ class Consumer:
                 self._reclaim_stale_pending()
                 self._consume_once()
             except Exception as e:
+                # Broad by design: a transient Redis outage (ConnectionError,
+                # TimeoutError, or any other RedisError) must never escape
+                # this loop and end it — that would leave the process
+                # "1/1 Running" with a dead consumer and nothing to signal
+                # it, exactly the failure mode this loop exists to avoid.
+                # Match the Go stream consumer's read-loop idiom (see
+                # pkg/redis/streamconsumer.go Start()): log, retry, flat
+                # backoff, no distinction between error types at this level.
                 logger.exception("Consumer loop error: %s", e)
                 if "NOGROUP" in str(e):
                     logger.warning("Consumer group lost, recreating", extra={"stream": self._stream})
-                    self._create_group()
+                    try:
+                        self._create_group()
+                    except Exception:
+                        # Redis may still be unreachable while we're trying to
+                        # recreate the group; don't let *this* raise escape
+                        # the loop either — the next pass retries both the
+                        # group recreation (via NOGROUP) and the read.
+                        logger.exception("Failed to recreate consumer group; will retry next pass")
                 time.sleep(3)
+            finally:
+                # Every pass through the loop — whether it succeeded or hit a
+                # handled error above — proves the loop is still alive and
+                # cycling. Only a pass that hangs inside a call without ever
+                # returning or raising (not a handled Redis error) leaves
+                # this stale.
+                self.last_heartbeat = time.monotonic()

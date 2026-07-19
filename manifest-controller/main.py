@@ -5,12 +5,14 @@ import threading
 import redis
 from config.config import (
     REDIS_URL,
+    HTTP_PORT,
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
     MANIFEST_LOADED_CANDIDATE_STREAM,
     validate,
 )
 from adapters.candidate_sql_uploader import CandidateSqlUploader
+from adapters.health.server import start_health_server
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
 from adapters.sources.s3 import S3Source
@@ -110,6 +112,14 @@ def main() -> None:
         target=candidate_consumer.start, daemon=True, name="consumer-release-requested",
     )
     candidate_thread.start()
+
+    # Backstop for the consumer loop's own retry-on-error handling: exposes
+    # /health and /ready wired to candidate_consumer.last_heartbeat, so if the
+    # loop ever stops making progress — this bug recurring in a different
+    # shape, a future bug, anything — Kubernetes' liveness probe notices and
+    # restarts the pod instead of it running "1/1 Ready" while silently dead.
+    start_health_server(HTTP_PORT, candidate_consumer, candidate_thread)
+
     # Park the main thread on the candidate consumer loop; on SIGTERM the
     # process exits and the daemon thread is abandoned.
     candidate_thread.join()

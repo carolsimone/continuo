@@ -54,6 +54,11 @@ def _common_monkeypatches(monkeypatch):
     _RecordingConsumer.instances = []
     monkeypatch.setattr(main, "Consumer", _RecordingConsumer)
     monkeypatch.setattr(main.threading, "Thread", _NoopThread)
+    # The real health server binds a socket in its constructor; these wiring
+    # tests only care about the candidate-consumer wiring, so stub it out
+    # rather than open a real port per test run. tests/test_health_server.py
+    # covers the health server itself.
+    monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
 
 
 def test_main_starts_one_candidate_consumer(monkeypatch):
@@ -61,6 +66,24 @@ def test_main_starts_one_candidate_consumer(monkeypatch):
     main.main()
     streams = [c.stream_name for c in _RecordingConsumer.instances]
     assert streams == [RELEASE_REQUESTED_V1]
+
+
+def test_main_starts_health_server_wired_to_the_candidate_consumer(monkeypatch):
+    """main() must wire the health server to the *same* consumer + thread it
+    starts, not a disconnected/default one — otherwise /health can't detect
+    this consumer's loop going stale."""
+    _common_monkeypatches(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        main, "start_health_server",
+        lambda port, consumer, thread: calls.append((port, consumer, thread)),
+    )
+    main.main()
+    assert len(calls) == 1
+    port, consumer, thread = calls[0]
+    assert isinstance(port, int) and port > 0
+    assert consumer is _RecordingConsumer.instances[0]
+    assert isinstance(thread, _NoopThread)
 
 
 def test_main_consumer_group_correct(monkeypatch):

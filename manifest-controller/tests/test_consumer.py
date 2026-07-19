@@ -1,11 +1,45 @@
 import logging
-import pytest
+import threading
+import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
+import redis.exceptions as redis_exceptions
+
+import adapters.redis.consumer as consumer_mod
 from adapters.redis.consumer import Consumer
 from streams_contract import RELEASE_REQUESTED_V1, MANIFEST_CONTROLLER_RELEASE_REQUESTED
 
 _STREAM = RELEASE_REQUESTED_V1
 _GROUP = MANIFEST_CONTROLLER_RELEASE_REQUESTED
+
+
+_TEST_RETRY_SLEEP = 0.01  # real seconds; short enough to keep tests fast
+
+# The real xreadgroup(..., block=1000) blocks on the socket for up to a
+# second server-side, which is what paces the production loop on the
+# no-error/no-message path. A MagicMock returns instantly, so without some
+# pacing here start()'s `while True` spins as fast as the interpreter can
+# manage — GIL-starving the test's own thread and burning CPU for the rest
+# of the process, since these background threads are daemons with no stop
+# mechanism and outlive the test. This tiny real sleep keeps every side
+# effect below at a bounded, sane iteration rate instead.
+_TEST_ITERATION_PACING = 0.01
+
+
+def _defang_sleep(monkeypatch):
+    """Rebind the `time` name inside adapters.redis.consumer's own module
+    namespace to a fake whose sleep is short-but-real (not zero — see
+    _TEST_ITERATION_PACING above), so start()'s retry loop doesn't block for
+    the real production 3s but still yields the GIL each pass. This only
+    shadows consumer.py's own binding (monkeypatch reverts it at teardown) —
+    it never mutates the real stdlib `time` module, so it can't affect
+    unrelated code or other tests."""
+    monkeypatch.setattr(
+        consumer_mod, "time",
+        SimpleNamespace(sleep=lambda _s: time.sleep(_TEST_RETRY_SLEEP), monotonic=time.monotonic),
+    )
 
 
 def test_consumer_creates_group_on_init():
@@ -165,3 +199,142 @@ def test_reclaim_uses_min_idle_so_it_never_steals_in_flight_work():
 
     kwargs = redis_mock.xautoclaim.call_args.kwargs
     assert kwargs["min_idle_time"] >= 60_000
+
+
+# --- start() loop resilience ------------------------------------------------
+#
+# Reproduces the 2026-07-19 incident: Redis briefly went unreachable and
+# manifest-controller's consumer loop was suspected to have died silently on
+# the first redis.exceptions.ConnectionError, unlike the Go services' stream
+# consumer (pkg/redis/streamconsumer.go Start()), which logs "Error in read
+# loop" and keeps retrying with a flat 3s backoff until Redis recovers.
+#
+# These tests drive the *real* start() loop (in a background thread, against
+# a mocked redis client) through that same failure shape and assert it
+# matches the Go behavior: log, retry, keep consuming once the connection
+# recovers — never let the exception escape and end the loop.
+
+def _start_in_background(consumer: Consumer) -> threading.Thread:
+    t = threading.Thread(target=consumer.start, daemon=True)
+    t.start()
+    return t
+
+
+def test_start_survives_transient_connection_errors_and_keeps_consuming(monkeypatch):
+    """A run of redis.exceptions.ConnectionError from _reclaim_stale_pending
+    (the exact call site in the incident traceback) must not kill the
+    consumer loop: it keeps retrying and successfully consumes a message once
+    the connection recovers."""
+    _defang_sleep(monkeypatch)
+    redis_mock = MagicMock()
+    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP")
+
+    attempts = {"n": 0}
+
+    def xautoclaim_side_effect(*_a, **_kw):
+        attempts["n"] += 1
+        if attempts["n"] <= 3:
+            raise redis_exceptions.ConnectionError(
+                "Error 111 connecting to continuo-infra-redis-master:6379. Connection refused."
+            )
+        time.sleep(_TEST_ITERATION_PACING)  # simulates the real xreadgroup(block=...) pacing
+        return (b"0-0", [], [])
+
+    redis_mock.xautoclaim.side_effect = xautoclaim_side_effect
+
+    delivered = threading.Event()
+
+    def xreadgroup_side_effect(*_a, **_kw):
+        if attempts["n"] > 3 and not delivered.is_set():
+            delivered.set()
+            return [("s", [(b"1-0", {b"payload": b"x"})])]
+        time.sleep(_TEST_ITERATION_PACING)
+        return []
+
+    redis_mock.xreadgroup.side_effect = xreadgroup_side_effect
+
+    seen = []
+    c = Consumer(
+        redis_client=redis_mock, stream_name="s", group_name="g",
+        message_handler=lambda fields: seen.append(fields),
+    )
+
+    t = _start_in_background(c)
+
+    assert delivered.wait(timeout=5), "consumer never recovered after transient ConnectionErrors"
+    deadline = time.monotonic() + 2
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert seen == [{b"payload": b"x"}]
+    assert t.is_alive(), "consumer thread must not exit on a transient connection error"
+    assert attempts["n"] > 3, "must have actually retried xautoclaim after the failures"
+
+
+def test_start_survives_group_recreate_failure_during_nogroup_recovery(monkeypatch):
+    """If Redis is still unreachable when start() tries to recreate a lost
+    consumer group (the NOGROUP branch), that failure must not escape the
+    loop either — it should log and retry on the next pass."""
+    _defang_sleep(monkeypatch)
+    redis_mock = MagicMock()
+
+    creates = {"n": 0}
+
+    def xgroup_create_side_effect(*_a, **_kw):
+        creates["n"] += 1
+        if creates["n"] == 2:
+            # The in-loop recreate attempt fails (Redis still down).
+            raise redis_exceptions.ConnectionError("Error 111 connecting to host:6379.")
+        return None
+
+    redis_mock.xgroup_create.side_effect = xgroup_create_side_effect
+
+    claims = {"n": 0}
+
+    def xautoclaim_side_effect(*_a, **_kw):
+        claims["n"] += 1
+        if claims["n"] == 1:
+            raise Exception("NOGROUP No such key 's' or consumer group 'g'")
+        time.sleep(_TEST_ITERATION_PACING)
+        return (b"0-0", [], [])
+
+    redis_mock.xautoclaim.side_effect = xautoclaim_side_effect
+
+    def xreadgroup_side_effect(*_a, **_kw):
+        time.sleep(_TEST_ITERATION_PACING)
+        return []
+
+    redis_mock.xreadgroup.side_effect = xreadgroup_side_effect
+
+    c = Consumer(redis_client=redis_mock, stream_name="s", group_name="g", message_handler=lambda f: None)
+    t = _start_in_background(c)
+
+    deadline = time.monotonic() + 2
+    while claims["n"] < 3 and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert t.is_alive(), "a failure recreating the consumer group must not kill the loop"
+    assert claims["n"] >= 3, "must keep attempting xautoclaim across passes"
+
+
+def test_last_heartbeat_advances_while_loop_runs(monkeypatch):
+    """The health server (adapters/health/server.py) treats a stale
+    last_heartbeat as 'the loop stopped making progress'. It must advance on
+    every pass, including passes that hit a handled Redis error."""
+    _defang_sleep(monkeypatch)
+    redis_mock = MagicMock()
+    redis_mock.xgroup_create.side_effect = Exception("BUSYGROUP")
+    redis_mock.xautoclaim.side_effect = redis_exceptions.ConnectionError("Error 111 connecting.")
+    redis_mock.xreadgroup.return_value = []
+
+    c = Consumer(redis_client=redis_mock, stream_name="s", group_name="g", message_handler=lambda f: None)
+    initial = c.last_heartbeat
+
+    t = _start_in_background(c)
+
+    deadline = time.monotonic() + 2
+    while c.last_heartbeat == initial and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert c.last_heartbeat > initial
+    assert t.is_alive()

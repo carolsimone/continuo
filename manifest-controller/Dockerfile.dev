@@ -9,4 +9,6 @@ RUN uv sync --frozen --extra dev
 
 COPY . .
 
+EXPOSE 8086
+
 CMD ["tail", "-f", "/dev/null"]
