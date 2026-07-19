@@ -9,6 +9,7 @@ import (
 	"os"
 	stdpath "path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -16,9 +17,15 @@ import (
 )
 
 // Load builds a Resolver from the dbt-commands.yaml at path. An empty path or
-// a missing file yields the built-in plain-dbt defaults. A file that exists
-// but fails to parse or validate returns an error; the caller treats that as
-// fatal so a config typo surfaces at boot, never mid-release.
+// a missing file yields the built-in plain-dbt defaults. A field this build
+// doesn't recognize (e.g. a newer operation key an older rolling-deploy
+// binary hasn't caught up to yet) is logged as a warning and ignored, not a
+// startup error — the fail-closed guarantee is unchanged, since a block that
+// is incomplete once unknown fields are dropped still fails completeness
+// validation. A file that exists but otherwise fails to parse or validate
+// (malformed YAML, an unrecognised placeholder, an incomplete block, etc.)
+// returns an error; the caller treats that as fatal so a real config problem
+// surfaces at boot, never mid-release.
 func Load(path string, logger *slog.Logger) (*Resolver, error) {
 	if path == "" {
 		logger.Info("DBT_COMMANDS_CONFIG_PATH not set, using built-in dbt commands")
@@ -33,16 +40,58 @@ func Load(path string, logger *slog.Logger) (*Resolver, error) {
 		return nil, fmt.Errorf("read dbt commands config %s: %w", path, err)
 	}
 
-	dec := yaml.NewDecoder(bytes.NewReader(raw))
-	dec.KnownFields(true)
 	var cfg fileConfig
-	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("parse dbt commands config %s: %w", path, err)
+	strictDec := yaml.NewDecoder(bytes.NewReader(raw))
+	strictDec.KnownFields(true)
+	if decErr := strictDec.Decode(&cfg); decErr != nil && !errors.Is(decErr, io.EOF) {
+		fields := unknownFieldNames(decErr)
+		if fields == nil {
+			// Not exclusively "field X not found" errors — a genuine parse
+			// or type problem, which must stay fatal.
+			return nil, fmt.Errorf("parse dbt commands config %s: %w", path, decErr)
+		}
+		logger.Warn("dbt commands config has fields this build does not recognize; ignoring them for forward/backward compatibility across rolling deploys",
+			"path", path, "unknown_fields", fields)
+		cfg = fileConfig{}
+		lenientDec := yaml.NewDecoder(bytes.NewReader(raw))
+		if decErr := lenientDec.Decode(&cfg); decErr != nil && !errors.Is(decErr, io.EOF) {
+			return nil, fmt.Errorf("parse dbt commands config %s: %w", path, decErr)
+		}
 	}
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("dbt commands config %s: %w", path, err)
 	}
 	return &Resolver{cfg: &cfg}, nil
+}
+
+// unknownFieldRe matches one yaml.v3 KnownFields TypeError line, e.g. "line 3:
+// field parse not found in type commandcfg.opSet".
+var unknownFieldRe = regexp.MustCompile(`^line \d+: field (\S+) not found in type \S+$`)
+
+// unknownFieldNames returns the sorted, de-duplicated field names named in
+// err, or nil if err is not EXCLUSIVELY yaml.v3 "known fields" TypeError
+// entries — a mix of an unknown-field message and any other decode problem
+// (a real type mismatch, malformed YAML, ...) must stay fatal, so a single
+// non-matching entry forces a nil result.
+func unknownFieldNames(err error) []string {
+	var terr *yaml.TypeError
+	if !errors.As(err, &terr) || len(terr.Errors) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, msg := range terr.Errors {
+		m := unknownFieldRe.FindStringSubmatch(msg)
+		if m == nil {
+			return nil
+		}
+		seen[m[1]] = true
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // validate enforces the config schema: the default block is required and

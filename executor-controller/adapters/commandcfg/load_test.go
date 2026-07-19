@@ -1,6 +1,7 @@
 package commandcfg
 
 import (
+	"bytes"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +14,13 @@ import (
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, nil))
+}
+
+// captureLogger returns a logger whose output lands in the returned buffer,
+// so a test can assert on what Load warned about.
+func captureLogger() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
 }
 
 // writeConfig writes content as a dbt-commands.yaml in a temp dir and returns its path.
@@ -218,14 +226,22 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			wantErr: "parse dbt commands config",
 		},
 		{
-			name:    "unknown top-level key",
+			// A typo'd top-level key is now tolerated (warn + ignore, see
+			// TestLoad_UnknownFieldWarnsAndLoads) rather than a distinct
+			// "field not found" error — but "default" was never actually
+			// set, so completeness validation still catches it, just with a
+			// different message.
+			name:    "unknown top-level key leaves default unset",
 			yaml:    "defualt:\n  run: [\"dbt\"]",
-			wantErr: "field defualt not found",
+			wantErr: "default: required and must define every command",
 		},
 		{
-			name:    "unknown operation key",
+			// Same tolerance applies inside an opSet: the typo'd key is
+			// dropped, so "run" was never actually set and completeness
+			// validation reports it missing.
+			name:    "unknown operation key leaves run unset",
 			yaml:    "default:\n  runn: [\"dbt\", \"run\", \"--select\", \"{{ node }}\"]",
-			wantErr: "field runn not found",
+			wantErr: "default: incomplete command set, missing",
 		},
 		{
 			name:    "empty argv reported before completeness",
@@ -397,4 +413,38 @@ func TestParseContextValidation_BuiltinAndShippedConfigsPass(t *testing.T) {
 		_, err := Load(shipped, testLogger())
 		require.NoErrorf(t, err, "shipped config %s must load", shipped)
 	}
+}
+
+// A field this build doesn't recognize (e.g. a newer chart's dbt-commands.yaml
+// carrying an operation key an older rolling-deploy binary predates) must not
+// crash-loop the executor: Load warns and proceeds with the field dropped.
+func TestLoad_UnknownFieldWarnsAndLoads(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
+  future_key: ["not yet understood by this build"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`)
+	logger, buf := captureLogger()
+	r, err := Load(path, logger)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, []string{"dbt", "run", "--select", "orders"},
+		r.NodeCommand("any-service", pkg_model.OperationRun, pkg_model.NodeTypeDbtModel, "orders"))
+	assert.Contains(t, buf.String(), "future_key", "warning must name the unknown field")
+}
+
+func TestLoad_MalformedYAMLStillFatalEvenWithUnknownFieldTolerance(t *testing.T) {
+	path := writeConfig(t, "default: [not a map")
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse dbt commands config")
 }

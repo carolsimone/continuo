@@ -1,6 +1,10 @@
 // Package commandcfg resolves the container argv for every dbt operation the
 // executor dispatches, from an optional deploy-time dbt-commands.yaml. A
-// missing file yields the built-in plain-dbt commands; an invalid file is a
+// missing file yields the built-in plain-dbt commands. A field this build
+// doesn't recognize is logged as a warning and ignored (so a config that has
+// grown a new key a rolling-deploy binary doesn't know about yet, or vice
+// versa, doesn't crash-loop); any other invalid file — malformed YAML, an
+// unrecognised placeholder, an incomplete command block, and so on — is a
 // startup error.
 package commandcfg
 

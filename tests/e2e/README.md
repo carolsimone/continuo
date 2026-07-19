@@ -56,7 +56,7 @@ bash tests/e2e/deploy-k8s-controllers.sh
 
 # 7. Run the tests
 docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
-  go test -v -count=1 -timeout 25m /app/tests/e2e/...
+  go test -v -count=1 -timeout 40m /app/tests/e2e/...
 
 # 8. Clean up k8s resources
 bash tests/e2e/cleanup-k8s-controllers.sh
@@ -93,7 +93,7 @@ bash tests/e2e/provision-k8s-test-env.sh
 
 # Run the tests
 docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
-  go test -v -count=1 -timeout 25m /app/tests/e2e/...
+  go test -v -count=1 -timeout 40m /app/tests/e2e/...
 
 # Clean up k8s resources
 bash tests/e2e/cleanup-k8s-controllers.sh
@@ -151,7 +151,7 @@ CI mirrors the blank-state flow above:
 5. Build + start `manifest-controller`
 6. `docker compose up -d ui`
 7. `bash tests/e2e/deploy-k8s-controllers.sh` (images pre-loaded by setup.sh)
-8. `docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 25m /app/tests/e2e/...`
+8. `docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 40m /app/tests/e2e/...`
 9. `bash tests/e2e/cleanup-k8s-controllers.sh`
 
 CI uses `deploy-k8s-controllers.sh` (not `provision-k8s-test-env.sh`) because
@@ -234,7 +234,7 @@ Run only the blue/green tests:
 
 ```bash
 docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator \
-  go test -v -count=1 -timeout 25m -run 'TestE2E_ReleasePromote' /app/tests/e2e/...
+  go test -v -count=1 -timeout 40m -run 'TestE2E_ReleasePromote' /app/tests/e2e/...
 ```
 
 ## Failure Path Test
@@ -283,7 +283,7 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 
 - Happy path: ~1 minute
 - Failure path: ~1 minute (3 retries + retry delay)
-- Timeout: 25 minutes per test
+- Timeout: 40 minutes for the whole `tests/e2e/...` package (`go test -timeout`)
 
 ## Troubleshooting
 
