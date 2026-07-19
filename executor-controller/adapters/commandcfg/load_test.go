@@ -161,6 +161,51 @@ default:
 	assert.Contains(t, err.Error(), "must be an absolute path")
 }
 
+// PartialParsePath must live in the same directory as ManifestPath: the
+// executor mounts the parse-cache emptyDir at dirname(PartialParsePath) in
+// every run/seed/build pod for the team's image, and a directory that
+// differs from the --target-path dbt actually writes both artifacts into
+// would shadow the team's real project files (dbt_project.yml, models/, …)
+// instead of just the disposable target dir.
+func TestLoad_PartialParsePathSameDirAsManifestPathPasses(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
+  compile:
+    command:             ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path:       "/project/target/manifest.json"
+    partial_parse_path:  "/project/target/partial_parse.msgpack"
+`)
+	_, err := Load(path, testLogger())
+	require.NoError(t, err)
+}
+
+func TestLoad_PartialParsePathDifferentDirFromManifestPathFails(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
+  compile:
+    command:             ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path:       "/project/target/manifest.json"
+    partial_parse_path:  "/project/partial_parse.msgpack"
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must live in the same directory as manifest_path")
+}
+
 func TestLoad_ValidationErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -249,5 +294,107 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})
+	}
+}
+
+// dbt folds --vars/--target/--profile/--profiles-dir/--project-dir/
+// --no-partial-parse into its partial-parse validity check. If a block's
+// run/seed/snapshot/test/build/seed_build argv carries a parse-affecting
+// flag the parse argv doesn't (or a different value for one), the compile
+// rehearsal validates a context the runtime dispatch never reproduces —
+// the rehearsal can pass while every dispatched node still full-parses.
+func TestLoad_ParseContextFlagsMatchAcrossBlock(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}", "--vars", "env:prod"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}", "--vars", "env:prod"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}", "--vars", "env:prod"]
+  test:       ["dbt", "test", "--select", "{{ node }}", "--vars", "env:prod"]
+  build:      ["dbt", "build", "--select", "{{ node }}", "--vars", "env:prod"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}", "--vars", "env:prod"]
+  parse:      ["dbt", "parse", "--vars", "env:prod"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`)
+	_, err := Load(path, testLogger())
+	require.NoError(t, err)
+}
+
+func TestLoad_ParseContextFlagMissingFromParseFails(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}", "--target", "prod"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "default.run")
+	assert.Contains(t, err.Error(), "--target")
+}
+
+func TestLoad_ParseContextFlagValueMismatchFails(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}", "--vars", "env:prod"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse", "--vars", "env:staging"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "default.run")
+	assert.Contains(t, err.Error(), "--vars")
+}
+
+func TestLoad_NoPartialParseFlagOnlyOnOneOpFails(t *testing.T) {
+	path := writeConfig(t, `
+default:
+  run:        ["dbt", "run", "--select", "{{ node }}"]
+  seed:       ["dbt", "seed", "--select", "{{ node }}"]
+  snapshot:   ["dbt", "snapshot", "--select", "{{ node }}"]
+  test:       ["dbt", "test", "--select", "{{ node }}"]
+  build:      ["dbt", "build", "--select", "{{ node }}", "--no-partial-parse"]
+  seed_build: ["dbt", "seed", "--select", "{{ node }}"]
+  parse:      ["dbt", "parse"]
+  compile:
+    command:       ["dbt", "compile", "--profiles-dir", "/project"]
+    manifest_path: "/project/target/manifest.json"
+`)
+	_, err := Load(path, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "default.build")
+	assert.Contains(t, err.Error(), "--no-partial-parse")
+}
+
+// Regression: builtinDefault() and both shipped dbt-commands.yaml files must
+// keep run/seed/snapshot/test/build/seed_build's parse-affecting flags in
+// sync with parse's. builtinDefault() itself is never routed through
+// validate() (Load("") and Defaults() construct a Resolver directly), so it
+// is checked explicitly here, mirroring TestBuiltinDefault_IsComplete.
+func TestParseContextValidation_BuiltinAndShippedConfigsPass(t *testing.T) {
+	require.NoError(t, validateParseContext("default", builtinDefault()),
+		"built-in default must define matching parse-context flags across the block")
+
+	for _, shipped := range []string{
+		filepath.Join("..", "..", "..", "config", "dbt-commands.yaml"),
+		filepath.Join("..", "..", "..", "deploy", "continuo", "files", "dbt-commands.yaml"),
+	} {
+		_, err := Load(shipped, testLogger())
+		require.NoErrorf(t, err, "shipped config %s must load", shipped)
 	}
 }

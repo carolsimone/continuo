@@ -45,9 +45,19 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001 - every fetch failure degrades
         _degrade(f"fetch s3://{bucket}/{key} failed: {exc}")
     try:
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        dest_dir = os.path.dirname(dest)
+        os.makedirs(dest_dir, exist_ok=True)
         with open(dest, "wb") as f:
             f.write(body)
+        # The team container runs as its own image's uid (not this sidecar's
+        # 65532), and dbt rewrites partial_parse.msgpack in place with 'wb'
+        # whenever it invalidates/updates the cache. A default-umask 0644 file
+        # owned by 65532 would EACCES that rewrite, so widen both the file and
+        # the directory this sidecar created to world-writable. The emptyDir
+        # mount root is already world-writable; this only matters for nested
+        # PARSE_CACHE_DEST values whose parent directory we just created.
+        os.chmod(dest, 0o666)
+        os.chmod(dest_dir, 0o777)
     except OSError as exc:
         try:
             os.unlink(dest)

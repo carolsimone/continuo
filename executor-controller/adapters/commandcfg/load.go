@@ -7,7 +7,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	stdpath "path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -129,10 +131,144 @@ func validateOpSet(path string, ops *opSet) error {
 				return fmt.Errorf("%s.compile.partial_parse_path: placeholders are not allowed", path)
 			case !strings.HasPrefix(pp, "/"):
 				return fmt.Errorf("%s.compile.partial_parse_path: must be an absolute path, got %q", path, pp)
+			case stdpath.Dir(pp) != stdpath.Dir(mp):
+				return fmt.Errorf(
+					"%s.compile.partial_parse_path: must live in the same directory as manifest_path (got %q vs %q) — "+
+						"the executor mounts the parse-cache volume at that directory in every run/seed/build pod for "+
+						"this team's image, which would replace (shadow) it if the two artifacts don't share a directory",
+					path, pp, mp)
 			}
 		}
 	}
+	if ops.Parse != nil {
+		if err := validateParseContext(path, ops); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// parseAffectingValueFlags is the set of dbt CLI flags whose value dbt folds
+// into its partial-parse validity check: a cached partial_parse.msgpack is
+// only reused when the invocation that reads it carries the same values dbt
+// recorded when it was written.
+var parseAffectingValueFlags = map[string]bool{
+	"--vars":         true,
+	"--target":       true,
+	"--profile":      true,
+	"--profiles-dir": true,
+	"--project-dir":  true,
+}
+
+// noPartialParseFlag disables partial parsing outright; its mere presence
+// (with no value) is itself parse-affecting.
+const noPartialParseFlag = "--no-partial-parse"
+
+// parseContextFlags extracts the parse-affecting flags (and, for the five
+// value flags, their values) from a dbt argv template. Both "--flag value"
+// and "--flag=value" forms are recognized; the last occurrence of a flag
+// wins. A value that is itself an unsubstituted {{ placeholder }} is ignored
+// (the flag is treated as absent) — its real value is only known once the
+// executor substitutes it per-dispatch, so it can never be compared
+// statically against a literal value in the parse argv (which cannot itself
+// contain placeholders — validateTemplate rejects that).
+func parseContextFlags(argv []string) map[string]string {
+	flags := map[string]string{}
+	for i := 0; i < len(argv); i++ {
+		elem := argv[i]
+		if elem == noPartialParseFlag {
+			flags[noPartialParseFlag] = "true"
+			continue
+		}
+		if name, value, ok := strings.Cut(elem, "="); ok && parseAffectingValueFlags[name] {
+			if !placeholderRe.MatchString(value) {
+				flags[name] = value
+			}
+			continue
+		}
+		if parseAffectingValueFlags[elem] && i+1 < len(argv) {
+			value := argv[i+1]
+			i++
+			if !placeholderRe.MatchString(value) {
+				flags[elem] = value
+			}
+		}
+	}
+	return flags
+}
+
+// firstDivergentFlag returns the lexicographically-first flag name whose
+// value differs between a and b (including one side lacking the flag
+// entirely), or "" if the two flag sets are equal. Sorted iteration keeps
+// the reported flag deterministic when more than one differs.
+func firstDivergentFlag(a, b map[string]string) string {
+	seen := make(map[string]bool, len(a)+len(b))
+	for k := range a {
+		seen[k] = true
+	}
+	for k := range b {
+		seen[k] = true
+	}
+	names := make([]string, 0, len(seen))
+	for k := range seen {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		av, aok := a[name]
+		bv, bok := b[name]
+		if aok != bok || av != bv {
+			return name
+		}
+	}
+	return ""
+}
+
+// validateParseContext requires that every node-dispatch op (run, seed,
+// snapshot, test, build, seed_build) in ops carries the exact same
+// parse-affecting flags (--vars, --target, --profile, --profiles-dir,
+// --project-dir, --no-partial-parse) as ops.Parse. dbt folds these into its
+// partial-parse validity check; if a runtime op's set differs from the parse
+// argv the compile-time rehearsal exercised, the rehearsal can pass while
+// every runtime pod re-parses from scratch (and parse_cache_reason is still
+// recorded as hydrated, since the executor never re-checks at dispatch time).
+func validateParseContext(path string, ops *opSet) error {
+	parseFlags := parseContextFlags(ops.Parse)
+	nodeOps := []struct {
+		name string
+		argv []string
+	}{
+		{"run", ops.Run}, {"seed", ops.Seed}, {"snapshot", ops.Snapshot},
+		{"test", ops.Test}, {"build", ops.Build}, {"seed_build", ops.SeedBuild},
+	}
+	for _, op := range nodeOps {
+		if op.argv == nil {
+			continue
+		}
+		opFlags := parseContextFlags(op.argv)
+		if flag := firstDivergentFlag(opFlags, parseFlags); flag != "" {
+			opVal, opHas := opFlags[flag]
+			parseVal, parseHas := parseFlags[flag]
+			return fmt.Errorf(
+				"%s.%s: parse-context flag %s does not match %s.parse (%s vs %s) — "+
+					"dbt folds this flag into its partial-parse validity check, so a mismatch "+
+					"means the compile rehearsal validates a context the runtime dispatch never reproduces",
+				path, op.name, flag, path, describeFlag(flag, opVal, opHas), describeFlag(flag, parseVal, parseHas))
+		}
+	}
+	return nil
+}
+
+// describeFlag formats a parse-context flag's value for an error message,
+// distinguishing "not set" from an explicit (possibly empty) value.
+func describeFlag(flag, value string, present bool) string {
+	if !present {
+		return fmt.Sprintf("%s absent", flag)
+	}
+	if flag == noPartialParseFlag {
+		return flag
+	}
+	return fmt.Sprintf("%s %q", flag, value)
 }
 
 // validateTemplate checks one argv template: non-empty, every placeholder in

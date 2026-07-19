@@ -7,8 +7,10 @@
 # (node-agnostic), seed_build (candidate-schema seed leg; schema via the
 # DBT_TARGET_SCHEMA env var + generate_schema_name macro), compile (command +
 # absolute manifest_path, plus optional partial_parse_path — defaults to
-# manifest_path's directory + /partial_parse.msgpack), parse (parse-export/
-# rehearsal leg; no placeholders).
+# manifest_path's directory + /partial_parse.msgpack; when set it must live in
+# the same directory as manifest_path, since the executor mounts the
+# parse-cache volume at that directory in the team container), parse
+# (parse-export/rehearsal leg; no placeholders).
 default:
   run:        ["dbt", "run", "--select", "{{ node }}"]
   seed:       ["dbt", "seed", "--select", "{{ node }}"]
@@ -16,7 +18,7 @@ default:
   test:       ["dbt", "test", "--select", "{{ node }}"]
   build:      ["dbt", "build", "--select", "{{ node }}"]
   seed_build: ["dbt", "seed", "--select", "{{ node }}"]
-  parse:      ["dbt", "parse", "--profiles-dir", "/project"]
+  parse:      ["dbt", "parse"]
   compile:
     command:       ["dbt", "compile", "--profiles-dir", "/project"]
     manifest_path: "/project/target/manifest.json"

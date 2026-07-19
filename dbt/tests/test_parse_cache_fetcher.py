@@ -5,6 +5,8 @@ fails the Job it runs in: every error path degrades (logs, writes a
 termination message, exits 0) instead of raising or exiting nonzero.
 """
 import io
+import os
+import stat
 from unittest import mock
 
 import pytest
@@ -28,6 +30,11 @@ def test_hydrates_dest_and_writes_termination_message(tmp_path, monkeypatch):
     fake.get_object.assert_called_once_with(Bucket="continuo", Key="svc/parse-cache/team-x/partial_parse.msgpack")
     assert dest.read_bytes() == b"BYTES"
     assert term.read_text() == "hydrated"
+    # The team container runs as its own (possibly non-65532) uid and dbt
+    # rewrites this file in place ('wb') on every partial-parse invalidation;
+    # a default-umask 0644 file owned by 65532 would EACCES that rewrite.
+    assert stat.S_IMODE(os.stat(dest).st_mode) == 0o666
+    assert stat.S_IMODE(os.stat(dest.parent).st_mode) == 0o777
 
 
 def test_degrades_on_missing_object(tmp_path, monkeypatch):

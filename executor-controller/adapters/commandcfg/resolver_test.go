@@ -51,7 +51,10 @@ func TestDefaults_CompileCommand(t *testing.T) {
 
 func TestParseCommand_DefaultAndOverride(t *testing.T) {
 	r := Defaults()
-	assert.Equal(t, []string{"dbt", "parse", "--profiles-dir", "/project"}, r.ParseCommand("any-service"))
+	// No --profiles-dir: the built-in parse argv must carry the same
+	// parse-affecting flags as run/seed/snapshot/test/build/seed_build (none),
+	// per validateParseContext.
+	assert.Equal(t, []string{"dbt", "parse"}, r.ParseCommand("any-service"))
 }
 
 func TestPartialParsePath_DefaultsToManifestSibling(t *testing.T) {

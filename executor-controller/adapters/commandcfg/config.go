@@ -13,7 +13,12 @@ type compileSpec struct {
 	ManifestPath string   `yaml:"manifest_path"`
 	// PartialParsePath is the absolute path where the team's dbt writes
 	// partial_parse.msgpack. Empty defaults to
-	// dirname(ManifestPath)/partial_parse.msgpack.
+	// dirname(ManifestPath)/partial_parse.msgpack. When set, it must live in
+	// the same directory as ManifestPath: the executor mounts the parse-cache
+	// volume at dirname(PartialParsePath) in every run/seed/build pod for this
+	// team's image, and a directory that differs from the --target-path
+	// dbt writes both artifacts into would shadow the team's actual project
+	// files instead of just the disposable target dir.
 	PartialParsePath string `yaml:"partial_parse_path"`
 }
 
