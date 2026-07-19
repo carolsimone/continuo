@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -163,6 +164,32 @@ func pollUntil(
 			}
 		}
 	}
+}
+
+// waitForParseCache polls state's task_execution rows for the given
+// schedule's latest execution until parse_cache equals want ("hydrated" or
+// "degraded"). task_execution has no schedule_id column of its own — it joins
+// through task_tracker (task_execution.task_id -> task_tracker.task_id ->
+// task_tracker.schedule_id) to scope the query to a single triggered run.
+func waitForParseCache(t *testing.T, ctx context.Context, db *sqlx.DB, scheduleID uuid.UUID, want string, timeout time.Duration) {
+	t.Helper()
+	var last sql.NullString
+	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
+		var got sql.NullString
+		err := db.Get(&got, `
+			SELECT te.parse_cache
+			  FROM task_execution te
+			  JOIN task_tracker t ON t.task_id = te.task_id
+			 WHERE t.schedule_id = $1
+			 ORDER BY te.created_at DESC
+			 LIMIT 1`, scheduleID)
+		if err != nil {
+			return false, nil
+		}
+		last = got
+		return got.Valid && got.String == want, nil
+	}, fmt.Sprintf("parse_cache never became %q for schedule %s (last seen: %q)", want, scheduleID, last.String))
+	t.Logf("✅ parse_cache=%q for schedule %s", want, scheduleID)
 }
 
 // containsAll checks if slice contains all elements
