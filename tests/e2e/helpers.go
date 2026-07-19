@@ -184,11 +184,18 @@ func waitForParseCache(t *testing.T, ctx context.Context, db *sqlx.DB, scheduleI
 			 ORDER BY te.created_at DESC
 			 LIMIT 1`, scheduleID)
 		if err != nil {
-			return false, nil
+			if err == sql.ErrNoRows {
+				// No task_execution row written yet — keep polling.
+				return false, nil
+			}
+			return false, err
 		}
-		last = got
+		if got != last {
+			t.Logf("parse_cache for schedule %s: %q", scheduleID, got.String)
+			last = got
+		}
 		return got.Valid && got.String == want, nil
-	}, fmt.Sprintf("parse_cache never became %q for schedule %s (last seen: %q)", want, scheduleID, last.String))
+	}, fmt.Sprintf("parse_cache never became %q for schedule %s", want, scheduleID))
 	t.Logf("✅ parse_cache=%q for schedule %s", want, scheduleID)
 }
 
