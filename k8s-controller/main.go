@@ -179,7 +179,7 @@ func main() {
 		redisClient,
 		streams.CheckK8sV1,
 		streams.K8sCheckStatus,
-		redis.NewCheckK8sBinding(redisClient, uowFactory, checkStatusHandler, logger),
+		redis.NewCheckK8sBinding(uowFactory, checkStatusHandler, logger),
 		logger,
 	)
 
