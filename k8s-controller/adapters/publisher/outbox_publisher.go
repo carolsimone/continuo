@@ -30,24 +30,44 @@ func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
 	return &OutboxPublisher{redis: r, logger: l}
 }
 
+// streamMaxLen caps each published stream at roughly this many entries
+// (Approx/~ trimming). It bounds Redis memory for streams a consumer group may
+// lag on. Trimming can drop the oldest entries before a lagging group reads
+// them; 10000 is the accepted bound, matching state's and the orchestrator's
+// publishers. Added in #282, where check.k8s:v1 (uncapped here alone) OOM-killed
+// Redis.
+const streamMaxLen = 10000
+
 // Publish unmarshals entry.Payload into the typed event struct for
 // entry.EventType and XADDs the resulting field map to entry.StreamName.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
-	values, err := p.toValues(entry)
+	args, err := p.xaddArgs(entry)
 	if err != nil {
 		return err
+	}
+	if _, err := p.redis.XAdd(ctx, args).Result(); err != nil {
+		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
+	}
+	return nil
+}
+
+// xaddArgs builds the XADD arguments for an outbox entry, including the shared
+// MaxLen cap so the stream cannot grow unbounded.
+func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, error) {
+	values, err := p.toValues(entry)
+	if err != nil {
+		return nil, err
 	}
 	// Inject outbox_entry_id on every XADD so consumer-side
 	// DedupWithOutboxEntryID can catch Processor-crash redeliveries (same
 	// outbox row republished with a fresh Redis msg_id).
 	values["outbox_entry_id"] = entry.ID.String()
-	if _, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
+	return &goredis.XAddArgs{
 		Stream: entry.StreamName,
+		MaxLen: streamMaxLen,
+		Approx: true,
 		Values: values,
-	}).Result(); err != nil {
-		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
-	}
-	return nil
+	}, nil
 }
 
 // toValues routes entry.EventType to the matching typed struct, unmarshals
