@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -69,6 +70,14 @@ type Processor struct {
 	tick              time.Duration
 	batchSize         int
 	repoOpts          []Option
+
+	// lastActivity is the unix-nano timestamp of the most recent unit of Run
+	// progress (a poll tick, and each drained batch), stored via atomic.Int64 so
+	// Healthy can be polled from a health-probe goroutine without racing Run.
+	// It backs the liveness heartbeat that catches a wedged-but-not-exited
+	// processor — the outbox analogue of StreamConsumer's heartbeat — which
+	// RegisterWorker/WorkerExited alone (goroutine-exit only) cannot see.
+	lastActivity atomic.Int64
 }
 
 func NewProcessor(
@@ -91,7 +100,7 @@ func NewProcessor(
 	if cfg.PerAggregateFIFO {
 		repoOpts = append(repoOpts, WithPerAggregateOrdering())
 	}
-	return &Processor{
+	p := &Processor{
 		db:                db,
 		tableName:         tableName,
 		publisher:         publisher,
@@ -101,6 +110,10 @@ func NewProcessor(
 		batchSize:         batchSize,
 		repoOpts:          repoOpts,
 	}
+	// Seed the heartbeat at construction so a probe firing before Run is
+	// scheduled sees "just started," not "stalled since the epoch."
+	p.lastActivity.Store(time.Now().UnixNano())
+	return p
 }
 
 func (p *Processor) Run(ctx context.Context) error {
@@ -108,6 +121,9 @@ func (p *Processor) Run(ctx context.Context) error {
 	defer ticker.Stop()
 	p.logger.Info("Starting outbox processor", "table", p.tableName, "tick", p.tick)
 	for {
+		// Advance the heartbeat once per poll tick, so an idle-but-live loop
+		// stays healthy; drain advances it again per batch under load.
+		p.lastActivity.Store(time.Now().UnixNano())
 		select {
 		case <-ctx.Done():
 			p.logger.Info("Outbox processor stopped", "table", p.tableName)
@@ -118,6 +134,21 @@ func (p *Processor) Run(ctx context.Context) error {
 	}
 }
 
+// Healthy reports whether Run has made progress within maxStale. It returns nil
+// while the loop is ticking (idle or draining); a non-nil error means the Run
+// goroutine has stopped making progress — wedged in a call that never returns,
+// the outbox analogue of a dead consumer. Wire it into a liveness probe (see
+// pkg/liveness AddWorkerProbe). maxStale MUST be comfortably above the poll
+// tick so an idle processor is never flagged.
+func (p *Processor) Healthy(maxStale time.Duration) error {
+	lastAt := time.Unix(0, p.lastActivity.Load())
+	if age := time.Since(lastAt); age > maxStale {
+		return fmt.Errorf("outbox processor %q: Run loop stalled — no activity for %s (last at %s)",
+			p.tableName, age.Round(time.Second), lastAt.Format(time.RFC3339))
+	}
+	return nil
+}
+
 // drain processes batches back-to-back as long as each one comes back full
 // (len == batchSize), which signals more pending rows are waiting. This lets a
 // burst of thousands of pending rows clear within the same tick instead of one
@@ -126,6 +157,10 @@ func (p *Processor) Run(ctx context.Context) error {
 // or context cancellation, yielding control back to the ticker.
 func (p *Processor) drain(ctx context.Context) {
 	for {
+		// Advance the heartbeat per batch so a large multi-batch backlog drain
+		// (which can run well beyond one tick) keeps liveness fresh instead of
+		// freezing it at the tick timestamp for the whole drain.
+		p.lastActivity.Store(time.Now().UnixNano())
 		processed, err := p.processBatchOnce(ctx)
 		if err != nil {
 			p.logger.Error("Outbox batch failed", "table", p.tableName, "error", err)

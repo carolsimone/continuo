@@ -21,11 +21,28 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
+
+// consumerHandlerTimeout bounds each message handler invocation with a context
+// deadline, so a genuinely-hung handler eventually returns control to the read
+// loop. These handlers do short DB writes and K8s job dispatch (they never
+// block waiting on a job to finish — completion arrives as a separate event),
+// so 60s far exceeds any legitimate invocation while still bounding a wedge.
+const consumerHandlerTimeout = 60 * time.Second
+
+// consumerHeartbeatStale is the liveness heartbeat budget: how long a consumer's
+// read loop may make no progress before the liveness probe restarts the pod. It
+// MUST exceed consumerHandlerTimeout plus a margin so a legitimately in-flight
+// handler never trips liveness (the heartbeat advances per handler attempt; see
+// pkg/redis.StreamConsumer.safeInvoke), while a true wedge — a handler that
+// ignores its deadline, or a goroutine that stopped iterating — still trips
+// within budget.
+const consumerHeartbeatStale = 3 * time.Minute
 
 func main() {
 	// Setup structured logger
@@ -50,6 +67,35 @@ func main() {
 	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
 	lifecycleManager.SetupSignalHandlers(ctx, cancel)
 
+	// Health registry feeding /ready (readiness) and /livez (liveness) — deploy
+	// config points the two Kubernetes probes at those DIFFERENT paths (see
+	// deploy/continuo/values.yaml). Worker registrations and consumer heartbeats
+	// feed both checks (a dead/wedged consumer restarts the pod); dependency
+	// probes (Redis/Postgres/dbt-warehouse) feed readiness ONLY (a backing-store
+	// outage stops traffic but must not restart a pod whose consumers are already
+	// retrying).
+	liveReg := liveness.NewRegistry()
+
+	// runConsumer starts a tracked stream consumer: a bounded handler deadline
+	// so a hung handler eventually returns; RegisterWorker before launch so a
+	// missing worker is observable; WorkerExited when Start returns (which now
+	// happens on a permanent bootstrap error too, not only clean shutdown); and
+	// a worker heartbeat probe so a wedged-but-not-exited loop is caught.
+	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		consumer.SetHandlerTimeout(consumerHandlerTimeout)
+		liveReg.RegisterWorker(name)
+		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
+			return consumer.Healthy(consumerHeartbeatStale)
+		})
+		go func() {
+			err := consumer.Start(ctx)
+			liveReg.WorkerExited(name, err)
+			if err != nil {
+				logger.Error("Consumer exited", "consumer", name, "error", err)
+			}
+		}()
+	}
+
 	// ========================================================================
 	// INITIALIZE DEPENDENCIES
 	// ========================================================================
@@ -73,6 +119,9 @@ func main() {
 		logger.Info("Closing PostgreSQL connection")
 		return pgDB.Close()
 	})
+	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error {
+		return pgDB.PingContext(ctx)
+	})
 
 	// 2. dbt-warehouse PostgreSQL client (used to drop candidate schemas after
 	// validation completes; same host/port/credentials as the main PG client but
@@ -95,6 +144,9 @@ func main() {
 		logger.Info("Closing dbt-warehouse connection")
 		return dbtDB.Close()
 	})
+	liveReg.AddProbe("dbt_warehouse", 5*time.Second, func(ctx context.Context) error {
+		return dbtDB.PingContext(ctx)
+	})
 
 	candidateSchemaCleaner := postgres.NewCandidateSchemaCleaner(dbtDB, logger)
 	candidateSchemaCreator := postgres.NewCandidateSchemaCreator(dbtDB, logger)
@@ -115,6 +167,9 @@ func main() {
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		logger.Info("Closing Redis connection")
 		return redisClient.Close()
+	})
+	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error {
+		return redisClient.Ping(ctx).Err()
 	})
 
 	// 3. K8s client (in-cluster config)
@@ -274,8 +329,14 @@ func main() {
 		pkgoutbox.ProcessorConfig{Tick: 5 * time.Second, BatchSize: 100, PerAggregateFIFO: true},
 	)
 
+	liveReg.RegisterWorker("outbox_processor")
 	go func() {
-		if err := outboxProcessor.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		err := outboxProcessor.Run(ctx)
+		if errors.Is(err, context.Canceled) {
+			err = nil
+		}
+		liveReg.WorkerExited("outbox_processor", err)
+		if err != nil {
 			logger.Error("Outbox processor exited", "error", err)
 		}
 	}()
@@ -293,8 +354,14 @@ func main() {
 		deployer.DispatcherConfig{Tick: 5 * time.Second, BatchSize: 50},
 	)
 
+	liveReg.RegisterWorker("deploy_dispatcher")
 	go func() {
-		if err := deployDispatcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		err := deployDispatcher.Run(ctx)
+		if errors.Is(err, context.Canceled) {
+			err = nil
+		}
+		liveReg.WorkerExited("deploy_dispatcher", err)
+		if err != nil {
 			logger.Error("Deploy dispatcher exited", "error", err)
 		}
 	}()
@@ -325,7 +392,7 @@ func main() {
 	// START HTTP HEALTH CHECK SERVER
 	// ========================================================================
 
-	healthServer := http.NewHealthServer(cfg.HTTPPort, logger)
+	healthServer := http.NewHealthServer(cfg.HTTPPort, liveReg, logger)
 
 	go func() {
 		if err := healthServer.Start(); err != nil {
@@ -345,67 +412,20 @@ func main() {
 
 	// All consumers run as goroutines so no single stream blocks the main
 	// goroutine. Lifecycle is tied to ctx; the lifecycle manager cancels ctx
-	// on shutdown, which exits each Start cleanly.
-	go func() {
-		if err := queryConsumer.Start(ctx); err != nil {
-			logger.Error("query.model consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := retryConsumer.Start(ctx); err != nil {
-			logger.Error("retry.task consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
-			logger.Error("schedule.cancelled consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := validationReqConsumer.Start(ctx); err != nil {
-			logger.Error("validation.requested consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := validationNodeConsumer.Start(ctx); err != nil {
-			logger.Error("validation.node.completed consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := seedBuildReqConsumer.Start(ctx); err != nil {
-			logger.Error("seed.build.requested consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := seedBuildNodeConsumer.Start(ctx); err != nil {
-			logger.Error("seed.build.node.completed consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := compileReqConsumer.Start(ctx); err != nil {
-			logger.Error("compile.requested consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := compileNodeConsumer.Start(ctx); err != nil {
-			logger.Error("compile.node.completed consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := validationResultTeardownConsumer.Start(ctx); err != nil {
-			logger.Error("validation.result teardown consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := releaseRejectedTeardownConsumer.Start(ctx); err != nil {
-			logger.Error("release.rejected teardown consumer error", "error", err)
-		}
-	}()
-	go func() {
-		if err := releasePromotedTeardownConsumer.Start(ctx); err != nil {
-			logger.Error("release.promoted teardown consumer error", "error", err)
-		}
-	}()
+	// on shutdown, which exits each Start cleanly. runConsumer additionally
+	// registers each one with the liveness registry backing /ready.
+	runConsumer("query_model", queryConsumer)
+	runConsumer("retry_task", retryConsumer)
+	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
+	runConsumer("validation_requested", validationReqConsumer)
+	runConsumer("validation_node_completed", validationNodeConsumer)
+	runConsumer("seed_build_requested", seedBuildReqConsumer)
+	runConsumer("seed_build_node_completed", seedBuildNodeConsumer)
+	runConsumer("compile_requested", compileReqConsumer)
+	runConsumer("compile_node_completed", compileNodeConsumer)
+	runConsumer("validation_result_teardown", validationResultTeardownConsumer)
+	runConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
+	runConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
 
 	// Block until shutdown is requested. Each consumer's Start returns
 	// when ctx is cancelled.

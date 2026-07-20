@@ -252,3 +252,114 @@ func TestConsumerName_StablePerHost(t *testing.T) {
 	assert.True(t, len(a) > len("state-task-status-updated"),
 		"consumer name must include a per-pod suffix")
 }
+
+// ── [P2/#4] permanent-vs-transient bootstrap error classification ───────────
+
+// fakeRedisErr implements the goredis.Error interface (Error + RedisError) so
+// tests can construct genuine Redis reply-errors — the only thing
+// goredis.HasErrorPrefix will match — without a live server.
+type fakeRedisErr string
+
+func (e fakeRedisErr) Error() string { return string(e) }
+func (e fakeRedisErr) RedisError()   {}
+
+// TestIsPermanentBootstrapError pins the narrowed [#2] classification and the
+// robust [#4] prefix matching. Pure unit test, no Redis.
+func TestIsPermanentBootstrapError(t *testing.T) {
+	// Structurally-permanent Redis reply errors (wrapping is transparent).
+	permanent := []error{
+		fmt.Errorf("failed to create consumer group: %w",
+			fakeRedisErr("WRONGTYPE Operation against a key holding the wrong kind of value")),
+		fakeRedisErr("ERR unknown command 'XGROUP', with args beginning with:"),
+		fakeRedisErr("ERR unknown subcommand 'CREATE'"),
+	}
+	for _, e := range permanent {
+		assert.Truef(t, isPermanentBootstrapError(e), "must be permanent: %v", e)
+	}
+
+	// Auth-class Redis errors are NOT permanent [#2]: a password rotation race
+	// or ACL-propagation lag is transient, so these must retry (not crashloop
+	// the fleet). Plus the ordinary transient server states.
+	transientRedis := []error{
+		fakeRedisErr("WRONGPASS invalid username-password pair or user is disabled."),
+		fakeRedisErr("NOAUTH Authentication required."),
+		fakeRedisErr("NOPERM this user has no permissions to run the 'xgroup|create' command"),
+		fakeRedisErr("LOADING Redis is loading the dataset in memory"),
+		fakeRedisErr("CLUSTERDOWN The cluster is down"),
+	}
+	for _, e := range transientRedis {
+		assert.Falsef(t, isPermanentBootstrapError(e), "must be transient: %v", e)
+	}
+
+	// [#4] robustness: a NON-Redis error (e.g. a network error) whose text
+	// merely CONTAINS — or even starts with — a permanent token must not be
+	// misclassified, because it is not a Redis reply-error at all.
+	assert.False(t, isPermanentBootstrapError(errors.New("unknown command received from a proxy: connection reset")),
+		"a non-Redis error must never be classified permanent, even if its text starts with a token")
+	assert.False(t, isPermanentBootstrapError(errors.New("dial tcp 10.0.0.1:6379: connect: connection refused")))
+
+	// [#4] a genuine Redis error that merely CONTAINS a token mid-message (not
+	// as the reply-error code prefix) must not match either.
+	assert.False(t, isPermanentBootstrapError(fakeRedisErr("ERR background save failed; WRONGTYPE appeared in a log line")),
+		"a token that is not the reply-error code prefix must not match")
+
+	assert.False(t, isPermanentBootstrapError(nil), "nil is not a permanent error")
+}
+
+// ── [P1b] bounded handler deadline + per-attempt heartbeat ──────────────────
+
+// TestSafeInvoke_AdvancesHeartbeatBeforeRunning proves the heartbeat advances
+// at the START of each handler attempt, so a legitimately-slow handler keeps
+// the liveness heartbeat fresh instead of freezing it at the read-loop
+// iteration timestamp. We stall a stale heartbeat, block the handler mid-flight,
+// and assert Healthy already reads fresh while the handler is still running.
+func TestSafeInvoke_AdvancesHeartbeatBeforeRunning(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c := testConsumer(func(context.Context, goredis.XMessage) error {
+		close(started)
+		<-release
+		return nil
+	})
+	// Pretend the loop last made progress an hour ago.
+	c.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+
+	go func() { _ = c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"}) }()
+
+	<-started // handler is now blocked mid-flight
+	assert.NoError(t, c.Healthy(time.Second),
+		"the heartbeat must be advanced at handler start, so a slow in-flight handler never trips liveness")
+	close(release)
+}
+
+// TestSafeInvoke_BoundsHandlerWithDeadline proves a configured handler timeout
+// unblocks a handler that would otherwise hang: the handler waits on ctx.Done()
+// and safeInvoke returns a DeadlineExceeded error promptly.
+func TestSafeInvoke_BoundsHandlerWithDeadline(t *testing.T) {
+	c := testConsumer(func(ctx context.Context, _ goredis.XMessage) error {
+		<-ctx.Done() // a well-behaved handler observes cancellation and returns
+		return ctx.Err()
+	})
+	c.SetHandlerTimeout(50 * time.Millisecond)
+
+	start := time.Now()
+	err := c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, elapsed, 2*time.Second, "the deadline must unblock the handler well before this bound")
+}
+
+// TestSafeInvoke_NoDeadlineWhenTimeoutUnset confirms the default (0) leaves the
+// handler context unbounded, preserving behaviour for callers that do not opt
+// in (e.g. orchestrator/state).
+func TestSafeInvoke_NoDeadlineWhenTimeoutUnset(t *testing.T) {
+	var hadDeadline bool
+	c := testConsumer(func(ctx context.Context, _ goredis.XMessage) error {
+		_, hadDeadline = ctx.Deadline()
+		return nil
+	})
+	require.NoError(t, c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"}))
+	assert.False(t, hadDeadline, "an unset handler timeout must not impose a deadline on the handler context")
+}

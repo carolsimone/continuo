@@ -317,6 +317,13 @@ services:
     enabled: true
     replicas: 1
     httpPort: 8084
+    # Readiness and liveness point at DIFFERENT paths with different semantics
+    # (see adapters/http/health.go): /ready = workers + heartbeats + dependency
+    # probes (a Redis/Postgres outage stops traffic); /livez = workers +
+    # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
+    # are already retrying, but a dead/wedged consumer must).
+    readinessPath: /ready
+    livenessPath: /livez
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: REDIS_PASSWORD, ref: redis}
@@ -356,6 +363,13 @@ services:
     enabled: true
     replicas: 1
     httpPort: 8085
+    # Readiness and liveness point at DIFFERENT paths with different semantics
+    # (see adapters/http/health.go): /ready = workers + heartbeats + dependency
+    # probes (a Redis/Postgres outage stops traffic); /livez = workers +
+    # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
+    # are already retrying, but a dead/wedged consumer must).
+    readinessPath: /ready
+    livenessPath: /livez
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
@@ -441,7 +455,12 @@ services:
     enabled: true
     replicas: 1
     httpPort: 8088
+    # readiness → /healthz (workers + heartbeats + dependency probes; a Redis/
+    # Postgres outage stops traffic); liveness → /livez (workers + heartbeats
+    # ONLY; a dependency outage must not restart a pod whose consumers are
+    # already retrying, but a dead/wedged consumer must). See adapters/http.
     probePath: /healthz
+    livenessPath: /livez
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: REDIS_PASSWORD, ref: redis}
@@ -455,7 +474,11 @@ services:
     enabled: true
     replicas: 1
     httpPort: 8090
+    # readiness → /healthz (workers + heartbeats + dependency probes); liveness
+    # → /livez (workers + heartbeats ONLY, so a dependency outage does not
+    # restart a pod whose consumer is already retrying). See main.go / adapters.
     probePath: /healthz
+    livenessPath: /livez
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: REDIS_PASSWORD, ref: redis}
@@ -470,7 +493,11 @@ services:
     replicas: 1
     httpPort: 8092
     grpcPort: 50054
+    # readiness → /healthz (workers + heartbeats + dependency probes); liveness
+    # → /livez (workers + heartbeats ONLY, so a dependency outage does not
+    # restart a pod whose consumer is already retrying). See main.go / adapters.
     probePath: /healthz
+    livenessPath: /livez
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: REDIS_PASSWORD, ref: redis}

@@ -19,6 +19,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -30,6 +31,21 @@ import (
 // import. Assert it here at the composition root, where both packages are
 // already wired, to get an explicit compile-time check.
 var _ handlers.K8sStatusChecker = (*k8s.K8sClient)(nil)
+
+// consumerHandlerTimeout bounds each message handler invocation with a context
+// deadline, so a genuinely-hung handler eventually returns control to the read
+// loop. These handlers do short DB writes and K8s API calls, so 60s is far more
+// than any legitimate invocation needs while still bounding a wedge.
+const consumerHandlerTimeout = 60 * time.Second
+
+// consumerHeartbeatStale is the liveness heartbeat budget: how long a consumer's
+// read loop may make no progress before the liveness probe restarts the pod. It
+// MUST exceed consumerHandlerTimeout plus a margin so a legitimately in-flight
+// handler never trips liveness (the heartbeat advances per handler attempt; see
+// pkg/redis.StreamConsumer.safeInvoke), while a true wedge — a handler that
+// ignores its deadline, or a goroutine that stopped iterating — still trips
+// within budget.
+const consumerHeartbeatStale = 3 * time.Minute
 
 func main() {
 	// Step 1: Setup structured JSON logger
@@ -54,6 +70,28 @@ func main() {
 	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
 	lifecycleManager.SetupSignalHandlers(ctx, cancel)
 
+	// Health registry feeding /ready (readiness) and /livez (liveness) — deploy
+	// config points the two Kubernetes probes at those DIFFERENT paths (see
+	// deploy/continuo/values.yaml). Worker registrations and consumer heartbeats
+	// feed both checks (a dead/wedged consumer restarts the pod); dependency
+	// probes (Redis/Postgres) feed readiness ONLY (a backing-store outage stops
+	// traffic but must not restart a pod whose consumers are already retrying).
+	liveReg := liveness.NewRegistry()
+
+	// runConsumer registers a tracked stream consumer with the registry:
+	// RegisterWorker so a missing/exited worker is observable (WorkerExited is
+	// called by the caller's goroutine when Start returns — which now happens on
+	// a permanent bootstrap error too, not only clean shutdown), a worker
+	// heartbeat probe so a wedged-but-not-exited loop is caught, and a bounded
+	// handler deadline so a hung handler eventually returns.
+	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		consumer.SetHandlerTimeout(consumerHandlerTimeout)
+		liveReg.RegisterWorker(name)
+		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
+			return consumer.Healthy(consumerHeartbeatStale)
+		})
+	}
+
 	// Step 4: Initialize Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
 		Addr:     cfg.Redis.Addr(),
@@ -62,6 +100,9 @@ func main() {
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		logger.Info("Closing Redis connection")
 		return redisClient.Close()
+	})
+	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error {
+		return redisClient.Ping(ctx).Err()
 	})
 
 	logger.Info("Connected to Redis", "addr", cfg.Redis.Addr())
@@ -82,6 +123,9 @@ func main() {
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
 		logger.Info("Closing PostgreSQL connection")
 		return pgDB.Close()
+	})
+	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error {
+		return pgDB.PingContext(ctx)
 	})
 
 	logger.Info("PostgreSQL repositories initialized")
@@ -158,9 +202,15 @@ func main() {
 		pkgoutbox.ProcessorConfig{Tick: time.Second, BatchSize: 100},
 	)
 
+	liveReg.RegisterWorker("outbox_processor")
 	go func() {
 		logger.Info("Starting outbox processor")
-		if err := outboxProc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		err := outboxProc.Run(ctx)
+		if errors.Is(err, context.Canceled) {
+			err = nil // clean stop on shutdown
+		}
+		liveReg.WorkerExited("outbox_processor", err)
+		if err != nil {
 			logger.Error("Outbox processor stopped with error", "error", err)
 		}
 	}()
@@ -183,9 +233,15 @@ func main() {
 		logger,
 	)
 
+	liveReg.RegisterWorker("stuck_entry_resolver")
 	go func() {
 		logger.Info("Starting stuck entry resolver")
-		if err := stuckEntryResolver.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		err := stuckEntryResolver.Run(ctx)
+		if errors.Is(err, context.Canceled) {
+			err = nil
+		}
+		liveReg.WorkerExited("stuck_entry_resolver", err)
+		if err != nil {
 			logger.Error("Stuck entry resolver stopped with error", "error", err)
 		}
 	}()
@@ -196,7 +252,7 @@ func main() {
 	)
 
 	// Step 16: Start HTTP Health Server (background)
-	healthServer := http.NewHealthServer(cfg.HTTPPort, logger)
+	healthServer := http.NewHealthServer(cfg.HTTPPort, liveReg, logger)
 	go func() {
 		if err := healthServer.Start(); err != nil {
 			logger.Error("Health server stopped", "error", err)
@@ -220,8 +276,11 @@ func main() {
 		redis.NewScheduleCancelledBinding(cancelledSchedulesRepo, logger),
 		logger,
 	)
+	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
 	go func() {
-		if err := scheduleCancelledConsumer.Start(ctx); err != nil {
+		err := scheduleCancelledConsumer.Start(ctx)
+		liveReg.WorkerExited("schedule_cancelled", err)
+		if err != nil {
 			logger.Error("Schedule cancelled consumer error", "error", err)
 		}
 	}()
@@ -246,15 +305,21 @@ func main() {
 
 	// Step 17: Start Redis consumers.
 	// The deployed consumer runs in the background; the check consumer runs as the main blocking loop.
+	runConsumer("node_deployed", deployedConsumer)
 	go func() {
 		logger.Info("Starting deployed consumer")
-		if err := deployedConsumer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		err := deployedConsumer.Start(ctx)
+		liveReg.WorkerExited("node_deployed", err)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("Deployed consumer stopped with error", "error", err)
 		}
 	}()
 
+	runConsumer("check_k8s", checkConsumer)
 	logger.Info("Starting check consumer (main loop)")
-	if err := checkConsumer.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	err = checkConsumer.Start(ctx)
+	liveReg.WorkerExited("check_k8s", err)
+	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("Check consumer stopped with error", "error", err)
 		os.Exit(1)
 	}

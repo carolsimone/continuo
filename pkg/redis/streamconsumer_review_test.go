@@ -2,10 +2,12 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,4 +155,188 @@ func TestStreamConsumer_WorkerPool_AcksFinishedLaneWhileAnotherBlocks(t *testing
 	require.Eventually(t, func() bool {
 		return len(pendingIDs()) == 0
 	}, 5*time.Second, 50*time.Millisecond, "slow lane ACKs once released")
+}
+
+// ── Read-loop / startup resilience (incident: consumer goroutines that die
+// silently on a Redis blip and are never restarted) ────────────────────────
+
+// TestStreamConsumer_Healthy_ReflectsHeartbeatFreshness is a pure unit test
+// (no Redis needed) for the Healthy staleness check that backs the liveness
+// probe: fresh activity reads healthy, activity older than maxStale reads
+// unhealthy with a descriptive error, and a never-started consumer (no
+// activity recorded at all) also reads unhealthy rather than nil-panicking.
+func TestStreamConsumer_Healthy_ReflectsHeartbeatFreshness(t *testing.T) {
+	c := NewStreamConsumer(goredis.NewClient(&goredis.Options{Addr: "127.0.0.1:1"}),
+		"stream", "group", func(context.Context, goredis.XMessage) error { return nil }, discardLog())
+
+	assert.NoError(t, c.Healthy(time.Minute), "freshly constructed consumer must read healthy")
+
+	c.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	err := c.Healthy(time.Minute)
+	require.Error(t, err, "activity older than maxStale must read unhealthy")
+	assert.Contains(t, err.Error(), "stalled")
+
+	c.lastActivity.Store(time.Now().UnixNano())
+	assert.NoError(t, c.Healthy(time.Minute), "a fresh heartbeat must clear the unhealthy state")
+
+	// A zero-value consumer (lastActivity never set — only possible in tests,
+	// since NewStreamConsumer seeds it) reads as 1970 and therefore stalled,
+	// which is the correct unhealthy answer for something that never ran.
+	var neverStarted StreamConsumer
+	err = neverStarted.Healthy(time.Minute)
+	require.Error(t, err, "a consumer with no recorded activity must read unhealthy, not panic")
+	assert.Contains(t, err.Error(), "stalled")
+}
+
+// TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting is the
+// regression test for the incident: a StreamConsumer pointed at an
+// unreachable Redis address must keep retrying — logging and backing off —
+// rather than returning from Start and leaving nothing to restart it. This
+// covers both halves of the loop the incident exposed: the startup
+// ensureConsumerGroup bootstrap, and (via the heartbeat) the read loop
+// proper. No REDIS_ADDR is needed: the address is deliberately unreachable.
+func TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting(t *testing.T) {
+	unreachable := goredis.NewClient(&goredis.Options{
+		Addr:        "127.0.0.1:1", // nothing listens here; every call fails fast
+		DialTimeout: 200 * time.Millisecond,
+	})
+	t.Cleanup(func() { unreachable.Close() })
+
+	c := NewStreamConsumer(unreachable, "stream", "group",
+		func(context.Context, goredis.XMessage) error { return nil }, discardLog())
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- c.Start(runCtx) }()
+
+	// Let it fail and retry the startup bootstrap a few times.
+	time.Sleep(1500 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("Start exited on a transient connection error (err=%v); it must retry indefinitely instead", err)
+	default:
+		// still running — correct.
+	}
+	assert.NoError(t, c.Healthy(2*time.Second),
+		"the retry loop must keep advancing its heartbeat even while every attempt fails")
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err, "Start must return cleanly on context cancellation")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start did not return promptly after ctx cancellation — the retry loop is not honoring ctx.Done()")
+	}
+}
+
+// TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces is
+// the [P2] regression: a PERMANENT consumer-group bootstrap failure — here a
+// wrong-typed stream key, which makes XGroupCreateMkStream fail with WRONGTYPE
+// on every attempt — must NOT be retried forever (which would keep the pod
+// ready+live consuming nothing while the heartbeat stays green). Instead Start
+// must return the error promptly, so the caller's WorkerExited(name, err)
+// records it and readiness fails loudly. The handler must never run.
+func TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx := context.Background()
+
+	stream := fmt.Sprintf("test-stream-permanent-boot-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+
+	// Wrong-typed key: XGroupCreateMkStream on it fails deterministically with
+	// WRONGTYPE — a misconfiguration no retry can ever clear.
+	require.NoError(t, rc.Set(ctx, stream, "not-a-stream", 0).Err())
+
+	var received atomic.Int32
+	handler := func(_ context.Context, _ goredis.XMessage) error {
+		received.Add(1)
+		return nil
+	}
+	c := NewStreamConsumer(rc, stream, group, handler, discardLog())
+
+	// Generous timeout: if the bug regressed (infinite retry), Start would keep
+	// looping until this ctx cancels and we'd see a nil return well after the
+	// short window below — the select's timeout branch catches that.
+	runCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- c.Start(runCtx) }()
+
+	select {
+	case err := <-done:
+		require.Error(t, err, "a permanent bootstrap error must make Start return, not loop forever")
+		assert.Contains(t, err.Error(), "WRONGTYPE",
+			"the returned error must carry the underlying permanent cause")
+		assert.Contains(t, err.Error(), "permanent consumer-group bootstrap failure")
+		assert.Equal(t, int32(0), received.Load(), "the handler must never run on a permanent bootstrap failure")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return on a permanent bootstrap error — it looped silently instead of surfacing it")
+	}
+}
+
+// TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries is
+// the [#1] regression: a message that fails transiently on every reclaim sweep
+// (e.g. a handler that keeps timing out — DeadlineExceeded is NOT ErrPermanent,
+// so shouldAck never ACKs it) would otherwise cycle in the PEL forever. Once its
+// PEL delivery counter passes maxDeliveries, the reclaim path must ACK-drop it so
+// the loop makes progress. We drive reclaimPending directly with a 0 idle gate
+// and an always-failing handler, and assert the message leaves the PEL rather
+// than redelivering indefinitely.
+func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx := context.Background()
+
+	stream := fmt.Sprintf("test-stream-poison-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+
+	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]interface{}{"k": "v"}}).Result()
+	require.NoError(t, err)
+
+	// Seed the PEL: a first delivery to some consumer moves the entry into the
+	// group's PEL with delivery count 1. reclaimPending's XAUTOCLAIM then claims
+	// it (bumping the counter) on each sweep.
+	_, err = rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
+		Group: group, Consumer: "seed-consumer", Streams: []string{stream, ">"}, Count: 10,
+	}).Result()
+	require.NoError(t, err)
+
+	var calls atomic.Int32
+	poison := func(context.Context, goredis.XMessage) error {
+		calls.Add(1)
+		return errors.New("transient handler failure that never clears")
+	}
+	// MinIdle 0 so every sweep is eligible immediately.
+	c := NewStreamConsumer(rc, stream, group, poison, discardLog(), WithReclaimMinIdle(0))
+
+	pendingCount := func() int64 {
+		res, perr := rc.XPending(ctx, stream, group).Result()
+		require.NoError(t, perr)
+		return res.Count
+	}
+
+	// Sweep repeatedly. Each XAUTOCLAIM bumps the delivery counter; once it
+	// exceeds maxDeliveries the message is ACK-dropped and the PEL empties.
+	require.Eventually(t, func() bool {
+		require.NoError(t, c.reclaimPending(ctx))
+		return pendingCount() == 0
+	}, 10*time.Second, 50*time.Millisecond,
+		"a poison message must be ACK-dropped once it exceeds maxDeliveries, not cycle in the PEL forever")
+
+	// It was genuinely retried several times before being dropped (i.e. it was a
+	// poison message, not a one-shot drop), and it is gone from the PEL. (Exact
+	// count depends on when the PEL delivery counter crosses the bound; assert a
+	// safe lower bound rather than an exact value.)
+	assert.GreaterOrEqual(t, calls.Load(), int32(3),
+		"the message should have been retried multiple times before quarantine, not dropped on first failure")
+	pend, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	require.NoError(t, err)
+	for _, p := range pend {
+		assert.NotEqual(t, msgID, p.ID, "the quarantined message must no longer be pending")
+	}
 }

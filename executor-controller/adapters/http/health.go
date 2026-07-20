@@ -6,16 +6,36 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/carolsimone/continuo/pkg/liveness"
 )
 
-// HealthServer provides HTTP health check endpoint
+// HealthServer provides HTTP liveness and readiness endpoints with deliberately
+// different semantics, both backed by the liveness registry:
+//
+//   - /ready (readiness) returns 503 when any registered worker has exited with
+//     an error, any consumer's read-loop heartbeat has gone stale, OR any
+//     external dependency probe (Redis/Postgres) fails. A dependency outage
+//     pulls the pod out of Service endpoints so no traffic is routed to it.
+//   - /livez (liveness) returns 503 ONLY for worker/heartbeat failures — never
+//     for a dependency outage. Restarting a pod whose backing store is briefly
+//     down just turns a recoverable outage into CrashLoopBackOff; the consumers
+//     are already retrying through it. A dead/wedged consumer goroutine, though,
+//     SHOULD restart the pod, and does.
+//   - /health is a plain process-up probe (always 200); retained for manual use.
+//
+// Deploy config points the Kubernetes readinessProbe at /ready and the
+// livenessProbe at /livez (see deploy/continuo/values.yaml), so the two probes
+// hit DIFFERENT paths with the semantics above.
 type HealthServer struct {
-	server *http.Server
-	logger *slog.Logger
+	server   *http.Server
+	logger   *slog.Logger
+	registry *liveness.Registry
 }
 
-// NewHealthServer creates a new health check HTTP server
-func NewHealthServer(port int, logger *slog.Logger) *HealthServer {
+// NewHealthServer creates a new health check HTTP server reading health from
+// the supplied liveness registry.
+func NewHealthServer(port int, registry *liveness.Registry, logger *slog.Logger) *HealthServer {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -25,12 +45,8 @@ func NewHealthServer(port int, logger *slog.Logger) *HealthServer {
 		}
 	})
 
-	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("READY")); err != nil {
-			logger.Warn("failed to write ready response", "error", err)
-		}
-	})
+	mux.HandleFunc("/ready", liveness.Handler("readiness", registry.Check, logger))
+	mux.HandleFunc("/livez", liveness.Handler("liveness", registry.LivenessCheck, logger))
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
@@ -39,8 +55,9 @@ func NewHealthServer(port int, logger *slog.Logger) *HealthServer {
 	}
 
 	return &HealthServer{
-		server: server,
-		logger: logger,
+		server:   server,
+		logger:   logger,
+		registry: registry,
 	}
 }
 

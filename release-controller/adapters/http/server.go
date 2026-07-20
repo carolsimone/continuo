@@ -7,27 +7,37 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/carolsimone/continuo/pkg/liveness"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
 
 // Server is the HTTP server for the release-controller. It exposes a REST API
 // for CI to submit release candidates and for operators to inspect release state.
 type Server struct {
-	deps *handlers.Deps
-	port string
-	srv  *http.Server
-	log  *slog.Logger
+	deps     *handlers.Deps
+	registry *liveness.Registry
+	port     string
+	srv      *http.Server
+	log      *slog.Logger
 }
 
-// NewServer creates a new Server. Call Start to begin listening.
-func NewServer(deps *handlers.Deps, port string, log *slog.Logger) *Server {
-	return &Server{deps: deps, port: port, log: log}
+// NewServer creates a new Server. Call Start to begin listening. Health is
+// backed by registry across two paths with different semantics: /healthz
+// (readiness) reflects workers + heartbeats + dependency probes, /livez
+// (liveness) reflects workers + heartbeats ONLY. Deploy config points the
+// Kubernetes readinessProbe at /healthz and the livenessProbe at /livez (see
+// deploy/continuo/values.yaml), so a dependency outage pulls the pod from
+// Service endpoints without restarting it, while a dead/wedged consumer both
+// fails readiness AND restarts the pod.
+func NewServer(deps *handlers.Deps, registry *liveness.Registry, port string, log *slog.Logger) *Server {
+	return &Server{deps: deps, registry: registry, port: port, log: log}
 }
 
 // Routes registers all HTTP routes and returns the handler tree.
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("GET /healthz", liveness.Handler("readiness", s.registry.Check, s.log))
+	mux.HandleFunc("GET /livez", liveness.Handler("liveness", s.registry.LivenessCheck, s.log))
 	mux.HandleFunc("POST /releases", s.handleReceiveCandidate)
 	mux.HandleFunc("GET /releases/{id}", s.handleGetRelease)
 	mux.HandleFunc("GET /releases", s.handleListReleases)

@@ -26,6 +26,24 @@ The `classification_decision` table is append-only and auditable: it contains ev
 |---|---|---|
 | `release.rejected:v1` | `remediation-release-rejected` | Emitted by release-controller when a release fails at any pipeline stage (compile, seed_build, or validation). The `stage` field in the payload determines how each failing node is classified. Each message carries one or more failing nodes (one for compile, one per seed for seed_build, one per model for validation); the handler processes each node independently. A `reason` of `parse_rehearsal_failed` or `artifact_upload_failed` (both `stage="compile"`) is excluded entirely at the inbound adapter, before any evidence is built — see "Parse-export-leg exclusion" below. |
 
+### HTTP (port 8090)
+
+Two health endpoints backed by the `pkg/liveness` registry, with readiness and
+liveness deliberately split:
+
+- `GET /healthz` — readiness. Fails (503) when the `release.rejected:v1`
+  consumer or the outbox publisher has exited with an error, the consumer
+  read-loop heartbeat has gone stale, **or** any dependency probe (Redis,
+  Postgres) fails. A dependency outage pulls the pod out of the Service
+  endpoints so no traffic is routed to it.
+- `GET /livez` — liveness. Fails (503) **only** for worker/heartbeat failures —
+  dependency probes are excluded, so a Redis/Postgres outage does not restart a
+  pod whose consumer is already retrying, while a dead or wedged consumer does.
+
+The Kubernetes `readinessProbe` points at `/healthz` and the `livenessProbe` at
+`/livez` (`deploy/continuo/values.yaml`: `probePath: /healthz`,
+`livenessPath: /livez`).
+
 ## Outbound Interfaces
 
 ### Redis producer

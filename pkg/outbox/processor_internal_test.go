@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/carolsimone/continuo/pkg/liveness"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,4 +143,37 @@ func TestPublish_FallsBackOnMismatchedBatchSlice(t *testing.T) {
 
 	require.Len(t, errs, 3, "result length must always match entries")
 	assert.Equal(t, 3, pub.calls, "fell back to per-entry publish")
+}
+
+// TestProcessor_HeartbeatTripsHealthWhenStalled is the [#5] regression: the
+// outbox processor now carries a read-loop heartbeat (like StreamConsumer), so a
+// wedged-but-not-exited Run loop — invisible to RegisterWorker/WorkerExited,
+// which only see a full goroutine exit — is caught. A ticking processor stays
+// healthy across readiness AND liveness; a stalled heartbeat trips both.
+func TestProcessor_HeartbeatTripsHealthWhenStalled(t *testing.T) {
+	p := newProc(&plainPublisher{})
+
+	// Freshly constructed → seeded → healthy.
+	require.NoError(t, p.Healthy(time.Minute), "a just-constructed processor must read healthy")
+
+	reg := liveness.NewRegistry()
+	reg.RegisterWorker("outbox_publisher")
+	reg.AddWorkerProbe("outbox_publisher_heartbeat", 0, func(context.Context) error {
+		return p.Healthy(30 * time.Second)
+	})
+
+	ctx := context.Background()
+	assert.True(t, reg.Ready(ctx), "a ticking processor must be ready")
+	assert.True(t, reg.Live(ctx), "a ticking processor must be live")
+
+	// Simulate a wedged Run loop: no tick advances the heartbeat.
+	p.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+	require.Error(t, p.Healthy(30*time.Second))
+	assert.False(t, reg.Ready(ctx), "a stalled outbox heartbeat must fail readiness")
+	assert.False(t, reg.Live(ctx), "a stalled outbox heartbeat must fail liveness (so the pod restarts)")
+
+	// A fresh tick clears it.
+	p.lastActivity.Store(time.Now().UnixNano())
+	require.NoError(t, p.Healthy(30*time.Second))
+	assert.True(t, reg.Live(ctx), "a fresh tick must clear the unhealthy state")
 }

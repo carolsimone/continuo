@@ -2,9 +2,12 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
@@ -38,11 +41,19 @@ func (p *releaseOutboxPublisher) Publish(ctx context.Context, entry *pkgoutbox.E
 	return nil
 }
 
+// outboxHeartbeatStale is the liveness budget for the outbox processor's Run
+// loop. The poll tick is 1s, so 60s is comfortably above it: a wedged (not
+// exited) processor trips within a minute, while an idle-but-live one never
+// does.
+const outboxHeartbeatStale = 60 * time.Second
+
 // StartOutboxPublisher constructs a pkgoutbox.Processor backed by
 // release_controller_outbox and starts its poll loop in a goroutine. The loop
-// runs until ctx is cancelled. Errors are logged; the caller does not need to
-// handle the returned error (the goroutine blocks until ctx.Done).
-func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, logger *slog.Logger) {
+// runs until ctx is cancelled. It is registered with liveReg both as a worker
+// (RegisterWorker/WorkerExited detects a full goroutine EXIT) and with a
+// heartbeat probe (processor.Healthy detects a wedged-but-not-exited loop) — the
+// outbox analogue of a consumer's liveness backstop.
+func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, liveReg *liveness.Registry, logger *slog.Logger) {
 	publisher := &releaseOutboxPublisher{redis: rc, logger: logger}
 	processor := pkgoutbox.NewProcessor(
 		db,
@@ -55,8 +66,22 @@ func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, 
 			BatchSize: 64,
 		},
 	)
+	liveReg.RegisterWorker("outbox_publisher")
+	liveReg.AddWorkerProbe("outbox_publisher_heartbeat", 10*time.Second, func(context.Context) error {
+		return processor.Healthy(outboxHeartbeatStale)
+	})
 	go func() {
-		if err := processor.Run(ctx); err != nil && ctx.Err() == nil {
+		err := processor.Run(ctx)
+		// Treat as a clean stop when the parent ctx is done OR the error unwraps
+		// to context.Canceled — a driver-level cancellation on graceful shutdown
+		// (e.g. "pq: canceling statement due to user request") does not unwrap to
+		// context.Canceled, so checking ctx.Err() too avoids a spurious unhealthy
+		// flip and error log during drain.
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			err = nil
+		}
+		liveReg.WorkerExited("outbox_publisher", err)
+		if err != nil {
 			logger.Error("outbox publisher stopped unexpectedly", "error", err)
 		}
 	}()

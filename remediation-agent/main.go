@@ -15,6 +15,8 @@ import (
 	"google.golang.org/grpc"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/liveness"
+	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	ragithub "github.com/carolsimone/continuo/remediation-agent/adapters/github"
 	grpcadapter "github.com/carolsimone/continuo/remediation-agent/adapters/grpc"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/llm"
@@ -30,6 +32,30 @@ import (
 	"github.com/carolsimone/continuo/remediation-agent/service/proposals"
 	"github.com/carolsimone/continuo/remediation-agent/service/uow"
 )
+
+// llmClientTimeout bounds a single LLM HTTP request. Without it the LLM path
+// uses http.DefaultClient, which has NO timeout, so one hung request could
+// block the handler goroutine forever. The remediation.requested handler makes
+// up to two sequential LLM calls per invocation, so the whole handler is
+// bounded by roughly 2 × this value (plus DB/S3 work), which consumerHandler
+// Timeout below then caps as a hard ceiling.
+const llmClientTimeout = 120 * time.Second
+
+// consumerHandlerTimeout bounds each message handler invocation with a context
+// deadline, so a genuinely-hung handler eventually returns control to the read
+// loop. It is generous because this handler runs up to two large (~16k-token)
+// LLM requests; 300s comfortably covers 2 × llmClientTimeout plus DB/S3 work
+// while still bounding a true hang.
+const consumerHandlerTimeout = 5 * time.Minute
+
+// consumerHeartbeatStale is the liveness heartbeat budget: how long the
+// consumer's read loop may make no progress before the liveness probe restarts
+// the pod. It MUST exceed consumerHandlerTimeout plus a margin so a legitimately
+// in-flight handler — including a slow multi-call LLM invocation — never trips
+// liveness (the heartbeat advances per handler attempt; see
+// pkg/redis.StreamConsumer.safeInvoke), while a true wedge still trips within
+// budget.
+const consumerHeartbeatStale = 6 * time.Minute
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -52,12 +78,45 @@ func main() {
 		cancel()
 	}()
 
+	// Health registry feeding /healthz (readiness) and /livez (liveness) —
+	// deploy config points the two Kubernetes probes at those DIFFERENT paths
+	// (see deploy/continuo/values.yaml). Worker registrations and consumer
+	// heartbeats feed both checks (a dead/wedged consumer restarts the pod);
+	// dependency probes (Redis/Postgres) feed readiness ONLY (a backing-store
+	// outage stops traffic but must not restart a pod whose consumer is already
+	// retrying).
+	liveReg := liveness.NewRegistry()
+
+	// runConsumer starts a tracked stream consumer: a bounded handler deadline
+	// so a hung handler (e.g. a stuck LLM request) eventually returns;
+	// RegisterWorker before launch so a missing worker is observable;
+	// WorkerExited when Start returns (which now happens on a permanent
+	// bootstrap error too, not only clean shutdown); and a worker heartbeat
+	// probe so a wedged-but-not-exited loop is caught.
+	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		consumer.SetHandlerTimeout(consumerHandlerTimeout)
+		liveReg.RegisterWorker(name)
+		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
+			return consumer.Healthy(consumerHeartbeatStale)
+		})
+		go func() {
+			err := consumer.Start(ctx)
+			liveReg.WorkerExited(name, err)
+			if err != nil && ctx.Err() == nil {
+				logger.Error("consumer stopped", "consumer", name, "error", err)
+			}
+		}()
+	}
+
 	db, err := postgres.NewDB(cfg.Postgres)
 	if err != nil {
 		logger.Error("postgres connect", "error", err)
 		os.Exit(1)
 	}
 	defer func() { _ = db.Close() }()
+	liveReg.AddProbe("postgres", 5*time.Second, func(ctx context.Context) error {
+		return db.PingContext(ctx)
+	})
 
 	rc, err := rredis.NewClient(ctx, rredis.Config{
 		Host:     cfg.Redis.Host,
@@ -69,6 +128,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() { _ = rc.Close() }()
+	liveReg.AddProbe("redis", 5*time.Second, func(ctx context.Context) error {
+		return rc.Ping(ctx).Err()
+	})
 
 	store := s3.NewS3(
 		cfg.S3.EndpointURL,
@@ -84,7 +146,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	llmProvider, err := llm.NewProvider(cfg.LLMProvider, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMBaseURL, nil)
+	// Bound the LLM HTTP client explicitly: passing nil would fall back to
+	// http.DefaultClient, which has NO request timeout, so a single hung LLM
+	// call could block the handler goroutine indefinitely (and, with the
+	// consumer heartbeat feeding liveness, get the pod restarted underneath
+	// in-flight work). A per-request timeout keeps each call bounded; the
+	// consumer's handler-timeout is the outer ceiling over the whole handler.
+	llmProvider, err := llm.NewProvider(cfg.LLMProvider, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMBaseURL,
+		&http.Client{Timeout: llmClientTimeout})
 	if err != nil {
 		logger.Error("llm provider init", "error", err)
 		os.Exit(1)
@@ -123,21 +192,22 @@ func main() {
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
 	// until ctx is cancelled.
-	rredis.StartOutboxPublisher(ctx, db, rc, logger)
+	rredis.StartOutboxPublisher(ctx, db, rc, liveReg, logger)
 
 	// Start the remediation.requested consumer in a goroutine; blocks until ctx
 	// is cancelled.
-	consumer := rredis.NewRemediationRequestedConsumer(rc, deps, logger)
-	go func() {
-		if err := consumer.Start(ctx); err != nil && ctx.Err() == nil {
-			logger.Error("remediation.requested consumer stopped", "error", err)
-		}
-	}()
+	runConsumer("remediation_requested", rredis.NewRemediationRequestedConsumer(rc, deps, logger))
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	// Two health paths with different semantics, both registry-backed. Deploy
+	// config points the Kubernetes readinessProbe at /healthz and the
+	// livenessProbe at /livez (see deploy/continuo/values.yaml): /healthz
+	// (readiness) reflects workers + heartbeats + dependency probes, so a Redis/
+	// Postgres outage pulls the pod from Service endpoints; /livez (liveness)
+	// reflects workers + heartbeats ONLY, so a dependency outage does NOT restart
+	// a pod whose consumer is already retrying, while a dead/wedged consumer does.
+	mux.HandleFunc("/healthz", liveness.Handler("readiness", liveReg.Check, logger))
+	mux.HandleFunc("/livez", liveness.Handler("liveness", liveReg.LivenessCheck, logger))
 	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.ListenAndServe() }()
 
@@ -184,3 +254,4 @@ func main() {
 	_ = srv.Shutdown(shutdownCtx)
 	logger.Info("remediation-agent stopped")
 }
+
