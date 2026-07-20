@@ -12,58 +12,79 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
 
-// TestHealthzReturns200WhenRegistryHealthy is the base case: with no
-// registered failures, /healthz answers 200. Before this change, /healthz was
-// hardcoded to 200 regardless of consumer state (dead code as far as the
-// registry goes), so this test alone would have passed either way — the
-// failing-registry tests below are the ones that pin the fix.
-func TestHealthzReturns200WhenRegistryHealthy(t *testing.T) {
+func testServer(reg *liveness.Registry) *Server {
+	return &Server{registry: reg, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
+func probe(t *testing.T, srv *Server, path string) int {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec.Code
+}
+
+// TestHealthzAndLivezHealthy: with a live worker and fresh heartbeat, both
+// /healthz (readiness) and /livez (liveness) answer 200.
+func TestHealthzAndLivezHealthy(t *testing.T) {
 	reg := liveness.NewRegistry()
 	reg.RegisterWorker("manifest_loaded_candidate")
-	srv := &Server{registry: reg, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	reg.AddWorkerProbe("manifest_loaded_candidate_heartbeat", 0, func(context.Context) error { return nil })
+	srv := testServer(reg)
 
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+	if code := probe(t, srv, "/healthz"); code != http.StatusOK {
+		t.Fatalf("/healthz: expected 200, got %d", code)
+	}
+	if code := probe(t, srv, "/livez"); code != http.StatusOK {
+		t.Fatalf("/livez: expected 200, got %d", code)
 	}
 }
 
-// TestHealthzReturns503WhenConsumerExited is the readiness-flip regression: a
-// consumer goroutine returning an error must drive /healthz to 503 — deploy
-// config points BOTH the readiness and liveness Kubernetes probes at
-// /healthz for this service, so this is what actually restarts a pod stuck
-// with a dead consumer instead of leaving it at 1/1 Running forever.
-func TestHealthzReturns503WhenConsumerExited(t *testing.T) {
+// TestDependencyOutageFailsReadinessNotLiveness is the [P1a] regression: a
+// failing DEPENDENCY probe fails /healthz (readiness) but NOT /livez (liveness).
+func TestDependencyOutageFailsReadinessNotLiveness(t *testing.T) {
 	reg := liveness.NewRegistry()
 	reg.RegisterWorker("manifest_loaded_candidate")
-	reg.WorkerExited("manifest_loaded_candidate", errors.New("redis dropped"))
-	srv := &Server{registry: reg, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	reg.AddDependencyProbe("postgres", 0, func(context.Context) error { return errors.New("down") })
+	srv := testServer(reg)
 
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 after consumer exit, got %d", rec.Code)
+	if code := probe(t, srv, "/healthz"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/healthz during dependency outage: expected 503, got %d", code)
+	}
+	if code := probe(t, srv, "/livez"); code != http.StatusOK {
+		t.Fatalf("/livez during dependency outage: expected 200 (must NOT restart), got %d", code)
 	}
 }
 
-// TestHealthzReturns503WhenHeartbeatStale proves the specific gap this
-// incident exposed: a consumer whose goroutine never returned (wedged, not
-// exited) is invisible to WorkerExited alone. The heartbeat probe catches it.
-func TestHealthzReturns503WhenHeartbeatStale(t *testing.T) {
+// TestConsumerExitFailsBothProbes: a consumer that exited with an error fails
+// BOTH /healthz and /livez — liveness restarts the pod.
+func TestConsumerExitFailsBothProbes(t *testing.T) {
 	reg := liveness.NewRegistry()
 	reg.RegisterWorker("manifest_loaded_candidate")
-	reg.AddProbe("manifest_loaded_candidate_heartbeat", 0, func(context.Context) error {
+	reg.WorkerExited("manifest_loaded_candidate", errors.New("permanent bootstrap failure: WRONGTYPE"))
+	srv := testServer(reg)
+
+	if code := probe(t, srv, "/healthz"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/healthz after consumer exit: expected 503, got %d", code)
+	}
+	if code := probe(t, srv, "/livez"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/livez after consumer exit: expected 503, got %d", code)
+	}
+}
+
+// TestStaleHeartbeatFailsBothProbes: a wedged consumer surfaces as a stale
+// heartbeat and must fail BOTH probes.
+func TestStaleHeartbeatFailsBothProbes(t *testing.T) {
+	reg := liveness.NewRegistry()
+	reg.RegisterWorker("manifest_loaded_candidate")
+	reg.AddWorkerProbe("manifest_loaded_candidate_heartbeat", 0, func(context.Context) error {
 		return errors.New("read loop stalled — no activity for 5m0s")
 	})
-	srv := &Server{registry: reg, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	srv := testServer(reg)
 
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when the read-loop heartbeat is stale, got %d", rec.Code)
+	if code := probe(t, srv, "/healthz"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/healthz with stale heartbeat: expected 503, got %d", code)
+	}
+	if code := probe(t, srv, "/livez"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/livez with stale heartbeat: expected 503, got %d", code)
 	}
 }

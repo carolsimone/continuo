@@ -10,25 +10,30 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
 
-// HealthServer provides HTTP liveness and readiness endpoints.
+// HealthServer provides HTTP liveness and readiness endpoints with deliberately
+// different semantics, both backed by the liveness registry:
 //
-//   - /health is a liveness probe: it returns 200 as long as the process is
-//     running and able to serve HTTP.
-//   - /ready is a readiness probe backed by the liveness registry: it returns
-//     503 when any registered consumer has exited with an error, any consumer's
-//     read-loop heartbeat has gone stale (wedged, not just erroring), or any
-//     cached dependency probe fails. Deploy config points BOTH the readiness
-//     AND liveness Kubernetes probes at /ready for this service (see
-//     deploy/continuo/values.yaml's readinessPath/livenessPath), so a wedged or
-//     exited consumer actually restarts the pod instead of leaving it at
-//     1/1 Running forever with a dead background loop.
+//   - /ready (readiness) returns 503 when any registered worker has exited with
+//     an error, any consumer's read-loop heartbeat has gone stale, OR any
+//     external dependency probe (Redis/Postgres) fails. A dependency outage
+//     pulls the pod out of Service endpoints so no traffic is routed to it.
+//   - /livez (liveness) returns 503 ONLY for worker/heartbeat failures — never
+//     for a dependency outage. Restarting a pod whose backing store is briefly
+//     down just turns a recoverable outage into CrashLoopBackOff; the consumers
+//     are already retrying through it. A dead/wedged consumer goroutine, though,
+//     SHOULD restart the pod, and does.
+//   - /health is a plain process-up probe (always 200); retained for manual use.
+//
+// Deploy config points the Kubernetes readinessProbe at /ready and the
+// livenessProbe at /livez (see deploy/continuo/values.yaml), so the two probes
+// hit DIFFERENT paths with the semantics above.
 type HealthServer struct {
 	server   *http.Server
 	logger   *slog.Logger
 	registry *liveness.Registry
 }
 
-// NewHealthServer creates a new health check HTTP server reading readiness from
+// NewHealthServer creates a new health check HTTP server reading health from
 // the supplied liveness registry.
 func NewHealthServer(port int, registry *liveness.Registry, logger *slog.Logger) *HealthServer {
 	mux := http.NewServeMux()
@@ -40,23 +45,8 @@ func NewHealthServer(port int, registry *liveness.Registry, logger *slog.Logger)
 		}
 	})
 
-	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		failures := registry.Check(r.Context())
-		if len(failures) == 0 {
-			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write([]byte("READY")); err != nil {
-				logger.Warn("failed to write ready response", "error", err)
-			}
-			return
-		}
-		for _, f := range failures {
-			logger.Warn("Readiness check failed", "component", f.Name, "error", f.Err)
-		}
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if _, err := fmt.Fprintf(w, "NOT READY: %d component(s) unhealthy", len(failures)); err != nil {
-			logger.Warn("failed to write ready response", "error", err)
-		}
-	})
+	mux.HandleFunc("/ready", writeHealth(logger, "readiness", registry.Check))
+	mux.HandleFunc("/livez", writeHealth(logger, "liveness", registry.LivenessCheck))
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
@@ -68,6 +58,29 @@ func NewHealthServer(port int, registry *liveness.Registry, logger *slog.Logger)
 		server:   server,
 		logger:   logger,
 		registry: registry,
+	}
+}
+
+// writeHealth returns a handler that answers 200 when check reports no failures
+// and 503 (logging each failing component) otherwise. kind names the probe in
+// logs and the response body ("readiness" or "liveness").
+func writeHealth(logger *slog.Logger, kind string, check func(context.Context) []liveness.Failure) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		failures := check(r.Context())
+		if len(failures) == 0 {
+			w.WriteHeader(http.StatusOK)
+			if _, err := fmt.Fprintf(w, "%s OK", kind); err != nil {
+				logger.Warn("failed to write health response", "kind", kind, "error", err)
+			}
+			return
+		}
+		for _, f := range failures {
+			logger.Warn("Health check failed", "kind", kind, "component", f.Name, "error", f.Err)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if _, err := fmt.Fprintf(w, "NOT %s: %d component(s) unhealthy", kind, len(failures)); err != nil {
+			logger.Warn("failed to write health response", "kind", kind, "error", err)
+		}
 	}
 }
 

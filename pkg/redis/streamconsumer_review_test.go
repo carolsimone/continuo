@@ -225,25 +225,23 @@ func TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting(t *testing
 	}
 }
 
-// TestStreamConsumer_Start_RetriesStartupObstruction_ThenResumes proves the
-// specific bug fixed here: previously, Start returned immediately (and for
-// good — nothing in this repo calls Start a second time) if
-// ensureConsumerGroup failed even once at startup. We simulate a startup
-// obstruction deterministically (the stream key pre-exists as the wrong Redis
-// type, so XGroupCreateMkStream fails every attempt with WRONGTYPE, standing
-// in for "Redis is transiently refusing requests"), confirm the consumer
-// keeps retrying rather than exiting, then clear the obstruction and confirm
-// it picks up and delivers a message afterwards — i.e. it resumes once the
-// underlying problem clears, with no restart.
-func TestStreamConsumer_Start_RetriesStartupObstruction_ThenResumes(t *testing.T) {
+// TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces is
+// the [P2] regression: a PERMANENT consumer-group bootstrap failure — here a
+// wrong-typed stream key, which makes XGroupCreateMkStream fail with WRONGTYPE
+// on every attempt — must NOT be retried forever (which would keep the pod
+// ready+live consuming nothing while the heartbeat stays green). Instead Start
+// must return the error promptly, so the caller's WorkerExited(name, err)
+// records it and readiness fails loudly. The handler must never run.
+func TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces(t *testing.T) {
 	rc := internalRedisClient(t)
 	ctx := context.Background()
 
-	stream := fmt.Sprintf("test-stream-startup-retry-%d", time.Now().UnixNano())
+	stream := fmt.Sprintf("test-stream-permanent-boot-%d", time.Now().UnixNano())
 	group := "test-group"
 	t.Cleanup(func() { rc.Del(ctx, stream) })
 
-	// Wrong-typed key: XGroupCreateMkStream on it fails deterministically.
+	// Wrong-typed key: XGroupCreateMkStream on it fails deterministically with
+	// WRONGTYPE — a misconfiguration no retry can ever clear.
 	require.NoError(t, rc.Set(ctx, stream, "not-a-stream", 0).Err())
 
 	var received atomic.Int32
@@ -253,38 +251,22 @@ func TestStreamConsumer_Start_RetriesStartupObstruction_ThenResumes(t *testing.T
 	}
 	c := NewStreamConsumer(rc, stream, group, handler, discardLog())
 
-	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	// Generous timeout: if the bug regressed (infinite retry), Start would keep
+	// looping until this ctx cancels and we'd see a nil return well after the
+	// short window below — the select's timeout branch catches that.
+	runCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- c.Start(runCtx) }()
 
-	// Give it time to hit the obstruction and retry at least once (retry
-	// backoff is 3s) before we lift it.
-	time.Sleep(2 * time.Second)
 	select {
 	case err := <-done:
-		t.Fatalf("Start exited while the startup obstruction was still in place (err=%v); "+
-			"a transient startup failure must not kill the consumer", err)
-	default:
-	}
-	require.NoError(t, c.Healthy(5*time.Second), "the startup-retry loop must still be iterating")
-
-	// Clear the obstruction ("Redis recovers") and give the consumer a message
-	// to prove it actually resumes rather than staying wedged on its first
-	// (now historical) failure.
-	require.NoError(t, rc.Del(ctx, stream).Err())
-	_, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]interface{}{"k": "v"}}).Result()
-	require.NoError(t, err)
-
-	require.Eventually(t, func() bool {
-		return received.Load() > 0
-	}, 8*time.Second, 200*time.Millisecond,
-		"consumer must resume and deliver messages once the startup obstruction clears")
-
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Start did not return after context cancellation")
+		require.Error(t, err, "a permanent bootstrap error must make Start return, not loop forever")
+		assert.Contains(t, err.Error(), "WRONGTYPE",
+			"the returned error must carry the underlying permanent cause")
+		assert.Contains(t, err.Error(), "permanent consumer-group bootstrap failure")
+		assert.Equal(t, int32(0), received.Load(), "the handler must never run on a permanent bootstrap failure")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return on a permanent bootstrap error — it looped silently instead of surfacing it")
 	}
 }

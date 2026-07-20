@@ -155,13 +155,15 @@ spec:
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              # livenessPath defaults the same way readinessPath does, so a
-              # service can point BOTH probes at a consumer-heartbeat-backed
-              # endpoint instead of the hardcoded-200 default. This closes the
-              # gap that let five services sit at 1/1 Running with fully dead
-              # Redis consumers for ~30 minutes during the Redis blip
-              # incident: their liveness probe never reflected consumer
-              # health, so nothing ever restarted them.
+              # livenessPath resolves independently of readinessPath, so a
+              # service points liveness at a WORKER-health-only endpoint (a dead
+              # or wedged consumer restarts the pod) that is distinct from the
+              # readiness endpoint (which also includes dependency probes, so a
+              # Redis/Postgres outage stops traffic WITHOUT restarting a pod
+              # whose consumers are already retrying). This split closes the gap
+              # that let five services sit at 1/1 Running with dead consumers
+              # during the Redis blip, without letting a dependency outage turn
+              # into CrashLoopBackOff. Falls back to probePath then /health.
               path: {{ default (default "/health" $svc.probePath) $svc.livenessPath }}
               port: {{ $svc.httpPort }}
             initialDelaySeconds: 15

@@ -22,11 +22,19 @@ import (
 	"github.com/carolsimone/continuo/remediation/service/uow"
 )
 
-// consumerHeartbeatStale is how long a stream consumer's read loop may go
-// without an iteration before the readiness probe considers it stalled — not
-// "erroring while it retries" (that path advances the heartbeat every
-// iteration; see pkg/redis.StreamConsumer.Healthy) but genuinely wedged.
-const consumerHeartbeatStale = 30 * time.Second
+// consumerHandlerTimeout bounds each message handler invocation with a context
+// deadline, so a genuinely-hung handler eventually returns control to the read
+// loop. This handler does short DB writes and S3 log reads, so 60s far exceeds
+// any legitimate invocation while still bounding a wedge.
+const consumerHandlerTimeout = 60 * time.Second
+
+// consumerHeartbeatStale is the liveness heartbeat budget: how long the
+// consumer's read loop may make no progress before the liveness probe restarts
+// the pod. It MUST exceed consumerHandlerTimeout plus a margin so a legitimately
+// in-flight handler never trips liveness (the heartbeat advances per handler
+// attempt; see pkg/redis.StreamConsumer.safeInvoke), while a true wedge still
+// trips within budget.
+const consumerHeartbeatStale = 3 * time.Minute
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -49,23 +57,24 @@ func main() {
 		cancel()
 	}()
 
-	// Liveness registry feeding /healthz (deploy config points BOTH the
-	// readiness AND liveness Kubernetes probes at it — probePath: /healthz in
-	// deploy/continuo/values.yaml). Tracks background workers (the
-	// release.rejected consumer, outbox publisher) plus cached dependency
-	// probes, so a wedged or exited consumer restarts the pod instead of
-	// leaving it at 1/1 Running with a dead background loop nothing else can
-	// see.
+	// Health registry feeding /healthz (readiness) and /livez (liveness) —
+	// deploy config points the two Kubernetes probes at those DIFFERENT paths
+	// (see deploy/continuo/values.yaml). Worker registrations and consumer
+	// heartbeats feed both checks (a dead/wedged consumer restarts the pod);
+	// dependency probes (Redis/Postgres) feed readiness ONLY (a backing-store
+	// outage stops traffic but must not restart a pod whose consumer is already
+	// retrying).
 	liveReg := liveness.NewRegistry()
 
-	// runConsumer starts a tracked stream consumer: RegisterWorker before
-	// launch so a missing worker is observable from the first probe,
-	// WorkerExited when Start returns (a non-nil error is a genuine unhandled
-	// exit — Start's own retry loop already absorbs transient Redis errors),
-	// and a heartbeat probe so a wedged-but-not-exited loop is caught too.
+	// runConsumer starts a tracked stream consumer: a bounded handler deadline
+	// so a hung handler eventually returns; RegisterWorker before launch so a
+	// missing worker is observable; WorkerExited when Start returns (which now
+	// happens on a permanent bootstrap error too, not only clean shutdown); and
+	// a worker heartbeat probe so a wedged-but-not-exited loop is caught.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		consumer.SetHandlerTimeout(consumerHandlerTimeout)
 		liveReg.RegisterWorker(name)
-		liveReg.AddProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
+		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
 			return consumer.Healthy(consumerHeartbeatStale)
 		})
 		go func() {
@@ -131,12 +140,15 @@ func main() {
 	runConsumer("release_rejected", rredis.NewReleaseRejectedConsumer(rc, deps, logger))
 
 	mux := http.NewServeMux()
-	// /healthz is backed by the liveness registry — deploy config points both
-	// the readiness AND liveness Kubernetes probes at it (probePath: /healthz
-	// in deploy/continuo/values.yaml) — so a consumer that exits, or whose
-	// read-loop heartbeat goes stale, actually restarts the pod instead of
-	// leaving a dead background loop running silently inside a 1/1 pod.
-	mux.HandleFunc("/healthz", healthzHandler(liveReg, logger))
+	// Two health paths with different semantics, both registry-backed. Deploy
+	// config points the Kubernetes readinessProbe at /healthz and the
+	// livenessProbe at /livez (see deploy/continuo/values.yaml): /healthz
+	// (readiness) reflects workers + heartbeats + dependency probes, so a Redis/
+	// Postgres outage pulls the pod from Service endpoints; /livez (liveness)
+	// reflects workers + heartbeats ONLY, so a dependency outage does NOT restart
+	// a pod whose consumer is already retrying, while a dead/wedged consumer does.
+	mux.HandleFunc("/healthz", healthHandler("readiness", liveReg.Check, logger))
+	mux.HandleFunc("/livez", healthHandler("liveness", liveReg.LivenessCheck, logger))
 	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.ListenAndServe() }()
 
@@ -146,20 +158,21 @@ func main() {
 	logger.Info("remediation service stopped")
 }
 
-// healthzHandler backs /healthz with the liveness registry: 200 when every
-// registered worker and dependency probe is healthy, 503 otherwise. Extracted
-// from main so it is directly unit-testable (see main_test.go) — the
-// regression coverage that pins "a dead consumer must flip this to 503"
-// rather than the old hardcoded-200 behaviour.
-func healthzHandler(reg *liveness.Registry, logger *slog.Logger) http.HandlerFunc {
+// healthHandler backs a health endpoint with the supplied registry check: 200
+// when it reports no failures, 503 otherwise (logging each failing component).
+// kind names the probe ("readiness" or "liveness"). Extracted from main so it
+// is directly unit-testable (see main_test.go) — the regression coverage that
+// pins "a dead consumer flips both probes to 503, but a dependency outage flips
+// only readiness" rather than the old hardcoded-200 behaviour.
+func healthHandler(kind string, check func(context.Context) []liveness.Failure, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		failures := reg.Check(r.Context())
+		failures := check(r.Context())
 		if len(failures) == 0 {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 		for _, f := range failures {
-			logger.Warn("Readiness check failed", "component", f.Name, "error", f.Err)
+			logger.Warn("Health check failed", "kind", kind, "component", f.Name, "error", f.Err)
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}

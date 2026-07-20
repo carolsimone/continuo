@@ -16,89 +16,92 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestReadyReturns200WhenRegistryHealthy is the base case: with only healthy
-// workers/probes registered, /ready must answer 200. Before this change,
-// executor-controller's /ready was hardcoded to 200 regardless of the
-// registry (dead code, unwired) — this test alone would have passed either
-// way, so the failing-registry tests below are the ones that pin the fix.
-func TestReadyReturns200WhenRegistryHealthy(t *testing.T) {
+// probe issues a GET against the given path on the health server and returns
+// the status code.
+func probe(t *testing.T, srv *HealthServer, path string) int {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	srv.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec.Code
+}
+
+// TestReadyAndLivezHealthyWhenRegistryHealthy: with a live worker and a fresh
+// heartbeat, both /ready and /livez answer 200.
+func TestReadyAndLivezHealthyWhenRegistryHealthy(t *testing.T) {
 	reg := liveness.NewRegistry()
 	reg.RegisterWorker("query_model")
+	reg.AddWorkerProbe("query_model_heartbeat", 0, func(context.Context) error { return nil })
 	srv := NewHealthServer(0, reg, discardLogger())
 
-	rec := httptest.NewRecorder()
-	srv.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+	if code := probe(t, srv, "/ready"); code != http.StatusOK {
+		t.Fatalf("/ready: expected 200, got %d", code)
+	}
+	if code := probe(t, srv, "/livez"); code != http.StatusOK {
+		t.Fatalf("/livez: expected 200, got %d", code)
 	}
 }
 
-// TestReadyReturns503WhenConsumerExited is the readiness-flip regression: a
-// consumer goroutine returning an error must drive /ready to 503, so the
-// Kubernetes probe (which deploy config now points at /ready for BOTH
-// readiness and liveness — see deploy/continuo/values.yaml) restarts the pod
-// instead of leaving a dead consumer running forever inside a 1/1 pod.
-func TestReadyReturns503WhenConsumerExited(t *testing.T) {
+// TestDependencyOutageFailsReadinessNotLiveness is the [P1a] regression: a
+// failing DEPENDENCY probe (Redis/Postgres down) must fail /ready (pull the pod
+// from Service endpoints) but NOT /livez (restarting a pod whose consumers are
+// already retrying would just turn a recoverable outage into CrashLoopBackOff).
+func TestDependencyOutageFailsReadinessNotLiveness(t *testing.T) {
 	reg := liveness.NewRegistry()
 	reg.RegisterWorker("query_model")
-	reg.WorkerExited("query_model", errors.New("redis dropped"))
+	reg.AddDependencyProbe("redis", 0, func(context.Context) error { return errors.New("connection refused") })
 	srv := NewHealthServer(0, reg, discardLogger())
 
-	rec := httptest.NewRecorder()
-	srv.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 after consumer exit, got %d", rec.Code)
+	if code := probe(t, srv, "/ready"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/ready during dependency outage: expected 503, got %d", code)
+	}
+	if code := probe(t, srv, "/livez"); code != http.StatusOK {
+		t.Fatalf("/livez during dependency outage: expected 200 (must NOT restart), got %d", code)
 	}
 }
 
-// TestReadyReturns503WhenHeartbeatStale proves the specific gap this incident
-// exposed: a consumer whose goroutine never returned (wedged, not exited) is
-// invisible to WorkerExited alone. The heartbeat probe must catch it too.
-func TestReadyReturns503WhenHeartbeatStale(t *testing.T) {
+// TestConsumerExitFailsBothProbes: a consumer goroutine that exited with an
+// error (e.g. a permanent bootstrap failure) must fail BOTH /ready and /livez —
+// liveness is what restarts the pod.
+func TestConsumerExitFailsBothProbes(t *testing.T) {
 	reg := liveness.NewRegistry()
 	reg.RegisterWorker("query_model")
-	reg.AddProbe("query_model_heartbeat", 0, func(context.Context) error {
+	reg.WorkerExited("query_model", errors.New("permanent bootstrap failure: WRONGTYPE"))
+	srv := NewHealthServer(0, reg, discardLogger())
+
+	if code := probe(t, srv, "/ready"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/ready after consumer exit: expected 503, got %d", code)
+	}
+	if code := probe(t, srv, "/livez"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/livez after consumer exit: expected 503, got %d", code)
+	}
+}
+
+// TestStaleHeartbeatFailsBothProbes: a wedged (not exited) consumer surfaces as
+// a stale worker heartbeat and must fail BOTH probes.
+func TestStaleHeartbeatFailsBothProbes(t *testing.T) {
+	reg := liveness.NewRegistry()
+	reg.RegisterWorker("query_model")
+	reg.AddWorkerProbe("query_model_heartbeat", 0, func(context.Context) error {
 		return errors.New("read loop stalled — no activity for 5m0s")
 	})
 	srv := NewHealthServer(0, reg, discardLogger())
 
-	rec := httptest.NewRecorder()
-	srv.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when the read-loop heartbeat is stale, got %d", rec.Code)
+	if code := probe(t, srv, "/ready"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/ready with stale heartbeat: expected 503, got %d", code)
+	}
+	if code := probe(t, srv, "/livez"); code != http.StatusServiceUnavailable {
+		t.Fatalf("/livez with stale heartbeat: expected 503, got %d", code)
 	}
 }
 
-// TestReadyReturns503WhenDependencyProbeFails: a failed Redis/Postgres ping
-// must also flip readiness.
-func TestReadyReturns503WhenDependencyProbeFails(t *testing.T) {
-	reg := liveness.NewRegistry()
-	reg.AddProbe("postgres", 0, func(context.Context) error { return errors.New("down") })
-	srv := NewHealthServer(0, reg, discardLogger())
-
-	rec := httptest.NewRecorder()
-	srv.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when a dependency probe fails, got %d", rec.Code)
-	}
-}
-
-// TestHealthAlwaysHealthy: /health stays a pure "process is up" liveness
-// check, independent of the registry.
+// TestHealthAlwaysHealthy: /health stays a pure "process is up" probe.
 func TestHealthAlwaysHealthy(t *testing.T) {
 	reg := liveness.NewRegistry()
 	reg.RegisterWorker("query_model")
 	reg.WorkerExited("query_model", errors.New("dead"))
 	srv := NewHealthServer(0, reg, discardLogger())
 
-	rec := httptest.NewRecorder()
-	srv.server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 from /health regardless of registry state, got %d", rec.Code)
+	if code := probe(t, srv, "/health"); code != http.StatusOK {
+		t.Fatalf("expected 200 from /health regardless of registry state, got %d", code)
 	}
 }

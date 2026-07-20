@@ -252,3 +252,93 @@ func TestConsumerName_StablePerHost(t *testing.T) {
 	assert.True(t, len(a) > len("state-task-status-updated"),
 		"consumer name must include a per-pod suffix")
 }
+
+// ── [P2] permanent-vs-transient bootstrap error classification ──────────────
+
+// TestIsPermanentBootstrapError classifies the server-error tokens that no
+// retry can clear (permanent) apart from the connection/loading states the
+// bootstrap loop must keep retrying (transient). Pure unit test, no Redis.
+func TestIsPermanentBootstrapError(t *testing.T) {
+	permanent := []string{
+		"failed to create consumer group: WRONGTYPE Operation against a key holding the wrong kind of value",
+		"WRONGPASS invalid username-password pair or user is disabled.",
+		"NOAUTH Authentication required.",
+		"NOPERM this user has no permissions to run the 'xgroup|create' command",
+		"ERR unknown command 'XGROUP', with args beginning with:",
+		"ERR unknown subcommand 'CREATE'",
+	}
+	for _, m := range permanent {
+		assert.Truef(t, isPermanentBootstrapError(errors.New(m)), "must be permanent: %s", m)
+	}
+
+	transient := []string{
+		"failed to create consumer group: dial tcp 10.0.0.1:6379: connect: connection refused",
+		"read tcp 10.0.0.1:52814->10.0.0.2:6379: i/o timeout",
+		"LOADING Redis is loading the dataset in memory",
+		"CLUSTERDOWN The cluster is down",
+		"MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to 'no'.",
+	}
+	for _, m := range transient {
+		assert.Falsef(t, isPermanentBootstrapError(errors.New(m)), "must be transient: %s", m)
+	}
+
+	assert.False(t, isPermanentBootstrapError(nil), "nil is not a permanent error")
+}
+
+// ── [P1b] bounded handler deadline + per-attempt heartbeat ──────────────────
+
+// TestSafeInvoke_AdvancesHeartbeatBeforeRunning proves the heartbeat advances
+// at the START of each handler attempt, so a legitimately-slow handler keeps
+// the liveness heartbeat fresh instead of freezing it at the read-loop
+// iteration timestamp. We stall a stale heartbeat, block the handler mid-flight,
+// and assert Healthy already reads fresh while the handler is still running.
+func TestSafeInvoke_AdvancesHeartbeatBeforeRunning(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c := testConsumer(func(context.Context, goredis.XMessage) error {
+		close(started)
+		<-release
+		return nil
+	})
+	// Pretend the loop last made progress an hour ago.
+	c.lastActivity.Store(time.Now().Add(-time.Hour).UnixNano())
+
+	go func() { _ = c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"}) }()
+
+	<-started // handler is now blocked mid-flight
+	assert.NoError(t, c.Healthy(time.Second),
+		"the heartbeat must be advanced at handler start, so a slow in-flight handler never trips liveness")
+	close(release)
+}
+
+// TestSafeInvoke_BoundsHandlerWithDeadline proves a configured handler timeout
+// unblocks a handler that would otherwise hang: the handler waits on ctx.Done()
+// and safeInvoke returns a DeadlineExceeded error promptly.
+func TestSafeInvoke_BoundsHandlerWithDeadline(t *testing.T) {
+	c := testConsumer(func(ctx context.Context, _ goredis.XMessage) error {
+		<-ctx.Done() // a well-behaved handler observes cancellation and returns
+		return ctx.Err()
+	})
+	c.SetHandlerTimeout(50 * time.Millisecond)
+
+	start := time.Now()
+	err := c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"})
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, elapsed, 2*time.Second, "the deadline must unblock the handler well before this bound")
+}
+
+// TestSafeInvoke_NoDeadlineWhenTimeoutUnset confirms the default (0) leaves the
+// handler context unbounded, preserving behaviour for callers that do not opt
+// in (e.g. orchestrator/state).
+func TestSafeInvoke_NoDeadlineWhenTimeoutUnset(t *testing.T) {
+	var hadDeadline bool
+	c := testConsumer(func(ctx context.Context, _ goredis.XMessage) error {
+		_, hadDeadline = ctx.Deadline()
+		return nil
+	})
+	require.NoError(t, c.safeInvoke(context.Background(), goredis.XMessage{ID: "1-0"}))
+	assert.False(t, hadDeadline, "an unset handler timeout must not impose a deadline on the handler context")
+}

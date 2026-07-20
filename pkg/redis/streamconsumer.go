@@ -46,17 +46,32 @@ type StreamConsumer struct {
 	// without a live Redis connection.
 	ackFn func(ctx context.Context, id string)
 
-	// lastActivity is the unix-nano timestamp of the most recent read-loop
-	// iteration, stored via atomic.Int64 so Healthy can be polled from the HTTP
-	// health handler's goroutine without racing Start's loop. It advances once
-	// per iteration regardless of outcome — including a failed read during a
-	// Redis outage — because the point is distinguishing "the loop is alive and
+	// lastActivity is the unix-nano timestamp of the most recent unit of read-
+	// loop progress, stored via atomic.Int64 so Healthy can be polled from the
+	// HTTP health handler's goroutine without racing the loop. It advances once
+	// per loop iteration AND once per handler attempt (see safeInvoke), so a
+	// batch of messages — or a single legitimately-slow handler — keeps the
+	// heartbeat fresh rather than freezing it for the whole readAndProcess call.
+	// It advances regardless of outcome — including a failed read during a Redis
+	// outage — because the point is distinguishing "the loop is alive and
 	// retrying" from "the loop is wedged or has exited," not "the last read
 	// succeeded." A Redis outage alone must never read as unhealthy here: the
 	// read loop already retries indefinitely, so flagging that as unhealthy
 	// would just add readiness-flap noise on top of a condition the consumer is
 	// already handling correctly.
 	lastActivity atomic.Int64
+
+	// handlerTimeout, when > 0, bounds each handler invocation with a context
+	// deadline so a genuinely-hung handler eventually returns control to the
+	// loop (which then iterates and re-advances the heartbeat). It is set once
+	// before Start via SetHandlerTimeout, so it is read-only for the lifetime of
+	// the running loop and needs no synchronisation. The liveness heartbeat-
+	// stale budget each caller passes to Healthy MUST be larger than this
+	// timeout plus a margin, so legitimate in-flight work never trips liveness
+	// while a true wedge (a handler that ignores ctx and never returns) still
+	// trips within budget. 0 (the default) leaves the handler unbounded, which
+	// preserves the pre-existing behaviour for callers that do not opt in.
+	handlerTimeout time.Duration
 }
 
 // ConsumerOption tunes optional behaviour on a StreamConsumer.
@@ -96,6 +111,21 @@ func WithWorkerPool(n int, aggregateKeyField string) ConsumerOption {
 		c.aggregateKeyField = aggregateKeyField
 	}
 }
+
+// WithHandlerTimeout bounds each handler invocation with a context deadline of
+// d (see the handlerTimeout field). Pass d <= 0 to leave handlers unbounded
+// (the default). Callers that wire the consumer's heartbeat into a liveness
+// probe should set this and choose a heartbeat-stale budget larger than d.
+func WithHandlerTimeout(d time.Duration) ConsumerOption {
+	return func(c *StreamConsumer) { c.handlerTimeout = d }
+}
+
+// SetHandlerTimeout sets the per-handler context-deadline budget (see the
+// handlerTimeout field). It must be called before Start — callers that receive
+// an already-constructed consumer (e.g. from a per-stream binding factory) use
+// this to opt in without threading an option through every factory. The write
+// happens-before the Start goroutine, so no synchronisation is required.
+func (c *StreamConsumer) SetHandlerTimeout(d time.Duration) { c.handlerTimeout = d }
 
 // consumerName derives a stable, per-pod consumer name. Reusing the same name
 // across process restarts means the consumer group registry does not grow an
@@ -179,6 +209,24 @@ var transientRetryBackoffs = []time.Duration{
 // layer is the primary poison defense (it returns ErrPermanent before any
 // panic can happen); this recover is defense in depth for future handlers.
 func (c *StreamConsumer) safeInvoke(ctx context.Context, msg goredis.XMessage) (err error) {
+	// Advance the heartbeat at each handler attempt (not just once per read-loop
+	// iteration) so a batch of up to Count messages — or a single legitimately-
+	// slow handler such as remediation-agent's LLM calls — keeps the liveness
+	// heartbeat fresh instead of going stale mid-work and getting the pod
+	// restarted underneath in-flight work.
+	c.lastActivity.Store(time.Now().UnixNano())
+
+	// Bound the handler with a deadline when configured so a genuinely-hung
+	// handler eventually returns control to the loop. The caller's heartbeat-
+	// stale budget is deliberately larger than this timeout, so this bounds
+	// legitimate work without tripping liveness; a handler that ignores ctx and
+	// never returns still trips liveness once the heartbeat goes stale.
+	if c.handlerTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.handlerTimeout)
+		defer cancel()
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			c.logger.Error("Handler panicked — recovered to keep the consumer alive",
@@ -230,11 +278,24 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 	// launches Start once in a goroutine and never calls it again on failure, so
 	// that one-shot failure would permanently kill the consumer even though the
 	// read loop it never reached is fully capable of surviving that same outage.
+	//
+	// A PERMANENT bootstrap error (a wrong-typed stream key, an ACL/auth denial,
+	// an unknown command) is the exception: no amount of retrying clears it, so
+	// looping forever would keep the pod ready+live while it consumes nothing
+	// and never fires WorkerExited. Those are returned instead, so the caller's
+	// WorkerExited(name, err) records the failure — readiness fails and it is
+	// logged loudly — rather than silently masking the misconfiguration.
 	for {
 		c.lastActivity.Store(time.Now().UnixNano())
 		err := c.ensureConsumerGroup(ctx)
 		if err == nil {
 			break
+		}
+		if isPermanentBootstrapError(err) {
+			c.logger.Error("Permanent consumer-group bootstrap failure — not retrying (surfacing to health)",
+				"stream", c.streamName, "group", c.consumerGroup, "error", err)
+			return fmt.Errorf("permanent consumer-group bootstrap failure for stream %q group %q: %w",
+				c.streamName, c.consumerGroup, err)
 		}
 		c.logger.Error("Failed to ensure consumer group at startup — retrying",
 			"stream", c.streamName, "group", c.consumerGroup, "error", err)
@@ -288,17 +349,21 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 	}
 }
 
-// Healthy reports whether the read loop has iterated within maxStale. It
+// Healthy reports whether the read loop has made progress within maxStale. It
 // returns nil whenever the loop is cycling — including throughout a Redis
 // outage, since the loop's own retry-with-backoff already handles that case
-// and a transient dial error is not itself a liveness failure. A non-nil
-// error means the goroutine has stopped making progress: wedged in a call
-// that never returns control (no context deadline on the path that hung), or
-// it exited some way other than Start's normal ctx.Done() return. That is
-// exactly the failure mode an HTTP liveness probe cannot see on its own — the
-// process and its HTTP server stay up while a consumer goroutine is dead — so
-// callers should wire this into a liveness/readiness registry probe (see
-// pkg/liveness) rather than relying on "is the HTTP server up."
+// and a transient dial error is not itself a liveness failure, and including
+// while a legitimately-slow-but-bounded handler is in flight, since each
+// handler attempt advances the heartbeat before running (see safeInvoke). A
+// non-nil error means the goroutine has stopped making progress: a handler
+// that ignores its (deadline-bounded) context and never returns, or a
+// goroutine that exited some way other than Start's normal ctx.Done() return.
+// That is exactly the failure mode an HTTP liveness probe cannot see on its
+// own — the process and its HTTP server stay up while a consumer goroutine is
+// dead — so callers should wire this into a liveness probe (see pkg/liveness'
+// AddWorkerProbe). maxStale MUST exceed the consumer's handlerTimeout (see
+// WithHandlerTimeout / SetHandlerTimeout) plus a margin, so in-flight work
+// never trips liveness while a true wedge still does.
 func (c *StreamConsumer) Healthy(maxStale time.Duration) error {
 	last := c.lastActivity.Load()
 	if last == 0 {
@@ -310,6 +375,42 @@ func (c *StreamConsumer) Healthy(maxStale time.Duration) error {
 			c.streamName, c.consumerGroup, age.Round(time.Second), lastAt.Format(time.RFC3339))
 	}
 	return nil
+}
+
+// permanentBootstrapErrorPrefixes are Redis server-error tokens that no retry
+// can ever clear: the stream key exists as a non-stream type (WRONGTYPE), the
+// connection is authenticated wrong or lacks permission (WRONGPASS / NOAUTH /
+// NOPERM), or the server does not implement the command (unknown command /
+// subcommand). These are deterministic misconfigurations, distinct from the
+// transient conditions the bootstrap loop rightly retries through — connection
+// refused, i/o timeout, LOADING, CLUSTERDOWN, MASTERDOWN, TRYAGAIN, and the
+// like all fall through as transient. BUSYGROUP never reaches here because
+// ensureConsumerGroup treats it as success.
+var permanentBootstrapErrorPrefixes = []string{
+	"WRONGTYPE",
+	"WRONGPASS",
+	"NOAUTH",
+	"NOPERM",
+	"unknown command",
+	"unknown subcommand",
+}
+
+// isPermanentBootstrapError reports whether an ensureConsumerGroup error is a
+// permanent misconfiguration that retrying will never fix. Everything not
+// matched here — crucially every network/connection error and every transient
+// server state — is treated as retryable, so a real Redis outage still gets the
+// indefinite log-and-backoff retry.
+func isPermanentBootstrapError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	for _, p := range permanentBootstrapErrorPrefixes {
+		if strings.Contains(msg, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *StreamConsumer) ensureConsumerGroup(ctx context.Context) error {

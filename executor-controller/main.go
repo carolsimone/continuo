@@ -28,15 +28,21 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// consumerHeartbeatStale is how long a stream consumer's read loop may go
-// without an iteration before the readiness probe considers it stalled — not
-// "erroring while it retries" (that path advances the heartbeat every
-// iteration; see pkg/redis.StreamConsumer.Healthy) but genuinely wedged:
-// blocked in a call that never returns, or a goroutine that exited some way
-// other than Start's normal ctx.Done() path. Set well above the loop's normal
-// cadence (an iteration happens at least every ~1-4s even mid-outage) so a
-// slow-but-alive loop is never flagged.
-const consumerHeartbeatStale = 30 * time.Second
+// consumerHandlerTimeout bounds each message handler invocation with a context
+// deadline, so a genuinely-hung handler eventually returns control to the read
+// loop. These handlers do short DB writes and K8s job dispatch (they never
+// block waiting on a job to finish — completion arrives as a separate event),
+// so 60s far exceeds any legitimate invocation while still bounding a wedge.
+const consumerHandlerTimeout = 60 * time.Second
+
+// consumerHeartbeatStale is the liveness heartbeat budget: how long a consumer's
+// read loop may make no progress before the liveness probe restarts the pod. It
+// MUST exceed consumerHandlerTimeout plus a margin so a legitimately in-flight
+// handler never trips liveness (the heartbeat advances per handler attempt; see
+// pkg/redis.StreamConsumer.safeInvoke), while a true wedge — a handler that
+// ignores its deadline, or a goroutine that stopped iterating — still trips
+// within budget.
+const consumerHeartbeatStale = 3 * time.Minute
 
 func main() {
 	// Setup structured logger
@@ -61,22 +67,24 @@ func main() {
 	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
 	lifecycleManager.SetupSignalHandlers(ctx, cancel)
 
-	// Liveness registry feeding /ready (deploy config points BOTH the
-	// readiness AND liveness Kubernetes probes at it — see
-	// deploy/continuo/values.yaml). Tracks background workers (consumers,
-	// outbox processor, deploy dispatcher) plus cached dependency probes, so a
-	// wedged or exited consumer restarts the pod instead of leaving it at
-	// 1/1 Running with a dead background loop nothing else can see.
+	// Health registry feeding /ready (readiness) and /livez (liveness) — deploy
+	// config points the two Kubernetes probes at those DIFFERENT paths (see
+	// deploy/continuo/values.yaml). Worker registrations and consumer heartbeats
+	// feed both checks (a dead/wedged consumer restarts the pod); dependency
+	// probes (Redis/Postgres/dbt-warehouse) feed readiness ONLY (a backing-store
+	// outage stops traffic but must not restart a pod whose consumers are already
+	// retrying).
 	liveReg := liveness.NewRegistry()
 
-	// runConsumer starts a tracked stream consumer: RegisterWorker before
-	// launch so a missing worker is observable from the first probe,
-	// WorkerExited when Start returns (a non-nil error is a genuine unhandled
-	// exit — Start's own retry loop already absorbs transient Redis errors),
-	// and a heartbeat probe so a wedged-but-not-exited loop is caught too.
+	// runConsumer starts a tracked stream consumer: a bounded handler deadline
+	// so a hung handler eventually returns; RegisterWorker before launch so a
+	// missing worker is observable; WorkerExited when Start returns (which now
+	// happens on a permanent bootstrap error too, not only clean shutdown); and
+	// a worker heartbeat probe so a wedged-but-not-exited loop is caught.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		consumer.SetHandlerTimeout(consumerHandlerTimeout)
 		liveReg.RegisterWorker(name)
-		liveReg.AddProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
+		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
 			return consumer.Healthy(consumerHeartbeatStale)
 		})
 		go func() {
