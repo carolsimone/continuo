@@ -1,26 +1,32 @@
-package publisher
+package publisher_test
 
 import (
+	"context"
 	"encoding/json"
-	"log/slog"
-	"os"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/carolsimone/continuo/k8s-controller/adapters/delayqueue"
+	"github.com/carolsimone/continuo/k8s-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestToValues_CheckDelayed_EmitsPayloadAndFlatCheckAfter verifies a check_delayed
-// outbox row is published to check.k8s:v1 as a typed JSON payload, with the
-// scheduling timestamp (check_after) kept as a flat sibling field so the binding
-// can gate re-delivery before decoding the payload.
-func TestToValues_CheckDelayed_EmitsPayloadAndFlatCheckAfter(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	p := NewOutboxPublisher(nil, logger)
+// TestPublish_CheckDelayed_WritesDelayQueueNotStream proves a check_delayed
+// outbox row is HSET+ZADD'd into the delay queue keyed by JobName, and NOT
+// XADD'd to check.k8s:v1 — removing the self-recirculating stream timer (#282).
+func TestPublish_CheckDelayed_WritesDelayQueueNotStream(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	r := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	pub := publisher.NewOutboxPublisher(r, newTestLogger())
 
 	taskID := uuid.New().String()
 	scheduleID := uuid.New().String()
@@ -40,17 +46,24 @@ func TestToValues_CheckDelayed_EmitsPayloadAndFlatCheckAfter(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	vals, err := p.toValues(&outbox.Entry{EventType: "check_delayed", Payload: raw})
+	ctx := context.Background()
+	require.NoError(t, pub.Publish(ctx, &outbox.Entry{
+		ID: uuid.New(), EventType: "check_delayed", StreamName: streams.CheckK8sV1, Payload: raw,
+	}))
+
+	// The stream must NOT have received this check.
+	xlen, err := r.XLen(ctx, streams.CheckK8sV1).Result()
 	require.NoError(t, err)
+	assert.Equal(t, int64(0), xlen, "check_delayed must not XADD the stream anymore")
 
-	// check_after stays a flat field for the consumer-side delay gate.
-	assert.Equal(t, "12345", vals["check_after"])
-	// Business fields move into the typed JSON payload, not flat keys.
-	_, hasFlatTaskID := vals["task_id"]
-	assert.False(t, hasFlatTaskID, "task_id must not be a flat field anymore")
+	// The ZSET holds the due time keyed by JobName.
+	score, err := r.ZScore(ctx, delayqueue.PendingKey, "job-1").Result()
+	require.NoError(t, err)
+	assert.Equal(t, float64(12345), score)
 
-	payloadStr, ok := vals["payload"].(string)
-	require.True(t, ok, "expected a string payload field")
+	// The HASH holds the typed CheckK8s payload, business fields intact.
+	payloadStr, err := r.HGet(ctx, delayqueue.TicketsKey, "job-1").Result()
+	require.NoError(t, err)
 	var ck pkgevents.CheckK8s
 	require.NoError(t, json.Unmarshal([]byte(payloadStr), &ck))
 	assert.Equal(t, pkgevents.CheckK8s{
@@ -68,11 +81,14 @@ func TestToValues_CheckDelayed_EmitsPayloadAndFlatCheckAfter(t *testing.T) {
 	}, ck)
 }
 
-// TestToValues_CheckDelayed_CarriesRunningAnnounced verifies running_announced
-// survives the check_delayed → check.k8s:v1 typed-payload conversion.
-func TestToValues_CheckDelayed_CarriesRunningAnnounced(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	p := NewOutboxPublisher(nil, logger)
+// TestPublish_CheckDelayed_CarriesRunningAnnounced verifies running_announced
+// survives the check_delayed → delay-queue typed-payload conversion.
+func TestPublish_CheckDelayed_CarriesRunningAnnounced(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	t.Cleanup(mr.Close)
+	r := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	pub := publisher.NewOutboxPublisher(r, newTestLogger())
 
 	raw, err := json.Marshal(event.JobCheckRequest{
 		TaskID:           uuid.New().String(),
@@ -82,10 +98,13 @@ func TestToValues_CheckDelayed_CarriesRunningAnnounced(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	vals, err := p.toValues(&outbox.Entry{EventType: "check_delayed", Payload: raw})
-	require.NoError(t, err)
+	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
+		ID: uuid.New(), EventType: "check_delayed", StreamName: streams.CheckK8sV1, Payload: raw,
+	}))
 
+	payloadStr, err := r.HGet(context.Background(), delayqueue.TicketsKey, "job-1").Result()
+	require.NoError(t, err)
 	var ck pkgevents.CheckK8s
-	require.NoError(t, json.Unmarshal([]byte(vals["payload"].(string)), &ck))
-	assert.True(t, ck.RunningAnnounced, "running_announced must survive check_delayed → check.k8s:v1 conversion")
+	require.NoError(t, json.Unmarshal([]byte(payloadStr), &ck))
+	assert.True(t, ck.RunningAnnounced, "running_announced must survive check_delayed → delay-queue conversion")
 }

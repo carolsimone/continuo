@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
 
+	"github.com/carolsimone/continuo/k8s-controller/adapters/delayqueue"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
@@ -38,9 +38,16 @@ func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
 // Redis.
 const streamMaxLen = 10000
 
-// Publish unmarshals entry.Payload into the typed event struct for
-// entry.EventType and XADDs the resulting field map to entry.StreamName.
+// Publish routes an outbox row to Redis. Most event types XADD their typed
+// field map to entry.StreamName. The check.k8s scheduling event (check_delayed)
+// is the exception: it is written to the delay queue (HSET payload + ZADD due
+// time) instead of the stream, so a not-yet-due check no longer self-recirculates
+// on the stream (the #282 root cause). The promoter later moves it to the stream
+// when due.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
+	if entry.EventType == "check_delayed" {
+		return p.scheduleDelayedCheck(ctx, entry)
+	}
 	args, err := p.xaddArgs(entry)
 	if err != nil {
 		return err
@@ -49,6 +56,42 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 		return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
 	}
 	return nil
+}
+
+// scheduleDelayedCheck converts a check_delayed outbox row into the typed
+// CheckK8s payload and enqueues it in the delay queue keyed by JobName.
+func (p *OutboxPublisher) scheduleDelayedCheck(ctx context.Context, entry *outbox.Entry) error {
+	var e event.JobCheckRequest
+	if err := json.Unmarshal(entry.Payload, &e); err != nil {
+		return fmt.Errorf("unmarshal check_delayed: %w", err)
+	}
+	retryCount, err := num.Int32(e.RetryCount, "retry_count")
+	if err != nil {
+		return fmt.Errorf("check.k8s payload: %w", err)
+	}
+	maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
+	if err != nil {
+		return fmt.Errorf("check.k8s payload: %w", err)
+	}
+	payload, err := json.Marshal(pkgevents.CheckK8s{
+		TaskID:           e.TaskID,
+		ScheduleID:       e.ScheduleID,
+		ScheduleName:     e.ScheduleName,
+		ServiceName:      e.ServiceName,
+		SchemaName:       e.SchemaName,
+		TableName:        e.TableName,
+		JobName:          e.JobName,
+		NodeType:         e.NodeType,
+		ImageTag:         e.ImageTag,
+		Operation:        e.Operation,
+		RetryCount:       retryCount,
+		MaxRetries:       maxRetries,
+		RunningAnnounced: e.RunningAnnounced,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal check.k8s payload: %w", err)
+	}
+	return delayqueue.Schedule(ctx, p.redis, e.JobName, string(payload), e.CheckAfter)
 }
 
 // xaddArgs builds the XADD arguments for an outbox entry, including the shared
@@ -101,45 +144,6 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 			return nil, fmt.Errorf("unmarshal task_failed: %w", err)
 		}
 		return e.ToMap(), nil
-
-	case "check_delayed":
-		var e event.JobCheckRequest
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal check_delayed: %w", err)
-		}
-		// The typed event travels in the JSON payload; check_after stays a flat
-		// field so the binding's delay gate can read it without decoding the
-		// payload, and so re-circulated copies preserve the schedule.
-		retryCount, err := num.Int32(e.RetryCount, "retry_count")
-		if err != nil {
-			return nil, fmt.Errorf("check.k8s payload: %w", err)
-		}
-		maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
-		if err != nil {
-			return nil, fmt.Errorf("check.k8s payload: %w", err)
-		}
-		payload, err := json.Marshal(pkgevents.CheckK8s{
-			TaskID:           e.TaskID,
-			ScheduleID:       e.ScheduleID,
-			ScheduleName:     e.ScheduleName,
-			ServiceName:      e.ServiceName,
-			SchemaName:       e.SchemaName,
-			TableName:        e.TableName,
-			JobName:          e.JobName,
-			NodeType:         e.NodeType,
-			ImageTag:         e.ImageTag,
-			Operation:        e.Operation,
-			RetryCount:       retryCount,
-			MaxRetries:       maxRetries,
-			RunningAnnounced: e.RunningAnnounced,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("marshal check.k8s payload: %w", err)
-		}
-		return map[string]interface{}{
-			"payload":     string(payload),
-			"check_after": strconv.FormatInt(e.CheckAfter, 10),
-		}, nil
 
 	case "node_status_updated":
 		var e event.NodeStatusUpdated
