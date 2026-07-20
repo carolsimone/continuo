@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -178,10 +179,13 @@ func TestStreamConsumer_Healthy_ReflectsHeartbeatFreshness(t *testing.T) {
 	c.lastActivity.Store(time.Now().UnixNano())
 	assert.NoError(t, c.Healthy(time.Minute), "a fresh heartbeat must clear the unhealthy state")
 
+	// A zero-value consumer (lastActivity never set — only possible in tests,
+	// since NewStreamConsumer seeds it) reads as 1970 and therefore stalled,
+	// which is the correct unhealthy answer for something that never ran.
 	var neverStarted StreamConsumer
 	err = neverStarted.Healthy(time.Minute)
 	require.Error(t, err, "a consumer with no recorded activity must read unhealthy, not panic")
-	assert.Contains(t, err.Error(), "has not started")
+	assert.Contains(t, err.Error(), "stalled")
 }
 
 // TestStreamConsumer_Start_SurvivesConnectionErrors_WithoutExiting is the
@@ -268,5 +272,71 @@ func TestStreamConsumer_Start_PermanentBootstrapError_ReturnsSoHealthSurfaces(t 
 		assert.Equal(t, int32(0), received.Load(), "the handler must never run on a permanent bootstrap failure")
 	case <-time.After(5 * time.Second):
 		t.Fatal("Start did not return on a permanent bootstrap error — it looped silently instead of surfacing it")
+	}
+}
+
+// TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries is
+// the [#1] regression: a message that fails transiently on every reclaim sweep
+// (e.g. a handler that keeps timing out — DeadlineExceeded is NOT ErrPermanent,
+// so shouldAck never ACKs it) would otherwise cycle in the PEL forever. Once its
+// PEL delivery counter passes maxDeliveries, the reclaim path must ACK-drop it so
+// the loop makes progress. We drive reclaimPending directly with a 0 idle gate
+// and an always-failing handler, and assert the message leaves the PEL rather
+// than redelivering indefinitely.
+func TestStreamConsumer_ReclaimPath_PoisonMessageQuarantinedAfterMaxDeliveries(t *testing.T) {
+	rc := internalRedisClient(t)
+	ctx := context.Background()
+
+	stream := fmt.Sprintf("test-stream-poison-%d", time.Now().UnixNano())
+	group := "test-group"
+	t.Cleanup(func() { rc.Del(ctx, stream) })
+
+	require.NoError(t, rc.XGroupCreateMkStream(ctx, stream, group, "0").Err())
+
+	msgID, err := rc.XAdd(ctx, &goredis.XAddArgs{Stream: stream, Values: map[string]interface{}{"k": "v"}}).Result()
+	require.NoError(t, err)
+
+	// Seed the PEL: a first delivery to some consumer moves the entry into the
+	// group's PEL with delivery count 1. reclaimPending's XAUTOCLAIM then claims
+	// it (bumping the counter) on each sweep.
+	_, err = rc.XReadGroup(ctx, &goredis.XReadGroupArgs{
+		Group: group, Consumer: "seed-consumer", Streams: []string{stream, ">"}, Count: 10,
+	}).Result()
+	require.NoError(t, err)
+
+	var calls atomic.Int32
+	poison := func(context.Context, goredis.XMessage) error {
+		calls.Add(1)
+		return errors.New("transient handler failure that never clears")
+	}
+	// MinIdle 0 so every sweep is eligible immediately.
+	c := NewStreamConsumer(rc, stream, group, poison, discardLog(), WithReclaimMinIdle(0))
+
+	pendingCount := func() int64 {
+		res, perr := rc.XPending(ctx, stream, group).Result()
+		require.NoError(t, perr)
+		return res.Count
+	}
+
+	// Sweep repeatedly. Each XAUTOCLAIM bumps the delivery counter; once it
+	// exceeds maxDeliveries the message is ACK-dropped and the PEL empties.
+	require.Eventually(t, func() bool {
+		require.NoError(t, c.reclaimPending(ctx))
+		return pendingCount() == 0
+	}, 10*time.Second, 50*time.Millisecond,
+		"a poison message must be ACK-dropped once it exceeds maxDeliveries, not cycle in the PEL forever")
+
+	// It was genuinely retried several times before being dropped (i.e. it was a
+	// poison message, not a one-shot drop), and it is gone from the PEL. (Exact
+	// count depends on when the PEL delivery counter crosses the bound; assert a
+	// safe lower bound rather than an exact value.)
+	assert.GreaterOrEqual(t, calls.Load(), int32(3),
+		"the message should have been retried multiple times before quarantine, not dropped on first failure")
+	pend, err := rc.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: stream, Group: group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	require.NoError(t, err)
+	for _, p := range pend {
+		assert.NotEqual(t, msgID, p.ID, "the quarantined message must no longer be pending")
 	}
 }

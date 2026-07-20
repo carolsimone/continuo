@@ -253,34 +253,55 @@ func TestConsumerName_StablePerHost(t *testing.T) {
 		"consumer name must include a per-pod suffix")
 }
 
-// ── [P2] permanent-vs-transient bootstrap error classification ──────────────
+// ── [P2/#4] permanent-vs-transient bootstrap error classification ───────────
 
-// TestIsPermanentBootstrapError classifies the server-error tokens that no
-// retry can clear (permanent) apart from the connection/loading states the
-// bootstrap loop must keep retrying (transient). Pure unit test, no Redis.
+// fakeRedisErr implements the goredis.Error interface (Error + RedisError) so
+// tests can construct genuine Redis reply-errors — the only thing
+// goredis.HasErrorPrefix will match — without a live server.
+type fakeRedisErr string
+
+func (e fakeRedisErr) Error() string { return string(e) }
+func (e fakeRedisErr) RedisError()   {}
+
+// TestIsPermanentBootstrapError pins the narrowed [#2] classification and the
+// robust [#4] prefix matching. Pure unit test, no Redis.
 func TestIsPermanentBootstrapError(t *testing.T) {
-	permanent := []string{
-		"failed to create consumer group: WRONGTYPE Operation against a key holding the wrong kind of value",
-		"WRONGPASS invalid username-password pair or user is disabled.",
-		"NOAUTH Authentication required.",
-		"NOPERM this user has no permissions to run the 'xgroup|create' command",
-		"ERR unknown command 'XGROUP', with args beginning with:",
-		"ERR unknown subcommand 'CREATE'",
+	// Structurally-permanent Redis reply errors (wrapping is transparent).
+	permanent := []error{
+		fmt.Errorf("failed to create consumer group: %w",
+			fakeRedisErr("WRONGTYPE Operation against a key holding the wrong kind of value")),
+		fakeRedisErr("ERR unknown command 'XGROUP', with args beginning with:"),
+		fakeRedisErr("ERR unknown subcommand 'CREATE'"),
 	}
-	for _, m := range permanent {
-		assert.Truef(t, isPermanentBootstrapError(errors.New(m)), "must be permanent: %s", m)
+	for _, e := range permanent {
+		assert.Truef(t, isPermanentBootstrapError(e), "must be permanent: %v", e)
 	}
 
-	transient := []string{
-		"failed to create consumer group: dial tcp 10.0.0.1:6379: connect: connection refused",
-		"read tcp 10.0.0.1:52814->10.0.0.2:6379: i/o timeout",
-		"LOADING Redis is loading the dataset in memory",
-		"CLUSTERDOWN The cluster is down",
-		"MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to 'no'.",
+	// Auth-class Redis errors are NOT permanent [#2]: a password rotation race
+	// or ACL-propagation lag is transient, so these must retry (not crashloop
+	// the fleet). Plus the ordinary transient server states.
+	transientRedis := []error{
+		fakeRedisErr("WRONGPASS invalid username-password pair or user is disabled."),
+		fakeRedisErr("NOAUTH Authentication required."),
+		fakeRedisErr("NOPERM this user has no permissions to run the 'xgroup|create' command"),
+		fakeRedisErr("LOADING Redis is loading the dataset in memory"),
+		fakeRedisErr("CLUSTERDOWN The cluster is down"),
 	}
-	for _, m := range transient {
-		assert.Falsef(t, isPermanentBootstrapError(errors.New(m)), "must be transient: %s", m)
+	for _, e := range transientRedis {
+		assert.Falsef(t, isPermanentBootstrapError(e), "must be transient: %v", e)
 	}
+
+	// [#4] robustness: a NON-Redis error (e.g. a network error) whose text
+	// merely CONTAINS — or even starts with — a permanent token must not be
+	// misclassified, because it is not a Redis reply-error at all.
+	assert.False(t, isPermanentBootstrapError(errors.New("unknown command received from a proxy: connection reset")),
+		"a non-Redis error must never be classified permanent, even if its text starts with a token")
+	assert.False(t, isPermanentBootstrapError(errors.New("dial tcp 10.0.0.1:6379: connect: connection refused")))
+
+	// [#4] a genuine Redis error that merely CONTAINS a token mid-message (not
+	// as the reply-error code prefix) must not match either.
+	assert.False(t, isPermanentBootstrapError(fakeRedisErr("ERR background save failed; WRONGTYPE appeared in a log line")),
+		"a token that is not the reply-error code prefix must not match")
 
 	assert.False(t, isPermanentBootstrapError(nil), "nil is not a permanent error")
 }

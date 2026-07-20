@@ -200,6 +200,17 @@ var transientRetryBackoffs = []time.Duration{
 	100 * time.Millisecond,
 }
 
+// maxDeliveries bounds how many times a message may be redelivered through the
+// reclaim (PEL) sweep before it is treated as poison and ACK-dropped. A message
+// that keeps failing every sweep — a handler bug, a payload the handler can
+// never process, or a handler that repeatedly exceeds its timeout (whose error
+// is context.DeadlineExceeded, NOT events.ErrPermanent, so it would otherwise
+// never be dropped) — would cycle in the PEL forever, never ACKed and never
+// surfaced. Past this bound the reclaim path drops it with a loud error log
+// (same visibility as an ErrPermanent drop) so the loop keeps making progress.
+// The comparison is against the XAUTOCLAIM/PEL delivery counter.
+const maxDeliveries = 5
+
 // safeInvoke calls the handler with panic recovery. A panicking handler would
 // otherwise unwind through the consumer loop and kill the process; on restart
 // the same message is re-delivered from the PEL and panics again — a permanent
@@ -365,11 +376,11 @@ func (c *StreamConsumer) Start(ctx context.Context) error {
 // WithHandlerTimeout / SetHandlerTimeout) plus a margin, so in-flight work
 // never trips liveness while a true wedge still does.
 func (c *StreamConsumer) Healthy(maxStale time.Duration) error {
-	last := c.lastActivity.Load()
-	if last == 0 {
-		return fmt.Errorf("stream consumer %q/%q: read loop has not started", c.streamName, c.consumerGroup)
-	}
-	lastAt := time.Unix(0, last)
+	// lastActivity is seeded in NewStreamConsumer, so it is never the zero value
+	// for a real consumer; a zero-value consumer (only constructed in tests)
+	// reads as "1970" and therefore stalled, which is the correct unhealthy
+	// answer for something that never ran.
+	lastAt := time.Unix(0, c.lastActivity.Load())
 	if age := time.Since(lastAt); age > maxStale {
 		return fmt.Errorf("stream consumer %q/%q: read loop stalled — no activity for %s (last at %s)",
 			c.streamName, c.consumerGroup, age.Round(time.Second), lastAt.Format(time.RFC3339))
@@ -377,36 +388,40 @@ func (c *StreamConsumer) Healthy(maxStale time.Duration) error {
 	return nil
 }
 
-// permanentBootstrapErrorPrefixes are Redis server-error tokens that no retry
-// can ever clear: the stream key exists as a non-stream type (WRONGTYPE), the
-// connection is authenticated wrong or lacks permission (WRONGPASS / NOAUTH /
-// NOPERM), or the server does not implement the command (unknown command /
-// subcommand). These are deterministic misconfigurations, distinct from the
-// transient conditions the bootstrap loop rightly retries through — connection
-// refused, i/o timeout, LOADING, CLUSTERDOWN, MASTERDOWN, TRYAGAIN, and the
-// like all fall through as transient. BUSYGROUP never reaches here because
-// ensureConsumerGroup treats it as success.
+// permanentBootstrapErrorPrefixes are Redis server-error *code* prefixes that no
+// retry can ever clear, because no timing scenario makes them transient: the
+// stream key exists as a non-stream type (WRONGTYPE), or the server does not
+// implement the command at all (unknown command / subcommand). These are
+// structural misconfigurations.
+//
+// Auth-class errors (WRONGPASS / NOAUTH / NOPERM) are deliberately NOT here:
+// they can be transient — a password rotation race, or ACL propagation lag —
+// and classifying them permanent would return Start, flip liveness, and
+// crashloop the whole consumer fleet during a recoverable auth blip. They fall
+// through to the transient path instead, so an operator's fix is picked up on
+// the next retry with no pod restart. Every network/connection error and every
+// transient server state (connection refused, i/o timeout, LOADING,
+// CLUSTERDOWN, MASTERDOWN, TRYAGAIN, …) is likewise transient. BUSYGROUP never
+// reaches here because ensureConsumerGroup treats it as success.
 var permanentBootstrapErrorPrefixes = []string{
 	"WRONGTYPE",
-	"WRONGPASS",
-	"NOAUTH",
-	"NOPERM",
 	"unknown command",
 	"unknown subcommand",
 }
 
 // isPermanentBootstrapError reports whether an ensureConsumerGroup error is a
-// permanent misconfiguration that retrying will never fix. Everything not
-// matched here — crucially every network/connection error and every transient
-// server state — is treated as retryable, so a real Redis outage still gets the
-// indefinite log-and-backoff retry.
+// permanent misconfiguration that retrying will never fix. It matches against
+// the Redis RESP error-code prefix via goredis.HasErrorPrefix, which first
+// unwraps to the underlying server error (so our fmt.Errorf wrapping is
+// transparent) and only matches genuine reply-error codes — a network error, or
+// a wrapped/aggregated error whose text merely happens to contain one of these
+// tokens, is never misclassified as permanent.
 func isPermanentBootstrapError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
 	for _, p := range permanentBootstrapErrorPrefixes {
-		if strings.Contains(msg, p) {
+		if goredis.HasErrorPrefix(err, p) {
 			return true
 		}
 	}
@@ -463,22 +478,42 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 
 		var ackIDs []string
 		for _, msg := range msgs {
-			if err := c.safeInvoke(ctx, msg); err != nil {
-				if errors.Is(err, events.ErrPermanent) {
-					c.logger.Error("Permanent handler error — ACKing to drop from PEL",
-						"message_id", msg.ID,
-						"error", err,
-					)
-					// fall through to ACK
-				} else {
-					c.logger.Error("Reclaimed message still failing — leaving in PEL for next sweep",
-						"message_id", msg.ID,
-						"error", err,
-					)
-					continue // no-ACK; next periodic sweep is the retry cadence
-				}
+			err := c.safeInvoke(ctx, msg)
+			if err == nil {
+				ackIDs = append(ackIDs, msg.ID)
+				continue
 			}
-			ackIDs = append(ackIDs, msg.ID)
+			if errors.Is(err, events.ErrPermanent) {
+				c.logger.Error("Permanent handler error — ACKing to drop from PEL",
+					"message_id", msg.ID,
+					"error", err,
+				)
+				ackIDs = append(ackIDs, msg.ID)
+				continue
+			}
+			// Transient failure. Quarantine a poison message that has been
+			// redelivered past the bound so it cannot cycle in the PEL forever
+			// — this is the general safety net that also catches a handler
+			// which keeps timing out (DeadlineExceeded is not ErrPermanent).
+			if n := c.deliveryCount(ctx, msg.ID); n > maxDeliveries {
+				c.logger.Error("Poison message exceeded max deliveries — ACK-dropping to break the redelivery loop",
+					"stream", c.streamName,
+					"message_id", msg.ID,
+					"deliveries", n,
+					"max_deliveries", maxDeliveries,
+					"handler_timeout", isHandlerTimeout(err),
+					"error", err,
+				)
+				ackIDs = append(ackIDs, msg.ID)
+				continue
+			}
+			c.logger.Error("Reclaimed message still failing — leaving in PEL for next sweep",
+				"stream", c.streamName,
+				"message_id", msg.ID,
+				"handler_timeout", isHandlerTimeout(err),
+				"error", err,
+			)
+			// no-ACK; next periodic sweep is the retry cadence
 		}
 		c.ackBatch(ctx, ackIDs)
 
@@ -487,6 +522,37 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 		}
 		cursor = next
 	}
+}
+
+// deliveryCount returns the PEL delivery counter for a single message — how many
+// times it has been delivered or claimed without being ACKed. A read failure
+// returns 0, which is deliberately conservative: it never triggers a false
+// quarantine, so a transiently-unreadable PEL just leaves the message for the
+// next sweep instead of dropping live work.
+func (c *StreamConsumer) deliveryCount(ctx context.Context, id string) int64 {
+	pend, err := c.client.XPendingExt(ctx, &goredis.XPendingExtArgs{
+		Stream: c.streamName,
+		Group:  c.consumerGroup,
+		Start:  id,
+		End:    id,
+		Count:  1,
+	}).Result()
+	if err != nil {
+		c.logger.Warn("Could not read PEL delivery count — not quarantining this sweep",
+			"stream", c.streamName, "message_id", id, "error", err)
+		return 0
+	}
+	if len(pend) == 0 {
+		return 0
+	}
+	return pend[0].RetryCount
+}
+
+// isHandlerTimeout reports whether an error came from the per-handler context
+// deadline (see handlerTimeout / safeInvoke), so a handler that ran out of time
+// is logged distinctly from a generic transient failure.
+func isHandlerTimeout(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 // cleanupStaleConsumers deletes consumer-group registry entries left by previous
@@ -668,8 +734,13 @@ func (c *StreamConsumer) shouldAck(ctx context.Context, msg goredis.XMessage) bo
 		)
 		return true
 	}
-	c.logger.Error("Message still failing after in-process retries", "message_id", msg.ID, "error", err)
-	return false // no-ACK; PEL sweep remains the safety net
+	if isHandlerTimeout(err) {
+		c.logger.Error("Handler exceeded its timeout — leaving in PEL for the reclaim sweep",
+			"stream", c.streamName, "message_id", msg.ID, "error", err)
+	} else {
+		c.logger.Error("Message still failing after in-process retries", "message_id", msg.ID, "error", err)
+	}
+	return false // no-ACK; PEL sweep remains the safety net (and eventually quarantines poison)
 }
 
 // ackBatch acknowledges a page of reclaimed message IDs in a single pipelined
