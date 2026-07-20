@@ -45,7 +45,7 @@ All three streams are consumed via `pkg/redis.StreamConsumer` with per-stream pa
 | Stream | Consumer group | Binding pattern |
 |---|---|---|
 | `node.deployed:v1` | `K8sDeployed` | Full: parse → `UnitOfWork.Begin` → dedup via `pkg/messageprocessing.DedupWithOutboxEntryID` → `CheckStatusHandler.Handle` → commit |
-| `check.k8s:v1` | `K8sCheckStatus` | Full (same as above); binding also gates on `check_after`: if the timestamp is in the future, re-circulates a fresh copy via XADD and ACKs without processing |
+| `check.k8s:v1` | `K8sCheckStatus` | Full (same as above); binding also gates on `check_after`: if the timestamp is in the future, re-circulates a fresh copy via XADD (capped at `MaxLen 10000`, approximate `~` — see Stream trimming below) and ACKs without processing |
 | `schedule.cancelled:v1` | `K8sScheduleCancelled` | Lightweight: parse `schedule_id` → insert into `cancelled_schedules` guard table (idempotent); no dedup, no outbox |
 
 Production and all candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `mode=compile`) are observed over these same `node.deployed:v1` / `check.k8s:v1` consumers; there is no separate consumer group and no label-selector filter on the consumers themselves. Routing to the appropriate outbox row happens inside `CheckStatusHandler` by inspecting the live Job's labels (see Candidate-mode job routing).
@@ -129,6 +129,15 @@ The Kubernetes `readinessProbe` points at `/ready` and the `livenessProbe` at
 ### Write-time fanout (D1 pattern)
 
 Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single transaction. The `pkg/outbox.Processor` polls the table and publishes each row to its `stream_name` via `k8s-controller/adapters/publisher.OutboxPublisher`, which routes the JSONB payload to the correct typed struct per `event_type`.
+
+#### Stream trimming
+
+k8s-controller writes to its Redis streams on two paths, and **both** cap the stream at `MaxLen 10000` (approximate, `~`), bounding Redis memory for streams a consumer group may lag on:
+
+- **`OutboxPublisher`** — every published `k8s_outbox` row (all producer streams above).
+- **`check.k8s:v1` recirculation** — the not-yet-due re-enqueue XADD in the `K8sCheckStatus` binding.
+
+**Caveat:** approximate trimming can drop the oldest entries before a lagging consumer group reads them; 10000 is the accepted bound, matching state's and the orchestrator's publishers. This is the guard against an unbounded self-recirculating stream — `check.k8s:v1` previously grew to millions of entries and OOM-killed Redis (issue #282), because a stream ACK does not delete the entry.
 
 | Outcome | Rows written |
 |---|---|
