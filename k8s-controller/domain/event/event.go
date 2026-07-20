@@ -21,8 +21,8 @@ type Event interface {
 }
 
 // JobCheckRequest is the payload of a check_delayed outbox row. The Publisher
-// reads it to build the check.k8s:v1 typed event; check_after gates the
-// consumer-side re-delivery delay.
+// writes it into the delay queue (HSET payload + ZADD check_after as the
+// score); check_after is the ZSET score / due time, not a consumer gate.
 type JobCheckRequest struct {
 	TaskID       string `json:"task_id"`
 	ScheduleID   string `json:"schedule_id"`
@@ -35,8 +35,9 @@ type JobCheckRequest struct {
 	NodeType     string `json:"node_type"`
 	ImageTag     string `json:"image_tag"`
 	// Operation is the dbt verb the Job runs (e.g. "test"); empty for a normal
-	// production `dbt run`. It recirculates on every check.k8s:v1 self-poll so a
-	// check that lands after the Job is TTL-reaped still carries the verb for retry.
+	// production `dbt run`. It travels in the durable payload (delay-queue
+	// ticket → promoted stream message) so a check that lands after the Job is
+	// TTL-reaped still carries the verb for retry.
 	Operation    string `json:"operation,omitempty"`
 	RetryCount   int    `json:"retry_count"` // current task retry count
 	MaxRetries   int    `json:"max_retries"` // maximum task retries allowed

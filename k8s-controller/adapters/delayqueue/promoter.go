@@ -32,6 +32,12 @@ local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, AR
 for _, job in ipairs(due) do
   local payload = redis.call('HGET', KEYS[2], job)
   if payload then
+    -- No outbox_entry_id here (unlike the publisher's xaddArgs, which stamps it
+    -- on every XADD): this write is keyed by JobName and idempotent, so a
+    -- Processor-crash redelivery just re-runs HSET+ZADD in place rather than
+    -- duplicating a ticket, and a consumer-crash PEL redelivery reuses the same
+    -- Redis msg_id, which the primary (message_id, stream_name) dedup already
+    -- catches. The secondary outbox_entry_id dedup key is unnecessary here.
     redis.call('XADD', KEYS[3], 'MAXLEN', '~', ARGV[3], '*', 'payload', payload)
     redis.call('HDEL', KEYS[2], job)
   end
