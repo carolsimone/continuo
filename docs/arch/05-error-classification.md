@@ -31,8 +31,53 @@ Add new emitters to this table as they land.
 
 | Site | Behaviour on `errors.Is(err, events.ErrPermanent)` |
 |---|---|
-| `pkg/redis/streamconsumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND periodic reclaim. **Read path** retries plain (non-`ErrPermanent`) errors inline via `invokeWithRetry` (backoff schedule `0 / 100ms`, one quick retry then park, ~100ms budget); if both attempts fail the message is left un-ACKed in the PEL and the reclaim sweep redelivers it. Keeping the inline budget short stops one transiently-failing message from head-of-line-blocking its lane for seconds. **Reclaim path** is single-shot: the handler is called exactly once per claimed entry, and on failure the entry stays in the PEL — the next periodic sweep (every `reclaimInterval`) is the retry cadence. This split keeps the read loop responsive when a large backlog of pending entries is being swept. The sweep itself uses `XAUTOCLAIM` (cursor-paged, one round-trip per 100 entries) gated by a `MinIdle` threshold (default 30s, overridable via `WithReclaimMinIdle`) so a multi-replica deployment cannot have one replica steal an in-flight message that a peer is actively retrying. Successful and `ErrPermanent`-dropped IDs are ACKed in one pipelined `XAck` per read batch / reclaim page (ack-after-success unchanged — only resolved IDs are batched). `ErrPermanent` ACKs immediately on either path. Both paths invoke the handler through `safeInvoke`, which recovers any handler panic and converts it into a plain (non-`ErrPermanent`) error — a panicking handler can no longer unwind through the loop and crash the process, and the message is left in the PEL for the next sweep just like any transient failure. Used by every Go service's Redis ingest path. |
+| `pkg/redis/streamconsumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND periodic reclaim. **Read path** retries plain (non-`ErrPermanent`) errors inline via `invokeWithRetry` (backoff schedule `0 / 100ms`, one quick retry then park, ~100ms budget); if both attempts fail the message is left un-ACKed in the PEL and the reclaim sweep redelivers it. Keeping the inline budget short stops one transiently-failing message from head-of-line-blocking its lane for seconds. **Reclaim path** is single-shot: the handler is called exactly once per claimed entry, and on failure the entry stays in the PEL — the next periodic sweep (every `reclaimInterval`) is the retry cadence. This split keeps the read loop responsive when a large backlog of pending entries is being swept. The sweep itself uses `XAUTOCLAIM` (cursor-paged, one round-trip per 100 entries) gated by a `MinIdle` threshold (default 30s, overridable via `WithReclaimMinIdle`) so a multi-replica deployment cannot have one replica steal an in-flight message that a peer is actively retrying. Successful and `ErrPermanent`-dropped IDs are ACKed in one pipelined `XAck` per read batch / reclaim page (ack-after-success unchanged — only resolved IDs are batched). `ErrPermanent` ACKs immediately on either path. Both paths invoke the handler through `safeInvoke`, which recovers any handler panic and converts it into a plain (non-`ErrPermanent`) error — a panicking handler can no longer unwind through the loop and crash the process, and the message is left in the PEL for the next sweep just like any transient failure. Beyond `ErrPermanent`, the consumer also classifies startup consumer-group bootstrap errors, quarantines poison messages past a delivery bound, and carries a per-handler timeout plus a liveness heartbeat — see **Stream consumer resilience** below. Used by every Go service's Redis ingest path. |
 | `executor-controller/service/deployer/dispatcher.go` (`dispatchRow`) | call `writeFailed` (writes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED as `executor_outbox` rows, marks `executor_deployments` row `failed`) |
+
+## Stream consumer resilience
+
+Beyond the `ErrPermanent` routing above, `pkg/redis/streamconsumer.go` layers
+three consumer-resilience behaviours that also bear on failure handling:
+
+- **Startup consumer-group bootstrap classification.** `Start` creates the
+  consumer group in a retry loop rather than returning on the first failure, so
+  a Redis outage overlapping process start does not permanently kill the
+  consumer. The bootstrap error is classified: a **permanent** bootstrap error —
+  a Redis reply-error code of `WRONGTYPE` (the stream key exists as a non-stream
+  type) or `unknown command` / `unknown subcommand` (the server does not
+  implement `XGROUP`) — makes `Start` return the error, which the caller records
+  via `liveness.Registry.WorkerExited`, so it surfaces on the readiness endpoint
+  and is logged loudly instead of retrying forever behind a green health check.
+  Everything else is retried with backoff: every network/connection error and
+  every transient server state (connection refused, i/o timeout, `LOADING`,
+  `CLUSTERDOWN`), and the auth-class codes `WRONGPASS` / `NOAUTH` / `NOPERM`
+  (which can be a password-rotation or ACL-propagation race, so restarting the
+  fleet on them is wrong). Classification uses `goredis.HasErrorPrefix` against
+  the RESP reply-error code, so a wrapped error or a non-Redis error whose text
+  merely contains a token is never misclassified.
+
+- **Poison-message quarantine (reclaim/PEL path).** A message that keeps failing
+  transiently — a handler bug, a payload the handler can never process, or a
+  handler that repeatedly exceeds its timeout (`context.DeadlineExceeded`, which
+  is **not** `ErrPermanent`) — would otherwise cycle in the PEL forever, never
+  ACKed. The reclaim path reads the PEL delivery counter (`XPendingExt`
+  `RetryCount`) and, once a message has been redelivered past `maxDeliveries`
+  (5), ACK-drops it with a loud ERROR log — the same visibility and effect as an
+  `ErrPermanent` drop. This is the general safety net for any repeatedly-failing
+  message, not only timeouts.
+
+- **Per-handler timeout + liveness heartbeat.** Each handler invocation runs
+  under a bounded context deadline (`SetHandlerTimeout` / `WithHandlerTimeout`),
+  so a hung handler eventually returns control to the loop; a timeout logs
+  distinctly from a generic transient failure. The consumer maintains a
+  `lastActivity` heartbeat advanced once per read-loop iteration and once per
+  handler attempt (so a batch, or a single slow-but-bounded handler, keeps it
+  fresh), exposed via `Healthy(maxStale)`. Each service wires `Healthy` into a
+  `liveness.Registry` worker probe with a stale budget larger than the handler
+  timeout, so a wedged (non-iterating) consumer goroutine trips liveness and
+  restarts the pod while legitimate in-flight work never does.
+  `pkgoutbox.Processor` carries the same `Healthy(maxStale)` heartbeat for the
+  outbox publisher loop.
 
 ## When NOT to use it
 

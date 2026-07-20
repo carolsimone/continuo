@@ -36,31 +36,13 @@ func NewServer(deps *handlers.Deps, registry *liveness.Registry, port string, lo
 // Routes registers all HTTP routes and returns the handler tree.
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.healthHandler("readiness", s.registry.Check))
-	mux.HandleFunc("GET /livez", s.healthHandler("liveness", s.registry.LivenessCheck))
+	mux.HandleFunc("GET /healthz", liveness.Handler("readiness", s.registry.Check, s.log))
+	mux.HandleFunc("GET /livez", liveness.Handler("liveness", s.registry.LivenessCheck, s.log))
 	mux.HandleFunc("POST /releases", s.handleReceiveCandidate)
 	mux.HandleFunc("GET /releases/{id}", s.handleGetRelease)
 	mux.HandleFunc("GET /releases", s.handleListReleases)
 	mux.HandleFunc("GET /current-prod", s.handleGetCurrentProd)
 	return mux
-}
-
-// healthHandler answers 200 when check reports no failures and 503 (logging
-// each failing component) otherwise. kind names the probe ("readiness" or
-// "liveness") in logs and the response body.
-func (s *Server) healthHandler(kind string, check func(context.Context) []liveness.Failure) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		failures := check(r.Context())
-		if len(failures) == 0 {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		for _, f := range failures {
-			s.log.Warn("Health check failed", "kind", kind, "component", f.Name, "error", f.Err)
-		}
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = fmt.Fprintf(w, "NOT %s: %d component(s) unhealthy", kind, len(failures))
-	}
 }
 
 // Start registers routes, begins accepting connections, and blocks until ctx is

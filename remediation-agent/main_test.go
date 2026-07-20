@@ -17,12 +17,13 @@ func discardLogger() *slog.Logger {
 }
 
 // readiness and liveness build the two health handlers exactly as main wires
-// them, so these tests exercise the real registry-check plumbing.
+// them (readiness → Check, liveness → LivenessCheck), so these tests exercise
+// the real registry-check split plumbing.
 func readiness(reg *liveness.Registry) http.HandlerFunc {
-	return healthHandler("readiness", reg.Check, discardLogger())
+	return liveness.Handler("readiness", reg.Check, discardLogger())
 }
 func liveHandler(reg *liveness.Registry) http.HandlerFunc {
-	return healthHandler("liveness", reg.LivenessCheck, discardLogger())
+	return liveness.Handler("liveness", reg.LivenessCheck, discardLogger())
 }
 
 func code(h http.HandlerFunc) int {

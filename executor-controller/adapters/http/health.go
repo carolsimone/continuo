@@ -45,8 +45,8 @@ func NewHealthServer(port int, registry *liveness.Registry, logger *slog.Logger)
 		}
 	})
 
-	mux.HandleFunc("/ready", writeHealth(logger, "readiness", registry.Check))
-	mux.HandleFunc("/livez", writeHealth(logger, "liveness", registry.LivenessCheck))
+	mux.HandleFunc("/ready", liveness.Handler("readiness", registry.Check, logger))
+	mux.HandleFunc("/livez", liveness.Handler("liveness", registry.LivenessCheck, logger))
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
@@ -58,29 +58,6 @@ func NewHealthServer(port int, registry *liveness.Registry, logger *slog.Logger)
 		server:   server,
 		logger:   logger,
 		registry: registry,
-	}
-}
-
-// writeHealth returns a handler that answers 200 when check reports no failures
-// and 503 (logging each failing component) otherwise. kind names the probe in
-// logs and the response body ("readiness" or "liveness").
-func writeHealth(logger *slog.Logger, kind string, check func(context.Context) []liveness.Failure) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		failures := check(r.Context())
-		if len(failures) == 0 {
-			w.WriteHeader(http.StatusOK)
-			if _, err := fmt.Fprintf(w, "%s OK", kind); err != nil {
-				logger.Warn("failed to write health response", "kind", kind, "error", err)
-			}
-			return
-		}
-		for _, f := range failures {
-			logger.Warn("Health check failed", "kind", kind, "component", f.Name, "error", f.Err)
-		}
-		w.WriteHeader(http.StatusServiceUnavailable)
-		if _, err := fmt.Fprintf(w, "NOT %s: %d component(s) unhealthy", kind, len(failures)); err != nil {
-			logger.Warn("failed to write health response", "kind", kind, "error", err)
-		}
 	}
 }
 

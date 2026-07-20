@@ -38,6 +38,24 @@ Exposes proposal data and the PR lifecycle to ui-service. Handlers are thin and 
 | `RecordPullRequest(id, pr_url, pr_number, opened_by)` | Sets `pr_state='open'`, `pr_url`, `pr_number`, `pr_opened_at=now()`, `pr_opened_by`. Emits `remediation.pr_opened:v1` via the transactional outbox. |
 | `FailPullRequest(id)` | Resets `pr_state` from `'opening'` to `'failed'`, making the action retryable. Called by ui-service when the GitHub step errors after a successful `BeginPullRequest` claim. |
 
+### HTTP (port 8092)
+
+Two health endpoints backed by the `pkg/liveness` registry, with readiness and
+liveness deliberately split:
+
+- `GET /healthz` — readiness. Fails (503) when the `remediation.requested:v1`
+  consumer or the outbox publisher has exited with an error, the consumer
+  read-loop heartbeat has gone stale, **or** any dependency probe (Redis,
+  Postgres) fails. A dependency outage pulls the pod out of the Service
+  endpoints so no traffic is routed to it.
+- `GET /livez` — liveness. Fails (503) **only** for worker/heartbeat failures —
+  dependency probes are excluded, so a Redis/Postgres outage does not restart a
+  pod whose consumer is already retrying, while a dead or wedged consumer does.
+
+The Kubernetes `readinessProbe` points at `/healthz` and the `livenessProbe` at
+`/livez` (`deploy/continuo/values.yaml`: `probePath: /healthz`,
+`livenessPath: /livez`).
+
 ## Outbound Interfaces
 
 ### Redis producer

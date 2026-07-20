@@ -147,8 +147,8 @@ func main() {
 	// Postgres outage pulls the pod from Service endpoints; /livez (liveness)
 	// reflects workers + heartbeats ONLY, so a dependency outage does NOT restart
 	// a pod whose consumer is already retrying, while a dead/wedged consumer does.
-	mux.HandleFunc("/healthz", healthHandler("readiness", liveReg.Check, logger))
-	mux.HandleFunc("/livez", healthHandler("liveness", liveReg.LivenessCheck, logger))
+	mux.HandleFunc("/healthz", liveness.Handler("readiness", liveReg.Check, logger))
+	mux.HandleFunc("/livez", liveness.Handler("liveness", liveReg.LivenessCheck, logger))
 	srv := &http.Server{Addr: ":" + cfg.HTTPPort, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = srv.ListenAndServe() }()
 
@@ -158,22 +158,3 @@ func main() {
 	logger.Info("remediation service stopped")
 }
 
-// healthHandler backs a health endpoint with the supplied registry check: 200
-// when it reports no failures, 503 otherwise (logging each failing component).
-// kind names the probe ("readiness" or "liveness"). Extracted from main so it
-// is directly unit-testable (see main_test.go) — the regression coverage that
-// pins "a dead consumer flips both probes to 503, but a dependency outage flips
-// only readiness" rather than the old hardcoded-200 behaviour.
-func healthHandler(kind string, check func(context.Context) []liveness.Failure, logger *slog.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		failures := check(r.Context())
-		if len(failures) == 0 {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		for _, f := range failures {
-			logger.Warn("Health check failed", "kind", kind, "component", f.Name, "error", f.Err)
-		}
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}
-}
