@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -78,9 +79,28 @@ func (p *OutboxPublisher) PublishBatch(ctx context.Context, entries []*outbox.En
 // XADD arguments (including the shared MaxLen cap so single and batched
 // publishes trim identically).
 func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, error) {
+	// A dead-letter row is published generically: its payload is already a flat
+	// scalar map (outbox.DeadLetterPayload), so it is expanded onto the stream
+	// via DeadLetterValues rather than routed through the map-unmarshal path
+	// below (which would produce the identical result, but this branch keeps
+	// the dead-letter wire shape explicit and independent of that path).
+	if entry.EventType == outbox.DeadLetterEventType {
+		values, err := outbox.DeadLetterValues(entry)
+		if err != nil {
+			// Our own payload; a decode failure here is deterministic, never transient.
+			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
+		}
+		return &goredis.XAddArgs{
+			Stream: entry.StreamName,
+			MaxLen: streamMaxLen,
+			Approx: true,
+			Values: values,
+		}, nil
+	}
+
 	var fields map[string]interface{}
 	if err := json.Unmarshal(entry.Payload, &fields); err != nil {
-		return nil, fmt.Errorf("unmarshal payload for stream %s: %w", entry.StreamName, err)
+		return nil, fmt.Errorf("%w: unmarshal payload for stream %s: %v", pkgevents.ErrPermanent, entry.StreamName, err)
 	}
 	// Inject outbox_entry_id so consumer-side dedup via
 	// pkg/messageprocessing.DedupWithOutboxEntryID can catch Processor-crash

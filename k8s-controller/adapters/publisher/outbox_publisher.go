@@ -62,7 +62,7 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 func (p *OutboxPublisher) scheduleDelayedCheck(ctx context.Context, entry *outbox.Entry) error {
 	var e event.JobCheckRequest
 	if err := json.Unmarshal(entry.Payload, &e); err != nil {
-		return fmt.Errorf("unmarshal check_delayed: %w", err)
+		return fmt.Errorf("%w: unmarshal check_delayed: %v", pkgevents.ErrPermanent, err)
 	}
 	retryCount, err := num.Int32(e.RetryCount, "retry_count")
 	if err != nil {
@@ -116,38 +116,50 @@ func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, erro
 // entry.Payload, and returns the flat field map for XADD.
 func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{}, error) {
 	switch entry.EventType {
+	case outbox.DeadLetterEventType:
+		// Dead-letter rows publish generically: their payload is already a flat
+		// scalar map (outbox.DeadLetterPayload), expanded via DeadLetterValues
+		// instead of falling through to the generic default case below (which
+		// would wrap it opaquely under a single "payload" field).
+		values, err := outbox.DeadLetterValues(entry)
+		if err != nil {
+			// Our own payload; a decode failure here is deterministic, never transient.
+			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
+		}
+		return values, nil
+
 	case "task_status_updated":
 		var e pkgevents.TaskStatusUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal task_status_updated: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal task_status_updated: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
 	case "task_execution_recorded":
 		var e pkgevents.TaskExecutionRecorded
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal task_execution_recorded: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal task_execution_recorded: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
 	case "task_retry":
 		var e event.TaskRetry
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal task_retry: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal task_retry: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
 	case "task_failed":
 		var e event.TaskFailed
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal task_failed: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal task_failed: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
 	case "node_status_updated":
 		var e event.NodeStatusUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal node_status_updated: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal node_status_updated: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
@@ -161,6 +173,6 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:
-		return nil, fmt.Errorf("k8s publisher: unknown event_type %q", entry.EventType)
+		return nil, fmt.Errorf("%w: k8s publisher: unknown event_type %q", pkgevents.ErrPermanent, entry.EventType)
 	}
 }

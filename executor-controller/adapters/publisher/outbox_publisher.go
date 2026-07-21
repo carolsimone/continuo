@@ -53,17 +53,28 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 // entry.Payload, and returns the field map for XADD.
 func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{}, error) {
 	switch entry.EventType {
+	case outbox.DeadLetterEventType:
+		// Dead-letter rows publish generically: their payload is already a flat
+		// scalar map (outbox.DeadLetterPayload), expanded via DeadLetterValues
+		// rather than going through a typed case below.
+		values, err := outbox.DeadLetterValues(entry)
+		if err != nil {
+			// Our own payload; a decode failure here is deterministic, never transient.
+			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
+		}
+		return values, nil
+
 	case "task_status_updated":
 		var e pkgevents.TaskStatusUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal task_status_updated: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal task_status_updated: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
 	case "node_deployed":
 		var e event.JobDeployed
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal node_deployed: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal node_deployed: %v", pkgevents.ErrPermanent, err)
 		}
 		// node.deployed:v1 carries a typed JSON payload (pkg/events.NodeDeployed);
 		// outbox_entry_id is added as a flat sibling by Publish for dedup.
@@ -97,7 +108,7 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 	case "node_updated":
 		var e event.NodeUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal node_updated: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal node_updated: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
@@ -117,6 +128,6 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:
-		return nil, fmt.Errorf("executor publisher: unknown event_type %q", entry.EventType)
+		return nil, fmt.Errorf("%w: executor publisher: unknown event_type %q", pkgevents.ErrPermanent, entry.EventType)
 	}
 }
