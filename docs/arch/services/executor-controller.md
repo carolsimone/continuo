@@ -75,9 +75,8 @@ liveness deliberately split:
 - `GET /ready` — readiness. Fails (503) when any registered worker (stream
   consumers, outbox processor, deploy dispatcher) has exited with an error, any
   consumer read-loop heartbeat has gone stale, **or** any dependency probe
-  (Redis, Postgres, dbt warehouse, the `outbox_dead_letters` backlog check)
-  fails. A dependency outage — or a non-zero dead-letter backlog — pulls the
-  pod out of the Service endpoints so no traffic is routed to it.
+  (Redis, Postgres, dbt warehouse) fails. A dependency outage pulls the pod
+  out of the Service endpoints so no traffic is routed to it.
 - `GET /livez` — liveness. Fails (503) **only** for worker/heartbeat failures —
   dependency probes are excluded, so a Redis/Postgres/dbt outage does not
   restart a pod whose consumers are already retrying through it, while a

@@ -79,18 +79,19 @@ three consumer-resilience behaviours that also bear on failure handling:
   `pkgoutbox.Processor` carries the same `Healthy(maxStale)` heartbeat for the
   outbox publisher loop.
 
-- **Dead-letter backlog probe.** A wedged-loop heartbeat cannot see a *live*
-  processor that is simply failing every row it publishes (e.g. a bad
+- **Dead-letter backlog visibility.** A wedged-loop heartbeat cannot see a
+  *live* processor that is simply failing every row it publishes (e.g. a bad
   payload or a permanently misconfigured downstream) — each row still goes
   terminal ('failed') and the loop keeps ticking. `pkgoutbox.Processor`
   exposes `DeadLetterBacklog(ctx)`, which counts rows with `status = 'failed'`
   (the terminal state; the dead-letter row it wrote alongside each one stays
-  `'pending'` and is not counted). Every service that runs an outbox
-  processor wires this into a `liveness.Registry.AddProbe("outbox_dead_letters",
-  30*time.Second, ...)` that fails liveness only when the backlog is
-  non-zero. The probe swallows its own query error (returns nil) rather than
-  failing liveness on a transient DB hiccup — the `Healthy` heartbeat above
-  already covers a genuinely wedged loop.
+  `'pending'` and is not counted). This is deliberately **not** wired into any
+  service's readiness or liveness probe: all replicas of a service share the
+  same outbox table, so gating pod health on the backlog would take the whole
+  Service out of rotation over a single stuck row — a data/ops condition that
+  needs a human or a dead-letter consumer to redrive, not a pod restart or an
+  endpoint pull. `DeadLetterBacklog` exists as an API seam for that future
+  consumer.
 
 ## When NOT to use it
 
