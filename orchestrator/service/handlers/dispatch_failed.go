@@ -11,6 +11,7 @@ import (
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 
+	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
@@ -60,7 +61,7 @@ func EmitDispatchFailed(
 		MessageProcessingID: &msgProcID,
 		AggregateType:       "orchestrator",
 		AggregateID:         scheduleUUID,
-		EventType:           "run_entries_dispatch_failed",
+		EventType:           domain.EventTypeRunEntriesDispatchFailed,
 		Payload:             payload,
 		StreamName:          streams.RunEntriesDispatchFailedV1,
 		Status:              "pending",
