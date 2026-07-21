@@ -17,7 +17,7 @@ func TestBuildDeadLetterEntry_CarriesOriginContext(t *testing.T) {
 		AggregateType: "release",
 		AggregateID:   aggID,
 		EventType:     "compile_requested",
-		StreamName:    "compile.requested:v1",
+		StreamName:    streams.CompileRequestedV1,
 		Payload:       []byte(`{"release_id":"rel-1"}`),
 	}
 	dl := buildDeadLetterEntry(failed, FailureKindTransientExhausted, errors.New("connection refused"), 10)
@@ -38,7 +38,7 @@ func TestBuildDeadLetterEntry_CarriesOriginContext(t *testing.T) {
 	if err := json.Unmarshal(dl.Payload, &p); err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
-	if p.OriginalEventType != "compile_requested" || p.OriginalStream != "compile.requested:v1" ||
+	if p.OriginalEventType != "compile_requested" || p.OriginalStream != streams.CompileRequestedV1 ||
 		p.FailureKind != FailureKindTransientExhausted || p.Attempts != 10 ||
 		p.FailedOutboxID != failedID.String() || p.Error != "connection refused" {
 		t.Fatalf("payload fields wrong: %+v", p)
@@ -48,7 +48,7 @@ func TestBuildDeadLetterEntry_CarriesOriginContext(t *testing.T) {
 func TestDeadLetterValues_AreScalars(t *testing.T) {
 	failed := &Entry{
 		ID: uuid.New(), AggregateType: "release", AggregateID: uuid.New(),
-		EventType: "compile_requested", StreamName: "compile.requested:v1",
+		EventType: "compile_requested", StreamName: streams.CompileRequestedV1,
 		Payload: []byte(`{"release_id":"rel-1"}`),
 	}
 	dl := buildDeadLetterEntry(failed, FailureKindPermanent, errors.New("bad payload"), 1)
