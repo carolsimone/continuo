@@ -27,6 +27,7 @@ type outboxRow struct {
 	CreatedAt           time.Time  `db:"created_at"`
 	ProcessedAt         *time.Time `db:"processed_at"`
 	ErrorMessage        *string    `db:"error_message"`
+	NextAttemptAt       *time.Time `db:"next_attempt_at"`
 }
 
 func entryFromRow(r *outboxRow) *Entry {
@@ -44,6 +45,7 @@ func entryFromRow(r *outboxRow) *Entry {
 		CreatedAt:           r.CreatedAt,
 		ProcessedAt:         r.ProcessedAt,
 		ErrorMessage:        r.ErrorMessage,
+		NextAttemptAt:       r.NextAttemptAt,
 	}
 }
 
@@ -68,16 +70,24 @@ func WithPerAggregateOrdering() Option {
 	return func(r *postgresRepository) { r.perAggregateFIFO = true }
 }
 
-// NewPostgresRepository constructs a Repository bound to a specific physical
-// table. Pass *sqlx.DB for autocommit operations (the Processor's GetPendingBatch
-// holds its own tx) or *sqlx.Tx for transactional writes (the writer's Create
-// must run inside the UoW transaction).
-func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger, opts ...Option) Repository {
+// newPostgresRepository builds the concrete repository. In-package callers (the
+// processor) use it directly to reach ScheduleRetry / CountTerminal, which are
+// deliberately NOT on the Repository interface so the ~10 service fakes that
+// satisfy pkgoutbox.Repository need no changes.
+func newPostgresRepository(exec Executor, tableName string, logger *slog.Logger, opts ...Option) *postgresRepository {
 	r := &postgresRepository{exec: exec, tableName: tableName, logger: logger}
 	for _, opt := range opts {
 		opt(r)
 	}
 	return r
+}
+
+// NewPostgresRepository constructs a Repository bound to a specific physical
+// table. Pass *sqlx.DB for autocommit operations (the Processor's GetPendingBatch
+// holds its own tx) or *sqlx.Tx for transactional writes (the writer's Create
+// must run inside the UoW transaction).
+func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger, opts ...Option) Repository {
+	return newPostgresRepository(exec, tableName, logger, opts...)
 }
 
 func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
@@ -134,9 +144,10 @@ func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]
 		SELECT id, message_processing_id, aggregate_type, aggregate_id,
 		       event_type, payload, stream_name,
 		       status, retry_count, max_retries,
-		       created_at, processed_at, error_message
+		       created_at, processed_at, error_message, next_attempt_at
 		FROM %s o
-		WHERE status = 'pending'%s
+		WHERE status = 'pending'
+		  AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())%s
 		ORDER BY created_at ASC
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
@@ -228,6 +239,27 @@ func (r *postgresRepository) IncrementRetry(ctx context.Context, id uuid.UUID) e
 	result, err := r.exec.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("increment retry in %s: %w", r.tableName, err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("outbox entry %s not found in %s", id, r.tableName)
+	}
+	return nil
+}
+
+// ScheduleRetry records a transient publish failure: it bumps retry_count,
+// stamps the next eligible attempt time, and stores the error for visibility —
+// all while leaving the row 'pending' so a later poll re-selects it once
+// next_attempt_at has passed. It replaces IncrementRetry on the transient path
+// (IncrementRetry is retained on the interface but no longer used by the
+// processor).
+func (r *postgresRepository) ScheduleRetry(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time, errorMessage string) error {
+	query := fmt.Sprintf(
+		`UPDATE %s SET retry_count = retry_count + 1, next_attempt_at = $1, error_message = $2 WHERE id = $3`,
+		r.tableName)
+	result, err := r.exec.ExecContext(ctx, query, nextAttemptAt, errorMessage, id)
+	if err != nil {
+		return fmt.Errorf("schedule retry in %s: %w", r.tableName, err)
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {

@@ -32,4 +32,5 @@ type Entry struct {
 	CreatedAt           time.Time
 	ProcessedAt         *time.Time
 	ErrorMessage        *string
+	NextAttemptAt       *time.Time // when a transiently-failed pending row is next eligible; NULL = due now
 }

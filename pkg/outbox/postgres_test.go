@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/testmigrations"
@@ -237,4 +238,52 @@ func TestPostgresRepository_SkipLockedIsolatesConcurrentBatches(t *testing.T) {
 		assert.Equal(t, 1, n, "row %s claimed by both txs (SKIP LOCKED broken)", id)
 	}
 	assert.Equal(t, 3, len(seen))
+}
+
+// seedRowReturningEntry seeds a pending row with next_attempt_at left NULL
+// (due now) and returns its id.
+func seedRowReturningEntry(t *testing.T, db *sqlx.DB) uuid.UUID {
+	return seedRow(t, db, 10)
+}
+
+func TestGetPendingBatch_SkipsRowNotYetDue(t *testing.T) {
+	db := dbForTest(t)
+	repo := outbox.NewPostgresRepository(db, testOutboxTable, newTestLogger())
+	due := seedRowReturningEntry(t, db)    // next_attempt_at NULL => due now
+	notDue := seedRowReturningEntry(t, db)
+	_, err := db.Exec(
+		`UPDATE `+testOutboxTable+` SET next_attempt_at = NOW() + interval '1 hour' WHERE id=$1`, notDue)
+	require.NoError(t, err)
+
+	batch, err := repo.GetPendingBatch(context.Background(), 10)
+	require.NoError(t, err)
+
+	ids := map[uuid.UUID]bool{}
+	for _, e := range batch {
+		ids[e.ID] = true
+	}
+	assert.True(t, ids[due], "row with NULL next_attempt_at must be selected")
+	assert.False(t, ids[notDue], "row with future next_attempt_at must be skipped")
+}
+
+func TestScheduleRetry_SetsNextAttemptAndKeepsPending(t *testing.T) {
+	db := dbForTest(t)
+	// ScheduleRetry is on the concrete repo; the processor uses it internally.
+	repo := outbox.NewPostgresRepositoryForTest(db, testOutboxTable, newTestLogger())
+	id := seedRowReturningEntry(t, db)
+
+	future := time.Now().Add(30 * time.Second)
+	require.NoError(t, repo.ScheduleRetry(context.Background(), id, future, "connection refused"))
+
+	var status, errMsg string
+	var rc int
+	var next *time.Time
+	require.NoError(t, db.QueryRow(
+		`SELECT status, retry_count, error_message, next_attempt_at FROM `+testOutboxTable+` WHERE id=$1`, id,
+	).Scan(&status, &rc, &errMsg, &next))
+	assert.Equal(t, "pending", status)
+	assert.Equal(t, 1, rc)
+	assert.Equal(t, "connection refused", errMsg)
+	require.NotNil(t, next)
+	assert.WithinDuration(t, future, *next, time.Second)
 }
