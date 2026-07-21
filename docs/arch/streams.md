@@ -92,6 +92,18 @@ file, e.g. `models/order_items.sql`) that is non-empty for `compile` and
 it is empty — the downstream agent resolves the path via orchestrator ancestry.
 See `docs/arch/services/remediation.md` for the full payload shape.
 
+**`outbox.dead_letter:v1`** — emitted by every outbox-owning service's
+`pkg/outbox.Processor` for a terminal outbox row: a permanent payload error,
+or a transient error whose retry budget was exhausted. Producers: `state`,
+`orchestrator`, `executor-controller`, `k8s-controller`, `release-controller`,
+`remediation`, `remediation-agent`. The payload carries
+`original_event_type`, `original_stream`, `original_aggregate_id`,
+`failure_kind` (`permanent` | `transient_exhausted`), `error`, `attempts`,
+`failed_outbox_id`. It is an operational DLQ signal, distinct from domain
+`<event>.failed:v1` compensation events; no consumer is wired to it today. See
+`docs/arch/05-error-classification.md` §Outbox processor resilience for the
+classification and backoff mechanics.
+
 **`remediation.pr_closed:v1`** — emitted by remediation-agent when its
 PR-outcome reconciler observes a terminal GitHub pull request state (merged,
 or closed without merge) for a proposal whose `pr_state` is `open`; the CAS

@@ -24,6 +24,9 @@ permanent.
 |---|---|---|
 | `executor-controller/adapters/k8s/client.go:177` (`buildPodSpec`) | `image_tag` missing on dispatch | `fmt.Errorf("%w: image_tag missing from job params for service %s", events.ErrPermanent, params.ServiceName)` |
 | `state/adapters/redis/*_binding.go` and `orchestrator/adapters/redis/*_parser.go` (each parser/binding) | per-stream parser returns a parse/validation failure (malformed payload, missing required field, bad UUID, unknown enum value, cross-field rule violation) | the parser returns `fmt.Errorf("%w: <reason>", events.ErrPermanent, …)` and the binding propagates it (logs ERROR + returns the error) so the consumer ACKs and drops the poison message |
+| `state/adapters/publisher/outbox_publisher.go` (`Publish`) | generic `json.Unmarshal(entry.Payload, &fields)` into a `map[string]interface{}` fails on malformed JSON — no per-type switch, no unknown-event_type detection | `fmt.Errorf("%w: unmarshal outbox row: %v", events.ErrPermanent, err)` |
+| `orchestrator`, `executor-controller`, `k8s-controller` outbox publishers (`adapters/*/outbox_publisher.go`, `Publish`) | decode a typed event out of `entry.Payload` per `event_type`; a `json.Unmarshal` failure, or the type-switch'"'"'s `default:` case (an `event_type` the publisher does not recognise), is deterministic — the row can never succeed no matter how many times it is retried | `fmt.Errorf("%w: unmarshal <event>: %v", events.ErrPermanent, err)` / `fmt.Errorf("%w: <service> publisher: unknown event_type %q", events.ErrPermanent, entry.EventType)` |
+| All 7 outbox publishers' `Publish`, dead-letter branch | `pkgoutbox.DeadLetterValues` fails to decode a dead-letter row's own JSON payload — the publisher's own construction, so a decode failure is a bug, not an infra blip | `fmt.Errorf("%w: dead-letter values: %v", events.ErrPermanent, err)` |
 
 Add new emitters to this table as they land.
 
@@ -33,6 +36,7 @@ Add new emitters to this table as they land.
 |---|---|
 | `pkg/redis/streamconsumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND periodic reclaim. **Read path** retries plain (non-`ErrPermanent`) errors inline via `invokeWithRetry` (backoff schedule `0 / 100ms`, one quick retry then park, ~100ms budget); if both attempts fail the message is left un-ACKed in the PEL and the reclaim sweep redelivers it. Keeping the inline budget short stops one transiently-failing message from head-of-line-blocking its lane for seconds. **Reclaim path** is single-shot: the handler is called exactly once per claimed entry, and on failure the entry stays in the PEL — the next periodic sweep (every `reclaimInterval`) is the retry cadence. This split keeps the read loop responsive when a large backlog of pending entries is being swept. The sweep itself uses `XAUTOCLAIM` (cursor-paged, one round-trip per 100 entries) gated by a `MinIdle` threshold (default 30s, overridable via `WithReclaimMinIdle`) so a multi-replica deployment cannot have one replica steal an in-flight message that a peer is actively retrying. Successful and `ErrPermanent`-dropped IDs are ACKed in one pipelined `XAck` per read batch / reclaim page (ack-after-success unchanged — only resolved IDs are batched). `ErrPermanent` ACKs immediately on either path. Both paths invoke the handler through `safeInvoke`, which recovers any handler panic and converts it into a plain (non-`ErrPermanent`) error — a panicking handler can no longer unwind through the loop and crash the process, and the message is left in the PEL for the next sweep just like any transient failure. Beyond `ErrPermanent`, the consumer also classifies startup consumer-group bootstrap errors, quarantines poison messages past a delivery bound, and carries a per-handler timeout plus a liveness heartbeat — see **Stream consumer resilience** below. Used by every Go service's Redis ingest path. |
 | `executor-controller/service/deployer/dispatcher.go` (`dispatchRow`) | call `writeFailed` (writes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED as `executor_outbox` rows, marks `executor_deployments` row `failed`) |
+| `pkg/outbox.Processor` (`processBatchOnce`) | a publish error matching `ErrPermanent` is terminal on attempt #1 — zero retries. Any other error is treated as transient and rescheduled with backoff instead. See **Outbox processor resilience** below. |
 
 ## Stream consumer resilience
 
@@ -79,19 +83,79 @@ three consumer-resilience behaviours that also bear on failure handling:
   `pkgoutbox.Processor` carries the same `Healthy(maxStale)` heartbeat for the
   outbox publisher loop.
 
-- **Dead-letter backlog visibility.** A wedged-loop heartbeat cannot see a
-  *live* processor that is simply failing every row it publishes (e.g. a bad
-  payload or a permanently misconfigured downstream) — each row still goes
-  terminal ('failed') and the loop keeps ticking. `pkgoutbox.Processor`
-  exposes `DeadLetterBacklog(ctx)`, which counts rows with `status = 'failed'`
-  (the terminal state; the dead-letter row it wrote alongside each one stays
-  `'pending'` and is not counted). This is deliberately **not** wired into any
-  service's readiness or liveness probe: all replicas of a service share the
-  same outbox table, so gating pod health on the backlog would take the whole
-  Service out of rotation over a single stuck row — a data/ops condition that
-  needs a human or a dead-letter consumer to redrive, not a pod restart or an
-  endpoint pull. `DeadLetterBacklog` exists as an API seam for that future
-  consumer.
+## Outbox processor resilience
+
+`pkg/outbox.Processor` (`processBatchOnce`) splits a publish failure it
+receives from `Publisher.Publish` into two classes and handles each
+differently:
+
+- **Permanent** (`errors.Is(err, events.ErrPermanent)`) — the payload is
+  deterministically bad (an undecodable JSON payload, or an `event_type` the
+  publisher's type-switch does not recognise); retrying can never succeed. The
+  row goes terminal on attempt #1 — `retry_count` is left untouched, since
+  bumping it would misrepresent a single dead-on-arrival row as a row that was
+  actually retried.
+- **Transient** (everything else — Redis `XADD`/connection errors, timeouts)
+  — treated as recoverable infra trouble. The row is rescheduled via
+  `ScheduleRetry`, which bumps `retry_count`, stamps `next_attempt_at = NOW()
+  + backoff(attempt)`, and records the error, leaving the row `pending`. It
+  only goes terminal once `retry_count + 1 >= MaxRetries`.
+
+**Due-gate and backoff curve.** `GetPendingBatch` selects only rows where
+`next_attempt_at IS NULL OR next_attempt_at <= NOW()`, evaluated against the
+DB clock rather than the host clock, so a row scheduled for retry is invisible
+to the poller until its backoff elapses. The delay is capped exponential
+growth — `base * 2^(attempt-1)` clamped to a maximum — defaulting to a
+5-second base and a 5-minute cap. `DefaultMaxRetries` is 10, giving a
+transient row roughly 20–30 minutes of retry window before the budget is
+exhausted and it goes terminal — long enough to ride out a real Redis outage
+or restart without manual intervention.
+
+**Mandatory durable dead-letter.** Every terminal outcome — permanent, or
+transient with the retry budget exhausted — writes a dead-letter row in the
+same transaction that marks the original row `failed`, so the signal is
+durable even if the process crashes immediately afterward. The dead-letter
+row is itself an ordinary outbox row targeting the single canonical stream
+`outbox.dead_letter:v1` (`streams.OutboxDeadLetterV1`), so it publishes
+through the same processor loop as any other row — immediately if Redis is
+reachable, or once Redis heals. Its payload (`pkgoutbox.DeadLetterPayload`)
+carries `original_event_type`, `original_stream`, `original_aggregate_id`,
+`failure_kind` (`permanent` or `transient_exhausted`), `error`, `attempts`,
+and `failed_outbox_id`. A loop guard — the dead-letter row's
+`aggregate_type`/`event_type` are set to the sentinel `outbox_dead_letter` —
+stops a dead-letter row from ever being dead-lettered itself. An optional
+`TerminalFailureHook`, on a service that wires one, still fires as a
+best-effort additional side effect alongside the mandatory dead-letter write;
+it is not the delivery mechanism.
+
+**Operational, not domain.** `outbox.dead_letter:v1` is an
+infrastructure/operational signal — "this outbox row could not be
+delivered" — distinct from a domain `<event>.failed:v1` compensation event,
+which represents a business-meaningful terminal outcome (e.g. a task that
+failed after exhausting its k8s retry budget). It has no consumer today; it
+exists for a future alerting/redrive service. Producers are every
+outbox-owning service's `pkg/outbox.Processor`: `state`, `orchestrator`,
+`executor-controller`, `k8s-controller`, `release-controller`, `remediation`,
+`remediation-agent`.
+
+**Dead-letter backlog visibility.** A wedged-loop heartbeat (see **Stream
+consumer resilience** above) cannot see a *live* processor that is simply
+failing every row it publishes (e.g. a bad payload or a permanently
+misconfigured downstream) — each row still goes terminal (`'failed'`) and the
+loop keeps ticking. `pkgoutbox.Processor` exposes `DeadLetterBacklog(ctx)`,
+which counts rows with `status = 'failed'` (the terminal state; the
+dead-letter row it wrote alongside each one stays `'pending'` until it
+publishes, and is not counted). This is deliberately **not** wired into any
+service's readiness or liveness probe: all replicas of a service share the
+same outbox table, so gating pod health on the backlog would take the whole
+Service out of rotation over a single stuck row — a data/ops condition that
+needs a human or a dead-letter consumer to redrive, not a pod restart or an
+endpoint pull. `DeadLetterBacklog` — backed by the repository's
+`CountTerminal` — exists as an API seam for that future consumer. Visibility
+today is the durable `outbox.dead_letter:v1` event plus a structured `ERROR`
+log (`"Outbox entry dead-lettered"`, with `failure_kind`, `entry_id`,
+`original_event_type`, `original_stream`, `attempts`, `error`) emitted at the
+moment a row goes terminal.
 
 ## When NOT to use it
 

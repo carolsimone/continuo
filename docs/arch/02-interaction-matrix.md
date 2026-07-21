@@ -65,6 +65,7 @@ Legend:
 | `remediation.proposed:v1` | `remediation-agent` | (approval surface) | Per-node fix proposal; pointer-only payload (S3 URIs for proposed SQL and unified diff, short rationale, confidence). |
 | `remediation.pr_opened:v1` | `remediation-agent` | (no consumer; audit seam) | Emitted when an operator records a pull request via `RecordPullRequest`. Pointer-only payload: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `opened_by`, `opened_at`. |
 | `remediation.pr_closed:v1` | `remediation-agent` | (no consumer; audit seam) | Emitted when the PR-outcome reconciler observes a terminal GitHub PR state and `RecordOutcome` performs the CAS `pr_state: open → merged | rejected`. Pointer-only payload: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `outcome` (`merged` or `rejected`), `closed_at`. |
+| `outbox.dead_letter:v1` | `state`, `orchestrator`, `executor-controller`, `k8s-controller`, `release-controller`, `remediation`, `remediation-agent` (every service's `pkg/outbox.Processor`) | (no consumer; operational DLQ) | Terminal outbox publish failure — a permanent payload error, or a transient error that exhausted its retry budget — written by the outbox processor in the same transaction that marks the original row `failed`. Operational signal distinct from domain `<event>.failed:v1` compensation events; see `docs/arch/05-error-classification.md` §Outbox processor resilience. |
 
 ## Outbound gRPC Calls by Service
 
