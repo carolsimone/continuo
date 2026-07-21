@@ -171,6 +171,14 @@ func (p *Processor) Healthy(maxStale time.Duration) error {
 	return nil
 }
 
+// DeadLetterBacklog reports how many rows are parked terminal ('failed'). Wire it
+// into a liveness probe to surface silently-abandoned events (a non-zero, growing
+// backlog means events are dying in the outbox). Uses p.db (autocommit), so it is
+// safe to call from a health-probe goroutine independent of the Run loop.
+func (p *Processor) DeadLetterBacklog(ctx context.Context) (int, error) {
+	return newPostgresRepository(p.db, p.tableName, p.logger).CountTerminal(ctx)
+}
+
 // drain processes batches back-to-back as long as each one comes back full
 // (len == batchSize), which signals more pending rows are waiting. This lets a
 // burst of thousands of pending rows clear within the same tick instead of one

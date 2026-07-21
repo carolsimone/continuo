@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -202,6 +203,16 @@ func main() {
 		logger,
 		pkgoutbox.ProcessorConfig{Tick: time.Second, BatchSize: 100},
 	)
+	liveReg.AddProbe("outbox_dead_letters", 30*time.Second, func(ctx context.Context) error {
+		n, err := outboxProc.DeadLetterBacklog(ctx)
+		if err != nil {
+			return nil // probe query failure must not fail liveness; the Healthy heartbeat covers a wedged loop
+		}
+		if n > 0 {
+			return fmt.Errorf("outbox %q: %d terminal dead-letters awaiting attention", "k8s_outbox", n)
+		}
+		return nil
+	})
 
 	liveReg.RegisterWorker("outbox_processor")
 	go func() {

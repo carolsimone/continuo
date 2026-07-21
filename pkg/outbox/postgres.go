@@ -247,6 +247,17 @@ func (r *postgresRepository) IncrementRetry(ctx context.Context, id uuid.UUID) e
 	return nil
 }
 
+// CountTerminal returns how many rows are parked in the terminal 'failed' state,
+// i.e. dead-lettered rows awaiting operator/consumer attention.
+func (r *postgresRepository) CountTerminal(ctx context.Context) (int, error) {
+	var n int
+	query := fmt.Sprintf(`SELECT count(*) FROM %s WHERE status = 'failed'`, r.tableName)
+	if err := r.exec.QueryRowContext(ctx, query).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count terminal in %s: %w", r.tableName, err)
+	}
+	return n, nil
+}
+
 // ScheduleRetry records a transient publish failure: it bumps retry_count,
 // stamps the next eligible attempt time, and stores the error for visibility —
 // all while leaving the row 'pending' so a later poll re-selects it once

@@ -79,6 +79,19 @@ three consumer-resilience behaviours that also bear on failure handling:
   `pkgoutbox.Processor` carries the same `Healthy(maxStale)` heartbeat for the
   outbox publisher loop.
 
+- **Dead-letter backlog probe.** A wedged-loop heartbeat cannot see a *live*
+  processor that is simply failing every row it publishes (e.g. a bad
+  payload or a permanently misconfigured downstream) — each row still goes
+  terminal ('failed') and the loop keeps ticking. `pkgoutbox.Processor`
+  exposes `DeadLetterBacklog(ctx)`, which counts rows with `status = 'failed'`
+  (the terminal state; the dead-letter row it wrote alongside each one stays
+  `'pending'` and is not counted). Every service that runs an outbox
+  processor wires this into a `liveness.Registry.AddProbe("outbox_dead_letters",
+  30*time.Second, ...)` that fails liveness only when the backlog is
+  non-zero. The probe swallows its own query error (returns nil) rather than
+  failing liveness on a transient DB hiccup — the `Healthy` heartbeat above
+  already covers a genuinely wedged loop.
+
 ## When NOT to use it
 
 - **Transient errors** (network, timeout, k8s API quota, redis blip).

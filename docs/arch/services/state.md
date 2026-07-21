@@ -225,8 +225,11 @@ The `internal/grpc/handlers/synthesise_derived_run.go` helper backs both `RerunH
 Port 8082 serves health checks only; trigger commands run over gRPC on 50051.
 
 `/ready` returns 200 only when every registered background worker (each Redis
-stream consumer plus the outbox processor) is live and the cached Redis/Postgres
-dependency probes (5s TTL) pass; otherwise 503. A consumer goroutine that
+stream consumer plus the outbox processor) is live and the cached dependency
+probes pass — Redis/Postgres (5s TTL) plus `outbox_dead_letters` (30s TTL),
+which fails whenever `state_outbox` has rows parked terminal (`status =
+'failed'`), surfacing a dead-lettered backlog without restarting the pod;
+otherwise 503. A consumer goroutine that
 returns a non-nil error (a genuine exit, distinct from the clean `nil` return on
 context cancel) marks itself unhealthy in the registry, flipping `/ready` to 503
 so Kubernetes stops routing to the degraded pod and restarts it.

@@ -46,8 +46,9 @@ liveness deliberately split:
 - `GET /healthz` — readiness. Fails (503) when the `remediation.requested:v1`
   consumer or the outbox publisher has exited with an error, the consumer
   read-loop heartbeat has gone stale, **or** any dependency probe (Redis,
-  Postgres) fails. A dependency outage pulls the pod out of the Service
-  endpoints so no traffic is routed to it.
+  Postgres, the `outbox_dead_letters` backlog check) fails. A dependency
+  outage — or a non-zero dead-letter backlog — pulls the pod out of the
+  Service endpoints so no traffic is routed to it.
 - `GET /livez` — liveness. Fails (503) **only** for worker/heartbeat failures —
   dependency probes are excluded, so a Redis/Postgres outage does not restart a
   pod whose consumer is already retrying, while a dead or wedged consumer does.
