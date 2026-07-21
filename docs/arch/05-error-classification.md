@@ -104,14 +104,23 @@ differently:
   replica knows how to publish, so dead-lettering it on attempt #1 would
   discard a row a peer replica could have handled moments later. The row is
   rescheduled via `ScheduleRetry`, which bumps `retry_count`, stamps
-  `next_attempt_at = NOW() + backoff(attempt)`, and records the error, leaving
-  the row `pending`. It only goes terminal once `retry_count + 1 >=
-  MaxRetries`.
+  `next_attempt_at = clock_timestamp() + backoff(attempt)`, records the error,
+  and moves the row to the `scheduled` status. `clock_timestamp()` (the
+  statement wall-clock) is used rather than `NOW()` (fixed at transaction
+  start) so a batch whose publish attempts outlast the first backoff interval
+  still schedules a real delay instead of a deadline already in the past. A
+  backed-off row goes terminal only once `retry_count + 1 >= MaxRetries`.
 
-**Due-gate and backoff curve.** `GetPendingBatch` selects only rows where
-`next_attempt_at IS NULL OR next_attempt_at <= NOW()`, evaluated against the
-DB clock rather than the host clock, so a row scheduled for retry is invisible
-to the poller until its backoff elapses. The delay is capped exponential
+**Due-gate, scheduled status, and backoff curve.** `GetPendingBatch` selects
+rows with `status IN ('pending', 'scheduled')` that are due —
+`next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp()`. A fresh
+`pending` row (never attempted, `next_attempt_at` NULL) is always eligible; a
+transiently-failed `scheduled` row becomes eligible only once its backoff
+elapses. The distinct `scheduled` status is what keeps the change safe under a
+rolling deployment: a previous-version replica's reader filters on
+`status = 'pending'` and so never reclaims a row a newer replica has backed
+off, so it cannot retry that row every tick and exhaust its budget before the
+backoff elapses. The delay is capped exponential
 growth — `base * 2^(attempt-1)` clamped to a maximum — defaulting to a
 5-second base and a 5-minute cap. `DefaultMaxRetries` is 10, giving a
 transient row roughly 20–30 minutes of retry window before the budget is
