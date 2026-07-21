@@ -84,7 +84,7 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 		Payload:       payload,
 		StreamName:    streams.ReleaseRejectedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)
@@ -212,7 +212,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 		Payload:       payload,
 		StreamName:    streams.ValidationRequestedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)
@@ -305,7 +305,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		Payload:       payload,
 		StreamName:    streams.SeedBuildRequestedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)
@@ -460,7 +460,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 		Payload:       payload,
 		StreamName:    streams.ReleaseRejectedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)

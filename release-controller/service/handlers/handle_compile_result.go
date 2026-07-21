@@ -159,7 +159,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			Payload:       payload,
 			StreamName:    streams.ReleaseRejectedV1,
 			Status:        "pending",
-			MaxRetries:    3,
+			MaxRetries:    pkgoutbox.DefaultMaxRetries,
 			CreatedAt:     now,
 		}); err != nil {
 			return fmt.Errorf("outbox insert: %w", err)
@@ -211,7 +211,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		Payload:       releasePayload,
 		StreamName:    streams.ReleaseRequestedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)
