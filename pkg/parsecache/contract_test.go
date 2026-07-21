@@ -20,9 +20,9 @@ import (
 // failing CI the moment they diverge.
 //
 // It lives in pkg (not k8s-controller or executor-controller) because the
-// per-service test containers hold only their own module — the dbt/ tree is
-// present only in the full-repo checkout, where the pkg static-guard suite
-// runs.
+// per-service test containers hold only their own module — the s3-sidecar/
+// tree is present only in the full-repo checkout, where the pkg static-guard
+// suite runs.
 func TestContractMatchesPythonFetcher(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -30,7 +30,7 @@ func TestContractMatchesPythonFetcher(t *testing.T) {
 	}
 	// <root>/pkg/parsecache/<this> → up two to the repo root.
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
-	pyPath := filepath.Join(repoRoot, "dbt", "s3-sidecar", "parse_cache_fetcher.py")
+	pyPath := filepath.Join(repoRoot, "s3-sidecar", "parse_cache_fetcher.py")
 	src, err := os.ReadFile(pyPath) //nolint:gosec // G304: pyPath is built from runtime.Caller(0) plus fixed literal segments, not external input
 	if err != nil {
 		t.Fatalf("read python contract %s: %v", pyPath, err)
