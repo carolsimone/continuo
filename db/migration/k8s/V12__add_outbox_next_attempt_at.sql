@@ -10,3 +10,8 @@ ALTER TABLE k8s_outbox
 CREATE INDEX IF NOT EXISTS idx_k8s_outbox_due
     ON k8s_outbox (next_attempt_at)
     WHERE status = 'pending';
+
+-- Align the DB fallback default with the outbox processor's retry budget
+-- (DefaultMaxRetries = 10), so a raw INSERT that omits max_retries still
+-- gets the current retry budget instead of a stale value.
+ALTER TABLE k8s_outbox ALTER COLUMN max_retries SET DEFAULT 10;

@@ -263,12 +263,14 @@ func (r *postgresRepository) CountTerminal(ctx context.Context) (int, error) {
 // all while leaving the row 'pending' so a later poll re-selects it once
 // next_attempt_at has passed. It replaces IncrementRetry on the transient path
 // (IncrementRetry is retained on the interface but no longer used by the
-// processor).
-func (r *postgresRepository) ScheduleRetry(ctx context.Context, id uuid.UUID, nextAttemptAt time.Time, errorMessage string) error {
+// processor). The next attempt time is computed against the DB clock (NOW() +
+// retryIn) rather than the host clock, matching the due-gate comparison used
+// by GetPendingBatch; make_interval takes whole seconds from the Go duration.
+func (r *postgresRepository) ScheduleRetry(ctx context.Context, id uuid.UUID, retryIn time.Duration, errorMessage string) error {
 	query := fmt.Sprintf(
-		`UPDATE %s SET retry_count = retry_count + 1, next_attempt_at = $1, error_message = $2 WHERE id = $3`,
+		`UPDATE %s SET retry_count = retry_count + 1, next_attempt_at = NOW() + make_interval(secs => $1), error_message = $2 WHERE id = $3`,
 		r.tableName)
-	result, err := r.exec.ExecContext(ctx, query, nextAttemptAt, errorMessage, id)
+	result, err := r.exec.ExecContext(ctx, query, retryIn.Seconds(), errorMessage, id)
 	if err != nil {
 		return fmt.Errorf("schedule retry in %s: %w", r.tableName, err)
 	}

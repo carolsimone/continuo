@@ -10,6 +10,7 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -362,7 +363,7 @@ func TestProcessor_DeadLetterRowDoesNotSpawnAnotherDeadLetter(t *testing.T) {
 	_, err := db.Exec(
 		`INSERT INTO orchestrator_outbox (id, aggregate_type, aggregate_id, event_type, payload, stream_name, max_retries)
 		 VALUES ($1, $2, $3, $4, '{"failure_kind":"permanent"}'::jsonb, $5, 1)`,
-		dlID, outbox.DeadLetterAggregateType, uuid.New(), outbox.DeadLetterEventType, "outbox.dead_letter:v1",
+		dlID, outbox.DeadLetterAggregateType, uuid.New(), outbox.DeadLetterEventType, streams.OutboxDeadLetterV1,
 	)
 	require.NoError(t, err)
 

@@ -261,9 +261,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		// once the budget is exhausted.
 		permanent := errors.Is(pubErr, pkgevents.ErrPermanent)
 		if !permanent && entry.RetryCount+1 < entry.MaxRetries {
-			attempt := entry.RetryCount + 1
-			next := time.Now().Add(backoff(attempt, p.retryBase, p.retryMax))
-			if err := repo.ScheduleRetry(ctx, entry.ID, next, pubErr.Error()); err != nil {
+			if err := repo.ScheduleRetry(ctx, entry.ID, backoff(entry.RetryCount+1, p.retryBase, p.retryMax), pubErr.Error()); err != nil {
 				p.logger.Error("Schedule retry failed", "entry_id", entry.ID, "error", err)
 			}
 			continue

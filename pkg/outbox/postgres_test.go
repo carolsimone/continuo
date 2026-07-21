@@ -272,8 +272,8 @@ func TestScheduleRetry_SetsNextAttemptAndKeepsPending(t *testing.T) {
 	repo := outbox.NewPostgresRepositoryForTest(db, testOutboxTable, newTestLogger())
 	id := seedRowReturningEntry(t, db)
 
-	future := time.Now().Add(30 * time.Second)
-	require.NoError(t, repo.ScheduleRetry(context.Background(), id, future, "connection refused"))
+	before := time.Now()
+	require.NoError(t, repo.ScheduleRetry(context.Background(), id, 30*time.Second, "connection refused"))
 
 	var status, errMsg string
 	var rc int
@@ -285,5 +285,8 @@ func TestScheduleRetry_SetsNextAttemptAndKeepsPending(t *testing.T) {
 	assert.Equal(t, 1, rc)
 	assert.Equal(t, "connection refused", errMsg)
 	require.NotNil(t, next)
-	assert.WithinDuration(t, future, *next, time.Second)
+	// next_attempt_at is stamped from the DB clock (NOW() + 30s), not the host
+	// clock, so assert the window tolerantly rather than an exact offset.
+	assert.True(t, next.After(before), "next_attempt_at should be after test start")
+	assert.True(t, next.Before(before.Add(35*time.Second)), "next_attempt_at should be roughly now+30s")
 }
