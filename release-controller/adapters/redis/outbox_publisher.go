@@ -90,16 +90,6 @@ func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, 
 	liveReg.AddWorkerProbe("outbox_publisher_heartbeat", 10*time.Second, func(context.Context) error {
 		return processor.Healthy(outboxHeartbeatStale)
 	})
-	liveReg.AddProbe("outbox_dead_letters", 30*time.Second, func(ctx context.Context) error {
-		n, err := processor.DeadLetterBacklog(ctx)
-		if err != nil {
-			return nil // probe query failure must not fail liveness; the Healthy heartbeat covers a wedged loop
-		}
-		if n > 0 {
-			return fmt.Errorf("outbox %q: %d terminal dead-letters awaiting attention", "release_controller_outbox", n)
-		}
-		return nil
-	})
 	go func() {
 		err := processor.Run(ctx)
 		// Treat as a clean stop when the parent ctx is done OR the error unwraps

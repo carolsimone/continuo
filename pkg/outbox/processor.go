@@ -171,10 +171,14 @@ func (p *Processor) Healthy(maxStale time.Duration) error {
 	return nil
 }
 
-// DeadLetterBacklog reports how many rows are parked terminal ('failed'). Wire it
-// into a liveness probe to surface silently-abandoned events (a non-zero, growing
-// backlog means events are dying in the outbox). Uses p.db (autocommit), so it is
-// safe to call from a health-probe goroutine independent of the Run loop.
+// DeadLetterBacklog reports how many rows are parked terminal ('failed'). It is
+// provided as an API seam for a future dead-letter consumer / redrive path, and
+// is deliberately NOT wired into readiness or liveness: a dead-letter backlog is
+// a data/ops condition that needs a human or the DLQ consumer to act on, not a
+// pod-health condition, and since all replicas share the same outbox table,
+// gating readiness on it would take the whole Service out of rotation over a
+// single stuck row. Uses p.db (autocommit), so it is safe to call from a
+// health-probe goroutine independent of the Run loop.
 func (p *Processor) DeadLetterBacklog(ctx context.Context) (int, error) {
 	return newPostgresRepository(p.db, p.tableName, p.logger).CountTerminal(ctx)
 }
