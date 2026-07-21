@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,7 +37,7 @@ func TestEmitDispatchFailed_WritesOutboxEntry(t *testing.T) {
 	require.NotNil(t, e.MessageProcessingID)
 	assert.Equal(t, msgProcID, *e.MessageProcessingID)
 	assert.Equal(t, "pending", e.Status)
-	assert.Equal(t, 3, e.MaxRetries)
+	assert.Equal(t, pkgoutbox.DefaultMaxRetries, e.MaxRetries)
 
 	var payload pkgEvents.RunEntriesDispatchFailed
 	require.NoError(t, json.Unmarshal(e.Payload, &payload))
