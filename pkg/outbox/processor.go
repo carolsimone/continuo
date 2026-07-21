@@ -63,9 +63,13 @@ type ProcessorConfig struct {
 // Processor owns the poll loop. Each tick:
 //  1. Begins a tx.
 //  2. GetPendingBatch with FOR UPDATE SKIP LOCKED.
-//  3. For each entry: call Publisher.Publish; on success MarkProcessed;
-//     on error if retry budget remains call IncrementRetry, otherwise call
-//     the TerminalFailureHook (best-effort) and MarkFailed.
+//  3. For each entry: call Publisher.Publish; on success MarkProcessed. On
+//     error, a permanent failure (events.ErrPermanent) or a transient failure
+//     that has exhausted its retry budget is terminal: write a durable
+//     dead-letter row (skipped if the row is itself a dead-letter — loop
+//     guard), fire the TerminalFailureHook (best-effort), and MarkFailed. A
+//     transient failure with budget remaining instead calls ScheduleRetry with
+//     capped exponential backoff, leaving the row 'pending' for a later poll.
 //  4. Commits.
 type Processor struct {
 	db                *sqlx.DB
@@ -213,7 +217,7 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		}
 	}()
 
-	repo := NewPostgresRepository(tx, p.tableName, p.logger, p.repoOpts...)
+	repo := newPostgresRepository(tx, p.tableName, p.logger, p.repoOpts...)
 	entries, err := repo.GetPendingBatch(ctx, p.batchSize)
 	if err != nil {
 		return 0, fmt.Errorf("get pending batch: %w", err)
@@ -238,26 +242,27 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 			continue
 		}
 		p.logger.Error("Publish failed", "entry_id", entry.ID, "event_type", entry.EventType, "error", pubErr)
-		// Permanent errors (events.ErrPermanent) bypass the retry budget. Retrying
-		// a deterministic-failure payload would burn the budget for no benefit and
-		// leave the task/schedule in limbo longer than necessary.
+
+		// Permanent errors (events.ErrPermanent) are deterministic — retrying is
+		// pure waste, so they go terminal on attempt #1. Everything else is
+		// transient (infra): reschedule with capped backoff and only go terminal
+		// once the budget is exhausted.
 		permanent := errors.Is(pubErr, pkgevents.ErrPermanent)
-		// retry_count is the count of past failures; +1 to evaluate "if we retry now, would this be the Nth attempt?"
 		if !permanent && entry.RetryCount+1 < entry.MaxRetries {
-			if err := repo.IncrementRetry(ctx, entry.ID); err != nil {
-				p.logger.Error("Increment retry failed", "entry_id", entry.ID, "error", err)
+			attempt := entry.RetryCount + 1
+			next := time.Now().Add(backoff(attempt, p.retryBase, p.retryMax))
+			if err := repo.ScheduleRetry(ctx, entry.ID, next, pubErr.Error()); err != nil {
+				p.logger.Error("Schedule retry failed", "entry_id", entry.ID, "error", err)
 			}
 			continue
 		}
-		// Terminal: either ErrPermanent or budget exhausted.
-		if p.onTerminalFailure != nil {
-			if hookErr := p.onTerminalFailure(ctx, entry, pubErr); hookErr != nil {
-				p.logger.Error("Terminal failure hook failed", "entry_id", entry.ID, "error", hookErr)
-			}
+
+		// Terminal: permanent, or transient budget exhausted.
+		kind := FailureKindTransientExhausted
+		if permanent {
+			kind = FailureKindPermanent
 		}
-		if err := repo.MarkFailed(ctx, entry.ID, pubErr.Error()); err != nil {
-			p.logger.Error("Mark failed failed", "entry_id", entry.ID, "error", err)
-		}
+		p.terminate(ctx, repo, entry, kind, pubErr)
 	}
 
 	if err := repo.MarkProcessedBatch(ctx, processedIDs); err != nil {
@@ -270,6 +275,37 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("commit tx: %w", err)
 	}
 	return claimed, nil
+}
+
+// terminate handles a row that has reached a terminal state. It writes a durable
+// dead-letter outbox row (in the caller's transaction, via repo) so the failure
+// is signalled to outbox.dead_letter:v1 the moment Redis is reachable, then marks
+// the original row failed. A row that is itself a dead-letter is never
+// dead-lettered again (loop guard). The optional TerminalFailureHook still fires
+// as a best-effort extra side effect.
+func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, entry *Entry, kind string, cause error) {
+	attempts := entry.RetryCount + 1
+	if entry.AggregateType != DeadLetterAggregateType {
+		dl := buildDeadLetterEntry(entry, kind, cause, attempts)
+		if err := repo.Create(ctx, dl); err != nil {
+			p.logger.Error("Dead-letter create failed", "entry_id", entry.ID, "error", err)
+		}
+	}
+	p.logger.Error("Outbox entry dead-lettered",
+		"failure_kind", kind,
+		"entry_id", entry.ID,
+		"original_event_type", entry.EventType,
+		"original_stream", entry.StreamName,
+		"attempts", attempts,
+		"error", cause)
+	if p.onTerminalFailure != nil {
+		if hookErr := p.onTerminalFailure(ctx, entry, cause); hookErr != nil {
+			p.logger.Error("Terminal failure hook failed", "entry_id", entry.ID, "error", hookErr)
+		}
+	}
+	if err := repo.MarkFailed(ctx, entry.ID, cause.Error()); err != nil {
+		p.logger.Error("Mark failed failed", "entry_id", entry.ID, "error", err)
+	}
 }
 
 // publish dispatches the batch and returns one error per entry, aligned with
