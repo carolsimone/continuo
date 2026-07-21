@@ -1,0 +1,3 @@
+# The production image copies only the three .py scripts.
+tests/
+pyproject.toml
