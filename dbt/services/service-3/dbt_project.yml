@@ -12,15 +12,15 @@ models:
       owner: "test"
       criticality: "CORE"
     table_d:
-      +tags: ["e2e-schedule"]
+      +tags: ["daily"]
     table_e:
-      +tags: ["e2e-schedule"]
+      +tags: ["daily"]
     table_f:
-      +tags: ["e2e-schedule"]
+      +tags: ["daily"]
     table_i:
-      +tags: ["e2e-schedule"]
+      +tags: ["daily"]
     table_j:
-      +tags: ["e2e-schedule"]
+      +tags: ["daily"]
     ftable_c:
       +tags: ["e2e-schedule-failure"]
     ftable_f:
