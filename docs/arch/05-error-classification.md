@@ -25,7 +25,8 @@ permanent.
 | `executor-controller/adapters/k8s/client.go:177` (`buildPodSpec`) | `image_tag` missing on dispatch | `fmt.Errorf("%w: image_tag missing from job params for service %s", events.ErrPermanent, params.ServiceName)` |
 | `state/adapters/redis/*_binding.go` and `orchestrator/adapters/redis/*_parser.go` (each parser/binding) | per-stream parser returns a parse/validation failure (malformed payload, missing required field, bad UUID, unknown enum value, cross-field rule violation) | the parser returns `fmt.Errorf("%w: <reason>", events.ErrPermanent, …)` and the binding propagates it (logs ERROR + returns the error) so the consumer ACKs and drops the poison message |
 | `state/adapters/publisher/outbox_publisher.go` (`Publish`) | generic `json.Unmarshal(entry.Payload, &fields)` into a `map[string]interface{}` fails on malformed JSON — no per-type switch, no unknown-event_type detection | `fmt.Errorf("%w: unmarshal outbox row: %v", events.ErrPermanent, err)` |
-| `orchestrator`, `executor-controller`, `k8s-controller` outbox publishers (`adapters/*/outbox_publisher.go`, `Publish`) | decode a typed event out of `entry.Payload` per `event_type`; a `json.Unmarshal` failure, or the type-switch'"'"'s `default:` case (an `event_type` the publisher does not recognise), is deterministic — the row can never succeed no matter how many times it is retried | `fmt.Errorf("%w: unmarshal <event>: %v", events.ErrPermanent, err)` / `fmt.Errorf("%w: <service> publisher: unknown event_type %q", events.ErrPermanent, entry.EventType)` |
+| `orchestrator`, `executor-controller`, `k8s-controller` outbox publishers (`adapters/*/outbox_publisher.go`, `Publish`) | decode a typed event out of `entry.Payload` per `event_type`; a `json.Unmarshal` failure against a *known* `event_type`, or an out-of-range numeric field (`pkg/num.Int32`) on an otherwise well-formed known payload, is deterministic — the row can never succeed no matter how many times it is retried | `fmt.Errorf("%w: unmarshal <event>: %v", events.ErrPermanent, err)` / `fmt.Errorf("%w: <event> payload: %v", events.ErrPermanent, err)` |
+| `orchestrator`, `executor-controller`, `k8s-controller` outbox publishers (`adapters/*/outbox_publisher.go`, `Publish`) | the type-switch's `default:` case — an `event_type` the publisher does not recognise — is **not** wrapped in `ErrPermanent`. During a rolling deployment an old replica can dequeue a row for an `event_type` only a newer (already-deployed) replica knows how to publish; treating it as permanent would dead-letter a row that a peer replica can handle moments later. The row is retried through its normal backoff budget instead | `fmt.Errorf("<service> publisher: unknown event_type %q (retryable — a newer replica may handle it during a rolling upgrade)", entry.EventType)` |
 | All 7 outbox publishers' `Publish`, dead-letter branch | `pkgoutbox.DeadLetterValues` fails to decode a dead-letter row's own JSON payload — the publisher's own construction, so a decode failure is a bug, not an infra blip | `fmt.Errorf("%w: dead-letter values: %v", events.ErrPermanent, err)` |
 
 Add new emitters to this table as they land.
@@ -90,16 +91,22 @@ receives from `Publisher.Publish` into two classes and handles each
 differently:
 
 - **Permanent** (`errors.Is(err, events.ErrPermanent)`) — the payload is
-  deterministically bad (an undecodable JSON payload, or an `event_type` the
-  publisher's type-switch does not recognise); retrying can never succeed. The
-  row goes terminal on attempt #1 — `retry_count` is left untouched, since
-  bumping it would misrepresent a single dead-on-arrival row as a row that was
-  actually retried.
-- **Transient** (everything else — Redis `XADD`/connection errors, timeouts)
-  — treated as recoverable infra trouble. The row is rescheduled via
-  `ScheduleRetry`, which bumps `retry_count`, stamps `next_attempt_at = NOW()
-  + backoff(attempt)`, and records the error, leaving the row `pending`. It
-  only goes terminal once `retry_count + 1 >= MaxRetries`.
+  deterministically bad for a *known* `event_type` (an undecodable JSON
+  payload, or an out-of-range numeric field on an otherwise well-formed
+  payload); retrying can never succeed. The row goes terminal on attempt #1 —
+  `retry_count` is left untouched, since bumping it would misrepresent a
+  single dead-on-arrival row as a row that was actually retried.
+- **Transient** (everything else — Redis `XADD`/connection errors, timeouts,
+  and an `event_type` the publisher's type-switch does not recognise) —
+  treated as recoverable. An unrecognised `event_type` is deliberately
+  transient rather than permanent: during a rolling deployment an old replica
+  can dequeue a row for an `event_type` only a newer (already-deployed)
+  replica knows how to publish, so dead-lettering it on attempt #1 would
+  discard a row a peer replica could have handled moments later. The row is
+  rescheduled via `ScheduleRetry`, which bumps `retry_count`, stamps
+  `next_attempt_at = NOW() + backoff(attempt)`, and records the error, leaving
+  the row `pending`. It only goes terminal once `retry_count + 1 >=
+  MaxRetries`.
 
 **Due-gate and backoff curve.** `GetPendingBatch` selects only rows where
 `next_attempt_at IS NULL OR next_attempt_at <= NOW()`, evaluated against the

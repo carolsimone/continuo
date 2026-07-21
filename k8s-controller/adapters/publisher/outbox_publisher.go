@@ -66,11 +66,13 @@ func (p *OutboxPublisher) scheduleDelayedCheck(ctx context.Context, entry *outbo
 	}
 	retryCount, err := num.Int32(e.RetryCount, "retry_count")
 	if err != nil {
-		return fmt.Errorf("check.k8s payload: %w", err)
+		// An out-of-range numeric field on a known event type is a
+		// deterministic bad payload, never fixed by retrying.
+		return fmt.Errorf("%w: check.k8s payload: %v", pkgevents.ErrPermanent, err)
 	}
 	maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
 	if err != nil {
-		return fmt.Errorf("check.k8s payload: %w", err)
+		return fmt.Errorf("%w: check.k8s payload: %v", pkgevents.ErrPermanent, err)
 	}
 	payload, err := json.Marshal(pkgevents.CheckK8s{
 		TaskID:           e.TaskID,
@@ -173,6 +175,10 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:
-		return nil, fmt.Errorf("%w: k8s publisher: unknown event_type %q", pkgevents.ErrPermanent, entry.EventType)
+		// Unknown event_type is retried, not dead-lettered: during a rolling
+		// deployment an old replica can dequeue a row for a newly-introduced
+		// event_type that a newer replica (already deployed) will publish
+		// moments later once this row cycles back to it.
+		return nil, fmt.Errorf("k8s publisher: unknown event_type %q (retryable — a newer replica may handle it during a rolling upgrade)", entry.EventType)
 	}
 }

@@ -173,6 +173,10 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("%w: orchestrator publisher: unknown event_type %q", pkgevents.ErrPermanent, entry.EventType)
+		// Unknown event_type is retried, not dead-lettered: during a rolling
+		// deployment an old replica can dequeue a row for a newly-introduced
+		// event_type that a newer replica (already deployed) will publish
+		// moments later once this row cycles back to it.
+		return nil, fmt.Errorf("orchestrator publisher: unknown event_type %q (retryable — a newer replica may handle it during a rolling upgrade)", entry.EventType)
 	}
 }

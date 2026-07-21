@@ -80,11 +80,13 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		// outbox_entry_id is added as a flat sibling by Publish for dedup.
 		taskRetryCount, err := num.Int32(e.TaskRetryCount, "task_retry_count")
 		if err != nil {
-			return nil, fmt.Errorf("node.deployed payload: %w", err)
+			// An out-of-range numeric field on a known event type is a
+			// deterministic bad payload, never fixed by retrying.
+			return nil, fmt.Errorf("%w: node.deployed payload: %v", pkgevents.ErrPermanent, err)
 		}
 		maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
 		if err != nil {
-			return nil, fmt.Errorf("node.deployed payload: %w", err)
+			return nil, fmt.Errorf("%w: node.deployed payload: %v", pkgevents.ErrPermanent, err)
 		}
 		payload, err := json.Marshal(pkgevents.NodeDeployed{
 			TaskID:         e.TaskID,
@@ -128,6 +130,10 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:
-		return nil, fmt.Errorf("%w: executor publisher: unknown event_type %q", pkgevents.ErrPermanent, entry.EventType)
+		// Unknown event_type is retried, not dead-lettered: during a rolling
+		// deployment an old replica can dequeue a row for a newly-introduced
+		// event_type that a newer replica (already deployed) will publish
+		// moments later once this row cycles back to it.
+		return nil, fmt.Errorf("executor publisher: unknown event_type %q (retryable — a newer replica may handle it during a rolling upgrade)", entry.EventType)
 	}
 }
