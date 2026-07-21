@@ -44,7 +44,7 @@ const streamMaxLen = streams.StreamMaxLen
 // time) instead of the stream, so a not-yet-due check waits off the stream. The
 // promoter later moves it onto the stream when due.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
-	if entry.EventType == "check_delayed" {
+	if entry.EventType == event.EventTypeCheckDelayed {
 		return p.scheduleDelayedCheck(ctx, entry)
 	}
 	args, err := p.xaddArgs(entry)
@@ -130,35 +130,35 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return values, nil
 
-	case "task_status_updated":
+	case event.EventTypeTaskStatusUpdated:
 		var e pkgevents.TaskStatusUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal task_status_updated: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
-	case "task_execution_recorded":
+	case event.EventTypeTaskExecutionRecorded:
 		var e pkgevents.TaskExecutionRecorded
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal task_execution_recorded: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
-	case "task_retry":
+	case event.EventTypeTaskRetry:
 		var e event.TaskRetry
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal task_retry: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
-	case "task_failed":
+	case event.EventTypeTaskFailed:
 		var e event.TaskFailed
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal task_failed: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
-	case "node_status_updated":
+	case event.EventTypeNodeStatusUpdated:
 		var e event.NodeStatusUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal node_status_updated: %v", pkgevents.ErrPermanent, err)

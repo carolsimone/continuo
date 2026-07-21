@@ -617,7 +617,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	if err := repo.Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "task",
 		AggregateID:   cmd.TaskID,
-		EventType:     "task_retry",
+		EventType:     event.EventTypeTaskRetry,
 		Payload:       retryPayload,
 		StreamName:    streams.RetryTaskV1,
 	}); err != nil {
@@ -697,7 +697,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 		ID:            outboxEntryID,
 		AggregateType: "task",
 		AggregateID:   cmd.TaskID,
-		EventType:     "check_delayed",
+		EventType:     event.EventTypeCheckDelayed,
 		Payload:       checkPayload,
 		StreamName:    streams.CheckK8sV1,
 	}); err != nil {
@@ -749,7 +749,7 @@ func (h *CheckStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork
 	if err := repo.Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "task",
 		AggregateID:   cmd.TaskID,
-		EventType:     "task_failed",
+		EventType:     event.EventTypeTaskFailed,
 		Payload:       failedPayload,
 		StreamName:    streams.TaskFailedV1,
 	}); err != nil {
@@ -785,7 +785,7 @@ func (h *CheckStatusHandler) writeTaskStatusUpdated(
 	return repo.Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "task",
 		AggregateID:   taskID,
-		EventType:     "task_status_updated",
+		EventType:     event.EventTypeTaskStatusUpdated,
 		Payload:       payload,
 		StreamName:    streams.TaskStatusUpdatedV1,
 	})
@@ -841,7 +841,7 @@ func (h *CheckStatusHandler) writeTaskExecutionRecordedWithLogS3Key(
 	return repo.Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "task",
 		AggregateID:   cmd.TaskID,
-		EventType:     "task_execution_recorded",
+		EventType:     event.EventTypeTaskExecutionRecorded,
 		Payload:       payload,
 		StreamName:    streams.TaskExecutionRecordedV1,
 	})
@@ -869,7 +869,7 @@ func (h *CheckStatusHandler) writeNodeStatusUpdated(
 	return repo.Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "task",
 		AggregateID:   cmd.TaskID,
-		EventType:     "node_status_updated",
+		EventType:     event.EventTypeNodeStatusUpdated,
 		Payload:       payload,
 		StreamName:    streams.NodeUpdatedV1,
 	})

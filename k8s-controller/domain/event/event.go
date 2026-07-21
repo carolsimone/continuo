@@ -15,6 +15,21 @@ const EventTypeSeedBuildNodeCompleted = "seed_build_node_completed"
 // the compile.node.completed:v1 per-node event.
 const EventTypeCompileNodeCompleted = "compile_node_completed"
 
+// Outbox event_type routing keys for k8s_outbox rows. Each value is the
+// event_type stored on the row and matched by the publisher's toValues switch
+// (EventTypeCheckDelayed is routed by Publish to the delay queue instead of a
+// stream). Defined here next to the payload structs so the emit site
+// (service/handlers) and the publisher adapter share one source of truth. Values
+// are the wire-stored event_type strings and must not change.
+const (
+	EventTypeTaskStatusUpdated     = "task_status_updated"
+	EventTypeTaskExecutionRecorded = "task_execution_recorded"
+	EventTypeTaskRetry             = "task_retry"
+	EventTypeTaskFailed            = "task_failed"
+	EventTypeNodeStatusUpdated     = "node_status_updated"
+	EventTypeCheckDelayed          = "check_delayed"
+)
+
 // Event is a marker interface for all events
 type Event interface {
 	isEvent()
@@ -38,9 +53,9 @@ type JobCheckRequest struct {
 	// production `dbt run`. It travels in the durable payload (delay-queue
 	// ticket → promoted stream message) so a check that lands after the Job is
 	// TTL-reaped still carries the verb for retry.
-	Operation    string `json:"operation,omitempty"`
-	RetryCount   int    `json:"retry_count"` // current task retry count
-	MaxRetries   int    `json:"max_retries"` // maximum task retries allowed
+	Operation  string `json:"operation,omitempty"`
+	RetryCount int    `json:"retry_count"` // current task retry count
+	MaxRetries int    `json:"max_retries"` // maximum task retries allowed
 	// RunningAnnounced is true once RUNNING has been announced for this attempt.
 	RunningAnnounced bool `json:"running_announced"`
 }
