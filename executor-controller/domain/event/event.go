@@ -5,20 +5,31 @@ type Event interface {
 	isEvent()
 }
 
+// Outbox event_type routing keys for executor_outbox rows. Each value is the
+// event_type stored on the row and matched by the publisher's toValues switch.
+// Defined here next to the payload structs so the emit site (service/deployer)
+// and the publisher adapter share one source of truth. Values are the wire-stored
+// event_type strings and must not change.
+const (
+	EventTypeTaskStatusUpdated = "task_status_updated"
+	EventTypeNodeDeployed      = "node_deployed"
+	EventTypeNodeUpdated       = "node_updated"
+)
+
 // JobDeployed is the payload of an executor_outbox row whose event_type is
 // "node_deployed". The dispatcher writes it after a deploy succeeds; the
 // publisher reads it to build the node.deployed:v1 typed wire event
 // (pkg/events.NodeDeployed). Stream: node.deployed:v1.
 type JobDeployed struct {
-	TaskID         string `json:"task_id"`
-	ScheduleID     string `json:"schedule_id"`
-	ScheduleName   string `json:"schedule_name"`
-	ServiceName    string `json:"service_name"`
-	SchemaName     string `json:"schema_name"`
-	TableName      string `json:"table_name"`
-	JobName        string `json:"job_name"`
-	NodeType       string `json:"node_type"`
-	ImageTag       string `json:"image_tag"`
+	TaskID       string `json:"task_id"`
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+	ServiceName  string `json:"service_name"`
+	SchemaName   string `json:"schema_name"`
+	TableName    string `json:"table_name"`
+	JobName      string `json:"job_name"`
+	NodeType     string `json:"node_type"`
+	ImageTag     string `json:"image_tag"`
 	// Operation is the dbt verb this Job runs (e.g. "test"); empty for a normal
 	// production `dbt run`. It flows onto node.deployed:v1 so k8s-controller
 	// carries it through the durable check/retry chain.
