@@ -52,6 +52,12 @@ type ProcessorConfig struct {
 	// PerAggregateFIFO publishes rows sharing an aggregate_id in creation order
 	// (a later row waits until the earlier one is processed). Off by default.
 	PerAggregateFIFO bool
+	// RetryBaseDelay is the first-retry delay for a transient failure; each
+	// subsequent retry doubles it up to RetryMaxDelay. Default 5s.
+	RetryBaseDelay time.Duration
+	// RetryMaxDelay caps the per-retry backoff so an outage retries at a steady
+	// interval rather than growing unbounded. Default 5m.
+	RetryMaxDelay time.Duration
 }
 
 // Processor owns the poll loop. Each tick:
@@ -70,6 +76,8 @@ type Processor struct {
 	tick              time.Duration
 	batchSize         int
 	repoOpts          []Option
+	retryBase         time.Duration
+	retryMax          time.Duration
 
 	// lastActivity is the unix-nano timestamp of the most recent unit of Run
 	// progress (a poll tick, and each drained batch), stored via atomic.Int64 so
@@ -96,6 +104,14 @@ func NewProcessor(
 	if batchSize == 0 {
 		batchSize = 100
 	}
+	retryBase := cfg.RetryBaseDelay
+	if retryBase == 0 {
+		retryBase = 5 * time.Second
+	}
+	retryMax := cfg.RetryMaxDelay
+	if retryMax == 0 {
+		retryMax = 5 * time.Minute
+	}
 	var repoOpts []Option
 	if cfg.PerAggregateFIFO {
 		repoOpts = append(repoOpts, WithPerAggregateOrdering())
@@ -108,6 +124,8 @@ func NewProcessor(
 		logger:            logger,
 		tick:              tick,
 		batchSize:         batchSize,
+		retryBase:         retryBase,
+		retryMax:          retryMax,
 		repoOpts:          repoOpts,
 	}
 	// Seed the heartbeat at construction so a probe firing before Run is
