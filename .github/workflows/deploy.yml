@@ -56,7 +56,7 @@ jobs:
               - 'remediation/**'
               - 'remediation-agent/**'
               - 'validation-runner/**'
-              - 'dbt/s3-sidecar/**'
+              - 's3-sidecar/**'
             state:
               - 'Dockerfile.base'
               - 'go.work'
@@ -116,7 +116,7 @@ jobs:
             validation_runner:
               - 'validation-runner/**'
             s3_sidecar:
-              - 'dbt/s3-sidecar/**'
+              - 's3-sidecar/**'
             stream_reaper:
               - 'pkg/**'
 
@@ -168,7 +168,7 @@ jobs:
                   {service: "remediation-agent", changed: $remediation_agent, dockerfile: "remediation-agent/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
                   {service: "validation-runner", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile", context: "validation-runner"},
-                  {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "dbt/s3-sidecar/Dockerfile", context: "dbt/s3-sidecar"},
+                  {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"},
                   {service: "stream-reaper", changed: $stream_reaper, dockerfile: "pkg/cmd/stream-reaper/Dockerfile", context: "pkg"}
                 ]
               }'

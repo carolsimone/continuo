@@ -1,3 +1,7 @@
+# Source the three S3 I/O scripts from the already-built continuo-owned s3-sidecar
+# image (top-level s3-sidecar/) — single source of truth, no local copy under dbt/.
+FROM s3-sidecar:latest AS sidecar
+
 FROM dbt-base:latest
 
 # Clear the inherited dbt-base entrypoint; callers use docker exec with explicit commands
@@ -15,13 +19,14 @@ COPY targets.yaml .
 # Kept so tests can be run via: docker exec dbt-compile-and-load uv run --with pytest pytest tests/
 # (covers compile_uploader, s3_common, cli, and config tests)
 COPY tests/ ./tests/
-# The two s3-sidecar scripts are copied here for TEST/integration harness use only
-# (run via `docker exec dbt-compile-and-load pytest`). In PRODUCTION each script runs
-# in the dedicated s3-sidecar image (python+boto3, no dbt), keeping S3 access entirely
-# out of any dbt image. The dbt+sidecar co-residence in this image is test-only and does
-# not violate production isolation.
-COPY s3-sidecar/s3_common.py /s3_common.py
-COPY s3-sidecar/compile_uploader.py /compile_uploader.py
-COPY s3-sidecar/parse_cache_fetcher.py /parse_cache_fetcher.py
+# The s3-sidecar scripts are baked in here for TEST/integration harness use only
+# (run via `docker exec dbt-compile-and-load pytest -m integration`): the integration
+# tests exercise the real dbt -> real sidecar round trip. In PRODUCTION each script
+# runs in the dedicated s3-sidecar image (python+boto3, no dbt), keeping S3 access
+# entirely out of any dbt image. This co-residence is test-only and does not violate
+# production isolation.
+COPY --from=sidecar /s3_common.py /s3_common.py
+COPY --from=sidecar /compile_uploader.py /compile_uploader.py
+COPY --from=sidecar /parse_cache_fetcher.py /parse_cache_fetcher.py
 
 CMD ["tail", "-f", "/dev/null"]

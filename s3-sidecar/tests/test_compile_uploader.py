@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-import compile_uploader  # pythonpath="s3-sidecar" in pyproject
+import compile_uploader  # pythonpath="." (sidecar root) in pyproject
 import s3_common
 
 

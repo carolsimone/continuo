@@ -1,6 +1,6 @@
 // Package parsecache holds the Go side of the cross-language parse-cache
 // hydration contract. The hydrate-parse-cache initContainer (Python,
-// dbt/s3-sidecar/parse_cache_fetcher.py) fetches the release-proven
+// s3-sidecar/parse_cache_fetcher.py) fetches the release-proven
 // partial-parse artifact into a run pod and reports its outcome on the
 // container's termination message; k8s-controller
 // (service/handlers/check_status_handler.go) parses that message to derive
