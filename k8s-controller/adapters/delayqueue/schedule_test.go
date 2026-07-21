@@ -2,6 +2,7 @@ package delayqueue
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -19,16 +20,20 @@ func newTestRedis(t *testing.T) *goredis.Client {
 }
 
 // TestSchedule_WritesHashAndZSetKeyedByJobName proves a scheduled check lands as
-// one HASH field + one ZSET member, both keyed by JobName.
+// one HASH field + one ZSET member, both keyed by JobName, and that the stored
+// ticket carries both the entry ID and the payload.
 func TestSchedule_WritesHashAndZSetKeyedByJobName(t *testing.T) {
 	r := newTestRedis(t)
 	ctx := context.Background()
 
-	require.NoError(t, Schedule(ctx, r, "job-1", `{"job_name":"job-1"}`, 1700000000))
+	require.NoError(t, Schedule(ctx, r, "job-1", "entry-1", `{"job_name":"job-1"}`, 1700000000))
 
-	payload, err := r.HGet(ctx, TicketsKey, "job-1").Result()
+	raw, err := r.HGet(ctx, TicketsKey, "job-1").Result()
 	require.NoError(t, err)
-	assert.Equal(t, `{"job_name":"job-1"}`, payload)
+	var stored ticket
+	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	assert.Equal(t, "entry-1", stored.EntryID)
+	assert.Equal(t, `{"job_name":"job-1"}`, stored.Payload)
 
 	score, err := r.ZScore(ctx, PendingKey, "job-1").Result()
 	require.NoError(t, err)
@@ -42,8 +47,8 @@ func TestSchedule_RescheduleIsInPlace(t *testing.T) {
 	r := newTestRedis(t)
 	ctx := context.Background()
 
-	require.NoError(t, Schedule(ctx, r, "job-1", `{"v":1}`, 1000))
-	require.NoError(t, Schedule(ctx, r, "job-1", `{"v":2}`, 2000))
+	require.NoError(t, Schedule(ctx, r, "job-1", "entry-1", `{"v":1}`, 1000))
+	require.NoError(t, Schedule(ctx, r, "job-1", "entry-2", `{"v":2}`, 2000))
 
 	hlen, err := r.HLen(ctx, TicketsKey).Result()
 	require.NoError(t, err)
@@ -53,9 +58,12 @@ func TestSchedule_RescheduleIsInPlace(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), zcard, "ZSET must hold one entry per job")
 
-	payload, err := r.HGet(ctx, TicketsKey, "job-1").Result()
+	raw, err := r.HGet(ctx, TicketsKey, "job-1").Result()
 	require.NoError(t, err)
-	assert.Equal(t, `{"v":2}`, payload, "latest payload wins")
+	var stored ticket
+	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	assert.Equal(t, `{"v":2}`, stored.Payload, "latest payload wins")
+	assert.Equal(t, "entry-2", stored.EntryID, "latest entry ID wins")
 
 	score, err := r.ZScore(ctx, PendingKey, "job-1").Result()
 	require.NoError(t, err)

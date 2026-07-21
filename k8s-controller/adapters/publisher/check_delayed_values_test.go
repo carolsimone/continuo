@@ -18,9 +18,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ticketPayload extracts the check payload from the delay-queue ticket envelope
+// stored in TicketsKey (the envelope wraps the payload with the outbox entry ID).
+func ticketPayload(t *testing.T, raw string) string {
+	t.Helper()
+	var env struct {
+		Payload string `json:"payload"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &env))
+	return env.Payload
+}
+
 // TestPublish_CheckDelayed_WritesDelayQueueNotStream proves a check_delayed
 // outbox row is HSET+ZADD'd into the delay queue keyed by JobName, and NOT
-// XADD'd to check.k8s:v1 — removing the self-recirculating stream timer (#282).
+// XADD'd to check.k8s:v1 — a not-yet-due check waits in the queue instead of
+// self-recirculating on the stream.
 func TestPublish_CheckDelayed_WritesDelayQueueNotStream(t *testing.T) {
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
@@ -62,10 +74,10 @@ func TestPublish_CheckDelayed_WritesDelayQueueNotStream(t *testing.T) {
 	assert.Equal(t, float64(12345), score)
 
 	// The HASH holds the typed CheckK8s payload, business fields intact.
-	payloadStr, err := r.HGet(ctx, delayqueue.TicketsKey, "job-1").Result()
+	raw2, err := r.HGet(ctx, delayqueue.TicketsKey, "job-1").Result()
 	require.NoError(t, err)
 	var ck pkgevents.CheckK8s
-	require.NoError(t, json.Unmarshal([]byte(payloadStr), &ck))
+	require.NoError(t, json.Unmarshal([]byte(ticketPayload(t, raw2)), &ck))
 	assert.Equal(t, pkgevents.CheckK8s{
 		TaskID:       taskID,
 		ScheduleID:   scheduleID,
@@ -102,9 +114,9 @@ func TestPublish_CheckDelayed_CarriesRunningAnnounced(t *testing.T) {
 		ID: uuid.New(), EventType: "check_delayed", StreamName: streams.CheckK8sV1, Payload: raw,
 	}))
 
-	payloadStr, err := r.HGet(context.Background(), delayqueue.TicketsKey, "job-1").Result()
+	raw2, err := r.HGet(context.Background(), delayqueue.TicketsKey, "job-1").Result()
 	require.NoError(t, err)
 	var ck pkgevents.CheckK8s
-	require.NoError(t, json.Unmarshal([]byte(payloadStr), &ck))
+	require.NoError(t, json.Unmarshal([]byte(ticketPayload(t, raw2)), &ck))
 	assert.True(t, ck.RunningAnnounced, "running_announced must survive check_delayed → delay-queue conversion")
 }

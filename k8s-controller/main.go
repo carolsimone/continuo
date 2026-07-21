@@ -219,9 +219,9 @@ func main() {
 	logger.Info("Outbox processor started")
 
 	// Delay-queue promoter (background): every second, atomically move due
-	// check tickets from the ZSET into check.k8s:v1. This replaces the removed
-	// stream self-recirculation timer (#282). A missed tick loses nothing — the
-	// ZSET is durable and the next tick promotes the backlog.
+	// check tickets from the ZSET into check.k8s:v1, so a not-yet-due check waits
+	// in the durable ZSET and stays off the stream until due. A missed tick loses
+	// nothing — the ZSET is durable and the next tick promotes the backlog.
 	promoter := delayqueue.NewPromoter(redisClient, logger)
 	liveReg.RegisterWorker("delayqueue_promoter")
 	go func() {

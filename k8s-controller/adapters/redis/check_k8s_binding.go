@@ -13,11 +13,11 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// NewCheckK8sBinding returns a pkg/redis.MessageHandler for check.k8s:v1. As of
-// Phase 2 of #282 every message it receives is genuinely due — the delay-queue
-// promoter only XADDs due tickets — so the old not-due/recirculation gate is
-// gone. Parse failures are permanent (ACK + drop); handler/repository failures
-// propagate so the message stays pending for retry.
+// NewCheckK8sBinding returns a pkg/redis.MessageHandler for check.k8s:v1. Every
+// message it receives is genuinely due — the delay-queue promoter only XADDs due
+// tickets — so there is no not-due/recirculation gate. Parse failures are
+// permanent (ACK + drop); handler/repository failures propagate so the message
+// stays pending for retry.
 func NewCheckK8sBinding(
 	uowFactory func() uow.UnitOfWork,
 	handler *handlers.CheckStatusHandler,

@@ -11,6 +11,7 @@ import (
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -25,25 +26,23 @@ type OutboxPublisher struct {
 	logger *slog.Logger
 }
 
+var _ outbox.Publisher = (*OutboxPublisher)(nil)
+
 // NewOutboxPublisher creates an OutboxPublisher wired to the given Redis client.
 func NewOutboxPublisher(r *goredis.Client, l *slog.Logger) *OutboxPublisher {
 	return &OutboxPublisher{redis: r, logger: l}
 }
 
-// streamMaxLen caps each published stream at roughly this many entries
-// (Approx/~ trimming). It bounds Redis memory for streams a consumer group may
-// lag on. Trimming can drop the oldest entries before a lagging group reads
-// them; 10000 is the accepted bound, matching state's and the orchestrator's
-// publishers. Added in #282, where check.k8s:v1 (uncapped here alone) OOM-killed
-// Redis.
-const streamMaxLen = 10000
+// streamMaxLen caps each published stream (Approx/~ trimming); it is the shared
+// streams.StreamMaxLen so the app-side publisher and the delay-queue promoter
+// bound the stream identically.
+const streamMaxLen = streams.StreamMaxLen
 
 // Publish routes an outbox row to Redis. Most event types XADD their typed
 // field map to entry.StreamName. The check.k8s scheduling event (check_delayed)
-// is the exception: it is written to the delay queue (HSET payload + ZADD due
-// time) instead of the stream, so a not-yet-due check no longer self-recirculates
-// on the stream (the #282 root cause). The promoter later moves it to the stream
-// when due.
+// is the exception: it is written to the delay queue (HSET ticket + ZADD due
+// time) instead of the stream, so a not-yet-due check waits off the stream. The
+// promoter later moves it onto the stream when due.
 func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) error {
 	if entry.EventType == "check_delayed" {
 		return p.scheduleDelayedCheck(ctx, entry)
@@ -91,7 +90,7 @@ func (p *OutboxPublisher) scheduleDelayedCheck(ctx context.Context, entry *outbo
 	if err != nil {
 		return fmt.Errorf("marshal check.k8s payload: %w", err)
 	}
-	return delayqueue.Schedule(ctx, p.redis, e.JobName, string(payload), e.CheckAfter)
+	return delayqueue.Schedule(ctx, p.redis, e.JobName, entry.ID.String(), string(payload), e.CheckAfter)
 }
 
 // xaddArgs builds the XADD arguments for an outbox entry, including the shared

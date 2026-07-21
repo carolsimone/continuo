@@ -15,9 +15,9 @@ import (
 // loops until a partial batch drains the backlog.
 const promoteBatch = 500
 
-// promoteMaxLen is the Phase-1 MAXLEN cap, retained as defense-in-depth on the
-// promoter's XADD (matches the publisher's streamMaxLen and the app-side cap).
-const promoteMaxLen = 10000
+// promoteMaxLen caps the promoter's XADD, sharing streams.StreamMaxLen with the
+// direct publisher path so the stream is bounded on both routes onto it.
+const promoteMaxLen = streams.StreamMaxLen
 
 // promoteScript atomically moves all due tickets (score <= now) from the ZSET
 // into the stream, bounded by LIMIT. Because Redis runs the whole script
@@ -25,20 +25,31 @@ const promoteMaxLen = 10000
 // exactly once: the first replica's ZREM/HDEL means a concurrent run sees
 // nothing to promote. Returns the number of due members processed.
 //
+// The ticket stores the source outbox row's entry ID next to the payload, so the
+// XADD stamps outbox_entry_id as a flat field just like the direct publisher
+// path. That field is what lets the consumer's secondary dedup key suppress a
+// duplicate: if an outbox publish reaches Redis but its Postgres transaction
+// rolls back, and the ticket is promoted (and thus deleted) before the row is
+// retried, the retry re-schedules and re-promotes the same check under a fresh
+// Redis msg_id — which the primary (message_id, stream_name) dedup would miss.
+//
 //	KEYS[1] = pending (ZSET)  KEYS[2] = tickets (HASH)  KEYS[3] = stream
 //	ARGV[1] = now (unix sec)  ARGV[2] = batch limit     ARGV[3] = stream maxlen
 const promoteScript = `
 local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, ARGV[2])
 for _, job in ipairs(due) do
-  local payload = redis.call('HGET', KEYS[2], job)
-  if payload then
-    -- No outbox_entry_id here (unlike the publisher's xaddArgs, which stamps it
-    -- on every XADD): this write is keyed by JobName and idempotent, so a
-    -- Processor-crash redelivery just re-runs HSET+ZADD in place rather than
-    -- duplicating a ticket, and a consumer-crash PEL redelivery reuses the same
-    -- Redis msg_id, which the primary (message_id, stream_name) dedup already
-    -- catches. The secondary outbox_entry_id dedup key is unnecessary here.
-    redis.call('XADD', KEYS[3], 'MAXLEN', '~', ARGV[3], '*', 'payload', payload)
+  local raw = redis.call('HGET', KEYS[2], job)
+  if raw then
+    -- A ticket that fails to decode (or is missing its fields) is dropped, not
+    -- retried: a malformed value would otherwise raise an error that aborts the
+    -- whole script, and because ZREM runs after XADD it would never be removed —
+    -- so every tick would re-select it and wedge the queue for every job behind
+    -- it. Dropping the one bad ticket keeps the rest of the backlog flowing.
+    local ok, t = pcall(cjson.decode, raw)
+    if ok and type(t) == 'table' and t.payload and t.entry_id then
+      redis.call('XADD', KEYS[3], 'MAXLEN', '~', ARGV[3], '*',
+        'payload', t.payload, 'outbox_entry_id', t.entry_id)
+    end
     redis.call('HDEL', KEYS[2], job)
   end
   redis.call('ZREM', KEYS[1], job)

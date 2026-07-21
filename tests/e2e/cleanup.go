@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/delayqueue"
 	"github.com/jmoiron/sqlx"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -137,6 +138,12 @@ func cleanupRedis(t *testing.T, ctx context.Context, clients *testClients) {
 	for _, stream := range streams {
 		clients.redisClient.Del(ctx, stream)
 	}
+
+	// Delay-queue durable keys (ZSET clock + HASH tickets) backing check.k8s:v1.
+	// These outlive the stream, so a future ticket left behind would let the
+	// promoter recreate the stream after the dedup/outbox tables are wiped and
+	// replay a stale check into a later test.
+	clients.redisClient.Del(ctx, delayqueue.PendingKey, delayqueue.TicketsKey)
 }
 
 // cleanupK8s removes test jobs from Kubernetes

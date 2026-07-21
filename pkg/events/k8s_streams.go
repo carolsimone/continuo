@@ -58,10 +58,11 @@ type NodeDeployed struct {
 // CheckK8s — stream: check.k8s:v1
 // Published and consumed by: k8s-controller (the delayed status-recheck)
 //
-// This is the typed payload the promoter XADDs (single `payload` field) to
-// check.k8s:v1 once a delay-queue ticket becomes due. The delay itself
-// (check_after) lives as the ZSET score on the delay queue, not in this
-// stream payload.
+// This is the typed payload the promoter XADDs to check.k8s:v1 once a
+// delay-queue ticket becomes due. It travels in the `payload` field, alongside a
+// flat `outbox_entry_id` sibling field (carried on the ticket) for consumer-side
+// dedup. The delay itself (check_after) lives as the ZSET score on the delay
+// queue, not in this stream payload.
 type CheckK8s struct {
 	TaskID       string `json:"task_id"`
 	ScheduleID   string `json:"schedule_id"`

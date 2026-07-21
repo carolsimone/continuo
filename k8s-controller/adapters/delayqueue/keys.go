@@ -1,19 +1,17 @@
-// Package delayqueue implements the check.k8s scheduled-set delay queue: a Redis
-// ZSET (the clock) + HASH (the payload) that replace the self-recirculating
-// check.k8s:v1 stream timer removed in Phase 2 of issue #282. The stream stays
-// the reliable executor; this package only answers "run this check at time T".
+// Package delayqueue implements the check.k8s delay queue: a Redis ZSET (the
+// clock) + HASH (the payload) that hold a status re-check until its due time.
+// Keeping a not-yet-due check here — one entry per in-flight Job — rather than on
+// the check.k8s:v1 stream bounds the stream's size. The stream stays the reliable
+// executor; this package only answers "run this check at time T".
 package delayqueue
 
-const (
-	// PendingKey is the ZSET acting as the clock: member = a Job's stable
-	// identity (JobName, unique per k8s Job), score = check_after (unix seconds).
-	// Because a ZSET member is keyed by value, re-scheduling a job is an in-place
-	// score update — one entry per in-flight job, forever. The #282 pile-up is
-	// physically impossible here.
-	PendingKey = "checkk8s:pending"
+import contract "github.com/carolsimone/continuo/pkg/delayqueue"
 
-	// TicketsKey is the HASH holding each pending check's payload: field =
-	// JobName, value = the CheckK8s payload JSON. Keyed by the same JobName as
-	// PendingKey, so the two structures stay one-entry-per-job in lockstep.
-	TicketsKey = "checkk8s:tickets"
+// PendingKey and TicketsKey are the delay queue's Redis keys, both keyed by
+// JobName (a K8s Job's stable identity) so the ZSET clock and the HASH of tickets
+// stay one-entry-per-job in lockstep. They come from the shared contract package
+// so the end-to-end teardown purges the same keys this adapter writes.
+const (
+	PendingKey = contract.PendingKey
+	TicketsKey = contract.TicketsKey
 )
