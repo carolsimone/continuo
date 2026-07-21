@@ -95,7 +95,7 @@ func emitPerNodeResult(ctx context.Context, outboxRepo outbox.Repository, namesp
 		EventType:     EventTypeValidationNodeResult,
 		Payload:       body,
 		StreamName:    streams.ValidationResultV1,
-		MaxRetries:    3,
+		MaxRetries:    outbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("create per-node projection row: %w", err)
 	}

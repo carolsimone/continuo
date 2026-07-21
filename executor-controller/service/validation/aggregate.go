@@ -241,7 +241,7 @@ func emitAggregateIfComplete(
 		EventType:     cfg.eventType,
 		Payload:       payload,
 		StreamName:    cfg.streamName,
-		MaxRetries:    3,
+		MaxRetries:    outbox.DefaultMaxRetries,
 	})
 }
 
