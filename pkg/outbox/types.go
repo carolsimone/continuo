@@ -10,10 +10,11 @@ import (
 // created without an explicit MaxRetries. The processor drops an entry to
 // "failed" once RetryCount reaches MaxRetries (see processor.go), so this
 // bounds how many times a transiently-failing publish is re-attempted before
-// it is parked for inspection. This budget spans a bounded backoff window
-// (~20–30 min) with capped exponential delays, allowing sustained retries
-// during infrastructure recovery without leaving entries in limbo indefinitely.
-const DefaultMaxRetries = 10
+// it is parked for inspection. With the default 1s base and 5m cap, this budget
+// spans a bounded backoff window (~20 min) with capped exponential delays,
+// allowing sustained retries during infrastructure recovery without leaving
+// entries in limbo indefinitely.
+const DefaultMaxRetries = 13
 
 // Entry is the canonical transactional-outbox row, shared across all services.
 // Each service owns its own physical <service>_outbox table; this struct is the

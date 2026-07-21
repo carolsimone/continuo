@@ -378,3 +378,37 @@ func TestProcessor_DeadLetterRowDoesNotSpawnAnotherDeadLetter(t *testing.T) {
 	).Scan(&count))
 	assert.Equal(t, 1, count, "the failing dead-letter row must not create a second dead-letter")
 }
+
+// TestProcessor_TerminalWriteFailureRollsBackBatch verifies that when the
+// dead-letter write fails, terminate() propagates the error so the whole batch
+// rolls back — the original row must NOT be committed as 'failed' without its
+// dead-letter, which would silently drop the mandatory failure signal.
+func TestProcessor_TerminalWriteFailureRollsBackBatch(t *testing.T) {
+	db := dbForTest(t)
+	id := seedRow(t, db, 5)
+
+	// Reject any dead-letter INSERT, so terminate()'s Create fails.
+	_, err := db.Exec(`CREATE OR REPLACE FUNCTION reject_dl() RETURNS trigger AS $$
+BEGIN IF NEW.event_type = 'outbox_dead_letter' THEN RAISE EXCEPTION 'dl rejected'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql`)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TRIGGER reject_dl_trg BEFORE INSERT ON orchestrator_outbox FOR EACH ROW EXECUTE FUNCTION reject_dl()`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.Exec(`DROP TRIGGER IF EXISTS reject_dl_trg ON orchestrator_outbox`)
+		_, _ = db.Exec(`DROP FUNCTION IF EXISTS reject_dl()`)
+	})
+
+	pub := &permanentFailingPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.Error(t, p.ProcessBatch(context.Background()), "batch must fail when the dead-letter write fails")
+
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status))
+	assert.Equal(t, "pending", status, "original row must roll back to pending, not commit as failed without a dead-letter")
+
+	var dl int
+	require.NoError(t, db.QueryRow(
+		`SELECT count(*) FROM orchestrator_outbox WHERE event_type=$1`, outbox.DeadLetterEventType,
+	).Scan(&dl))
+	assert.Equal(t, 0, dl, "no dead-letter row must be committed when the batch rolled back")
+}

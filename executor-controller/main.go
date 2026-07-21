@@ -328,6 +328,7 @@ func main() {
 		// node_deployed row, since they share the task aggregate_id.
 		pkgoutbox.ProcessorConfig{Tick: 5 * time.Second, BatchSize: 100, PerAggregateFIFO: true},
 	)
+
 	liveReg.RegisterWorker("outbox_processor")
 	go func() {
 		err := outboxProcessor.Run(ctx)

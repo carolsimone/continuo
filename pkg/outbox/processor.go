@@ -53,7 +53,11 @@ type ProcessorConfig struct {
 	// (a later row waits until the earlier one is processed). Off by default.
 	PerAggregateFIFO bool
 	// RetryBaseDelay is the first-retry delay for a transient failure; each
-	// subsequent retry doubles it up to RetryMaxDelay. Default 5s.
+	// subsequent retry doubles it up to RetryMaxDelay. Default 1s — small so a
+	// brief blip recovers within about a poll tick (important under
+	// PerAggregateFIFO, where a scheduled head withholds its younger siblings
+	// until it publishes), while the exponential growth still spaces out
+	// attempts during a sustained outage.
 	RetryBaseDelay time.Duration
 	// RetryMaxDelay caps the per-retry backoff so an outage retries at a steady
 	// interval rather than growing unbounded. Default 5m.
@@ -111,7 +115,7 @@ func NewProcessor(
 	}
 	retryBase := cfg.RetryBaseDelay
 	if retryBase == 0 {
-		retryBase = 5 * time.Second
+		retryBase = time.Second
 	}
 	retryMax := cfg.RetryMaxDelay
 	if retryMax == 0 {
@@ -273,7 +277,13 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 		if permanent {
 			kind = FailureKindPermanent
 		}
-		p.terminate(ctx, repo, entry, kind, pubErr)
+		if err := p.terminate(ctx, repo, entry, kind, pubErr); err != nil {
+			// A terminal write failed (dead-letter INSERT or MarkFailed). Abort
+			// the whole batch so it rolls back and retries next tick, rather than
+			// committing a row marked failed with no dead-letter — the mandatory
+			// signal must never be silently dropped.
+			return 0, fmt.Errorf("terminate entry %s: %w", entry.ID, err)
+		}
 	}
 
 	if err := repo.MarkProcessedBatch(ctx, processedIDs); err != nil {
@@ -294,12 +304,17 @@ func (p *Processor) processBatchOnce(ctx context.Context) (int, error) {
 // the original row failed. A row that is itself a dead-letter is never
 // dead-lettered again (loop guard). The optional TerminalFailureHook still fires
 // as a best-effort extra side effect.
-func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, entry *Entry, kind string, cause error) {
+//
+// It returns an error if either terminal write (the dead-letter INSERT or
+// MarkFailed) fails, so the caller can roll the whole batch back: marking a row
+// failed without its dead-letter would silently drop the mandatory failure
+// signal, so the two writes must commit together or not at all.
+func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, entry *Entry, kind string, cause error) error {
 	attempts := entry.RetryCount + 1
 	if entry.AggregateType != DeadLetterAggregateType {
 		dl := buildDeadLetterEntry(entry, kind, cause, attempts)
 		if err := repo.Create(ctx, dl); err != nil {
-			p.logger.Error("Dead-letter create failed", "entry_id", entry.ID, "error", err)
+			return fmt.Errorf("create dead-letter for %s: %w", entry.ID, err)
 		}
 	}
 	p.logger.Error("Outbox entry dead-lettered",
@@ -315,8 +330,9 @@ func (p *Processor) terminate(ctx context.Context, repo *postgresRepository, ent
 		}
 	}
 	if err := repo.MarkFailed(ctx, entry.ID, cause.Error()); err != nil {
-		p.logger.Error("Mark failed failed", "entry_id", entry.ID, "error", err)
+		return fmt.Errorf("mark failed for %s: %w", entry.ID, err)
 	}
+	return nil
 }
 
 // publish dispatches the batch and returns one error per entry, aligned with

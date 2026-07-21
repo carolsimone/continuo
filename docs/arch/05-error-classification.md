@@ -122,10 +122,14 @@ rolling deployment: a previous-version replica's reader filters on
 off, so it cannot retry that row every tick and exhaust its budget before the
 backoff elapses. The delay is capped exponential
 growth — `base * 2^(attempt-1)` clamped to a maximum — defaulting to a
-5-second base and a 5-minute cap. `DefaultMaxRetries` is 10, giving a
-transient row roughly 20–30 minutes of retry window before the budget is
-exhausted and it goes terminal — long enough to ride out a real Redis outage
-or restart without manual intervention.
+1-second base and a 5-minute cap. The small base keeps the first retry about a
+poll tick away so a brief blip recovers quickly (which matters under
+per-aggregate FIFO, where a scheduled head withholds its younger siblings until
+it publishes), while the exponential growth still spaces out attempts during a
+sustained outage. `DefaultMaxRetries` is 13, giving a transient row roughly 20
+minutes of retry window before the budget is exhausted and it goes terminal —
+long enough to ride out a real Redis outage or restart without manual
+intervention.
 
 **Mandatory durable dead-letter.** Every terminal outcome — permanent, or
 transient with the retry budget exhausted — writes a dead-letter row in the

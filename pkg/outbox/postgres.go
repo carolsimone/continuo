@@ -268,22 +268,18 @@ func (r *postgresRepository) CountTerminal(ctx context.Context) (int, error) {
 }
 
 // ScheduleRetry records a transient publish failure: it bumps retry_count,
-// moves the row to 'scheduled', stamps the next eligible attempt time, and
-// stores the error for visibility. 'scheduled' is a distinct status from
-// 'pending' specifically so a previous-version replica's `status = 'pending'`
-// reader (rolling deploy, before this due-gate existed) does not see the row
-// and cannot reclaim/retry it before next_attempt_at elapses; a later poll
-// (from any replica running this code) re-selects it once due via
-// GetPendingBatch's status IN ('pending', 'scheduled') clause. It replaces
-// IncrementRetry on the transient path (IncrementRetry is retained on the
-// interface but no longer used by the processor). The next attempt time is
-// computed against clock_timestamp() — the actual statement-execution wall
-// clock — rather than NOW() (fixed at transaction start) or the host clock:
-// using NOW() here would understate the backoff whenever the enclosing
-// batch's publish attempts run long, since the deadline would be measured
-// from before those attempts started. This matches the due-gate comparison
-// used by GetPendingBatch; make_interval takes whole seconds from the Go
-// duration.
+// moves the row to 'scheduled', stamps the next eligible attempt time
+// (clock_timestamp() + retryIn), and stores the error for visibility. The
+// 'scheduled' status keeps a backed-off row out of any reader that selects only
+// `status = 'pending'`, so a co-running replica without this due-gate cannot
+// reclaim the row and retry it before next_attempt_at elapses; GetPendingBatch
+// re-selects it once due via its status IN ('pending', 'scheduled') clause. The
+// deadline is measured against clock_timestamp() — the statement-execution wall
+// clock — not NOW(), which is fixed at transaction start: because this runs in
+// the same batch transaction as the publish attempts, NOW() would measure the
+// backoff from before those attempts ran and could leave the deadline already
+// in the past. This matches the due-gate comparison in GetPendingBatch;
+// make_interval takes whole seconds from the Go duration.
 func (r *postgresRepository) ScheduleRetry(ctx context.Context, id uuid.UUID, retryIn time.Duration, errorMessage string) error {
 	query := fmt.Sprintf(
 		`UPDATE %s SET status = 'scheduled', retry_count = retry_count + 1, next_attempt_at = clock_timestamp() + make_interval(secs => $1), error_message = $2 WHERE id = $3`,

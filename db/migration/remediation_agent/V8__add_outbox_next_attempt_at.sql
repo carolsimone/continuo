@@ -16,9 +16,9 @@ CREATE INDEX IF NOT EXISTS idx_remediation_agent_outbox_due
     WHERE status = 'scheduled';
 
 -- Align the DB fallback default with the outbox processor's retry budget
--- (DefaultMaxRetries = 10), so a raw INSERT that omits max_retries still
+-- (DefaultMaxRetries = 13), so a raw INSERT that omits max_retries still
 -- gets the current retry budget instead of a stale value.
-ALTER TABLE remediation_agent_outbox ALTER COLUMN max_retries SET DEFAULT 10;
+ALTER TABLE remediation_agent_outbox ALTER COLUMN max_retries SET DEFAULT 13;
 
 -- 'scheduled' marks a transiently-failed row awaiting its backoff deadline.
 -- It is a distinct status from 'pending' specifically so a previous-version

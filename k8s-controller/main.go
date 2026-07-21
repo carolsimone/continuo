@@ -202,6 +202,7 @@ func main() {
 		logger,
 		pkgoutbox.ProcessorConfig{Tick: time.Second, BatchSize: 100},
 	)
+
 	liveReg.RegisterWorker("outbox_processor")
 	go func() {
 		logger.Info("Starting outbox processor")
