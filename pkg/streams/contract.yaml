@@ -159,6 +159,12 @@ streams:
     producers: [k8s-controller]
     consumers: []
 
+  - name: outbox.dead_letter:v1
+    const: OutboxDeadLetterV1
+    description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor. Operational DLQ, not a domain event.
+    producers: [state, orchestrator, executor-controller, k8s-controller, release-controller, remediation, remediation-agent]
+    consumers: []
+
   # ---------------- cross-service fanout ----------------
 
   - name: schedule.cancelled:v1
