@@ -43,7 +43,7 @@ docker build -f k8s-controller/Dockerfile.dev -t continuo-k8s-controller:latest 
 log_info "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/ || { log_error "failed to build dbt-base"; exit 1; }
 log_info "Building s3-sidecar image..."
-DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest dbt/s3-sidecar/ || { log_error "failed to build s3-sidecar"; exit 1; }
+DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/ || { log_error "failed to build s3-sidecar"; exit 1; }
 log_info "Building validation-runner image..."
 DOCKER_BUILDKIT=1 docker build -t validation-runner:latest validation-runner/ || { log_error "failed to build validation-runner"; exit 1; }
 

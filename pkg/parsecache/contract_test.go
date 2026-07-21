@@ -10,7 +10,7 @@ import (
 
 // TestContractMatchesPythonFetcher guards the cross-language parse-cache
 // hydration contract. The hydrate-parse-cache initContainer (Python,
-// dbt/s3-sidecar/parse_cache_fetcher.py) writes its outcome to the
+// s3-sidecar/parse_cache_fetcher.py) writes its outcome to the
 // container's termination message; k8s-controller parses that message using
 // the constants in this package, and executor-controller names the
 // initContainer it builds with ContainerName. Nothing generates one side

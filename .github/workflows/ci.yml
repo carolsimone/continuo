@@ -193,6 +193,15 @@ jobs:
             ghcr.io/astral-sh/uv:python3.12-bookworm-slim \
             sh -c "uv sync --frozen --extra dev && uv run pytest -v"
 
+      - name: Test s3-sidecar
+        # Unit-test the continuo-owned sidecar scripts (compile_uploader,
+        # parse_cache_fetcher, s3_common) against boto3 in the uv image. No committed
+        # uv.lock, so use ephemeral --with deps rather than uv sync --frozen.
+        run: |
+          docker run --rm -v "$PWD/s3-sidecar:/app" -w /app \
+            ghcr.io/astral-sh/uv:python3.12-bookworm-slim \
+            sh -c "uv run --with boto3 --with pytest pytest tests/ -v"
+
       - name: Test dbt compile + S3 upload (integration)
         # Runs every @pytest.mark.integration test under dbt/tests (test_upload.py's
         # compile+S3 round trip and test_parse_rehearsal.py's real-dbt partial-parse

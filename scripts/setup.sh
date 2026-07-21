@@ -61,7 +61,7 @@ fi
 echo "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 echo "Building s3-sidecar image..."
-DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest dbt/s3-sidecar/
+DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
 echo "Building validation-runner image..."
 DOCKER_BUILDKIT=1 docker build -t validation-runner:latest validation-runner/
 echo "Building service images (batched)..."
