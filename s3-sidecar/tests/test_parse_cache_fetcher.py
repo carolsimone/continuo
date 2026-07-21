@@ -11,7 +11,7 @@ from unittest import mock
 
 import pytest
 
-import parse_cache_fetcher  # pythonpath="s3-sidecar" in pyproject
+import parse_cache_fetcher  # pythonpath="." (sidecar root) in pyproject
 import s3_common
 
 
