@@ -69,7 +69,8 @@ type ProcessorConfig struct {
 //     dead-letter row (skipped if the row is itself a dead-letter — loop
 //     guard), fire the TerminalFailureHook (best-effort), and MarkFailed. A
 //     transient failure with budget remaining instead calls ScheduleRetry with
-//     capped exponential backoff, leaving the row 'pending' for a later poll.
+//     capped exponential backoff, moving the row to 'scheduled' until it is
+//     due for a later poll.
 //  4. Commits.
 type Processor struct {
 	db                *sqlx.DB

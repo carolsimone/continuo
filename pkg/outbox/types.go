@@ -26,11 +26,11 @@ type Entry struct {
 	EventType           string
 	Payload             []byte // JSONB; typed events.* struct marshaled here
 	StreamName          string
-	Status              string // "pending" | "processed" | "failed"
+	Status              string // "pending" | "scheduled" | "processed" | "failed"
 	RetryCount          int
 	MaxRetries          int
 	CreatedAt           time.Time
 	ProcessedAt         *time.Time
 	ErrorMessage        *string
-	NextAttemptAt       *time.Time // when a transiently-failed pending row is next eligible; NULL = due now
+	NextAttemptAt       *time.Time // when a 'scheduled' (transiently-failed) row is next eligible; NULL = due now
 }

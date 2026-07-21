@@ -96,7 +96,7 @@ func TestProcessor_TransientErrorIncrementsRetry(t *testing.T) {
 	var status string
 	var rc int
 	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status, &rc))
-	assert.Equal(t, "pending", status)
+	assert.Equal(t, "scheduled", status)
 	assert.Equal(t, 1, rc)
 }
 
@@ -223,7 +223,7 @@ func TestProcessor_BatchFailureIsolatesFailedRow(t *testing.T) {
 		var rc int
 		require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status, &rc))
 		if id == failID {
-			assert.Equal(t, "pending", status, "failed row stays pending")
+			assert.Equal(t, "scheduled", status, "transiently-failed row moves to scheduled")
 			assert.Equal(t, 1, rc, "failed row retry_count incremented")
 		} else {
 			assert.Equal(t, "processed", status, "sibling rows processed")
@@ -260,8 +260,9 @@ func TestProcessor_DrainClearsBacklogInOneTick(t *testing.T) {
 	assert.GreaterOrEqual(t, pub.batchCalls, total/batch, "each full batch is its own pipelined publish")
 }
 
-// A transient error must reschedule (future next_attempt_at, still pending),
-// NOT mark failed and NOT write a dead-letter — even across a single ProcessBatch.
+// A transient error must reschedule (future next_attempt_at, status
+// 'scheduled' rather than terminal 'failed'), NOT mark failed and NOT write a
+// dead-letter — even across a single ProcessBatch.
 func TestProcessor_TransientErrorReschedulesWithBackoff(t *testing.T) {
 	db := dbForTest(t)
 	id := seedRow(t, db, 10)
@@ -276,7 +277,7 @@ func TestProcessor_TransientErrorReschedulesWithBackoff(t *testing.T) {
 	require.NoError(t, db.QueryRow(
 		`SELECT status, retry_count, next_attempt_at FROM orchestrator_outbox WHERE id=$1`, id,
 	).Scan(&status, &rc, &next))
-	assert.Equal(t, "pending", status)
+	assert.Equal(t, "scheduled", status)
 	assert.Equal(t, 1, rc)
 	require.NotNil(t, next, "transient failure must set next_attempt_at")
 	assert.True(t, next.After(time.Now()), "next_attempt_at must be in the future")
