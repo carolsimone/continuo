@@ -32,7 +32,7 @@ const (
 	RetryTaskV1 = "retry.task:v1"
 	// NodeDeployedV1 — Pod-deploy intent from executor; consumed by k8s-controller.
 	NodeDeployedV1 = "node.deployed:v1"
-	// CheckK8sV1 — Delayed status-check tickets; k8s-controller self-loops.
+	// CheckK8sV1 — Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
 	CheckK8sV1 = "check.k8s:v1"
 	// TaskFailedV1 — Terminal task failure emitted by k8s-controller.
 	TaskFailedV1 = "task.failed:v1"

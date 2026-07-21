@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/k8s-controller/adapters/delayqueue"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/http"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/k8s"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/postgres"
@@ -179,7 +180,7 @@ func main() {
 		redisClient,
 		streams.CheckK8sV1,
 		streams.K8sCheckStatus,
-		redis.NewCheckK8sBinding(redisClient, uowFactory, checkStatusHandler, logger),
+		redis.NewCheckK8sBinding(uowFactory, checkStatusHandler, logger),
 		logger,
 	)
 
@@ -216,6 +217,26 @@ func main() {
 	}()
 
 	logger.Info("Outbox processor started")
+
+	// Delay-queue promoter (background): every second, atomically move due
+	// check tickets from the ZSET into check.k8s:v1, so a not-yet-due check waits
+	// in the durable ZSET and stays off the stream until due. A missed tick loses
+	// nothing — the ZSET is durable and the next tick promotes the backlog.
+	promoter := delayqueue.NewPromoter(redisClient, logger)
+	liveReg.RegisterWorker("delayqueue_promoter")
+	go func() {
+		logger.Info("Starting delay-queue promoter")
+		err := promoter.Run(ctx, time.Second)
+		if errors.Is(err, context.Canceled) {
+			err = nil // clean stop on shutdown
+		}
+		liveReg.WorkerExited("delayqueue_promoter", err)
+		if err != nil {
+			logger.Error("Delay-queue promoter stopped with error", "error", err)
+		}
+	}()
+
+	logger.Info("Delay-queue promoter started")
 
 	// Step 15: Initialize and start StuckEntryResolver (background).
 	// Uses a dedicated repository against k8s_outbox for stuck-entry remediation.

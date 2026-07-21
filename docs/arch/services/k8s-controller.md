@@ -45,12 +45,21 @@ All three streams are consumed via `pkg/redis.StreamConsumer` with per-stream pa
 | Stream | Consumer group | Binding pattern |
 |---|---|---|
 | `node.deployed:v1` | `K8sDeployed` | Full: parse → `UnitOfWork.Begin` → dedup via `pkg/messageprocessing.DedupWithOutboxEntryID` → `CheckStatusHandler.Handle` → commit |
-| `check.k8s:v1` | `K8sCheckStatus` | Full (same as above); binding also gates on `check_after`: if the timestamp is in the future, re-circulates a fresh copy via XADD (capped at `MaxLen 10000`, approximate `~` — see Stream trimming below) and ACKs without processing |
+| `check.k8s:v1` | `K8sCheckStatus` | Full (same as above). Every message is already due — the delay-queue promoter only XADDs due tickets (see Delay queue below) — so the binding has no delay gate and processes each message immediately |
 | `schedule.cancelled:v1` | `K8sScheduleCancelled` | Lightweight: parse `schedule_id` → insert into `cancelled_schedules` guard table (idempotent); no dedup, no outbox |
 
 Production and all candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `mode=compile`) are observed over these same `node.deployed:v1` / `check.k8s:v1` consumers; there is no separate consumer group and no label-selector filter on the consumers themselves. Routing to the appropriate outbox row happens inside `CheckStatusHandler` by inspecting the live Job's labels (see Candidate-mode job routing).
 
-`node.deployed:v1` and `check.k8s:v1` carry their event as a typed JSON `payload` field, decoded by the per-stream parsers into `pkg/events.NodeDeployed` and `pkg/events.CheckK8s` (`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `image_tag`, plus retry/max-retries). The task-level retry count is named `task_retry_count` on `node.deployed:v1` and `retry_count` on `check.k8s:v1`; both parsers map it onto `command.CheckJobStatus.RetryCount`. `check.k8s:v1` additionally carries `running_announced` — false on a fresh `node.deployed:v1` (a new attempt), set true once RUNNING has been announced, so the self-poll loop announces RUNNING exactly once per attempt without persistent state. Transport metadata travels as flat sibling fields: `outbox_entry_id` (consumed by `DedupWithOutboxEntryID` for dedup) and, on `check.k8s:v1`, `check_after` (the binding's delay gate reads it before the payload is decoded, so re-circulated copies preserve the schedule).
+`node.deployed:v1` and `check.k8s:v1` carry their event as a typed JSON `payload` field, decoded by the per-stream parsers into `pkg/events.NodeDeployed` and `pkg/events.CheckK8s` (`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `image_tag`, plus retry/max-retries). The task-level retry count is named `task_retry_count` on `node.deployed:v1` and `retry_count` on `check.k8s:v1`; both parsers map it onto `command.CheckJobStatus.RetryCount`. `check.k8s:v1` additionally carries `running_announced` — false on a fresh `node.deployed:v1` (a new attempt), set true once RUNNING has been announced, so the self-poll loop announces RUNNING exactly once per attempt without persistent state. Transport metadata travels as a flat `outbox_entry_id` sibling field on both streams, consumed by `DedupWithOutboxEntryID`; on `check.k8s:v1` the promoter copies it from the delay-queue ticket so a re-promoted check is deduped on it.
+
+### Delay queue (Redis: `checkk8s:pending` ZSET + `checkk8s:tickets` HASH)
+
+A not-yet-due status re-check waits in a Redis delay queue rather than being re-XADD'd onto `check.k8s:v1`, so the stream cannot grow unbounded. The queue is two durable keys, both keyed by `JobName` (a K8s Job's stable identity), kept in lockstep:
+
+- `checkk8s:pending` — a ZSET acting as the clock: member = `JobName`, score = `check_after` (unix seconds). Because a member is keyed by value, re-scheduling a Job is an in-place score update — one entry per in-flight Job.
+- `checkk8s:tickets` — a HASH holding each pending check's ticket: field = `JobName`, value = a JSON envelope `{entry_id, payload}` wrapping the typed `CheckK8s` payload with the source outbox row's ID.
+
+`OutboxPublisher` writes a `check_delayed` row into this queue (HSET ticket + ZADD due time in one `MULTI`/`EXEC`). A background **promoter** ticks every second, running one atomic Lua script that moves every due ticket (score ≤ now, bounded per batch) into `check.k8s:v1`: it XADDs the ticket's `payload` plus a flat `outbox_entry_id` field, then `HDEL`/`ZREM`s the ticket. Running the whole script uninterrupted makes promotion exactly-once across replicas. Carrying `outbox_entry_id` onto the stream lets the consumer's secondary dedup key suppress a replay if an outbox publish reaches Redis but its Postgres transaction rolls back and the row is retried after its ticket was already promoted.
 
 ### HTTP (port 8085)
 
@@ -78,7 +87,7 @@ The Kubernetes `readinessProbe` points at `/ready` and the `livenessProbe` at
 
 | Stream | Trigger |
 |---|---|
-| `check.k8s:v1` | Job still running; re-enqueue with `check_after` delay |
+| `check.k8s:v1` | Job still running; the `check_delayed` outbox row enqueues a delay-queue ticket, which the promoter moves onto this stream once due (see Delay queue) |
 | `retry.task:v1` | Job failed, retryable; `executor-controller` will re-deploy |
 | `task.failed:v1` | Job failed permanently; currently has no in-repo consumer |
 | `task.status.updated:v1` | Job running (first observation) and terminal (SUCCEEDED/FAILED); consumed by `state` to update task status. k8s-controller is the sole producer of the running/terminal pod lifecycle. |
@@ -120,7 +129,7 @@ The Kubernetes `readinessProbe` points at `/ready` and the `livenessProbe` at
 
 | Status | Action |
 |---|---|
-| **Running** | The first time an attempt is observed running (`running_announced=false`), announce `task.status.updated:v1` (RUNNING) stamped with the running attempt — suppressed for candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `mode=compile`). Always write a `check_delayed` outbox entry → re-enqueue to `check.k8s:v1` with `check_after` and `running_announced=true`, so RUNNING is announced exactly once per attempt. k8s-controller is the sole producer of the running/terminal pod lifecycle. |
+| **Running** | The first time an attempt is observed running (`running_announced=false`), announce `task.status.updated:v1` (RUNNING) stamped with the running attempt — suppressed for candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `mode=compile`). Always write a `check_delayed` outbox entry → enqueue a delay-queue ticket with `check_after` and `running_announced=true` (the promoter later moves it to `check.k8s:v1`), so RUNNING is announced exactly once per attempt. k8s-controller is the sole producer of the running/terminal pod lifecycle. |
 | **Failed, retryable** (`retry_count < max_retries`) | Fetch+upload logs (soft-fail) → entry A: publish `task.status.updated:v1` (FAILED) stamping the attempt that ran; entry B: publish `retry.task:v1` for the next attempt (`retry_count + 1`) |
 | **Failed, permanent** (`retry_count >= max_retries`) | Fetch+upload logs (soft-fail) → entry A: publish `task.status.updated:v1` (FAILED) + `task.execution.recorded:v1`; entry B: publish `task.failed:v1` + `node.updated:v1` FAILED |
 | **Succeeded** | Entry A: publish `task.status.updated:v1` (SUCCEEDED) + `task.execution.recorded:v1`; entry B: publish `node.updated:v1` SUCCEEDED |
@@ -135,9 +144,9 @@ Each handler outcome writes 1–3 canonical `k8s_outbox` rows inside a single tr
 k8s-controller writes to its Redis streams on two paths, and **both** cap the stream at `MaxLen 10000` (approximate, `~`), bounding Redis memory for streams a consumer group may lag on:
 
 - **`OutboxPublisher`** — every published `k8s_outbox` row (all producer streams above).
-- **`check.k8s:v1` recirculation** — the not-yet-due re-enqueue XADD in the `K8sCheckStatus` binding.
+- **Delay-queue promoter** — the XADD onto `check.k8s:v1` when a ticket becomes due.
 
-**Caveat:** approximate trimming can drop the oldest entries before a lagging consumer group reads them; 10000 is the accepted bound, matching state's and the orchestrator's publishers. This is the guard against an unbounded self-recirculating stream — `check.k8s:v1` previously grew to millions of entries and OOM-killed Redis (issue #282), because a stream ACK does not delete the entry.
+**Caveat:** approximate trimming can drop the oldest entries before a lagging consumer group reads them; 10000 is the accepted bound, matching state's and the orchestrator's publishers. A stream ACK does not delete the entry, so without a cap a busy stream can grow until it OOM-kills Redis; the cap and the delay queue (which keeps not-yet-due checks off the stream) together bound that growth.
 
 | Outcome | Rows written |
 |---|---|
@@ -156,7 +165,7 @@ For candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `mode=compile`), 
 
 All three candidate modes share the same non-terminal behaviour:
 
-- **Running** — the handler writes one `check_delayed` row (→ `check.k8s:v1`) with a `check_after` delay and **suppresses** the RUNNING `task_status_updated` announcement (candidate Jobs have no real task/schedule). `running_announced=true` is set on the forward ticket so the mode is not re-read wastefully every poll; on the next check the Job's `mode` is re-read and routing recurs. Candidate Jobs are always Running on the first check fired by the `node.deployed:v1` trigger, so this re-poll carries them to a terminal status.
+- **Running** — the handler writes one `check_delayed` row (enqueued in the delay queue, promoted to `check.k8s:v1` when due) with a `check_after` delay and **suppresses** the RUNNING `task_status_updated` announcement (candidate Jobs have no real task/schedule). `running_announced=true` is set on the forward ticket so the mode is not re-read wastefully every poll; on the next check the Job's `mode` is re-read and routing recurs. Candidate Jobs are always Running on the first check fired by the `node.deployed:v1` trigger, so this re-poll carries them to a terminal status.
 - **Unknown** — not treated as a permanent failure; the handler re-polls via the same `check.k8s:v1` ticket. (Production treats Unknown as a permanent failure — `task_status_updated` (FAILED) + `task_failed`.)
 
 On terminal (SUCCEEDED or FAILED) each mode routes to its own handler and writes exactly ONE outbox row; no `task_status_updated`, `task_execution_recorded`, or `node_status_updated` is written for any candidate-mode Job:
@@ -185,12 +194,12 @@ Each completed row's `aggregate_id` is a deterministic UUIDv5 over an immutable 
 ## Redis Payload Reference
 
 ### `check.k8s:v1`
-`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `check_after`, `node_type`, `retry_count`, `max_retries`, `image_tag`, `operation` (omitted when empty), `running_announced`
+`task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `node_type`, `retry_count`, `max_retries`, `image_tag`, `operation` (omitted when empty), `running_announced`. The delay (`check_after`) is not a stream field — it is the ZSET score on the delay queue; `outbox_entry_id` rides as a flat sibling field for dedup.
 
 ### `retry.task:v1`
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `image_tag`, `task_retry_count`, `max_retries`, `node_type`, `operation` (omitted when empty)
 
-`operation` is the dbt verb the Job runs (e.g. `test`, `build`). It is sourced from durable check/retry data, not from Job metadata: it arrives on `node.deployed:v1`, is held on `CheckJobStatus.Operation`, recirculates on every `check.k8s:v1` self-poll ticket, and is copied onto `retry.task:v1`. Sourcing it from the Job's labels would be unsafe because a TTL-reaped ("vanished") Job returns empty labels from `GetJobMeta`, which would silently rebuild a `dbt test`/`dbt build` Job as `dbt run`; carrying it in the durable payload keeps a retried `dbt test` or `dbt build` Job the same verb. Normal production runs have an empty `operation`, so the field is omitted and the wire format is unchanged for them.
+`operation` is the dbt verb the Job runs (e.g. `test`, `build`). It is sourced from durable check/retry data, not from Job metadata: it arrives on `node.deployed:v1`, is held on `CheckJobStatus.Operation`, rides the delay-queue ticket onto every `check.k8s:v1` self-poll, and is copied onto `retry.task:v1`. Sourcing it from the Job's labels would be unsafe because a TTL-reaped ("vanished") Job returns empty labels from `GetJobMeta`, which would silently rebuild a `dbt test`/`dbt build` Job as `dbt run`; carrying it in the durable payload keeps a retried `dbt test` or `dbt build` Job the same verb. Normal production runs have an empty `operation`, so the field is omitted and the wire format is unchanged for them.
 
 ### `task.failed:v1`
 `task_id`, `schedule_id`, `schedule_name`, `service_name`, `schema_name`, `table_name`, `job_name`, `error_message`, `retry_count`
@@ -209,7 +218,7 @@ Each completed row's `aggregate_id` is a deterministic UUIDv5 over an immutable 
 | Loop | Description |
 |---|---|
 | Redis consumer (three-stream) | Reads `node.deployed:v1`, `check.k8s:v1`, and `schedule.cancelled:v1` via `pkg/redis.StreamConsumer`; periodic XAUTOCLAIM sweep reclaims pending entries after `MinIdle` threshold for crash recovery |
-| Delayed requeue | Holds `check.k8s:v1` messages until `check_after` time before dispatching to handler |
+| Delay-queue promoter | Ticks every second; one atomic Lua script moves every due ticket (score ≤ now) from the `checkk8s:pending` ZSET into `check.k8s:v1` (see Delay queue). A missed tick loses nothing — the ZSET is durable and the next tick promotes the backlog |
 | Outbox processor (`pkg/outbox.Processor`) | Polls `k8s_outbox`; publishes each row to its `stream_name` via `OutboxPublisher` |
 | Stuck entry resolver | Periodically finds `k8s_outbox` entries stuck in pending beyond `stuck_threshold_seconds`; force-marks them failed via `K8sOutboxStuckRepository`; tracks resolve attempts in memory; escalates with CRITICAL log if `max_resolve_attempts` exceeded |
 

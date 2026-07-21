@@ -146,7 +146,7 @@ streams:
 
   - name: check.k8s:v1
     const: CheckK8sV1
-    description: Delayed status-check tickets; k8s-controller self-loops.
+    description: Delayed status-check tickets; a promoter moves due tickets from the delay queue into the stream.
     producers: [k8s-controller]
     consumers:
       - service: k8s-controller

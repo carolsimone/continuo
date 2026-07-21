@@ -14,7 +14,7 @@ import (
 
 // TestXAddArgs_SetsMaxLenApprox asserts k8s-controller's publisher caps every
 // stream with MaxLen/Approx, matching state's and the orchestrator's publishers
-// so k8s-controller streams cannot grow unbounded (issue #282).
+// so k8s-controller streams cannot grow unbounded.
 func TestXAddArgs_SetsMaxLenApprox(t *testing.T) {
 	p := NewOutboxPublisher(nil, nil)
 	entry := &outbox.Entry{
