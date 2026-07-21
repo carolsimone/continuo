@@ -208,7 +208,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		Payload:       payload,
 		StreamName:    streams.ReleasePromotedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	})
 }
@@ -296,7 +296,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		Payload:       payload,
 		StreamName:    streams.ReleaseRejectedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)

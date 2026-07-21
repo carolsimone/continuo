@@ -10,8 +10,11 @@ import (
 // created without an explicit MaxRetries. The processor drops an entry to
 // "failed" once RetryCount reaches MaxRetries (see processor.go), so this
 // bounds how many times a transiently-failing publish is re-attempted before
-// it is parked for inspection.
-const DefaultMaxRetries = 3
+// it is parked for inspection. With the default 1s base and 5m cap, this budget
+// spans a bounded backoff window (~20 min) with capped exponential delays,
+// allowing sustained retries during infrastructure recovery without leaving
+// entries in limbo indefinitely.
+const DefaultMaxRetries = 13
 
 // Entry is the canonical transactional-outbox row, shared across all services.
 // Each service owns its own physical <service>_outbox table; this struct is the
@@ -24,10 +27,11 @@ type Entry struct {
 	EventType           string
 	Payload             []byte // JSONB; typed events.* struct marshaled here
 	StreamName          string
-	Status              string // "pending" | "processed" | "failed"
+	Status              string // "pending" | "scheduled" | "processed" | "failed"
 	RetryCount          int
 	MaxRetries          int
 	CreatedAt           time.Time
 	ProcessedAt         *time.Time
 	ErrorMessage        *string
+	NextAttemptAt       *time.Time // when a 'scheduled' (transiently-failed) row is next eligible; NULL = due now
 }

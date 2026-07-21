@@ -283,7 +283,7 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 		EventType:     event.EventTypeValidationNodeCompleted,
 		Payload:       payload,
 		StreamName:    streams.ValidationNodeCompletedV1,
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("create validation_node_completed row: %w", err)
 	}
@@ -344,7 +344,7 @@ func (h *CheckStatusHandler) handleSeedBuildTerminal(
 		EventType:     event.EventTypeSeedBuildNodeCompleted,
 		Payload:       payload,
 		StreamName:    streams.SeedBuildNodeCompletedV1,
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("create seed_build_node_completed row: %w", err)
 	}
@@ -411,7 +411,7 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 		EventType:     event.EventTypeCompileNodeCompleted,
 		Payload:       payload,
 		StreamName:    streams.CompileNodeCompletedV1,
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("create compile_node_completed row: %w", err)
 	}

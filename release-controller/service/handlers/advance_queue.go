@@ -129,7 +129,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		Payload:       payload,
 		StreamName:    streams.CompileRequestedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)

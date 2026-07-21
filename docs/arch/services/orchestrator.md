@@ -155,7 +155,7 @@ Four selectors live in `orchestrator/domain/snapshot/`, are pure Go, and read al
 | `topology_state` | Singleton row holding the monotonic `topology_generation` counter |
 | `cancelled_schedules` | Schedule IDs cancelled by an upstream control-plane signal; consulted to short-circuit terminal-state processing for already-cancelled runs |
 
-All `orchestrator_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`.
+All `orchestrator_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`, `next_attempt_at` (nullable; `NULL` means due now — see `docs/arch/05-error-classification.md` §Outbox processor resilience).
 
 ### Adapter-replaceable ports
 
@@ -218,11 +218,11 @@ Each consumer is wired as a `parser → handler` binding under `adapters/redis/`
 - `GET /health` — liveness probe; returns 200 while the process can serve HTTP.
 - `GET /ready` — readiness probe backed by a liveness registry. Returns 200 only
   when every registered background worker (each Redis stream consumer plus the
-  outbox processor) is live and the cached Redis/Postgres dependency probes (5s
-  TTL) pass; otherwise 503. A consumer goroutine that returns a non-nil error
-  (a genuine exit, distinct from the clean `nil` return on context cancel)
-  marks itself unhealthy in the registry, flipping `/ready` to 503 so Kubernetes
-  stops routing to the degraded pod and restarts it.
+  outbox processor) is live and the cached dependency probes pass —
+  Redis/Postgres (5s TTL); otherwise 503. A consumer goroutine that returns a
+  non-nil error (a genuine exit, distinct from the clean `nil` return on
+  context cancel) marks itself unhealthy in the registry, flipping `/ready` to
+  503 so Kubernetes stops routing to the degraded pod and restarts it.
 
 ### Graceful shutdown
 

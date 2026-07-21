@@ -62,15 +62,17 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 func (p *OutboxPublisher) scheduleDelayedCheck(ctx context.Context, entry *outbox.Entry) error {
 	var e event.JobCheckRequest
 	if err := json.Unmarshal(entry.Payload, &e); err != nil {
-		return fmt.Errorf("unmarshal check_delayed: %w", err)
+		return fmt.Errorf("%w: unmarshal check_delayed: %v", pkgevents.ErrPermanent, err)
 	}
 	retryCount, err := num.Int32(e.RetryCount, "retry_count")
 	if err != nil {
-		return fmt.Errorf("check.k8s payload: %w", err)
+		// An out-of-range numeric field on a known event type is a
+		// deterministic bad payload, never fixed by retrying.
+		return fmt.Errorf("%w: check.k8s payload: %v", pkgevents.ErrPermanent, err)
 	}
 	maxRetries, err := num.Int32(e.MaxRetries, "max_retries")
 	if err != nil {
-		return fmt.Errorf("check.k8s payload: %w", err)
+		return fmt.Errorf("%w: check.k8s payload: %v", pkgevents.ErrPermanent, err)
 	}
 	payload, err := json.Marshal(pkgevents.CheckK8s{
 		TaskID:           e.TaskID,
@@ -116,38 +118,50 @@ func (p *OutboxPublisher) xaddArgs(entry *outbox.Entry) (*goredis.XAddArgs, erro
 // entry.Payload, and returns the flat field map for XADD.
 func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{}, error) {
 	switch entry.EventType {
+	case outbox.DeadLetterEventType:
+		// Dead-letter rows publish generically: their payload is already a flat
+		// scalar map (outbox.DeadLetterPayload), expanded via DeadLetterValues
+		// instead of falling through to the generic default case below (which
+		// would wrap it opaquely under a single "payload" field).
+		values, err := outbox.DeadLetterValues(entry)
+		if err != nil {
+			// Our own payload; a decode failure here is deterministic, never transient.
+			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
+		}
+		return values, nil
+
 	case "task_status_updated":
 		var e pkgevents.TaskStatusUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal task_status_updated: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal task_status_updated: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
 	case "task_execution_recorded":
 		var e pkgevents.TaskExecutionRecorded
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal task_execution_recorded: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal task_execution_recorded: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
 	case "task_retry":
 		var e event.TaskRetry
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal task_retry: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal task_retry: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
 	case "task_failed":
 		var e event.TaskFailed
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal task_failed: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal task_failed: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
 	case "node_status_updated":
 		var e event.NodeStatusUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
-			return nil, fmt.Errorf("unmarshal node_status_updated: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal node_status_updated: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
@@ -161,6 +175,10 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return map[string]interface{}{"payload": string(entry.Payload)}, nil
 
 	default:
-		return nil, fmt.Errorf("k8s publisher: unknown event_type %q", entry.EventType)
+		// Unknown event_type is retried, not dead-lettered: during a rolling
+		// deployment an old replica can dequeue a row for a newly-introduced
+		// event_type that a newer replica (already deployed) will publish
+		// moments later once this row cycles back to it.
+		return nil, fmt.Errorf("k8s publisher: unknown event_type %q (retryable — a newer replica may handle it during a rolling upgrade)", entry.EventType)
 	}
 }

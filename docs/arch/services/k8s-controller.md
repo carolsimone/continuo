@@ -34,7 +34,7 @@ Port ownership follows the repo-wide convention:
 | `k8s_outbox` | Canonical transactional outbox — each write-time side effect is a separate row with a JSONB payload; `pkg/outbox.Processor` polls and publishes to the typed Redis stream per row |
 | `message_processing` | Per-stream inbound dedup table keyed on `(message_id, stream_name)`; `pkg/messageprocessing.Dedup` inserts atomically inside the same transaction as outbox writes |
 
-All `k8s_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`.
+All `k8s_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`, `next_attempt_at` (nullable; `NULL` means due now — see `docs/arch/05-error-classification.md` §Outbox processor resilience).
 
 ## Inbound Interfaces
 
@@ -69,8 +69,8 @@ liveness deliberately split:
 - `GET /ready` — readiness. Fails (503) when any registered worker (stream
   consumers, outbox processor, stuck-entry resolver) has exited with an error,
   any consumer read-loop heartbeat has gone stale, **or** any dependency probe
-  (Redis, Postgres) fails. A dependency outage pulls the pod out of the Service
-  endpoints so no traffic is routed to it.
+  (Redis, Postgres) fails. A dependency outage pulls the pod out of the
+  Service endpoints so no traffic is routed to it.
 - `GET /livez` — liveness. Fails (503) **only** for worker/heartbeat failures —
   dependency probes are excluded, so a Redis/Postgres outage does not restart a
   pod whose consumers are already retrying through it, while a dead or wedged

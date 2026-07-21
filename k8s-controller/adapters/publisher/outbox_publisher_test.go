@@ -3,6 +3,7 @@ package publisher_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -102,6 +103,41 @@ func TestPublisher_UnknownEventTypeReturnsError(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown event_type")
+}
+
+// TestPublisher_UnknownEventType_IsTransient guards Fix #3: an unknown
+// event_type must NOT be classified as pkgevents.ErrPermanent. During a
+// rolling deployment an old replica can dequeue a row for an event_type only
+// a newer replica knows about; that row must be retried through its budget,
+// not dead-lettered on attempt #1.
+func TestPublisher_UnknownEventType_IsTransient(t *testing.T) {
+	pub := publisher.NewOutboxPublisher(nil, newTestLogger())
+	err := pub.Publish(context.Background(), &outbox.Entry{
+		ID: uuid.New(), EventType: "not_yet_known_type", Payload: []byte(`{}`), StreamName: "x:v1",
+	})
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, pkgevents.ErrPermanent),
+		"unknown event_type must be transient (plain error), not ErrPermanent")
+}
+
+// TestPublisher_CheckDelayed_OutOfRangeMaxRetries_IsPermanent guards Fix #5:
+// an out-of-range numeric field on a known, well-formed event_type is a
+// deterministic bad payload — retrying it can never succeed — so it must be
+// classified as pkgevents.ErrPermanent.
+func TestPublisher_CheckDelayed_OutOfRangeMaxRetries_IsPermanent(t *testing.T) {
+	pub := publisher.NewOutboxPublisher(nil, newTestLogger())
+	payload := mustMarshalK8s(t, event.JobCheckRequest{
+		TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc",
+		SchemaName: "pub", TableName: "tbl", JobName: "j1", NodeType: "dbt-model",
+		ImageTag: "sha", MaxRetries: 1 << 40, // exceeds int32 range
+	})
+
+	err := pub.Publish(context.Background(), &outbox.Entry{
+		ID: uuid.New(), EventType: "check_delayed", StreamName: streams.CheckK8sV1, Payload: payload,
+	})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pkgevents.ErrPermanent),
+		"out-of-range max_retries must be permanent (ErrPermanent), not retried forever")
 }
 
 // TestPublisher_ContractAllHandledEventTypes is a regression guard that asserts

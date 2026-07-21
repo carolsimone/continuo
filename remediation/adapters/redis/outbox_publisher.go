@@ -10,6 +10,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	goredis "github.com/redis/go-redis/v9"
 
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 )
@@ -27,6 +28,25 @@ var _ pkgoutbox.Publisher = (*remediationOutboxPublisher)(nil)
 // The wire format uses a single "payload" field containing the JSON body,
 // consistent with how other service event consumers decode messages.
 func (p *remediationOutboxPublisher) Publish(ctx context.Context, entry *pkgoutbox.Entry) error {
+	if entry.EventType == pkgoutbox.DeadLetterEventType {
+		// Dead-letter rows publish generically: their payload is already a flat
+		// scalar map (pkgoutbox.DeadLetterPayload), expanded via DeadLetterValues
+		// rather than nested under a single "payload" field like other events.
+		values, err := pkgoutbox.DeadLetterValues(entry)
+		if err != nil {
+			// Our own payload; a decode failure here is deterministic, never transient.
+			return fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
+		}
+		if _, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
+			Stream: entry.StreamName,
+			MaxLen: 10000,
+			Approx: true,
+			Values: values,
+		}).Result(); err != nil {
+			return fmt.Errorf("xadd to %s: %w", entry.StreamName, err)
+		}
+		return nil
+	}
 	_, err := p.redis.XAdd(ctx, &goredis.XAddArgs{
 		Stream: entry.StreamName,
 		MaxLen: 10000,

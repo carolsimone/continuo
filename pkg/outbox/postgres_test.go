@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/testmigrations"
@@ -237,4 +238,76 @@ func TestPostgresRepository_SkipLockedIsolatesConcurrentBatches(t *testing.T) {
 		assert.Equal(t, 1, n, "row %s claimed by both txs (SKIP LOCKED broken)", id)
 	}
 	assert.Equal(t, 3, len(seen))
+}
+
+// seedRowReturningEntry seeds a fresh 'pending' row with next_attempt_at left
+// NULL (due now) and returns its id.
+func seedRowReturningEntry(t *testing.T, db *sqlx.DB) uuid.UUID {
+	return seedRow(t, db, 10)
+}
+
+// seedScheduledRow seeds a row already in the 'scheduled' state (as
+// ScheduleRetry produces after a transient failure), with next_attempt_at set
+// to now+delta, and returns its id. A negative delta yields a due row.
+func seedScheduledRow(t *testing.T, db *sqlx.DB, delta time.Duration) uuid.UUID {
+	t.Helper()
+	id := seedRow(t, db, 10)
+	_, err := db.Exec(
+		`UPDATE `+testOutboxTable+` SET status = 'scheduled', next_attempt_at = clock_timestamp() + make_interval(secs => $1) WHERE id = $2`,
+		delta.Seconds(), id,
+	)
+	require.NoError(t, err)
+	return id
+}
+
+func TestGetPendingBatch_SkipsRowNotYetDue(t *testing.T) {
+	db := dbForTest(t)
+	repo := outbox.NewPostgresRepository(db, testOutboxTable, newTestLogger())
+	freshPending := seedRowReturningEntry(t, db)          // next_attempt_at NULL => due now
+	dueScheduled := seedScheduledRow(t, db, -time.Minute) // scheduled, deadline already passed
+	notDue := seedScheduledRow(t, db, time.Hour)          // scheduled, deadline in the future
+
+	batch, err := repo.GetPendingBatch(context.Background(), 10)
+	require.NoError(t, err)
+
+	ids := map[uuid.UUID]bool{}
+	for _, e := range batch {
+		ids[e.ID] = true
+	}
+	assert.True(t, ids[freshPending], "fresh pending row with NULL next_attempt_at must be selected")
+	assert.True(t, ids[dueScheduled], "scheduled row past its deadline must be selected")
+	assert.False(t, ids[notDue], "scheduled row with future next_attempt_at must be skipped")
+}
+
+func TestScheduleRetry_SetsNextAttemptAndMovesToScheduled(t *testing.T) {
+	db := dbForTest(t)
+	// ScheduleRetry is on the concrete repo; the processor uses it internally.
+	repo := outbox.NewPostgresRepositoryForTest(db, testOutboxTable, newTestLogger())
+	id := seedRowReturningEntry(t, db)
+
+	before := time.Now()
+	require.NoError(t, repo.ScheduleRetry(context.Background(), id, 30*time.Second, "connection refused"))
+
+	var status, errMsg string
+	var rc int
+	var next *time.Time
+	require.NoError(t, db.QueryRow(
+		`SELECT status, retry_count, error_message, next_attempt_at FROM `+testOutboxTable+` WHERE id=$1`, id,
+	).Scan(&status, &rc, &errMsg, &next))
+	// ScheduleRetry moves the row to 'scheduled' (not 'pending') so a
+	// previous-version replica's status='pending' reader cannot reclaim it
+	// before next_attempt_at elapses (rolling-deploy safety).
+	assert.Equal(t, "scheduled", status)
+	assert.Equal(t, 1, rc)
+	assert.Equal(t, "connection refused", errMsg)
+	require.NotNil(t, next)
+	// next_attempt_at is stamped from the DB's clock_timestamp() (statement
+	// execution time), not NOW() (tx-start time) or the host clock, so assert
+	// the window tolerantly rather than an exact offset.
+	assert.True(t, next.After(before), "next_attempt_at should be after test start")
+	assert.True(t, next.Before(before.Add(35*time.Second)), "next_attempt_at should be roughly now+30s")
+
+	// Must not be terminal.
+	assert.NotEqual(t, "failed", status)
+	assert.NotEqual(t, "processed", status)
 }

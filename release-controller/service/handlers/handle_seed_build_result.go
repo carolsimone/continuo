@@ -126,7 +126,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		Payload:       payload,
 		StreamName:    streams.ReleaseRejectedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)
@@ -227,7 +227,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 		Payload:       payload,
 		StreamName:    streams.ValidationRequestedV1,
 		Status:        "pending",
-		MaxRetries:    3,
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("outbox insert: %w", err)

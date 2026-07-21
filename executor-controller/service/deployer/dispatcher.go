@@ -507,7 +507,7 @@ func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxR
 		EventType:           "node_deployed",
 		Payload:             body,
 		StreamName:          streams.NodeDeployedV1,
-		MaxRetries:          3,
+		MaxRetries:          outbox.DefaultMaxRetries,
 	}); err != nil {
 		return fmt.Errorf("write validation node_deployed trigger: %w", err)
 	}
@@ -547,6 +547,6 @@ func (d *Dispatcher) createOutbox(ctx context.Context, outboxRepo outbox.Reposit
 		EventType:           eventType,
 		Payload:             body,
 		StreamName:          stream,
-		MaxRetries:          3,
+		MaxRetries:          outbox.DefaultMaxRetries,
 	})
 }

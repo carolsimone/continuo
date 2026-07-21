@@ -2,6 +2,7 @@ package publisher_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/adapters/publisher"
@@ -149,4 +150,18 @@ func TestOutboxPublisher_UnknownEventType_ReturnsError(t *testing.T) {
 	_, err := p.PayloadToValuesForTest(entry)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown_event")
+}
+
+// TestOutboxPublisher_UnknownEventType_IsTransient guards Fix #3: an unknown
+// event_type must NOT be classified as pkgevents.ErrPermanent. During a
+// rolling deployment an old replica can dequeue a row for an event_type only
+// a newer replica knows about; that row must be retried through its budget,
+// not dead-lettered on attempt #1.
+func TestOutboxPublisher_UnknownEventType_IsTransient(t *testing.T) {
+	entry := makeEntry("not_yet_known_type", []byte(`{}`))
+	p := publisher.NewOutboxPublisher(nil, nil)
+	_, err := p.PayloadToValuesForTest(entry)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, pkgevents.ErrPermanent),
+		"unknown event_type must be transient (plain error), not ErrPermanent")
 }

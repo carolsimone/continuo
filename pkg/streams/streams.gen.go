@@ -36,6 +36,8 @@ const (
 	CheckK8sV1 = "check.k8s:v1"
 	// TaskFailedV1 — Terminal task failure emitted by k8s-controller.
 	TaskFailedV1 = "task.failed:v1"
+	// OutboxDeadLetterV1 — Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor. Operational DLQ, not a domain event.
+	OutboxDeadLetterV1 = "outbox.dead_letter:v1"
 	// ScheduleCancelledV1 — Schedule cancellation broadcast; fanned out to orchestrator, executor, k8s.
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
@@ -169,6 +171,7 @@ var All = []string{
 	NodeDeployedV1,
 	CheckK8sV1,
 	TaskFailedV1,
+	OutboxDeadLetterV1,
 	ScheduleCancelledV1,
 	ReleaseRequestedV1,
 	ManifestLoadedCandidateV1,

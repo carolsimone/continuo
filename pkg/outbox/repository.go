@@ -20,13 +20,15 @@ type Executor interface {
 // Implementations operate against a table conforming to the canonical schema:
 //   id (uuid PK), message_processing_id (uuid nullable FK), aggregate_type (text),
 //   aggregate_id (uuid), event_type (text), payload (jsonb), stream_name (text),
-//   status (text, CHECK pending|processed|failed), retry_count (int), max_retries (int),
+//   status (text, CHECK pending|scheduled|processed|failed), retry_count (int), max_retries (int),
 //   created_at (timestamptz), processed_at (timestamptz nullable),
-//   error_message (text nullable).
+//   error_message (text nullable), next_attempt_at (timestamptz nullable).
 //
 // GetPendingBatch MUST be called inside a transaction held by the caller until
-// MarkProcessed / IncrementRetry / MarkFailed completes, because the batch uses
-// FOR UPDATE SKIP LOCKED.
+// the follow-up write that resolves each claimed row — marking it processed,
+// marking it failed, or rescheduling it for a later attempt — completes,
+// because the batch uses FOR UPDATE SKIP LOCKED to hold the rows for the life
+// of that transaction.
 type Repository interface {
 	Create(ctx context.Context, entry *Entry) error
 	GetPendingBatch(ctx context.Context, limit int) ([]*Entry, error)

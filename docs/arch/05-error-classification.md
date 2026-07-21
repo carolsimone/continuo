@@ -24,6 +24,10 @@ permanent.
 |---|---|---|
 | `executor-controller/adapters/k8s/client.go:177` (`buildPodSpec`) | `image_tag` missing on dispatch | `fmt.Errorf("%w: image_tag missing from job params for service %s", events.ErrPermanent, params.ServiceName)` |
 | `state/adapters/redis/*_binding.go` and `orchestrator/adapters/redis/*_parser.go` (each parser/binding) | per-stream parser returns a parse/validation failure (malformed payload, missing required field, bad UUID, unknown enum value, cross-field rule violation) | the parser returns `fmt.Errorf("%w: <reason>", events.ErrPermanent, …)` and the binding propagates it (logs ERROR + returns the error) so the consumer ACKs and drops the poison message |
+| `state/adapters/publisher/outbox_publisher.go` (`Publish`) | generic `json.Unmarshal(entry.Payload, &fields)` into a `map[string]interface{}` fails on malformed JSON — no per-type switch, no unknown-event_type detection | `fmt.Errorf("%w: unmarshal outbox row: %v", events.ErrPermanent, err)` |
+| `orchestrator`, `executor-controller`, `k8s-controller` outbox publishers (`adapters/*/outbox_publisher.go`, `Publish`) | decode a typed event out of `entry.Payload` per `event_type`; a `json.Unmarshal` failure against a *known* `event_type`, or an out-of-range numeric field (`pkg/num.Int32`) on an otherwise well-formed known payload, is deterministic — the row can never succeed no matter how many times it is retried | `fmt.Errorf("%w: unmarshal <event>: %v", events.ErrPermanent, err)` / `fmt.Errorf("%w: <event> payload: %v", events.ErrPermanent, err)` |
+| `orchestrator`, `executor-controller`, `k8s-controller` outbox publishers (`adapters/*/outbox_publisher.go`, `Publish`) | the type-switch's `default:` case — an `event_type` the publisher does not recognise — is **not** wrapped in `ErrPermanent`. During a rolling deployment an old replica can dequeue a row for an `event_type` only a newer (already-deployed) replica knows how to publish; treating it as permanent would dead-letter a row that a peer replica can handle moments later. The row is retried through its normal backoff budget instead | `fmt.Errorf("<service> publisher: unknown event_type %q (retryable — a newer replica may handle it during a rolling upgrade)", entry.EventType)` |
+| All 7 outbox publishers' `Publish`, dead-letter branch | `pkgoutbox.DeadLetterValues` fails to decode a dead-letter row's own JSON payload — the publisher's own construction, so a decode failure is a bug, not an infra blip | `fmt.Errorf("%w: dead-letter values: %v", events.ErrPermanent, err)` |
 
 Add new emitters to this table as they land.
 
@@ -33,6 +37,7 @@ Add new emitters to this table as they land.
 |---|---|
 | `pkg/redis/streamconsumer.go` (`readAndProcess` and `reclaimPending`) | log ERROR, ACK, continue — drops the message from the PEL under both first-delivery AND periodic reclaim. **Read path** retries plain (non-`ErrPermanent`) errors inline via `invokeWithRetry` (backoff schedule `0 / 100ms`, one quick retry then park, ~100ms budget); if both attempts fail the message is left un-ACKed in the PEL and the reclaim sweep redelivers it. Keeping the inline budget short stops one transiently-failing message from head-of-line-blocking its lane for seconds. **Reclaim path** is single-shot: the handler is called exactly once per claimed entry, and on failure the entry stays in the PEL — the next periodic sweep (every `reclaimInterval`) is the retry cadence. This split keeps the read loop responsive when a large backlog of pending entries is being swept. The sweep itself uses `XAUTOCLAIM` (cursor-paged, one round-trip per 100 entries) gated by a `MinIdle` threshold (default 30s, overridable via `WithReclaimMinIdle`) so a multi-replica deployment cannot have one replica steal an in-flight message that a peer is actively retrying. Successful and `ErrPermanent`-dropped IDs are ACKed in one pipelined `XAck` per read batch / reclaim page (ack-after-success unchanged — only resolved IDs are batched). `ErrPermanent` ACKs immediately on either path. Both paths invoke the handler through `safeInvoke`, which recovers any handler panic and converts it into a plain (non-`ErrPermanent`) error — a panicking handler can no longer unwind through the loop and crash the process, and the message is left in the PEL for the next sweep just like any transient failure. Beyond `ErrPermanent`, the consumer also classifies startup consumer-group bootstrap errors, quarantines poison messages past a delivery bound, and carries a per-handler timeout plus a liveness heartbeat — see **Stream consumer resilience** below. Used by every Go service's Redis ingest path. |
 | `executor-controller/service/deployer/dispatcher.go` (`dispatchRow`) | call `writeFailed` (writes `task.status.updated:v1` FAILED + `node.updated:v1` FAILED as `executor_outbox` rows, marks `executor_deployments` row `failed`) |
+| `pkg/outbox.Processor` (`processBatchOnce`) | a publish error matching `ErrPermanent` is terminal on attempt #1 — zero retries. Any other error is treated as transient and rescheduled with backoff instead. See **Outbox processor resilience** below. |
 
 ## Stream consumer resilience
 
@@ -78,6 +83,99 @@ three consumer-resilience behaviours that also bear on failure handling:
   restarts the pod while legitimate in-flight work never does.
   `pkgoutbox.Processor` carries the same `Healthy(maxStale)` heartbeat for the
   outbox publisher loop.
+
+## Outbox processor resilience
+
+`pkg/outbox.Processor` (`processBatchOnce`) splits a publish failure it
+receives from `Publisher.Publish` into two classes and handles each
+differently:
+
+- **Permanent** (`errors.Is(err, events.ErrPermanent)`) — the payload is
+  deterministically bad for a *known* `event_type` (an undecodable JSON
+  payload, or an out-of-range numeric field on an otherwise well-formed
+  payload); retrying can never succeed. The row goes terminal on attempt #1 —
+  `retry_count` is left untouched, since bumping it would misrepresent a
+  single dead-on-arrival row as a row that was actually retried.
+- **Transient** (everything else — Redis `XADD`/connection errors, timeouts,
+  and an `event_type` the publisher's type-switch does not recognise) —
+  treated as recoverable. An unrecognised `event_type` is deliberately
+  transient rather than permanent: during a rolling deployment an old replica
+  can dequeue a row for an `event_type` only a newer (already-deployed)
+  replica knows how to publish, so dead-lettering it on attempt #1 would
+  discard a row a peer replica could have handled moments later. The row is
+  rescheduled via `ScheduleRetry`, which bumps `retry_count`, stamps
+  `next_attempt_at = clock_timestamp() + backoff(attempt)`, records the error,
+  and moves the row to the `scheduled` status. `clock_timestamp()` (the
+  statement wall-clock) is used rather than `NOW()` (fixed at transaction
+  start) so a batch whose publish attempts outlast the first backoff interval
+  still schedules a real delay instead of a deadline already in the past. A
+  backed-off row goes terminal only once `retry_count + 1 >= MaxRetries`.
+
+**Due-gate, scheduled status, and backoff curve.** `GetPendingBatch` selects
+rows with `status IN ('pending', 'scheduled')` that are due —
+`next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp()`. A fresh
+`pending` row (never attempted, `next_attempt_at` NULL) is always eligible; a
+transiently-failed `scheduled` row becomes eligible only once its backoff
+elapses. The distinct `scheduled` status is what keeps the change safe under a
+rolling deployment: a previous-version replica's reader filters on
+`status = 'pending'` and so never reclaims a row a newer replica has backed
+off, so it cannot retry that row every tick and exhaust its budget before the
+backoff elapses. The delay is capped exponential
+growth — `base * 2^(attempt-1)` clamped to a maximum — defaulting to a
+1-second base and a 5-minute cap. The small base keeps the first retry about a
+poll tick away so a brief blip recovers quickly (which matters under
+per-aggregate FIFO, where a scheduled head withholds its younger siblings until
+it publishes), while the exponential growth still spaces out attempts during a
+sustained outage. `DefaultMaxRetries` is 13, giving a transient row roughly 20
+minutes of retry window before the budget is exhausted and it goes terminal —
+long enough to ride out a real Redis outage or restart without manual
+intervention.
+
+**Mandatory durable dead-letter.** Every terminal outcome — permanent, or
+transient with the retry budget exhausted — writes a dead-letter row in the
+same transaction that marks the original row `failed`, so the signal is
+durable even if the process crashes immediately afterward. The dead-letter
+row is itself an ordinary outbox row targeting the single canonical stream
+`outbox.dead_letter:v1` (`streams.OutboxDeadLetterV1`), so it publishes
+through the same processor loop as any other row — immediately if Redis is
+reachable, or once Redis heals. Its payload (`pkgoutbox.DeadLetterPayload`)
+carries `original_event_type`, `original_stream`, `original_aggregate_id`,
+`failure_kind` (`permanent` or `transient_exhausted`), `error`, `attempts`,
+and `failed_outbox_id`. A loop guard — the dead-letter row's
+`aggregate_type`/`event_type` are set to the sentinel `outbox_dead_letter` —
+stops a dead-letter row from ever being dead-lettered itself. An optional
+`TerminalFailureHook`, on a service that wires one, still fires as a
+best-effort additional side effect alongside the mandatory dead-letter write;
+it is not the delivery mechanism.
+
+**Operational, not domain.** `outbox.dead_letter:v1` is an
+infrastructure/operational signal — "this outbox row could not be
+delivered" — distinct from a domain `<event>.failed:v1` compensation event,
+which represents a business-meaningful terminal outcome (e.g. a task that
+failed after exhausting its k8s retry budget). It has no consumer today; it
+exists for a future alerting/redrive service. Producers are every
+outbox-owning service's `pkg/outbox.Processor`: `state`, `orchestrator`,
+`executor-controller`, `k8s-controller`, `release-controller`, `remediation`,
+`remediation-agent`.
+
+**Dead-letter backlog visibility.** A wedged-loop heartbeat (see **Stream
+consumer resilience** above) cannot see a *live* processor that is simply
+failing every row it publishes (e.g. a bad payload or a permanently
+misconfigured downstream) — each row still goes terminal (`'failed'`) and the
+loop keeps ticking. `pkgoutbox.Processor` exposes `DeadLetterBacklog(ctx)`,
+which counts rows with `status = 'failed'` (the terminal state; the
+dead-letter row it wrote alongside each one stays `'pending'` until it
+publishes, and is not counted). This is deliberately **not** wired into any
+service's readiness or liveness probe: all replicas of a service share the
+same outbox table, so gating pod health on the backlog would take the whole
+Service out of rotation over a single stuck row — a data/ops condition that
+needs a human or a dead-letter consumer to redrive, not a pod restart or an
+endpoint pull. `DeadLetterBacklog` — backed by the repository's
+`CountTerminal` — exists as an API seam for that future consumer. Visibility
+today is the durable `outbox.dead_letter:v1` event plus a structured `ERROR`
+log (`"Outbox entry dead-lettered"`, with `failure_kind`, `entry_id`,
+`original_event_type`, `original_stream`, `attempts`, `error`) emitted at the
+moment a row goes terminal.
 
 ## When NOT to use it
 

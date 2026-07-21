@@ -101,10 +101,21 @@ func (p *OutboxPublisher) PayloadToValuesForTest(entry *outbox.Entry) (map[strin
 // moved here without behavioral change.
 func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]interface{}, error) {
 	switch entry.EventType {
+	case outbox.DeadLetterEventType:
+		// Dead-letter rows publish generically: their payload is already a flat
+		// scalar map (outbox.DeadLetterPayload), expanded via DeadLetterValues
+		// rather than a bespoke case below.
+		values, err := outbox.DeadLetterValues(entry)
+		if err != nil {
+			// Our own payload; a decode failure here is deterministic, never transient.
+			return nil, fmt.Errorf("%w: dead-letter values: %v", pkgevents.ErrPermanent, err)
+		}
+		return values, nil
+
 	case "node_ready_for_execution":
 		var evt domain.NodeReadyForExecution
 		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
-			return nil, fmt.Errorf("unmarshal node_ready_for_execution: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal node_ready_for_execution: %v", pkgevents.ErrPermanent, err)
 		}
 		values := map[string]interface{}{
 			"outbox_entry_id":  entry.ID.String(),
@@ -137,7 +148,7 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 	case "cascade_task_skipped":
 		var evt domain.CascadeTaskSkipped
 		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
-			return nil, fmt.Errorf("unmarshal cascade_task_skipped: %w", err)
+			return nil, fmt.Errorf("%w: unmarshal cascade_task_skipped: %v", pkgevents.ErrPermanent, err)
 		}
 		// A cascade-skipped node is reported on task.status.updated:v1 as a
 		// terminal "skipped" task status. Serialize through the shared
@@ -162,6 +173,10 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("orchestrator publisher: unknown event_type %q", entry.EventType)
+		// Unknown event_type is retried, not dead-lettered: during a rolling
+		// deployment an old replica can dequeue a row for a newly-introduced
+		// event_type that a newer replica (already deployed) will publish
+		// moments later once this row cycles back to it.
+		return nil, fmt.Errorf("orchestrator publisher: unknown event_type %q (retryable — a newer replica may handle it during a rolling upgrade)", entry.EventType)
 	}
 }

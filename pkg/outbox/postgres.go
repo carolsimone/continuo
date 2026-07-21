@@ -27,6 +27,7 @@ type outboxRow struct {
 	CreatedAt           time.Time  `db:"created_at"`
 	ProcessedAt         *time.Time `db:"processed_at"`
 	ErrorMessage        *string    `db:"error_message"`
+	NextAttemptAt       *time.Time `db:"next_attempt_at"`
 }
 
 func entryFromRow(r *outboxRow) *Entry {
@@ -44,6 +45,7 @@ func entryFromRow(r *outboxRow) *Entry {
 		CreatedAt:           r.CreatedAt,
 		ProcessedAt:         r.ProcessedAt,
 		ErrorMessage:        r.ErrorMessage,
+		NextAttemptAt:       r.NextAttemptAt,
 	}
 }
 
@@ -68,16 +70,24 @@ func WithPerAggregateOrdering() Option {
 	return func(r *postgresRepository) { r.perAggregateFIFO = true }
 }
 
-// NewPostgresRepository constructs a Repository bound to a specific physical
-// table. Pass *sqlx.DB for autocommit operations (the Processor's GetPendingBatch
-// holds its own tx) or *sqlx.Tx for transactional writes (the writer's Create
-// must run inside the UoW transaction).
-func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger, opts ...Option) Repository {
+// newPostgresRepository builds the concrete repository. In-package callers (the
+// processor) use it directly to reach ScheduleRetry / CountTerminal, which are
+// deliberately NOT on the Repository interface so the ~10 service fakes that
+// satisfy pkgoutbox.Repository need no changes.
+func newPostgresRepository(exec Executor, tableName string, logger *slog.Logger, opts ...Option) *postgresRepository {
 	r := &postgresRepository{exec: exec, tableName: tableName, logger: logger}
 	for _, opt := range opts {
 		opt(r)
 	}
 	return r
+}
+
+// NewPostgresRepository constructs a Repository bound to a specific physical
+// table. Pass *sqlx.DB for autocommit operations (the Processor's GetPendingBatch
+// holds its own tx) or *sqlx.Tx for transactional writes (the writer's Create
+// must run inside the UoW transaction).
+func NewPostgresRepository(exec Executor, tableName string, logger *slog.Logger, opts ...Option) Repository {
+	return newPostgresRepository(exec, tableName, logger, opts...)
 }
 
 func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
@@ -115,10 +125,13 @@ func (r *postgresRepository) Create(ctx context.Context, entry *Entry) error {
 
 func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]*Entry, error) {
 	// When per-aggregate ordering is enabled, withhold any row that has an
-	// older still-pending sibling for the same aggregate, so events for one
-	// aggregate publish strictly in creation order. created_at is assigned per
-	// Create call (time.Now), so siblings written in one writer transaction get
-	// distinct, ordered timestamps.
+	// older still-pending-or-scheduled sibling for the same aggregate, so
+	// events for one aggregate publish strictly in creation order. A
+	// backed-off ('scheduled') sibling must still withhold younger rows —
+	// otherwise a younger row could publish out of order while its older
+	// sibling waits out its backoff. created_at is assigned per Create call
+	// (time.Now), so siblings written in one writer transaction get distinct,
+	// ordered timestamps.
 	fifoClause := ""
 	if r.perAggregateFIFO {
 		fifoClause = fmt.Sprintf(`
@@ -126,17 +139,24 @@ func (r *postgresRepository) GetPendingBatch(ctx context.Context, limit int) ([]
 		      SELECT 1 FROM %s older
 		      WHERE older.aggregate_type = o.aggregate_type
 		        AND older.aggregate_id   = o.aggregate_id
-		        AND older.status = 'pending'
+		        AND older.status IN ('pending', 'scheduled')
 		        AND older.created_at < o.created_at
 		  )`, r.tableName)
 	}
+	// Fresh 'pending' rows always have next_attempt_at NULL, so they are
+	// always eligible; 'scheduled' rows (previously backed off after a
+	// transient failure) become eligible once their deadline passes.
+	// clock_timestamp() is the actual statement-execution wall clock — unlike
+	// NOW(), which is fixed at transaction start — so the due-check reflects
+	// when this SELECT actually runs, not when the enclosing tx began.
 	query := fmt.Sprintf(`
 		SELECT id, message_processing_id, aggregate_type, aggregate_id,
 		       event_type, payload, stream_name,
 		       status, retry_count, max_retries,
-		       created_at, processed_at, error_message
+		       created_at, processed_at, error_message, next_attempt_at
 		FROM %s o
-		WHERE status = 'pending'%s
+		WHERE status IN ('pending', 'scheduled')
+		  AND (next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp())%s
 		ORDER BY created_at ASC
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
@@ -228,6 +248,45 @@ func (r *postgresRepository) IncrementRetry(ctx context.Context, id uuid.UUID) e
 	result, err := r.exec.ExecContext(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("increment retry in %s: %w", r.tableName, err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("outbox entry %s not found in %s", id, r.tableName)
+	}
+	return nil
+}
+
+// CountTerminal returns how many rows are parked in the terminal 'failed' state,
+// i.e. dead-lettered rows awaiting operator/consumer attention.
+func (r *postgresRepository) CountTerminal(ctx context.Context) (int, error) {
+	var n int
+	query := fmt.Sprintf(`SELECT count(*) FROM %s WHERE status = 'failed'`, r.tableName)
+	if err := r.exec.QueryRowContext(ctx, query).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count terminal in %s: %w", r.tableName, err)
+	}
+	return n, nil
+}
+
+// ScheduleRetry records a transient publish failure: it bumps retry_count,
+// moves the row to 'scheduled', stamps the next eligible attempt time
+// (clock_timestamp() + retryIn), and stores the error for visibility. The
+// 'scheduled' status keeps a backed-off row out of any reader that selects only
+// `status = 'pending'`, so a co-running replica without this due-gate cannot
+// reclaim the row and retry it before next_attempt_at elapses; GetPendingBatch
+// re-selects it once due via its status IN ('pending', 'scheduled') clause. The
+// deadline is measured against clock_timestamp() — the statement-execution wall
+// clock — not NOW(), which is fixed at transaction start: because this runs in
+// the same batch transaction as the publish attempts, NOW() would measure the
+// backoff from before those attempts ran and could leave the deadline already
+// in the past. This matches the due-gate comparison in GetPendingBatch;
+// make_interval takes whole seconds from the Go duration.
+func (r *postgresRepository) ScheduleRetry(ctx context.Context, id uuid.UUID, retryIn time.Duration, errorMessage string) error {
+	query := fmt.Sprintf(
+		`UPDATE %s SET status = 'scheduled', retry_count = retry_count + 1, next_attempt_at = clock_timestamp() + make_interval(secs => $1), error_message = $2 WHERE id = $3`,
+		r.tableName)
+	result, err := r.exec.ExecContext(ctx, query, retryIn.Seconds(), errorMessage, id)
+	if err != nil {
+		return fmt.Errorf("schedule retry in %s: %w", r.tableName, err)
 	}
 	rows, _ := result.RowsAffected()
 	if rows == 0 {

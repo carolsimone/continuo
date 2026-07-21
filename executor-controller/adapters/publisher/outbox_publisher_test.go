@@ -3,6 +3,7 @@ package publisher_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -178,6 +179,47 @@ func TestPublisher_UnknownEventType(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown event_type")
+}
+
+// TestPublisher_UnknownEventType_IsTransient guards Fix #3: an unknown
+// event_type must NOT be classified as pkgevents.ErrPermanent. During a
+// rolling deployment an old replica can dequeue a row for an event_type only
+// a newer replica knows about; that row must be retried through its budget,
+// not dead-lettered on attempt #1.
+func TestPublisher_UnknownEventType_IsTransient(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	r := newRedis(t)
+	pub := publisher.NewOutboxPublisher(r, logger)
+
+	err := pub.Publish(context.Background(), &outbox.Entry{
+		ID: uuid.New(), EventType: "not_yet_known_type", StreamName: "x:v1", Payload: []byte(`{}`),
+	})
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, pkgevents.ErrPermanent),
+		"unknown event_type must be transient (plain error), not ErrPermanent")
+}
+
+// TestPublisher_NodeDeployed_OutOfRangeMaxRetries_IsPermanent guards Fix #5:
+// an out-of-range numeric field on a known, well-formed event_type is a
+// deterministic bad payload — retrying it can never succeed — so it must be
+// classified as pkgevents.ErrPermanent.
+func TestPublisher_NodeDeployed_OutOfRangeMaxRetries_IsPermanent(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	r := newRedis(t)
+	pub := publisher.NewOutboxPublisher(r, logger)
+
+	payload, err := json.Marshal(event.JobDeployed{
+		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
+		ImageTag: "sha-abc", MaxRetries: 1 << 40, // exceeds int32 range
+	})
+	require.NoError(t, err)
+
+	pubErr := pub.Publish(context.Background(), &outbox.Entry{
+		ID: uuid.New(), EventType: "node_deployed", StreamName: streams.NodeDeployedV1, Payload: payload,
+	})
+	require.Error(t, pubErr)
+	assert.True(t, errors.Is(pubErr, pkgevents.ErrPermanent),
+		"out-of-range max_retries must be permanent (ErrPermanent), not retried forever")
 }
 
 // TestPublisher_ContractAllHandledEventTypes is a regression guard that asserts

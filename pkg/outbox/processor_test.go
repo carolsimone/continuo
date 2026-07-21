@@ -10,6 +10,7 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
@@ -95,7 +96,7 @@ func TestProcessor_TransientErrorIncrementsRetry(t *testing.T) {
 	var status string
 	var rc int
 	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status, &rc))
-	assert.Equal(t, "pending", status)
+	assert.Equal(t, "scheduled", status)
 	assert.Equal(t, 1, rc)
 }
 
@@ -222,7 +223,7 @@ func TestProcessor_BatchFailureIsolatesFailedRow(t *testing.T) {
 		var rc int
 		require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status, &rc))
 		if id == failID {
-			assert.Equal(t, "pending", status, "failed row stays pending")
+			assert.Equal(t, "scheduled", status, "transiently-failed row moves to scheduled")
 			assert.Equal(t, 1, rc, "failed row retry_count incremented")
 		} else {
 			assert.Equal(t, "processed", status, "sibling rows processed")
@@ -257,4 +258,157 @@ func TestProcessor_DrainClearsBacklogInOneTick(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT count(*) FROM orchestrator_outbox WHERE status='pending'`).Scan(&pending))
 	assert.Equal(t, 0, pending, "drain loop must clear the entire backlog within the run window")
 	assert.GreaterOrEqual(t, pub.batchCalls, total/batch, "each full batch is its own pipelined publish")
+}
+
+// A transient error must reschedule (future next_attempt_at, status
+// 'scheduled' rather than terminal 'failed'), NOT mark failed and NOT write a
+// dead-letter — even across a single ProcessBatch.
+func TestProcessor_TransientErrorReschedulesWithBackoff(t *testing.T) {
+	db := dbForTest(t)
+	id := seedRow(t, db, 10)
+
+	pub := &fakePublisher{failTimes: 1}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+
+	var status string
+	var rc int
+	var next *time.Time
+	require.NoError(t, db.QueryRow(
+		`SELECT status, retry_count, next_attempt_at FROM orchestrator_outbox WHERE id=$1`, id,
+	).Scan(&status, &rc, &next))
+	assert.Equal(t, "scheduled", status)
+	assert.Equal(t, 1, rc)
+	require.NotNil(t, next, "transient failure must set next_attempt_at")
+	assert.True(t, next.After(time.Now()), "next_attempt_at must be in the future")
+
+	var deadLetters int
+	require.NoError(t, db.QueryRow(
+		`SELECT count(*) FROM orchestrator_outbox WHERE event_type=$1`, outbox.DeadLetterEventType,
+	).Scan(&deadLetters))
+	assert.Equal(t, 0, deadLetters, "transient (non-exhausted) failure must not dead-letter")
+}
+
+// The production incident (#280): a transient outage spanning several attempts,
+// then recovery, must end in 'processed' — never 'failed'.
+func TestProcessor_TransientOutageThenRecoveryReachesProcessed(t *testing.T) {
+	db := dbForTest(t)
+	id := seedRow(t, db, 10)
+
+	// Fail the first 3 publish attempts, then succeed — simulating a ~outage.
+	// Zero backoff so the test drives attempts back-to-back without waiting.
+	pub := &fakePublisher{failTimes: 3}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(),
+		outbox.ProcessorConfig{RetryBaseDelay: time.Nanosecond, RetryMaxDelay: time.Nanosecond})
+
+	for i := 0; i < 5; i++ { // more cycles than failures; each re-selects the due row
+		require.NoError(t, p.ProcessBatch(context.Background()))
+	}
+
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status))
+	assert.Equal(t, "processed", status, "row must recover to processed, never failed (issue #280)")
+}
+
+// Permanent error: terminal on attempt #1, retry_count stays 0, and a dead-letter
+// row with failure_kind=permanent is written.
+func TestProcessor_PermanentErrorDeadLettersImmediately(t *testing.T) {
+	db := dbForTest(t)
+	id := seedRow(t, db, 10)
+
+	pub := &permanentFailingPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+
+	var status string
+	var rc int
+	require.NoError(t, db.QueryRow(`SELECT status, retry_count FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status, &rc))
+	assert.Equal(t, "failed", status)
+	assert.Equal(t, 0, rc, "permanent error must not consume retries")
+	assert.Equal(t, 1, pub.calls, "publisher called exactly once")
+
+	var kind string
+	require.NoError(t, db.QueryRow(
+		`SELECT payload->>'failure_kind' FROM orchestrator_outbox WHERE event_type=$1`, outbox.DeadLetterEventType,
+	).Scan(&kind))
+	assert.Equal(t, outbox.FailureKindPermanent, kind)
+}
+
+// Transient budget exhaustion: after MaxRetries, terminal with a
+// failure_kind=transient_exhausted dead-letter.
+func TestProcessor_TransientExhaustionDeadLetters(t *testing.T) {
+	db := dbForTest(t)
+	id := seedRow(t, db, 1) // budget of 1 => attempt 1's failure exhausts it
+
+	pub := &fakePublisher{failTimes: 10}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status))
+	assert.Equal(t, "failed", status)
+
+	var kind string
+	require.NoError(t, db.QueryRow(
+		`SELECT payload->>'failure_kind' FROM orchestrator_outbox WHERE event_type=$1`, outbox.DeadLetterEventType,
+	).Scan(&kind))
+	assert.Equal(t, outbox.FailureKindTransientExhausted, kind)
+}
+
+// Loop guard: a dead-letter row that itself fails to publish must NOT spawn a
+// second dead-letter — it just parks (or reschedules) as any other row.
+func TestProcessor_DeadLetterRowDoesNotSpawnAnotherDeadLetter(t *testing.T) {
+	db := dbForTest(t)
+	// Seed a dead-letter row directly, with a budget of 1 so its failure is terminal.
+	dlID := uuid.New()
+	_, err := db.Exec(
+		`INSERT INTO orchestrator_outbox (id, aggregate_type, aggregate_id, event_type, payload, stream_name, max_retries)
+		 VALUES ($1, $2, $3, $4, '{"failure_kind":"permanent"}'::jsonb, $5, 1)`,
+		dlID, outbox.DeadLetterAggregateType, uuid.New(), outbox.DeadLetterEventType, streams.OutboxDeadLetterV1,
+	)
+	require.NoError(t, err)
+
+	pub := &fakePublisher{failTimes: 10}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.NoError(t, p.ProcessBatch(context.Background()))
+
+	var count int
+	require.NoError(t, db.QueryRow(
+		`SELECT count(*) FROM orchestrator_outbox WHERE event_type=$1`, outbox.DeadLetterEventType,
+	).Scan(&count))
+	assert.Equal(t, 1, count, "the failing dead-letter row must not create a second dead-letter")
+}
+
+// TestProcessor_TerminalWriteFailureRollsBackBatch verifies that when the
+// dead-letter write fails, terminate() propagates the error so the whole batch
+// rolls back — the original row must NOT be committed as 'failed' without its
+// dead-letter, which would silently drop the mandatory failure signal.
+func TestProcessor_TerminalWriteFailureRollsBackBatch(t *testing.T) {
+	db := dbForTest(t)
+	id := seedRow(t, db, 5)
+
+	// Reject any dead-letter INSERT, so terminate()'s Create fails.
+	_, err := db.Exec(`CREATE OR REPLACE FUNCTION reject_dl() RETURNS trigger AS $$
+BEGIN IF NEW.event_type = 'outbox_dead_letter' THEN RAISE EXCEPTION 'dl rejected'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql`)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TRIGGER reject_dl_trg BEFORE INSERT ON orchestrator_outbox FOR EACH ROW EXECUTE FUNCTION reject_dl()`)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.Exec(`DROP TRIGGER IF EXISTS reject_dl_trg ON orchestrator_outbox`)
+		_, _ = db.Exec(`DROP FUNCTION IF EXISTS reject_dl()`)
+	})
+
+	pub := &permanentFailingPublisher{}
+	p := outbox.NewProcessor(db, testOutboxTable, pub, nil, newTestLogger(), outbox.ProcessorConfig{})
+	require.Error(t, p.ProcessBatch(context.Background()), "batch must fail when the dead-letter write fails")
+
+	var status string
+	require.NoError(t, db.QueryRow(`SELECT status FROM orchestrator_outbox WHERE id=$1`, id).Scan(&status))
+	assert.Equal(t, "pending", status, "original row must roll back to pending, not commit as failed without a dead-letter")
+
+	var dl int
+	require.NoError(t, db.QueryRow(
+		`SELECT count(*) FROM orchestrator_outbox WHERE event_type=$1`, outbox.DeadLetterEventType,
+	).Scan(&dl))
+	assert.Equal(t, 0, dl, "no dead-letter row must be committed when the batch rolled back")
 }
