@@ -117,8 +117,8 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@$(MAKE) e2e-start-services
 	@echo "Building dbt-base image (required for e2e-setup)..."
 	@DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
-	@echo "Building validation-runner image (required for e2e-setup)..."
-	@DOCKER_BUILDKIT=1 docker build -t validation-runner:latest validation-runner/
+	@echo "Pulling external validation-runner image (required for e2e-setup)..."
+	@docker pull ghcr.io/carolsimone/validation-runner-postgres:0.1.0
 	@$(MAKE) e2e-setup
 	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 40m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
