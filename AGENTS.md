@@ -98,6 +98,7 @@ Please read: `tests/e2e/README.md`.
    `KUBECONFIG=~/.kube/hetzner-continuo.yaml kubectl get nodes`
 
 # IMPORTANT
+* NEVER create a branch directly (no `git checkout -b`, `git branch`, `git switch -c`, or any equivalent). Branch ONLY by creating a git worktree (via the using-git-worktrees skill or `git worktree add`), which branches off `origin/main`. Creating branches off the local checkout drags in un-pushed local commits and messes up my workflow.
 * As the very last step before finishing a branch and pushing the last commit it, LLM must:
   * only merge to main from a PR.
   * run e2e tests (read tests/e2e/README.md for how to do that).
