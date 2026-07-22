@@ -91,15 +91,14 @@ func main() {
 	logger.Info("CLI catalog loaded", "tools", len(catalog.Tools()))
 
 	// os.Environ() returns a fresh copy of the environment slice, so the append
-	// below is safe and does not alias the process environment.
+	// below is safe and does not alias the process environment. The initiating
+	// identity is not baked in here: Execute stamps CONTINUO_ACTOR per call from
+	// the authenticated chat operator, so each action is attributed to the human
+	// who approved it (empty → state's system sentinel).
 	cliEnv := append(
 		os.Environ(),
 		"CONTINUO_STATE_ADDR="+cfg.StateAddr,
 		"CONTINUO_ORCHESTRATOR_ADDR="+cfg.OrchestratorAddr,
-		// Stamp cancellations (and future actor-attributed actions) run via the
-		// chat agent with a fixed identity, since the CLI is otherwise an
-		// unauthenticated system caller.
-		"CONTINUO_ACTOR=agent-runner-llm",
 	)
 	executor := cliexec.NewExecutor(catalog, cfg.CLIPath, cliEnv, cfg.ToolTimeout, cfg.ToolResultMaxBytes, logger)
 

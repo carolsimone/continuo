@@ -47,6 +47,17 @@ exit 1
 	return path
 }
 
+// actorCLI writes an executable script that echoes the CONTINUO_ACTOR env var
+// it received, as JSON. Used to assert the executor stamps the actor per call.
+func actorCLI(t *testing.T) string {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "continuo")
+	script := "#!/bin/sh\n" +
+		`printf '{"actor":"%s"}' "$CONTINUO_ACTOR"` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755)) //nolint:gosec // G306: must be executable to run as the fake CLI under test.
+	return path
+}
+
 func testCatalog(t *testing.T) *Catalog {
 	raw, err := os.ReadFile("testdata/describe.json")
 	require.NoError(t, err)
@@ -70,6 +81,26 @@ func TestExecutor_RunsArgvDirectly(t *testing.T) {
 		call("schedule_status", map[string]string{"schedule-name": "daily"}))
 	assert.False(t, res.IsError)
 	assert.Contains(t, res.Output, `"argv":"schedule status daily"`)
+}
+
+func TestExecutor_StampsActorFromUserID(t *testing.T) {
+	// Base env has no CONTINUO_ACTOR; the executor must add it from userID.
+	e := NewExecutor(testCatalog(t), actorCLI(t), []string{"PATH=/usr/bin:/bin"}, 5*time.Second, 4096,
+		slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	res := e.Execute(context.Background(), "okta.example.com|alice", uuid.New(),
+		call("schedule_status", map[string]string{"schedule-name": "daily"}))
+	assert.False(t, res.IsError)
+	assert.Contains(t, res.Output, `"actor":"okta.example.com|alice"`)
+}
+
+func TestExecutor_EmptyUserIDOmitsActor(t *testing.T) {
+	// Empty userID must leave CONTINUO_ACTOR unset so state records the system sentinel.
+	e := NewExecutor(testCatalog(t), actorCLI(t), []string{"PATH=/usr/bin:/bin"}, 5*time.Second, 4096,
+		slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	res := e.Execute(context.Background(), "", uuid.New(),
+		call("schedule_status", map[string]string{"schedule-name": "daily"}))
+	assert.False(t, res.IsError)
+	assert.Contains(t, res.Output, `"actor":""`)
 }
 
 func TestExecutor_RejectsUnknownTool(t *testing.T) {
