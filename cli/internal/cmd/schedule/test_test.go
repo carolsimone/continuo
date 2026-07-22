@@ -40,6 +40,18 @@ func runTest(t *testing.T, fake client.StateClient, args []string, human bool) (
 	return outBuf.String(), errBuf.String(), exit
 }
 
+func TestScheduleTest_ForwardsActor(t *testing.T) {
+	fake := &fakeState{testResp: &statev1.TriggerScheduleResponse{ScheduleId: "s1"}}
+	var outBuf, errBuf bytes.Buffer
+	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "okta.example.com|alice"}
+	cmd := NewTestCommand(func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd.SetArgs([]string{"daily"})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "okta.example.com|alice", fake.gotTestActor)
+}
+
 func TestScheduleTest_SuccessEmitsJSON(t *testing.T) {
 	fake := &fakeState{testResp: &statev1.TriggerScheduleResponse{ScheduleId: "sched_456"}}
 

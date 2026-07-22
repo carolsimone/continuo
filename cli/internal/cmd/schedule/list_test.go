@@ -26,15 +26,15 @@ type fakeStateList struct {
 	err  error
 }
 
-func (f *fakeStateList) TriggerSchedule(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeStateList) TriggerSchedule(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerSchedule should not be called in list tests")
 }
 
-func (f *fakeStateList) TriggerScheduleTest(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeStateList) TriggerScheduleTest(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerScheduleTest should not be called in list tests")
 }
 
-func (f *fakeStateList) TriggerScheduleBuild(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeStateList) TriggerScheduleBuild(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerScheduleBuild should not be called in list tests")
 }
 

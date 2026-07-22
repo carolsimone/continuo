@@ -22,10 +22,12 @@ type fakeState struct {
 	resp            *statev1.TriggerScheduleResponse
 	err             error
 	gotScheduleName string
+	gotTriggerActor string
 
 	testResp            *statev1.TriggerScheduleResponse
 	testErr             error
 	gotTestScheduleName string
+	gotTestActor        string
 
 	cancelResp      *statev1.CancelScheduleResponse
 	cancelErr       error
@@ -35,20 +37,24 @@ type fakeState struct {
 	buildResp            *statev1.TriggerScheduleResponse
 	buildErr             error
 	gotBuildScheduleName string
+	gotBuildActor        string
 }
 
-func (f *fakeState) TriggerSchedule(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeState) TriggerSchedule(_ context.Context, name, actor string) (*statev1.TriggerScheduleResponse, error) {
 	f.gotScheduleName = name
+	f.gotTriggerActor = actor
 	return f.resp, f.err
 }
 
-func (f *fakeState) TriggerScheduleTest(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeState) TriggerScheduleTest(_ context.Context, name, actor string) (*statev1.TriggerScheduleResponse, error) {
 	f.gotTestScheduleName = name
+	f.gotTestActor = actor
 	return f.testResp, f.testErr
 }
 
-func (f *fakeState) TriggerScheduleBuild(_ context.Context, name string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeState) TriggerScheduleBuild(_ context.Context, name, actor string) (*statev1.TriggerScheduleResponse, error) {
 	f.gotBuildScheduleName = name
+	f.gotBuildActor = actor
 	return f.buildResp, f.buildErr
 }
 
@@ -106,6 +112,33 @@ func run(t *testing.T, fake client.StateClient, args []string, human bool) (stdo
 		}
 	}
 	return outBuf.String(), errBuf.String(), exit
+}
+
+// runTriggerWithActor invokes the trigger command with the resolved actor
+// (config.Config.Actor, sourced from CONTINUO_ACTOR) and returns the exit code.
+func runTriggerWithActor(t *testing.T, fake client.StateClient, args []string, actor string) int {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	cfg := &config.Config{Timeout: 2 * time.Second, Actor: actor}
+	cmd := NewTriggerCommand(func(_ context.Context, _ string) (client.StateClient, error) { return fake, nil }, cfg, &outBuf, &errBuf)
+	cmd.SetArgs(args)
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	if err := cmd.Execute(); err != nil {
+		var cliErr output.CLIError
+		if errors.As(err, &cliErr) {
+			return cliErr.ExitCode()
+		}
+		return 1
+	}
+	return 0
+}
+
+func TestTrigger_ForwardsActor(t *testing.T) {
+	fake := &fakeState{resp: &statev1.TriggerScheduleResponse{ScheduleId: "s1"}}
+	exit := runTriggerWithActor(t, fake, []string{"daily"}, "okta.example.com|alice")
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, "okta.example.com|alice", fake.gotTriggerActor)
 }
 
 func TestTrigger_SuccessEmitsJSON(t *testing.T) {
