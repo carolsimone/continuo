@@ -13,7 +13,9 @@ export function createConfigRouter(configFilePath: string) {
         res.status(503).json({ error: 'Configuration unavailable' });
         return;
       }
-      res.json(parsed);
+      // Return only the whitelisted keys; never echo the raw file, so a stray
+      // or deprecated key (e.g. cancel_by_emails) can never reach the client.
+      res.json({ cancellation_reasons: parsed.cancellation_reasons });
     } catch {
       res.status(503).json({ error: 'Configuration unavailable' });
     }

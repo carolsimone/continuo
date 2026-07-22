@@ -1,8 +1,4 @@
 {
-  "cancel_by_emails": [
-    "placeholder1@example.com",
-    "placeholder2@example.com"
-  ],
   "cancellation_reasons": [
     "Incorrect trigger",
     "Data quality issue",
