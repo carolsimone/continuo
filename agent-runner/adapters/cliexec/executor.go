@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -127,17 +128,27 @@ func (e *Executor) Execute(ctx context.Context, userID string, threadID uuid.UUI
 	// with '-' (so it can never be smuggled in as a flag). e.cliPath is our
 	// own trusted continuo binary, and there is no shell in this call chain.
 	cmd := exec.CommandContext(cctx, e.cliPath, argv...) //nolint:gosec // G204: validated argv, direct execve, no shell.
-	// Stamp the initiating identity for this call. When userID is set (every
-	// mutating chat tool is human-approved before Execute runs, so this is the
-	// approving operator), append CONTINUO_ACTOR so the CLI forwards it as
-	// x-continuo-user-id gRPC metadata. When empty, leave it unset so state
-	// resolves its system sentinel. A copy is taken so e.env is never mutated.
 	// A nil e.env intentionally inherits the parent process environment; the
 	// continuo CLI is our own trusted binary and needs PATH plus the
 	// CONTINUO_* address vars that main injects.
+	//
+	// Stamp the initiating identity for this call. When userID is set (every
+	// mutating chat tool is human-approved before Execute runs, so this is the
+	// approving operator), append CONTINUO_ACTOR so the CLI forwards it as
+	// x-continuo-user-id gRPC metadata. When empty, leave e.env untouched so the
+	// nil-inherits-parent behavior is preserved exactly.
+	//
+	// Because exec.Cmd only inherits the parent environment when cmd.Env is nil,
+	// appending to a nil e.env would replace inheritance with a 1-element env and
+	// strip PATH and the inherited CONTINUO_* vars. So when e.env is nil we seed
+	// the copy from os.Environ() to keep inheritance while adding the actor.
 	env := e.env
 	if userID != "" {
-		env = append(append([]string(nil), e.env...), "CONTINUO_ACTOR="+userID)
+		base := e.env
+		if base == nil {
+			base = os.Environ()
+		}
+		env = append(append([]string(nil), base...), "CONTINUO_ACTOR="+userID)
 	}
 	cmd.Env = env
 	start := time.Now()

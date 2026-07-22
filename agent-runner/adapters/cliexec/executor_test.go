@@ -58,6 +58,18 @@ func actorCLI(t *testing.T) string {
 	return path
 }
 
+// actorAndMarkerCLI echoes both the CONTINUO_ACTOR the executor stamped and an
+// inherited marker env var, so a test can prove the subprocess still inherits
+// the parent environment when a nil base env is used.
+func actorAndMarkerCLI(t *testing.T) string {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "continuo")
+	script := "#!/bin/sh\n" +
+		`printf '{"actor":"%s","marker":"%s"}' "$CONTINUO_ACTOR" "$CONTINUO_TEST_MARKER"` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(script), 0o755)) //nolint:gosec // G306: must be executable to run as the fake CLI under test.
+	return path
+}
+
 func testCatalog(t *testing.T) *Catalog {
 	raw, err := os.ReadFile("testdata/describe.json")
 	require.NoError(t, err)
@@ -91,6 +103,21 @@ func TestExecutor_StampsActorFromUserID(t *testing.T) {
 		call("schedule_status", map[string]string{"schedule-name": "daily"}))
 	assert.False(t, res.IsError)
 	assert.Contains(t, res.Output, `"actor":"okta.example.com|alice"`)
+}
+
+func TestExecutor_NilEnvStillInheritsParentWhenStampingActor(t *testing.T) {
+	// A nil base env means "inherit the parent environment". Stamping the actor
+	// must NOT break that inheritance (regression: appending to nil would replace
+	// the whole env with a single CONTINUO_ACTOR entry, stripping PATH and the
+	// inherited CONTINUO_* service config).
+	t.Setenv("CONTINUO_TEST_MARKER", "present")
+	e := NewExecutor(testCatalog(t), actorAndMarkerCLI(t), nil, 5*time.Second, 4096,
+		slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	res := e.Execute(context.Background(), "okta.example.com|alice", uuid.New(),
+		call("schedule_status", map[string]string{"schedule-name": "daily"}))
+	assert.False(t, res.IsError)
+	assert.Contains(t, res.Output, `"actor":"okta.example.com|alice"`)
+	assert.Contains(t, res.Output, `"marker":"present"`, "nil base env must still inherit the parent environment")
 }
 
 func TestExecutor_EmptyUserIDOmitsActor(t *testing.T) {
