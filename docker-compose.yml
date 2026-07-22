@@ -202,7 +202,10 @@ services:
       # the cached image. PullAlways would fail with ErrImagePull locally;
       # production omits this and defaults to Always.
       - VALIDATION_IMAGE_PULL_POLICY=IfNotPresent
-      - VALIDATION_IMAGE=validation-runner:latest
+      - VALIDATION_IMAGE=ghcr.io/carolsimone/validation-runner-postgres:0.1.0
+      # Warehouse credentials for the validation pod come from this operator-owned
+      # Secret (envFrom). scripts/setup.sh creates it in the kind cluster.
+      - VALIDATION_WAREHOUSE_SECRET=continuo-warehouse-validation
       - S3_SIDECAR_IMAGE=s3-sidecar:latest
       # dbt PostgreSQL target (forwarded to K8s job pods)
       - DBT_POSTGRES_DB=continuo_dbt
