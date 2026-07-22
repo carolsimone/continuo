@@ -41,7 +41,7 @@ None.
 | `--timeout` | `CONTINUO_TIMEOUT` | gRPC deadline applied to each call |
 | `--human` | — | emit human text on stderr instead of JSON on stdout |
 | `--json` | — | forward-compatibility no-op; JSON is the default output |
-| — | `CONTINUO_ACTOR` | initiating identity forwarded to `state` — recorded as `cancelled_by` on `schedule cancel`, and as the run initiator on `node trigger` (via the `x-continuo-user-id` gRPC metadata header); empty selects the `state` service's own system identity |
+| — | `CONTINUO_ACTOR` | initiating identity forwarded to `state` on every mutating command — recorded as `cancelled_by` on `schedule cancel`, and as the run initiator on `schedule trigger`/`test`/`build` and `node trigger`/`test`/`build` (via the `x-continuo-user-id` gRPC metadata header; `schedule cancel` carries it in the request's `cancelled_by` field); empty selects the `state` service's own system identity |
 
 ## Commands and the RPC each consumes
 
