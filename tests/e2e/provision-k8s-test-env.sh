@@ -45,7 +45,7 @@ DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/ || { log_error "fail
 log_info "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/ || { log_error "failed to build s3-sidecar"; exit 1; }
 log_info "Pulling external validation-runner image..."
-docker pull ghcr.io/carolsimone/validation-runner-postgres:0.1.0 || { log_error "failed to pull validation-runner-postgres"; exit 1; }
+docker pull ghcr.io/carolsimone/validation-runner-postgres:0.1.1 || { log_error "failed to pull validation-runner-postgres"; exit 1; }
 
 log_info "Loading controller images into kind..."
 kind load docker-image continuo-executor-controller:latest --name continuo || {
@@ -57,7 +57,7 @@ kind load docker-image continuo-k8s-controller:latest --name continuo || {
 }
 kind load docker-image dbt-base:latest --name continuo || { log_error "failed to load dbt-base into kind"; exit 1; }
 kind load docker-image s3-sidecar:latest --name continuo || { log_error "failed to load s3-sidecar into kind"; exit 1; }
-kind load docker-image ghcr.io/carolsimone/validation-runner-postgres:0.1.0 --name continuo || { log_error "failed to load validation-runner-postgres into kind"; exit 1; }
+kind load docker-image ghcr.io/carolsimone/validation-runner-postgres:0.1.1 --name continuo || { log_error "failed to load validation-runner-postgres into kind"; exit 1; }
 
 # Build each dbt service image, tag it by its own content digest (never :latest),
 # and load that tag into kind. The executor composes the dbt job image as

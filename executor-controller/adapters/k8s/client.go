@@ -305,7 +305,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	// selects a different engine purely by overriding VALIDATION_IMAGE.
 	image := os.Getenv("VALIDATION_IMAGE")
 	if image == "" {
-		image = "ghcr.io/carolsimone/validation-runner-postgres:0.1.0"
+		image = "ghcr.io/carolsimone/validation-runner-postgres:0.1.1"
 	}
 
 	// The validation container's warehouse credentials come from an operator-owned

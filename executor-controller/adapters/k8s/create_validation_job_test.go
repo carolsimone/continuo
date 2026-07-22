@@ -80,7 +80,7 @@ func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testin
 
 	main := spec.Containers[0]
 	assert.Equal(t, "dbt-job", main.Name)
-	assert.Equal(t, "ghcr.io/carolsimone/validation-runner-postgres:0.1.0", main.Image)
+	assert.Equal(t, "ghcr.io/carolsimone/validation-runner-postgres:0.1.1", main.Image)
 	assert.Equal(t, []string{"python", "/validation_runner.py"}, main.Command)
 	// The main container fetches its own SQL: it carries the URI + S3 creds.
 	assert.Equal(t, p.CandidateSQLURI, envByName(spec, "CANDIDATE_SQL_URI"))
@@ -300,7 +300,7 @@ func TestCreateValidationJob_DefaultsToPublishedPostgresImage(t *testing.T) {
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 
 	job := fetchJob(t, c, p.Namespace, p.JobName)
-	assert.Equal(t, "ghcr.io/carolsimone/validation-runner-postgres:0.1.0", job.Spec.Template.Spec.Containers[0].Image)
+	assert.Equal(t, "ghcr.io/carolsimone/validation-runner-postgres:0.1.1", job.Spec.Template.Spec.Containers[0].Image)
 }
 
 // The validation container gets its warehouse credentials from the operator-owned
