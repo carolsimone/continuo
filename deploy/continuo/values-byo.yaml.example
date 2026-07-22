@@ -49,6 +49,13 @@ auth:
   operatorEmails: ops@example.com
   viewerEmails: team@example.com
 
+validation:
+  # The image reference IS the engine choice; override for a non-postgres warehouse.
+  image: ghcr.io/carolsimone/validation-runner-postgres:0.1.0
+  # REQUIRED: a Secret you create with the warehouse connection keys
+  # (postgres image: DBT_POSTGRES_HOST/PORT/DB/USER/PASSWORD).
+  warehouseSecret: continuo-warehouse-validation
+
 databaseInit:
   enabled: true    # set false if your DBA pre-creates the 9 databases
 

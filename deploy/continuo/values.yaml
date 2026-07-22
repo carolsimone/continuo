@@ -221,6 +221,17 @@ github:
   existingSecretTokenKey: token
   existingSecretAppPrivateKeyKey: app-private-key
 
+validation:
+  # Published per-engine validation-runner image; the image reference IS the engine
+  # choice. Override to run a different warehouse engine (Snowflake, BigQuery, ...).
+  image: ghcr.io/carolsimone/validation-runner-postgres:0.1.0
+  # REQUIRED. Name of the Secret (which you create) holding the validation
+  # warehouse connection for the chosen engine — for the postgres image:
+  # DBT_POSTGRES_HOST, DBT_POSTGRES_PORT, DBT_POSTGRES_DB, DBT_POSTGRES_USER,
+  # DBT_POSTGRES_PASSWORD. The executor attaches it to each validation pod via
+  # envFrom; the chart fails to render if this is unset.
+  warehouseSecret: ""
+
 databaseInit:
   # Idempotently creates all 9 databases (including continuo_dbt) before the
   # Flyway migrations run. Disable when a DBA pre-creates databases; the
@@ -345,6 +356,7 @@ services:
       MAX_CONCURRENT_JOBS: "50"
       VALIDATION_IMAGE_PULL_POLICY: Always
       VALIDATION_IMAGE: __VALIDATION_IMAGE__
+      VALIDATION_WAREHOUSE_SECRET: __VALIDATION_WAREHOUSE_SECRET__
       S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__
       DBT_POSTGRES_DB: continuo_dbt
       HTTP_PORT: "8084"

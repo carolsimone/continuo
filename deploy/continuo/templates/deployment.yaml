@@ -105,7 +105,9 @@ spec:
               {{- else if eq $val "__DOCKERHUB_USERNAME__" }}
               value: {{ $.Values.global.teamImagePrefix | quote }}
               {{- else if eq $val "__VALIDATION_IMAGE__" }}
-              value: {{ include "continuo.image" (dict "root" $ "name" "validation-runner") | quote }}
+              value: {{ $.Values.validation.image | quote }}
+              {{- else if eq $val "__VALIDATION_WAREHOUSE_SECRET__" }}
+              value: {{ required "validation.warehouseSecret must be set to the name of the Secret holding the validation warehouse credentials" $.Values.validation.warehouseSecret | quote }}
               {{- else if eq $val "__S3_SIDECAR_IMAGE__" }}
               value: {{ include "continuo.image" (dict "root" $ "name" "s3-sidecar") | quote }}
               {{- else if eq $val "__AUTH_ISSUER_URL__" }}

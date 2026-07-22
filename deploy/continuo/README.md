@@ -119,6 +119,16 @@ Notes that matter before you commit to this path:
   warehouse — the one database no Flyway migration directory owns). If your
   DBA provisions databases out-of-band, set `databaseInit.enabled: false` and
   drop `CREATEDB` from the connecting user's grants.
+- **Validation warehouse Secret is required.** `validation.warehouseSecret`
+  must name a Secret you create holding the validation runner's warehouse
+  connection; the executor attaches it to every validation pod via `envFrom`,
+  and the chart refuses to render if it is unset. For the default postgres
+  image (`validation.image`), the Secret keys are `DBT_POSTGRES_HOST`,
+  `DBT_POSTGRES_PORT`, `DBT_POSTGRES_DB`, `DBT_POSTGRES_USER`,
+  `DBT_POSTGRES_PASSWORD`. The image reference IS the engine choice — point
+  `validation.image` at a different `validation-runner-<engine>` image (and
+  supply that engine's connection keys in the Secret) to validate on another
+  warehouse.
 - **Upgrades keep the pre-install hook.** With `postgresql.enabled: false`,
   the migration Job stays a Helm `pre-install,pre-upgrade` hook — the same
   ordering the previous production deploy flow relied on — because your
