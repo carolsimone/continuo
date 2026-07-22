@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
@@ -223,7 +224,7 @@ func (h *ReleasePromotedHandler) Handle(
 		MessageProcessingID: &msgProcessingID,
 		AggregateType:       "orchestrator",
 		AggregateID:         uuid.NewSHA1(releaseSchedulesNamespace, []byte("aggregate:"+in.ReleaseID)),
-		EventType:           "release_promoted",
+		EventType:           domain.EventTypeReleasePromoted,
 		Payload:             outboxPayload,
 		StreamName:          streams.SchedulesLoadedV1,
 		Status:              "pending",

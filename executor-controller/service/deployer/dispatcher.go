@@ -458,7 +458,7 @@ func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo 
 		Operation:      cmd.Operation,
 		TaskRetryCount: cmd.TaskRetryCount, MaxRetries: cmd.TaskMaxRetries,
 	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, "node_deployed", streams.NodeDeployedV1, deployed); err != nil {
+	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeNodeDeployed, streams.NodeDeployedV1, deployed); err != nil {
 		return fmt.Errorf("write node_deployed announcement: %w", err)
 	}
 	return nil
@@ -504,7 +504,7 @@ func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxR
 		MessageProcessingID: dep.MessageProcessingID(),
 		AggregateType:       "task",
 		AggregateID:         taskID,
-		EventType:           "node_deployed",
+		EventType:           event.EventTypeNodeDeployed,
 		Payload:             body,
 		StreamName:          streams.NodeDeployedV1,
 		MaxRetries:          outbox.DefaultMaxRetries,
@@ -520,7 +520,7 @@ func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo ou
 	if err != nil {
 		return fmt.Errorf("write FAILED task_status announcement: %w", err)
 	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, "task_status_updated", streams.TaskStatusUpdatedV1,
+	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeTaskStatusUpdated, streams.TaskStatusUpdatedV1,
 		pkgevents.TaskStatusUpdated{TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, Status: "FAILED", RetryCount: retryCount}); err != nil {
 		return fmt.Errorf("write FAILED task_status announcement: %w", err)
 	}
@@ -528,7 +528,7 @@ func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo ou
 		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
 		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName, Status: "FAILED",
 	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, "node_updated", streams.NodeUpdatedV1, nodeFailed); err != nil {
+	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeNodeUpdated, streams.NodeUpdatedV1, nodeFailed); err != nil {
 		return fmt.Errorf("write FAILED node_updated announcement: %w", err)
 	}
 	return nil

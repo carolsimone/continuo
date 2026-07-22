@@ -8,12 +8,12 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
 
@@ -140,7 +140,7 @@ func (h *SeedBuildOnPromoteHandler) Handle(
 			MessageProcessingID: &msgProcessingID,
 			AggregateType:       "orchestrator",
 			AggregateID:         scheduleID,
-			EventType:           "node_ready_for_execution",
+			EventType:           domain.EventTypeNodeReadyForExecution,
 			Payload:             evtPayload,
 			StreamName:          streams.QueryModelV1,
 			Status:              "pending",

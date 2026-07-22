@@ -112,7 +112,7 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		}
 		return values, nil
 
-	case "node_ready_for_execution":
+	case domain.EventTypeNodeReadyForExecution:
 		var evt domain.NodeReadyForExecution
 		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal node_ready_for_execution: %v", pkgevents.ErrPermanent, err)
@@ -145,7 +145,7 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		}
 		return values, nil
 
-	case "cascade_task_skipped":
+	case domain.EventTypeCascadeTaskSkipped:
 		var evt domain.CascadeTaskSkipped
 		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal cascade_task_skipped: %v", pkgevents.ErrPermanent, err)
@@ -163,8 +163,8 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		values["outbox_entry_id"] = entry.ID.String()
 		return values, nil
 
-	case "run_entries_dispatched", "run_entries_dispatch_failed",
-		"release_promoted":
+	case domain.EventTypeRunEntriesDispatched, domain.EventTypeRunEntriesDispatchFailed,
+		domain.EventTypeReleasePromoted:
 		// These event types carry a self-contained JSON payload that downstream
 		// consumers decode directly from the "payload" field.
 		return map[string]interface{}{

@@ -64,14 +64,14 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return values, nil
 
-	case "task_status_updated":
+	case event.EventTypeTaskStatusUpdated:
 		var e pkgevents.TaskStatusUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal task_status_updated: %v", pkgevents.ErrPermanent, err)
 		}
 		return e.ToMap(), nil
 
-	case "node_deployed":
+	case event.EventTypeNodeDeployed:
 		var e event.JobDeployed
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal node_deployed: %v", pkgevents.ErrPermanent, err)
@@ -107,7 +107,7 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		}
 		return map[string]interface{}{"payload": string(payload)}, nil
 
-	case "node_updated":
+	case event.EventTypeNodeUpdated:
 		var e event.NodeUpdated
 		if err := json.Unmarshal(entry.Payload, &e); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal node_updated: %v", pkgevents.ErrPermanent, err)

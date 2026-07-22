@@ -62,6 +62,19 @@ type ScheduleGraph struct {
 	TopologyGeneration int64 // :TopologyRoot.topology_generation at query time; 0 when unknown.
 }
 
+// Outbox event_type routing keys for orchestrator_outbox rows. Each value is the
+// event_type stored on the row and matched by the publisher's payloadToValues
+// switch; defining them here (next to the payload structs) gives the emit site
+// (service/handlers) and the publisher adapter (adapters/publisher) one source of
+// truth. Values are the wire-stored event_type strings and must not change.
+const (
+	EventTypeNodeReadyForExecution    = "node_ready_for_execution"
+	EventTypeCascadeTaskSkipped       = "cascade_task_skipped"
+	EventTypeRunEntriesDispatched     = "run_entries_dispatched"
+	EventTypeRunEntriesDispatchFailed = "run_entries_dispatch_failed"
+	EventTypeReleasePromoted          = "release_promoted"
+)
+
 // CascadeTaskSkipped is the event payload written to task.status.updated:v1 outbox entries
 // for downstream nodes that become unreachable due to an upstream failure.
 type CascadeTaskSkipped struct {
