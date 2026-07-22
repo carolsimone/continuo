@@ -119,16 +119,19 @@ Notes that matter before you commit to this path:
   warehouse — the one database no Flyway migration directory owns). If your
   DBA provisions databases out-of-band, set `databaseInit.enabled: false` and
   drop `CREATEDB` from the connecting user's grants.
-- **Validation warehouse Secret is required.** `validation.warehouseSecret`
-  must name a Secret you create holding the validation runner's warehouse
-  connection; the executor attaches it to every validation pod via `envFrom`,
-  and the chart refuses to render if it is unset. For the default postgres
-  image (`validation.image`), the Secret keys are `DBT_POSTGRES_HOST`,
-  `DBT_POSTGRES_PORT`, `DBT_POSTGRES_DB`, `DBT_POSTGRES_USER`,
-  `DBT_POSTGRES_PASSWORD`. The image reference IS the engine choice — point
-  `validation.image` at a different `validation-runner-<engine>` image (and
-  supply that engine's connection keys in the Secret) to validate on another
-  warehouse.
+- **Validation warehouse Secret.** The validation runner reads its warehouse
+  connection from a Secret the executor attaches to every validation pod via
+  `envFrom`. By default (`validation.createWarehouseSecret: true`) the chart
+  **creates that Secret for you** from the Postgres it already configures
+  (bundled or `externalDatabase`), with the keys the postgres runner reads —
+  `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`,
+  `POSTGRES_PASSWORD` — so the quickstart needs no extra action. Set
+  `validation.createWarehouseSecret: false` and point
+  `validation.warehouseSecret` at your own Secret when you run a **non-postgres
+  engine** (the image reference IS the engine choice — override
+  `validation.image`, and your Secret's keys match that engine's runner) or
+  when `externalDatabase.existingSecret` holds the password (the chart cannot
+  inline a password it does not itself hold).
 - **Upgrades keep the pre-install hook.** With `postgresql.enabled: false`,
   the migration Job stays a Helm `pre-install,pre-upgrade` hook — the same
   ordering the previous production deploy flow relied on — because your

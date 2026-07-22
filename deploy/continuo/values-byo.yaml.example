@@ -51,9 +51,11 @@ auth:
 
 validation:
   # The image reference IS the engine choice; override for a non-postgres warehouse.
-  image: ghcr.io/carolsimone/validation-runner-postgres:0.1.0
-  # REQUIRED: a Secret you create with the warehouse connection keys
-  # (postgres image: DBT_POSTGRES_HOST/PORT/DB/USER/PASSWORD).
+  image: ghcr.io/carolsimone/validation-runner-postgres:0.1.1
+  # With externalDatabase.existingSecret set, the chart cannot inline the warehouse
+  # password, so supply your own Secret with the postgres runner's connection keys
+  # (POSTGRES_HOST/PORT/DB/USER/PASSWORD).
+  createWarehouseSecret: false
   warehouseSecret: continuo-warehouse-validation
 
 databaseInit:

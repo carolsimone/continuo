@@ -134,6 +134,34 @@ app.kubernetes.io/name: {{ .service }}
 {{- if .Values.postgresql.enabled -}}disable{{- else -}}{{ .Values.externalDatabase.sslMode }}{{- end -}}
 {{- end -}}
 
+{{/* The Postgres password the chart can inline into the validation warehouse
+     Secret: the bundled instance's stable generated password, or the inline
+     externalDatabase.password. When postgresql.enabled=false AND the password
+     lives only in externalDatabase.existingSecret, the chart cannot read it —
+     the operator must set validation.createWarehouseSecret=false and provide
+     their own Secret. */}}
+{{- define "continuo.postgresql.password" -}}
+{{- if .Values.postgresql.enabled -}}
+{{- include "continuo.generatedSecret" (dict "root" . "secretName" (include "continuo.postgresql.fullname" .) "key" "password") -}}
+{{- else if .Values.externalDatabase.existingSecret -}}
+{{- fail "validation.createWarehouseSecret cannot inline the warehouse password when externalDatabase.existingSecret is set; set validation.createWarehouseSecret=false and supply validation.warehouseSecret" -}}
+{{- else -}}
+{{- required "set externalDatabase.password (or validation.createWarehouseSecret=false + validation.warehouseSecret) when postgresql.enabled=false" .Values.externalDatabase.password -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Name of the validation warehouse Secret the executor attaches via envFrom.
+     Chart-created (createWarehouseSecret=true): validation.warehouseSecret if set,
+     else <release>-warehouse-validation. Operator-supplied
+     (createWarehouseSecret=false): validation.warehouseSecret is required. */}}
+{{- define "continuo.validation.warehouseSecretName" -}}
+{{- if .Values.validation.createWarehouseSecret -}}
+{{- default (printf "%s-warehouse-validation" (include "continuo.fullname" .)) .Values.validation.warehouseSecret -}}
+{{- else -}}
+{{- required "set validation.warehouseSecret (the name of your warehouse credentials Secret) when validation.createWarehouseSecret=false" .Values.validation.warehouseSecret -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "continuo.redis.host" -}}
 {{- if .Values.redis.enabled -}}
 {{- include "continuo.redis.fullname" . -}}

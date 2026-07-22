@@ -6,6 +6,13 @@ kind: Deployment
 metadata:
   name: {{ $svc.name }}
   namespace: {{ $.Release.Namespace }}
+  {{- if eq $svc.name "executor-controller" }}
+  annotations:
+    # VALIDATION_WAREHOUSE_SECRET holds the NAME of a Secret (a resource
+    # reference), not a credential value; every real secret in this chart is
+    # injected via secretKeyRef. The heuristic matches the var name only.
+    ignore-check.kube-linter.io/env-var-secret: "value is a Secret name, not a secret"
+  {{- end }}
   labels:
     {{- include "continuo.labels" $ | nindent 4 }}
     app.kubernetes.io/name: {{ $svc.name }}
@@ -107,7 +114,7 @@ spec:
               {{- else if eq $val "__VALIDATION_IMAGE__" }}
               value: {{ $.Values.validation.image | quote }}
               {{- else if eq $val "__VALIDATION_WAREHOUSE_SECRET__" }}
-              value: {{ required "validation.warehouseSecret must be set to the name of the Secret holding the validation warehouse credentials" $.Values.validation.warehouseSecret | quote }}
+              value: {{ include "continuo.validation.warehouseSecretName" $ | quote }}
               {{- else if eq $val "__S3_SIDECAR_IMAGE__" }}
               value: {{ include "continuo.image" (dict "root" $ "name" "s3-sidecar") | quote }}
               {{- else if eq $val "__AUTH_ISSUER_URL__" }}
