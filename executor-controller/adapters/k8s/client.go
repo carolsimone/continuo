@@ -286,10 +286,13 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 
 // buildValidationPodSpec constructs the PodSpec for a validation node job.
 //
-// Validation runs the continuo-owned validation-runner image, which carries
-// validation_runner.py, the warehouse adapter, and boto3 — never the per-service
-// team image. VALIDATION_IMAGE overrides verbatim; else validation-runner:latest,
-// DOCKERHUB_USERNAME-prefixed.
+// Validation runs an external, per-engine validation-runner image (the image
+// reference is the engine choice) — never the per-service team image.
+// VALIDATION_IMAGE overrides verbatim; else the published postgres image. The
+// warehouse connection is not injected inline: the operator-owned Secret named by
+// VALIDATION_WAREHOUSE_SECRET is attached to the container via envFrom, so the
+// validation credentials are owned by the operator and separate from both the
+// executor's own DB and the dbt team images.
 //
 // build_from_sql nodes receive CANDIDATE_SQL_URI + S3 credentials directly on the
 // single main container; the runner fetches the compiled SQL from S3 itself. There
@@ -297,16 +300,22 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // have no candidate SQL and never touch S3, so they remain single-container with no
 // emptyDir and no S3 credentials.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
-	// VALIDATION_IMAGE pins the validator image. In production the Helm chart sets
-	// it to the SHA-tagged continuo-validation-runner:<imageTag>; when unset (local
-	// docker-compose, kind e2e) it falls back to the locally-built validation-runner:latest,
-	// DOCKERHUB_USERNAME-prefixed when set.
+	// VALIDATION_IMAGE pins the validator image; the image reference is the engine
+	// choice. When unset it defaults to the published postgres runner. The operator
+	// selects a different engine purely by overriding VALIDATION_IMAGE.
 	image := os.Getenv("VALIDATION_IMAGE")
 	if image == "" {
-		image = "validation-runner:latest"
-		if user := os.Getenv("DOCKERHUB_USERNAME"); user != "" {
-			image = user + "/" + image
-		}
+		image = "ghcr.io/carolsimone/validation-runner-postgres:0.1.0"
+	}
+
+	// The validation container's warehouse credentials come from an operator-owned
+	// Secret (envFrom), not inline env. Without it validation cannot connect, so
+	// fail the node permanently with an actionable reason rather than launch a pod
+	// that can only error.
+	warehouseSecret := os.Getenv("VALIDATION_WAREHOUSE_SECRET")
+	if warehouseSecret == "" {
+		return corev1.PodSpec{}, fmt.Errorf("%w: validation warehouse secret not configured (set VALIDATION_WAREHOUSE_SECRET) for node %s",
+			events.ErrPermanent, p.NodeID)
 	}
 
 	op := p.ValidationOp
@@ -323,12 +332,6 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		{Name: "TABLE_NAME", Value: p.TableName},
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
-		// dbt profile connection — forwarded from executor-controller environment.
-		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
-		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
-		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
-		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
-		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
 		{Name: "VALIDATION_OP", Value: op},
 		{Name: "PROD_SCHEMA", Value: p.ProdSchema},
 	}
@@ -339,6 +342,12 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		ImagePullPolicy: validationImagePullPolicy(),
 		Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
 		Env:             mainEnv,
+		// Warehouse connection is operator-owned: the whole Secret lands as env.
+		EnvFrom: []corev1.EnvFromSource{{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: warehouseSecret},
+			},
+		}},
 	}
 	mainContainer.SecurityContext = continuoImageSecurityContext()
 
@@ -410,8 +419,8 @@ func baseContainerSecurityContext() *corev1.SecurityContext {
 }
 
 // continuoImageSecurityContext extends the base hardening with a forced
-// non-root user for containers running continuo-owned images
-// (validation-runner, s3-sidecar), which are built with uid 65532.
+// non-root user for containers running the validation-runner and s3-sidecar
+// images, which are built with uid 65532.
 func continuoImageSecurityContext() *corev1.SecurityContext {
 	sc := baseContainerSecurityContext()
 	yes := true
@@ -547,15 +556,13 @@ func sharedVolumeMount() corev1.VolumeMount {
 // validationImagePullPolicy resolves the pull policy applied to both the
 // validation main container and the compile leg's s3-sidecar upload container.
 //
-// The default is PullAlways so that when either image reference is a mutable
-// tag (the env-unset fallbacks are validation-runner:latest / s3-sidecar:latest)
-// a re-push is picked up on the next Job. When the Helm chart pins both images
-// to the release tag, PullAlways costs only a cheap digest check.
+// The default is PullAlways so that when an image reference is a mutable tag a
+// re-push is picked up on the next Job. When both images are pinned to a fixed
+// tag, PullAlways costs only a cheap digest check.
 //
 // e2e and local clusters side-load images directly into the node's image cache
-// and have no registry to pull from, so they set VALIDATION_IMAGE_PULL_POLICY
-// to IfNotPresent or Never; PullAlways would fail with ErrImagePull there
-// because neither image exists in any accessible registry.
+// and set VALIDATION_IMAGE_PULL_POLICY to IfNotPresent or Never so the cached
+// image is used instead of failing with ErrImagePull.
 func validationImagePullPolicy() corev1.PullPolicy {
 	switch os.Getenv("VALIDATION_IMAGE_PULL_POLICY") {
 	case string(corev1.PullIfNotPresent):

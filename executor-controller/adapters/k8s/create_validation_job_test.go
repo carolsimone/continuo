@@ -18,6 +18,15 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+// TestMain defaults VALIDATION_WAREHOUSE_SECRET for the whole package: validation
+// pods now require the operator-owned warehouse Secret, so success-path tests need
+// not set it individually. Tests exercising the missing-secret path override it
+// with t.Setenv.
+func TestMain(m *testing.M) {
+	os.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
+	os.Exit(m.Run())
+}
+
 func newValidationTestClient(objects ...*batchv1.Job) *K8sClient {
 	runtimeObjs := make([]runtime.Object, 0, len(objects))
 	for _, o := range objects {
@@ -71,7 +80,7 @@ func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testin
 
 	main := spec.Containers[0]
 	assert.Equal(t, "dbt-job", main.Name)
-	assert.Equal(t, "validation-runner:latest", main.Image)
+	assert.Equal(t, "ghcr.io/carolsimone/validation-runner-postgres:0.1.0", main.Image)
 	assert.Equal(t, []string{"python", "/validation_runner.py"}, main.Command)
 	// The main container fetches its own SQL: it carries the URI + S3 creds.
 	assert.Equal(t, p.CandidateSQLURI, envByName(spec, "CANDIDATE_SQL_URI"))
@@ -233,11 +242,9 @@ func TestCreateValidationJob_IsIdempotent_AlreadyExists(t *testing.T) {
 }
 
 // TestCreateValidationJob_DefaultsToPullAlways verifies that, with no override,
-// validation Jobs are built with imagePullPolicy=Always. A service image is
-// re-baked FROM dbt-base and pushed under the same mutable service tag whenever
-// the validation runner changes; PullIfNotPresent would keep a stale cached
-// image on the node and validate the candidate with an out-of-date runner.
-// PullAlways forces the node to fetch the freshly pushed image for every run.
+// validation Jobs are built with imagePullPolicy=Always so that a re-push to a
+// mutable tag is picked up on the next run. Side-loaded clusters override this
+// via VALIDATION_IMAGE_PULL_POLICY (see the next test).
 func TestCreateValidationJob_DefaultsToPullAlways(t *testing.T) {
 	t.Setenv("VALIDATION_IMAGE_PULL_POLICY", "")
 	c := newValidationTestClient()
@@ -281,9 +288,10 @@ func TestCreateValidationJob_PullPolicyOverride(t *testing.T) {
 	}
 }
 
-// Validation runs the continuo-owned validation image, not the per-service
-// image; with DOCKERHUB_USERNAME set it is prefixed, matching the prod idiom.
-func TestCreateValidationJob_UsesContinuoValidationImage(t *testing.T) {
+// With VALIDATION_IMAGE unset the validator defaults to the published per-engine
+// postgres image. DOCKERHUB_USERNAME does not apply — the image is external, so
+// no username prefixing happens.
+func TestCreateValidationJob_DefaultsToPublishedPostgresImage(t *testing.T) {
 	t.Setenv("VALIDATION_IMAGE", "")
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	c := newValidationTestClient()
@@ -292,7 +300,41 @@ func TestCreateValidationJob_UsesContinuoValidationImage(t *testing.T) {
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 
 	job := fetchJob(t, c, p.Namespace, p.JobName)
-	assert.Equal(t, "carolsimone/validation-runner:latest", job.Spec.Template.Spec.Containers[0].Image)
+	assert.Equal(t, "ghcr.io/carolsimone/validation-runner-postgres:0.1.0", job.Spec.Template.Spec.Containers[0].Image)
+}
+
+// The validation container gets its warehouse credentials from the operator-owned
+// Secret named by VALIDATION_WAREHOUSE_SECRET (envFrom), never inline DBT_POSTGRES_*.
+func TestCreateValidationJob_AttachesWarehouseSecretEnvFrom(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
+	c := newValidationTestClient()
+	p := validationParams()
+	p.ValidationOp = "clone_from_prod"
+	p.ProdSchema = "analytics"
+	p.CandidateSQLURI = ""
+
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+	main := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec.Containers[0]
+
+	require.Len(t, main.EnvFrom, 1)
+	require.NotNil(t, main.EnvFrom[0].SecretRef)
+	assert.Equal(t, "continuo-warehouse-validation", main.EnvFrom[0].SecretRef.Name)
+	for _, e := range main.Env {
+		assert.NotContains(t, e.Name, "DBT_POSTGRES_",
+			"warehouse creds must come from the Secret, not inline env")
+	}
+}
+
+// Without VALIDATION_WAREHOUSE_SECRET configured, validation cannot connect to the
+// warehouse, so the node fails permanently with an actionable reason.
+func TestCreateValidationJob_MissingWarehouseSecretErrors(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "")
+	c := newValidationTestClient()
+	p := validationParams()
+
+	err := c.CreateValidationJob(context.Background(), p)
+	require.ErrorIs(t, err, events.ErrPermanent)
+	assert.Contains(t, err.Error(), "warehouse secret")
 }
 
 // An explicit VALIDATION_IMAGE override is used verbatim (no prefixing).
