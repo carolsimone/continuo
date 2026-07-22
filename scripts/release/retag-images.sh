@@ -12,11 +12,11 @@ TAG="${2:?usage: retag-images.sh <commit-sha> <release-tag> <registry-owner>}"
 OWNER="${3:?usage: retag-images.sh <commit-sha> <release-tag> <registry-owner>}"
 
 # Keep in sync with the build-publish matrix in .github/workflows/deploy.yml —
-# the 14 continuo-owned images every main push publishes as :<git-sha>.
+# the 13 continuo-owned images every main push publishes as :<git-sha>.
 services=(
   state orchestrator executor-controller k8s-controller ui-service
   manifest-controller release-controller agent-runner remediation
-  remediation-agent migrations validation-runner s3-sidecar stream-reaper
+  remediation-agent migrations s3-sidecar stream-reaper
 )
 
 # Verify-all-then-retag: never leave a half-tagged release on a missing image.

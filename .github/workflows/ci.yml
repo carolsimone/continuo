@@ -185,14 +185,6 @@ jobs:
       - name: Test manifest-controller
         run: docker exec manifest-controller uv run pytest -v
 
-      - name: Test validation-runner
-        # Run the validation-runner unit tests against the committed lockfile so CI
-        # matches the image's pinned deps. Uses the uv image so the step needs only Docker.
-        run: |
-          docker run --rm -v "$PWD/validation-runner:/app" -w /app \
-            ghcr.io/astral-sh/uv:python3.12-bookworm-slim \
-            sh -c "uv sync --frozen --extra dev && uv run pytest -v"
-
       - name: Test s3-sidecar
         # Unit-test the continuo-owned sidecar scripts (compile_uploader,
         # parse_cache_fetcher, s3_common) against boto3 in the uv image. No committed
