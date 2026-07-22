@@ -96,9 +96,9 @@ Port 8091: HTTP health endpoints `/health` (liveness) and `/ready` (readiness); 
 
 ### `continuo` CLI subprocess (tool execution)
 
-The `continuo` binary is bundled in the agent-runner container image. It is invoked via direct argv exec (no shell) for each tool call. The subprocess inherits `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` from agent-runner's environment, and agent-runner additionally stamps `CONTINUO_ACTOR=agent-runner-llm` into the subprocess environment so any mutating CLI command attributes its action to the agent rather than to an individual operator.
+The `continuo` binary is bundled in the agent-runner container image. It is invoked via direct argv exec (no shell) for each tool call. The subprocess inherits `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` from agent-runner's environment. Per tool call, agent-runner also stamps `CONTINUO_ACTOR=<user_id>` from the authenticated chat operator (the `user_id` from the `Open` event) into the subprocess environment, so a mutating CLI command attributes its action to that operator. Every mutating tool is gated behind an explicit human confirmation before it runs, so the stamped identity is the operator who approved the action. When no operator identity is present, `CONTINUO_ACTOR` is left unset and `state` records its `system` sentinel.
 
-Because the discovered tool menu is derived from `continuo describe`, it includes a mutating `schedule_cancel` tool whose `reason` is a required positional argument (the LLM must supply a non-empty reason) and whose cancelling identity is always the stamped `agent-runner-llm` actor rather than anything the LLM passes.
+Because the discovered tool menu is derived from `continuo describe`, it includes a mutating `schedule_cancel` tool whose `reason` is a required positional argument (the LLM must supply a non-empty reason). Its cancelling identity, like every other mutating tool, is the confirming operator carried via `CONTINUO_ACTOR`, not anything the LLM passes.
 
 | Subprocess call | Purpose |
 |---|---|

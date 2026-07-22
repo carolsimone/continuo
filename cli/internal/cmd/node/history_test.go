@@ -67,13 +67,13 @@ func (f *fakeNodeState) TriggerNodeBuild(_ context.Context, service, schema, tab
 	return f.buildResp, f.buildErr
 }
 
-func (f *fakeNodeState) TriggerSchedule(context.Context, string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeNodeState) TriggerSchedule(context.Context, string, string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerSchedule should not be called in node tests")
 }
-func (f *fakeNodeState) TriggerScheduleTest(context.Context, string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeNodeState) TriggerScheduleTest(context.Context, string, string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerScheduleTest should not be called in node tests")
 }
-func (f *fakeNodeState) TriggerScheduleBuild(context.Context, string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeNodeState) TriggerScheduleBuild(context.Context, string, string) (*statev1.TriggerScheduleResponse, error) {
 	return nil, nil
 }
 func (f *fakeNodeState) ListAllSchedules(context.Context) (*statev1.ListAllSchedulesResponse, error) {

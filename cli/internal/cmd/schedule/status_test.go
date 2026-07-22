@@ -32,13 +32,13 @@ type fakeStateStatus struct {
 	listTasksDeadlines []bool
 }
 
-func (f *fakeStateStatus) TriggerSchedule(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeStateStatus) TriggerSchedule(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerSchedule should not be called in status tests")
 }
-func (f *fakeStateStatus) TriggerScheduleTest(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeStateStatus) TriggerScheduleTest(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerScheduleTest should not be called in status tests")
 }
-func (f *fakeStateStatus) TriggerScheduleBuild(_ context.Context, _ string) (*statev1.TriggerScheduleResponse, error) {
+func (f *fakeStateStatus) TriggerScheduleBuild(_ context.Context, _, _ string) (*statev1.TriggerScheduleResponse, error) {
 	panic("TriggerScheduleBuild should not be called in status tests")
 }
 func (f *fakeStateStatus) ListAllSchedules(ctx context.Context) (*statev1.ListAllSchedulesResponse, error) {

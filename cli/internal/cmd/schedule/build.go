@@ -65,7 +65,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.TriggerScheduleBuild(ctx, scheduleName)
+			resp, err := c.TriggerScheduleBuild(ctx, scheduleName, cfg.Actor)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
