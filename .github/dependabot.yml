@@ -9,8 +9,9 @@
 version: 2
 
 updates:
-  # The Go workspace members plus cli, which lives outside go.work by design
-  # (see CLAUDE.md). Kept in step with scripts/lint-ci-modules.txt.
+  # Every Go module in the repository: the go.work members, cli (outside the
+  # workspace by design, see CLAUDE.md), and the two e2e stub servers, which are
+  # also standalone modules and so are invisible to a workspace-wide update.
   - package-ecosystem: gomod
     directories:
       - /agent-runner
@@ -24,6 +25,8 @@ updates:
       - /remediation-agent
       - /state
       - /tests/e2e
+      - /tests/e2e/stub-github
+      - /tests/e2e/stub-llm
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
