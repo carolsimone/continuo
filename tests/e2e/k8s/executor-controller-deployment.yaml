@@ -113,7 +113,11 @@ spec:
             - name: VALIDATION_IMAGE_PULL_POLICY
               value: "IfNotPresent"
             - name: VALIDATION_IMAGE
-              value: "validation-runner:latest"
+              value: "continuo-validation-runner-postgres:latest"
+            # Names the Secret (created by provision-k8s-test-env.sh) whose keys the
+            # validation pod receives via envFrom as its warehouse connection.
+            - name: VALIDATION_WAREHOUSE_SECRET
+              value: "continuo-warehouse-validation"
             - name: S3_SIDECAR_IMAGE
               value: "s3-sidecar:latest"
             - name: MAX_CONCURRENT_JOBS
