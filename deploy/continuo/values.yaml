@@ -388,7 +388,9 @@ services:
       rules:
         - apiGroups: ["batch"]
           resources: ["jobs"]
-          verbs: ["create", "get", "list", "watch"]
+          # delete: the candidate-schema lifecycle removes its own one-shot
+          # schema-op Jobs (delete-on-success + clear-terminal-before-retry).
+          verbs: ["create", "get", "list", "watch", "delete"]
         - apiGroups: [""]
           resources: ["pods"]
           verbs: ["get", "list", "watch"]

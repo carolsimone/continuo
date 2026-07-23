@@ -80,6 +80,28 @@ func TestSchemaOpJobName_DeterministicAndDNSSafe(t *testing.T) {
 	}
 }
 
+// A 40-char commit-SHA release id yields `_candidate_<sha>` → an untruncated
+// `ensure-schema-candidate-<sha>` is 64 chars, over the 63-char limit Kubernetes
+// applies to the pod-template job-name label. The name must be truncated while
+// staying deterministic and unique per schema.
+func TestSchemaOpJobName_TruncatesLongNamesPreservingUniqueness(t *testing.T) {
+	shaA := "_candidate_" + strings.Repeat("a", 39) + "b"
+	shaB := "_candidate_" + strings.Repeat("a", 39) + "c" // same truncated head, different schema
+
+	nameA := schemaOpJobName(schemaOpEnsure, shaA)
+	nameB := schemaOpJobName(schemaOpEnsure, shaB)
+
+	for _, name := range []string{nameA, nameB} {
+		assert.LessOrEqual(t, len(name), maxSchemaOpJobNameLen)
+		assert.Regexp(t, `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`, name, "must stay a valid DNS-1123 label")
+	}
+	// Deterministic (idempotent scheduling on redelivery) and unique per schema.
+	assert.Equal(t, nameA, schemaOpJobName(schemaOpEnsure, shaA))
+	assert.NotEqual(t, nameA, nameB, "schemas sharing a truncated head must map to distinct Jobs")
+	// Short names remain fully readable, untouched by truncation.
+	assert.Equal(t, "ensure-schema-candidate-rel-1", schemaOpJobName(schemaOpEnsure, "_candidate_rel_1"))
+}
+
 func TestCandidateSchemaRunner_RefusesNonCandidateSchema(t *testing.T) {
 	client := newValidationTestClient()
 	creator := NewCandidateSchemaCreator(client, "default", testLogger())
@@ -135,7 +157,7 @@ func TestSchemaOpJob_SetsActiveDeadlineMatchingWaitTimeout(t *testing.T) {
 	job, err := schemaOpJob(schemaOpEnsure, "_candidate_x", "ensure-schema-candidate-x", "default")
 	require.NoError(t, err)
 	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
-	assert.Equal(t, int64(schemaOpJobTimeout/time.Second), *job.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, int64(SchemaOpJobTimeout/time.Second), *job.Spec.ActiveDeadlineSeconds)
 }
 
 // A Job killed by ActiveDeadlineSeconds carries a JobFailed condition but can leave

@@ -2,6 +2,8 @@ package k8s
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -63,15 +65,31 @@ func (r *candidateSchemaJobRunner) run(ctx context.Context, op, schema string) e
 	return r.client.RunSchemaOpJob(ctx, op, schema, schemaOpJobName(op, schema), r.namespace)
 }
 
+// maxSchemaOpJobNameLen caps the schema-op Job name. Kubernetes copies the Job name
+// into the pod-template `job-name` label (63-char limit) and derives pod names /
+// hostnames from it, so the cap stays under 63 with headroom for the pod-name suffix.
+// A 40-char commit-SHA release id already produces a 64-char untruncated name.
+const maxSchemaOpJobNameLen = 52
+
 // schemaOpJobName derives a deterministic, DNS-1123-safe Job name from the op and
 // candidate schema, so a redelivered trigger maps to the same (idempotent) Job. The
-// literal prefix guarantees the name never starts with a sanitized dash.
+// literal prefix guarantees the name never starts with a sanitized dash. Names over
+// maxSchemaOpJobNameLen keep a readable head and regain uniqueness with a digest of
+// the full schema name — distinct schemas sharing a truncated head must never map to
+// one Job.
 func schemaOpJobName(op, schema string) string {
 	prefix := "ensure"
 	if op == schemaOpDrop {
 		prefix = "drop"
 	}
-	return fmt.Sprintf("%s-schema-%s", prefix, sanitizeK8sName(schema))
+	name := fmt.Sprintf("%s-schema-%s", prefix, sanitizeK8sName(schema))
+	if len(name) <= maxSchemaOpJobNameLen {
+		return name
+	}
+	digest := sha256.Sum256([]byte(schema))
+	suffix := hex.EncodeToString(digest[:])[:10]
+	head := strings.TrimRight(name[:maxSchemaOpJobNameLen-len(suffix)-1], "-")
+	return head + "-" + suffix
 }
 
 // sanitizeK8sName lowercases s and reduces it to a DNS-1123-safe fragment. It is used

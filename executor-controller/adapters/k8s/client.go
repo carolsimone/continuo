@@ -395,9 +395,11 @@ const (
 	schemaOpDrop   = "drop_schema"
 
 	schemaOpJobPollInterval = 2 * time.Second
-	// schemaOpJobTimeout bounds the wait for a schema-op Job to terminate; the DDL is
-	// quick, so a Job still running past this is a failure rather than an infinite block.
-	schemaOpJobTimeout = 5 * time.Minute
+	// SchemaOpJobTimeout bounds the wait for a schema-op Job to terminate; the DDL is
+	// quick, so a Job still running past this is a failure rather than an infinite
+	// block. Exported so main.go can size the handler budget of the stream consumers
+	// that block on schema-op Jobs above this wait, not under it.
+	SchemaOpJobTimeout = 5 * time.Minute
 )
 
 // buildSchemaOpPodSpec constructs the PodSpec for a candidate-schema lifecycle Job. It
@@ -445,7 +447,7 @@ func buildSchemaOpPodSpec(op, candidateSchema string) (corev1.PodSpec, error) {
 // validation watcher ignores it — its lifecycle is owned here, not surfaced as a
 // validation node. TTLSecondsAfterFinished is a cleanup backstop; RunSchemaOpJob also
 // deletes the Job once it observes a terminal state. ActiveDeadlineSeconds matches
-// schemaOpJobTimeout so a hung DDL pod (e.g. a stuck warehouse lock) is killed and the
+// SchemaOpJobTimeout so a hung DDL pod (e.g. a stuck warehouse lock) is killed and the
 // Job goes Failed — a terminal state submitSchemaOpJob can clear on the next retry —
 // instead of staying Active forever and livelocking every retry at the wait timeout.
 func schemaOpJob(op, candidateSchema, jobName, namespace string) (*batchv1.Job, error) {
@@ -455,7 +457,7 @@ func schemaOpJob(op, candidateSchema, jobName, namespace string) (*batchv1.Job, 
 	}
 	backoffLimit := int32(0)
 	ttl := int32(120)
-	activeDeadline := int64(schemaOpJobTimeout / time.Second)
+	activeDeadline := int64(SchemaOpJobTimeout / time.Second)
 	labels := map[string]string{
 		"app":              "continuo-schema-op",
 		"schema-op":        op,
@@ -551,7 +553,7 @@ func (c *K8sClient) createSchemaOpJob(ctx context.Context, job *batchv1.Job) err
 }
 
 func (c *K8sClient) waitForSchemaOpJob(ctx context.Context, namespace, jobName, op string) error {
-	waitCtx, cancel := context.WithTimeout(ctx, schemaOpJobTimeout)
+	waitCtx, cancel := context.WithTimeout(ctx, SchemaOpJobTimeout)
 	defer cancel()
 	ticker := time.NewTicker(schemaOpJobPollInterval)
 	defer ticker.Stop()

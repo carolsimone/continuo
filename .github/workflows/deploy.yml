@@ -167,7 +167,7 @@ jobs:
                   {service: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
                   {service: "remediation-agent", changed: $remediation_agent, dockerfile: "remediation-agent/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
-                  {service: "validation-runner-postgres", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile.postgres", context: "validation-runner"},
+                  {service: "validation-runner-postgres", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile.postgres", context: "validation-runner", build_args: "CONTINUO_INDEX_URL=https://test.pypi.org/simple/"},
                   {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"},
                   {service: "stream-reaper", changed: $stream_reaper, dockerfile: "pkg/cmd/stream-reaper/Dockerfile", context: "pkg"}
                 ]
@@ -233,8 +233,15 @@ jobs:
           tags: |
             ${{ env.IMAGE_REPO }}:${{ github.sha }}
             ${{ env.IMAGE_REPO }}:latest
+          # matrix.build_args carries per-service extras; today only
+          # validation-runner-postgres sets it (CONTINUO_INDEX_URL so its Dockerfile
+          # resolves the two pinned continuo packages from TestPyPI in a scoped
+          # --no-deps transaction until they are on real PyPI — every other
+          # dependency still resolves from the default index only). Unset entries
+          # contribute a blank line, which build-push-action ignores.
           build-args: |
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/continuo-base:v1
+            ${{ matrix.build_args }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
 

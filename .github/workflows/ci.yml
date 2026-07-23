@@ -221,7 +221,7 @@ jobs:
         run: |
           docker build -t continuo-validation-runner-postgres:ci \
             -f validation-runner/Dockerfile.postgres \
-            --build-arg EXTRA_INDEX_URL=https://test.pypi.org/simple/ validation-runner/
+            --build-arg CONTINUO_INDEX_URL=https://test.pypi.org/simple/ validation-runner/
           cd validation-runner
           uv sync --all-groups
           VALIDATION_IMAGE_UNDER_TEST=continuo-validation-runner-postgres:ci \

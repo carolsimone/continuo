@@ -45,10 +45,10 @@ DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/ || { log_error "fail
 log_info "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/ || { log_error "failed to build s3-sidecar"; exit 1; }
 log_info "Building slim validation-runner (postgres) image..."
-# EXTRA_INDEX_URL resolves continuo-validation-* from TestPyPI until on real PyPI.
+# CONTINUO_INDEX_URL resolves continuo-validation-* from TestPyPI until on real PyPI.
 DOCKER_BUILDKIT=1 docker build -t continuo-validation-runner-postgres:latest \
   -f validation-runner/Dockerfile.postgres \
-  --build-arg EXTRA_INDEX_URL=https://test.pypi.org/simple/ validation-runner/ \
+  --build-arg CONTINUO_INDEX_URL=https://test.pypi.org/simple/ validation-runner/ \
   || { log_error "failed to build validation-runner-postgres"; exit 1; }
 
 log_info "Loading controller images into kind..."
