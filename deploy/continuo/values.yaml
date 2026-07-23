@@ -222,11 +222,18 @@ github:
   existingSecretAppPrivateKeyKey: app-private-key
 
 validation:
-  # The engine the SRE validates against. PostgreSQL is the only fully supported
-  # engine today: the executor's candidate-schema create/teardown
-  # (CandidateSchemaCreator/Cleaner) is PostgreSQL-specific, so another engine would
-  # build candidate schemas the executor never drops. `engine` resolves to the slim
-  # continuo-validation-runner-<engine> image the executor runs.
+  # PRODUCTION: revisit this whole block before real workloads. The defaults below
+  # validate against the SAME PostgreSQL this chart runs for its own control plane —
+  # convenient for dev/demo, but NOT where you want production dbt models built. A real
+  # deployment points validation at its actual data warehouse: set `engine` to match it,
+  # supply that warehouse's connection via the Secret (createWarehouseSecret/warehouseSecret),
+  # and set `warehouseDatabase` to the target database.
+  #
+  # The engine the SRE validates against. PostgreSQL is the only fully supported engine
+  # today: the executor's candidate-schema create/teardown (CandidateSchemaCreator/Cleaner)
+  # is PostgreSQL-specific, so another engine would build candidate schemas the executor
+  # never drops. Once other engine libraries land, set this to your real warehouse's engine.
+  # `engine` resolves to the slim continuo-validation-runner-<engine> image the executor runs.
   engine: postgres
   # When true (default) the chart creates the warehouse Secret from the Postgres it
   # configures (bundled or externalDatabase), with keys the postgres runner reads:
