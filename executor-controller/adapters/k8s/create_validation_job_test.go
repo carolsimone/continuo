@@ -18,11 +18,13 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-// TestMain defaults VALIDATION_WAREHOUSE_SECRET for the whole package: validation
-// pods now require the operator-owned warehouse Secret, so success-path tests need
-// not set it individually. Tests exercising the missing-secret path override it
-// with t.Setenv.
+// TestMain defaults VALIDATION_IMAGE and VALIDATION_WAREHOUSE_SECRET for the whole
+// package: validation pods now require both (the engine image is the SRE's choice, the
+// warehouse Secret is operator-owned), so success-path tests need not set them
+// individually. Tests exercising the missing-image / missing-secret paths override
+// them with t.Setenv.
 func TestMain(m *testing.M) {
+	os.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-validation-runner-postgres:latest")
 	os.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	os.Exit(m.Run())
 }
@@ -288,19 +290,17 @@ func TestCreateValidationJob_PullPolicyOverride(t *testing.T) {
 	}
 }
 
-// With VALIDATION_IMAGE unset the validator defaults to the published per-engine
-// postgres image. DOCKERHUB_USERNAME does not apply — the image is external, so
-// no username prefixing happens.
-func TestCreateValidationJob_DefaultsToPublishedPostgresImage(t *testing.T) {
+// The executor bakes in no engine: with VALIDATION_IMAGE unset the node fails
+// permanently rather than silently defaulting to one engine. The SRE sets
+// VALIDATION_IMAGE (Helm/compose) to the chosen engine's runner image.
+func TestCreateValidationJob_MissingImageErrors(t *testing.T) {
 	t.Setenv("VALIDATION_IMAGE", "")
-	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	c := newValidationTestClient()
 	p := validationParams()
 
-	require.NoError(t, c.CreateValidationJob(context.Background(), p))
-
-	job := fetchJob(t, c, p.Namespace, p.JobName)
-	assert.Equal(t, "ghcr.io/carolsimone/continuo-validation-runner-postgres:latest", job.Spec.Template.Spec.Containers[0].Image)
+	err := c.CreateValidationJob(context.Background(), p)
+	require.ErrorIs(t, err, events.ErrPermanent)
+	assert.Contains(t, err.Error(), "VALIDATION_IMAGE not configured")
 }
 
 // The validation container gets its warehouse credentials from the operator-owned

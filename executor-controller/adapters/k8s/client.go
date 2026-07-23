@@ -301,11 +301,15 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // have no candidate SQL and never touch S3, so they remain single-container with no
 // emptyDir and no S3 credentials.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
-	// VALIDATION_IMAGE pins the validator image (Helm/compose set it per the chosen
-	// engine). When unset it defaults to the postgres runner.
+	// VALIDATION_IMAGE names the engine's validation-runner image; the SRE chooses the
+	// engine at deploy time (Helm/compose) and that resolves to the matching
+	// continuo-validation-runner-<engine> image. The executor bakes in no engine — a
+	// hardcoded default would silently force one — so an unset image fails the node
+	// permanently with an actionable reason.
 	image := os.Getenv("VALIDATION_IMAGE")
 	if image == "" {
-		image = "ghcr.io/carolsimone/continuo-validation-runner-postgres:latest"
+		return corev1.PodSpec{}, fmt.Errorf("%w: VALIDATION_IMAGE not configured (set it to the chosen engine's validation-runner image) for node %s",
+			events.ErrPermanent, p.NodeID)
 	}
 
 	// The validation container's warehouse credentials come from an operator-owned
