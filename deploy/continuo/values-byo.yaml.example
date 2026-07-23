@@ -58,3 +58,8 @@ ingress:
   host: continuo.example.com
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt
+
+validation:
+  # externalDatabase.existingSecret holds the password; supply your own warehouse Secret.
+  createWarehouseSecret: false
+  warehouseSecret: continuo-warehouse-validation

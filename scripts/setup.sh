@@ -62,8 +62,12 @@ echo "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 echo "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
-echo "Building validation-runner image..."
-DOCKER_BUILDKIT=1 docker build -t validation-runner:latest validation-runner/
+echo "Building slim validation-runner (postgres) image..."
+# CONTINUO_INDEX_URL resolves continuo-validation-* from TestPyPI until they are on real
+# PyPI (the reshape's pre-release phase); harmless once they are.
+DOCKER_BUILDKIT=1 docker build -t continuo-validation-runner-postgres:latest \
+  -f validation-runner/Dockerfile.postgres \
+  --build-arg CONTINUO_INDEX_URL=https://test.pypi.org/simple/ validation-runner/
 echo "Building service images (batched)..."
 # Build in small batches instead of all ~13 services at once. On a 2-CPU/7.75GB
 # CI runner, building everything in parallel thrashes memory and disk I/O so badly
@@ -134,7 +138,7 @@ kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME
 kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME}
 kind load docker-image dbt-base:latest --name ${CLUSTER_NAME}
 kind load docker-image s3-sidecar:latest --name ${CLUSTER_NAME}
-kind load docker-image validation-runner:latest --name ${CLUSTER_NAME}
+kind load docker-image continuo-validation-runner-postgres:latest --name ${CLUSTER_NAME}
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -196,6 +200,16 @@ kubectl create serviceaccount ${CLUSTER_NAME}-app-sa || echo "ServiceAccount alr
 kubectl create clusterrolebinding ${CLUSTER_NAME}-app-admin \
   --clusterrole=cluster-admin \
   --serviceaccount=default:${CLUSTER_NAME}-app-sa || echo "ClusterRoleBinding already exists, continuing..."
+
+# Warehouse credentials for the validation pods, which the executor attaches via
+# envFrom (VALIDATION_WAREHOUSE_SECRET). The host bridge IP is used because the
+# validation Job runs inside kind and reaches Postgres on the host, not via the
+# compose service name.
+echo "Creating validation warehouse Secret..."
+export DOCKER_BRIDGE_IP=$(docker network inspect bridge --format='{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || echo "")
+envsubst < tests/e2e/k8s/validation-warehouse-secret.yaml | kubectl apply -f - || {
+  echo "Error: failed to create validation warehouse Secret"; exit 1
+}
 
 # Resolve the API server address reachable from inside docker containers
 KUBE_IP=$(docker exec ${CLUSTER_NAME}-control-plane kubectl get endpoints kubernetes -n default -o jsonpath='{.subsets[0].addresses[0].ip}')

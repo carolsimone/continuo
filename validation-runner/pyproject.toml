@@ -1,16 +1,53 @@
 [project]
-name = "validation-runner"
 version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = [
-    "boto3>=1.34.0",
-    "psycopg2-binary>=2.9.0",
+name = "continuo-validation-runner"
+description = "Slim continuo validation harness: op dispatch, candidate-SQL fetch, result-block; imports one engine adapter by discovery."
+authors = [{ name = "Simone Carolini" }]
+readme = "README.md"
+requires-python = ">= 3.14"
+dependencies = ["continuo-validation-contract==0.2.0", "boto3==1.40.0"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3.14",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-]
+[dependency-groups]
+dev = ["ruff==0.3.0", "mypy==1.18.2"]
+test = ["pytest==9.0.3", "pytest-cov==4.1.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["continuo_validation_runner"]
+
+# continuo-validation-contract is not on real PyPI yet (reshape pre-release); pull it
+# from an EXPLICIT TestPyPI index scoped to that package only, so boto3 and tooling keep
+# their real-PyPI wheels. Remove this once the contract is on real PyPI.
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+explicit = true
+
+[tool.uv.sources]
+continuo-validation-contract = { index = "testpypi" }
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["I", "D"]
+ignore = ["D104"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.mypy]
+python_version = "3.14"
+disallow_untyped_defs = true
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+addopts = "--tb=short"
+markers = ["image: needs the built validation-runner-postgres image"]

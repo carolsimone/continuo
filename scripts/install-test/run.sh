@@ -39,6 +39,17 @@ case "$MODE" in
         --from-literal=redis-password=ci-redis-pw \
         --from-literal=neo4j-password=ci-neo4j-pw \
         --dry-run=client -o yaml | kubectl apply -f -
+      # values-byo-secret sets validation.createWarehouseSecret=false, so the chart
+      # does not create this — the operator (here, the fixture) provides it with the
+      # postgres runner's POSTGRES_* keys, or the first validation pod would fail with
+      # CreateContainerConfigError.
+      kubectl -n "$NS" create secret generic continuo-warehouse-validation \
+        --from-literal=POSTGRES_HOST=byo-postgres \
+        --from-literal=POSTGRES_PORT=5432 \
+        --from-literal=POSTGRES_DB=continuo_dbt \
+        --from-literal=POSTGRES_USER=continuo \
+        --from-literal=POSTGRES_PASSWORD=ci-postgres-pw \
+        --dry-run=client -o yaml | kubectl apply -f -
       helm_args+=(-f "${FIXTURES}/values-byo-secret.yaml")
     else
       helm_args+=(-f "${FIXTURES}/values-byo-inline.yaml")

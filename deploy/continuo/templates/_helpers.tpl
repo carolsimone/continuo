@@ -38,6 +38,41 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 {{- end -}}
 
+{{/* The validation-runner image for the SRE-selected engine. The engine name maps to
+     the continuo-validation-runner-<engine> image; PostgreSQL is the only supported
+     engine until the executor candidate-schema lifecycle is engine-aware. */}}
+{{- define "continuo.validation.image" -}}
+{{- $eng := .Values.validation.engine | default "postgres" -}}
+{{- if ne $eng "postgres" -}}
+{{- fail (printf "validation.engine=%q is not available: 'postgres' is the only engine with a published continuo-validation-runner image today. Adding an engine means publishing its continuo-validation-<engine> library + image; it ALSO means you (the operator) must supply that engine's own warehouse connection (set validation.createWarehouseSecret=false and provide a Secret with THAT engine's keys — a Trino library reads different keys than POSTGRES_*) and configure your dbt team images with that engine's dbt profile. See the validation: block in values.yaml." $eng) -}}
+{{- end -}}
+{{- include "continuo.image" (dict "root" . "name" (printf "validation-runner-%s" $eng)) -}}
+{{- end -}}
+
+{{/* Name of the validation warehouse Secret the executor attaches via envFrom.
+     - createWarehouseSecret=true, bundled generated Postgres: the keys live on the
+       bundled Postgres Secret itself (postgresql/secret.yaml), so the password is
+       generated exactly once — name is that Secret.
+     - createWarehouseSecret=true, external Postgres with an inline password: the
+       chart creates a dedicated Secret (validation-warehouse-secret.yaml).
+     - createWarehouseSecret=true but the password is in an existingSecret: the chart
+       cannot read it — render fails, directing the operator to opt out.
+     - createWarehouseSecret=false: the operator supplies validation.warehouseSecret. */}}
+{{- define "continuo.validation.warehouseSecretName" -}}
+{{- $v := .Values -}}
+{{- if $v.validation.createWarehouseSecret -}}
+  {{- if and $v.postgresql.enabled (not $v.postgresql.auth.existingSecret) -}}
+    {{- include "continuo.postgresql.fullname" . -}}
+  {{- else if and (not $v.postgresql.enabled) $v.externalDatabase.password (not $v.externalDatabase.existingSecret) -}}
+    {{- default (printf "%s-warehouse-validation" (include "continuo.fullname" .)) $v.validation.warehouseSecret -}}
+  {{- else -}}
+    {{- fail "validation.createWarehouseSecret cannot build the warehouse Secret when the Postgres password lives in an existingSecret (or the engine is not postgres); set validation.createWarehouseSecret=false and supply validation.warehouseSecret" -}}
+  {{- end -}}
+{{- else -}}
+  {{- required "set validation.warehouseSecret (the name of your warehouse credentials Secret) when validation.createWarehouseSecret=false" $v.validation.warehouseSecret -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "continuo.configMapName" -}}
 {{- printf "%s-config" (include "continuo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

@@ -44,6 +44,12 @@ spec:
         - podSelector:
             matchLabels:
               app: dbt-job
+        # Candidate-schema lifecycle Jobs (executor-scheduled engine-image pods
+        # running ensure_schema/drop_schema) carry app=continuo-schema-op — never
+        # app=dbt-job — and must reach the warehouse to run their DDL.
+        - podSelector:
+            matchLabels:
+              app: continuo-schema-op
       ports:
         - port: 5432
 {{- end }}

@@ -30,10 +30,24 @@ import (
 
 // consumerHandlerTimeout bounds each message handler invocation with a context
 // deadline, so a genuinely-hung handler eventually returns control to the read
-// loop. These handlers do short DB writes and K8s job dispatch (they never
-// block waiting on a job to finish — completion arrives as a separate event),
-// so 60s far exceeds any legitimate invocation while still bounding a wedge.
+// loop. Most handlers do short DB writes and K8s job dispatch (completion
+// arrives as a separate event), so 60s far exceeds any legitimate invocation
+// while still bounding a wedge. The candidate-schema handlers are the
+// exception — see schemaOpHandlerTimeout.
 const consumerHandlerTimeout = 60 * time.Second
+
+// schemaOpHandlerTimeout is the handler budget for consumers that block on a
+// candidate-schema engine-image Job (validation/seed-build ensure, teardown
+// drop): the k8s adapter waits up to k8s.SchemaOpJobTimeout for the Job to
+// terminate, so the message deadline must sit above that wait — under it, a
+// cold image pull or slow DDL would cancel the handler and churn retries while
+// the Job keeps running.
+const schemaOpHandlerTimeout = k8s.SchemaOpJobTimeout + time.Minute
+
+// schemaOpHeartbeatStale mirrors consumerHeartbeatStale for the schema-op
+// consumers: it MUST exceed schemaOpHandlerTimeout plus a margin so a handler
+// legitimately waiting on a Job never trips liveness.
+const schemaOpHeartbeatStale = schemaOpHandlerTimeout + 2*time.Minute
 
 // consumerHeartbeatStale is the liveness heartbeat budget: how long a consumer's
 // read loop may make no progress before the liveness probe restarts the pod. It
@@ -81,11 +95,11 @@ func main() {
 	// missing worker is observable; WorkerExited when Start returns (which now
 	// happens on a permanent bootstrap error too, not only clean shutdown); and
 	// a worker heartbeat probe so a wedged-but-not-exited loop is caught.
-	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
-		consumer.SetHandlerTimeout(consumerHandlerTimeout)
+	startConsumer := func(name string, consumer *pkgredis.StreamConsumer, handlerTimeout, heartbeatStale time.Duration) {
+		consumer.SetHandlerTimeout(handlerTimeout)
 		liveReg.RegisterWorker(name)
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
-			return consumer.Healthy(consumerHeartbeatStale)
+			return consumer.Healthy(heartbeatStale)
 		})
 		go func() {
 			err := consumer.Start(ctx)
@@ -94,6 +108,14 @@ func main() {
 				logger.Error("Consumer exited", "consumer", name, "error", err)
 			}
 		}()
+	}
+	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		startConsumer(name, consumer, consumerHandlerTimeout, consumerHeartbeatStale)
+	}
+	// runSchemaOpConsumer starts a consumer whose handler blocks on a
+	// candidate-schema engine-image Job, with the larger budget that wait needs.
+	runSchemaOpConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
+		startConsumer(name, consumer, schemaOpHandlerTimeout, schemaOpHeartbeatStale)
 	}
 
 	// ========================================================================
@@ -123,35 +145,7 @@ func main() {
 		return pgDB.PingContext(ctx)
 	})
 
-	// 2. dbt-warehouse PostgreSQL client (used to drop candidate schemas after
-	// validation completes; same host/port/credentials as the main PG client but
-	// targets the dbt materialization database).
-	dbtDB, err := postgres.NewPostgresClient(
-		cfg.DBTWarehouse.Host,
-		cfg.DBTWarehouse.Port,
-		cfg.DBTWarehouse.DB,
-		cfg.DBTWarehouse.User,
-		cfg.DBTWarehouse.Password,
-		logger,
-	)
-	if err != nil {
-		logger.Error("Failed to connect to dbt warehouse", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("dbt-warehouse client initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Closing dbt-warehouse connection")
-		return dbtDB.Close()
-	})
-	liveReg.AddProbe("dbt_warehouse", 5*time.Second, func(ctx context.Context) error {
-		return dbtDB.PingContext(ctx)
-	})
-
-	candidateSchemaCleaner := postgres.NewCandidateSchemaCleaner(dbtDB, logger)
-	candidateSchemaCreator := postgres.NewCandidateSchemaCreator(dbtDB, logger)
-
-	// 3. Redis client
+	// 2. Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
 		Addr:     cfg.Redis.Addr(),
 		Password: cfg.Redis.Password,
@@ -187,6 +181,13 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("K8s client initialized")
+
+	// Candidate-schema lifecycle: the executor never connects to the warehouse. It
+	// schedules a one-shot engine-image Job (harness ensure_schema/drop_schema op) and
+	// blocks on the result, so the engine adapter baked into VALIDATION_IMAGE owns the
+	// DDL dialect and the warehouse credentials stay on the Job, not the control plane.
+	candidateSchemaCreator := k8s.NewCandidateSchemaCreator(k8sClient, cfg.K8sNamespace, logger)
+	candidateSchemaCleaner := k8s.NewCandidateSchemaCleaner(k8sClient, cfg.K8sNamespace, logger)
 
 	// ========================================================================
 	// INITIALIZE REPOSITORIES
@@ -259,9 +260,15 @@ func main() {
 	logger.Info("schedule.cancelled consumer initialized",
 		"stream", streams.ScheduleCancelledV1, "group", streams.ExecutorScheduleCancelled)
 
+	// schemaOpReclaim keeps the PEL sweep from stealing a message whose handler is
+	// legitimately blocked on a schema-op Job: with the default 30s MinIdle a peer
+	// replica would re-claim (and double-drive) the message mid-wait, so entries on
+	// these streams become claimable only after the full schema-op budget has passed.
+	schemaOpReclaim := pkgredis.WithReclaimMinIdle(schemaOpHandlerTimeout + time.Minute)
+
 	validationReqConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.ValidationRequestedV1, streams.ExecutorValidationRequested,
-		validationReqBinding, logger)
+		validationReqBinding, logger, schemaOpReclaim)
 	logger.Info("validation.requested consumer initialized",
 		"stream", streams.ValidationRequestedV1, "group", streams.ExecutorValidationRequested)
 
@@ -273,7 +280,7 @@ func main() {
 
 	seedBuildReqConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.SeedBuildRequestedV1, streams.ExecutorSeedBuildRequested,
-		seedBuildReqBinding, logger)
+		seedBuildReqBinding, logger, schemaOpReclaim)
 	logger.Info("seed.build.requested consumer initialized",
 		"stream", streams.SeedBuildRequestedV1, "group", streams.ExecutorSeedBuildRequested)
 
@@ -297,19 +304,19 @@ func main() {
 
 	validationResultTeardownConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.ValidationResultV1, streams.ExecutorValidationResultTeardown,
-		validationResultTeardownBinding, logger)
+		validationResultTeardownBinding, logger, schemaOpReclaim)
 	logger.Info("validation.result teardown consumer initialized",
 		"stream", streams.ValidationResultV1, "group", streams.ExecutorValidationResultTeardown)
 
 	releaseRejectedTeardownConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
-		releaseRejectedTeardownBinding, logger)
+		releaseRejectedTeardownBinding, logger, schemaOpReclaim)
 	logger.Info("release.rejected teardown consumer initialized",
 		"stream", streams.ReleaseRejectedV1, "group", streams.ExecutorReleaseRejected)
 
 	releasePromotedTeardownConsumer := pkgredis.NewStreamConsumer(
 		redisClient, streams.ReleasePromotedV1, streams.ExecutorReleasePromoted,
-		releasePromotedTeardownBinding, logger)
+		releasePromotedTeardownBinding, logger, schemaOpReclaim)
 	logger.Info("release.promoted teardown consumer initialized",
 		"stream", streams.ReleasePromotedV1, "group", streams.ExecutorReleasePromoted)
 
@@ -417,15 +424,15 @@ func main() {
 	runConsumer("query_model", queryConsumer)
 	runConsumer("retry_task", retryConsumer)
 	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
-	runConsumer("validation_requested", validationReqConsumer)
+	runSchemaOpConsumer("validation_requested", validationReqConsumer)
 	runConsumer("validation_node_completed", validationNodeConsumer)
-	runConsumer("seed_build_requested", seedBuildReqConsumer)
+	runSchemaOpConsumer("seed_build_requested", seedBuildReqConsumer)
 	runConsumer("seed_build_node_completed", seedBuildNodeConsumer)
 	runConsumer("compile_requested", compileReqConsumer)
 	runConsumer("compile_node_completed", compileNodeConsumer)
-	runConsumer("validation_result_teardown", validationResultTeardownConsumer)
-	runConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
-	runConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
+	runSchemaOpConsumer("validation_result_teardown", validationResultTeardownConsumer)
+	runSchemaOpConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
+	runSchemaOpConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
 
 	// Block until shutdown is requested. Each consumer's Start returns
 	// when ctx is cancelled.
