@@ -115,6 +115,8 @@ spec:
               value: {{ include "continuo.validation.image" $ | quote }}
               {{- else if eq $val "__VALIDATION_WAREHOUSE_SECRET__" }}
               value: {{ include "continuo.validation.warehouseSecretName" $ | quote }}
+              {{- else if eq $val "__VALIDATION_WAREHOUSE_DATABASE__" }}
+              value: {{ $.Values.validation.warehouseDatabase | quote }}
               {{- else if eq $val "__S3_SIDECAR_IMAGE__" }}
               value: {{ include "continuo.image" (dict "root" $ "name" "s3-sidecar") | quote }}
               {{- else if eq $val "__AUTH_ISSUER_URL__" }}

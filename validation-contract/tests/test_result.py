@@ -4,6 +4,17 @@ import json
 from continuo_validation_contract import result
 
 
+def test_sentinel_markers_are_the_wire_contract():
+    """Pin the sentinel strings to their literal wire values.
+
+    The Go side (pkg/validationresult) pins the same literals independently, so an
+    edit to either marker on either side fails its own suite — the cross-language
+    guard cannot be silently defeated by editing only the Python constant.
+    """
+    assert result.SENTINEL_BEGIN == "===CONTINUO_VALIDATION_RESULT_BEGIN==="
+    assert result.SENTINEL_END == "===CONTINUO_VALIDATION_RESULT_END==="
+
+
 def _extract(block: str) -> dict:
     lines = block.splitlines()
     assert lines[0] == result.SENTINEL_BEGIN

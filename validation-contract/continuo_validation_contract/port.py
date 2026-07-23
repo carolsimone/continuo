@@ -76,7 +76,12 @@ def discover_adapter() -> tuple[str, type[WarehouseAdapter]]:
             "a runner image must install exactly one"
         )
     ep = eps[0]
-    cls = ep.load()
+    try:
+        cls = ep.load()
+    except Exception as exc:  # import-time failure in the adapter package
+        raise AdapterDiscoveryError(
+            f"failed to load adapter entry point {ep.name!r}: {exc}"
+        ) from exc
     if not (isinstance(cls, type) and issubclass(cls, WarehouseAdapter)):
         raise AdapterDiscoveryError(
             f"entry point {ep.name!r} does not resolve to a WarehouseAdapter subclass"

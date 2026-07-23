@@ -80,15 +80,16 @@ _DISCOVER_SCRIPT = textwrap.dedent(
 )
 
 
-def _run_discovery(tmp_path: Path, entry_points: dict) -> str:
+def _run_discovery(tmp_path: Path, entry_points: dict, module_body: str = _FIXTURE_MODULE) -> str:
     """Run ``discover_adapter`` in a fresh venv holding the contract + a fixture adapter.
 
     Installs a generated fixture package declaring *entry_points* (an
-    ``continuo_validation.adapters`` group) and returns the discovery script's stdout.
+    ``continuo_validation.adapters`` group) with *module_body* as its module source,
+    and returns the discovery script's stdout.
     """
     fixture = tmp_path / "fixture"
     (fixture / "cvfixtureadapters").mkdir(parents=True)
-    (fixture / "cvfixtureadapters" / "__init__.py").write_text(_FIXTURE_MODULE)
+    (fixture / "cvfixtureadapters" / "__init__.py").write_text(module_body)
     eps = "\n".join(f'{name} = "cvfixtureadapters:{target}"' for name, target in entry_points.items())
     (fixture / "pyproject.toml").write_text(
         textwrap.dedent(
@@ -140,3 +141,18 @@ def test_discover_non_adapter_entry_point_raises(tmp_path):
     out = _run_discovery(tmp_path, {"broken": "not_an_adapter"})
     assert out.startswith("ERR")
     assert "WarehouseAdapter subclass" in out
+
+
+def test_discover_wraps_adapter_import_failure(tmp_path):
+    """A failing adapter import surfaces as AdapterDiscoveryError, not a raw ImportError.
+
+    That lets the runner still emit a structured result block for a malformed engine
+    image rather than crashing with a traceback.
+    """
+    out = _run_discovery(
+        tmp_path,
+        {"one": "OneAdapter"},
+        module_body="import definitely_missing_pkg_zzz  # noqa: F401\n",
+    )
+    assert out.startswith("ERR")
+    assert "failed to load adapter entry point" in out
