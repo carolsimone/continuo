@@ -221,6 +221,26 @@ github:
   existingSecretTokenKey: token
   existingSecretAppPrivateKeyKey: app-private-key
 
+validation:
+  # The engine the SRE validates against. PostgreSQL is the only fully supported
+  # engine today: the executor's candidate-schema create/teardown
+  # (CandidateSchemaCreator/Cleaner) is PostgreSQL-specific, so another engine would
+  # build candidate schemas the executor never drops. `engine` resolves to the slim
+  # continuo-validation-runner-<engine> image the executor runs.
+  engine: postgres
+  # When true (default) the chart creates the warehouse Secret from the Postgres it
+  # configures (bundled or externalDatabase), with keys the postgres runner reads:
+  # POSTGRES_HOST/PORT/DB/USER/PASSWORD. Set false to supply your own Secret — needed
+  # when externalDatabase.existingSecret holds the password (the chart cannot inline a
+  # password it does not itself hold).
+  createWarehouseSecret: true
+  # Name of the warehouse Secret the executor attaches to each validation pod via
+  # envFrom. Empty = chart-derived (<release>-warehouse-validation).
+  # REQUIRED when createWarehouseSecret=false.
+  warehouseSecret: ""
+  # Database the validation runner writes candidate schemas into (the dbt warehouse).
+  warehouseDatabase: continuo_dbt
+
 databaseInit:
   # Idempotently creates all 9 databases (including continuo_dbt) before the
   # Flyway migrations run. Disable when a DBA pre-creates databases; the
@@ -345,6 +365,7 @@ services:
       MAX_CONCURRENT_JOBS: "50"
       VALIDATION_IMAGE_PULL_POLICY: Always
       VALIDATION_IMAGE: __VALIDATION_IMAGE__
+      VALIDATION_WAREHOUSE_SECRET: __VALIDATION_WAREHOUSE_SECRET__
       S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__
       DBT_POSTGRES_DB: continuo_dbt
       HTTP_PORT: "8084"
