@@ -41,11 +41,11 @@ wheels = [
 
 [[package]]
 name = "continuo-validation-contract"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://test.pypi.org/simple/" }
-sdist = { url = "https://test-files.pythonhosted.org/packages/7c/92/69a12ed84746de003aebd41a5db113fd0a09a8df4b2c7b3a20612a7eb063/continuo_validation_contract-0.1.0.tar.gz", hash = "sha256:ada21f1610060d1c074092636705295282f98cf8585148182270ba78a22bb67e", size = 13493, upload-time = "2026-07-23T08:54:11.28Z" }
+sdist = { url = "https://test-files.pythonhosted.org/packages/13/b3/3f4a8ef8cfe90a9b0304cf6522c078c35e543e5f09fbb12dd38a08574972/continuo_validation_contract-0.1.1.tar.gz", hash = "sha256:2c3d2deff79ebb3a20b62cc2c3bf9e3bd08c0929c1b03b7d4f7c362777c9a9d9", size = 14812, upload-time = "2026-07-23T10:57:57.381Z" }
 wheels = [
-    { url = "https://test-files.pythonhosted.org/packages/61/ab/91da535d8cb3b016e4dacf53d8c0640b9e5145ea1025612d0c5fe9e42ef0/continuo_validation_contract-0.1.0-py3-none-any.whl", hash = "sha256:2e62a74921d0eaf0a26ee3bf10c1b7c6fc0b9a0a178b126e70b38e8826f2100c", size = 3930, upload-time = "2026-07-23T08:54:10.112Z" },
+    { url = "https://test-files.pythonhosted.org/packages/4a/92/7f902c17d6976ad8c7fc106c5885803d8055ff62d72b9998ce43ae5e07ca/continuo_validation_contract-0.1.1-py3-none-any.whl", hash = "sha256:628e0be007667a35f8f878baf97a97682a4b360e39c4cd388b75bc9af9899a9d", size = 3992, upload-time = "2026-07-23T10:57:56.386Z" },
 ]
 
 [[package]]
@@ -70,7 +70,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = "==1.40.0" },
-    { name = "continuo-validation-contract", specifier = "==0.1.0", index = "https://test.pypi.org/simple/" },
+    { name = "continuo-validation-contract", specifier = "==0.1.1", index = "https://test.pypi.org/simple/" },
 ]
 
 [package.metadata.requires-dev]
