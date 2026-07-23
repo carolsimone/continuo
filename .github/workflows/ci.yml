@@ -197,11 +197,35 @@ jobs:
       - name: Test validation-runner harness
         # Harness unit tests. continuo-validation-contract resolves from the explicit,
         # package-scoped TestPyPI index in the pyproject (lockfile-pinned) until it is on
-        # real PyPI; the image smoke tests run in the e2e/image build, not here.
+        # real PyPI; the image smoke tests run in the next step, not here.
         run: |
           docker run --rm -v "$PWD/validation-runner:/app" -w /app \
             ghcr.io/astral-sh/uv:bookworm-slim \
             sh -c "uv sync --all-groups && uv run pytest tests -m 'not image' -v"
+
+      - name: Set up uv
+        # For the image smoke tests below, which must run on the runner itself (they
+        # drive `docker run` against the built image). Cache disabled: the repo has a
+        # symlink loop (.opencode/) that breaks the cache tree-walk.
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+
+      - name: Smoke-test validation-runner image
+        # Tier-4 image tests (pytest -m image): build the slim postgres engine image
+        # with the same Dockerfile/build-arg the e2e provision uses, then assert it
+        # fails structurally — the baked adapter is discovered and missing
+        # POSTGRES_* env yields a structured result block, not a raw traceback.
+        # Runs on the runner (not in a container) because the tests invoke
+        # `docker run`; the build also warms the layer cache for the e2e provision.
+        run: |
+          docker build -t continuo-validation-runner-postgres:ci \
+            -f validation-runner/Dockerfile.postgres \
+            --build-arg EXTRA_INDEX_URL=https://test.pypi.org/simple/ validation-runner/
+          cd validation-runner
+          uv sync --all-groups
+          VALIDATION_IMAGE_UNDER_TEST=continuo-validation-runner-postgres:ci \
+            uv run pytest tests -m image -v
 
       - name: Test s3-sidecar
         # Unit-test the continuo-owned sidecar scripts (compile_uploader,

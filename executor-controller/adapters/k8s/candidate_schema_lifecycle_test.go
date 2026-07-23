@@ -6,13 +6,18 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(os.Stderr, nil)) }
@@ -121,6 +126,76 @@ func TestWaitForSchemaOpJob_SucceededReturnsNil(t *testing.T) {
 	}
 	client := newValidationTestClient(done)
 	assert.NoError(t, client.waitForSchemaOpJob(context.Background(), "default", "drop-schema-candidate-x", schemaOpDrop))
+}
+
+// A hung DDL pod must not hold the Job Active forever: the Job's ActiveDeadlineSeconds
+// matches the executor's wait timeout, so the kubelet kills the pod and the Job goes
+// terminal (JobFailed/DeadlineExceeded) — a state submitSchemaOpJob can clear on retry.
+func TestSchemaOpJob_SetsActiveDeadlineMatchingWaitTimeout(t *testing.T) {
+	job, err := schemaOpJob(schemaOpEnsure, "_candidate_x", "ensure-schema-candidate-x", "default")
+	require.NoError(t, err)
+	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, int64(schemaOpJobTimeout/time.Second), *job.Spec.ActiveDeadlineSeconds)
+}
+
+// A Job killed by ActiveDeadlineSeconds carries a JobFailed condition but can leave
+// Status.Failed at zero; it must still count as terminal so a retry clears and
+// recreates it instead of waiting on a Job that will never run again.
+func TestSubmitSchemaOpJob_ClearsDeadlineExceededJobAndRecreates(t *testing.T) {
+	stale := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "ensure-schema-candidate-x", Namespace: "default"},
+		Status: batchv1.JobStatus{
+			Conditions: []batchv1.JobCondition{
+				{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "DeadlineExceeded"},
+			},
+		},
+	}
+	client := newValidationTestClient(stale)
+
+	err := client.submitSchemaOpJob(context.Background(), schemaOpEnsure, "_candidate_x", "ensure-schema-candidate-x", "default")
+	require.NoError(t, err)
+
+	job := fetchJob(t, client, "default", "ensure-schema-candidate-x")
+	assert.Empty(t, job.Status.Conditions, "the deadline-killed leftover must be replaced by a fresh Job")
+}
+
+// Two concurrent triggers can both see NotFound and race Create; the loser's
+// AlreadyExists is not an error — the Job is deterministic by name and the op
+// idempotent, so the loser just waits on the winner's Job.
+func TestSubmitSchemaOpJob_ToleratesLostCreateRace(t *testing.T) {
+	client := newValidationTestClient()
+	client.clientset.(*fake.Clientset).PrependReactor("create", "jobs",
+		func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, apierrors.NewAlreadyExists(batchv1.Resource("jobs"), "ensure-schema-candidate-x")
+		})
+
+	err := client.submitSchemaOpJob(context.Background(), schemaOpEnsure, "_candidate_x", "ensure-schema-candidate-x", "default")
+	assert.NoError(t, err)
+}
+
+// Schema-op Jobs are deleted only after a terminal state (delete-on-success by a
+// concurrent waiter, or TTL cleanup), so a vanished Job means the op already
+// completed — return success instead of polling into the timeout.
+func TestWaitForSchemaOpJob_NotFoundReturnsNil(t *testing.T) {
+	client := newValidationTestClient()
+	assert.NoError(t, client.waitForSchemaOpJob(context.Background(), "default", "drop-schema-candidate-x", schemaOpDrop))
+}
+
+// A JobFailed condition with Status.Failed still zero (the DeadlineExceeded shape)
+// must surface as a failure, not keep the waiter polling.
+func TestWaitForSchemaOpJob_FailedConditionReturnsError(t *testing.T) {
+	deadlineKilled := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "ensure-schema-candidate-x", Namespace: "default"},
+		Status: batchv1.JobStatus{
+			Conditions: []batchv1.JobCondition{
+				{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "DeadlineExceeded"},
+			},
+		},
+	}
+	client := newValidationTestClient(deadlineKilled)
+	err := client.waitForSchemaOpJob(context.Background(), "default", "ensure-schema-candidate-x", schemaOpEnsure)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed")
 }
 
 func TestWaitForSchemaOpJob_FailedReturnsError(t *testing.T) {
