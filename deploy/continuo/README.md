@@ -127,11 +127,12 @@ Notes that matter before you commit to this path:
   `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`,
   `POSTGRES_PASSWORD` — so the quickstart needs no extra action. Set
   `validation.createWarehouseSecret: false` and point
-  `validation.warehouseSecret` at your own Secret when you run a **non-postgres
-  engine** (the image reference IS the engine choice — override
-  `validation.image`, and your Secret's keys match that engine's runner) or
-  when `externalDatabase.existingSecret` holds the password (the chart cannot
-  inline a password it does not itself hold).
+  `validation.warehouseSecret` at your own Secret when `externalDatabase`
+  supplies the password via `existingSecret` (the chart cannot inline a password
+  it does not itself hold). **PostgreSQL is the only fully supported validation
+  engine today** — the executor's candidate-schema create/teardown is
+  PostgreSQL-specific, so keep `validation.image` on the postgres runner until
+  that lifecycle is made engine-aware.
 - **Upgrades keep the pre-install hook.** With `postgresql.enabled: false`,
   the migration Job stays a Helm `pre-install,pre-upgrade` hook — the same
   ordering the previous production deploy flow relied on — because your

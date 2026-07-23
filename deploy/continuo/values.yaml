@@ -222,14 +222,18 @@ github:
   existingSecretAppPrivateKeyKey: app-private-key
 
 validation:
-  # Published per-engine validation-runner image; the image reference IS the engine
-  # choice. Override to run a different warehouse engine (Snowflake, BigQuery, ...).
+  # Published validation-runner image. PostgreSQL is the only fully supported engine
+  # today: the executor's candidate-schema create/teardown
+  # (CandidateSchemaCreator/Cleaner) is PostgreSQL-specific, so pointing this at
+  # another engine's runner would build candidate schemas the executor never drops.
+  # Other engines land once that lifecycle is made engine-aware; until then keep the
+  # postgres image.
   image: ghcr.io/carolsimone/validation-runner-postgres:0.1.1
   # When true (default) the chart creates the warehouse Secret from the Postgres it
   # configures (bundled or externalDatabase), with keys the postgres runner reads:
-  # POSTGRES_HOST/PORT/DB/USER/PASSWORD. Set false to supply your own Secret —
-  # required for a non-postgres engine image, or when externalDatabase.existingSecret
-  # is set (the chart cannot inline a password it does not hold).
+  # POSTGRES_HOST/PORT/DB/USER/PASSWORD. Set false to supply your own Secret — needed
+  # when externalDatabase.existingSecret holds the password (the chart cannot inline a
+  # password it does not itself hold).
   createWarehouseSecret: true
   # Name of the warehouse Secret the executor attaches to each validation pod via
   # envFrom. Empty = chart-derived (<release>-warehouse-validation).

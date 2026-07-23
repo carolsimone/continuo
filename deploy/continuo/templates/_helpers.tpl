@@ -134,31 +134,27 @@ app.kubernetes.io/name: {{ .service }}
 {{- if .Values.postgresql.enabled -}}disable{{- else -}}{{ .Values.externalDatabase.sslMode }}{{- end -}}
 {{- end -}}
 
-{{/* The Postgres password the chart can inline into the validation warehouse
-     Secret: the bundled instance's stable generated password, or the inline
-     externalDatabase.password. When postgresql.enabled=false AND the password
-     lives only in externalDatabase.existingSecret, the chart cannot read it —
-     the operator must set validation.createWarehouseSecret=false and provide
-     their own Secret. */}}
-{{- define "continuo.postgresql.password" -}}
-{{- if .Values.postgresql.enabled -}}
-{{- include "continuo.generatedSecret" (dict "root" . "secretName" (include "continuo.postgresql.fullname" .) "key" "password") -}}
-{{- else if .Values.externalDatabase.existingSecret -}}
-{{- fail "validation.createWarehouseSecret cannot inline the warehouse password when externalDatabase.existingSecret is set; set validation.createWarehouseSecret=false and supply validation.warehouseSecret" -}}
-{{- else -}}
-{{- required "set externalDatabase.password (or validation.createWarehouseSecret=false + validation.warehouseSecret) when postgresql.enabled=false" .Values.externalDatabase.password -}}
-{{- end -}}
-{{- end -}}
-
 {{/* Name of the validation warehouse Secret the executor attaches via envFrom.
-     Chart-created (createWarehouseSecret=true): validation.warehouseSecret if set,
-     else <release>-warehouse-validation. Operator-supplied
-     (createWarehouseSecret=false): validation.warehouseSecret is required. */}}
+     - createWarehouseSecret=true, bundled generated Postgres: the keys live on the
+       bundled Postgres Secret itself (postgresql/secret.yaml), so the password is
+       generated exactly once — name is that Secret.
+     - createWarehouseSecret=true, external Postgres with an inline password: the
+       chart creates a dedicated Secret (validation-warehouse-secret.yaml).
+     - createWarehouseSecret=true but the password is in an existingSecret: the chart
+       cannot read it — render fails, directing the operator to opt out.
+     - createWarehouseSecret=false: the operator supplies validation.warehouseSecret. */}}
 {{- define "continuo.validation.warehouseSecretName" -}}
-{{- if .Values.validation.createWarehouseSecret -}}
-{{- default (printf "%s-warehouse-validation" (include "continuo.fullname" .)) .Values.validation.warehouseSecret -}}
+{{- $v := .Values -}}
+{{- if $v.validation.createWarehouseSecret -}}
+  {{- if and $v.postgresql.enabled (not $v.postgresql.auth.existingSecret) -}}
+    {{- include "continuo.postgresql.fullname" . -}}
+  {{- else if and (not $v.postgresql.enabled) $v.externalDatabase.password (not $v.externalDatabase.existingSecret) -}}
+    {{- default (printf "%s-warehouse-validation" (include "continuo.fullname" .)) $v.validation.warehouseSecret -}}
+  {{- else -}}
+    {{- fail "validation.createWarehouseSecret cannot build the warehouse Secret when the Postgres password lives in an existingSecret (or the engine is not postgres); set validation.createWarehouseSecret=false and supply validation.warehouseSecret" -}}
+  {{- end -}}
 {{- else -}}
-{{- required "set validation.warehouseSecret (the name of your warehouse credentials Secret) when validation.createWarehouseSecret=false" .Values.validation.warehouseSecret -}}
+  {{- required "set validation.warehouseSecret (the name of your warehouse credentials Secret) when validation.createWarehouseSecret=false" $v.validation.warehouseSecret -}}
 {{- end -}}
 {{- end -}}
 

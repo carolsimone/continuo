@@ -50,7 +50,7 @@ auth:
   viewerEmails: team@example.com
 
 validation:
-  # The image reference IS the engine choice; override for a non-postgres warehouse.
+  # PostgreSQL is the only fully supported validation engine today.
   image: ghcr.io/carolsimone/validation-runner-postgres:0.1.1
   # With externalDatabase.existingSecret set, the chart cannot inline the warehouse
   # password, so supply your own Secret with the postgres runner's connection keys
