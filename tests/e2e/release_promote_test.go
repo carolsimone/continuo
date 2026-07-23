@@ -852,10 +852,11 @@ func waitForTopologySwap(t *testing.T, ctx context.Context, clients *testClients
 
 // assertCandidateSchemaDropped polls the dbt warehouse until the release's
 // _candidate_<sanitized releaseID> schema is absent from
-// information_schema.schemata. The executor drops the schema asynchronously on
-// the validation.result:v1 terminal (kind=complete), so this must poll. The
-// schema name is computed with the same sanitization release-controller
-// applies (non-[A-Za-z0-9_] → _).
+// information_schema.schemata. On the validation.result:v1 terminal
+// (kind=complete) the executor schedules a one-shot engine-image drop_schema
+// Job (it does not connect to the warehouse itself), so the drop is
+// asynchronous and this must poll. The schema name is computed with the same
+// sanitization release-controller applies (non-[A-Za-z0-9_] → _).
 func assertCandidateSchemaDropped(t *testing.T, ctx context.Context, clients *testClients, releaseID string, timeout time.Duration) {
 	t.Helper()
 	schema := "_candidate_" + sanitizeReleaseSchemaSuffix(releaseID)

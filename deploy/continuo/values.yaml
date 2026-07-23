@@ -222,30 +222,56 @@ github:
   existingSecretAppPrivateKeyKey: app-private-key
 
 validation:
-  # PRODUCTION: revisit this whole block before real workloads. The defaults below
-  # validate against the SAME PostgreSQL this chart runs for its own control plane —
-  # convenient for dev/demo, but NOT where you want production dbt models built. A real
-  # deployment points validation at its actual data warehouse: set `engine` to match it,
-  # supply that warehouse's connection via the Secret (createWarehouseSecret/warehouseSecret),
-  # and set `warehouseDatabase` to the target database.
+  # ┌────────────────────────────────────────────────────────────────────────────┐
+  # │  READ THIS BEFORE PRODUCTION — EVERYTHING BELOW IS POSTGRESQL-SPECIFIC.       │
+  # │                                                                              │
+  # │  These defaults validate against the SAME PostgreSQL this chart runs for its │
+  # │  own control plane. That is a DEV/DEMO convenience, not a production setup.   │
+  # │                                                                              │
+  # │  `postgres` is the ONLY engine that works out of the box today. If your data │
+  # │  warehouse is Trino, Snowflake, BigQuery, Redshift, Spark, etc., the chart   │
+  # │  WILL FAIL TO RENDER (`helm` errors) until you do ALL of the following — a    │
+  # │  partial change silently validates against the wrong warehouse or breaks:    │
+  # │                                                                              │
+  # │  1. `engine:` → set to your engine. Requires a published                     │
+  # │     continuo-validation-runner-<engine> image (only `postgres` exists now).  │
+  # │  2. `createWarehouseSecret:` → MUST be `false`. The auto-created Secret only  │
+  # │     emits POSTGRES_* keys. Every engine library reads DIFFERENT connection   │
+  # │     env — e.g. Trino is host/port/CATALOG/user, not a POSTGRES_* database —   │
+  # │     so you MUST supply your own Secret (`warehouseSecret:`) with YOUR         │
+  # │     engine's keys. Do not assume POSTGRES_* carries over. IT DOES NOT.        │
+  # │  3. `warehouseDatabase:` → the postgres DATABASE name. Other engines do not   │
+  # │     have a flat "database" (Trino → catalog.schema, BigQuery → dataset), so   │
+  # │     this value's meaning changes with the engine.                            │
+  # │  4. The executor's dbt-job connection (services.executor-controller.env      │
+  # │     DBT_POSTGRES_DB, below) forwards a POSTGRES dbt profile to your dbt team  │
+  # │     images. A non-postgres warehouse ALSO needs those team images configured │
+  # │     with that engine's dbt profile — that is your dbt setup, not just a value │
+  # │     here.                                                                     │
+  # └────────────────────────────────────────────────────────────────────────────┘
   #
-  # The engine the SRE validates against. PostgreSQL is the only fully supported engine
-  # today: the executor's candidate-schema create/teardown (CandidateSchemaCreator/Cleaner)
-  # is PostgreSQL-specific, so another engine would build candidate schemas the executor
-  # never drops. Once other engine libraries land, set this to your real warehouse's engine.
-  # `engine` resolves to the slim continuo-validation-runner-<engine> image the executor runs.
+  # `engine` resolves to the slim continuo-validation-runner-<engine> image the executor
+  # runs. The candidate-schema create/teardown is NO LONGER postgres-specific in the
+  # executor — it runs inside the engine image via the adapter — so the only barrier to a
+  # new engine is publishing its library/image and giving it (points 2–4) its own
+  # connection. See the fail message in _helpers.tpl `continuo.validation.image`.
   engine: postgres
-  # When true (default) the chart creates the warehouse Secret from the Postgres it
-  # configures (bundled or externalDatabase), with keys the postgres runner reads:
-  # POSTGRES_HOST/PORT/DB/USER/PASSWORD. Set false to supply your own Secret — needed
-  # when externalDatabase.existingSecret holds the password (the chart cannot inline a
-  # password it does not itself hold).
+  # POSTGRES-ONLY. When true (default) the chart builds the warehouse Secret from the
+  # Postgres it configures (bundled or externalDatabase), emitting the keys the POSTGRES
+  # runner reads: POSTGRES_HOST/PORT/DB/USER/PASSWORD. This is postgres-shaped and cannot
+  # produce another engine's keys — for ANY non-postgres engine set this to `false` and
+  # provide your own Secret via `warehouseSecret`. Also set false when
+  # externalDatabase.existingSecret holds the password (the chart cannot inline a password
+  # it does not itself hold).
   createWarehouseSecret: true
-  # Name of the warehouse Secret the executor attaches to each validation pod via
-  # envFrom. Empty = chart-derived (<release>-warehouse-validation).
-  # REQUIRED when createWarehouseSecret=false.
+  # Name of the warehouse Secret the executor attaches to each validation/schema-op pod
+  # via envFrom. Empty = chart-derived (<release>-warehouse-validation, postgres keys).
+  # REQUIRED when createWarehouseSecret=false — this is where a non-postgres operator
+  # points at their own Secret carrying that engine's connection env.
   warehouseSecret: ""
-  # Database the validation runner writes candidate schemas into (the dbt warehouse).
+  # POSTGRES DATABASE the runner writes candidate schemas into. Also fed to the dbt job
+  # pods as DBT_POSTGRES_DB (below). For a non-postgres engine this maps to that engine's
+  # namespace concept, not a postgres database.
   warehouseDatabase: continuo_dbt
 
 databaseInit:
@@ -374,11 +400,16 @@ services:
       VALIDATION_IMAGE: __VALIDATION_IMAGE__
       VALIDATION_WAREHOUSE_SECRET: __VALIDATION_WAREHOUSE_SECRET__
       S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__
+      # POSTGRES-ONLY. Forwarded (with the reused POSTGRES_* connection) to the dbt team-image
+      # job pods (compile/seed/run) as their dbt postgres profile — NOT to the validation
+      # runner, and NOT an executor warehouse connection (the executor no longer connects to
+      # the warehouse; candidate-schema create/drop run in the engine image). A non-postgres
+      # warehouse needs its dbt team images configured with that engine's dbt profile instead.
+      # Sourced from validation.warehouseDatabase so dbt and the runner target one database.
       DBT_POSTGRES_DB: __VALIDATION_WAREHOUSE_DATABASE__
       HTTP_PORT: "8084"
       DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__
-      # Tag for per-TEAM dbt images (not continuo images) — kept as in the
-      # previous chart; team image pinning is out of scope here.
+      # Tag for the per-TEAM dbt images (not continuo images); team image pinning is out of scope here.
       IMAGE_TAG: latest
       DBT_COMMANDS_CONFIG_PATH: /etc/continuo/dbt-commands.yaml
     volumeMounts:
