@@ -223,6 +223,10 @@ jobs:
             -f validation-runner/Dockerfile.postgres \
             --build-arg CONTINUO_INDEX_URL=https://test.pypi.org/simple/ validation-runner/
           cd validation-runner
+          # The harness-test step above ran uv as root inside a container against
+          # this same mounted directory, leaving a root-owned .venv the runner user
+          # cannot even stat — keep this step's venv outside the workspace.
+          export UV_PROJECT_ENVIRONMENT="${RUNNER_TEMP}/validation-runner-venv"
           uv sync --all-groups
           VALIDATION_IMAGE_UNDER_TEST=continuo-validation-runner-postgres:ci \
             uv run pytest tests -m image -v
