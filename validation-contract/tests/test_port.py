@@ -23,6 +23,39 @@ def test_warehouse_adapter_cannot_be_instantiated():
         WarehouseAdapter()  # type: ignore[abstract]
 
 
+def test_warehouse_adapter_requires_drop_schema():
+    """drop_schema is part of the contract: omitting it blocks instantiation.
+
+    A concrete adapter that implements every method except the teardown one must
+    still be abstract, so the executor can rely on drop_schema existing on every
+    installed engine.
+    """
+
+    class MissingDrop(WarehouseAdapter):
+        @classmethod
+        def required_env(cls):
+            return []
+
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+        def ensure_schema(self, schema):
+            ...
+
+        def build_empty_from_sql(self, schema, table, compiled_sql):
+            ...
+
+        def clone_empty_from_prod(self, candidate_schema, prod_schema, table):
+            ...
+
+        def close(self):
+            ...
+
+    with pytest.raises(TypeError, match="drop_schema"):
+        MissingDrop()  # type: ignore[abstract]
+
+
 def test_discover_adapter_raises_when_none_installed():
     """With no adapter package installed, discovery raises cleanly.
 
@@ -49,6 +82,9 @@ class OneAdapter(WarehouseAdapter):
         return cls()
 
     def ensure_schema(self, schema):
+        ...
+
+    def drop_schema(self, schema):
         ...
 
     def build_empty_from_sql(self, schema, table, compiled_sql):

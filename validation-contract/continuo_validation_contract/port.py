@@ -42,6 +42,16 @@ class WarehouseAdapter(ABC):
         """Idempotently create *schema*; safe under concurrent callers."""
 
     @abstractmethod
+    def drop_schema(self, schema: str) -> None:
+        """Idempotently drop *schema* and everything in it; no-op if absent.
+
+        Symmetric teardown for :meth:`ensure_schema`. The executor schedules this
+        as a one-shot engine-image op once a validation reaches its terminal result,
+        so the control plane never connects to the warehouse itself. *schema* is
+        opaque and mapped to the engine's own dialect.
+        """
+
+    @abstractmethod
     def build_empty_from_sql(self, schema: str, table: str, compiled_sql: str) -> None:
         """Create ``schema.table`` empty, shaped by the compiled SELECT."""
 
