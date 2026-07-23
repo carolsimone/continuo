@@ -318,6 +318,8 @@ The App is installed on the single dbt-demo repo only (`contents:write` + `pull-
 
 Implemented via the `PullRequestCreator` interface in `ui-service/src/server/github/pull-request-creator.ts`.
 
+The private key reaches the container differently per environment. In Kubernetes it comes from the `githubAppPrivateKey` secret reference in `deploy/continuo/values.yaml`. Under docker compose it is read from `${GITHUB_APP_PRIVATE_KEY}`, which `scripts/ensure-dev-env.sh` populates in a git-ignored `.env` with a freshly generated throwaway RSA key. A generated key is required rather than a blank or fake value because octokit's `createAppAuth` rejects anything that is not a valid PEM at construction, which would leave `prCreator` undefined and the Create PR route reporting itself as unconfigured. The generated key authenticates nothing: local runs point `GITHUB_API_BASE_URL` at the `stub-github` service.
+
 ### HTTP to `release-controller` (`RELEASE_CONTROLLER_URL`, default `http://release-controller:8088`)
 
 | Route proxied | BFF route |

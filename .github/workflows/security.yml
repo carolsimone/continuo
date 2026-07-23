@@ -1,0 +1,94 @@
+name: security
+
+# Deliberately separate from ci.yml. The CI job runs on a single self-hosted
+# runner and takes ~55 minutes because it builds images and stands up kind; these
+# scans need neither, so putting them here keeps them off the shared runner and
+# gives fast, independent feedback.
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  schedule:
+    # Weekly, Monday 04:00 UTC. The scheduled run is the point of this workflow:
+    # most vulnerabilities are disclosed after the code that depends on them was
+    # last touched, so a pull-request-only trigger never sees them.
+    - cron: "0 4 * * 1"
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+# These scans read source and need nothing else. Results are written to the job
+# summary rather than uploaded as SARIF, because code scanning uploads require
+# GitHub Advanced Security while the repository is private.
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    name: Go vulnerabilities (blocking)
+    # Always GitHub-hosted, including for maintainer pull requests. These jobs
+    # have no reason to touch the self-hosted box, which has prod-deploy reach.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.work
+
+      # Fails the pull request on any finding. govulncheck reports a dependency
+      # vulnerability only when a call path from this module actually reaches the
+      # vulnerable symbol, so findings are actionable rather than noise.
+      - name: Run govulncheck
+        run: bash scripts/security-scan.sh vuln
+
+  secrets:
+    name: Secret scan (blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A full-history scan needs the full history. On pull requests the
+          # shallow default is enough, since only the working tree is scanned.
+          fetch-depth: ${{ github.event_name == 'schedule' && 0 || 1 }}
+
+      # Pull requests scan the working tree, which is what a merge would
+      # introduce. The weekly run walks every commit, catching anything that
+      # entered the repository before this gate existed.
+      - name: Run gitleaks
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            bash scripts/security-scan.sh secrets --history
+          else
+            bash scripts/security-scan.sh secrets
+          fi
+
+  dependencies:
+    name: Dependency CVEs (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Advisory: reports HIGH/CRITICAL and always exits 0. Base-image and
+      # transitive CVEs are often unfixable upstream, so gating on them would
+      # block every merge behind an ignore-list edit. Dependabot is what actually
+      # resolves these; this job exists to make them visible.
+      - name: Run Trivy dependency scan
+        run: bash scripts/security-scan.sh deps
+
+  misconfiguration:
+    name: Dockerfile/K8s misconfiguration (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy config scan
+        run: bash scripts/security-scan.sh config
