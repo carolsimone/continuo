@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -78,6 +79,25 @@ func TestSchemaOpJobName_DeterministicAndDNSSafe(t *testing.T) {
 		assert.NotEqual(t, byte('-'), name[0])
 		assert.NotEqual(t, byte('-'), name[len(name)-1])
 	}
+}
+
+// The fake clientset performs NO label validation, so this asserts with the real
+// apimachinery validator. The candidate schema's leading underscore once made the
+// candidate-schema label value invalid ("must start and end with an alphanumeric
+// character"), so the API server rejected every schema-op Job at creation — the
+// ensure never ran and releases hung in validation while the handler retried.
+func TestSchemaOpJob_LabelValuesAndNamePassRealK8sValidation(t *testing.T) {
+	job, err := schemaOpJob(schemaOpEnsure, "_candidate_e2e_rel_669e6eb5", schemaOpJobName(schemaOpEnsure, "_candidate_e2e_rel_669e6eb5"), "default")
+	require.NoError(t, err)
+
+	for k, v := range job.Labels {
+		assert.Empty(t, validation.IsValidLabelValue(v), "job label %s=%q", k, v)
+	}
+	for k, v := range job.Spec.Template.Labels {
+		assert.Empty(t, validation.IsValidLabelValue(v), "pod-template label %s=%q", k, v)
+	}
+	// The Job name feeds the controller-stamped job-name label and pod names.
+	assert.Empty(t, validation.IsDNS1123Label(job.Name), "job name %q", job.Name)
 }
 
 // A 40-char commit-SHA release id yields `_candidate_<sha>` → an untruncated

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strings"
 	"time"
 
 	validationmodel "github.com/carolsimone/continuo/executor-controller/domain/model"
@@ -792,14 +793,17 @@ func validationImagePullPolicy() corev1.PullPolicy {
 var nonK8sLabel = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 
 // sanitizeK8sLabel coerces an arbitrary string into a valid Kubernetes label
-// value: disallowed characters become "-" and the result is truncated to the
-// 63-character limit.
+// value: disallowed characters become "-", the result is truncated to the
+// 63-character limit, and leading/trailing non-alphanumerics are trimmed —
+// a label value must START and END alphanumeric, not merely contain allowed
+// characters. Candidate schemas begin with "_", which the API server would
+// otherwise reject (rejecting the whole Job at creation).
 func sanitizeK8sLabel(s string) string {
 	out := nonK8sLabel.ReplaceAllString(s, "-")
 	if len(out) > 63 {
 		out = out[:63]
 	}
-	return out
+	return strings.Trim(out, "-_.")
 }
 
 // CountActiveJobs returns the number of Jobs in the namespace matching
