@@ -195,13 +195,11 @@ jobs:
             sh -c "uv sync --all-groups && uv run pytest tests -v"
 
       - name: Test validation-runner harness
-        # Harness unit tests. continuo-validation-contract resolves from TestPyPI until
-        # it is on real PyPI (reshape pre-release); the image smoke tests run in the
-        # e2e/image build, not here.
+        # Harness unit tests. continuo-validation-contract resolves from the explicit,
+        # package-scoped TestPyPI index in the pyproject (lockfile-pinned) until it is on
+        # real PyPI; the image smoke tests run in the e2e/image build, not here.
         run: |
           docker run --rm -v "$PWD/validation-runner:/app" -w /app \
-            -e UV_EXTRA_INDEX_URL=https://test.pypi.org/simple/ \
-            -e UV_INDEX_STRATEGY=unsafe-best-match \
             ghcr.io/astral-sh/uv:bookworm-slim \
             sh -c "uv sync --all-groups && uv run pytest tests -m 'not image' -v"
 

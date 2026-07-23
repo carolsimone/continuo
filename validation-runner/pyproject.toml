@@ -22,6 +22,17 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["continuo_validation_runner"]
 
+# continuo-validation-contract is not on real PyPI yet (reshape pre-release); pull it
+# from an EXPLICIT TestPyPI index scoped to that package only, so boto3 and tooling keep
+# their real-PyPI wheels. Remove this once the contract is on real PyPI.
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+explicit = true
+
+[tool.uv.sources]
+continuo-validation-contract = { index = "testpypi" }
+
 [tool.ruff]
 line-length = 100
 
