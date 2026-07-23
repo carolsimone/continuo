@@ -11,6 +11,7 @@ class FakeWarehouseAdapter(WarehouseAdapter):
 
     def __init__(self):
         self.schemas_ensured = []
+        self.schemas_dropped = []
         self.builds = []    # list of (schema, table, sql)
         self.clones = []    # list of (candidate_schema, prod_schema, table)
         self.closed = False
@@ -28,6 +29,10 @@ class FakeWarehouseAdapter(WarehouseAdapter):
     def ensure_schema(self, schema: str) -> None:
         """Record schema ensure call."""
         self.schemas_ensured.append(schema)
+
+    def drop_schema(self, schema: str) -> None:
+        """Record schema drop call."""
+        self.schemas_dropped.append(schema)
 
     def build_empty_from_sql(self, schema: str, table: str, compiled_sql: str) -> None:
         """Record build call."""
@@ -230,6 +235,43 @@ def test_main_clone_from_prod_missing_prod_schema_exits(monkeypatch, capsys):
     assert "missing required env var PROD_SCHEMA" in out
 
 
+def test_main_ensure_schema_calls_adapter_without_table(monkeypatch, capsys):
+    """ensure_schema op creates the schema and needs no TABLE_NAME."""
+    monkeypatch.setenv("DBT_TARGET_SCHEMA", "_candidate_relA")
+    monkeypatch.delenv("TABLE_NAME", raising=False)
+    monkeypatch.delenv("NODE_ID", raising=False)
+    monkeypatch.setenv("VALIDATION_OP", "ensure_schema")
+    fake = FakeWarehouseAdapter()
+    _install_fake_adapter(monkeypatch, fake)
+
+    runner.main()
+
+    assert fake.schemas_ensured == ["_candidate_relA"]
+    assert fake.schemas_dropped == []
+    assert fake.builds == [] and fake.clones == []
+    assert fake.closed is True
+    out = capsys.readouterr().out
+    assert '"status":"success"' in out
+    assert '"unique_id":"schema._candidate_relA"' in out
+
+
+def test_main_drop_schema_calls_adapter_without_ensuring(monkeypatch, capsys):
+    """drop_schema op drops the schema, needs no TABLE_NAME, and never ensures."""
+    monkeypatch.setenv("DBT_TARGET_SCHEMA", "_candidate_relA")
+    monkeypatch.delenv("TABLE_NAME", raising=False)
+    monkeypatch.setenv("VALIDATION_OP", "drop_schema")
+    fake = FakeWarehouseAdapter()
+    _install_fake_adapter(monkeypatch, fake)
+
+    runner.main()
+
+    assert fake.schemas_dropped == ["_candidate_relA"]
+    assert fake.schemas_ensured == []  # teardown must not recreate the schema
+    assert fake.builds == [] and fake.clones == []
+    assert fake.closed is True
+    assert '"status":"success"' in capsys.readouterr().out
+
+
 def test_main_missing_dbt_target_schema_exits_2_with_block(monkeypatch, capsys):
     """Exit 2 when DBT_TARGET_SCHEMA is missing, with a structured error block."""
     monkeypatch.delenv("DBT_TARGET_SCHEMA", raising=False)
@@ -365,9 +407,27 @@ def _setup_missing_prod_schema(monkeypatch):
     monkeypatch.delenv("PROD_SCHEMA", raising=False)
 
 
+def _setup_ensure_schema(monkeypatch):
+    """Arrange an ensure_schema run that reaches the success block."""
+    monkeypatch.setenv("DBT_TARGET_SCHEMA", "_candidate_relA")
+    monkeypatch.delenv("TABLE_NAME", raising=False)
+    monkeypatch.setenv("VALIDATION_OP", "ensure_schema")
+    _install_fake_adapter(monkeypatch, FakeWarehouseAdapter())
+
+
+def _setup_drop_schema(monkeypatch):
+    """Arrange a drop_schema run that reaches the success block."""
+    monkeypatch.setenv("DBT_TARGET_SCHEMA", "_candidate_relA")
+    monkeypatch.delenv("TABLE_NAME", raising=False)
+    monkeypatch.setenv("VALIDATION_OP", "drop_schema")
+    _install_fake_adapter(monkeypatch, FakeWarehouseAdapter())
+
+
 # (setup, expected SystemExit code, or None when main() returns normally)
 _SENTINEL_SCENARIOS = [
     ("success", _setup_success, None),
+    ("ensure_schema", _setup_ensure_schema, None),
+    ("drop_schema", _setup_drop_schema, None),
     ("empty_candidate_sql", _setup_empty_candidate_sql, 2),
     ("s3_error", _setup_s3_error, 1),
     ("unknown_op", _setup_unknown_op, 2),
@@ -383,11 +443,11 @@ def test_main_emits_exactly_one_sentinel_block_as_last_stdout_line(monkeypatch, 
 
     The contract (see ``result.py``) is: exactly ONE sentinel-framed block, as the
     terminal non-empty stdout line, on every outcome that emits one. Exercises all
-    eight block-emitting paths through ``main()`` — success, empty candidate SQL,
-    S3-fetch error, unknown VALIDATION_OP, adapter discovery failure, missing
-    required adapter env, missing DBT_TARGET_SCHEMA, and missing PROD_SCHEMA — each
-    in its own isolated monkeypatch context so scenarios cannot leak patches into
-    one another.
+    ten block-emitting paths through ``main()`` — success, ensure_schema, drop_schema,
+    empty candidate SQL, S3-fetch error, unknown VALIDATION_OP, adapter discovery
+    failure, missing required adapter env, missing DBT_TARGET_SCHEMA, and missing
+    PROD_SCHEMA — each in its own isolated monkeypatch context so scenarios cannot
+    leak patches into one another.
     """
     for name, setup, expected_exit in _SENTINEL_SCENARIOS:
         with monkeypatch.context() as mp:

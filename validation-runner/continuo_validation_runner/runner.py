@@ -67,40 +67,56 @@ def load_candidate_sql() -> str:
     return decoded
 
 
+_NODE_OPS = ("build_from_sql", "clone_from_prod")
+_SCHEMA_OPS = ("ensure_schema", "drop_schema")
+
+
 def main() -> None:
-    """Run one validation node end to end; exits non-zero on failure."""
+    """Run one validation op end to end; exits non-zero on failure.
+
+    Node ops (``build_from_sql``/``clone_from_prod``) materialize one empty node
+    table and require ``TABLE_NAME``. Schema ops (``ensure_schema``/``drop_schema``)
+    act on the whole candidate schema — the executor schedules them as one-shot
+    engine-image Jobs to own the candidate-schema lifecycle without connecting to
+    the warehouse itself — and take no table.
+    """
     logging.basicConfig(
         level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s"
     )
     schema = _require("DBT_TARGET_SCHEMA")
-    table = _require("TABLE_NAME")
     op = os.environ.get("VALIDATION_OP", "build_from_sql")
-    unique_id = _node_id() or f"model.{table}"
 
-    # Gather op-specific inputs BEFORE touching the adapter, surfacing input errors
-    # as a structured block (preserves the prior contract + exit codes).
+    # Gather op-specific inputs and identity BEFORE touching the adapter, surfacing
+    # input errors as a structured block (preserves the prior contract + exit codes).
+    table = None
     candidate_sql = None
     prod_schema = None
-    if op == "build_from_sql":
-        try:
-            raw_sql = load_candidate_sql()
-        except Exception as exc:
-            uri = os.environ.get("CANDIDATE_SQL_URI", "")
-            logger.error("ERROR fetching candidate SQL from %r: %s", uri, exc)
-            print(result.result_block("error", str(exc), unique_id=unique_id), flush=True)
-            sys.exit(1)
-        if not raw_sql:
-            logger.error(
-                "CANDIDATE_SQL_URI is unset or the object is empty for a "
-                "build_from_sql node; cannot validate"
-            )
-            print(result.result_block("error", "CANDIDATE_SQL_URI is unset or empty",
-                                      unique_id=unique_id), flush=True)
-            sys.exit(2)
-        candidate_sql = raw_sql
-    elif op == "clone_from_prod":
-        prod_schema = _require("PROD_SCHEMA")
+    if op in _NODE_OPS:
+        table = _require("TABLE_NAME")
+        unique_id = _node_id() or f"model.{table}"
+        if op == "build_from_sql":
+            try:
+                raw_sql = load_candidate_sql()
+            except Exception as exc:
+                uri = os.environ.get("CANDIDATE_SQL_URI", "")
+                logger.error("ERROR fetching candidate SQL from %r: %s", uri, exc)
+                print(result.result_block("error", str(exc), unique_id=unique_id), flush=True)
+                sys.exit(1)
+            if not raw_sql:
+                logger.error(
+                    "CANDIDATE_SQL_URI is unset or the object is empty for a "
+                    "build_from_sql node; cannot validate"
+                )
+                print(result.result_block("error", "CANDIDATE_SQL_URI is unset or empty",
+                                          unique_id=unique_id), flush=True)
+                sys.exit(2)
+            candidate_sql = raw_sql
+        else:
+            prod_schema = _require("PROD_SCHEMA")
+    elif op in _SCHEMA_OPS:
+        unique_id = _node_id() or f"schema.{schema}"
     else:
+        unique_id = _node_id() or f"schema.{schema}"
         logger.error("unknown VALIDATION_OP %r", op)
         print(result.result_block("error", f"unknown VALIDATION_OP {op!r}",
                                   unique_id=unique_id), flush=True)
@@ -122,21 +138,26 @@ def main() -> None:
         sys.exit(2)
 
     # close() runs exactly once, in the finally, on every path: the success case,
-    # the build error (sys.exit raises SystemExit, which still unwinds finally), and
+    # the op error (sys.exit raises SystemExit, which still unwinds finally), and
     # a from_env() failure (adapter stays None). A close() failure only logs — the
     # primary error, if any, is already the SystemExit propagating through.
     adapter = None
     try:
         adapter = adapter_cls.from_env()
-        adapter.ensure_schema(schema)
-        if op == "build_from_sql":
-            assert candidate_sql is not None, "candidate_sql must be set for build_from_sql"
-            adapter.build_empty_from_sql(schema, table, candidate_sql)
+        if op == "ensure_schema":
+            adapter.ensure_schema(schema)
+        elif op == "drop_schema":
+            adapter.drop_schema(schema)
         else:
-            assert prod_schema is not None, "prod_schema must be set for clone_from_prod"
-            adapter.clone_empty_from_prod(schema, prod_schema, table)
+            adapter.ensure_schema(schema)
+            if op == "build_from_sql":
+                assert candidate_sql is not None, "candidate_sql must be set for build_from_sql"
+                adapter.build_empty_from_sql(schema, table, candidate_sql)
+            else:
+                assert prod_schema is not None, "prod_schema must be set for clone_from_prod"
+                adapter.clone_empty_from_prod(schema, prod_schema, table)
     except Exception as exc:
-        logger.error("ERROR building %s.%s: %s", schema, table, exc)
+        logger.error("ERROR op=%s on schema %s: %s", op, schema, exc)
         print(result.result_block("error", str(exc), unique_id=unique_id), flush=True)
         sys.exit(1)
     finally:
@@ -146,7 +167,7 @@ def main() -> None:
             except Exception as close_exc:  # never mask the primary outcome
                 logger.error("adapter close failed: %s", close_exc)
 
-    logger.info("built %s.%s (empty, op=%s, engine=%s)", schema, table, op, engine)
+    logger.info("ran op=%s on schema=%s (engine=%s)", op, schema, engine)
     print(result.result_block("success", unique_id=unique_id), flush=True)
 
 

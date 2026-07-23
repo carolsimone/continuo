@@ -3,7 +3,7 @@ FROM python:3.14-slim
 # Slim per-engine validation runner: the continuo harness plus exactly ONE engine
 # library (postgres) installed from PyPI. The engine is baked at build time; the
 # executor selects it by choosing this image. No other engine's driver is present.
-ARG POSTGRES_LIB_VERSION=0.1.1
+ARG POSTGRES_LIB_VERSION=0.2.0
 # EXTRA_INDEX_URL lets the build resolve continuo-validation-* from TestPyPI until
 # those packages are on real PyPI (harmless once they are — real PyPI is the base index).
 ARG EXTRA_INDEX_URL=""

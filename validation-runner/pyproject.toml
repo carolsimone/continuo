@@ -5,7 +5,7 @@ description = "Slim continuo validation harness: op dispatch, candidate-SQL fetc
 authors = [{ name = "Simone Carolini" }]
 readme = "README.md"
 requires-python = ">= 3.14"
-dependencies = ["continuo-validation-contract==0.1.1", "boto3==1.40.0"]
+dependencies = ["continuo-validation-contract==0.2.0", "boto3==1.40.0"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3.14",
