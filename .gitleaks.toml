@@ -20,6 +20,10 @@ paths = [
   # Recorded HTTP fixtures for the GitHub stub contain synthetic tokens that
   # exist to exercise parsing, not to authenticate anything.
   '''^tests/e2e/stub-github/.*\.json$''',
+  # The developer-local .env is git-ignored and so can never be committed. A
+  # directory scan still reaches it, where it would always flag the throwaway
+  # GitHub App key that scripts/ensure-dev-env.sh generates there by design.
+  '''(^|/)\.env$''',
 ]
 
 # Historical commit exemption, applied only to full-history scans.
