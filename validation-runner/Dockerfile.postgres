@@ -1,0 +1,21 @@
+FROM python:3.14-slim
+
+# Slim per-engine validation runner: the continuo harness plus exactly ONE engine
+# library (postgres) installed from PyPI. The engine is baked at build time; the
+# executor selects it by choosing this image. No other engine's driver is present.
+ARG POSTGRES_LIB_VERSION=0.1.0
+# EXTRA_INDEX_URL lets the build resolve continuo-validation-* from TestPyPI until
+# those packages are on real PyPI (harmless once they are — real PyPI is the base index).
+ARG EXTRA_INDEX_URL=""
+COPY . /src/validation-runner
+RUN pip install --no-cache-dir ${EXTRA_INDEX_URL:+--extra-index-url ${EXTRA_INDEX_URL}} \
+    /src/validation-runner "continuo-validation-postgres==${POSTGRES_LIB_VERSION}" \
+    && rm -rf /src
+
+# continuo's executor invokes `python /validation_runner.py`.
+COPY validation_runner.py /validation_runner.py
+
+RUN useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
+USER 65532:65532
+ENTRYPOINT []
+CMD ["python", "/validation_runner.py"]
