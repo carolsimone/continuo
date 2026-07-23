@@ -56,7 +56,11 @@ jobs:
         with:
           # A full-history scan needs the full history. On pull requests the
           # shallow default is enough, since only the working tree is scanned.
-          fetch-depth: ${{ github.event_name == 'schedule' && 0 || 1 }}
+          #
+          # Both branches are quoted because GitHub expressions treat the number
+          # 0 as falsy: an unquoted `... && 0 || 1` yields 1 on the scheduled run
+          # too, which would silently reduce the history scan to a shallow clone.
+          fetch-depth: ${{ github.event_name == 'schedule' && '0' || '1' }}
 
       # Pull requests scan the working tree, which is what a merge would
       # introduce. The weekly run walks every commit, catching anything that
