@@ -98,10 +98,13 @@ func (c *K8sClient) GetJobStatus(ctx context.Context, namespace, jobName string)
 		}
 	} else if job.Status.Failed > 0 || c.hasFailedCondition(job) {
 		result.Status = model.JobStatusFailed
-	} else if reason, msg := c.checkImagePullError(ctx, namespace, jobName); reason != "" {
-		// Pod is stuck waiting for an image that will never arrive. The k8s Job
-		// controller never increments Status.Failed for image pull loops — detect
-		// it via pod ContainerStatus.Waiting.Reason so the run can fail cleanly.
+	} else if reason, msg := c.checkUnrecoverableStartError(ctx, namespace, jobName); reason != "" {
+		// Pod is stuck on a start condition that never self-resolves — an image
+		// that will never arrive, or a missing Secret/ConfigMap (e.g. an absent
+		// validation warehouse Secret leaves the pod in CreateContainerConfigError).
+		// The k8s Job controller never increments Status.Failed for these loops, so
+		// detect them via pod ContainerStatus.Waiting.Reason and fail the run cleanly
+		// instead of hanging the release forever.
 		result.Status = model.JobStatusFailed
 		result.TerminationMsg = fmt.Sprintf("%s: %s", reason, msg)
 	} else {
@@ -353,13 +356,16 @@ func (c *K8sClient) hasFailedCondition(job *batchv1.Job) bool {
 	return false
 }
 
-// checkImagePullError inspects pod container statuses for image pull failure reasons.
+// checkUnrecoverableStartError inspects pod container statuses for start-time
+// waiting reasons that never self-resolve: an unpullable image, or a missing
+// Secret/ConfigMap reference (CreateContainerConfigError). The k8s Job controller
+// leaves Status.Failed at zero while such a pod loops, so surface it here.
 // The k8s Job controller never marks Status.Failed for stuck image pulls, so we detect
 // them directly from pod state. Both main containers and init containers are checked —
 // a broken init-container image (e.g. the compile Job's `compile` init container) would
 // otherwise hang a release in "validating" forever because Job.Status.Failed stays zero.
 // Returns reason+message if found, empty strings otherwise.
-func (c *K8sClient) checkImagePullError(ctx context.Context, namespace, jobName string) (reason, message string) {
+func (c *K8sClient) checkUnrecoverableStartError(ctx context.Context, namespace, jobName string) (reason, message string) {
 	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("job-name=%s", jobName),
 	})
@@ -373,7 +379,8 @@ func (c *K8sClient) checkImagePullError(ctx context.Context, namespace, jobName 
 		for _, cs := range allStatuses {
 			if cs.State.Waiting != nil {
 				switch cs.State.Waiting.Reason {
-				case "ImagePullBackOff", "ErrImagePull", "InvalidImageName":
+				case "ImagePullBackOff", "ErrImagePull", "InvalidImageName",
+					"CreateContainerConfigError", "CreateContainerError":
 					msg := cs.State.Waiting.Message
 					if msg == "" {
 						msg = cs.State.Waiting.Reason
