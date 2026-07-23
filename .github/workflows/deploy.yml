@@ -167,7 +167,7 @@ jobs:
                   {service: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
                   {service: "remediation-agent", changed: $remediation_agent, dockerfile: "remediation-agent/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
-                  {service: "validation-runner", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile", context: "validation-runner"},
+                  {service: "validation-runner-postgres", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile.postgres", context: "validation-runner"},
                   {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"},
                   {service: "stream-reaper", changed: $stream_reaper, dockerfile: "pkg/cmd/stream-reaper/Dockerfile", context: "pkg"}
                 ]
