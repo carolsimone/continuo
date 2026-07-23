@@ -224,6 +224,46 @@ func TestGetJobStatus_InitContainerImagePullBackOff_ReturnsJobStatusFailed(t *te
 	assert.Contains(t, result.TerminationMsg, "ImagePullBackOff")
 }
 
+// TestGetJobStatus_CreateContainerConfigError_ReturnsJobStatusFailed verifies that a
+// pod stuck in CreateContainerConfigError — e.g. a validation Job whose
+// VALIDATION_WAREHOUSE_SECRET names a Secret absent from the namespace — is surfaced
+// as a failure. Like image-pull loops, the k8s Job controller never increments
+// Status.Failed for a config error, so the release would otherwise hang forever.
+func TestGetJobStatus_CreateContainerConfigError_ReturnsJobStatusFailed(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-job", Namespace: "default"},
+		Status:     batchv1.JobStatus{Active: 1},
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-job-abc",
+			Namespace: "default",
+			Labels:    map[string]string{"job-name": "test-job"},
+		},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "dbt-job",
+					State: corev1.ContainerState{
+						Waiting: &corev1.ContainerStateWaiting{
+							Reason:  "CreateContainerConfigError",
+							Message: "secret \"continuo-warehouse-validation\" not found",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	client := &K8sClient{clientset: fake.NewSimpleClientset(job, pod), logger: slog.Default()}
+	result, err := client.GetJobStatus(context.Background(), "default", "test-job")
+	require.NoError(t, err)
+	assert.Equal(t, model.JobStatusFailed, result.Status)
+	assert.Contains(t, result.TerminationMsg, "CreateContainerConfigError")
+	assert.Contains(t, result.TerminationMsg, "not found")
+}
+
 // TestPickInitContainerLog_ReturnsFailedInitContainerName verifies that the helper
 // returns the name of the first init container that terminated with a non-zero exit
 // code, so GetPodLogs knows which container log to read as a fallback.
