@@ -123,35 +123,7 @@ func main() {
 		return pgDB.PingContext(ctx)
 	})
 
-	// 2. dbt-warehouse PostgreSQL client (used to drop candidate schemas after
-	// validation completes; same host/port/credentials as the main PG client but
-	// targets the dbt materialization database).
-	dbtDB, err := postgres.NewPostgresClient(
-		cfg.DBTWarehouse.Host,
-		cfg.DBTWarehouse.Port,
-		cfg.DBTWarehouse.DB,
-		cfg.DBTWarehouse.User,
-		cfg.DBTWarehouse.Password,
-		logger,
-	)
-	if err != nil {
-		logger.Error("Failed to connect to dbt warehouse", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("dbt-warehouse client initialized")
-
-	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
-		logger.Info("Closing dbt-warehouse connection")
-		return dbtDB.Close()
-	})
-	liveReg.AddProbe("dbt_warehouse", 5*time.Second, func(ctx context.Context) error {
-		return dbtDB.PingContext(ctx)
-	})
-
-	candidateSchemaCleaner := postgres.NewCandidateSchemaCleaner(dbtDB, logger)
-	candidateSchemaCreator := postgres.NewCandidateSchemaCreator(dbtDB, logger)
-
-	// 3. Redis client
+	// 2. Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
 		Addr:     cfg.Redis.Addr(),
 		Password: cfg.Redis.Password,
@@ -187,6 +159,13 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("K8s client initialized")
+
+	// Candidate-schema lifecycle: the executor never connects to the warehouse. It
+	// schedules a one-shot engine-image Job (harness ensure_schema/drop_schema op) and
+	// blocks on the result, so the engine adapter baked into VALIDATION_IMAGE owns the
+	// DDL dialect and the warehouse credentials stay on the Job, not the control plane.
+	candidateSchemaCreator := k8s.NewCandidateSchemaCreator(k8sClient, cfg.K8sNamespace, logger)
+	candidateSchemaCleaner := k8s.NewCandidateSchemaCleaner(k8sClient, cfg.K8sNamespace, logger)
 
 	// ========================================================================
 	// INITIALIZE REPOSITORIES

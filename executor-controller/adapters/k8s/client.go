@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"time"
 
 	validationmodel "github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/service/artifacts"
@@ -385,6 +386,160 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		return corev1.PodSpec{}, fmt.Errorf("%w: unknown validation_op %q for node %s",
 			events.ErrPermanent, op, p.NodeID)
 	}
+}
+
+// Candidate-schema lifecycle ops run as one-shot engine-image Jobs: the executor
+// schedules them and blocks on the result but never connects to the warehouse itself.
+const (
+	schemaOpEnsure = "ensure_schema"
+	schemaOpDrop   = "drop_schema"
+
+	schemaOpJobPollInterval = 2 * time.Second
+	// schemaOpJobTimeout bounds the wait for a schema-op Job to terminate; the DDL is
+	// quick, so a Job still running past this is a failure rather than an infinite block.
+	schemaOpJobTimeout = 5 * time.Minute
+)
+
+// buildSchemaOpPodSpec constructs the PodSpec for a candidate-schema lifecycle Job. It
+// runs the same engine image as validation (VALIDATION_IMAGE) with the operator's
+// warehouse Secret attached via envFrom, invoking the harness ensure_schema/drop_schema
+// op on DBT_TARGET_SCHEMA — a single short-lived container that runs one DDL statement
+// through the engine adapter and exits. No S3, no candidate SQL, no table.
+func buildSchemaOpPodSpec(op, candidateSchema string) (corev1.PodSpec, error) {
+	image := os.Getenv("VALIDATION_IMAGE")
+	if image == "" {
+		return corev1.PodSpec{}, fmt.Errorf("%w: VALIDATION_IMAGE not configured (set it to the chosen engine's validation-runner image) for schema op %s",
+			events.ErrPermanent, op)
+	}
+	warehouseSecret := os.Getenv("VALIDATION_WAREHOUSE_SECRET")
+	if warehouseSecret == "" {
+		return corev1.PodSpec{}, fmt.Errorf("%w: validation warehouse secret not configured (set VALIDATION_WAREHOUSE_SECRET) for schema op %s",
+			events.ErrPermanent, op)
+	}
+	container := corev1.Container{
+		Name:            "schema-op",
+		Image:           image,
+		ImagePullPolicy: validationImagePullPolicy(),
+		// Command unset: run the image's default entrypoint (python /validation_runner.py).
+		Env: []corev1.EnvVar{
+			{Name: "DBT_TARGET_SCHEMA", Value: candidateSchema},
+			{Name: "VALIDATION_OP", Value: op},
+		},
+		// Warehouse connection is operator-owned: the whole Secret lands as env.
+		EnvFrom: []corev1.EnvFromSource{{
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: warehouseSecret},
+			},
+		}},
+		SecurityContext: continuoImageSecurityContext(),
+	}
+	return corev1.PodSpec{
+		RestartPolicy:   corev1.RestartPolicyNever,
+		SecurityContext: jobPodSecurityContext(),
+		Containers:      []corev1.Container{container},
+	}, nil
+}
+
+// schemaOpJob wraps buildSchemaOpPodSpec in a one-shot Job. It carries a distinct
+// app=continuo-schema-op label (never mode=validation/app=dbt-job) so k8s-controller's
+// validation watcher ignores it — its lifecycle is owned here, not surfaced as a
+// validation node. TTLSecondsAfterFinished is a cleanup backstop; RunSchemaOpJob also
+// deletes the Job once it observes a terminal state.
+func schemaOpJob(op, candidateSchema, jobName, namespace string) (*batchv1.Job, error) {
+	podSpec, err := buildSchemaOpPodSpec(op, candidateSchema)
+	if err != nil {
+		return nil, err
+	}
+	backoffLimit := int32(0)
+	ttl := int32(120)
+	labels := map[string]string{
+		"app":              "continuo-schema-op",
+		"schema-op":        op,
+		"candidate-schema": sanitizeK8sLabel(candidateSchema),
+	}
+	return &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: namespace, Labels: labels},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:            &backoffLimit,
+			TTLSecondsAfterFinished: &ttl,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec:       podSpec,
+			},
+		},
+	}, nil
+}
+
+// RunSchemaOpJob schedules a candidate-schema lifecycle Job and blocks until it
+// terminates: Succeeded -> nil, Failed (or timeout) -> error. It is idempotent by job
+// name — a redelivered trigger waits on the in-flight Job instead of duplicating it —
+// and a leftover terminal Job from a prior attempt is cleared first so a retry runs
+// clean. The engine adapter runs the DDL; the executor holds no warehouse connection.
+func (c *K8sClient) RunSchemaOpJob(ctx context.Context, op, candidateSchema, jobName, namespace string) error {
+	if err := c.submitSchemaOpJob(ctx, op, candidateSchema, jobName, namespace); err != nil {
+		return err
+	}
+	return c.waitForSchemaOpJob(ctx, namespace, jobName, op)
+}
+
+// submitSchemaOpJob ensures exactly one runnable schema-op Job exists for jobName:
+// creates it when absent, clears-and-recreates a leftover terminal Job from a prior
+// attempt, and leaves an in-flight Job untouched (a redelivered trigger just waits).
+func (c *K8sClient) submitSchemaOpJob(ctx context.Context, op, candidateSchema, jobName, namespace string) error {
+	job, err := schemaOpJob(op, candidateSchema, jobName, namespace)
+	if err != nil {
+		return err
+	}
+
+	existing, getErr := c.clientset.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
+	switch {
+	case getErr == nil && (existing.Status.Succeeded > 0 || existing.Status.Failed > 0):
+		if err := c.deleteJob(ctx, namespace, jobName); err != nil {
+			return fmt.Errorf("clear stale schema-op job %s: %w", jobName, err)
+		}
+		return c.CreateJob(ctx, job)
+	case getErr == nil:
+		c.logger.InfoContext(ctx, "schema-op job already in flight; waiting", "job_name", jobName, "op", op)
+		return nil
+	case errors.IsNotFound(getErr):
+		return c.CreateJob(ctx, job)
+	default:
+		return fmt.Errorf("get schema-op job %s: %w", jobName, getErr)
+	}
+}
+
+func (c *K8sClient) waitForSchemaOpJob(ctx context.Context, namespace, jobName, op string) error {
+	waitCtx, cancel := context.WithTimeout(ctx, schemaOpJobTimeout)
+	defer cancel()
+	ticker := time.NewTicker(schemaOpJobPollInterval)
+	defer ticker.Stop()
+	for {
+		job, err := c.clientset.BatchV1().Jobs(namespace).Get(waitCtx, jobName, metav1.GetOptions{})
+		if err == nil {
+			if job.Status.Succeeded > 0 {
+				c.logger.InfoContext(ctx, "schema-op job succeeded", "job_name", jobName, "op", op)
+				_ = c.deleteJob(ctx, namespace, jobName)
+				return nil
+			}
+			if job.Status.Failed > 0 {
+				return fmt.Errorf("schema-op job %s (%s) failed", jobName, op)
+			}
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("schema-op job %s (%s) did not terminate: %w", jobName, op, waitCtx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *K8sClient) deleteJob(ctx context.Context, namespace, jobName string) error {
+	policy := metav1.DeletePropagationBackground
+	err := c.clientset.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{PropagationPolicy: &policy})
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 // s3SidecarImage resolves the non-dbt S3 I/O sidecar image used by the

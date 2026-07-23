@@ -9,12 +9,6 @@ type Config struct {
 	Redis    pkgconfig.RedisConfig
 	Postgres pkgconfig.PostgresConfig
 
-	// DBTWarehouse is the connection to the dbt materialization database (the same
-	// Postgres server executor forwards to dbt job pods, database DBT_POSTGRES_DB).
-	// Used to drop candidate schemas after validation completes. Host/port/user/password
-	// are shared with the executor's own POSTGRES_* vars; only the database name differs.
-	DBTWarehouse DBTWarehouse
-
 	// Schedule cancellation
 	CancelledSchedulesTTLHours         int
 	CancelledSchedulesSweepIntervalMin int
@@ -28,29 +22,21 @@ type Config struct {
 	MaxConcurrentJobs int
 }
 
-// DBTWarehouse holds connection parameters for the dbt materialization database.
-type DBTWarehouse struct {
-	Host     string
-	Port     int
-	DB       string
-	User     string
-	Password string
-}
-
 // Load reads configuration from environment variables.
 // v accumulates missing required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator) Config {
+	// DBT_POSTGRES_DB names the warehouse database dbt job pods materialize into; the
+	// executor forwards it (with the reused POSTGRES_* connection) to those pods via
+	// k8s dbtConnectionEnvVars. It is consumed there through os.Getenv, not stored on
+	// Config — required here only so a missing value fails fast at boot rather than
+	// silently forwarding an empty database name to every dbt Job. The executor itself
+	// no longer connects to the warehouse (candidate-schema lifecycle is an engine-image
+	// Job), so there is no warehouse connection to hold.
+	_ = v.Require("DBT_POSTGRES_DB")
+
 	return Config{
 		Redis:    pkgconfig.LoadRedis(v),
 		Postgres: pkgconfig.LoadPostgres(v),
-
-		DBTWarehouse: DBTWarehouse{
-			Host:     pkgconfig.EnvOrDefault("POSTGRES_HOST", ""),
-			Port:     pkgconfig.EnvIntOrDefault("POSTGRES_PORT", 5432),
-			DB:       v.Require("DBT_POSTGRES_DB"),
-			User:     pkgconfig.EnvOrDefault("POSTGRES_USER", ""),
-			Password: pkgconfig.EnvOrDefault("POSTGRES_PASSWORD", ""),
-		},
 
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
