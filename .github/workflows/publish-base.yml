@@ -1,12 +1,9 @@
 name: Publish Base Image
 
+# Manual backfill only. On push to main, deploy.yml's build-base job owns
+# publishing continuo-base:v1 — inside its own DAG, so service-image builds
+# wait for the fresh base instead of racing a separately-triggered workflow.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - Dockerfile.base
-      - .github/workflows/publish-base.yml
   workflow_dispatch:  # allows manual trigger from the Actions UI
 
 env:
@@ -17,7 +14,7 @@ env:
 jobs:
   publish:
     # Self-hosted for the warm Docker layer cache (this only builds + pushes the
-    # base image). Triggered by push/dispatch (trusted), so no fork exposure.
+    # base image). Triggered by manual dispatch (trusted), so no fork exposure.
     runs-on: self-hosted
 
     permissions:

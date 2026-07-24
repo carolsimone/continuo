@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release: ${{ steps.filter.outputs.release }}
+      base: ${{ steps.filter.outputs.base }}
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
       - name: Checkout
@@ -35,6 +36,8 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
+            base:
+              - 'Dockerfile.base'
             release:
               - '.github/workflows/deploy.yml'
               - 'Dockerfile.base'
@@ -176,12 +179,61 @@ jobs:
           )"
           echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
 
+  build-base:
+    # When Dockerfile.base changes, the service images must build FROM the
+    # rebuilt continuo-base:v1 — publishing it here, inside this workflow's
+    # DAG, guarantees build-publish never pulls a stale base. Publishing it
+    # from a separate push-triggered workflow raced this one: the base build
+    # queued behind other jobs while build-publish pulled the old :v1.
+    # (publish-base.yml remains as a manual backfill entry point.)
+    if: needs.detect-changes.outputs.base == 'true'
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push continuo-base
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.base
+          platforms: linux/amd64
+          push: true
+          # :v1 is the pinned tag every Dockerfile.prod consumes (see the
+          # BASE_IMAGE build-arg in build-publish below); bump both together
+          # on breaking base changes.
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/continuo-base:v1
+            ghcr.io/${{ github.repository_owner }}/continuo-base:${{ github.sha }}
+          cache-from: type=gha,scope=continuo-base
+          cache-to: type=gha,scope=continuo-base,mode=max
+
   build-publish:
     # force_publish backfills :<git-sha> images on a manual dispatch even
     # when no release path changed (inputs is empty on push, so this
     # reduces to today's behavior there).
-    if: needs.detect-changes.outputs.release == 'true' || inputs.force_publish == true
-    needs: detect-changes
+    # build-base is skipped on most pushes; !cancelled() keeps this job
+    # running in that case while a build-base failure still blocks it.
+    if: >-
+      !cancelled() && needs.build-base.result != 'failure' &&
+      (needs.detect-changes.outputs.release == 'true' || inputs.force_publish == true)
+    needs:
+      - detect-changes
+      - build-base
     # GitHub-hosted on purpose: this is a matrix (one job per service) that runs
     # in parallel here for free. On the single self-hosted runner the jobs
     # serialize (one agent = one job at a time) and queue behind PR CI — measured
