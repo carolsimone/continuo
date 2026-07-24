@@ -195,9 +195,8 @@ jobs:
             sh -c "uv sync --all-groups && uv run pytest tests -v"
 
       - name: Test validation-runner harness
-        # Harness unit tests. continuo-validation-contract resolves from the explicit,
-        # package-scoped TestPyPI index in the pyproject (lockfile-pinned) until it is on
-        # real PyPI; the image smoke tests run in the next step, not here.
+        # Harness unit tests (continuo-validation-contract resolves from real PyPI,
+        # lockfile-pinned); the image smoke tests run in the next steps, not here.
         run: |
           docker run --rm -v "$PWD/validation-runner:/app" -w /app \
             ghcr.io/astral-sh/uv:bookworm-slim \
@@ -220,8 +219,7 @@ jobs:
         # `docker run`; the build also warms the layer cache for the e2e provision.
         run: |
           docker build -t continuo-validation-runner-postgres:ci \
-            -f validation-runner/Dockerfile.postgres \
-            --build-arg CONTINUO_INDEX_URL=https://test.pypi.org/simple/ validation-runner/
+            -f validation-runner/Dockerfile.postgres validation-runner/
           cd validation-runner
           # The harness-test step above ran uv as root inside a container against
           # this same mounted directory, leaving a root-owned .venv the runner user
@@ -229,6 +227,20 @@ jobs:
           export UV_PROJECT_ENVIRONMENT="${RUNNER_TEMP}/validation-runner-venv"
           uv sync --all-groups
           VALIDATION_IMAGE_UNDER_TEST=continuo-validation-runner-postgres:ci \
+            uv run pytest tests -m image -v
+
+      - name: Smoke-test validation-runner trino image
+        # Same tier-4 assertions against the trino engine image: the baked adapter
+        # is discovered and missing TRINO_* env yields a structured result block.
+        run: |
+          docker build -t continuo-validation-runner-trino:ci \
+            -f validation-runner/Dockerfile.trino validation-runner/
+          cd validation-runner
+          export UV_PROJECT_ENVIRONMENT="${RUNNER_TEMP}/validation-runner-venv"
+          uv sync --all-groups
+          VALIDATION_IMAGE_UNDER_TEST=continuo-validation-runner-trino:ci \
+          VALIDATION_IMAGE_ENGINE=trino \
+          VALIDATION_IMAGE_REQUIRED_ENV=TRINO_HOST \
             uv run pytest tests -m image -v
 
       - name: Test s3-sidecar
