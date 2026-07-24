@@ -655,11 +655,11 @@ func s3CredEnvVars() []corev1.EnvVar {
 // connection env of its own. The compile parse rehearsal containers and every
 // dbt run/seed pod MUST attach this same source — connection drift between
 // them silently invalidates every hydrated partial-parse cache.
-func warehouseSecretEnvFrom(ctx string) ([]corev1.EnvFromSource, error) {
+func warehouseSecretEnvFrom(subject string) ([]corev1.EnvFromSource, error) {
 	name := os.Getenv("VALIDATION_WAREHOUSE_SECRET")
 	if name == "" {
 		return nil, fmt.Errorf("%w: validation warehouse secret not configured (set VALIDATION_WAREHOUSE_SECRET) for %s",
-			events.ErrPermanent, ctx)
+			events.ErrPermanent, subject)
 	}
 	return []corev1.EnvFromSource{{
 		SecretRef: &corev1.SecretEnvSource{
