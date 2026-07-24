@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import NodesCatalogPanel from '../../src/client/NodesCatalogPanel';
 
@@ -114,16 +114,14 @@ describe('NodesCatalogPanel', () => {
       return Promise.resolve({ ok: true, json: async () => pageNew });  // post-search catalog page
     });
     render(<MemoryRouter><NodesCatalogPanel /></MemoryRouter>);
-    await vi.advanceTimersByTimeAsync(250);                                     // fire mount debounce → call 1 (pending)
+    await act(async () => { await vi.advanceTimersByTimeAsync(250); });         // fire mount debounce → call 1 (pending)
 
     fireEvent.change(screen.getByPlaceholderText(/table name/i), { target: { value: 'x' } });
-    await vi.advanceTimersByTimeAsync(250);                                     // fire call 2 → resolves pageNew
+    await act(async () => { await vi.advanceTimersByTimeAsync(250); });         // fire call 2 → resolves pageNew
     expect(screen.getByText('NEW_NODE')).toBeInTheDocument();
 
     resolveStale({ ok: true, json: async () => pageStale });                    // late stale response arrives
-    await vi.advanceTimersByTimeAsync(0);
-    await Promise.resolve();
-    await Promise.resolve();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
     expect(screen.queryByText('STALE_NODE')).not.toBeInTheDocument();           // stale must be ignored
     expect(screen.getByText('NEW_NODE')).toBeInTheDocument();
