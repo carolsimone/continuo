@@ -405,12 +405,6 @@ services:
       VALIDATION_IMAGE_PULL_POLICY: Always
       VALIDATION_IMAGE: __VALIDATION_IMAGE__
       VALIDATION_WAREHOUSE_SECRET: __VALIDATION_WAREHOUSE_SECRET__
-      # COMPATIBILITY ONLY: current executor images read the warehouse connection
-      # from the Secret above and ignore this var, but images published before
-      # that change refuse to boot without it (the chart-level install test runs
-      # this chart against the previously published images). Remove once an
-      # executor image that no longer requires DBT_POSTGRES_DB is published.
-      DBT_POSTGRES_DB: __VALIDATION_WAREHOUSE_DATABASE__
       S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__
       HTTP_PORT: "8084"
       DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__
