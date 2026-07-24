@@ -218,7 +218,12 @@ describe('DAGPanel service view', () => {
       </ReactFlowProvider>,
     );
     const selected = container.querySelector('.react-flow__node[data-id="svc-a.sch.n1"]') as HTMLElement;
-    expect(selected.style.borderColor).toBe('rgb(99, 102, 241)'); // focus indigo
+    // Assert the three non-accent sides individually: jsdom serializes the
+    // `border-color` shorthand getter as the 4-value form when the left side
+    // differs, so checking the shorthand would compare against the expansion.
+    expect(selected.style.borderTopColor).toBe('rgb(99, 102, 241)'); // focus indigo
+    expect(selected.style.borderRightColor).toBe('rgb(99, 102, 241)'); // focus indigo
+    expect(selected.style.borderBottomColor).toBe('rgb(99, 102, 241)'); // focus indigo
     expect(selected.style.borderLeftColor).toBe('rgb(14, 165, 233)'); // svc-a accent survives
     // A dimmed collapsed vertex keeps its accent too.
     const dimVertex = container.querySelector('.react-flow__node[data-id="svc:svc-b"]') as HTMLElement;
