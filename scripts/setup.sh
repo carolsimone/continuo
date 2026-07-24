@@ -18,6 +18,9 @@ if ! docker compose version &>/dev/null 2>&1; then
     fi
 fi
 
+# Generate the developer-local .env before any compose command reads it.
+bash "$(dirname "${BASH_SOURCE[0]}")/ensure-dev-env.sh"
+
 # Install kind if not present
 if ! command -v kind &> /dev/null; then
     echo "Installing kind ${KIND_VERSION}..."

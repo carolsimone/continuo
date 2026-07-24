@@ -1,6 +1,6 @@
 module github.com/carolsimone/continuo/release-controller
 
-go 1.25.1
+go 1.25.12
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2

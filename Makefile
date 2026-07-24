@@ -44,8 +44,12 @@ build-prod-service:
 	@test -n "$(SERVICE)" || (echo "Usage: make build-prod-service SERVICE=state" && exit 1)
 	DOCKER_BUILDKIT=1 docker build -t continuo-$(SERVICE):prod -f $(SERVICE)/Dockerfile.prod .
 
-up:
+up: dev-env
 	$(DOCKER_COMPOSE) up
+
+.PHONY: dev-env
+dev-env:  ## Create the developer-local .env if missing (no-op when present)
+	@bash scripts/ensure-dev-env.sh
 
 down:
 	$(DOCKER_COMPOSE) down --remove-orphans --volumes
@@ -62,6 +66,10 @@ format:
 .PHONY: lint-go
 lint-go:  ## Run golangci-lint over Go modules (all, or MODULE=<name>)
 	@bash scripts/lint-go.sh $(MODULE)
+
+.PHONY: security-scan
+security-scan:  ## Run the vulnerability and secret scanners (SCAN=vuln|secrets|deps|config)
+	@bash scripts/security-scan.sh $(SCAN)
 
 .PHONY: e2e-setup
 e2e-setup:  ## Provision K8s test environment for E2E testing

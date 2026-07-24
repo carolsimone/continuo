@@ -1,0 +1,104 @@
+# Dependabot keeps dependencies current so that known CVEs are fixed by an
+# upgrade before a scanner has to report them.
+#
+# Every ecosystem groups its patch and minor updates into a single pull request
+# per week. Ungrouped, this monorepo's eleven Go modules plus npm, uv, Actions and
+# Docker would open dozens of pull requests a week and the noise would guarantee
+# they all get ignored. Major updates stay ungrouped because they carry breaking
+# changes and need to be reviewed one at a time.
+version: 2
+
+updates:
+  # Every Go module in the repository: the go.work members, cli (outside the
+  # workspace by design, see CLAUDE.md), and the two e2e stub servers, which are
+  # also standalone modules and so are invisible to a workspace-wide update.
+  - package-ecosystem: gomod
+    directories:
+      - /agent-runner
+      - /cli
+      - /executor-controller
+      - /k8s-controller
+      - /orchestrator
+      - /pkg
+      - /release-controller
+      - /remediation
+      - /remediation-agent
+      - /state
+      - /tests/e2e
+      - /tests/e2e/stub-github
+      - /tests/e2e/stub-llm
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      go-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: chore(deps)
+
+  - package-ecosystem: npm
+    directory: /ui-service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: chore(deps)
+
+  # The Python services: manifest-controller plus the validation contract and
+  # runner packages, each a uv project with its own pyproject.toml and uv.lock.
+  - package-ecosystem: uv
+    directories:
+      - /manifest-controller
+      - /validation-contract
+      - /validation-runner
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: chore(deps)
+
+  # Actions are a supply-chain surface in their own right: a compromised or
+  # abandoned action runs with access to the workflow token and, for maintainer
+  # pull requests, the self-hosted runner.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore(ci)
+
+  # Base images across Dockerfile.base, the per-service Dockerfile.dev/.prod and
+  # the dbt images. Most base-image CVEs are fixed by moving to a newer tag.
+  - package-ecosystem: docker
+    directories:
+      - /**
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      docker:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore(deps)

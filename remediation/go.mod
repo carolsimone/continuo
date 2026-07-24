@@ -1,6 +1,6 @@
 module github.com/carolsimone/continuo/remediation
 
-go 1.25.1
+go 1.25.12
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.5
