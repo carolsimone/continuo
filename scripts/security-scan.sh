@@ -56,6 +56,27 @@ have_docker() {
 # call path from this module actually reaches the vulnerable symbol. That is why
 # this one is allowed to block.
 scan_vuln() {
+  # Resolve the module list first and fail closed if it is absent or empty, before
+  # installing anything. This is a blocking gate, so an empty target list must be
+  # an error, not a zero-iteration loop that returns success having scanned
+  # nothing. Same registry the lint gate uses, so the two gates never drift.
+  local registry="scripts/lint-ci-modules.txt"
+  if [ ! -s "${registry}" ]; then
+    echo "error: ${registry} is missing or empty; refusing to report a blocking" \
+         "vulnerability gate as green having scanned nothing" >&2
+    return 1
+  fi
+
+  local targets
+  targets="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "${registry}" \
+    | sed 's#^[[:space:]]*#./#')"
+
+  if [ -z "${targets}" ]; then
+    echo "error: ${registry} lists no modules; the vulnerability gate scanned" \
+         "nothing and will not pass by default" >&2
+    return 1
+  fi
+
   local gopath_bin
   gopath_bin="$(go env GOPATH)/bin"
 
@@ -65,11 +86,6 @@ scan_vuln() {
     go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" || return 1
   fi
   export PATH="${gopath_bin}:${PATH}"
-
-  # Same module registry the lint gate uses, so the two gates never drift.
-  local targets
-  targets="$(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' scripts/lint-ci-modules.txt \
-    | sed 's#^[[:space:]]*#./#')"
 
   local rc=0
   for m in ${targets}; do

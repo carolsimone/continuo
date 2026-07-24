@@ -18,7 +18,13 @@ on:
     - cron: "0 4 * * 1"
 
 concurrency:
-  group: security-${{ github.ref }}
+  # Keyed by event as well as ref. A schedule event and a push to main both carry
+  # github.ref == refs/heads/main, so keying on ref alone would put them in one
+  # group and let a routine merge, via cancel-in-progress, abort the weekly
+  # full-history secret scan — the run this workflow exists for. Including
+  # github.event_name isolates the scheduled run while still superseding stale
+  # per-PR runs (each PR has a distinct ref).
+  group: security-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 # These scans read source and need nothing else. Results are written to the job
