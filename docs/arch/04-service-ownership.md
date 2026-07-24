@@ -97,7 +97,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | gRPC server methods owned | none |
 | Redis consumes | `query.model:v1`, `retry.task:v1`, `schedule.cancelled:v1`, `validation.requested:v1`, `validation.node.completed:v1`, `validation.result:v1` (kind=complete, for candidate schema teardown) |
 | Redis produces | `node.deployed:v1`, `task.status.updated:v1` (FAILED only, on the never-deployed terminal dispatch failure — k8s-controller owns RUNNING and the pod terminal), `node.updated:v1` (FAILED on terminal dispatch failure only), `validation.result:v1` (unified validation leg: `kind=node` per-node projections as each node settles, then a trailing `kind=complete` per-release decision) |
-| External DB writes | None directly. Candidate-schema create/drop run as one-shot engine-image K8s Jobs (`CandidateSchemaCreator`/`CandidateSchemaCleaner` schedule them), so the executor holds no warehouse connection. It still forwards `DBT_POSTGRES_*` (the warehouse profile) to the dbt job pods it creates for compile/seed-build/run. |
+| External DB writes | None directly. Candidate-schema create/drop run as one-shot engine-image K8s Jobs (`CandidateSchemaCreator`/`CandidateSchemaCleaner` schedule them), so the executor holds no warehouse connection. The dbt job pods it creates for compile/seed-build/run receive the warehouse connection by `envFrom` of the operator-owned Secret named by `VALIDATION_WAREHOUSE_SECRET`; team dbt profiles read the Secret's engine-native keys. |
 | Outbound gRPC calls | none |
 
 ### Invariants
