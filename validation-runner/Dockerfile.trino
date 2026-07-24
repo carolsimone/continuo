@@ -1,17 +1,17 @@
 FROM python:3.14-slim
 
 # Slim per-engine validation runner: the continuo harness plus exactly ONE engine
-# library (postgres) installed from PyPI. The engine is baked at build time; the
+# library (trino) installed from PyPI. The engine is baked at build time; the
 # executor selects it by choosing this image. No other engine's driver is present.
 #
 # CONTRACT_VERSION must match the harness pyproject's continuo-validation-contract
 # pin — a mismatch fails the second install loudly instead of resolving elsewhere.
 ARG CONTRACT_VERSION=0.2.0
-ARG POSTGRES_LIB_VERSION=0.2.0
-# CONTINUO_INDEX_URL: optional alternate index (TestPyPI) used ONLY for the two
-# continuo packages, in the separate --no-deps transaction below — never as an
+ARG TRINO_LIB_VERSION=0.1.1
+# CONTINUO_INDEX_URL: optional alternate index used ONLY for the two continuo
+# packages, in the separate --no-deps transaction below — never as an
 # --extra-index-url on the general install, where pip would consider it for EVERY
-# dependency (boto3, psycopg2, transitives) and could resolve any of them from the
+# dependency (boto3, trino, transitives) and could resolve any of them from the
 # untrusted index (dependency confusion). Normally unset: the continuo packages
 # live on real PyPI.
 ARG CONTINUO_INDEX_URL=""
@@ -24,10 +24,10 @@ COPY . /src/validation-runner
 RUN if [ -n "${CONTINUO_INDEX_URL}" ]; then \
         pip install --no-cache-dir --no-deps --index-url "${CONTINUO_INDEX_URL}" \
             "continuo-validation-contract==${CONTRACT_VERSION}" \
-            "continuo-validation-postgres==${POSTGRES_LIB_VERSION}"; \
+            "continuo-validation-trino==${TRINO_LIB_VERSION}"; \
     fi \
     && pip install --no-cache-dir \
-        /src/validation-runner "continuo-validation-postgres==${POSTGRES_LIB_VERSION}" \
+        /src/validation-runner "continuo-validation-trino==${TRINO_LIB_VERSION}" \
     && rm -rf /src
 
 # continuo's executor invokes `python /validation_runner.py`.

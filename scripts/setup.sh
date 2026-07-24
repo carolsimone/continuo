@@ -66,11 +66,8 @@ DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 echo "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
 echo "Building slim validation-runner (postgres) image..."
-# CONTINUO_INDEX_URL resolves continuo-validation-* from TestPyPI until they are on real
-# PyPI (the reshape's pre-release phase); harmless once they are.
 DOCKER_BUILDKIT=1 docker build -t continuo-validation-runner-postgres:latest \
-  -f validation-runner/Dockerfile.postgres \
-  --build-arg CONTINUO_INDEX_URL=https://test.pypi.org/simple/ validation-runner/
+  -f validation-runner/Dockerfile.postgres validation-runner/
 echo "Building service images (batched)..."
 # Build in small batches instead of all ~13 services at once. On a 2-CPU/7.75GB
 # CI runner, building everything in parallel thrashes memory and disk I/O so badly
