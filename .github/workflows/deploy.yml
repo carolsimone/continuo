@@ -308,7 +308,13 @@ jobs:
   deploy:
     # force_publish is a backfill-only run (see build-publish above); it
     # never deploys, so it never touches the Hetzner box.
-    if: needs.detect-changes.outputs.release == 'true' && inputs.force_publish != true
+    # The implicit success() check skips a job when anything in its
+    # transitive needs chain was skipped — which build-base is on every push
+    # that leaves Dockerfile.base untouched — so the real requirement,
+    # build-publish succeeded, must be spelled out explicitly.
+    if: >-
+      !cancelled() && needs.build-publish.result == 'success' &&
+      needs.detect-changes.outputs.release == 'true' && inputs.force_publish != true
     needs:
       - detect-changes
       - build-publish
