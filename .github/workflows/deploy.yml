@@ -308,7 +308,16 @@ jobs:
   deploy:
     # force_publish is a backfill-only run (see build-publish above); it
     # never deploys, so it never touches the Hetzner box.
-    if: needs.detect-changes.outputs.release == 'true' && inputs.force_publish != true
+    # !cancelled() is required: build-base is skipped on most pushes, and the
+    # implicit success() is chain-wide — without the override a skipped
+    # build-base silently skips this job too (no push deployed between the
+    # build-base introduction and this guard). build-publish must itself have
+    # succeeded; its own condition already blocks on a build-base failure.
+    if: >-
+      !cancelled() &&
+      needs.build-publish.result == 'success' &&
+      needs.detect-changes.outputs.release == 'true' &&
+      inputs.force_publish != true
     needs:
       - detect-changes
       - build-publish
