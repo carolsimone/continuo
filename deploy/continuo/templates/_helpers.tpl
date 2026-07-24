@@ -43,8 +43,9 @@ app.kubernetes.io/name: {{ .service }}
      engine until the executor candidate-schema lifecycle is engine-aware. */}}
 {{- define "continuo.validation.image" -}}
 {{- $eng := .Values.validation.engine | default "postgres" -}}
-{{- if ne $eng "postgres" -}}
-{{- fail (printf "validation.engine=%q is not available: 'postgres' is the only engine with a published continuo-validation-runner image today. Adding an engine means publishing its continuo-validation-<engine> library + image; it ALSO means you (the operator) must supply that engine's own warehouse connection (set validation.createWarehouseSecret=false and provide a Secret with THAT engine's keys — a Trino library reads different keys than POSTGRES_*) and configure your dbt team images with that engine's dbt profile. See the validation: block in values.yaml." $eng) -}}
+{{- $supported := list "postgres" "trino" -}}
+{{- if not (has $eng $supported) -}}
+{{- fail (printf "validation.engine=%q is not available: only %s have a published continuo-validation-runner image today. Adding an engine means publishing its continuo-validation-<engine> library + image; it ALSO means you (the operator) must supply that engine's own warehouse connection (set validation.createWarehouseSecret=false and provide a Secret with THAT engine's keys — e.g. the trino library reads TRINO_*, not POSTGRES_*) and configure your dbt team images with that engine's dbt profile. See the validation: block in values.yaml." $eng (join ", " $supported)) -}}
 {{- end -}}
 {{- include "continuo.image" (dict "root" . "name" (printf "validation-runner-%s" $eng)) -}}
 {{- end -}}
