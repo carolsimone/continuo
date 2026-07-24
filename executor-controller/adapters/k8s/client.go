@@ -890,7 +890,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 }
 
 // buildSeedBuildPodSpec constructs the PodSpec for a seed-build Job.
-// It mirrors buildPodSpec (production team image + standard DBT_POSTGRES_* +
+// It mirrors buildPodSpec (production team image + warehouse-Secret envFrom +
 // SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
 // generate_schema_name macro materializes the seed into the candidate schema.
 // ImageTag must be non-empty — the team image must be explicitly versioned.
@@ -956,7 +956,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 // /shared in every container:
 //   - initContainer "compile": team image runs the service's resolved compile
 //     command and copies the manifest from its declared path into
-//     /shared/manifest.json, with the standard DBT_POSTGRES_* warehouse envs.
+//     /shared/manifest.json, with the warehouse-Secret envFrom attached.
 //   - when params.CandidateSchema is set, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", export and rehearse the service's
 //     partial-parse cache (see buildParseExportCommand) into

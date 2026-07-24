@@ -90,7 +90,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	k8sDB := connectPostgres(t, pgHost, "continuo_k8s")
 	stateDB := connectPostgres(t, pgHost, "continuo_state")
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
-	dbtDB := connectPostgres(t, pgHost, getEnv("DBT_POSTGRES_DB", "continuo_dbt"))
+	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
 	remediationDB := connectPostgres(t, pgHost, "continuo_remediation")
 	remediationAgentDB := connectPostgres(t, pgHost, "continuo_remediation_agent")
 
