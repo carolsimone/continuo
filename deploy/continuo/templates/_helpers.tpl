@@ -39,8 +39,8 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 
 {{/* The validation-runner image for the SRE-selected engine. The engine name maps to
-     the continuo-validation-runner-<engine> image; PostgreSQL is the only supported
-     engine until the executor candidate-schema lifecycle is engine-aware. */}}
+     the continuo-validation-runner-<engine> image; the $supported list is the set of
+     engines with a published library + image. */}}
 {{- define "continuo.validation.image" -}}
 {{- $eng := .Values.validation.engine | default "postgres" -}}
 {{- $supported := list "postgres" "trino" -}}
@@ -62,12 +62,16 @@ app.kubernetes.io/name: {{ .service }}
 {{- define "continuo.validation.warehouseSecretName" -}}
 {{- $v := .Values -}}
 {{- if $v.validation.createWarehouseSecret -}}
+  {{- $eng := $v.validation.engine | default "postgres" -}}
+  {{- if ne $eng "postgres" -}}
+    {{- fail (printf "validation.createWarehouseSecret=true only works with validation.engine=postgres: the generated Secret carries POSTGRES_* keys, which the %q engine library does not read. Set validation.createWarehouseSecret=false and supply validation.warehouseSecret with that engine's keys (e.g. trino reads TRINO_HOST/TRINO_CATALOG)." $eng) -}}
+  {{- end -}}
   {{- if and $v.postgresql.enabled (not $v.postgresql.auth.existingSecret) -}}
     {{- include "continuo.postgresql.fullname" . -}}
   {{- else if and (not $v.postgresql.enabled) $v.externalDatabase.password (not $v.externalDatabase.existingSecret) -}}
     {{- default (printf "%s-warehouse-validation" (include "continuo.fullname" .)) $v.validation.warehouseSecret -}}
   {{- else -}}
-    {{- fail "validation.createWarehouseSecret cannot build the warehouse Secret when the Postgres password lives in an existingSecret (or the engine is not postgres); set validation.createWarehouseSecret=false and supply validation.warehouseSecret" -}}
+    {{- fail "validation.createWarehouseSecret cannot build the warehouse Secret when the Postgres password lives in an existingSecret; set validation.createWarehouseSecret=false and supply validation.warehouseSecret" -}}
   {{- end -}}
 {{- else -}}
   {{- required "set validation.warehouseSecret (the name of your warehouse credentials Secret) when validation.createWarehouseSecret=false" $v.validation.warehouseSecret -}}

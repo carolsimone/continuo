@@ -212,7 +212,7 @@ jobs:
 
       - name: Smoke-test validation-runner image
         # Tier-4 image tests (pytest -m image): build the slim postgres engine image
-        # with the same Dockerfile/build-arg the e2e provision uses, then assert it
+        # with the same Dockerfile the e2e provision uses, then assert it
         # fails structurally — the baked adapter is discovered and missing
         # POSTGRES_* env yields a structured result block, not a raw traceback.
         # Runs on the runner (not in a container) because the tests invoke

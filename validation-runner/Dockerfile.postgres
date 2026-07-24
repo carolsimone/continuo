@@ -12,7 +12,8 @@ ARG POSTGRES_LIB_VERSION=0.2.0
 # continuo packages, in the separate --no-deps transaction below — never as an
 # --extra-index-url on the general install, where pip would consider it for EVERY
 # dependency (boto3, psycopg2, transitives) and could resolve any of them from the
-# untrusted index (dependency confusion). Unset once the packages are on real PyPI.
+# untrusted index (dependency confusion). Normally unset: the continuo packages
+# live on real PyPI.
 ARG CONTINUO_INDEX_URL=""
 COPY . /src/validation-runner
 # Two transactions keep the index scopes airtight:
