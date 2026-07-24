@@ -294,8 +294,9 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // to the matching continuo-validation-runner-<engine> image; the executor runs it
 // verbatim. The warehouse connection is not injected inline: the operator-owned
 // Secret named by VALIDATION_WAREHOUSE_SECRET is attached to the container via
-// envFrom, so the validation credentials are owned by the operator and separate from
-// both the executor's own DB and the dbt team images.
+// envFrom, so the warehouse credentials are owned by the operator and separate from
+// the executor's own DB. The dbt-running team containers attach this same Secret —
+// it is the single warehouse connection for validation and dbt jobs alike.
 //
 // build_from_sql nodes receive CANDIDATE_SQL_URI + S3 credentials directly on the
 // single main container; the runner fetches the compiled SQL from S3 itself. There
@@ -1133,8 +1134,9 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 func (c *K8sClient) setClientsetForTest(cs kubernetes.Interface) { c.clientset = cs }
 
 // buildPodSpec constructs the PodSpec for a query executor job.
-// PostgreSQL connection env vars are forwarded from the executor-controller's
-// own environment so dbt pods can reach the same database.
+// The warehouse connection arrives via envFrom of the operator-owned Secret named
+// by VALIDATION_WAREHOUSE_SECRET; the team image's dbt profile reads the Secret's
+// engine-native keys (POSTGRES_*, TRINO_*, ...).
 // Returns an error if ImageTag is empty — content-addressed tags must be explicit;
 // falling back to "latest" is intentionally refused.
 // When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
