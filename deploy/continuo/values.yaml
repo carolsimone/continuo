@@ -246,11 +246,10 @@ validation:
   # │  3. `warehouseDatabase:` → the postgres DATABASE name. Other engines do not   │
   # │     have a flat "database" (Trino → catalog.schema, BigQuery → dataset), so   │
   # │     this value's meaning changes with the engine.                            │
-  # │  4. The executor's dbt-job connection (services.executor-controller.env      │
-  # │     DBT_POSTGRES_DB, below) forwards a POSTGRES dbt profile to your dbt team  │
-  # │     images. A non-postgres warehouse ALSO needs those team images configured │
-  # │     with that engine's dbt profile — that is your dbt setup, not just a value │
-  # │     here.                                                                     │
+  # │  4. Your dbt team images: dbt job pods receive the warehouse Secret's keys   │
+  # │     verbatim (envFrom), so each team's profiles.yml must read YOUR engine's  │
+  # │     native env names (POSTGRES_*, TRINO_*, ...) and the image must bake that │
+  # │     engine's dbt adapter — that is your dbt setup, not a value here.         │
   # └────────────────────────────────────────────────────────────────────────────┘
   #
   # `engine` resolves to the slim continuo-validation-runner-<engine> image the executor
@@ -273,8 +272,9 @@ validation:
   # REQUIRED when createWarehouseSecret=false — this is where a non-postgres operator
   # points at their own Secret carrying that engine's connection env.
   warehouseSecret: ""
-  # POSTGRES DATABASE the runner writes candidate schemas into. Also fed to the dbt job
-  # pods as DBT_POSTGRES_DB (below). For a non-postgres engine this maps to that engine's
+  # POSTGRES DATABASE the warehouse Secret carries as POSTGRES_DB — the database the
+  # validation runner writes candidate schemas into and dbt job pods materialize into
+  # (both read it from the Secret). For a non-postgres engine this maps to that engine's
   # namespace concept, not a postgres database.
   warehouseDatabase: continuo_dbt
 
@@ -405,14 +405,13 @@ services:
       VALIDATION_IMAGE_PULL_POLICY: Always
       VALIDATION_IMAGE: __VALIDATION_IMAGE__
       VALIDATION_WAREHOUSE_SECRET: __VALIDATION_WAREHOUSE_SECRET__
-      S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__
-      # POSTGRES-ONLY. Forwarded (with the reused POSTGRES_* connection) to the dbt team-image
-      # job pods (compile/seed/run) as their dbt postgres profile — NOT to the validation
-      # runner, and NOT an executor warehouse connection (the executor no longer connects to
-      # the warehouse; candidate-schema create/drop run in the engine image). A non-postgres
-      # warehouse needs its dbt team images configured with that engine's dbt profile instead.
-      # Sourced from validation.warehouseDatabase so dbt and the runner target one database.
+      # COMPATIBILITY ONLY: current executor images read the warehouse connection
+      # from the Secret above and ignore this var, but images published before
+      # that change refuse to boot without it (the chart-level install test runs
+      # this chart against the previously published images). Remove once an
+      # executor image that no longer requires DBT_POSTGRES_DB is published.
       DBT_POSTGRES_DB: __VALIDATION_WAREHOUSE_DATABASE__
+      S3_SIDECAR_IMAGE: __S3_SIDECAR_IMAGE__
       HTTP_PORT: "8084"
       DOCKERHUB_USERNAME: __DOCKERHUB_USERNAME__
       # Tag for the per-TEAM dbt images (not continuo images); team image pinning is out of scope here.

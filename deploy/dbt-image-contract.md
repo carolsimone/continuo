@@ -33,13 +33,19 @@ that connects using the environment below.
 
 ## Environment your container receives
 
-Database (every Job):
+Database (every Job): the operator-owned warehouse Secret is attached to your
+container verbatim via `envFrom`, so your `profiles.yml` reads the deployment
+engine's native keys and your image bakes that engine's dbt adapter.
 
-| Variable | Meaning |
+| Variable (postgres engine) | Meaning |
 |---|---|
-| `DBT_POSTGRES_HOST` / `DBT_POSTGRES_PORT` | warehouse Postgres endpoint |
-| `DBT_POSTGRES_DB` | warehouse database (`continuo_dbt`) |
-| `DBT_POSTGRES_USER` / `DBT_POSTGRES_PASSWORD` | warehouse credentials |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | warehouse Postgres endpoint |
+| `POSTGRES_DB` | warehouse database (`continuo_dbt`) |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` | warehouse credentials |
+
+On a non-postgres deployment the Secret carries that engine's keys instead
+(e.g. trino: `TRINO_HOST`, `TRINO_CATALOG`, optional `TRINO_PORT`/`TRINO_USER`/
+`TRINO_HTTP_SCHEME`/`TRINO_PASSWORD`).
 
 Run context (scheduled runs only): `TASK_ID`, `SCHEDULE_ID`,
 `SCHEDULE_NAME`, `SERVICE_NAME`, `SCHEMA`, `TABLE_NAME`, `JOB_NAME`.

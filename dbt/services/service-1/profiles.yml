@@ -3,11 +3,11 @@ default:
   outputs:
     dev:
       type: postgres
-      host: "{{ env_var('DBT_POSTGRES_HOST', 'localhost') }}"
-      port: "{{ env_var('DBT_POSTGRES_PORT', '5432') | int }}"
-      dbname: "{{ env_var('DBT_POSTGRES_DB', 'continuo_dbt') }}"
-      user: "{{ env_var('DBT_POSTGRES_USER', 'continuo_svc') }}"
-      password: "{{ env_var('DBT_POSTGRES_PASSWORD', 'runner') }}"
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'continuo_dbt') }}"
+      user: "{{ env_var('POSTGRES_USER', 'continuo_svc') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'runner') }}"
       schema: e2e_schema
       threads: 4
 

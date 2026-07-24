@@ -294,8 +294,9 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // to the matching continuo-validation-runner-<engine> image; the executor runs it
 // verbatim. The warehouse connection is not injected inline: the operator-owned
 // Secret named by VALIDATION_WAREHOUSE_SECRET is attached to the container via
-// envFrom, so the validation credentials are owned by the operator and separate from
-// both the executor's own DB and the dbt team images.
+// envFrom, so the warehouse credentials are owned by the operator and separate from
+// the executor's own DB. The dbt-running team containers attach this same Secret —
+// it is the single warehouse connection for validation and dbt jobs alike.
 //
 // build_from_sql nodes receive CANDIDATE_SQL_URI + S3 credentials directly on the
 // single main container; the runner fetches the compiled SQL from S3 itself. There
@@ -318,10 +319,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	// Secret (envFrom), not inline env. Without it validation cannot connect, so
 	// fail the node permanently with an actionable reason rather than launch a pod
 	// that can only error.
-	warehouseSecret := os.Getenv("VALIDATION_WAREHOUSE_SECRET")
-	if warehouseSecret == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: validation warehouse secret not configured (set VALIDATION_WAREHOUSE_SECRET) for node %s",
-			events.ErrPermanent, p.NodeID)
+	whFrom, err := warehouseSecretEnvFrom("node " + p.NodeID)
+	if err != nil {
+		return corev1.PodSpec{}, err
 	}
 
 	op := p.ValidationOp
@@ -349,11 +349,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
 		Env:             mainEnv,
 		// Warehouse connection is operator-owned: the whole Secret lands as env.
-		EnvFrom: []corev1.EnvFromSource{{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: warehouseSecret},
-			},
-		}},
+		EnvFrom: whFrom,
 	}
 	mainContainer.SecurityContext = continuoImageSecurityContext()
 
@@ -414,10 +410,9 @@ func buildSchemaOpPodSpec(op, candidateSchema string) (corev1.PodSpec, error) {
 		return corev1.PodSpec{}, fmt.Errorf("%w: VALIDATION_IMAGE not configured (set it to the chosen engine's validation-runner image) for schema op %s",
 			events.ErrPermanent, op)
 	}
-	warehouseSecret := os.Getenv("VALIDATION_WAREHOUSE_SECRET")
-	if warehouseSecret == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: validation warehouse secret not configured (set VALIDATION_WAREHOUSE_SECRET) for schema op %s",
-			events.ErrPermanent, op)
+	whFrom, err := warehouseSecretEnvFrom("schema op " + op)
+	if err != nil {
+		return corev1.PodSpec{}, err
 	}
 	container := corev1.Container{
 		Name:            "schema-op",
@@ -429,11 +424,7 @@ func buildSchemaOpPodSpec(op, candidateSchema string) (corev1.PodSpec, error) {
 			{Name: "VALIDATION_OP", Value: op},
 		},
 		// Warehouse connection is operator-owned: the whole Secret lands as env.
-		EnvFrom: []corev1.EnvFromSource{{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: warehouseSecret},
-			},
-		}},
+		EnvFrom:         whFrom,
 		SecurityContext: continuoImageSecurityContext(),
 	}
 	return corev1.PodSpec{
@@ -658,20 +649,24 @@ func s3CredEnvVars() []corev1.EnvVar {
 	}
 }
 
-// dbtConnectionEnvVars is the release-independent dbt profile env every
-// dbt-running container receives. It is the ONLY env the parse rehearsal can
-// legitimately depend on: per-node vars (TASK_ID, TABLE_NAME, SCHEMA, ...) are
-// not rehearsable and DBT_TARGET_SCHEMA is added per candidate context. The
-// parse containers and the run pods MUST build from this same function — env
-// drift between them silently invalidates every hydrated cache.
-func dbtConnectionEnvVars() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
-		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
-		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
-		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
-		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+// warehouseSecretEnvFrom returns the envFrom source that attaches the
+// operator-owned warehouse Secret (named by VALIDATION_WAREHOUSE_SECRET) to a
+// dbt-running container. dbt team profiles read the Secret's engine-native
+// keys (POSTGRES_*, TRINO_*, ...) directly; the executor forwards no warehouse
+// connection env of its own. The compile parse rehearsal containers and every
+// dbt run/seed pod MUST attach this same source — connection drift between
+// them silently invalidates every hydrated partial-parse cache.
+func warehouseSecretEnvFrom(subject string) ([]corev1.EnvFromSource, error) {
+	name := os.Getenv("VALIDATION_WAREHOUSE_SECRET")
+	if name == "" {
+		return nil, fmt.Errorf("%w: validation warehouse secret not configured (set VALIDATION_WAREHOUSE_SECRET) for %s",
+			events.ErrPermanent, subject)
 	}
+	return []corev1.EnvFromSource{{
+		SecretRef: &corev1.SecretEnvSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: name},
+		},
+	}}, nil
 }
 
 // parseCacheInitContainer returns the s3-sidecar initContainer + emptyDir
@@ -886,7 +881,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 }
 
 // buildSeedBuildPodSpec constructs the PodSpec for a seed-build Job.
-// It mirrors buildPodSpec (production team image + standard DBT_POSTGRES_* +
+// It mirrors buildPodSpec (production team image + warehouse-Secret envFrom +
 // SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
 // generate_schema_name macro materializes the seed into the candidate schema.
 // ImageTag must be non-empty — the team image must be explicitly versioned.
@@ -915,7 +910,10 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
 	}
-	envVars = append(envVars, dbtConnectionEnvVars()...)
+	whFrom, err := warehouseSecretEnvFrom("seed-build job " + p.JobName)
+	if err != nil {
+		return corev1.PodSpec{}, err
+	}
 
 	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
@@ -927,6 +925,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         command,
 				Env:             envVars,
+				EnvFrom:         whFrom,
 				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
@@ -948,7 +947,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 // /shared in every container:
 //   - initContainer "compile": team image runs the service's resolved compile
 //     command and copies the manifest from its declared path into
-//     /shared/manifest.json, with the standard DBT_POSTGRES_* warehouse envs.
+//     /shared/manifest.json, with the warehouse-Secret envFrom attached.
 //   - when params.CandidateSchema is set, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", export and rehearse the service's
 //     partial-parse cache (see buildParseExportCommand) into
@@ -1050,6 +1049,13 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	// Upload container image: the shared minimal python+boto3 sidecar (NO dbt).
 	uploadImage := s3SidecarImage()
 
+	// Warehouse connection for every dbt-running init container (compile and the
+	// parse legs): the operator-owned Secret, attached via envFrom.
+	whFrom, err := warehouseSecretEnvFrom("compile job for service " + p.ServiceName)
+	if err != nil {
+		return corev1.PodSpec{}, err
+	}
+
 	mount := sharedVolumeMount()
 
 	// compile_uploader.py parses the bucket from MANIFEST_S3_URI; S3_BUCKET is
@@ -1073,7 +1079,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json" +
 						" && chmod 644 /shared/manifest.json",
 				},
-				Env:             dbtConnectionEnvVars(),
+				EnvFrom:         whFrom,
 				VolumeMounts:    []corev1.VolumeMount{mount},
 				SecurityContext: baseContainerSecurityContext(),
 			},
@@ -1092,16 +1098,14 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	}
 
 	if p.CandidateSchema != "" {
-		prodEnv := dbtConnectionEnvVars()
-		candEnv := append(dbtConnectionEnvVars(),
-			corev1.EnvVar{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema})
+		candEnv := []corev1.EnvVar{{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema}}
 		spec.InitContainers = append(spec.InitContainers,
 			corev1.Container{
 				Name:            "parse-prod",
 				Image:           teamImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "prod")},
-				Env:             prodEnv,
+				EnvFrom:         whFrom,
 				VolumeMounts:    []corev1.VolumeMount{mount},
 				SecurityContext: baseContainerSecurityContext(),
 			},
@@ -1111,6 +1115,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "candidate")},
 				Env:             candEnv,
+				EnvFrom:         whFrom,
 				VolumeMounts:    []corev1.VolumeMount{mount},
 				SecurityContext: baseContainerSecurityContext(),
 			})
@@ -1129,8 +1134,9 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 func (c *K8sClient) setClientsetForTest(cs kubernetes.Interface) { c.clientset = cs }
 
 // buildPodSpec constructs the PodSpec for a query executor job.
-// PostgreSQL connection env vars are forwarded from the executor-controller's
-// own environment so dbt pods can reach the same database.
+// The warehouse connection arrives via envFrom of the operator-owned Secret named
+// by VALIDATION_WAREHOUSE_SECRET; the team image's dbt profile reads the Secret's
+// engine-native keys (POSTGRES_*, TRINO_*, ...).
 // Returns an error if ImageTag is empty — content-addressed tags must be explicit;
 // falling back to "latest" is intentionally refused.
 // When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
@@ -1158,7 +1164,10 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 		{Name: "TABLE_NAME", Value: params.TableName},
 		{Name: "JOB_NAME", Value: params.JobName},
 	}
-	envVars = append(envVars, dbtConnectionEnvVars()...)
+	whFrom, err := warehouseSecretEnvFrom("dbt job " + params.JobName)
+	if err != nil {
+		return corev1.PodSpec{}, err
+	}
 
 	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
@@ -1170,6 +1179,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         command,
 				Env:             envVars,
+				EnvFrom:         whFrom,
 				SecurityContext: baseContainerSecurityContext(),
 			},
 		},

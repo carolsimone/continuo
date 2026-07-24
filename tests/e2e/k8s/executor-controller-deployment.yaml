@@ -130,8 +130,6 @@ spec:
               value: "local"
             - name: LOG_LEVEL
               value: "INFO"
-            - name: DBT_POSTGRES_DB
-              value: "continuo_dbt"
             - name: DBT_COMMANDS_CONFIG_PATH
               value: "/etc/continuo/dbt-commands.yaml"
             # S3 access for the validation Job: the executor forwards these into

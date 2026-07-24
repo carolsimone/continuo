@@ -6,9 +6,9 @@ and skipped by default. Run them inside the dbt-compile-and-load container:
   docker exec -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test \
     -e AWS_DEFAULT_REGION=us-east-1 \
     -e S3_ENDPOINT_URL=http://localstack:4566 -e S3_BUCKET=continuo -e S3_ENV=local \
-    -e DBT_POSTGRES_HOST=postgres -e DBT_POSTGRES_PORT=5432 \
-    -e DBT_POSTGRES_DB=continuo_dbt -e DBT_POSTGRES_USER=continuo_svc \
-    -e DBT_POSTGRES_PASSWORD=continuo \
+    -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
+    -e POSTGRES_DB=continuo_dbt -e POSTGRES_USER=continuo_svc \
+    -e POSTGRES_PASSWORD=continuo \
     dbt-compile-and-load uv run --with pytest pytest tests/test_upload.py -v -m integration
 """
 import json

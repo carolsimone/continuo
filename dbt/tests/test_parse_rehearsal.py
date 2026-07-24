@@ -93,11 +93,11 @@ def _run_parse(project_dir, target_path, env):
 
 def _base_env():
     env = dict(os.environ)
-    env.setdefault("DBT_POSTGRES_HOST", "postgres")
-    env.setdefault("DBT_POSTGRES_PORT", "5432")
-    env.setdefault("DBT_POSTGRES_DB", "continuo_dbt")
-    env.setdefault("DBT_POSTGRES_USER", "continuo_svc")
-    env.setdefault("DBT_POSTGRES_PASSWORD", "continuo")
+    env.setdefault("POSTGRES_HOST", "postgres")
+    env.setdefault("POSTGRES_PORT", "5432")
+    env.setdefault("POSTGRES_DB", "continuo_dbt")
+    env.setdefault("POSTGRES_USER", "continuo_svc")
+    env.setdefault("POSTGRES_PASSWORD", "continuo")
     # Parse-time env_var() reads must resolve; the values themselves are
     # irrelevant since `dbt parse` never opens a connection.
     return env
