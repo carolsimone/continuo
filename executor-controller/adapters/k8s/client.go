@@ -658,20 +658,24 @@ func s3CredEnvVars() []corev1.EnvVar {
 	}
 }
 
-// dbtConnectionEnvVars is the release-independent dbt profile env every
-// dbt-running container receives. It is the ONLY env the parse rehearsal can
-// legitimately depend on: per-node vars (TASK_ID, TABLE_NAME, SCHEMA, ...) are
-// not rehearsable and DBT_TARGET_SCHEMA is added per candidate context. The
-// parse containers and the run pods MUST build from this same function — env
-// drift between them silently invalidates every hydrated cache.
-func dbtConnectionEnvVars() []corev1.EnvVar {
-	return []corev1.EnvVar{
-		{Name: "DBT_POSTGRES_HOST", Value: os.Getenv("POSTGRES_HOST")},
-		{Name: "DBT_POSTGRES_PORT", Value: os.Getenv("POSTGRES_PORT")},
-		{Name: "DBT_POSTGRES_DB", Value: os.Getenv("DBT_POSTGRES_DB")},
-		{Name: "DBT_POSTGRES_USER", Value: os.Getenv("POSTGRES_USER")},
-		{Name: "DBT_POSTGRES_PASSWORD", Value: os.Getenv("POSTGRES_PASSWORD")},
+// warehouseSecretEnvFrom returns the envFrom source that attaches the
+// operator-owned warehouse Secret (named by VALIDATION_WAREHOUSE_SECRET) to a
+// dbt-running container. dbt team profiles read the Secret's engine-native
+// keys (POSTGRES_*, TRINO_*, ...) directly; the executor forwards no warehouse
+// connection env of its own. The compile parse rehearsal containers and every
+// dbt run/seed pod MUST attach this same source — connection drift between
+// them silently invalidates every hydrated partial-parse cache.
+func warehouseSecretEnvFrom(ctx string) ([]corev1.EnvFromSource, error) {
+	name := os.Getenv("VALIDATION_WAREHOUSE_SECRET")
+	if name == "" {
+		return nil, fmt.Errorf("%w: validation warehouse secret not configured (set VALIDATION_WAREHOUSE_SECRET) for %s",
+			events.ErrPermanent, ctx)
 	}
+	return []corev1.EnvFromSource{{
+		SecretRef: &corev1.SecretEnvSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: name},
+		},
+	}}, nil
 }
 
 // parseCacheInitContainer returns the s3-sidecar initContainer + emptyDir
@@ -915,7 +919,10 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 		{Name: "JOB_NAME", Value: p.JobName},
 		{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema},
 	}
-	envVars = append(envVars, dbtConnectionEnvVars()...)
+	whFrom, err := warehouseSecretEnvFrom("seed-build job " + p.JobName)
+	if err != nil {
+		return corev1.PodSpec{}, err
+	}
 
 	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
@@ -927,6 +934,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         command,
 				Env:             envVars,
+				EnvFrom:         whFrom,
 				SecurityContext: baseContainerSecurityContext(),
 			},
 		},
@@ -1050,6 +1058,13 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	// Upload container image: the shared minimal python+boto3 sidecar (NO dbt).
 	uploadImage := s3SidecarImage()
 
+	// Warehouse connection for every dbt-running init container (compile and the
+	// parse legs): the operator-owned Secret, attached via envFrom.
+	whFrom, err := warehouseSecretEnvFrom("compile job for service " + p.ServiceName)
+	if err != nil {
+		return corev1.PodSpec{}, err
+	}
+
 	mount := sharedVolumeMount()
 
 	// compile_uploader.py parses the bucket from MANIFEST_S3_URI; S3_BUCKET is
@@ -1073,7 +1088,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json" +
 						" && chmod 644 /shared/manifest.json",
 				},
-				Env:             dbtConnectionEnvVars(),
+				EnvFrom:         whFrom,
 				VolumeMounts:    []corev1.VolumeMount{mount},
 				SecurityContext: baseContainerSecurityContext(),
 			},
@@ -1092,16 +1107,14 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	}
 
 	if p.CandidateSchema != "" {
-		prodEnv := dbtConnectionEnvVars()
-		candEnv := append(dbtConnectionEnvVars(),
-			corev1.EnvVar{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema})
+		candEnv := []corev1.EnvVar{{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema}}
 		spec.InitContainers = append(spec.InitContainers,
 			corev1.Container{
 				Name:            "parse-prod",
 				Image:           teamImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "prod")},
-				Env:             prodEnv,
+				EnvFrom:         whFrom,
 				VolumeMounts:    []corev1.VolumeMount{mount},
 				SecurityContext: baseContainerSecurityContext(),
 			},
@@ -1111,6 +1124,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "candidate")},
 				Env:             candEnv,
+				EnvFrom:         whFrom,
 				VolumeMounts:    []corev1.VolumeMount{mount},
 				SecurityContext: baseContainerSecurityContext(),
 			})
@@ -1158,7 +1172,10 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 		{Name: "TABLE_NAME", Value: params.TableName},
 		{Name: "JOB_NAME", Value: params.JobName},
 	}
-	envVars = append(envVars, dbtConnectionEnvVars()...)
+	whFrom, err := warehouseSecretEnvFrom("dbt job " + params.JobName)
+	if err != nil {
+		return corev1.PodSpec{}, err
+	}
 
 	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
@@ -1170,6 +1187,7 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Command:         command,
 				Env:             envVars,
+				EnvFrom:         whFrom,
 				SecurityContext: baseContainerSecurityContext(),
 			},
 		},

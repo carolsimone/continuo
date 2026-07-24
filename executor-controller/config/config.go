@@ -25,15 +25,6 @@ type Config struct {
 // Load reads configuration from environment variables.
 // v accumulates missing required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator) Config {
-	// DBT_POSTGRES_DB names the warehouse database dbt job pods materialize into; the
-	// executor forwards it (with the reused POSTGRES_* connection) to those pods via
-	// k8s dbtConnectionEnvVars. It is consumed there through os.Getenv, not stored on
-	// Config — required here only so a missing value fails fast at boot rather than
-	// silently forwarding an empty database name to every dbt Job. The executor itself
-	// no longer connects to the warehouse (candidate-schema lifecycle is an engine-image
-	// Job), so there is no warehouse connection to hold.
-	_ = v.Require("DBT_POSTGRES_DB")
-
 	return Config{
 		Redis:    pkgconfig.LoadRedis(v),
 		Postgres: pkgconfig.LoadPostgres(v),

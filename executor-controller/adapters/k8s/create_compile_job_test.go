@@ -12,6 +12,7 @@ import (
 
 func TestCreateCompileJob_InitCompilesMainUploads(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	c := newValidationTestClient()
 	p := ValidationJobParams{
 		JobName: "compile-svc-rel", ReleaseID: "rel-1", NodeID: "core",
@@ -41,6 +42,7 @@ func TestCreateCompileJob_InitCompilesMainUploads(t *testing.T) {
 
 func TestCreateCompileJob_RespectsS3SidecarImageEnv(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	t.Setenv("S3_SIDECAR_IMAGE", "ghcr.io/acme/s3-sidecar:v2")
 	c := newValidationTestClient()
 	p := ValidationJobParams{
@@ -55,6 +57,7 @@ func TestCreateCompileJob_RespectsS3SidecarImageEnv(t *testing.T) {
 }
 
 func TestCreateCompileJob_EmptyImageTagErrors(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	c := newValidationTestClient()
 	p := ValidationJobParams{JobName: "x", ServiceName: "core", NodeID: "core",
 		ManifestS3URI: "s3://b/k", Namespace: "default"}
@@ -67,6 +70,7 @@ func TestCreateCompileJob_EmptyImageTagErrors(t *testing.T) {
 // the resolved parse argv twice per context, and four PARSE_* env vars added
 // to the upload container so it also ships the exported msgpacks to S3.
 func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	p := ValidationJobParams{
 		ServiceName:         "core",
 		ImageTag:            "abc123",
@@ -90,9 +94,12 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 	prod := spec.InitContainers[1]
 	cand := spec.InitContainers[2]
 
-	assert.Equal(t, dbtConnectionEnvVars(), prod.Env, "parse-prod env must be exactly dbtConnectionEnvVars(), no DBT_TARGET_SCHEMA")
-	wantCandEnv := append(dbtConnectionEnvVars(), corev1.EnvVar{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema})
-	assert.Equal(t, wantCandEnv, cand.Env)
+	assert.Equal(t, wantWarehouseEnvFrom(), prod.EnvFrom,
+		"parse-prod connection comes from the warehouse Secret alone")
+	assert.Empty(t, prod.Env, "parse-prod carries no inline env, in particular no DBT_TARGET_SCHEMA")
+	assert.Equal(t, wantWarehouseEnvFrom(), cand.EnvFrom)
+	assert.Equal(t, []corev1.EnvVar{{Name: "DBT_TARGET_SCHEMA", Value: p.CandidateSchema}}, cand.Env,
+		"parse-candidate inline env is exactly DBT_TARGET_SCHEMA")
 
 	for ctx, ctr := range map[string]corev1.Container{"prod": prod, "candidate": cand} {
 		require.Len(t, ctr.Command, 3)
@@ -125,6 +132,7 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 // keeps the two-container layout: a single "compile" initContainer and an
 // upload container carrying no PARSE_* env.
 func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	p := ValidationJobParams{
 		ServiceName:   "core",
 		ImageTag:      "abc123",
