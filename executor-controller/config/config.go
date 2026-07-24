@@ -25,6 +25,13 @@ type Config struct {
 // Load reads configuration from environment variables.
 // v accumulates missing required vars; check v.Missing() after calling.
 func Load(v *pkgconfig.Validator) Config {
+	// Every Job this service creates (validation, schema-op, compile, seed, run)
+	// attaches the warehouse Secret named by VALIDATION_WAREHOUSE_SECRET via
+	// envFrom. It is consumed in the k8s adapter through os.Getenv, not stored on
+	// Config — required here only so a missing name fails fast at boot rather
+	// than permanently failing every Job at dispatch time.
+	_ = v.Require("VALIDATION_WAREHOUSE_SECRET")
+
 	return Config{
 		Redis:    pkgconfig.LoadRedis(v),
 		Postgres: pkgconfig.LoadPostgres(v),

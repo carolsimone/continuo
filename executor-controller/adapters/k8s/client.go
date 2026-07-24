@@ -318,10 +318,9 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	// Secret (envFrom), not inline env. Without it validation cannot connect, so
 	// fail the node permanently with an actionable reason rather than launch a pod
 	// that can only error.
-	warehouseSecret := os.Getenv("VALIDATION_WAREHOUSE_SECRET")
-	if warehouseSecret == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: validation warehouse secret not configured (set VALIDATION_WAREHOUSE_SECRET) for node %s",
-			events.ErrPermanent, p.NodeID)
+	whFrom, err := warehouseSecretEnvFrom("node " + p.NodeID)
+	if err != nil {
+		return corev1.PodSpec{}, err
 	}
 
 	op := p.ValidationOp
@@ -349,11 +348,7 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 		Command:         validationmodel.ValidationCommand(p.NodeType, p.TableName),
 		Env:             mainEnv,
 		// Warehouse connection is operator-owned: the whole Secret lands as env.
-		EnvFrom: []corev1.EnvFromSource{{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: warehouseSecret},
-			},
-		}},
+		EnvFrom: whFrom,
 	}
 	mainContainer.SecurityContext = continuoImageSecurityContext()
 
@@ -414,10 +409,9 @@ func buildSchemaOpPodSpec(op, candidateSchema string) (corev1.PodSpec, error) {
 		return corev1.PodSpec{}, fmt.Errorf("%w: VALIDATION_IMAGE not configured (set it to the chosen engine's validation-runner image) for schema op %s",
 			events.ErrPermanent, op)
 	}
-	warehouseSecret := os.Getenv("VALIDATION_WAREHOUSE_SECRET")
-	if warehouseSecret == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: validation warehouse secret not configured (set VALIDATION_WAREHOUSE_SECRET) for schema op %s",
-			events.ErrPermanent, op)
+	whFrom, err := warehouseSecretEnvFrom("schema op " + op)
+	if err != nil {
+		return corev1.PodSpec{}, err
 	}
 	container := corev1.Container{
 		Name:            "schema-op",
@@ -429,11 +423,7 @@ func buildSchemaOpPodSpec(op, candidateSchema string) (corev1.PodSpec, error) {
 			{Name: "VALIDATION_OP", Value: op},
 		},
 		// Warehouse connection is operator-owned: the whole Secret lands as env.
-		EnvFrom: []corev1.EnvFromSource{{
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: warehouseSecret},
-			},
-		}},
+		EnvFrom:         whFrom,
 		SecurityContext: continuoImageSecurityContext(),
 	}
 	return corev1.PodSpec{

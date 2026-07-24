@@ -375,3 +375,5 @@ docker run --rm -v continuo_neo4j_data:/data alpine rm -f /data/databases/store_
 docker-compose rm -f neo4j
 docker-compose up -d --force-recreate neo4j
 ```
+
+`E2E_WAREHOUSE_DB` (default `continuo_dbt`) selects the warehouse database the harness inspects for dbt-materialized tables.
