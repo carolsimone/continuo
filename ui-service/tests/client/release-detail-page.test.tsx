@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import ReleaseDetailPage from '../../src/client/ReleaseDetailPage';
 
@@ -75,9 +75,7 @@ function proposalCallCount(fetchMock: ReturnType<typeof vi.fn>): number {
 
 // Flush pending microtasks + zero-delay timers so React applies state updates.
 async function flush() {
-  await vi.advanceTimersByTimeAsync(0);
-  await Promise.resolve();
-  await Promise.resolve();
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 }
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -163,7 +161,7 @@ describe('ReleaseDetailPage — proposal link polling', () => {
 
     // Proposal lands after the page is already open.
     proposals.current = [PROPOSAL_G];
-    await vi.advanceTimersByTimeAsync(5000);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     await flush();
 
     expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
@@ -180,7 +178,7 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
     const settled = proposalCallCount(fetchMock);
 
-    await vi.advanceTimersByTimeAsync(30000); // 6 poll intervals
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); }); // 6 poll intervals
     expect(proposalCallCount(fetchMock)).toBe(settled); // no further polling
   });
 
@@ -191,11 +189,12 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     renderDetail();
-    await vi.advanceTimersByTimeAsync(190000); // past the 180s cap
+    await flush();
+    await act(async () => { await vi.advanceTimersByTimeAsync(190000); }); // past the 180s cap
     const capped = proposalCallCount(fetchMock);
     expect(capped).toBeGreaterThanOrEqual(36); // interval delivered the full cap, not a short-circuit
 
-    await vi.advanceTimersByTimeAsync(60000);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
     expect(proposalCallCount(fetchMock)).toBe(capped); // capped, no more polling
   });
 
@@ -210,7 +209,7 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     const afterMount = proposalCallCount(fetchMock);
     expect(afterMount).toBeLessThanOrEqual(1); // single best-effort fetch, no interval
 
-    await vi.advanceTimersByTimeAsync(30000);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
     expect(proposalCallCount(fetchMock)).toBe(afterMount);
   });
 
@@ -225,7 +224,7 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     const beforeUnmount = proposalCallCount(fetchMock);
 
     unmount();
-    await vi.advanceTimersByTimeAsync(30000);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
     expect(proposalCallCount(fetchMock)).toBe(beforeUnmount); // no polling after unmount
   });
 
@@ -255,9 +254,9 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     expect(screen.queryByText(/Proposed fix available/)).not.toBeInTheDocument();
 
     // Two polls fire while both responses are still in flight (overlapping).
-    await vi.advanceTimersByTimeAsync(5000); // poll A (older)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); }); // poll A (older)
     const pollA = deferreds[deferreds.length - 1];
-    await vi.advanceTimersByTimeAsync(5000); // poll B (newer)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); }); // poll B (newer)
     const pollB = deferreds[deferreds.length - 1];
 
     // Newer poll B resolves first: finds the proposal, shows the link, stops polling.
