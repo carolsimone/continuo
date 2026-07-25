@@ -6,7 +6,7 @@ dependencies = [
     "sqlglot>=30.13.0",
     "redis>=5.0.0",
     "grpcio>=1.62.0",
-    "protobuf>=4.25.0",
+    "protobuf>=7.35.1",
     "boto3>=1.34.0",
 ]
 
