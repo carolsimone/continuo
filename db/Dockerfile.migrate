@@ -1,4 +1,4 @@
-FROM flyway/flyway:10
+FROM flyway/flyway:13
 
 # The base image runs as root and defines no non-root user. Migrations need no
 # privileges: install the tooling as root, hand /flyway (Flyway writes its

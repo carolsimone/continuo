@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 # Minimal S3 I/O sidecar for compile and per-node dbt Jobs. NO dbt — keeps S3 access out
 # of every dbt image. boto3 only. compile_uploader.py uploads the compiled manifest (and,
 # optionally, partial-parse msgpack artifacts) to S3 (compile leg). parse_cache_fetcher.py
