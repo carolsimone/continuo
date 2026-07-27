@@ -1,6 +1,11 @@
 # dbt
 
-Dockerized dbt (PostgreSQL) services, each running isolated dbt models as containerized jobs.
+Dockerized dbt (PostgreSQL) job images. The platform owns the shared image
+and the command-dispatch mechanism (`base/`, `dbt-commands.yaml`) — it does
+not own dbt model definitions. `services/service-1/2/3` below are throwaway
+e2e test fixtures, not production content; real teams own their dbt models
+in their own repo (e.g. [`continuo-dbt-demo`](https://github.com/carolsimone/continuo-dbt-demo))
+and ship them as their own service image built on this base.
 
 ## Job, not a service
 
@@ -19,9 +24,11 @@ Postgres warehouse via `POSTGRES_HOST`/`POSTGRES_DB`/etc. env vars, not a
 throwaway file-based database. Either way, a Job runs one dbt invocation and
 exits — no gRPC/HTTP surface, no owned datastore, no persistent process. Its
 behavior is pinned to whatever `dbt-commands.yaml` resolves, so this image
-itself is very unlikely to need touching for a new team; day-to-day changes
-are to the dbt models under `services/*`, or to `dbt-commands.yaml` for a new
-command dialect.
+itself is very unlikely to need touching for a new team. Day-to-day changes
+to platform-owned pieces are the shared `base/` image or `dbt-commands.yaml`
+for a new command dialect — the dbt models themselves are each team's own,
+living in their own repo, not under `services/*` here (those are e2e
+fixtures only).
 
 `dbt_upload` (below) is a different kind of container: a producer-side CLI
 that compiles and publishes a service's manifest, run manually via
@@ -43,7 +50,7 @@ dbt/
   .env.hetzner              # Hetzner credentials (gitignored)
   Dockerfile.upload         # Image for dbt-compile-and-load service
   base/                     # Shared Docker base image (Python 3.12 + dbt-postgres)
-  services/
+  services/                # e2e test fixtures only, not production content
     service-1/              # models: table_a, table_b, table_c
     service-2/              # models: table_g, table_h
     service-3/              # models: table_d, table_e, table_f, table_i, table_j
