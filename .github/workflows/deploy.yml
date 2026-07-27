@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   detect-changes:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       release: ${{ steps.filter.outputs.release }}
       base: ${{ steps.filter.outputs.base }}
@@ -188,7 +188,7 @@ jobs:
     # (publish-base.yml remains as a manual backfill entry point.)
     if: needs.detect-changes.outputs.base == 'true'
     needs: detect-changes
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: write
@@ -321,7 +321,7 @@ jobs:
     needs:
       - detect-changes
       - build-publish
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Deploy to Hetzner
         uses: appleboy/ssh-action@v1
