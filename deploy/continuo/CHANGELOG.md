@@ -12,6 +12,21 @@ shipped in those.
 
 ## [Unreleased]
 
+### Fixed
+- `values.schema.json` was rejecting the existing `services[].image` override
+  and any resource key beyond `cpu`/`memory` (e.g. `ephemeral-storage`,
+  `nvidia.com/gpu`) — both are valid, already-supported overrides that would
+  have blocked upgrades for anyone using them.
+- `templates/NOTES.txt` advertised an HTTPS URL regardless of
+  `ingress.tls.enabled`, a fixed "password" login regardless of
+  `dex.demoUser.passwordHash` overrides, and omitted the Dex port-forward/
+  `/etc/hosts` steps the quickstart login actually needs when Ingress is off.
+- `dbt/README.md` described the dispatched dbt Jobs as running
+  `base/entrypoint.sh` against a throwaway DuckDB file; in reality
+  `executor-controller` sets `Command` explicitly from
+  `deploy/continuo/files/dbt-commands.yaml` (bypassing the image entrypoint)
+  and every service's `profiles.yml` targets real Postgres.
+
 ### Added
 - `values.schema.json` validates `values.yaml` structure and types on `helm
   lint`/`install`/`upgrade`, catching typos and wrong-shaped overrides before

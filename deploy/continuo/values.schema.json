@@ -11,26 +11,17 @@
     "defaultResources", "services"
   ],
   "definitions": {
+    "resourceList": {
+      "description": "Kubernetes ResourceList: arbitrary resource names (cpu, memory, ephemeral-storage, hugepages-*, extended resources like nvidia.com/gpu) mapped to quantity strings. Passed straight through toYaml in deployment.yaml, so this must not restrict the key set to a fixed cpu/memory pair.",
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
     "resourceSpec": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "requests": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "cpu": {"type": "string"},
-            "memory": {"type": "string"}
-          }
-        },
-        "limits": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "cpu": {"type": "string"},
-            "memory": {"type": "string"}
-          }
-        }
+        "requests": {"$ref": "#/definitions/resourceList"},
+        "limits": {"$ref": "#/definitions/resourceList"}
       }
     },
     "imageSpec": {
@@ -337,6 +328,10 @@
         "properties": {
           "name": {"type": "string"},
           "enabled": {"type": "boolean"},
+          "image": {
+            "type": "string",
+            "description": "Full image ref override, e.g. for a custom build. Empty/absent = derived via the continuo.image helper (registry/prefix/continuo-<name>:tag)."
+          },
           "replicas": {"type": "integer", "minimum": 0},
           "httpPort": {"type": "integer"},
           "grpcPort": {"type": "integer"},

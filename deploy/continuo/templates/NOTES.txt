@@ -23,21 +23,33 @@ UPGRADE NOTES
 {{- end }}
 
 ACCESS
-{{- if .Values.ingress.enabled }}
-  Continuo UI: https://{{ .Values.ingress.host }}
-{{- else }}
-  No Ingress configured (ingress.enabled=false). Reach the UI locally with:
+  Continuo UI: {{ .Values.auth.publicUrl }}
+{{- if not .Values.ingress.enabled }}
+
+  No Ingress configured (ingress.enabled=false) — port-forward first:
 
     kubectl port-forward -n {{ .Release.Namespace }} svc/ui-service {{ $uiPort }}:{{ $uiPort }}
-
-  then open {{ .Values.auth.publicUrl }}
 {{- end }}
 
 {{- if .Values.dex.enabled }}
 
 QUICKSTART LOGIN (dex.enabled=true — demo identity provider, not for production)
-  Email:    {{ .Values.dex.demoUser.email }}
+  Email: {{ .Values.dex.demoUser.email }}
+{{- if eq .Values.dex.demoUser.passwordHash "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" }}
   Password: password
+{{- else }}
+  Password: (dex.demoUser.passwordHash was overridden — use the cleartext for that hash)
+{{- end }}
+{{- if not .Values.ingress.enabled }}
+
+  OIDC needs the browser and ui-service to resolve the same issuer hostname,
+  so port-forwarding ui-service alone is not enough to log in. Also run:
+
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "continuo.dex.fullname" . }} 5556:5556 &
+    echo "127.0.0.1 {{ include "continuo.dex.fullname" . }}" | sudo tee -a /etc/hosts
+
+  (see deploy/continuo/README.md for why the /etc/hosts line is needed)
+{{- end }}
 
   Set dex.enabled=false and configure auth.* for a real OIDC provider before
   running this anywhere reachable by untrusted users.

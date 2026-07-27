@@ -1,19 +1,27 @@
 # dbt
 
-Dockerized dbt (DuckDB) services, each running isolated dbt models as containerized jobs.
+Dockerized dbt (PostgreSQL) services, each running isolated dbt models as containerized jobs.
 
 ## Job, not a service
 
 The images built from `base/` and `services/*` are not long-running services
 (see the [top-level README](../README.md) for those) — `executor-controller`
-dispatches each as a one-shot Kubernetes `Job` per scheduled run. The shared
-`dbt-base` entrypoint (`base/entrypoint.sh`) reads a handful of env vars
-(`SCHEDULE_NAME`, `TABLE_NAME`, `SCHEMA`, `JOB_NAME`, `SERVICE_NAME`), runs
-`dbt run --select "$TABLE_NAME"` once against a throwaway DuckDB file, and
+dispatches each as a one-shot Kubernetes `Job` per scheduled run, setting the
+container's `Command` explicitly from
+[`deploy/continuo/files/dbt-commands.yaml`](../deploy/continuo/files/dbt-commands.yaml)
+(via the executor's `CommandResolver` — the default dialect, or a per-team
+override such as `wise-dbt run-model`). That `Command` replaces the image's
+own `base/entrypoint.sh` ENTRYPOINT entirely for every dispatched Job — the
+resolved verb depends on the run's Operation and node type (`run`/`seed`/
+`snapshot`/`test`/`build`), not always a plain `dbt run`. The base image
+installs `dbt-postgres`, and every service's `profiles.yml` targets a real
+Postgres warehouse via `POSTGRES_HOST`/`POSTGRES_DB`/etc. env vars, not a
+throwaway file-based database. Either way, a Job runs one dbt invocation and
 exits — no gRPC/HTTP surface, no owned datastore, no persistent process. Its
-behavior is pinned to that single dbt invocation, so this entrypoint itself is
-very unlikely to need touching; day-to-day changes are to the dbt models
-under `services/*` instead.
+behavior is pinned to whatever `dbt-commands.yaml` resolves, so this image
+itself is very unlikely to need touching for a new team; day-to-day changes
+are to the dbt models under `services/*`, or to `dbt-commands.yaml` for a new
+command dialect.
 
 `dbt_upload` (below) is a different kind of container: a producer-side CLI
 that compiles and publishes a service's manifest, run manually via
@@ -34,7 +42,7 @@ dbt/
   targets.yaml              # Named S3 target profiles (localstack, hetzner)
   .env.hetzner              # Hetzner credentials (gitignored)
   Dockerfile.upload         # Image for dbt-compile-and-load service
-  base/                     # Shared Docker base image (Python 3.12 + dbt-duckdb)
+  base/                     # Shared Docker base image (Python 3.12 + dbt-postgres)
   services/
     service-1/              # models: table_a, table_b, table_c
     service-2/              # models: table_g, table_h
@@ -156,12 +164,20 @@ s3://continuo/local/manifest/service-1/manifest_v3.json
 
 ## How dbt services work
 
-Each service has its own `Dockerfile`, `dbt_project.yml`, and `profiles.yml`. The shared base image (`dbt-base`) provides the entrypoint, which:
+Each service has its own `Dockerfile`, `dbt_project.yml`, and `profiles.yml`.
+`profiles.yml` targets Postgres via `POSTGRES_HOST`/`POSTGRES_PORT`/
+`POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD` env vars (see
+`services/*/profiles.yml`). `base/entrypoint.sh` (which logs the job
+parameters — `schedule_name`, `table_name`, `schema_name`, `job_name`,
+`service_name` — then runs `dbt run --select $TABLE_NAME`) is the image's
+default `ENTRYPOINT`, but executor-created Jobs override `Command`
+explicitly (see [Job, not a service](#job-not-a-service) above), so it only
+runs when a Job is launched *without* an explicit command — e.g. manual
+debugging via `docker run`/`kubectl run`, not the production dispatch path.
 
-1. Logs the job parameters: `schedule_name`, `table_name`, `schema_name`, `job_name`, `service_name`
-2. Runs `dbt run --select $TABLE_NAME` against a local DuckDB file at `/tmp/dev.duckdb`
-
-Each k8s Job pod starts with a fresh DuckDB file. Models use direct `SELECT ... FROM a JOIN b USING (id)` SQL so that sqlglot can extract real cross-service upstream dependencies when the manifest-controller resolves the graph.
+Models use direct `SELECT ... FROM a JOIN b USING (id)` SQL so that sqlglot
+can extract real cross-service upstream dependencies when the
+manifest-controller resolves the graph.
 
 ### Model metadata
 
