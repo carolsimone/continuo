@@ -2,6 +2,24 @@
 
 Dockerized dbt (DuckDB) services, each running isolated dbt models as containerized jobs.
 
+## Job, not a service
+
+The images built from `base/` and `services/*` are not long-running services
+(see the [top-level README](../README.md) for those) — `executor-controller`
+dispatches each as a one-shot Kubernetes `Job` per scheduled run. The shared
+`dbt-base` entrypoint (`base/entrypoint.sh`) reads a handful of env vars
+(`SCHEDULE_NAME`, `TABLE_NAME`, `SCHEMA`, `JOB_NAME`, `SERVICE_NAME`), runs
+`dbt run --select "$TABLE_NAME"` once against a throwaway DuckDB file, and
+exits — no gRPC/HTTP surface, no owned datastore, no persistent process. Its
+behavior is pinned to that single dbt invocation, so this entrypoint itself is
+very unlikely to need touching; day-to-day changes are to the dbt models
+under `services/*` instead.
+
+`dbt_upload` (below) is a different kind of container: a producer-side CLI
+that compiles and publishes a service's manifest, run manually via
+`docker exec` rather than dispatched as a Job by continuo — see
+[Producing a release for continuo](#producing-a-release-for-continuo).
+
 ## Structure
 
 ```
