@@ -55,6 +55,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Fetch PR base commit
+        # Needed by the changelog check below to diff against; a plain
+        # checkout only has the PR merge commit at depth 1.
+        if: github.event_name == 'pull_request'
+        run: git fetch --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+
+      - name: Require a CHANGELOG.md entry for chart changes
+        # Only meaningful on PRs — a release-tag-triggered workflow_call run
+        # has no PR base to diff against, and the PR that shipped the change
+        # was already gated on this.
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/install-test/changelog-check.sh
+
       - name: Set up Go
         # lint.sh executes kube-linter through a version-pinned `go run`, so
         # besides the runner's preinstalled helm it only needs Go.

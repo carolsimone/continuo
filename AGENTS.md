@@ -70,6 +70,19 @@ The exception is `manifest-controller`, which is Python 3.12 and uses uv for dep
 All the other services should, more or less, use a similar stack but with different dependencies.
 Remove any dependency that is not needed.
 
+# Helm chart versioning (`deploy/continuo/`)
+`release.yml` locks the chart's `version` and `appVersion` together — one `vX.Y.Z` git tag stamps both identically and retags every service image to match, so there is no chart-vs-app compatibility matrix to track. The only thing chart versioning has to protect is: **does an unmodified existing user's `values.yaml`/overrides still produce a working install after `helm upgrade` to the new version?**
+
+Whenever a PR changes `deploy/continuo/values.yaml`, `values.schema.json`, `Chart.yaml`, or `templates/**`:
+- **Update `values.schema.json` to match.** `additionalProperties: false` is set throughout on purpose — adding, renaming, or removing a values key without updating the schema fails `helm lint` (`scripts/install-test/lint.sh`), which is the intended forcing function.
+- **Add an entry under `## [Unreleased]`** in `deploy/continuo/CHANGELOG.md` (Added/Changed/Removed/Breaking, [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format). CI (`scripts/install-test/changelog-check.sh`, wired into `install-test.yml`) fails a PR that touches the chart's user-facing surface without this.
+- **Decide the semver bump** the change implies, scoped to the values contract rather than internal service APIs:
+  - PATCH — template/default fixes, no values schema change.
+  - MINOR — new values added with safe defaults; existing overrides keep working unmodified.
+  - MAJOR/Breaking — anything that breaks an unmodified existing values file on upgrade: a renamed/removed key, a previously-optional value becoming required, an immutable field changing (Service selector, PVC size, StatefulSet volumeClaimTemplates), or dropping support for an older `kubeVersion`.
+- **If a value becomes newly required**, add an `{{ if .Release.IsUpgrade }}` warning to `templates/NOTES.txt` telling operators what to set — the changelog is easy to miss, but NOTES.txt is what actually prints at `helm upgrade` time.
+- Validate with `bash scripts/install-test/lint.sh` (helm lint + template + kube-linter across all four values topologies) before pushing.
+
 # How to run it
 Everything needs to run against docker images within my host machine. I use MacOS M4 and colima to be precise.
 All should be added to the `docker-compose.yml` file at the root of the project.

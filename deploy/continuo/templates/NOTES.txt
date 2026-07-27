@@ -1,0 +1,46 @@
+Continuo {{ .Chart.AppVersion }} (chart {{ .Chart.Version }}) {{ if .Release.IsUpgrade }}upgraded{{ else }}installed{{ end }} as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+{{- if .Release.IsUpgrade }}
+
+UPGRADE NOTES
+  This chart does not yet auto-detect which new/changed values apply to your
+  release — check the changelog for anything between your previous version
+  and {{ .Chart.Version }} before assuming this upgrade is a no-op:
+
+    https://github.com/carolsimone/continuo/blob/main/deploy/continuo/CHANGELOG.md
+
+  A "Breaking" entry means a value's meaning or requirement changed; a
+  "Changed"/"Added" entry may still need a new value set to enable a feature.
+  If this upgrade already failed, re-run with --dry-run to see the exact
+  rendering/validation error before retrying for real.
+{{- end }}
+
+{{- $uiPort := 8090 }}
+{{- range .Values.services }}
+{{- if eq .name "ui-service" }}
+{{- $uiPort = .httpPort }}
+{{- end }}
+{{- end }}
+
+ACCESS
+{{- if .Values.ingress.enabled }}
+  Continuo UI: https://{{ .Values.ingress.host }}
+{{- else }}
+  No Ingress configured (ingress.enabled=false). Reach the UI locally with:
+
+    kubectl port-forward -n {{ .Release.Namespace }} svc/ui-service {{ $uiPort }}:{{ $uiPort }}
+
+  then open {{ .Values.auth.publicUrl }}
+{{- end }}
+
+{{- if .Values.dex.enabled }}
+
+QUICKSTART LOGIN (dex.enabled=true — demo identity provider, not for production)
+  Email:    {{ .Values.dex.demoUser.email }}
+  Password: password
+
+  Set dex.enabled=false and configure auth.* for a real OIDC provider before
+  running this anywhere reachable by untrusted users.
+{{- end }}
+
+More on configuration, upgrades, and BYO datastores: deploy/continuo/README.md
