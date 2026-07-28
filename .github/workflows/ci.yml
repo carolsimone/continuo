@@ -102,13 +102,16 @@ jobs:
           # so docker compose build also benefits from the buildx cache backend.
           install: true
 
-      - name: Detect Dockerfile.base changes
+      - name: Detect Dockerfile.base and validation changes
         id: basefilter
         uses: dorny/paths-filter@v4
         with:
           filters: |
             base:
               - 'Dockerfile.base'
+            validation:
+              - 'validation-contract/**'
+              - 'validation-runner/**'
 
       # Normally pull continuo-base from ghcr (published by publish-base.yml,
       # public package — anonymous pull), falling back to a local build if the
@@ -199,6 +202,7 @@ jobs:
         run: docker exec manifest-controller uv run pytest -v
 
       - name: Test validation-contract
+        if: steps.basefilter.outputs.validation == 'true'
         # The contract package's own tests (port discovery + result-block). Uses the uv
         # image; uv fetches Python 3.14 per requires-python. Its discovery tests build
         # throwaway venvs, so uv/pip must be available (they are, inside the uv image).
@@ -208,6 +212,7 @@ jobs:
             sh -c "uv sync --all-groups && uv run pytest tests -v"
 
       - name: Test validation-runner harness
+        if: steps.basefilter.outputs.validation == 'true'
         # Harness unit tests (continuo-validation-contract resolves from real PyPI,
         # lockfile-pinned); the image smoke tests run in the next steps, not here.
         run: |
@@ -216,6 +221,7 @@ jobs:
             sh -c "uv sync --all-groups && uv run pytest tests -m 'not image' -v"
 
       - name: Set up uv
+        if: steps.basefilter.outputs.validation == 'true'
         # For the image smoke tests below, which must run on the runner itself (they
         # drive `docker run` against the built image). Cache disabled: the repo has a
         # symlink loop (.opencode/) that breaks the cache tree-walk.
@@ -224,6 +230,7 @@ jobs:
           enable-cache: false
 
       - name: Smoke-test validation-runner image
+        if: steps.basefilter.outputs.validation == 'true'
         # Tier-4 image tests (pytest -m image): build the slim postgres engine image
         # with the same Dockerfile the e2e provision uses, then assert it
         # fails structurally — the baked adapter is discovered and missing
@@ -243,6 +250,7 @@ jobs:
             uv run pytest tests -m image -v
 
       - name: Smoke-test validation-runner trino image
+        if: steps.basefilter.outputs.validation == 'true'
         # Same tier-4 assertions against the trino engine image: the baked adapter
         # is discovered and missing TRINO_* env yields a structured result block.
         run: |
