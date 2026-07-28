@@ -27,6 +27,24 @@ func TestCreateSeedBuildJob_TeamImageDbtSeedIntoCandidate(t *testing.T) {
 	assert.Equal(t, "seed_build", job.Spec.Template.Labels["mode"])
 }
 
+// TestCreateSeedBuildJob_SetsTTLSecondsAfterFinished verifies that a seed-build
+// Job carries a TTLSecondsAfterFinished so Kubernetes garbage-collects it (and
+// its pod) after it terminates, instead of leaving failed pods around forever.
+func TestCreateSeedBuildJob_SetsTTLSecondsAfterFinished(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	c := newValidationTestClient()
+	p := ValidationJobParams{
+		JobName: "seedbuild-fx-ttl", ReleaseID: "r", NodeID: "seed.core.fx",
+		ServiceName: "core", SchemaName: "analytics", TableName: "fx",
+		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "abc123",
+		CandidateSchema: "_candidate_r", Namespace: "default",
+	}
+	require.NoError(t, c.CreateSeedBuildJob(context.Background(), p))
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+	require.NotNil(t, job.Spec.TTLSecondsAfterFinished, "job must set TTLSecondsAfterFinished")
+	assert.Equal(t, jobTTLSecondsAfterFinished, *job.Spec.TTLSecondsAfterFinished)
+}
+
 func TestCreateSeedBuildJob_EmptyImageTagErrors(t *testing.T) {
 	c := newValidationTestClient()
 	p := ValidationJobParams{JobName: "x", ServiceName: "core", TableName: "fx",
