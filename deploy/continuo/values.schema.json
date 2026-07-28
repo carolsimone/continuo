@@ -1,0 +1,415 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "continuo",
+  "description": "Structural/type validation for deploy/continuo values.yaml. Cross-field 'required when X' rules (e.g. externalDatabase.host when postgresql.enabled=false) are enforced at render time by `required` guards in templates/_helpers.tpl, not here — this schema only catches wrong shapes/types and misspelled keys before Helm even reaches those guards.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "global", "postgresql", "externalDatabase", "redis", "externalRedis",
+    "neo4j", "externalNeo4j", "minio", "s3", "dex", "auth", "llm", "github",
+    "validation", "databaseInit", "streamReaper", "networkPolicy", "ingress",
+    "defaultResources", "services"
+  ],
+  "definitions": {
+    "resourceList": {
+      "description": "Kubernetes ResourceList: arbitrary resource names (cpu, memory, ephemeral-storage, hugepages-*, extended resources like nvidia.com/gpu) mapped to quantity strings. Passed straight through toYaml in deployment.yaml, so this must not restrict the key set to a fixed cpu/memory pair.",
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
+    "resourceSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": {"$ref": "#/definitions/resourceList"},
+        "limits": {"$ref": "#/definitions/resourceList"}
+      }
+    },
+    "imageSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag"],
+      "properties": {
+        "repository": {"type": "string"},
+        "tag": {"type": "string"}
+      }
+    },
+    "singleKeySecretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {"type": "string"},
+        "existingSecretPasswordKey": {"type": "string"}
+      }
+    },
+    "persistenceSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {"type": "string"},
+        "storageClass": {"type": "string"}
+      }
+    }
+  },
+  "properties": {
+    "nameOverride": {"type": "string"},
+    "fullnameOverride": {"type": "string"},
+
+    "global": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "imageRegistry": {"type": "string"},
+        "imageRepositoryPrefix": {"type": "string"},
+        "imageTag": {"type": "string"},
+        "imagePullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]},
+        "storageClass": {"type": "string"},
+        "env": {"type": "string"},
+        "logLevel": {"type": "string"},
+        "teamImagePrefix": {"type": "string"},
+        "stateGrpcAddr": {"type": "string"},
+        "orchestratorGrpcAddr": {"type": "string"},
+        "agentRunnerGrpcAddr": {"type": "string"}
+      }
+    },
+
+    "postgresql": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"$ref": "#/definitions/imageSpec"},
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "username": {"type": "string"},
+            "existingSecret": {"type": "string"},
+            "existingSecretPasswordKey": {"type": "string"}
+          }
+        },
+        "persistence": {"$ref": "#/definitions/persistenceSpec"},
+        "resources": {"$ref": "#/definitions/resourceSpec"}
+      }
+    },
+
+    "externalDatabase": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": {"type": "string"},
+        "port": {"type": "integer"},
+        "username": {"type": "string"},
+        "password": {"type": "string"},
+        "existingSecret": {"type": "string"},
+        "existingSecretPasswordKey": {"type": "string"},
+        "sslMode": {"type": "string"}
+      }
+    },
+
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"$ref": "#/definitions/imageSpec"},
+        "auth": {"$ref": "#/definitions/singleKeySecretRef"},
+        "persistence": {"$ref": "#/definitions/persistenceSpec"},
+        "resources": {"$ref": "#/definitions/resourceSpec"}
+      }
+    },
+
+    "externalRedis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": {"type": "string"},
+        "port": {"type": "integer"},
+        "password": {"type": "string"},
+        "existingSecret": {"type": "string"},
+        "existingSecretPasswordKey": {"type": "string"}
+      }
+    },
+
+    "neo4j": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"$ref": "#/definitions/imageSpec"},
+        "auth": {"$ref": "#/definitions/singleKeySecretRef"},
+        "persistence": {"$ref": "#/definitions/persistenceSpec"},
+        "resources": {"$ref": "#/definitions/resourceSpec"}
+      }
+    },
+
+    "externalNeo4j": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": {"type": "string"},
+        "username": {"type": "string"},
+        "password": {"type": "string"},
+        "existingSecret": {"type": "string"},
+        "existingSecretPasswordKey": {"type": "string"}
+      }
+    },
+
+    "minio": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"$ref": "#/definitions/imageSpec"},
+        "mcImage": {"$ref": "#/definitions/imageSpec"},
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {"type": "string"},
+            "existingSecretAccessKeyIdKey": {"type": "string"},
+            "existingSecretSecretKeyKey": {"type": "string"}
+          }
+        },
+        "bucket": {"type": "string"},
+        "persistence": {"$ref": "#/definitions/persistenceSpec"},
+        "resources": {"$ref": "#/definitions/resourceSpec"}
+      }
+    },
+
+    "s3": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "endpointUrl": {"type": "string"},
+        "bucket": {"type": "string"},
+        "region": {"type": "string"},
+        "accessKeyId": {"type": "string"},
+        "secretKey": {"type": "string"},
+        "existingSecret": {"type": "string"},
+        "existingSecretAccessKeyIdKey": {"type": "string"},
+        "existingSecretSecretKeyKey": {"type": "string"},
+        "env": {"type": "string"}
+      }
+    },
+
+    "dex": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"$ref": "#/definitions/imageSpec"},
+        "demoUser": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "email": {"type": "string"},
+            "username": {"type": "string"},
+            "userID": {"type": "string"},
+            "passwordHash": {"type": "string"}
+          }
+        },
+        "resources": {"$ref": "#/definitions/resourceSpec"}
+      }
+    },
+
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "publicUrl": {"type": "string"},
+        "issuerUrl": {"type": "string"},
+        "clientId": {"type": "string"},
+        "oidcClientSecret": {"type": "string"},
+        "existingSecret": {"type": "string"},
+        "existingSecretClientSecretKey": {"type": "string"},
+        "operatorEmails": {"type": "string"},
+        "viewerEmails": {"type": "string"},
+        "roleMapping": {"type": "string"}
+      }
+    },
+
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {"type": "string"},
+        "model": {"type": "string"},
+        "apiKey": {"type": "string"},
+        "existingSecret": {"type": "string"},
+        "existingSecretApiKeyKey": {"type": "string"}
+      }
+    },
+
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "token": {"type": "string"},
+        "appId": {"type": "string"},
+        "installationId": {"type": "string"},
+        "appPrivateKey": {"type": "string"},
+        "existingSecret": {"type": "string"},
+        "existingSecretTokenKey": {"type": "string"},
+        "existingSecretAppPrivateKeyKey": {"type": "string"}
+      }
+    },
+
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "createWarehouseSecret"],
+      "properties": {
+        "engine": {
+          "type": "string",
+          "description": "continuo-validation-runner-<engine> image name. Not an enum: new engines are added by publishing a new adapter image, not by editing this chart."
+        },
+        "createWarehouseSecret": {"type": "boolean"},
+        "warehouseSecret": {"type": "string"},
+        "warehouseDatabase": {"type": "string"}
+      }
+    },
+
+    "databaseInit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"}
+      }
+    },
+
+    "streamReaper": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "schedule": {"type": "string"},
+        "retention": {"type": "string"}
+      }
+    },
+
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"}
+      }
+    },
+
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "className": {"type": "string"},
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "host": {"type": "string"},
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "secretName": {"type": "string"}
+          }
+        }
+      }
+    },
+
+    "defaultResources": {"$ref": "#/definitions/resourceSpec"},
+
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "enabled"],
+        "properties": {
+          "name": {"type": "string"},
+          "enabled": {"type": "boolean"},
+          "image": {
+            "type": "string",
+            "description": "Full image ref override, e.g. for a custom build. Empty/absent = derived via the continuo.image helper (registry/prefix/continuo-<name>:tag)."
+          },
+          "replicas": {"type": "integer", "minimum": 0},
+          "httpPort": {"type": "integer"},
+          "grpcPort": {"type": "integer"},
+          "readinessPath": {"type": "string"},
+          "livenessPath": {"type": "string"},
+          "probePath": {"type": "string"},
+          "serviceType": {"type": "string"},
+          "secretEnv": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "ref"],
+              "properties": {
+                "name": {"type": "string"},
+                "ref": {"type": "string"}
+              }
+            }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {"type": "string"}
+          },
+          "rbac": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "rules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["apiGroups", "resources", "verbs"],
+                  "properties": {
+                    "apiGroups": {"type": "array", "items": {"type": "string"}},
+                    "resources": {"type": "array", "items": {"type": "string"}},
+                    "verbs": {"type": "array", "items": {"type": "string"}}
+                  }
+                }
+              }
+            }
+          },
+          "resources": {"$ref": "#/definitions/resourceSpec"},
+          "volumeMounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "mountPath"],
+              "properties": {
+                "name": {"type": "string"},
+                "mountPath": {"type": "string"},
+                "readOnly": {"type": "boolean"}
+              }
+            }
+          },
+          "volumes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "configMap"],
+              "properties": {
+                "name": {"type": "string"},
+                "configMap": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name"],
+                  "properties": {
+                    "name": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
