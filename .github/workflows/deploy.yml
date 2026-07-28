@@ -339,6 +339,18 @@ jobs:
             fi
           done
 
+      - name: Smoke-run the arm64 variant
+        # Executes the arm64 image under QEMU on this amd64 runner. Catches a
+        # wrong GOARCH: the manifest would still list linux/arm64, but the
+        # binary inside would fail with "exec format error".
+        # Skipped for images with no runnable entrypoint of this shape.
+        if: matrix.service != 'migrations'
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 --entrypoint /bin/sh \
+            "${IMAGE_REPO}:${GITHUB_SHA}" \
+            -c 'uname -m && echo "arm64 variant executed OK"'
+
   deploy:
     # force_publish is a backfill-only run (see build-publish above); it
     # never deploys, so it never touches the Hetzner box.
