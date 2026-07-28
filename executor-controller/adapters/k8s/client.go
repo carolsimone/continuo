@@ -25,6 +25,15 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// jobTTLSecondsAfterFinished bounds how long a terminal (Succeeded or Failed) dbt
+// Job — and its pod — stays on the cluster before Kubernetes garbage-collects it.
+// k8s-controller reads and uploads a Job's pod logs to S3 synchronously the moment it
+// observes the Job go terminal, so this window only needs to cover ad-hoc
+// kubectl-level debugging of a still-present pod, not log retention: the S3 copy is
+// durable long before this elapses. 24h matches the other Job TTL backstops in this
+// repo (db-init-migrate-job.yaml, minio/bucket-init-job.yaml).
+const jobTTLSecondsAfterFinished = int32(86400)
+
 // JobParams represents the parameters needed to create a K8s Job
 type JobParams struct {
 	JobName      string
@@ -170,6 +179,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	if params.Mode != "" {
 		jobLabels["mode"] = params.Mode
 	}
+	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      params.JobName,
@@ -177,7 +187,8 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 			Labels:    jobLabels,
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit: &backoffLimit,
+			BackoffLimit:            &backoffLimit,
+			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: jobLabels,
@@ -267,6 +278,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 		pkg_model.AnnotationReleaseID: params.ReleaseID,
 		pkg_model.AnnotationNodeID:    params.NodeID,
 	}
+	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        params.JobName,
@@ -275,7 +287,8 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 			Annotations: annotations,
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit: &backoffLimit,
+			BackoffLimit:            &backoffLimit,
+			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec:       podSpec,
@@ -861,6 +874,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 		pkg_model.AnnotationReleaseID: params.ReleaseID,
 		pkg_model.AnnotationNodeID:    params.NodeID,
 	}
+	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        params.JobName,
@@ -869,7 +883,8 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 			Annotations: annotations,
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit: &backoffLimit,
+			BackoffLimit:            &backoffLimit,
+			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec:       podSpec,
@@ -995,6 +1010,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 		pkg_model.AnnotationReleaseID: params.ReleaseID,
 		pkg_model.AnnotationNodeID:    params.NodeID,
 	}
+	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        params.JobName,
@@ -1003,7 +1019,8 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 			Annotations: annotations,
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit: &backoffLimit,
+			BackoffLimit:            &backoffLimit,
+			TTLSecondsAfterFinished: &ttl,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec:       podSpec,

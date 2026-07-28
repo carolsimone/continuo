@@ -56,6 +56,24 @@ func TestCreateCompileJob_RespectsS3SidecarImageEnv(t *testing.T) {
 	assert.Equal(t, "ghcr.io/acme/s3-sidecar:v2", job.Spec.Template.Spec.Containers[0].Image)
 }
 
+// TestCreateCompileJob_SetsTTLSecondsAfterFinished verifies that a compile Job
+// carries a TTLSecondsAfterFinished so Kubernetes garbage-collects it (and its
+// pod) after it terminates, instead of leaving failed pods around forever.
+func TestCreateCompileJob_SetsTTLSecondsAfterFinished(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	c := newValidationTestClient()
+	p := ValidationJobParams{
+		JobName: "compile-svc-rel-ttl", ReleaseID: "rel-1", NodeID: "core",
+		ServiceName: "core", ImageTag: "abc123",
+		ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default",
+	}
+	require.NoError(t, c.CreateCompileJob(context.Background(), p))
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+	require.NotNil(t, job.Spec.TTLSecondsAfterFinished, "job must set TTLSecondsAfterFinished")
+	assert.Equal(t, jobTTLSecondsAfterFinished, *job.Spec.TTLSecondsAfterFinished)
+}
+
 func TestCreateCompileJob_EmptyImageTagErrors(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	c := newValidationTestClient()

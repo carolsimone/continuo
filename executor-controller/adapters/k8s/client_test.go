@@ -197,3 +197,34 @@ func TestCreateQueryJob_NormalProduction_HasNoModeLabel(t *testing.T) {
 	assert.False(t, hasPodModeLabel,
 		"pod template of normal production job must also have no mode label")
 }
+
+// TestCreateQueryJob_SetsTTLSecondsAfterFinished verifies that a production dbt
+// Job carries a TTLSecondsAfterFinished so Kubernetes garbage-collects the Job
+// (and its pod) some time after it terminates, instead of leaving failed pods on
+// the cluster indefinitely.
+func TestCreateQueryJob_SetsTTLSecondsAfterFinished(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	c := newQueryTestClient()
+	ctx := context.Background()
+
+	params := JobParams{
+		JobName:      "prod-svc-analytics-orders-abc456",
+		TaskID:       "task-3",
+		ScheduleID:   "sched-3",
+		ScheduleName: "daily",
+		ServiceName:  "svc",
+		SchemaName:   "analytics",
+		TableName:    "orders",
+		Namespace:    "default",
+		NodeType:     pkg_model.NodeTypeDbtModel,
+		ImageTag:     "v1",
+	}
+
+	require.NoError(t, c.CreateQueryJob(ctx, params))
+
+	job, err := c.clientset.BatchV1().Jobs("default").Get(ctx, params.JobName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	require.NotNil(t, job.Spec.TTLSecondsAfterFinished, "job must set TTLSecondsAfterFinished")
+	assert.Equal(t, jobTTLSecondsAfterFinished, *job.Spec.TTLSecondsAfterFinished)
+}

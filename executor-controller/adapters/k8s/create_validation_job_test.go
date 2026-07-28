@@ -64,6 +64,21 @@ func validationParams() ValidationJobParams {
 	}
 }
 
+// TestCreateValidationJob_SetsTTLSecondsAfterFinished verifies that a
+// mode=validation Job carries a TTLSecondsAfterFinished so Kubernetes
+// garbage-collects it (and its pod) after it terminates, instead of leaving
+// failed release-validation pods around forever.
+func TestCreateValidationJob_SetsTTLSecondsAfterFinished(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "")
+	c := newValidationTestClient()
+	p := validationParams()
+
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+	require.NotNil(t, job.Spec.TTLSecondsAfterFinished, "job must set TTLSecondsAfterFinished")
+	assert.Equal(t, jobTTLSecondsAfterFinished, *job.Spec.TTLSecondsAfterFinished)
+}
+
 func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
