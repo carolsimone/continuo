@@ -323,6 +323,22 @@ jobs:
             echo "Built ${IMAGE_REPO} because latest was missing."
           fi
 
+      - name: Assert the published image is multi-arch
+        # Fails closed if a build silently reverts to single-arch. Proves the
+        # arm64 variant EXISTS; the smoke step below proves it RUNS.
+        run: |
+          set -euo pipefail
+          platforms="$(docker buildx imagetools inspect "${IMAGE_REPO}:${GITHUB_SHA}" --raw \
+            | jq -r '.manifests[].platform | "\(.os)/\(.architecture)"')"
+          echo "${IMAGE_REPO}:${GITHUB_SHA} platforms:"
+          echo "${platforms}"
+          for want in linux/amd64 linux/arm64; do
+            if ! grep -qx "${want}" <<< "${platforms}"; then
+              echo "::error::${IMAGE_REPO}:${GITHUB_SHA} is missing ${want}"
+              exit 1
+            fi
+          done
+
   deploy:
     # force_publish is a backfill-only run (see build-publish above); it
     # never deploys, so it never touches the Hetzner box.
