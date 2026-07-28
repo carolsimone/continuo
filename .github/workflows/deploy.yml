@@ -293,6 +293,19 @@ jobs:
             -t "${IMAGE_REPO}:${GITHUB_SHA}" \
             "${IMAGE_REPO}:latest"
 
+          # A reused :latest predating multi-arch is amd64-only. Fail this step so
+          # the build step below (which runs on steps.reuse.outcome == 'failure')
+          # rebuilds it properly for both platforms. Self-healing: no manual
+          # backfill needed.
+          platforms="$(docker buildx imagetools inspect "${IMAGE_REPO}:${GITHUB_SHA}" --raw \
+            | jq -r '.manifests[].platform | "\(.os)/\(.architecture)"')"
+          for want in linux/amd64 linux/arm64; do
+            if ! grep -qx "${want}" <<< "${platforms}"; then
+              echo "Reused image lacks ${want}; falling through to a full build"
+              exit 1
+            fi
+          done
+
       - name: Build and push image
         if: matrix.changed == 'true' || steps.reuse.outcome == 'failure'
         uses: docker/build-push-action@v7
@@ -320,7 +333,7 @@ jobs:
           elif [ "${{ steps.reuse.outcome }}" = "success" ]; then
             echo "Reused ${IMAGE_REPO}:latest for ${GITHUB_SHA}."
           else
-            echo "Built ${IMAGE_REPO} because latest was missing."
+            echo "Built ${IMAGE_REPO} for ${GITHUB_SHA}: reuse was unavailable (latest missing or single-arch)."
           fi
 
       - name: Assert the published image is multi-arch
