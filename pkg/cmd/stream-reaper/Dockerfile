@@ -2,7 +2,11 @@
 # module mode from the pkg build context (no go.work required). Build context
 # is `pkg/`.
 ARG BASE_IMAGE=ghcr.io/carolsimone/continuo-base:v1
-FROM ${BASE_IMAGE} AS builder
+FROM --platform=$BUILDPLATFORM ${BASE_IMAGE} AS builder
+
+# Supplied by buildx: the architecture of the image being produced. The builder
+# itself stays on the native build platform and cross-compiles to it.
+ARG TARGETARCH
 
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -10,7 +14,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -o /app/bin/stream-reaper ./cmd/stream-reaper
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -o /app/bin/stream-reaper ./cmd/stream-reaper
 
 # Runtime stage
 FROM alpine:latest

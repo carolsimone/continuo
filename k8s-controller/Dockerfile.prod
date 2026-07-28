@@ -1,6 +1,10 @@
 # Build stage
 ARG BASE_IMAGE=ghcr.io/carolsimone/continuo-base:v1
-FROM ${BASE_IMAGE} AS builder
+FROM --platform=$BUILDPLATFORM ${BASE_IMAGE} AS builder
+
+# Supplied by buildx: the architecture of the image being produced. The builder
+# itself stays on the native build platform and cross-compiles to it.
+ARG TARGETARCH
 
 WORKDIR /app
 
@@ -29,7 +33,7 @@ COPY state/ ./state/
 # Build static binary
 WORKDIR /app/k8s-controller
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/bin/k8s-controller .
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/k8s-controller .
 
 # Runtime stage
 FROM alpine:latest
