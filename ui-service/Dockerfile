@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:26-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:26-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

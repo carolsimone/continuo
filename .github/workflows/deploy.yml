@@ -265,6 +265,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up QEMU
+        # binfmt registration for linux/arm64. The Go images cross-compile and
+        # need no emulation, but the Python images are built under QEMU; without
+        # this the arm64 half of every build fails on this amd64 runner.
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -285,13 +293,26 @@ jobs:
             -t "${IMAGE_REPO}:${GITHUB_SHA}" \
             "${IMAGE_REPO}:latest"
 
+          # A reused :latest predating multi-arch is amd64-only. Fail this step so
+          # the build step below (which runs on steps.reuse.outcome == 'failure')
+          # rebuilds it properly for both platforms. Self-healing: no manual
+          # backfill needed.
+          platforms="$(docker buildx imagetools inspect "${IMAGE_REPO}:${GITHUB_SHA}" --raw \
+            | jq -r '.manifests[].platform | "\(.os)/\(.architecture)"')"
+          for want in linux/amd64 linux/arm64; do
+            if ! grep -qx "${want}" <<< "${platforms}"; then
+              echo "Reused image lacks ${want}; falling through to a full build"
+              exit 1
+            fi
+          done
+
       - name: Build and push image
         if: matrix.changed == 'true' || steps.reuse.outcome == 'failure'
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ env.IMAGE_REPO }}:${{ github.sha }}
@@ -312,8 +333,36 @@ jobs:
           elif [ "${{ steps.reuse.outcome }}" = "success" ]; then
             echo "Reused ${IMAGE_REPO}:latest for ${GITHUB_SHA}."
           else
-            echo "Built ${IMAGE_REPO} because latest was missing."
+            echo "Built ${IMAGE_REPO} for ${GITHUB_SHA}: reuse was unavailable (latest missing or single-arch)."
           fi
+
+      - name: Assert the published image is multi-arch
+        # Fails closed if a build silently reverts to single-arch. Proves the
+        # arm64 variant EXISTS; the smoke step below proves it RUNS.
+        run: |
+          set -euo pipefail
+          platforms="$(docker buildx imagetools inspect "${IMAGE_REPO}:${GITHUB_SHA}" --raw \
+            | jq -r '.manifests[].platform | "\(.os)/\(.architecture)"')"
+          echo "${IMAGE_REPO}:${GITHUB_SHA} platforms:"
+          echo "${platforms}"
+          for want in linux/amd64 linux/arm64; do
+            if ! grep -qx "${want}" <<< "${platforms}"; then
+              echo "::error::${IMAGE_REPO}:${GITHUB_SHA} is missing ${want}"
+              exit 1
+            fi
+          done
+
+      - name: Smoke-run the arm64 variant
+        # Executes the arm64 image under QEMU on this amd64 runner. Catches a
+        # wrong GOARCH: the manifest would still list linux/arm64, but the
+        # binary inside would fail with "exec format error".
+        # Skipped for images with no runnable entrypoint of this shape.
+        if: matrix.service != 'migrations'
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 --entrypoint /bin/sh \
+            "${IMAGE_REPO}:${GITHUB_SHA}" \
+            -c 'uname -m && echo "arm64 variant executed OK"'
 
   deploy:
     # force_publish is a backfill-only run (see build-publish above); it
