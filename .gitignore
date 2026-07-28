@@ -61,7 +61,8 @@ docs/future-dev/*
 # CLAUDE
 .claude/settings.json
 .claude/settings.local.json
-.claude/settings.local.jsondocs/superpowers/*
+.claude/settings.local.json
+docs/superpowers/*
 
 .rtk/*
 .venv
@@ -86,3 +87,10 @@ __pycache__/
 *.pfx
 id_rsa*
 id_ed25519*
+
+# Populated values files hold real datastore credentials and belong in the
+# private infrastructure repository, never here. Only the .example template
+# that ships alongside them is safe to commit.
+values.secret.yaml
+values.secret.*.yaml
+deploy/infra/
