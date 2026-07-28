@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   detect-changes:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       release: ${{ steps.filter.outputs.release }}
       base: ${{ steps.filter.outputs.base }}
@@ -188,7 +188,7 @@ jobs:
     # (publish-base.yml remains as a manual backfill entry point.)
     if: needs.detect-changes.outputs.base == 'true'
     needs: detect-changes
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: write
@@ -234,13 +234,23 @@ jobs:
     needs:
       - detect-changes
       - build-base
-    # GitHub-hosted on purpose: this is a matrix (one job per service) that runs
-    # in parallel here for free. On the single self-hosted runner the jobs
-    # serialize (one agent = one job at a time) and queue behind PR CI — measured
-    # ~6x slower for a release — so the warm-cache gain doesn't pay off. ci.yml and
-    # the single-job publish workflows stay self-hosted; only this parallel matrix
-    # belongs on hosted.
-    runs-on: ubuntu-latest
+    # Self-hosted, deliberately trading wall-clock for cost.
+    #
+    # This is a matrix (one job per service), so on GitHub-hosted it fans out for
+    # free — and it used to live there for exactly that reason. It is also the
+    # single largest consumer of billable Actions minutes: ~743 job-minutes/month
+    # of a ~2,029 total, against a 2,000-minute allowance. Keeping it hosted is
+    # what pushes the account into paid overage, and eliminating that bill is the
+    # goal that outranks speed here.
+    #
+    # The cost is real and was measured: the runner box runs runner_count=1, so
+    # these per-service jobs serialize (one agent = one job at a time) and queue
+    # behind PR CI — ~6x slower for a release. Accepted knowingly.
+    #
+    # This becomes free again the moment the box has several agents: raise
+    # runner_count (needs a larger server_type — see the sizing table in
+    # carolsimone/hetzner-cicd-runner) and the matrix fans out on-prem instead.
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: write
@@ -321,7 +331,7 @@ jobs:
     needs:
       - detect-changes
       - build-publish
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Deploy to Hetzner
         uses: appleboy/ssh-action@v1

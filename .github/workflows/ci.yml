@@ -15,12 +15,25 @@ concurrency:
 jobs:
   ci:
     # Fork-gated runner. Maintainer PRs (branches pushed inside this repo) run on
-    # the fast self-hosted box (8 vCPU / 16 GB, warm caches); fork PRs from
-    # outside contributors run on free GitHub-hosted (sandboxed) — never on the
-    # self-hosted box, which has prod-deploy reach. This expression is the routing
-    # default; the actual security boundary is the repo setting "Require approval
-    # for all outside collaborators", since a fork could otherwise edit this line.
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'self-hosted' }}
+    # the self-hosted box (warm caches); fork PRs from outside contributors run on
+    # free GitHub-hosted (sandboxed) — never on the self-hosted box, which has
+    # prod-deploy reach. This expression is the routing default; the actual
+    # security boundary is the repo setting "Require approval for all outside
+    # collaborators", since a fork could otherwise edit this line.
+    #
+    # The `kind` label is REQUIRED, not decorative. This job runs scripts/setup.sh,
+    # which creates a kind cluster named `continuo` — a fixed name — and whose
+    # existence check (setup.sh:47) *adopts* an existing cluster instead of
+    # failing. The runner box now has more than one agent, so without this label
+    # two PRs building at once land on two agents, the second adopts the first's
+    # cluster and `kind load`s its own images into it, and both runs report
+    # results that are quietly wrong. Only one agent on the box carries `kind`,
+    # so requiring it makes GitHub's scheduler serialize these jobs.
+    #
+    # fromJSON is needed because a ternary cannot yield a YAML sequence.
+    runs-on: ${{ github.event.pull_request.head.repo.fork
+      && 'ubuntu-latest'
+      || fromJSON('["self-hosted","kind"]') }}
     # Hard backstop against runaway runs. Without this the job inherits GitHub's
     # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
     # hours of Actions minutes. A healthy run is ~55 min; cap well below the
