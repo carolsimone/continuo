@@ -217,7 +217,7 @@ func main() {
 	// latter retains a full payload per consumed message). Both are pruned past
 	// the retention window on the same timer using DB-clock cutoffs.
 
-	mpPruner := pkgmessageprocessing.NewPruner(pgDB, logger)
+	mpPruner := pkgmessageprocessing.NewPruner(pgDB, "orchestrator_outbox", logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
 			pkgoutbox.OutboxRetentionTarget(pgDB, "orchestrator_outbox", logger),

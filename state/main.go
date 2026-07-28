@@ -152,7 +152,7 @@ func main() {
 	// processed state_outbox rows and terminal message_processing dedup rows
 	// (the latter retains a full payload per consumed message). Both are pruned
 	// past the retention window on the same timer using DB-clock cutoffs.
-	mpPruner := pkgmessageprocessing.NewPruner(db, logger)
+	mpPruner := pkgmessageprocessing.NewPruner(db, "state_outbox", logger)
 	retentionSweeper := pkgoutbox.NewRetentionSweeper(
 		[]pkgoutbox.RetentionTarget{
 			pkgoutbox.OutboxRetentionTarget(db, "state_outbox", logger),
