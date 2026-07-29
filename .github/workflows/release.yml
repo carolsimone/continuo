@@ -126,3 +126,78 @@ jobs:
           helm show chart "/tmp/chart-verify/continuo-${VERSION}.tgz" > /tmp/chart-verify/chart-meta.yaml
           grep -qx "version: ${VERSION}" /tmp/chart-verify/chart-meta.yaml
           grep -qx "appVersion: ${GITHUB_REF_NAME}" /tmp/chart-verify/chart-meta.yaml
+
+  # Publishes the GitHub Release for the tag. Runs last, so a Release only exists
+  # once the images are retagged, the install test passed, and the chart is pushed
+  # and verified — the Release is therefore a truthful marker that the artifacts
+  # a reader will go looking for are actually there.
+  #
+  # Body comes from the matching section of deploy/continuo/CHANGELOG.md. That file
+  # is already mandatory for any chart-surface change (scripts/install-test/changelog-check.sh),
+  # so this reuses a source that is kept current rather than adding a second one to
+  # maintain. If the section is missing, fall back to GitHub's generated notes rather
+  # than failing the release — the artifacts are already published by this point and
+  # a missing changelog entry is not worth blocking on.
+  github-release:
+    needs:
+      - retag-images
+      - install-test
+      - publish-chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.retag-images.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Extract this version's changelog section
+        id: notes
+        run: |
+          set -euo pipefail
+          CHANGELOG=deploy/continuo/CHANGELOG.md
+          # Print the body between "## [X.Y.Z]" and the next "## [" heading.
+          if [ -f "$CHANGELOG" ] && grep -qE "^## \[${VERSION}\]" "$CHANGELOG"; then
+            awk -v ver="## [${VERSION}]" '
+              index($0, ver) == 1 { found = 1; next }
+              found && /^## \[/    { exit }
+              found                { print }
+            ' "$CHANGELOG" > /tmp/notes.md
+          fi
+
+          if [ -s /tmp/notes.md ]; then
+            {
+              echo "## Install"
+              echo
+              echo '```bash'
+              echo "helm install continuo oci://ghcr.io/${{ github.repository_owner }}/charts/continuo \\"
+              echo "  --version ${VERSION} -n continuo --create-namespace"
+              echo '```'
+              cat /tmp/notes.md
+            } > /tmp/release-body.md
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No '## [${VERSION}]' section in $CHANGELOG; falling back to generated notes." >&2
+            : > /tmp/release-body.md
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Idempotent: re-running the workflow for an existing tag updates the
+          # Release rather than failing.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file /tmp/release-body.md --latest
+          elif [ "${{ steps.notes.outputs.generate }}" = "true" ]; then
+            gh release create "$TAG" --title "$TAG" --generate-notes --latest
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file /tmp/release-body.md --latest
+          fi
