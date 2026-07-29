@@ -82,8 +82,8 @@ which `ui-service` requires before honoring the allowlist, so this works cleanly
 ### Step 2 — Configure continuo
 
 All per-deployment identity settings live under top-level `auth` and are read
-from the **on-box secret values file** that the deploy passes with `-f` (on the
-Hetzner server this is `/root/continuo-values.secret.yaml`). Nothing here goes in
+from the **secret values file** that the deploy passes with `-f`, which is kept
+on the deployment host rather than in this repository. Nothing here goes in
 the committed `deploy/continuo/values.yaml` — the chart's `auth.*` defaults are
 empty (a deploy fails closed until they are set), and the on-box file deep-merges
 real values over them. So you only edit the on-box secret file; add an `auth`
@@ -115,22 +115,18 @@ commit to `main`, so it is optional and not part of the test.
 ### Step 3 — Deploy
 
 The `auth.*` sentinel expansion must be present in the chart the cluster
-deploys. The Hetzner deploy renders from the `main` branch checked out at
-`/root/continuo`, so this chart change has to be on `main` first (merge it),
-after which a normal deploy picks up the on-box `auth` values.
+deploys. If your deploy renders the chart from a checkout of `main`, this chart
+change has to be on `main` first, after which a normal deploy picks up the
+`auth` values from your secret values file.
 
-Trigger the deploy the way you normally do (the `deploy` GitHub Actions workflow
-SSHes in, runs `git pull --ff-only origin main`, then `helm upgrade`), or apply
-it by hand on the box with both value files — the committed chart plus the on-box
-secrets:
+Trigger the deploy the way you normally do, or apply it by hand with both value
+files — the committed chart plus your secrets:
 
 ```bash
-ssh continuo-server
-cd /root/continuo && git pull --ff-only origin main
-KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm upgrade --install continuo-app deploy/continuo \
-  -f /root/continuo-values.secret.yaml \
+helm upgrade --install <release> deploy/continuo \
+  -f <your-secret-values>.yaml \
   --set global.imageTag=<current-sha> \
-  -n continuo --wait
+  -n <namespace> --wait
 ```
 
 Confirm the pod is healthy (not crashlooping):
@@ -143,8 +139,7 @@ kubectl -n continuo logs -l app=ui-service | tail
 
 ### Step 4 — Reach it and log in
 
-Port-forward the service to `localhost:18090` (over your SSH tunnel to the
-cluster, using your Hetzner kubeconfig). The **local** port (left of the colon)
+Port-forward the service to `localhost:18090`. The **local** port (left of the colon)
 must match the redirect URI and `AUTH_PUBLIC_URL`; the **remote** port (right of
 the colon) is always `8090`, the port the container listens on:
 

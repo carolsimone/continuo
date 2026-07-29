@@ -99,16 +99,10 @@ All should be added to the `docker-compose.yml` file at the root of the project.
 **Running the e2e test:**
 Please read: `tests/e2e/README.md`.
 
-# Deployment in Server (or debugging server issues)
-* You can access the server by running: `ssh continuo-server`. Now you are in the server ubuntu machine.
-
-* LLM can run kubectl/helm locally against the remote cluster, in this way:
-  1. Fetch the k3s kubeconfig: 
-     `scp continuo-server:/etc/rancher/k3s/k3s.yaml ~/.kube/hetzner-continuo.yaml`
-  2. Patch the server URL (k3s sets it to 127.0.0.1 by default):
-    `sed -i '' "s|server: https://127.0.0.1:6443|server: https://<HETZNER_HOST>:6443|" ~/.kube/hetzner-continuo.yaml`
-  3. Test locally:
-   `KUBECONFIG=~/.kube/hetzner-continuo.yaml kubectl get nodes`
+# Deployment
+Continuo deploys as a Helm chart; see `deploy/README.md` for install modes and values.
+Provisioning the infrastructure a production install runs against, and obtaining cluster
+credentials for it, are managed outside this repository.
 
 # IMPORTANT
 * NEVER create a branch directly (no `git checkout -b`, `git branch`, `git switch -c`, or any equivalent). Branch ONLY by creating a git worktree (via the using-git-worktrees skill or `git worktree add`), which branches off `origin/main`. Creating branches off the local checkout drags in un-pushed local commits and messes up my workflow.
