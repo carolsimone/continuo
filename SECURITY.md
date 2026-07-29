@@ -76,6 +76,29 @@ build. Base-image and transitive CVEs are frequently unfixable upstream, so
 gating on them would block every merge behind an ignore-list edit rather than
 producing a fix. Dependabot is what actually resolves them.
 
+## Known advisories we have assessed as not reachable
+
+`govulncheck` filters Go findings by reachability automatically. npm has no
+equivalent, so where we ship a dependency with an open advisory we record the
+analysis here rather than leaving you to wonder.
+
+**GHSA-qwww-vcr4-c8h2 — `react-router` (high).** *RSC Mode CSRF Bypass Allows
+Action Execution Before 400 Response*, affecting `>=7.12.0 <8.3.0`. `ui-service`
+ships `react-router-dom@7.18.2`, which is in range, so `npm audit` reports it.
+
+It is not reachable here. The advisory is specific to React Server Components
+mode. `ui-service` uses plain declarative client-side routing — `BrowserRouter`
+in `src/client/App.tsx`, with no `createBrowserRouter`, no `RouterProvider`, and
+no react-router usage anywhere under `src/server/`. There is no code path that
+reaches the vulnerable behaviour.
+
+We are moving to `react-router` v8 regardless, tracked in
+[#337](https://github.com/carolsimone/continuo/issues/337). It is not a quick
+version bump: `react-router-dom` was discontinued at 7.18.2 and its API moved
+into the `react-router` package, so closing this means a deliberate migration
+rather than a patch. If you find a path that *does* reach it, please report it
+using the process above — we would rather be wrong about this in private.
+
 ## Credentials in local development
 
 The docker compose stack talks to local stubs, not real services, and needs no
