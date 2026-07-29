@@ -9,27 +9,11 @@ For anything beyond a bug fix or a docs correction, **open an issue first** and 
 what you want to change. Continuo has strong architectural conventions (below), and a
 pull request that cuts across them is painful to land no matter how good the code is.
 
-## Licensing and sign-off
+## Licensing
 
 Continuo is licensed under the Apache License 2.0. Contributions are accepted under the
-same license.
-
-We use the [Developer Certificate of Origin](DCO) — a short statement that you wrote the
-code, or otherwise have the right to submit it. You agree to it by adding a sign-off line
-to each commit:
-
-```
-Signed-off-by: Your Name <your.email@example.com>
-```
-
-`git commit -s` adds this for you. To sign off a branch you already wrote:
-
-```bash
-git rebase --signoff origin/main
-git push --force-with-lease
-```
-
-A CI check enforces this on every pull request. There is no separate agreement to sign.
+same license — by opening a pull request you agree to that, per section 5 of the licence.
+There is no separate agreement to sign.
 
 We do **not** use per-file license headers. The root `LICENSE` covers the whole
 repository; please do not add headers to new files.
