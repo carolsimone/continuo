@@ -399,6 +399,46 @@ describe('DetailPage — Open node detail link', () => {
     });
     expect(screen.queryByRole('link', { name: /open node detail/i })).toBeNull();
   });
+
+  it('keeps the node selected when the graph card mounts after the click', async () => {
+    // The Nodes table renders from the tasks fetch and the graph card from the
+    // graph fetch. Holding the graph fetch behind a gate forces the order this
+    // test is about: the user clicks a node row, and only then does the DAG
+    // panel mount.
+    let releaseGraph: () => void = () => {};
+    const graphGate = new Promise<void>((resolve) => {
+      releaseGraph = resolve;
+    });
+    const base = failedRoutes();
+    const routes = {
+      ...base,
+      [`/api/schedules/${SCHED}/graph`]: async () => {
+        await graphGate;
+        return base[`/api/schedules/${SCHED}/graph`]();
+      },
+      [`/api/runs/${RUN_ID}/graph`]: async () => {
+        await graphGate;
+        return base[`/api/runs/${RUN_ID}/graph`]();
+      },
+    };
+    const fetchMock = mockFetchSequence(routes);
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const nodeButton = await screen.findByRole('button', { name: /orders/i });
+    fireEvent.click(nodeButton);
+
+    // The graph card is still loading, so the click landed before the DAG mounted.
+    expect(screen.getByText('Loading graph')).toBeInTheDocument();
+
+    releaseGraph();
+    await waitFor(() => expect(screen.queryByText('Loading graph')).toBeNull());
+
+    expect(
+      await screen.findByRole('link', { name: /open node detail/i }),
+    ).toBeInTheDocument();
+  });
 });
 
 describe('DetailPage — Trigger run success cue', () => {

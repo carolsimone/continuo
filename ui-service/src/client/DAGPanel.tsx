@@ -418,10 +418,6 @@ export default function DAGPanel({
     });
   }, [fitView, graphNodes, layout.nodes, onNodeClick, searchQuery]);
 
-  useEffect(() => {
-    if (searchQuery === '') onNodeClick(null);
-  }, [onNodeClick, searchQuery]);
-
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (isServiceVertexId(node.id)) {
@@ -440,7 +436,15 @@ export default function DAGPanel({
           className="dag-search-input"
           placeholder="Search nodes…"
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            // Emptying the search box drops the selection the search made.
+            // This belongs on the change event rather than in an effect keyed
+            // on the query: such an effect also runs on mount, where the query
+            // is empty, and would clear a selection made elsewhere on the page.
+            if (next === '' && searchQuery !== '') onNodeClick(null);
+            setSearchQuery(next);
+          }}
         />
       </div>
 

@@ -9,6 +9,7 @@ function setup(props: {
   colorByStatus?: boolean;
   tasks: Task[];
   selectedNodeId?: string | null;
+  onNodeClick?: (nodeId: string | null) => void;
 }) {
   const graphNodes: GraphNode[] = [
     { node_id: 's.sch.a', node_type: 'dbt-model', schedule_name: 's' },
@@ -25,7 +26,7 @@ function setup(props: {
         graphEdges={graphEdges}
         tasks={props.tasks}
         selectedNodeId={props.selectedNodeId ?? null}
-        onNodeClick={() => {}}
+        onNodeClick={props.onNodeClick ?? (() => {})}
         colorByStatus={props.colorByStatus}
       />
     </ReactFlowProvider>,
@@ -255,5 +256,32 @@ describe('DAGPanel service view', () => {
     );
     const ids = [...container.querySelectorAll('.react-flow__node')].map(n => n.getAttribute('data-id'));
     expect(ids.sort()).toEqual(['svc:svc-a', 'svc:svc-b']);
+  });
+});
+
+describe('DAGPanel selection side effects', () => {
+  it('does not clear the selection when it mounts', () => {
+    // The panel mounts whenever the graph fetch resolves, which can be after
+    // the user has already picked a node in the Nodes table. Mounting must
+    // leave that selection alone.
+    const onNodeClick = vi.fn();
+    setup({ tasks: [], selectedNodeId: 's.sch.a', onNodeClick });
+
+    expect(onNodeClick).not.toHaveBeenCalled();
+  });
+
+  it('clears the selection when the search box is cleared', () => {
+    const onNodeClick = vi.fn();
+    const { container } = setup({ tasks: [], onNodeClick });
+    const input = container.querySelector('.dag-search-input') as HTMLInputElement;
+
+    fireEvent.change(input, { target: { value: 'a' } });
+    expect(onNodeClick).toHaveBeenLastCalledWith('s.sch.a');
+
+    onNodeClick.mockClear();
+    fireEvent.change(input, { target: { value: '' } });
+
+    expect(onNodeClick).toHaveBeenCalledTimes(1);
+    expect(onNodeClick).toHaveBeenCalledWith(null);
   });
 });
