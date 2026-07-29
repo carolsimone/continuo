@@ -4,6 +4,13 @@ on:
   pull_request:
     branches:
       - main
+  # Runs merged pull_request commits again with head_branch=main, since
+  # pull_request-triggered runs are attributed to the PR's head branch, never
+  # to main. Without this, the README's ci.yml badge (which shows the latest
+  # run on the default branch) has no run to report and renders as failing.
+  push:
+    branches:
+      - main
 
 # A new push to a PR cancels any still-running build for that same PR. The single
 # self-hosted runner serializes jobs, so without this it would tie up finishing a
