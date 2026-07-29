@@ -349,6 +349,13 @@ export default function DAGPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const lastAutoFocusKeyRef = useRef<string | null>(null);
   const lastSearchMatchRef = useRef<string | null>(null);
+  // Tracks whether the graph has ever been fitted, independent of the
+  // selection/search suppression below. The canvas has no `fitView` or
+  // `defaultViewport` prop, so without an initial fit it renders at the raw
+  // default viewport; a wide DAG mounting with a node already selected (e.g.
+  // picked from the Nodes table while the graph card was still loading)
+  // would otherwise never get fitted at all.
+  const hasFittedOnceRef = useRef(false);
 
   useEffect(() => {
     setNodes(layout.nodes);
@@ -356,7 +363,16 @@ export default function DAGPanel({
   }, [layout, setEdges, setNodes]);
 
   const focusFullGraph = useCallback(() => {
-    if (searchQuery.trim() || selectedNodeId || layout.nodes.length === 0) {
+    if (layout.nodes.length === 0) {
+      lastAutoFocusKeyRef.current = null;
+      return;
+    }
+    // Every fit after the first is suppressed while a search or a selection
+    // is active, so the view is never yanked away from what the user is
+    // looking at. The very first fit is exempt from that suppression so the
+    // graph is not left cropped at the default viewport when it mounts with
+    // a node already selected.
+    if ((searchQuery.trim() || selectedNodeId) && hasFittedOnceRef.current) {
       lastAutoFocusKeyRef.current = null;
       return;
     }
@@ -370,6 +386,7 @@ export default function DAGPanel({
       maxZoom: 1.5,
       duration: 300,
     });
+    hasFittedOnceRef.current = true;
   }, [fitView, layout.nodes, searchQuery, selectedNodeId]);
 
   useEffect(() => {
@@ -418,10 +435,6 @@ export default function DAGPanel({
     });
   }, [fitView, graphNodes, layout.nodes, onNodeClick, searchQuery]);
 
-  useEffect(() => {
-    if (searchQuery === '') onNodeClick(null);
-  }, [onNodeClick, searchQuery]);
-
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (isServiceVertexId(node.id)) {
@@ -440,7 +453,15 @@ export default function DAGPanel({
           className="dag-search-input"
           placeholder="Search nodes…"
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            // Emptying the search box drops the selection the search made.
+            // This belongs on the change event rather than in an effect keyed
+            // on the query: such an effect also runs on mount, where the query
+            // is empty, and would clear a selection made elsewhere on the page.
+            if (next === '' && searchQuery !== '') onNodeClick(null);
+            setSearchQuery(next);
+          }}
         />
       </div>
 
