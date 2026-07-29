@@ -2,6 +2,7 @@
   "name": "continuo-ui",
   "version": "1.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "concurrently \"vite\" \"CHAT_BRIDGE_ENABLED=true AUTH_MODE=dev tsx watch src/server/index.ts\"",
     "build:client": "vite build",
