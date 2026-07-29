@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-29
+
 ### Fixed
 - `values.schema.json` was rejecting the existing `services[].image` override
   and any resource key beyond `cpu`/`memory` (e.g. `ephemeral-storage`,
