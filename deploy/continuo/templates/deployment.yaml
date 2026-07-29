@@ -38,8 +38,51 @@ spec:
         runAsUser: 65532
         runAsGroup: 65532
         {{- end }}
-      {{- if and $.Values.postgresql.enabled $svc.env $svc.env.POSTGRES_DB }}
+      {{- $needsMigrations := and $.Values.postgresql.enabled $svc.env $svc.env.POSTGRES_DB }}
+      {{- $needsRedis := and $.Values.redis.enabled $svc.env $svc.env.REDIS_URL }}
+      {{- if or $needsMigrations $needsRedis }}
       initContainers:
+        {{- if $needsRedis }}
+        # Bundled mode: Redis is a StatefulSet with no ordering guarantee against
+        # these Deployments, so a Redis-backed service that starts first crashes
+        # on connect. CrashLoopBackOff then backs off exponentially (10s, 20s,
+        # 40s, 80s...), so the pod stays down long after Redis is actually ready
+        # — the restart loop costs more than the wait it replaces. Gate instead.
+        # BYO installs point at Redis that is already running and render nothing.
+        - name: wait-for-redis
+          image: "{{ $.Values.redis.image.repository }}:{{ $.Values.redis.image.tag }}"
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "continuo.containerSecurityContext" $ | nindent 12 }}
+          env:
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "redis") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "redis") | quote }}
+            - name: REDIS_HOST
+              value: {{ include "continuo.redis.host" $ | quote }}
+            - name: REDIS_PORT
+              value: {{ include "continuo.redis.port" $ | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              tries=0
+              until [ "$(redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping 2>/dev/null)" = "PONG" ]; do
+                tries=$((tries+1))
+                if [ "$tries" -gt 100 ]; then
+                  echo "FATAL: Redis at ${REDIS_HOST}:${REDIS_PORT} never became ready after $((100*3))s" >&2
+                  exit 1
+                fi
+                echo "waiting for redis ($tries)..."; sleep 3
+              done
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+        {{- end }}
+        {{- if $needsMigrations }}
         # Bundled mode: the migration Job is a regular resource (hooks would
         # deadlock — see db-init-migrate-job.yaml), so Postgres-backed services
         # gate on Flyway having initialized their database. BYO installs keep
@@ -80,6 +123,7 @@ spec:
           resources:
             requests: {cpu: 25m, memory: 32Mi}
             limits: {cpu: 100m, memory: 64Mi}
+        {{- end }}
       {{- end }}
       containers:
         - name: {{ $svc.name }}

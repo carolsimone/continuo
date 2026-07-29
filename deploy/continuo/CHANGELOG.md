@@ -12,6 +12,16 @@ shipped in those.
 
 ## [Unreleased]
 
+### Fixed
+- Redis-backed services (`manifest-controller`, `ui-service`) no longer start
+  before the bundled Redis is reachable. They previously raced the Redis
+  StatefulSet, crashed on connect, and entered CrashLoopBackOff — whose
+  exponential backoff (10s, 20s, 40s, 80s...) kept them down well after Redis
+  became ready, so the restart loop cost more time than the wait it replaced. A
+  `wait-for-redis` initContainer now gates them, mirroring the existing
+  `wait-for-migrations` gate for Postgres-backed services. Bundled installs only;
+  BYO installs point at Redis that is already running and render no initContainer.
+
 ## [0.1.1] - 2026-07-29
 
 ### Fixed
