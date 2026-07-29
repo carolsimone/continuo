@@ -82,7 +82,7 @@ kind create cluster --name continuo
 
 # 2. Install Continuo from the published Helm chart (pre-built images, no clone needed)
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.1.0 -n continuo --create-namespace
+  --version 0.1.1 -n continuo --create-namespace
 
 # 3. Wait for everything to come up
 kubectl -n continuo get pods -w
