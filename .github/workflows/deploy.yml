@@ -383,7 +383,10 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Deploy to Hetzner
-        uses: appleboy/ssh-action@v1
+        # Pinned to a commit SHA, not a tag. This step receives HETZNER_SSH_KEY,
+        # so whoever controls the v1 tag could otherwise move it and inherit
+        # production SSH access. Bump deliberately after reviewing the diff.
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: root

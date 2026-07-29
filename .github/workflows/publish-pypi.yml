@@ -26,12 +26,18 @@ jobs:
         run: uv build validation-contract -o dist
       - name: Publish to TestPyPI
         if: contains(github.ref_name, '-test')
-        uses: pypa/gh-action-pypi-publish@release/v1
+        # Pinned to a commit SHA. release/v1 is a moving branch, and this job
+        # holds id-token: write for PyPI Trusted Publishing — a compromised
+        # revision could mint a token and publish under this project's name.
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: dist
       - name: Publish to PyPI
         if: ${{ !contains(github.ref_name, '-test') }}
-        uses: pypa/gh-action-pypi-publish@release/v1
+        # Pinned to a commit SHA. release/v1 is a moving branch, and this job
+        # holds id-token: write for PyPI Trusted Publishing — a compromised
+        # revision could mint a token and publish under this project's name.
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
         with:
           packages-dir: dist
