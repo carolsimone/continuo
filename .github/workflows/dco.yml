@@ -11,7 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  # Job name becomes the check-run name, which is what a branch ruleset requires
+  # by string. Keep it "dco" so the required check is unambiguous.
+  dco:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
