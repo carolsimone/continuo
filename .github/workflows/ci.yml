@@ -57,6 +57,26 @@ jobs:
     env:
       DOCKER_BUILDKIT: "1"
 
+      # Both self-hosted agents run as the same OS user, so without this they
+      # share one ~/.docker. Every concurrent job then competes over the same
+      # buildx/current pointer and the same registry credentials; a private
+      # config directory per job makes this job's Docker client state its own.
+      # This requires the buildx/compose CLI plugins to be installed system-wide
+      # (/usr/libexec/docker/cli-plugins, as on the runners and on ubuntu-latest);
+      # a user-local ~/.docker/cli-plugins install would be hidden by this and
+      # `docker buildx` would report "unknown command".
+      DOCKER_CONFIG: ${{ runner.temp }}/.docker
+
+      # Pin the builder for every docker/compose invocation in this job. The
+      # builds below resolve base tags that exist only in the local daemon
+      # image store (continuo-base, dbt-base, s3-sidecar), which only the
+      # docker driver can see: a docker-container builder runs isolated from
+      # the daemon and resolves "FROM continuo-base:latest" against docker.io,
+      # failing with "pull access denied". Setting it here rather than running
+      # `docker buildx use` is deliberate — the env var applies to this job's
+      # process tree only, so no other job can redirect these builds.
+      BUILDX_BUILDER: default
+
     steps:
       - name: Free disk space
         # GitHub-hosted only (the fork-PR path). ubuntu-latest ships ~30 GB of
@@ -98,16 +118,15 @@ jobs:
         run: bash scripts/lint-go.sh --ci
 
       - name: Run guards
-        # Fail fast if ci.yml contains inline build/run/wait logic that should
-        # live in shared scripts. Keeps CI and local dev on the same primitives.
-        run: bash scripts/check-ci-alignment.sh
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        with:
-          # install: true makes 'docker build' an alias for 'docker buildx build',
-          # so docker compose build also benefits from the buildx cache backend.
-          install: true
+        # check-ci-alignment: fail fast if ci.yml contains inline build/run/wait
+        # logic that should live in shared scripts. Keeps CI and local dev on the
+        # same primitives.
+        # check-docker-state-isolation: fail fast if a workflow job would share
+        # ~/.docker (builder pointer, registry credentials) with jobs running
+        # concurrently on the other runner agent.
+        run: |
+          bash scripts/check-ci-alignment.sh
+          bash scripts/check-docker-state-isolation.sh
 
       - name: Detect Dockerfile.base and validation changes
         id: basefilter
@@ -134,11 +153,8 @@ jobs:
           # a git diff). Otherwise pull the published ghcr base (public
           # package, anonymous pull) and fall back to a local build if the
           # pull fails.
-          # --load is required: the docker-container buildx driver set up
-          # above builds in an isolated builder and does not populate the
-          # daemon's image store on its own, so without it continuo-base
-          # would stay in the builder cache and later steps could fall back
-          # to a stale continuo-base:latest tag from a previous run.
+          # --load makes the result land in the daemon's image store, which is
+          # where the service builds resolve "FROM continuo-base:latest" from.
           if [ "${{ steps.basefilter.outputs.base }}" = "true" ]; then
             echo "Dockerfile.base changed in this PR; building continuo-base locally..."
             DOCKER_BUILDKIT=1 docker build --load -t continuo-base:latest -f Dockerfile.base .
@@ -148,16 +164,6 @@ jobs:
             echo "Pull failed; building continuo-base locally..."
             DOCKER_BUILDKIT=1 docker build --load -t continuo-base:latest -f Dockerfile.base .
           fi
-
-      - name: Switch to docker driver for local image access
-        # The docker-container buildx driver set up above (used by the buildx
-        # builds later in this job) runs in an isolated container and cannot
-        # see local daemon images. The default docker driver shares the
-        # daemon's image store, so "FROM continuo-base:latest" resolves
-        # correctly in docker compose build. Docker Engine 24+ (shipped on
-        # ubuntu-latest) supports type=gha cache with the default driver, so
-        # docker compose build still benefits.
-        run: docker buildx use default
 
       - name: Set up infrastructure
         # COMPOSE_FILE merges docker-compose.ci.yml so docker compose build uses

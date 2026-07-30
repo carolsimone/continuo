@@ -192,6 +192,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      # Private Docker client state: both self-hosted agents run as the same OS
+      # user, so a sibling job's docker/login-action post step (which logs out)
+      # would otherwise drop the ghcr credentials this push still needs, and its
+      # buildx builder selection would leak into this job.
+      DOCKER_CONFIG: ${{ runner.temp }}/.docker
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -259,6 +265,11 @@ jobs:
       matrix: ${{ fromJSON(needs.detect-changes.outputs.matrix) }}
     env:
       IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/continuo-${{ matrix.service }}
+      # Private Docker client state per matrix leg. These legs run two-at-a-time
+      # across the agents and share one OS user: on a shared ~/.docker the first
+      # leg to finish logs out from under the other, which then fails its push
+      # with "failed to fetch anonymous token".
+      DOCKER_CONFIG: ${{ runner.temp }}/.docker
     steps:
       - name: Checkout
         uses: actions/checkout@v7

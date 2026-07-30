@@ -21,6 +21,12 @@ jobs:
       contents: read
       packages: write
 
+    env:
+      # Private Docker client state: both self-hosted agents run as the same OS
+      # user, so on a shared ~/.docker a concurrent job's docker/login-action
+      # post step logs out and this push loses its ghcr credentials mid-flight.
+      DOCKER_CONFIG: ${{ runner.temp }}/.docker
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
