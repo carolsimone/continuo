@@ -30,6 +30,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Major bumps only, and only for version updates — the `ignore` key does
+      # not apply to security updates, so a major that fixes an advisory still
+      # arrives. Majors are where the breakage lives here (React 19 needing act()
+      # in fake-timer tests, jsdom 29 border longhands, a react-dom partial group
+      # breaking `npm ci`), so they should be opened deliberately rather than
+      # landing unprompted alongside routine patches.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       go-minor-patch:
         applies-to: version-updates
@@ -45,6 +54,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Major bumps only, and only for version updates — the `ignore` key does
+      # not apply to security updates, so a major that fixes an advisory still
+      # arrives. Majors are where the breakage lives here (React 19 needing act()
+      # in fake-timer tests, jsdom 29 border longhands, a react-dom partial group
+      # breaking `npm ci`), so they should be opened deliberately rather than
+      # landing unprompted alongside routine patches.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-patch:
         applies-to: version-updates
@@ -65,6 +83,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Major bumps only, and only for version updates — the `ignore` key does
+      # not apply to security updates, so a major that fixes an advisory still
+      # arrives. Majors are where the breakage lives here (React 19 needing act()
+      # in fake-timer tests, jsdom 29 border longhands, a react-dom partial group
+      # breaking `npm ci`), so they should be opened deliberately rather than
+      # landing unprompted alongside routine patches.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       python-minor-patch:
         applies-to: version-updates
@@ -83,6 +110,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Major bumps only, and only for version updates — the `ignore` key does
+      # not apply to security updates, so a major that fixes an advisory still
+      # arrives. Majors are where the breakage lives here (React 19 needing act()
+      # in fake-timer tests, jsdom 29 border longhands, a react-dom partial group
+      # breaking `npm ci`), so they should be opened deliberately rather than
+      # landing unprompted alongside routine patches.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       actions:
         patterns: ["*"]
@@ -97,6 +133,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Major bumps only, and only for version updates — the `ignore` key does
+      # not apply to security updates, so a major that fixes an advisory still
+      # arrives. Majors are where the breakage lives here (React 19 needing act()
+      # in fake-timer tests, jsdom 29 border longhands, a react-dom partial group
+      # breaking `npm ci`), so they should be opened deliberately rather than
+      # landing unprompted alongside routine patches.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       docker:
         patterns: ["*"]
