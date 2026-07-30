@@ -1,0 +1,20 @@
+name: Isolate Docker client state
+description: >
+  Point DOCKER_CONFIG at a private per-job directory. Both self-hosted runner
+  agents execute as the same OS user, so jobs otherwise share one ~/.docker and
+  overwrite each other's buildx builder selection and registry credentials.
+
+runs:
+  using: composite
+  steps:
+    # DOCKER_CONFIG has to be exported through $GITHUB_ENV rather than set in the
+    # job's env: block, because the runner context (which owns RUNNER_TEMP) is
+    # not available there. Every later step in the job — including action steps
+    # such as docker/login-action — inherits it.
+    - name: Point DOCKER_CONFIG at a private directory
+      shell: bash
+      run: |
+        dir="${RUNNER_TEMP}/.docker"
+        mkdir -p "$dir"
+        echo "DOCKER_CONFIG=$dir" >> "$GITHUB_ENV"
+        echo "DOCKER_CONFIG=$dir"

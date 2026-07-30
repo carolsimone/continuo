@@ -30,12 +30,6 @@ jobs:
       packages: write
     outputs:
       version: ${{ steps.meta.outputs.version }}
-    env:
-      # Private Docker client state: both self-hosted agents run as the same OS
-      # user, so on a shared ~/.docker a concurrent job's docker/login-action
-      # post step logs out and the imagetools retags below lose their ghcr
-      # credentials mid-flight.
-      DOCKER_CONFIG: ${{ runner.temp }}/.docker
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -44,6 +38,11 @@ jobs:
           # origin/main below needs commits this tag's shallow default
           # clone would otherwise omit.
           fetch-depth: 0
+
+      - name: Isolate Docker client state
+        # Without this, a concurrent job's docker/login-action post step logs out
+        # and the imagetools retags below lose their ghcr credentials mid-flight.
+        uses: ./.github/actions/isolate-docker-state
 
       - name: Resolve release metadata
         id: meta

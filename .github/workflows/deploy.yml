@@ -192,15 +192,15 @@ jobs:
     permissions:
       contents: read
       packages: write
-    env:
-      # Private Docker client state: both self-hosted agents run as the same OS
-      # user, so a sibling job's docker/login-action post step (which logs out)
-      # would otherwise drop the ghcr credentials this push still needs, and its
-      # buildx builder selection would leak into this job.
-      DOCKER_CONFIG: ${{ runner.temp }}/.docker
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Isolate Docker client state
+        # Without this, a sibling job's docker/login-action post step (which logs
+        # out) drops the ghcr credentials this push still needs, and its buildx
+        # builder selection leaks into this job.
+        uses: ./.github/actions/isolate-docker-state
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -265,16 +265,17 @@ jobs:
       matrix: ${{ fromJSON(needs.detect-changes.outputs.matrix) }}
     env:
       IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/continuo-${{ matrix.service }}
-      # Private Docker client state per matrix leg. These legs run two-at-a-time
-      # across the agents and share one OS user: on a shared ~/.docker the first
-      # leg to finish logs out from under the other, which then fails its push
-      # with "failed to fetch anonymous token".
-      DOCKER_CONFIG: ${{ runner.temp }}/.docker
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Isolate Docker client state
+        # These matrix legs run two-at-a-time across the agents under one OS user.
+        # On a shared ~/.docker the first leg to finish logs out from under the
+        # other, which then fails its push with "failed to fetch anonymous token".
+        uses: ./.github/actions/isolate-docker-state
 
       - name: Set up QEMU
         # binfmt registration for linux/arm64. The Go images cross-compile and

@@ -57,16 +57,6 @@ jobs:
     env:
       DOCKER_BUILDKIT: "1"
 
-      # Both self-hosted agents run as the same OS user, so without this they
-      # share one ~/.docker. Every concurrent job then competes over the same
-      # buildx/current pointer and the same registry credentials; a private
-      # config directory per job makes this job's Docker client state its own.
-      # This requires the buildx/compose CLI plugins to be installed system-wide
-      # (/usr/libexec/docker/cli-plugins, as on the runners and on ubuntu-latest);
-      # a user-local ~/.docker/cli-plugins install would be hidden by this and
-      # `docker buildx` would report "unknown command".
-      DOCKER_CONFIG: ${{ runner.temp }}/.docker
-
       # Pin the builder for every docker/compose invocation in this job. The
       # builds below resolve base tags that exist only in the local daemon
       # image store (continuo-base, dbt-base, s3-sidecar), which only the
@@ -96,6 +86,15 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Isolate Docker client state
+        # Keeps this job's builder selection and registry credentials out of the
+        # ~/.docker that the two runner agents would otherwise share. Requires the
+        # buildx/compose CLI plugins to be installed system-wide
+        # (/usr/libexec/docker/cli-plugins, as on the runners and on
+        # ubuntu-latest); a user-local ~/.docker/cli-plugins install would be
+        # hidden and `docker buildx` would report "unknown command".
+        uses: ./.github/actions/isolate-docker-state
 
       - name: Set up Go
         uses: actions/setup-go@v7

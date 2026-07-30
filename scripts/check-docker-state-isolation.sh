@@ -24,7 +24,8 @@ set -uo pipefail
 WORKFLOW_DIR="${1:-.github/workflows}"
 rc=0
 
-# Jobs touching Docker must isolate DOCKER_CONFIG.
+# Jobs touching Docker must isolate DOCKER_CONFIG, which .github/actions/
+# isolate-docker-state does.
 while IFS= read -r violation; do
   echo "DOCKER STATE VIOLATION: ${violation}" >&2
   rc=1
@@ -48,8 +49,9 @@ done < <(
     function flush() {
       uses_docker = (body ~ /docker\/(login|setup-buildx|build-push)-action/) \
                  || (body ~ /(^|[^-a-z])docker (build|buildx|compose|image|pull|push|run|tag)/)
-      if (uses_docker && body !~ /DOCKER_CONFIG:/)
-        printf "%s job \"%s\" uses Docker without a private DOCKER_CONFIG (add DOCKER_CONFIG: ${{ runner.temp }}/.docker to the job env)\n", job_file, job
+      isolated = (body ~ /isolate-docker-state/) || (body ~ /DOCKER_CONFIG[:=]/)
+      if (uses_docker && !isolated)
+        printf "%s job \"%s\" uses Docker without a private DOCKER_CONFIG (add a `uses: ./.github/actions/isolate-docker-state` step after checkout)\n", job_file, job
     }
   ' "$WORKFLOW_DIR"/*.yml
 )

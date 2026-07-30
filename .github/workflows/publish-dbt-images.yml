@@ -18,15 +18,14 @@ jobs:
     permissions:
       contents: read
 
-    env:
-      # Private Docker client state: both self-hosted agents run as the same OS
-      # user, so on a shared ~/.docker a concurrent job's docker/login-action
-      # post step logs out and these pushes lose their credentials mid-flight.
-      DOCKER_CONFIG: ${{ runner.temp }}/.docker
-
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Isolate Docker client state
+        # Without this, a concurrent job's docker/login-action post step logs out
+        # and these pushes lose their credentials mid-flight.
+        uses: ./.github/actions/isolate-docker-state
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v4
