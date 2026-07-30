@@ -27,11 +27,18 @@ concurrency:
   group: security-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
-# These scans read source and need nothing else. Results are written to the job
-# summary rather than uploaded as SARIF, because code scanning uploads require
-# GitHub Advanced Security while the repository is private.
+# Each job uploads its findings as SARIF, so they land in Security > Code scanning
+# alongside CodeQL instead of scrolling away in a job log. security-events: write
+# is what permits that upload; contents: read has to be restated because a
+# permissions block replaces the default set rather than adding to it.
+#
+# Note the Security tab will show findings the blocking gates deliberately
+# ignore: govulncheck's SARIF includes vulnerabilities with no reachable call
+# path, and the two Trivy scans are advisory by design. A green pipeline with
+# open alerts is the intended state, not a contradiction.
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   govulncheck:
@@ -51,7 +58,36 @@ jobs:
       # vulnerability only when a call path from this module actually reaches the
       # vulnerable symbol, so findings are actionable rather than noise.
       - name: Run govulncheck
+        env:
+          SARIF_DIR: sarif
         run: bash scripts/security-scan.sh vuln
+
+      # govulncheck is invoked once per Go module, so this leaves one SARIF file
+      # per module. Code scanning rejects more than one run per category, and a
+      # category per module would need a job matrix and scatter one tool across a
+      # dozen Security tab entries. Merge into a single run instead — and note
+      # that is not a concatenation; see scripts/merge-sarif.py.
+      - name: Merge per-module SARIF into one run
+        if: always()
+        run: |
+          shopt -s nullglob
+          files=(sarif/govulncheck-*.sarif)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no govulncheck SARIF files to merge" >&2
+            exit 0
+          fi
+          python3 scripts/merge-sarif.py sarif/govulncheck.merged.sarif "${files[@]}"
+          rm -f "${files[@]}"
+
+      # if: always() — a blocking scan that fails must still publish what it
+      # found, otherwise the findings that justify the failure never appear.
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: sarif/govulncheck.merged.sarif
+          category: govulncheck
+
 
   secrets:
     name: Secret scan (blocking)
@@ -72,12 +108,23 @@ jobs:
       # introduce. The weekly run walks every commit, catching anything that
       # entered the repository before this gate existed.
       - name: Run gitleaks
+        env:
+          SARIF_DIR: sarif
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
             bash scripts/security-scan.sh secrets --history
           else
             bash scripts/security-scan.sh secrets
           fi
+      # if: always() — a blocking scan that fails must still publish what it
+      # found, otherwise the findings that justify the failure never appear.
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: sarif/
+          category: gitleaks
+
 
   dependencies:
     name: Dependency CVEs (advisory)
@@ -91,7 +138,18 @@ jobs:
       # block every merge behind an ignore-list edit. Dependabot is what actually
       # resolves these; this job exists to make them visible.
       - name: Run Trivy dependency scan
+        env:
+          SARIF_DIR: sarif
         run: bash scripts/security-scan.sh deps
+      # if: always() — a blocking scan that fails must still publish what it
+      # found, otherwise the findings that justify the failure never appear.
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: sarif/
+          category: trivy-fs
+
 
   misconfiguration:
     name: Dockerfile/K8s misconfiguration (advisory)
@@ -101,4 +159,15 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Run Trivy config scan
+        env:
+          SARIF_DIR: sarif
         run: bash scripts/security-scan.sh config
+      # if: always() — a blocking scan that fails must still publish what it
+      # found, otherwise the findings that justify the failure never appear.
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: sarif/
+          category: trivy-config
+
