@@ -21,6 +21,12 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Default for jobs without their own permissions block; jobs that push
+# images, publish the chart, or edit the GitHub release declare their
+# additional scopes themselves.
+permissions:
+  contents: read
+
 jobs:
   retag-images:
     runs-on: self-hosted

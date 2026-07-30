@@ -2,7 +2,10 @@ FROM dbt-base:latest
 
 # wise-dbt is a dbt alias exercising the dbt-commands.yaml dialect path in
 # e2e: the executor dispatches service-1 jobs as `wise-dbt run --select ...`.
+# The symlink lands in /usr/local/bin, so this single step needs root.
+USER root
 RUN ln -s "$(command -v dbt)" /usr/local/bin/wise-dbt
+USER dbt
 
 COPY dbt_project.yml profiles.yml ./
 COPY models/ ./models/
