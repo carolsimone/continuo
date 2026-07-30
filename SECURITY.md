@@ -4,7 +4,9 @@
 
 **Please do not open a public issue for security vulnerabilities.**
 
-Report them privately to **carolini.simone@gmail.com**. Include enough detail to
+Report privately through GitHub's
+[private vulnerability reporting](https://github.com/carolsimone/continuo/security/advisories/new). 
+If you cannot use that form, email carolini.simone@gmail.com instead. Include enough detail to
 reproduce the problem: affected component, version or commit, and the steps or
 input that trigger it. A proof of concept helps but is not required.
 
