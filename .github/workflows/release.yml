@@ -39,6 +39,11 @@ jobs:
           # clone would otherwise omit.
           fetch-depth: 0
 
+      - name: Isolate Docker client state
+        # Without this, a concurrent job's docker/login-action post step logs out
+        # and the imagetools retags below lose their ghcr credentials mid-flight.
+        uses: ./.github/actions/isolate-docker-state
+
       - name: Resolve release metadata
         id: meta
         run: |
