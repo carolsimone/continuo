@@ -1,12 +1,12 @@
 name: publish-pypi
 
 # Publishes the continuo-validation-contract package via PyPI Trusted Publishing
-# (OIDC, no stored token). Tag `contract-v<ver>-test<n>` publishes to TestPyPI;
-# `contract-v<ver>` publishes to real PyPI. The GitHub environment name is what
-# each PyPI "pending publisher" is registered against.
+# (OIDC, no stored token). Tag `validation-contract-v<ver>-test<n>` publishes to
+# TestPyPI; `validation-contract-v<ver>` publishes to real PyPI. The GitHub
+# environment name is what each PyPI "pending publisher" is registered against.
 on:
   push:
-    tags: ["contract-v*"]
+    tags: ["validation-contract-v*"]
 
 permissions: {}
 
