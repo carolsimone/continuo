@@ -162,8 +162,9 @@ export function createRemediationRouter(
       });
     } catch (err) {
       console.error(
-        `[remediation] recordPullRequest failed for proposal ${id} (PR ${pr.url}); ` +
-          `proposal may remain in pr_state=opening — reconcile manually:`,
+        '[remediation] recordPullRequest failed for proposal %s (PR %s); proposal may remain in pr_state=opening — reconcile manually:',
+        id,
+        pr.url,
         err,
       );
     }
