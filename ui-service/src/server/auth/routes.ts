@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { parse as parseCookies } from 'cookie';
 import type { OidcAuthConfig } from './config';
 import type { OidcFlow, PendingAuth } from './oidc';
@@ -32,6 +33,21 @@ export function createAuthRouter(deps: {
   };
   const publicOrigin = new URL(cfg.publicUrl).origin;
   const router = Router();
+
+  // The login/callback handlers do crypto and an upstream OIDC round-trip per
+  // request, so cap them per client IP. The limit is far above any human flow
+  // (a login uses 2-3 requests) but stops a single source hammering the IdP.
+  // xForwardedForHeader validation is off because the service runs behind an
+  // ingress that always sets the header while Express has no trust proxy.
+  router.use(
+    rateLimit({
+      windowMs: 15 * 60 * 1000,
+      limit: 100,
+      standardHeaders: true,
+      legacyHeaders: false,
+      validate: { xForwardedForHeader: false },
+    }),
+  );
 
   router.get('/login', async (req, res, next) => {
     try {

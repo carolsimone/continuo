@@ -1,6 +1,7 @@
 import http from 'http';
 import path from 'path';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { createGrpcClient } from './grpc-client';
 import { createGrpcGraphClient } from './grpc-graph-client';
 import { createAgentClient } from './agent-client';
@@ -52,7 +53,19 @@ async function main() {
   if (process.env.NODE_ENV === 'production') {
     const staticDir = path.join(__dirname, '../dist');
     app.use(express.static(staticDir));
-    app.get('*', (_req, res) => {
+    // The SPA fallback reads index.html from disk per request; bound it per
+    // client IP (navigation loads it once — the limit only bites automated
+    // hammering). xForwardedForHeader validation is off because the service
+    // runs behind an ingress that always sets the header while Express has
+    // no trust proxy.
+    const spaFallbackLimiter = rateLimit({
+      windowMs: 60 * 1000,
+      limit: 300,
+      standardHeaders: true,
+      legacyHeaders: false,
+      validate: { xForwardedForHeader: false },
+    });
+    app.get('*', spaFallbackLimiter, (_req, res) => {
       res.sendFile(path.join(staticDir, 'index.html'));
     });
   }
@@ -72,6 +85,10 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('ui-service failed to start:', err);
+  // Log only name/message/stack, never the raw error object: startup errors
+  // can carry the config that produced them (OIDC client secret, session
+  // keys) in extra properties, which must not reach the logs.
+  const detail = err instanceof Error ? (err.stack ?? `${err.name}: ${err.message}`) : 'unknown error';
+  console.error('ui-service failed to start:', detail);
   process.exit(1);
 });

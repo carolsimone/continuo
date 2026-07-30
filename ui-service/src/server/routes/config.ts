@@ -1,8 +1,23 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { readFileSync } from 'fs';
 
 export function createConfigRouter(configFilePath: string) {
   const router = Router();
+
+  // Each request re-reads the config file from disk (intentional, see below),
+  // so bound it per client IP. The UI fetches this once per cancel dialog.
+  // xForwardedForHeader validation is off because the service runs behind an
+  // ingress that always sets the header while Express has no trust proxy.
+  router.use(
+    rateLimit({
+      windowMs: 60 * 1000,
+      limit: 120,
+      standardHeaders: true,
+      legacyHeaders: false,
+      validate: { xForwardedForHeader: false },
+    }),
+  );
 
   router.get('/', (_req, res) => {
     try {
