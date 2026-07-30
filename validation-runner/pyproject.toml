@@ -12,7 +12,7 @@ classifiers = [
 ]
 
 [dependency-groups]
-dev = ["ruff==0.16.0", "mypy==1.18.2"]
+dev = ["ruff==0.16.0", "mypy==2.3.0"]
 test = ["pytest==9.1.1", "pytest-cov==4.1.0"]
 
 [build-system]
