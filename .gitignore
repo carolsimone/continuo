@@ -94,3 +94,8 @@ id_ed25519*
 values.secret.yaml
 values.secret.*.yaml
 deploy/infra/
+
+# Local engineering notes: architecture audit findings and known-issue write-ups.
+# Kept out of the public repo deliberately — they are working notes, not docs.
+docs/ddd-violations/
+docs/known-issues/
