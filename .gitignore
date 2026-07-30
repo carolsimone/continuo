@@ -99,3 +99,7 @@ deploy/infra/
 # Kept out of the public repo deliberately — they are working notes, not docs.
 docs/ddd-violations/
 docs/known-issues/
+
+# SARIF scan reports, written only when SARIF_DIR is set (CI does; local runs
+# do not). Machine-readable output for code scanning, never source.
+sarif/
