@@ -219,20 +219,25 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            # Writable paths the JVM needs once the root filesystem is
-            # read-only: run-time logs and java.io.tmpdir scratch space. The
-            # only config env var set is NEO4J_AUTH, which writes under /data,
-            # so the image's conf dir can stay read-only.
+            # Writable paths the entrypoint and JVM need once the root
+            # filesystem is read-only: run-time logs, java.io.tmpdir scratch
+            # space, and the conf dir — the entrypoint unconditionally
+            # rewrites neo4j.conf at startup and regenerates a complete file
+            # from env/defaults when the mounted dir starts empty.
             - name: logs
               mountPath: /logs
             - name: tmp
               mountPath: /tmp
+            - name: conf
+              mountPath: /var/lib/neo4j/conf
       volumes:
         - name: data
           emptyDir: {}
         - name: logs
           emptyDir: {}
         - name: tmp
+          emptyDir: {}
+        - name: conf
           emptyDir: {}
 ---
 apiVersion: v1
