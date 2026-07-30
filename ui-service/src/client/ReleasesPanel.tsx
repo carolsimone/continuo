@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import { ReleaseListItem, ReleasesListResponse, CurrentProd } from './types';
 import { firstInFlight, releasePillClass, reasonLabel } from './release-helpers';
 

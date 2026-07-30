@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router';
 import DashboardPage from './DashboardPage';
 import DetailPage from './DetailPage';
 import NodeDetailPage from './NodeDetailPage';

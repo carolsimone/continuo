@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { ScheduleTopologySummary } from './types';
 
 interface Props {
