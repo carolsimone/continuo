@@ -31,7 +31,7 @@ jobs:
       - name: Set up QEMU
         # dbt-base is python:3.12-slim + pip installs, so the arm64 half builds
         # under emulation.
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 

@@ -269,7 +269,7 @@ jobs:
         # binfmt registration for linux/arm64. The Go images cross-compile and
         # need no emulation, but the Python images are built under QEMU; without
         # this the arm64 half of every build fails on this amd64 runner.
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
