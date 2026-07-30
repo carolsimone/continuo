@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/carolsimone/continuo/actions/workflows/ci.yml/badge.svg)](https://github.com/carolsimone/continuo/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/github/v/tag/carolsimone/continuo?sort=semver&filter=v*&label=version)](https://github.com/carolsimone/continuo/tags)
+[![Release](https://img.shields.io/github/v/release/carolsimone/continuo?label=release)](https://github.com/carolsimone/continuo/releases)
 
 Continuo is a control plane for data pipelines with built-in agentic
 remediation. It orchestrates independent dbt (data build tool) projects
