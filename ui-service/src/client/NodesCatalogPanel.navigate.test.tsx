@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { it, expect } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import NodesCatalogPanel from './NodesCatalogPanel';
 import type { NodeSummary } from './types';
 

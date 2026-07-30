@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import type { NodeSummary, NodesResponse } from './types';
 import { formatDuration, formatRelative } from './node-helpers';
 
