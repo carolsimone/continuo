@@ -1,9 +1,11 @@
 # Throwaway "existing infrastructure" for the BYO install-test modes: plain
 # single-replica datastores the chart is pointed at via external* values.
 # CI-only fixture with CI-only throwaway credentials; not a production
-# template (no persistence, no hardening — that is the chart's job, not the
-# fixture's). Image tags match the chart's bundled defaults so both modes
-# exercise the same datastore versions.
+# template (no persistence — that is the chart's job, not the fixture's).
+# Pods still run unprivileged with read-only root filesystems so the fixture
+# passes the same baseline container checks as the rest of the repo. Image
+# tags match the chart's bundled defaults so both modes exercise the same
+# datastore versions.
 #
 # A real BYO datastore lives outside the cluster, so the chart's
 # default-deny-ingress NetworkPolicy (podSelector: {} — every pod in the
@@ -27,9 +29,23 @@ spec:
       labels:
         app: byo-postgres
     spec:
+      # uid/gid 999 is the postgres user baked into the official image;
+      # fsGroup makes the emptyDir volumes writable for it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           image: postgres:18.3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: POSTGRES_USER
               value: continuo
@@ -47,8 +63,18 @@ spec:
             # parent keeps the image's own layout regardless of minor version.
             - name: data
               mountPath: /var/lib/postgresql
+            # With a read-only root filesystem the socket dir and scratch
+            # space need their own writable mounts.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
 ---
 apiVersion: v1
@@ -89,9 +115,22 @@ spec:
       labels:
         app: byo-redis
     spec:
+      # uid/gid 999 is the redis user baked into the official image.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redis
           image: redis:8.6.4
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           args: ["redis-server", "--requirepass", "ci-redis-pw"]
           ports:
             - containerPort: 6379
@@ -100,6 +139,14 @@ spec:
               port: 6379
             initialDelaySeconds: 2
             periodSeconds: 3
+          volumeMounts:
+            # The image's workdir; redis snapshots (dump.rdb) land here and
+            # must stay writable under the read-only root filesystem.
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -139,9 +186,23 @@ spec:
       labels:
         app: byo-neo4j
     spec:
+      # uid/gid 7474 is the neo4j user baked into the official image; started
+      # as a non-root user the entrypoint skips its own su-exec step.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 7474
+        runAsGroup: 7474
+        fsGroup: 7474
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: neo4j
           image: neo4j:5.26.28-community
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: NEO4J_AUTH
               value: neo4j/ci-neo4j-pw
@@ -158,8 +219,20 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            # Writable paths the JVM needs once the root filesystem is
+            # read-only: run-time logs and java.io.tmpdir scratch space. The
+            # only config env var set is NEO4J_AUTH, which writes under /data,
+            # so the image's conf dir can stay read-only.
+            - name: logs
+              mountPath: /logs
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
 ---
 apiVersion: v1

@@ -18,6 +18,11 @@ concurrency:
   group: deploy-main
   cancel-in-progress: false
 
+# Default for jobs without their own permissions block; jobs that push
+# images declare packages: write themselves.
+permissions:
+  contents: read
+
 jobs:
   detect-changes:
     runs-on: self-hosted

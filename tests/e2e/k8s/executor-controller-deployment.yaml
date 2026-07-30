@@ -81,11 +81,24 @@ spec:
         app: executor-controller
     spec:
       serviceAccountName: executor-controller
+      # The binary needs no privileges: config comes from env, Kubernetes
+      # access from the ServiceAccount token. uid 65534 = nobody.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: executor-controller
           image: continuo-executor-controller:latest
           imagePullPolicy: IfNotPresent
           command: ["/app/executor-controller/bin/executor-controller"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8084
               name: health

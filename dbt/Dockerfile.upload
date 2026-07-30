@@ -9,6 +9,9 @@ ENTRYPOINT []
 
 WORKDIR /app
 
+# System-level install and the venv build need root; the image drops back to
+# the dbt user (inherited from dbt-base) once /app is owned by it.
+USER root
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
@@ -28,5 +31,10 @@ COPY tests/ ./tests/
 COPY --from=sidecar /s3_common.py /s3_common.py
 COPY --from=sidecar /compile_uploader.py /compile_uploader.py
 COPY --from=sidecar /parse_cache_fetcher.py /parse_cache_fetcher.py
+
+# pytest and dbt both write under /app (target/, logs/, .pytest_cache); hand
+# the tree to the unprivileged dbt user and run as it.
+RUN chown -R dbt:dbt /app
+USER dbt
 
 CMD ["tail", "-f", "/dev/null"]

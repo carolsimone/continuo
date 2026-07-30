@@ -17,4 +17,9 @@ COPY macros/ /project/macros/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# dbt needs to create target/ and logs/ under /project at run time; own the
+# project tree so the image can run unprivileged.
+RUN useradd --uid 1000 --create-home dbt && chown -R dbt:dbt /project
+USER dbt
+
 ENTRYPOINT ["/entrypoint.sh"]

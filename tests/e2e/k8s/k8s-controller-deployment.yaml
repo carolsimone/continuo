@@ -49,11 +49,24 @@ spec:
         app: k8s-controller
     spec:
       serviceAccountName: k8s-controller
+      # The binary needs no privileges: config comes from env, Kubernetes
+      # access from the ServiceAccount token. uid 65534 = nobody.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: k8s-controller
           image: continuo-k8s-controller:latest
           imagePullPolicy: IfNotPresent
           command: ["/app/k8s-controller/bin/k8s-controller"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8085
               name: health
