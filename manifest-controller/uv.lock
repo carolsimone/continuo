@@ -4,30 +4,30 @@ requires-python = ">=3.14"
 
 [[package]]
 name = "boto3"
-version = "1.43.56"
+version = "1.43.59"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
     { name = "jmespath" },
     { name = "s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/53/05/23e1aa8c9e4b0399a61e7fd65c4f9cc0625121f24760e37471f776404abb/boto3-1.43.56.tar.gz", hash = "sha256:57c90df9fb026f2e6ae22530861198130203733c5c9ec4e5cca3a4037f5a8db4", size = 112673, upload-time = "2026-07-24T19:31:48.606Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/c8/ef9de1d7413da3adcdb6363258ba6b5cc703593409d8c1957825b20a69d3/boto3-1.43.59.tar.gz", hash = "sha256:4e9b14f89adc1a533c89312e86d8e00455a6f15d398796d92f9191b06e56b401", size = 112653, upload-time = "2026-07-29T19:33:25.703Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b8/57/3a960c9f581c00f2a591901b46e035ff79ab3956d16607f12306b3b8d483/boto3-1.43.56-py3-none-any.whl", hash = "sha256:feb699d4ab241ef5c1b80bb58277be2aaad365cd4b672d7817e0bc59ee45131b", size = 140026, upload-time = "2026-07-24T19:31:47.155Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/10/c5999e72b020012f2e0ccccf2a15632329edd34cb95b02b1ccfb1712ec08/boto3-1.43.59-py3-none-any.whl", hash = "sha256:58b9635deebf075c1c3d76df78df08eb2979c2a74283194676783a0bff3b4557", size = 140024, upload-time = "2026-07-29T19:33:23.751Z" },
 ]
 
 [[package]]
 name = "botocore"
-version = "1.43.56"
+version = "1.43.59"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jmespath" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/cc/7f84a5d3071fe878380e9f610ab36ca87b8cbbc4aa81ba2727f90e1f3ea3/botocore-1.43.56.tar.gz", hash = "sha256:6c01f85f0ff9863076f4c761e74ee3aa96c5ccc1ad09fc1efd62ef8f2d22bf57", size = 15733117, upload-time = "2026-07-24T19:31:38.125Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/37/3712a70796583570a5a2e426163e13762ba5ec615a73e966ad18e5933954/botocore-1.43.59.tar.gz", hash = "sha256:8016da69ecc1d705249a8ef13548d3c95eec87ac1cd26133a8bdfa73ca175be0", size = 15788291, upload-time = "2026-07-29T19:33:14.871Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5c/cd/86fe9e659e9699f62f8dd5ecd8c6725474334b23cab8aa71d82b5f56f1a4/botocore-1.43.56-py3-none-any.whl", hash = "sha256:aafc741f1b10f6fd63253eaf6ea029680c1ff436d87e1b8969d62aefa0c76976", size = 15418773, upload-time = "2026-07-24T19:31:34.758Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/cd/62d749f824b25c152144665f7c5eb8b5ca8be967a87e0c63577b7d4501ae/botocore-1.43.59-py3-none-any.whl", hash = "sha256:21393c35d23b19d7ba95cc4156b59f4013f80696d667997e1abd9d4e29651708", size = 15471171, upload-time = "2026-07-29T19:33:10.864Z" },
 ]
 
 [[package]]
@@ -123,15 +123,15 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3", specifier = ">=1.43.56" },
+    { name = "boto3", specifier = ">=1.43.59" },
     { name = "grpcio", specifier = ">=1.62.0" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.62.0" },
     { name = "protobuf", specifier = ">=7.35.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1.1" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "redis", specifier = ">=8.0.1" },
-    { name = "sqlglot", specifier = ">=30.13.0" },
+    { name = "redis", specifier = ">=8.1.0" },
+    { name = "sqlglot", specifier = ">=30.14.0" },
 ]
 provides-extras = ["dev"]
 
@@ -245,11 +245,11 @@ wheels = [
 
 [[package]]
 name = "redis"
-version = "8.0.1"
+version = "8.1.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/cc/c3/928b290c2c0ca99ab96eea5b4ff8f30be8112b075301a7d3ba214a3c8c12/redis-8.0.1.tar.gz", hash = "sha256:afc5a7a2f5a084f5b1880dec548dd45be17db7e43c82a30d84f952aefb05cfb0", size = 5114170, upload-time = "2026-06-23T14:52:37.728Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/99/604f0b666d4c616d891cf77ebb9db6bb21601344c051aebf1b72b9ff915f/redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25", size = 5254356, upload-time = "2026-07-30T08:51:00.269Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/0a/c2345ebf1ebe70840ce3f6c6ee612f8fa749cfbd1b03069c53bf0c62aaad/redis-8.0.1-py3-none-any.whl", hash = "sha256:47daa35a058c23468d6437f17a8c76882cb316b838ef763036af99b96cedd743", size = 502406, upload-time = "2026-06-23T14:52:36.137Z" },
+    { url = "https://files.pythonhosted.org/packages/66/9d/c5731f6e3608663d4d3656fd8d3aecee8b509c3082818f5a13eae925baea/redis-8.1.0-py3-none-any.whl", hash = "sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb", size = 560618, upload-time = "2026-07-30T08:50:58.497Z" },
 ]
 
 [[package]]
@@ -284,11 +284,11 @@ wheels = [
 
 [[package]]
 name = "sqlglot"
-version = "30.13.0"
+version = "30.14.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/bf/62/6d5bd3169478b7f09e08ab3e50175d486a9e7f3a419b88fc9280ba564ab1/sqlglot-30.13.0.tar.gz", hash = "sha256:f0a6eb79de2fd6efe2689f8cf197caa4f08bfe77c7880315616fa4420b8ba2bf", size = 5932385, upload-time = "2026-07-20T20:16:54.873Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/cd/39a94f0f98076ee8e7c7c38fd4bba8d7845b0c629ff967057c64ef2c0989/sqlglot-30.14.0.tar.gz", hash = "sha256:df2ef5d2b8ca814313781f4ff35bf63e58f821ef517eeddbd523c19a61fa9bb9", size = 5944410, upload-time = "2026-07-27T11:23:30.698Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/2f/2076eca54f6a8ed1c86301bdb4bb2ae4181b0c1c4dbc041062ca997dc1b2/sqlglot-30.13.0-py3-none-any.whl", hash = "sha256:08f87ff7b052246d61b731628c8c2db0bc91f2c9e69f5ba68a1d160a9f5b49b1", size = 719120, upload-time = "2026-07-20T20:16:53.248Z" },
+    { url = "https://files.pythonhosted.org/packages/33/ec/a729883ceda22dcd9117ce182f64d884bf494e72c4dfce00c2ad0a5978e1/sqlglot-30.14.0-py3-none-any.whl", hash = "sha256:fc768e24889d63a5e1237dea7ad305e5ffb4356a98b0bed828f89591ebcd3636", size = 719007, upload-time = "2026-07-27T11:23:28.637Z" },
 ]
 
 [[package]]
