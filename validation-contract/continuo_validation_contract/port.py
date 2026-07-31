@@ -1,7 +1,7 @@
-"""Warehouse adapter port and entry-point discovery.
+"""Validation adapter port and entry-point discovery.
 
 Validation builds each node as an EMPTY table in the candidate schema; the DDL is
-engine-specific and lives behind the WarehouseAdapter port. Engine packages register
+engine-specific and lives behind the ValidationAdapter port. Engine packages register
 a ``continuo_validation.adapters`` entry point; each runner image installs exactly
 one, so discovery — not configuration — selects the adapter.
 """
@@ -22,7 +22,7 @@ class AdapterDiscoveryError(Exception):
     """Installed adapter plugins do not resolve to exactly one usable engine."""
 
 
-class WarehouseAdapter(ABC):
+class ValidationAdapter(ABC):
     """Port for engine-specific empty-table DDL during blue/green validation.
 
     stdout is a parsed channel: the runner prints one sentinel-framed result block
@@ -39,7 +39,7 @@ class WarehouseAdapter(ABC):
 
     @classmethod
     @abstractmethod
-    def from_env(cls) -> "WarehouseAdapter":
+    def from_env(cls) -> "ValidationAdapter":
         """Construct a connected adapter from environment variables."""
 
     @abstractmethod
@@ -69,11 +69,16 @@ class WarehouseAdapter(ABC):
         """Release the underlying connection."""
 
 
+# Deprecated alias: engine packages published against contract <= 0.2 subclass
+# this name. Remove once all engine packages import ValidationAdapter.
+WarehouseAdapter = ValidationAdapter
+
+
 class RuntimeAdapter(ABC):
     """Port for engine-specific data-plane I/O at python-node runtime.
 
     The harness is the only caller: scripts never see this surface. Same
-    stdout discipline as WarehouseAdapter — log to stderr, never print.
+    stdout discipline as ValidationAdapter — log to stderr, never print.
     """
 
     @classmethod
@@ -130,16 +135,16 @@ def _discover(group: str, kind: str, base: type) -> tuple[str, type]:
     return ep.name, cls
 
 
-def discover_adapter() -> tuple[str, type[WarehouseAdapter]]:
+def discover_adapter() -> tuple[str, type[ValidationAdapter]]:
     """Return ``(engine_name, adapter_class)`` from the single installed plugin.
 
     Raises
     ------
     AdapterDiscoveryError
         If zero or multiple adapters are installed, or the entry point does not
-        resolve to a WarehouseAdapter subclass.
+        resolve to a ValidationAdapter subclass.
     """
-    return _discover(ENTRY_POINT_GROUP, "warehouse", WarehouseAdapter)  # type: ignore[return-value]
+    return _discover(ENTRY_POINT_GROUP, "validation", ValidationAdapter)  # type: ignore[return-value]
 
 
 def discover_runtime_adapter() -> tuple[str, type[RuntimeAdapter]]:
