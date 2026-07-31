@@ -1,5 +1,5 @@
 [project]
-version = "0.2.0"
+version = "0.3.0"
 name = "continuo-validation-contract"
 description = "The continuo validation runner contract: the WarehouseAdapter port and result-block wire format."
 authors = [{ name = "Simone Carolini" }]

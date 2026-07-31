@@ -9,8 +9,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from importlib.metadata import entry_points
+from typing import TYPE_CHECKING
 
 ENTRY_POINT_GROUP = "continuo_validation.adapters"
+RUNTIME_ENTRY_POINT_GROUP = "continuo_runtime.adapters"
+
+if TYPE_CHECKING:  # pragma: no cover
+    import pyarrow
 
 
 class AdapterDiscoveryError(Exception):
@@ -64,6 +69,67 @@ class WarehouseAdapter(ABC):
         """Release the underlying connection."""
 
 
+class RuntimeAdapter(ABC):
+    """Port for engine-specific data-plane I/O at python-node runtime.
+
+    The harness is the only caller: scripts never see this surface. Same
+    stdout discipline as WarehouseAdapter — log to stderr, never print.
+    """
+
+    @classmethod
+    @abstractmethod
+    def required_env(cls) -> list[str]:
+        """Names of env vars that must be non-empty before connecting."""
+
+    @classmethod
+    @abstractmethod
+    def from_env(cls) -> "RuntimeAdapter":
+        """Construct a connected adapter from environment variables."""
+
+    @abstractmethod
+    def fetch(self, sql: str) -> "pyarrow.Table":
+        """Execute one declared read and return the result as Arrow."""
+
+    @abstractmethod
+    def ensure_table(self, schema: str, table: str, columns: list[dict]) -> None:
+        """CREATE TABLE IF NOT EXISTS with the typed DDL compiled from columns.
+
+        Each column dict carries ``name``, ``type`` (SQL type string from the
+        contract's supported set), ``nullable`` (bool).
+        """
+
+    @abstractmethod
+    def load(self, schema: str, table: str, data: "pyarrow.Table") -> None:
+        """Atomically replace the table's contents with *data*."""
+
+    @abstractmethod
+    def close(self) -> None:
+        """Release the underlying connection."""
+
+
+def _discover(group: str, kind: str, base: type) -> tuple[str, type]:
+    """Shared logic for discovering and loading an adapter plugin."""
+    eps = list(entry_points(group=group))
+    if not eps:
+        raise AdapterDiscoveryError(
+            f"no {kind} adapter installed (entry-point group {group!r} is empty); "
+            f"install exactly one engine package"
+        )
+    if len(eps) > 1:
+        names = ", ".join(sorted(ep.name for ep in eps))
+        raise AdapterDiscoveryError(
+            f"multiple {kind} adapters installed ({names}); an image must install exactly one"
+        )
+    ep = eps[0]
+    try:
+        cls = ep.load()
+    except Exception as exc:
+        raise AdapterDiscoveryError(f"failed to load adapter entry point {ep.name!r}: {exc}") from exc
+    if not (isinstance(cls, type) and issubclass(cls, base)):
+        raise AdapterDiscoveryError(f"entry point {ep.name!r} does not resolve to a {base.__name__} subclass")
+    return ep.name, cls
+
+
 def discover_adapter() -> tuple[str, type[WarehouseAdapter]]:
     """Return ``(engine_name, adapter_class)`` from the single installed plugin.
 
@@ -73,27 +139,9 @@ def discover_adapter() -> tuple[str, type[WarehouseAdapter]]:
         If zero or multiple adapters are installed, or the entry point does not
         resolve to a WarehouseAdapter subclass.
     """
-    eps = list(entry_points(group=ENTRY_POINT_GROUP))
-    if not eps:
-        raise AdapterDiscoveryError(
-            f"no warehouse adapter installed (entry-point group {ENTRY_POINT_GROUP!r} is empty); "
-            "install exactly one continuo-validation-<engine> package"
-        )
-    if len(eps) > 1:
-        names = ", ".join(sorted(ep.name for ep in eps))
-        raise AdapterDiscoveryError(
-            f"multiple warehouse adapters installed ({names}); "
-            "a runner image must install exactly one"
-        )
-    ep = eps[0]
-    try:
-        cls = ep.load()
-    except Exception as exc:  # import-time failure in the adapter package
-        raise AdapterDiscoveryError(
-            f"failed to load adapter entry point {ep.name!r}: {exc}"
-        ) from exc
-    if not (isinstance(cls, type) and issubclass(cls, WarehouseAdapter)):
-        raise AdapterDiscoveryError(
-            f"entry point {ep.name!r} does not resolve to a WarehouseAdapter subclass"
-        )
-    return ep.name, cls
+    return _discover(ENTRY_POINT_GROUP, "warehouse", WarehouseAdapter)  # type: ignore[return-value]
+
+
+def discover_runtime_adapter() -> tuple[str, type[RuntimeAdapter]]:
+    """Return ``(engine_name, adapter_class)`` from the single installed runtime plugin."""
+    return _discover(RUNTIME_ENTRY_POINT_GROUP, "runtime", RuntimeAdapter)  # type: ignore[return-value]

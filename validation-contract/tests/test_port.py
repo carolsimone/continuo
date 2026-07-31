@@ -192,3 +192,29 @@ def test_discover_wraps_adapter_import_failure(tmp_path):
     )
     assert out.startswith("ERR")
     assert "failed to load adapter entry point" in out
+
+
+# --- RuntimeAdapter tests -------------------------------------------------------
+
+from continuo_validation_contract.port import (
+    RUNTIME_ENTRY_POINT_GROUP,
+    RuntimeAdapter,
+    discover_runtime_adapter,
+)
+
+
+def test_runtime_adapter_is_abstract():
+    """The port is abstract — a concrete adapter must implement every method."""
+    with pytest.raises(TypeError):
+        RuntimeAdapter()  # type: ignore[abstract]
+
+
+def test_runtime_entry_point_group_name():
+    """The runtime entry point group constant has the correct value."""
+    assert RUNTIME_ENTRY_POINT_GROUP == "continuo_runtime.adapters"
+
+
+def test_discover_runtime_adapter_empty_group_raises():
+    """With no runtime adapter package installed, discovery raises cleanly."""
+    with pytest.raises(port.AdapterDiscoveryError, match="no runtime adapter installed"):
+        discover_runtime_adapter()
