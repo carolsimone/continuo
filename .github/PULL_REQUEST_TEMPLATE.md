@@ -14,6 +14,7 @@ Closes #
 
 ## Checklist
 
+- [ ] Every commit is signed off (`git commit -s`) — the `dco` check enforces this
 - [ ] Tests added or updated for the behavior changed
 - [ ] `scripts/lint-go.sh --ci` passes (Go changes)
 - [ ] Full `npm test` and `npm run build` pass (ui-service changes)
