@@ -1,6 +1,7 @@
 name: release
 
-# Release flow, triggered by pushing a v* tag on a main commit:
+# Release flow, triggered by pushing a v<major>.<minor>.<patch> tag on a main
+# commit:
 #   1. retag-images  — alias every published :<commit-sha> image to the
 #                      release tag (fails closed if the commit never went
 #                      through deploy.yml's build-publish).
@@ -15,7 +16,12 @@ name: release
 on:
   push:
     tags:
-      - 'v*'
+      # The digit matters: a tag glob anchors at the first character, so a bare
+      # `v*` also claims every other tag family that happens to start with a v
+      # — `validation-contract-v0.3.0`, the PyPI package tag, among them.
+      # Requiring a digit after the v keeps this trigger to release tags.
+      # Guarded by scripts/check-release-tag-trigger.sh.
+      - 'v[0-9]*'
 
 concurrency:
   group: release-${{ github.ref }}

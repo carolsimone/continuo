@@ -123,9 +123,13 @@ jobs:
         # check-docker-state-isolation: fail fast if a workflow job would share
         # ~/.docker (builder pointer, registry credentials) with jobs running
         # concurrently on the other runner agent.
+        # check-release-tag-trigger: fail fast if release.yml's tag glob also
+        # claims another workflow's tag family, which would run the product
+        # release pipeline on a tag that has no release images behind it.
         run: |
           bash scripts/check-ci-alignment.sh
           bash scripts/check-docker-state-isolation.sh
+          bash scripts/check-release-tag-trigger.sh
 
       - name: Detect Dockerfile.base and validation changes
         id: basefilter
