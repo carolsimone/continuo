@@ -186,6 +186,7 @@ test-manifest:
 .PHONY: guards
 guards:
 	bash scripts/check-ci-alignment.sh
+	bash scripts/check-release-tag-trigger.sh
 	cd pkg && go test ./...
 	diff state/proto/state/v1/state.proto ui-service/proto/state.proto
 
