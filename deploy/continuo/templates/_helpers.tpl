@@ -38,16 +38,23 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 {{- end -}}
 
-{{/* The validation-runner image for the SRE-selected engine. The engine name maps to
-     the continuo-validation-runner-<engine> image; the $supported list is the set of
-     engines with a published library + image. */}}
+{{/* The validation image for the SRE-selected engine. Engine name maps to
+     the external continuo-validation-<engine> image; validation.imageTag pins its
+     version independently of the chart appVersion — validation releases from
+     its own repository. The $supported list is the set of engines with a
+     published library + image. */}}
 {{- define "continuo.validation.image" -}}
 {{- $eng := .Values.validation.engine | default "postgres" -}}
 {{- $supported := list "postgres" "trino" -}}
 {{- if not (has $eng $supported) -}}
-{{- fail (printf "validation.engine=%q is not available: only %s have a published continuo-validation-runner image today. Adding an engine means publishing its continuo-validation-<engine> library + image; it ALSO means you (the operator) must supply that engine's own warehouse connection (set validation.createWarehouseSecret=false and provide a Secret with THAT engine's keys — e.g. the trino library reads TRINO_*, not POSTGRES_*) and configure your dbt team images with that engine's dbt profile. See the validation: block in values.yaml." $eng (join ", " $supported)) -}}
+{{- fail (printf "validation.engine=%q is not available: only %s have a published continuo-validation image today. Adding an engine means publishing its continuo-validation-<engine> library + image; it ALSO means you (the operator) must supply that engine's own warehouse connection (set validation.createWarehouseSecret=false and provide a Secret with THAT engine's keys — e.g. the trino library reads TRINO_*, not POSTGRES_*) and configure your dbt team images with that engine's dbt profile. See the validation: block in values.yaml." $eng (join ", " $supported)) -}}
 {{- end -}}
-{{- include "continuo.image" (dict "root" . "name" (printf "validation-runner-%s" $eng)) -}}
+{{- $tag := .Values.validation.imageTag -}}
+{{- if .Values.global.imageRegistry -}}
+{{- printf "%s/%s/continuo-validation-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}
+{{- else -}}
+{{- printf "%s/continuo-validation-%s:%s" .Values.global.imageRepositoryPrefix $eng $tag -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Name of the validation warehouse Secret the executor attaches via envFrom.

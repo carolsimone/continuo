@@ -12,6 +12,12 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `validation.imageTag` — pins the external `continuo-validation-<engine>` image version independently of the chart `appVersion` (default `v0.2.0`).
+
+### Changed
+- The validation image is now the externally released `continuo-validation-<engine>` (from github.com/carolsimone/continuo-validation), replacing the chart-appVersion-tagged `continuo-validation-runner-<engine>`; `global.imageTag` no longer applies to it.
+
 ### Fixed
 - Redis-backed services (`manifest-controller`, `ui-service`) no longer start
   before the bundled Redis is reachable. They previously raced the Redis

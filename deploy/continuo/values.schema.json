@@ -261,11 +261,15 @@
       "properties": {
         "engine": {
           "type": "string",
-          "description": "continuo-validation-runner-<engine> image name. Not an enum: new engines are added by publishing a new adapter image, not by editing this chart."
+          "description": "continuo-validation-<engine> image name. Not an enum: new engines are added by publishing a new adapter image, not by editing this chart."
         },
         "createWarehouseSecret": {"type": "boolean"},
         "warehouseSecret": {"type": "string"},
-        "warehouseDatabase": {"type": "string"}
+        "warehouseDatabase": {"type": "string"},
+        "imageTag": {
+          "type": "string",
+          "description": "Tag of the external continuo-validation-<engine> image; versioned independently of the chart appVersion."
+        }
       }
     },
 
