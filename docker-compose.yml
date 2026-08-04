@@ -198,10 +198,10 @@ services:
       - K8S_NAMESPACE=default
       - MAX_CONCURRENT_JOBS=50
       # The validation image is a published external image (continuo-validation);
-      # scripts/setup.sh pulls it and side-loads it into the local kind node
-      # cache, so validation pods must use the cached image. PullAlways would
-      # fail with ErrImagePull locally; production omits this and defaults to
-      # Always.
+      # scripts/setup.sh (dev) and tests/e2e/provision-k8s-test-env.sh (e2e) each
+      # pull it and side-load it into the local kind node cache, so validation pods
+      # must use the cached image. PullAlways would fail with ErrImagePull locally;
+      # production omits this and defaults to Always.
       - VALIDATION_IMAGE_PULL_POLICY=IfNotPresent
       - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0
       # Warehouse credentials for the validation pod come from this operator-owned

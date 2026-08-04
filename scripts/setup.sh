@@ -65,7 +65,7 @@ echo "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 echo "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
-echo "Pulling validation runner (postgres) image..."
+echo "Pulling continuo-validation (postgres) image..."
 docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0
 echo "Building service images (batched)..."
 # Build in small batches instead of all ~13 services at once. On a 2-CPU/7.75GB

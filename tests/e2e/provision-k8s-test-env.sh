@@ -44,7 +44,7 @@ log_info "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/ || { log_error "failed to build dbt-base"; exit 1; }
 log_info "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/ || { log_error "failed to build s3-sidecar"; exit 1; }
-log_info "Pulling validation runner (postgres) image..."
+log_info "Pulling continuo-validation (postgres) image..."
 docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0 \
   || { log_error "failed to pull continuo-validation-postgres"; exit 1; }
 

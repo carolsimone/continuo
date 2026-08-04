@@ -61,7 +61,7 @@ func TestBuildValidationPodSpecHardening(t *testing.T) {
 	spec, err := buildValidationPodSpec(p)
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
-	// validation-runner is continuo-owned and built non-root (uid 65532).
+	// continuo-validation-<engine> is built non-root (uid 65532).
 	assertNonRoot(t, spec.Containers[0].SecurityContext)
 }
 
@@ -72,7 +72,7 @@ func TestBuildValidationPodSpecBuildFromSQLHardening(t *testing.T) {
 	spec, err := buildValidationPodSpec(p)
 	require.NoError(t, err)
 	assertPodHardening(t, spec)
-	// validation-runner is continuo-owned and built non-root (uid 65532).
+	// continuo-validation-<engine> is built non-root (uid 65532).
 	assertNonRoot(t, spec.Containers[0].SecurityContext)
 }
 

@@ -178,8 +178,9 @@ Every container in this chart, bundled or not, gets:
 
 | Key | Purpose |
 |---|---|
-| `global.imageRegistry` / `global.imageRepositoryPrefix` / `global.imageTag` | Compose Continuo image refs as `<registry>/<prefix>/continuo-<service>:<tag>`. Empty `imageTag` falls back to `Chart.appVersion`. |
+| `global.imageRegistry` / `global.imageRepositoryPrefix` / `global.imageTag` | Compose Continuo-owned service image refs as `<registry>/<prefix>/continuo-<service>:<tag>`. Empty `imageTag` falls back to `Chart.appVersion`. Does not apply to the validation image — see `validation.engine` / `validation.imageTag` below. |
 | `global.teamImagePrefix` | Registry/namespace prefix executor-controller uses to compose per-team dbt images for compile/seed/scheduled Jobs (unrelated to `global.imageRepositoryPrefix`, which names Continuo's own images). |
+| `validation.engine` / `validation.imageTag` | Select and pin the external `continuo-validation-<engine>` image, composed as `<registry>/<prefix>/continuo-validation-<engine>:<imageTag>` (from the separate `continuo-validation` repository, `github.com/carolsimone/continuo-validation`) — reuses `global.imageRegistry`/`global.imageRepositoryPrefix` but `imageTag` is required and versioned independently of `global.imageTag`/`appVersion`, since validation ships on its own release train. |
 | `global.storageClass` | Default `StorageClass` for every bundled datastore PVC (Persistent Volume Claim); each datastore's own `persistence.storageClass` overrides it. |
 | `postgresql.enabled` / `redis.enabled` / `neo4j.enabled` / `minio.enabled` / `dex.enabled` | Toggle the bundled quickstart instance of each datastore/identity-provider off to bring your own. |
 | `postgresql.auth.existingSecret` / `redis.auth.existingSecret` / `neo4j.auth.existingSecret` / `minio.auth.existingSecret` | Pre-created Secret for the *bundled* instance's credentials (see the reinstall table above for keys), instead of letting the chart generate one. Empty (default) = generate and keep stable across upgrades. |
