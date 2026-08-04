@@ -42,14 +42,42 @@ app.kubernetes.io/name: {{ .service }}
      the external continuo-validation-<engine> image; validation.imageTag pins its
      version independently of the chart appVersion — validation releases from
      its own repository. The $supported list is the set of engines with a
-     published library + image. */}}
+     published library + image.
+
+     validation.imageTag is optional in the schema (not `required`): an
+     existing release upgraded without merging the new chart defaults (e.g.
+     `helm upgrade --reuse-values`) has no way to supply it, and a hard
+     schema requirement would abort that upgrade before this template — or
+     the upgrade NOTES — ever renders. A YAML `imageTag: null` override
+     collapses to the same "key absent" state, since Helm drops a key whose
+     override value is null before merging, so both cases fall back to
+     CONTINUO_VALIDATION_DEFAULT_TAG below.
+
+     A present-but-empty string ("") is different: it survives the merge, so
+     it is a real, deliberate misconfiguration rather than an absent key, and
+     the schema's `minLength: 1` already rejects it wherever the schema sees
+     the merged value. This `fail` is the backstop for the one case the
+     schema cannot see: `helm upgrade --reuse-values` re-supplying an
+     already-stored empty string.
+
+     scripts/check-validation-image-pin.sh renders this template with
+     validation.imageTag unset to assert CONTINUO_VALIDATION_DEFAULT_TAG
+     below stays in sync with values.yaml's default — keep them equal. */}}
 {{- define "continuo.validation.image" -}}
 {{- $eng := .Values.validation.engine | default "postgres" -}}
 {{- $supported := list "postgres" "trino" -}}
 {{- if not (has $eng $supported) -}}
 {{- fail (printf "validation.engine=%q is not available: only %s have a published continuo-validation image today. Adding an engine means publishing its continuo-validation-<engine> library + image; it ALSO means you (the operator) must supply that engine's own warehouse connection (set validation.createWarehouseSecret=false and provide a Secret with THAT engine's keys — e.g. the trino library reads TRINO_*, not POSTGRES_*) and configure your dbt team images with that engine's dbt profile. See the validation: block in values.yaml." $eng (join ", " $supported)) -}}
 {{- end -}}
-{{- $tag := .Values.validation.imageTag -}}
+{{- $tag := "" -}}
+{{- if hasKey .Values.validation "imageTag" -}}
+{{- $tag = .Values.validation.imageTag -}}
+{{- if not $tag -}}
+{{- fail "validation.imageTag is set to an empty string; unset the key entirely to use the chart's default continuo-validation-<engine> image tag, or set a real value (\"vX.Y.Z\" or \"vX.Y.Z@sha256:<digest>\")" -}}
+{{- end -}}
+{{- else -}}
+{{- $tag = "v0.2.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
+{{- end -}}
 {{- if .Values.global.imageRegistry -}}
 {{- printf "%s/%s/continuo-validation-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}
 {{- else -}}

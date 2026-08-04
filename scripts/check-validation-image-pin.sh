@@ -8,9 +8,12 @@
 # resolve for us. That string is hand-maintained in every location that
 # side-loads or references it: the Makefile, the local/e2e cluster bootstrap
 # scripts, the e2e static Deployment fixture, docker-compose, the
-# executor-controller Go test fixtures, and the chart's own default (read by
+# executor-controller Go test fixtures, the chart's own default (read by
 # rendering the chart, not by grepping values.yaml as text, since the actual
-# ref is composed from registry/prefix/engine/tag at template time).
+# ref is composed from registry/prefix/engine/tag at template time), and the
+# chart's *fallback* default in templates/_helpers.tpl (read by rendering the
+# chart a second time with validation.imageTag explicitly unset, since that
+# literal only ever appears when the key is absent from the merged values).
 #
 # Nothing arbitrates between these locations, and the quiet failure is worse
 # than the loud one: if one location advances and another lags, either the
@@ -24,19 +27,26 @@
 # Scope note: every hand-maintained location here only ever pins the
 # postgres engine (the default/e2e engine) as a bare `repo:tag` ref. The only
 # place an operator can legitimately move to a `tag@sha256:digest` pin is
-# `deploy/continuo/values.yaml`'s `validation.imageTag` (see its comment) —
-# this guard does not need to tolerate that shape because a digest pin would
-# fail equality against the bare-tag dev/e2e locations by design, which is
-# correct: those locations track the chart's *default*, not an operator's
-# digest override.
+# `deploy/continuo/values.yaml`'s `validation.imageTag` (see its comment).
+# REF_RE captures that optional `@sha256:<digest>` suffix rather than
+# stopping at the tag, so a digest-pinned chart still disagrees with the
+# bare-tag dev/e2e locations as intended (those track the chart's *default*,
+# not an operator's digest override) — and, just as importantly, two
+# genuinely different digest pins disagree with each other too, instead of
+# both truncating to the same bare `repo:tag` and comparing equal.
 
 set -uo pipefail
 
 REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CHART_DIR="${REPO_ROOT}/deploy/continuo"
 
-# Matches the full ref: ghcr.io/carolsimone/continuo-validation-postgres:vX.Y.Z
-REF_RE='ghcr\.io/carolsimone/continuo-validation-postgres:[A-Za-z0-9._-]+'
+# Matches the full ref: ghcr.io/carolsimone/continuo-validation-postgres:vX.Y.Z,
+# optionally digest-pinned as vX.Y.Z@sha256:<64 hex chars>. The digest suffix
+# must be part of the match, not left for a separate pass to notice — two
+# refs that agree on repo:tag but pin different digests (or one pinned, one
+# not) are NOT the same ref, and a pattern that stops at `@` would compare
+# them equal.
+REF_RE='ghcr\.io/carolsimone/continuo-validation-postgres:[A-Za-z0-9._-]+(@sha256:[0-9a-f]{64})?'
 
 # Prints every ref matching REF_RE in $1, one per line (possibly none).
 extract_all_refs() {
@@ -120,6 +130,24 @@ if [ "$render_rc" -ne 0 ]; then
 fi
 chart_ref="$(printf '%s\n' "$rendered" | grep -oE "$REF_RE" | head -1)"
 record "deploy/continuo (helm template default)" "$chart_ref"
+
+# templates/_helpers.tpl's continuo.validation.image also hand-maintains a
+# fallback tag literal, used only when validation.imageTag is absent from the
+# merged values (a release upgraded before the key existed, or an explicit
+# `imageTag: null` override — Helm drops a null-valued override key before
+# merging, so both collapse to "key absent"). values.schema.json cannot see
+# that literal, since it never appears in values.yaml, so nothing else in
+# this script would catch it drifting from the values.yaml default. Rendering
+# with the key explicitly unset exercises that fallback path directly.
+rendered_unset="$(helm template pin-check "$CHART_DIR" --kube-version 1.29.0 --set validation.imageTag=null 2>&1)"
+render_unset_rc=$?
+if [ "$render_unset_rc" -ne 0 ]; then
+  echo "check-validation-image-pin: helm template (validation.imageTag unset) failed:" >&2
+  echo "$rendered_unset" >&2
+  exit 1
+fi
+chart_ref_unset="$(printf '%s\n' "$rendered_unset" | grep -oE "$REF_RE" | head -1)"
+record "deploy/continuo (helm template, imageTag unset — helper default)" "$chart_ref_unset"
 
 if [ "${#refs[@]}" -eq 0 ]; then
   echo "check-validation-image-pin: found no pins at all — the extraction patterns may be stale" >&2

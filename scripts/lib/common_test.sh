@@ -39,6 +39,12 @@ run_capture(){
 reset_stub_state(){
   DOCKER_SAVE_RC=0 DOCKER_SAVE_EMPTY=0 DOCKER_SAVE_ARGS=""
   KIND_LOAD_ARCHIVE_RC=0 KIND_LOAD_DOCKERIMAGE_RC=0 KIND_LOAD_DOCKERIMAGE_CALLED=0
+  # Defaults describe a classic-graphdriver store on a recent Docker — the
+  # unaffected case — so every pre-existing test below (which predates the
+  # containerd-store/version preflight) keeps exercising the save/load
+  # behaviour it was written for, undisturbed by the new check.
+  DOCKER_INFO_DRIVERSTATUS='[[Backing Filesystem extfs]]'
+  DOCKER_VERSION_SERVER='28.0.4'
 }
 docker(){
   if [ "$1" = "save" ]; then
@@ -47,6 +53,8 @@ docker(){
     [ "$DOCKER_SAVE_RC" = "0" ] && [ "$DOCKER_SAVE_EMPTY" != "1" ] && printf x > "$6"
     return "$DOCKER_SAVE_RC"
   fi
+  if [ "$1" = "info" ]; then printf '%s' "$DOCKER_INFO_DRIVERSTATUS"; return 0; fi
+  if [ "$1" = "version" ]; then printf '%s' "$DOCKER_VERSION_SERVER"; return 0; fi
 }
 kind(){
   if [ "$1" = "load" ] && [ "$2" = "image-archive" ]; then return "$KIND_LOAD_ARCHIVE_RC"; fi
@@ -109,6 +117,40 @@ assert "total failure (both routes) fails loudly" "[ $rc -ne 0 ]"
 assert "total failure names docker save --platform" "[[ \"\$out\" == *'docker save --platform'* ]]"
 assert "total failure names kind load docker-image" "[[ \"\$out\" == *'kind load docker-image'* ]]"
 assert "total failure leaves no archive behind" "[ -z \"\$(tmp_archives)\" ]"
+
+# --- containerd store + Docker <28: no route works, fail before trying ----
+reset_stub_state
+DOCKER_INFO_DRIVERSTATUS='[]'   # empty DriverStatus == containerd image store
+DOCKER_VERSION_SERVER='27.3.1'
+run_capture kind_load_pulled_image "ghcr.io/x/y:v1" "c"
+assert "containerd store on Docker <28 fails" "[ $rc -ne 0 ]"
+assert "containerd/<28 failure names the Docker 28.0 requirement" "[[ \"\$out\" == *'28.0'* ]]"
+assert "containerd/<28 failure names the containerd image store" "[[ \"\$out\" == *'containerd image store'* ]]"
+assert "containerd/<28 failure never calls docker save" "[ -z \"\$DOCKER_SAVE_ARGS\" ]"
+assert "containerd/<28 failure never calls the kind-load fallback" "[ \"\$KIND_LOAD_DOCKERIMAGE_CALLED\" = 0 ]"
+
+# The `null` spelling (older `docker info` JSON encodes a nil slice as
+# `null`, not `[]`) must be recognized too.
+reset_stub_state
+DOCKER_INFO_DRIVERSTATUS='null'
+DOCKER_VERSION_SERVER='27.3.1'
+run_capture kind_load_pulled_image "ghcr.io/x/y:v1" "c"
+assert "containerd store (null spelling) on Docker <28 fails" "[ $rc -ne 0 ]"
+
+# --- containerd store + Docker 28+: the preflight does not block it -------
+reset_stub_state
+DOCKER_INFO_DRIVERSTATUS='[]'
+DOCKER_VERSION_SERVER='28.1.0'
+run_capture kind_load_pulled_image "ghcr.io/x/y:v1" "c"
+assert "containerd store on Docker 28+ is not blocked" "[ $rc -eq 0 ]"
+assert "containerd store on Docker 28+ uses the platform-scoped route" "[ \"\$KIND_LOAD_DOCKERIMAGE_CALLED\" = 0 ]"
+
+# --- classic graphdriver store on Docker <28: unaffected, as documented ---
+reset_stub_state
+DOCKER_INFO_DRIVERSTATUS='[[Backing Filesystem extfs]]'
+DOCKER_VERSION_SERVER='24.0.7'
+run_capture kind_load_pulled_image "ghcr.io/x/y:v1" "c"
+assert "classic graphdriver on Docker <28 is not blocked" "[ $rc -eq 0 ]"
 
 unset -f uname docker kind
 
