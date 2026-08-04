@@ -1,5 +1,0 @@
-"""Container entrypoint: continuo's executor invokes `python /validation_runner.py`."""
-from continuo_validation_runner.runner import main
-
-if __name__ == "__main__":
-    main()

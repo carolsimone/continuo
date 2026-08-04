@@ -73,13 +73,11 @@ updates:
     commit-message:
       prefix: chore(deps)
 
-  # The Python services: manifest-controller plus the validation contract and
-  # runner packages, each a uv project with its own pyproject.toml and uv.lock.
+  # The Python service manifest-controller, a uv project with its own
+  # pyproject.toml and uv.lock.
   - package-ecosystem: uv
     directories:
       - /manifest-controller
-      - /validation-contract
-      - /validation-runner
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

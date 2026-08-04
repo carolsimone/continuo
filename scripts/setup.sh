@@ -65,9 +65,8 @@ echo "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 echo "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
-echo "Building slim validation-runner (postgres) image..."
-DOCKER_BUILDKIT=1 docker build -t continuo-validation-runner-postgres:latest \
-  -f validation-runner/Dockerfile.postgres validation-runner/
+echo "Pulling validation runner (postgres) image..."
+docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0
 echo "Building service images (batched)..."
 # Build in small batches instead of all ~13 services at once. On a 2-CPU/7.75GB
 # CI runner, building everything in parallel thrashes memory and disk I/O so badly
@@ -138,7 +137,7 @@ kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME
 kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME}
 kind load docker-image dbt-base:latest --name ${CLUSTER_NAME}
 kind load docker-image s3-sidecar:latest --name ${CLUSTER_NAME}
-kind load docker-image continuo-validation-runner-postgres:latest --name ${CLUSTER_NAME}
+kind load docker-image ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0 --name ${CLUSTER_NAME}
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 

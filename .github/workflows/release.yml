@@ -18,8 +18,8 @@ on:
     tags:
       # The digit matters: a tag glob anchors at the first character, so a bare
       # `v*` also claims every other tag family that happens to start with a v
-      # — `validation-contract-v0.3.0`, the PyPI package tag, among them.
-      # Requiring a digit after the v keeps this trigger to release tags.
+      # (e.g. a package tag like `some-package-v0.3.0`). Requiring a digit
+      # after the v keeps this trigger to release tags.
       # Guarded by scripts/check-release-tag-trigger.sh.
       - 'v[0-9]*'
 

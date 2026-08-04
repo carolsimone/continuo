@@ -63,7 +63,6 @@ jobs:
               - 'cli/**'
               - 'remediation/**'
               - 'remediation-agent/**'
-              - 'validation-runner/**'
               - 's3-sidecar/**'
             state:
               - 'Dockerfile.base'
@@ -121,8 +120,6 @@ jobs:
               - 'remediation-agent/**'
             migrations:
               - 'db/**'
-            validation_runner:
-              - 'validation-runner/**'
             s3_sidecar:
               - 's3-sidecar/**'
             stream_reaper:
@@ -142,7 +139,6 @@ jobs:
           REMEDIATION_CHANGED: ${{ steps.filter.outputs.remediation }}
           REMEDIATION_AGENT_CHANGED: ${{ steps.filter.outputs.remediation_agent }}
           MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations }}
-          VALIDATION_RUNNER_CHANGED: ${{ steps.filter.outputs.validation_runner }}
           S3_SIDECAR_CHANGED: ${{ steps.filter.outputs.s3_sidecar }}
           STREAM_REAPER_CHANGED: ${{ steps.filter.outputs.stream_reaper }}
         run: |
@@ -159,7 +155,6 @@ jobs:
               --arg remediation "$REMEDIATION_CHANGED" \
               --arg remediation_agent "$REMEDIATION_AGENT_CHANGED" \
               --arg migrations "$MIGRATIONS_CHANGED" \
-              --arg validation_runner "$VALIDATION_RUNNER_CHANGED" \
               --arg s3_sidecar "$S3_SIDECAR_CHANGED" \
               --arg stream_reaper "$STREAM_REAPER_CHANGED" \
               '{
@@ -175,8 +170,6 @@ jobs:
                   {service: "remediation", changed: $remediation, dockerfile: "remediation/Dockerfile.prod", context: "."},
                   {service: "remediation-agent", changed: $remediation_agent, dockerfile: "remediation-agent/Dockerfile.prod", context: "."},
                   {service: "migrations", changed: $migrations, dockerfile: "db/Dockerfile.migrate", context: "db"},
-                  {service: "validation-runner-postgres", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile.postgres", context: "validation-runner"},
-                  {service: "validation-runner-trino", changed: $validation_runner, dockerfile: "validation-runner/Dockerfile.trino", context: "validation-runner"},
                   {service: "s3-sidecar", changed: $s3_sidecar, dockerfile: "s3-sidecar/Dockerfile", context: "s3-sidecar"},
                   {service: "stream-reaper", changed: $stream_reaper, dockerfile: "pkg/cmd/stream-reaper/Dockerfile", context: "pkg"}
                 ]
@@ -334,9 +327,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_REPO }}:${{ github.sha }}
             ${{ env.IMAGE_REPO }}:latest
-          # matrix.build_args carries per-service extras (none set today; the
-          # continuo-validation-* packages resolve from real PyPI). Unset entries
-          # contribute a blank line, which build-push-action ignores.
+          # matrix.build_args carries per-service extras (none set today). Unset
+          # entries contribute a blank line, which build-push-action ignores.
           build-args: |
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/continuo-base:v1
             ${{ matrix.build_args }}
