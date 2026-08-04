@@ -12,7 +12,7 @@ printf 'on:\n  push:\n    tags:\n      - %s\n\njobs:\n  a:\n    steps:\n      - 
 printf 'on:\n  push:\n    tags: ["validation-contract-v*"]\n' > "$tmp/good/publish-pypi.yml"
 bash "$G" "$tmp/good" >/dev/null 2>&1; assert "disjoint families pass" "[ $? -eq 0 ]"
 
-# The v* / validation-contract-v* collision that sent a package tag into release.
+# A bare v* overlaps any other tag family that also starts with a v.
 printf 'on:\n  push:\n    tags:\n      - %s\n' "'v*'" > "$tmp/overlap/release.yml"
 printf 'on:\n  push:\n    tags: ["validation-contract-v*"]\n' > "$tmp/overlap/publish-pypi.yml"
 bash "$G" "$tmp/overlap" >/dev/null 2>&1; assert "overlapping tag families fail" "[ $? -ne 0 ]"

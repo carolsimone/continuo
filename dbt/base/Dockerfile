@@ -5,7 +5,7 @@ FROM python:3.12-slim
 # breaking every dbt compile/run. These are the exact versions the e2e suite is
 # validated against. This image is the dbt project base inherited by every team
 # service image; it is run only for compile, seed-build, and scheduled dbt runs.
-# Validation nodes run in a separate minimal image (validation-runner), not here.
+# Validation nodes run in a separate minimal image (continuo-validation-<engine>), not here.
 RUN pip install --no-cache-dir "dbt-core==1.12.0b1" "dbt-postgres==1.10.0"
 
 WORKDIR /project
