@@ -21,29 +21,6 @@ check_container_health(){ local c=$1 p=$2 path=${3:-/health} r=${4:-30}; for ((i
 start_go_service(){ local c=$1 path=$2 warm=${3:-20}; log_info "Starting ${c} (go run, cold ~20-30s)..."
   docker exec -d "$c" bash -c "cd /app/${path} && go run main.go" || { log_error "Failed to start ${c}"; return 1; }; sleep "$warm"; }
 
-# True if this Docker's active image store is the containerd snapshotter
-# rather than the classic graphdriver. `docker info`'s DriverStatus field is
-# graphdriver-specific plumbing (backing filesystem, native overlay diff
-# support, etc.) and is always empty under the containerd store — there is
-# nothing else to report there. `--format '{{json .DriverStatus}}'` prints
-# `[]` for an empty/nil slice either way, which is the signal.
-_kind_load_uses_containerd_store(){
-  local status
-  status="$(docker info --format '{{json .DriverStatus}}' 2>/dev/null)"
-  [ "$status" = "null" ] || [ "$status" = "[]" ]
-}
-
-# True if the Docker Engine (server, not client) is 28.0 or newer — the
-# version `docker save --platform` was added in.
-_kind_load_docker_ge_28(){
-  local major
-  major="$(docker version --format '{{.Server.Version}}' 2>/dev/null | cut -d. -f1)"
-  case "$major" in
-    ''|*[!0-9]*) return 1 ;;
-  esac
-  [ "$major" -ge 28 ]
-}
-
 # Side-loads a pulled (not locally built) image into a kind cluster.
 #
 # `docker pull` on a containerd-backed image store only fetches the blobs for
@@ -61,25 +38,25 @@ _kind_load_docker_ge_28(){
 # works on both amd64 and arm64 hosts pulling the same multi-arch tag.
 #
 # `--platform` needs both a containerd-backed image store and a recent-enough
-# Docker (API 1.48 / Engine-CLI 28.0+); a classic graphdriver store never has
-# the multi-platform-index bug in the first place (a graphdriver pull only
-# ever resolves and stores the host platform, no manifest list involved), so
-# on those hosts the platform-scoped attempt is simply unavailable, not
-# broken — it fails harmlessly and the bare fallback below works fine. This
-# tries the platform-scoped route first and falls back to the original bare
-# `kind load docker-image` on any failure — save failing, an empty archive,
-# or the archive load failing.
+# Docker (API 1.48 / Engine-CLI 28.0+). Rather than inspect the local Docker
+# to predict which route will work — `docker info`'s reported store/driver
+# does not reliably distinguish every configuration (a classic graphdriver
+# can report the same empty DriverStatus a containerd store does, e.g. under
+# `vfs` in some rootless/nested setups), so a predictive check risks hard
+# blocking a configuration that would in fact have worked — this just tries
+# both routes in order and reports what actually happened:
 #
-# One combination has NO working route at all: a containerd-backed image
-# store on Docker <28.0. `docker save --platform` is unavailable there (the
-# flag itself needs 28.0+), and the bare fallback's `kind load docker-image`
-# runs `ctr images import --all-platforms` — the exact same missing-blob
-# failure the platform-scoped route exists to avoid, not something the
-# fallback happens to dodge. Attempting the fallback in that case does not
-# rescue anything; it just trades one confusing failure (an archive that
-# quietly never gets built) for another (`ctr`'s "content digest ... not
-# found", several layers removed from the real cause). This is detected up
-# front and fails immediately with an actionable message instead.
+#   1. platform-scoped: `docker save --platform` + `kind load image-archive`.
+#   2. bare fallback: `kind load docker-image`.
+#
+# A classic-graphdriver host has no `--platform` support, so route 1 fails
+# harmlessly there and route 2 (which never hits the multi-platform-index
+# bug in the first place) succeeds. A modern containerd-store host succeeds
+# at route 1 outright. Only a containerd store on Docker <28.0 has no
+# working route — `--platform` is unavailable, and the bare fallback's `ctr
+# images import --all-platforms` hits the exact missing-blob problem the
+# platform-scoped route exists to avoid — and that is reported as a loud,
+# named failure only once both attempts are actually exhausted.
 kind_load_pulled_image(){
   local ref=$1 cluster=$2 host_arch platform archive
 
@@ -89,11 +66,6 @@ kind_load_pulled_image(){
     aarch64|arm64) platform="linux/arm64" ;;
     *) log_error "kind_load_pulled_image: unsupported host architecture '${host_arch}' for ${ref}"; return 1 ;;
   esac
-
-  if _kind_load_uses_containerd_store && ! _kind_load_docker_ge_28; then
-    log_error "kind_load_pulled_image: this Docker uses the containerd image store on Docker <28.0 — neither 'docker save --platform' (needs Engine-CLI 28.0+ / API 1.48+) nor the bare 'kind load docker-image' fallback (fails on missing non-host-platform blobs, same root cause) can side-load a pulled multi-platform image (${ref}) on this combination. Upgrade Docker to 28.0+, or switch the Docker Engine image store back to the classic graphdriver."
-    return 1
-  fi
 
   # The XXXXXX run must be the template's last characters: BSD/macOS mktemp
   # only randomizes a trailing run, silently leaving a literal "XXXXXX" (a
@@ -118,6 +90,6 @@ kind_load_pulled_image(){
     return 0
   fi
 
-  log_error "kind_load_pulled_image: both the platform-scoped route ('docker save --platform ${platform}' + 'kind load image-archive') and the fallback ('kind load docker-image') failed for ${ref}"
+  log_error "kind_load_pulled_image: both the platform-scoped route ('docker save --platform ${platform}' + 'kind load image-archive') and the fallback ('kind load docker-image') failed for ${ref}. The likely cause: 'docker save --platform' needs Docker Engine-CLI 28.0+ (API 1.48+), and a containerd-backed Docker image store cannot side-load a pulled multi-arch image without it. Upgrade Docker to 28.0+, or switch the Docker Engine image store back to the classic graphdriver."
   return 1
 }

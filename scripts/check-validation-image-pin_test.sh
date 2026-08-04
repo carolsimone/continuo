@@ -119,6 +119,26 @@ out="$(bash "$G" "$tmp/digest-vs-digest" 2>&1)"; rc=$?
 assert "two different digest pins are caught as drift" "[ $rc -ne 0 ]"
 assert "differing-digest drift is a DRIFT report" "[[ \"\$out\" == *'PIN DRIFT'* ]]"
 
+# --- a malformed digest is a named error, not a silent truncate-and-pass ---
+# (regression case for S2: a pattern anchored on the correct `@sha256:<64
+# hex>` shape simply fails to match a malformed one and falls back to the
+# bare repo:tag, comparing equal to everything else — a typo'd digest must
+# not pass.)
+write_fixture "$tmp/bad-digest-short" "v0.2.0"
+sed -i.bak 's/imageTag: "v0.2.0"/imageTag: "v0.2.0@sha256:deadbeef"/' \
+  "$tmp/bad-digest-short/deploy/continuo/values.yaml"
+out="$(bash "$G" "$tmp/bad-digest-short" 2>&1)"; rc=$?
+assert "a too-short digest fails" "[ $rc -ne 0 ]"
+assert "too-short digest is a malformed-digest report, not a false pass" "[[ \"\$out\" == *'malformed digest pin'* ]]"
+assert "too-short digest names the bad ref" "[[ \"\$out\" == *'v0.2.0@sha256:deadbeef'* ]]"
+
+write_fixture "$tmp/bad-digest-algo" "v0.2.0"
+sed -i.bak 's/imageTag: "v0.2.0"/imageTag: "v0.2.0@sha512:1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111"/' \
+  "$tmp/bad-digest-algo/deploy/continuo/values.yaml"
+out="$(bash "$G" "$tmp/bad-digest-algo" 2>&1)"; rc=$?
+assert "a wrong-algorithm digest fails" "[ $rc -ne 0 ]"
+assert "wrong-algorithm digest is a malformed-digest report" "[[ \"\$out\" == *'malformed digest pin'* ]]"
+
 # --- a location stops pinning the image at all -----------------------------
 write_fixture "$tmp/missing" "v0.2.0"
 : > "$tmp/missing/docker-compose.yml"

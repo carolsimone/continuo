@@ -28,12 +28,16 @@
 # postgres engine (the default/e2e engine) as a bare `repo:tag` ref. The only
 # place an operator can legitimately move to a `tag@sha256:digest` pin is
 # `deploy/continuo/values.yaml`'s `validation.imageTag` (see its comment).
-# REF_RE captures that optional `@sha256:<digest>` suffix rather than
-# stopping at the tag, so a digest-pinned chart still disagrees with the
-# bare-tag dev/e2e locations as intended (those track the chart's *default*,
-# not an operator's digest override) — and, just as importantly, two
-# genuinely different digest pins disagree with each other too, instead of
-# both truncating to the same bare `repo:tag` and comparing equal.
+# REF_RE captures that optional `@...` suffix rather than stopping at the
+# tag, so a digest-pinned chart still disagrees with the bare-tag dev/e2e
+# locations as intended (those track the chart's *default*, not an
+# operator's digest override), two genuinely different digest pins disagree
+# with each other too (instead of both truncating to the same bare
+# `repo:tag` and comparing equal), and — since REF_RE deliberately matches
+# ANY `@...` suffix, not just a well-formed one — `record()` separately
+# rejects a malformed digest (wrong algorithm, wrong length, stray
+# characters) as a named error instead of silently truncating it away and
+# comparing the mangled ref equal to everything else.
 
 set -uo pipefail
 
@@ -41,12 +45,18 @@ REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CHART_DIR="${REPO_ROOT}/deploy/continuo"
 
 # Matches the full ref: ghcr.io/carolsimone/continuo-validation-postgres:vX.Y.Z,
-# optionally digest-pinned as vX.Y.Z@sha256:<64 hex chars>. The digest suffix
-# must be part of the match, not left for a separate pass to notice — two
-# refs that agree on repo:tag but pin different digests (or one pinned, one
-# not) are NOT the same ref, and a pattern that stops at `@` would compare
-# them equal.
-REF_RE='ghcr\.io/carolsimone/continuo-validation-postgres:[A-Za-z0-9._-]+(@sha256:[0-9a-f]{64})?'
+# optionally followed by an `@...` digest suffix. Deliberately permissive
+# about the digest's *shape* (any algorithm-name-and-value-like text after
+# the `@`, not just a well-formed `@sha256:<64 hex>`) so a malformed digest
+# is captured whole rather than silently dropped by a pattern that only
+# recognizes the correct form — record() below is what actually validates
+# it, and reports a bad digest as a named error instead of quietly
+# truncating it (and comparing the mangled, digest-less ref equal to
+# everything else).
+REF_RE='ghcr\.io/carolsimone/continuo-validation-postgres:[A-Za-z0-9._-]+(@[A-Za-z0-9:_-]+)?'
+
+# A ref's optional digest suffix, if present, must be exactly this shape.
+DIGEST_SUFFIX_RE='@sha256:[0-9a-f]{64}$'
 
 # Prints every ref matching REF_RE in $1, one per line (possibly none).
 extract_all_refs() {
@@ -59,11 +69,21 @@ fail=0
 
 # Records one (name, ref) pair. An empty ref is a hard failure — a location
 # that stopped pinning the image (moved file, edited-away line) must be
-# caught, not silently skipped from the comparison.
+# caught, not silently skipped from the comparison. A ref carrying an `@`
+# that isn't a well-formed `@sha256:<64 hex>` digest is also a hard failure,
+# named on its own — not folded into the drift comparison, where it would
+# either compare (wrongly) equal to a bare-tag ref sharing the same repo:tag
+# prefix, or just show up as one more "disagreeing" ref without saying what
+# is actually wrong with it.
 record() {
   local name="$1" ref="$2"
   if [ -z "$ref" ]; then
     echo "check-validation-image-pin: no image ref found for ${name}" >&2
+    fail=1
+    return
+  fi
+  if [[ "$ref" == *@* ]] && ! [[ "$ref" =~ $DIGEST_SUFFIX_RE ]]; then
+    echo "check-validation-image-pin: malformed digest pin for ${name}: ${ref} (want @sha256:<64 lowercase hex chars>)" >&2
     fail=1
     return
   fi
