@@ -186,6 +186,8 @@ test-manifest:
 guards:
 	bash scripts/check-ci-alignment.sh
 	bash scripts/check-release-tag-trigger.sh
+	bash scripts/check-validation-image-pin.sh
+	bash scripts/check-validation-image-sideload.sh
 	cd pkg && go test ./...
 	diff state/proto/state/v1/state.proto ui-service/proto/state.proto
 

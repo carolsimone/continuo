@@ -36,8 +36,18 @@ start_go_service(){ local c=$1 path=$2 warm=${3:-20}; log_info "Starting ${c} (g
 # archive directly — one fewer round trip than reloading it into the local
 # engine first. The platform is derived from the host, not hardcoded, so this
 # works on both amd64 and arm64 hosts pulling the same multi-arch tag.
+#
+# `--platform` needs both a containerd-backed image store and a recent-enough
+# Docker (API 1.48 / Engine-CLI 28.0+); older Docker or a classic graphdriver
+# store never has the multi-platform-index bug in the first place, so on
+# those hosts the platform-scoped attempt is simply unavailable, not broken.
+# Rather than version-sniff, this tries the platform-scoped route first and
+# falls back to the original bare `kind load docker-image` on any failure —
+# save failing, an empty archive, or the archive load failing — only
+# reporting an error if the fallback also fails.
 kind_load_pulled_image(){
   local ref=$1 cluster=$2 host_arch platform archive
+
   host_arch="$(uname -m)"
   case "$host_arch" in
     x86_64|amd64) platform="linux/amd64" ;;
@@ -53,13 +63,21 @@ kind_load_pulled_image(){
   archive="$(mktemp "${TMPDIR:-/tmp}/continuo-validation-image.XXXXXX")" || {
     log_error "kind_load_pulled_image: failed to create a temp file for ${ref}"; return 1; }
 
-  if ! docker save --platform "$platform" "$ref" -o "$archive"; then
-    log_error "kind_load_pulled_image: 'docker save --platform ${platform}' failed for ${ref}"
-    rm -f "$archive"; return 1
-  fi
-  if ! kind load image-archive "$archive" --name "$cluster"; then
-    log_error "kind_load_pulled_image: 'kind load image-archive' failed for ${ref} (platform ${platform})"
-    rm -f "$archive"; return 1
+  if docker save --platform "$platform" "$ref" -o "$archive" && [ -s "$archive" ]; then
+    if kind load image-archive "$archive" --name "$cluster"; then
+      rm -f "$archive"
+      return 0
+    fi
+    log_warn "kind_load_pulled_image: 'kind load image-archive' failed for ${ref} (platform ${platform}); falling back to 'kind load docker-image'"
+  else
+    log_warn "kind_load_pulled_image: 'docker save --platform ${platform}' failed or produced an empty archive for ${ref} (Docker <28.0 or a classic graphdriver store never has the --platform flag / behaviour); falling back to 'kind load docker-image'"
   fi
   rm -f "$archive"
+
+  if kind load docker-image "$ref" --name "$cluster"; then
+    return 0
+  fi
+
+  log_error "kind_load_pulled_image: both the platform-scoped route ('docker save --platform ${platform}' + 'kind load image-archive') and the fallback ('kind load docker-image') failed for ${ref}"
+  return 1
 }
