@@ -83,7 +83,7 @@ jobs:
       # found, otherwise the findings that justify the failure never appear.
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v3.37.4
         with:
           sarif_file: sarif/govulncheck.merged.sarif
           category: govulncheck
@@ -120,7 +120,7 @@ jobs:
       # found, otherwise the findings that justify the failure never appear.
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v3.37.4
         with:
           sarif_file: sarif/
           category: gitleaks
@@ -145,7 +145,7 @@ jobs:
       # found, otherwise the findings that justify the failure never appear.
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v3.37.4
         with:
           sarif_file: sarif/
           category: trivy-fs
@@ -166,7 +166,7 @@ jobs:
       # found, otherwise the findings that justify the failure never appear.
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v3.37.4
         with:
           sarif_file: sarif/
           category: trivy-config
