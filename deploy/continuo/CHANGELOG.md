@@ -13,7 +13,7 @@ shipped in those.
 ## [Unreleased]
 
 ### Added
-- `validation.imageTag` — pins the external `continuo-validation-<engine>` image version independently of the chart `appVersion` (default `v0.2.0`).
+- `validation.imageTag` — pins the external `continuo-validation-<engine>` image version independently of the chart `appVersion` (default `v0.2.0`). Must be non-empty; `values.schema.json` rejects `""` at `helm lint`/`install`/`upgrade` time rather than letting it render an unpullable image ref.
 
 ### Changed
 - The validation image is now the externally released `continuo-validation-<engine>` (from github.com/carolsimone/continuo-validation), replacing the chart-appVersion-tagged `continuo-validation-runner-<engine>`; `global.imageTag` no longer applies to it.
