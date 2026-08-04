@@ -13,7 +13,8 @@ shipped in those.
 ## [Unreleased]
 
 ### Added
-- `validation.imageTag` — pins the external `continuo-validation-<engine>` image version independently of the chart `appVersion` (default `v0.2.0`). Must be non-empty; `values.schema.json` rejects `""` at `helm lint`/`install`/`upgrade` time rather than letting it render an unpullable image ref.
+- `validation.imageTag` — pins the external `continuo-validation-<engine>` image version independently of the chart `appVersion` (default `v0.2.0`). Must be non-empty and is now in `validation`'s `required` list, so both `""` and an explicit `imageTag: null` override are rejected at `helm lint`/`install`/`upgrade` time rather than letting either render an unpullable image ref (`null` previously slipped past `minLength` and rendered `%!s(<nil>)` into the image). Accepts an optional `@sha256:<digest>` suffix (`"vX.Y.Z@sha256:<digest>"`) for an immutable pin — a plain tag is mutable, since `continuo-validation`'s publish workflow re-pushes `:vX.Y.Z` on every tag; see `values.yaml`/README.
+- `helm upgrade` NOTES.txt now reminds operators that the validation image is externally released and pinned by `validation.imageTag` independently of `appVersion`, and that private-registry mirrors need it mirrored explicitly — an unmirrored bump otherwise renders healthy at install and only fails later, at the next release promotion, as a validation-pod `ErrImagePull`.
 
 ### Changed
 - The validation image is now the externally released `continuo-validation-<engine>` (from github.com/carolsimone/continuo-validation), replacing the chart-appVersion-tagged `continuo-validation-runner-<engine>`; `global.imageTag` no longer applies to it.

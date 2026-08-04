@@ -13,6 +13,13 @@ UPGRADE NOTES
   "Changed"/"Added" entry may still need a new value set to enable a feature.
   If this upgrade already failed, re-run with --dry-run to see the exact
   rendering/validation error before retrying for real.
+
+  The validation image ({{ include "continuo.validation.image" $ }}) is an
+  externally released image, pinned by validation.imageTag independently of
+  this chart's appVersion. If you mirror continuo images into a private
+  registry (global.imageRegistry/global.imageRepositoryPrefix), mirror this
+  ref too — an install can come up healthy and only fail later, at the next
+  release promotion, with a validation-pod ErrImagePull.
 {{- end }}
 
 {{- $uiPort := 8090 }}

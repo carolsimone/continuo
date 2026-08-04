@@ -257,7 +257,7 @@
     "validation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["engine", "createWarehouseSecret"],
+      "required": ["engine", "createWarehouseSecret", "imageTag"],
       "properties": {
         "engine": {
           "type": "string",

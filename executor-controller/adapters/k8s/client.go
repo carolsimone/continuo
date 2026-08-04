@@ -637,7 +637,12 @@ func baseContainerSecurityContext() *corev1.SecurityContext {
 
 // continuoImageSecurityContext extends the base hardening with a forced
 // non-root user for containers running the continuo-validation-<engine> and
-// s3-sidecar images, which are built with uid 65532.
+// s3-sidecar images. uid 65532 is a cross-repo contract, not a locally
+// observed fact: the s3-sidecar image is built in this repository, but
+// continuo-validation-<engine> is built and released from
+// github.com/carolsimone/continuo-validation, so this uid tracks that
+// repository's `useradd --uid` and changes there require a coordinated
+// change here.
 func continuoImageSecurityContext() *corev1.SecurityContext {
 	sc := baseContainerSecurityContext()
 	yes := true

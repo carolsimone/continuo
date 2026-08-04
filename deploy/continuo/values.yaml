@@ -262,6 +262,11 @@ validation:
   # Tag of the continuo-validation-<engine> image. Validation ships from its own
   # repository (github.com/carolsimone/continuo-validation) on its own release
   # train, so this is pinned independently of the chart's appVersion/global.imageTag.
+  # A plain tag is mutable: continuo-validation's publish workflow re-pushes
+  # both `:vX.Y.Z` and `:latest` on every tag, so re-running a tag moves it
+  # under existing installs. For an immutable pin, set
+  # "vX.Y.Z@sha256:<digest>" — the value is appended verbatim after the tag
+  # position in the composed image ref, producing a valid repo:tag@digest.
   imageTag: "v0.2.0"
   # POSTGRES-ONLY. When true (default) the chart builds the warehouse Secret from the
   # Postgres it configures (bundled or externalDatabase), emitting the keys the POSTGRES
