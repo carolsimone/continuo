@@ -130,11 +130,15 @@ jobs:
         # continuo-validation image tag has drifted between the Makefile,
         # setup/e2e scripts, docker-compose, the executor-controller Go test
         # fixtures, and the chart's own rendered default.
+        # check-validation-image-sideload: fail fast if either kind-provisioning
+        # script side-loads the pulled validation image with a bare `kind load
+        # docker-image`, which fails on a containerd-backed image store.
         run: |
           bash scripts/check-ci-alignment.sh
           bash scripts/check-docker-state-isolation.sh
           bash scripts/check-release-tag-trigger.sh
           bash scripts/check-validation-image-pin.sh
+          bash scripts/check-validation-image-sideload.sh
 
       - name: Detect Dockerfile.base changes
         id: basefilter

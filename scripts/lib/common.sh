@@ -20,3 +20,46 @@ check_container_health(){ local c=$1 p=$2 path=${3:-/health} r=${4:-30}; for ((i
   log_error "${c} not healthy after $((r*2))s"; docker logs --tail 20 "$c" 2>&1||true; return 1; }
 start_go_service(){ local c=$1 path=$2 warm=${3:-20}; log_info "Starting ${c} (go run, cold ~20-30s)..."
   docker exec -d "$c" bash -c "cd /app/${path} && go run main.go" || { log_error "Failed to start ${c}"; return 1; }; sleep "$warm"; }
+
+# Side-loads a pulled (not locally built) image into a kind cluster.
+#
+# `docker pull` on a containerd-backed image store only fetches the blobs for
+# the host platform, but keeps the full multi-platform manifest-list
+# metadata — including any buildx provenance/SBOM attestation manifests the
+# publisher attached. `kind load docker-image` always runs `ctr images
+# import --all-platforms`, which then fails looking for blobs of platforms
+# that were never pulled. Locally built images never hit this, since a local
+# build only ever writes manifests it actually has blobs for.
+#
+# `docker save --platform <arch>` collapses the image down to the one
+# manifest whose blobs are present, and `kind load image-archive` loads that
+# archive directly — one fewer round trip than reloading it into the local
+# engine first. The platform is derived from the host, not hardcoded, so this
+# works on both amd64 and arm64 hosts pulling the same multi-arch tag.
+kind_load_pulled_image(){
+  local ref=$1 cluster=$2 host_arch platform archive
+  host_arch="$(uname -m)"
+  case "$host_arch" in
+    x86_64|amd64) platform="linux/amd64" ;;
+    aarch64|arm64) platform="linux/arm64" ;;
+    *) log_error "kind_load_pulled_image: unsupported host architecture '${host_arch}' for ${ref}"; return 1 ;;
+  esac
+
+  # The XXXXXX run must be the template's last characters: BSD/macOS mktemp
+  # only randomizes a trailing run, silently leaving a literal "XXXXXX" (a
+  # fixed, collidable name) if anything follows it — unlike GNU mktemp,
+  # which accepts a suffix. No file extension is needed for docker/kind to
+  # read the archive, so there is nothing to put after it.
+  archive="$(mktemp "${TMPDIR:-/tmp}/continuo-validation-image.XXXXXX")" || {
+    log_error "kind_load_pulled_image: failed to create a temp file for ${ref}"; return 1; }
+
+  if ! docker save --platform "$platform" "$ref" -o "$archive"; then
+    log_error "kind_load_pulled_image: 'docker save --platform ${platform}' failed for ${ref}"
+    rm -f "$archive"; return 1
+  fi
+  if ! kind load image-archive "$archive" --name "$cluster"; then
+    log_error "kind_load_pulled_image: 'kind load image-archive' failed for ${ref} (platform ${platform})"
+    rm -f "$archive"; return 1
+  fi
+  rm -f "$archive"
+}
