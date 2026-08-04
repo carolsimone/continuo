@@ -20,3 +20,76 @@ check_container_health(){ local c=$1 p=$2 path=${3:-/health} r=${4:-30}; for ((i
   log_error "${c} not healthy after $((r*2))s"; docker logs --tail 20 "$c" 2>&1||true; return 1; }
 start_go_service(){ local c=$1 path=$2 warm=${3:-20}; log_info "Starting ${c} (go run, cold ~20-30s)..."
   docker exec -d "$c" bash -c "cd /app/${path} && go run main.go" || { log_error "Failed to start ${c}"; return 1; }; sleep "$warm"; }
+
+# Side-loads a pulled (not locally built) image into a kind cluster.
+#
+# `docker pull` on a containerd-backed image store only fetches the blobs for
+# the host platform, but keeps the full multi-platform manifest-list
+# metadata — including any buildx provenance/SBOM attestation manifests the
+# publisher attached. `kind load docker-image` always runs `ctr images
+# import --all-platforms`, which then fails looking for blobs of platforms
+# that were never pulled. Locally built images never hit this, since a local
+# build only ever writes manifests it actually has blobs for.
+#
+# `docker save --platform <arch>` collapses the image down to the one
+# manifest whose blobs are present, and `kind load image-archive` loads that
+# archive directly — one fewer round trip than reloading it into the local
+# engine first. The platform is derived from the host, not hardcoded, so this
+# works on both amd64 and arm64 hosts pulling the same multi-arch tag.
+#
+# `--platform` needs both a containerd-backed image store and a recent-enough
+# Docker (API 1.48 / Engine-CLI 28.0+). Rather than inspect the local Docker
+# to predict which route will work — `docker info`'s reported store/driver
+# does not reliably distinguish every configuration (a classic graphdriver
+# can report the same empty DriverStatus a containerd store does, e.g. under
+# `vfs` in some rootless/nested setups), so a predictive check risks hard
+# blocking a configuration that would in fact have worked — this just tries
+# both routes in order and reports what actually happened:
+#
+#   1. platform-scoped: `docker save --platform` + `kind load image-archive`.
+#   2. bare fallback: `kind load docker-image`.
+#
+# A classic-graphdriver host has no `--platform` support, so route 1 fails
+# harmlessly there and route 2 (which never hits the multi-platform-index
+# bug in the first place) succeeds. A modern containerd-store host succeeds
+# at route 1 outright. Only a containerd store on Docker <28.0 has no
+# working route — `--platform` is unavailable, and the bare fallback's `ctr
+# images import --all-platforms` hits the exact missing-blob problem the
+# platform-scoped route exists to avoid — and that is reported as a loud,
+# named failure only once both attempts are actually exhausted.
+kind_load_pulled_image(){
+  local ref=$1 cluster=$2 host_arch platform archive
+
+  host_arch="$(uname -m)"
+  case "$host_arch" in
+    x86_64|amd64) platform="linux/amd64" ;;
+    aarch64|arm64) platform="linux/arm64" ;;
+    *) log_error "kind_load_pulled_image: unsupported host architecture '${host_arch}' for ${ref}"; return 1 ;;
+  esac
+
+  # The XXXXXX run must be the template's last characters: BSD/macOS mktemp
+  # only randomizes a trailing run, silently leaving a literal "XXXXXX" (a
+  # fixed, collidable name) if anything follows it — unlike GNU mktemp,
+  # which accepts a suffix. No file extension is needed for docker/kind to
+  # read the archive, so there is nothing to put after it.
+  archive="$(mktemp "${TMPDIR:-/tmp}/continuo-validation-image.XXXXXX")" || {
+    log_error "kind_load_pulled_image: failed to create a temp file for ${ref}"; return 1; }
+
+  if docker save --platform "$platform" "$ref" -o "$archive" && [ -s "$archive" ]; then
+    if kind load image-archive "$archive" --name "$cluster"; then
+      rm -f "$archive"
+      return 0
+    fi
+    log_warn "kind_load_pulled_image: 'kind load image-archive' failed for ${ref} (platform ${platform}); falling back to 'kind load docker-image'"
+  else
+    log_warn "kind_load_pulled_image: 'docker save --platform ${platform}' failed or produced an empty archive for ${ref} (Docker <28.0 or a classic graphdriver store never has the --platform flag / behaviour); falling back to 'kind load docker-image'"
+  fi
+  rm -f "$archive"
+
+  if kind load docker-image "$ref" --name "$cluster"; then
+    return 0
+  fi
+
+  log_error "kind_load_pulled_image: both the platform-scoped route ('docker save --platform ${platform}' + 'kind load image-archive') and the fallback ('kind load docker-image') failed for ${ref}. The likely cause: 'docker save --platform' needs Docker Engine-CLI 28.0+ (API 1.48+), and a containerd-backed Docker image store cannot side-load a pulled multi-arch image without it. Upgrade Docker to 28.0+, or switch the Docker Engine image store back to the classic graphdriver."
+  return 1
+}

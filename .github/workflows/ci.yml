@@ -126,21 +126,27 @@ jobs:
         # check-release-tag-trigger: fail fast if release.yml's tag glob also
         # claims another workflow's tag family, which would run the product
         # release pipeline on a tag that has no release images behind it.
+        # check-validation-image-pin: fail fast if the hand-maintained
+        # continuo-validation image tag has drifted between the Makefile,
+        # setup/e2e scripts, docker-compose, the executor-controller Go test
+        # fixtures, and the chart's own rendered default.
+        # check-validation-image-sideload: fail fast if either kind-provisioning
+        # script side-loads the pulled validation image with a bare `kind load
+        # docker-image`, which fails on a containerd-backed image store.
         run: |
           bash scripts/check-ci-alignment.sh
           bash scripts/check-docker-state-isolation.sh
           bash scripts/check-release-tag-trigger.sh
+          bash scripts/check-validation-image-pin.sh
+          bash scripts/check-validation-image-sideload.sh
 
-      - name: Detect Dockerfile.base and validation changes
+      - name: Detect Dockerfile.base changes
         id: basefilter
         uses: dorny/paths-filter@v4
         with:
           filters: |
             base:
               - 'Dockerfile.base'
-            validation:
-              - 'validation-contract/**'
-              - 'validation-runner/**'
 
       # Normally pull continuo-base from ghcr (published by publish-base.yml,
       # public package — anonymous pull), falling back to a local build if the
@@ -216,69 +222,6 @@ jobs:
 
       - name: Test manifest-controller
         run: docker exec manifest-controller uv run pytest -v
-
-      - name: Test validation-contract
-        if: steps.basefilter.outputs.validation == 'true'
-        # The contract package's own tests (port discovery + result-block). Uses the uv
-        # image; uv fetches Python 3.14 per requires-python. Its discovery tests build
-        # throwaway venvs, so uv/pip must be available (they are, inside the uv image).
-        run: |
-          docker run --rm -v "$PWD/validation-contract:/app" -w /app \
-            ghcr.io/astral-sh/uv:bookworm-slim \
-            sh -c "uv sync --all-groups && uv run pytest tests -v"
-
-      - name: Test validation-runner harness
-        if: steps.basefilter.outputs.validation == 'true'
-        # Harness unit tests (continuo-validation-contract resolves from real PyPI,
-        # lockfile-pinned); the image smoke tests run in the next steps, not here.
-        run: |
-          docker run --rm -v "$PWD/validation-runner:/app" -w /app \
-            ghcr.io/astral-sh/uv:bookworm-slim \
-            sh -c "uv sync --all-groups && uv run pytest tests -m 'not image' -v"
-
-      - name: Set up uv
-        if: steps.basefilter.outputs.validation == 'true'
-        # For the image smoke tests below, which must run on the runner itself (they
-        # drive `docker run` against the built image). Cache disabled: the repo has a
-        # symlink loop (.opencode/) that breaks the cache tree-walk.
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: false
-
-      - name: Smoke-test validation-runner image
-        if: steps.basefilter.outputs.validation == 'true'
-        # Tier-4 image tests (pytest -m image): build the slim postgres engine image
-        # with the same Dockerfile the e2e provision uses, then assert it
-        # fails structurally — the baked adapter is discovered and missing
-        # POSTGRES_* env yields a structured result block, not a raw traceback.
-        # Runs on the runner (not in a container) because the tests invoke
-        # `docker run`; the build also warms the layer cache for the e2e provision.
-        run: |
-          docker build -t continuo-validation-runner-postgres:ci \
-            -f validation-runner/Dockerfile.postgres validation-runner/
-          cd validation-runner
-          # The harness-test step above ran uv as root inside a container against
-          # this same mounted directory, leaving a root-owned .venv the runner user
-          # cannot even stat — keep this step's venv outside the workspace.
-          export UV_PROJECT_ENVIRONMENT="${RUNNER_TEMP}/validation-runner-venv"
-          uv sync --all-groups
-          VALIDATION_IMAGE_UNDER_TEST=continuo-validation-runner-postgres:ci \
-            uv run pytest tests -m image -v
-
-      - name: Smoke-test validation-runner trino image
-        if: steps.basefilter.outputs.validation == 'true'
-        # Same tier-4 assertions against the trino engine image: the baked adapter
-        # is discovered and missing TRINO_* env yields a structured result block.
-        run: |
-          docker build -t continuo-validation-runner-trino:ci \
-            -f validation-runner/Dockerfile.trino validation-runner/
-          cd validation-runner
-          export UV_PROJECT_ENVIRONMENT="${RUNNER_TEMP}/validation-runner-venv"
-          uv sync --all-groups
-          VALIDATION_IMAGE_UNDER_TEST=continuo-validation-runner-trino:ci \
-          VALIDATION_IMAGE_ENGINE=trino \
-          VALIDATION_IMAGE_REQUIRED_ENV=TRINO_HOST \
-            uv run pytest tests -m image -v
 
       - name: Test s3-sidecar
         # Unit-test the continuo-owned sidecar scripts (compile_uploader,

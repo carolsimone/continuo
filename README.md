@@ -150,5 +150,4 @@ no owned datastore, no gRPC/HTTP surface, and a small, fixed set of behaviors,
 so they change far less often than the services above:
 
 - [dbt/](dbt/README.md) — runs one dbt model/test/build per Job invocation
-- [validation-runner/](validation-runner/README.md) — runs one blue/green validation op per Job invocation
-- [validation-contract/](validation-contract/README.md) — the shared interface implemented by validation-runner and every engine adapter package (no runtime of its own)
+- [continuo-validation](https://github.com/carolsimone/continuo-validation) — external repo publishing the `continuo-validation-<engine>` images; runs one blue/green validation op per Job invocation

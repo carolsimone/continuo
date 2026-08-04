@@ -59,8 +59,12 @@ npm exec --yes -- license-checker@25.0.1 --production --summary
 
 ## Python
 
-`manifest-controller`, `validation-runner`, and `validation-contract` are Python 3.12
-services managed with uv.
+`manifest-controller` is the only Python 3.12 service in this repository, managed
+with uv. The validation stack (the `continuo-validation-<engine>` images the Helm
+chart pulls) is built and released from the separate `continuo-validation`
+repository, so its Python dependencies — including `continuo-validation-contract`,
+the PyPI-published engine-adapter contract — are covered by that repository's own
+third-party licenses, not this document.
 
 | Package | License | Used by |
 | --- | --- | --- |
@@ -68,8 +72,7 @@ services managed with uv.
 | `redis` | MIT | manifest-controller |
 | `grpcio` | Apache-2.0 | manifest-controller |
 | `protobuf` | BSD-3-Clause | manifest-controller |
-| `boto3` | Apache-2.0 | manifest-controller, validation-runner |
-| `continuo-validation-contract` | Apache-2.0 | validation-runner (this project) |
+| `boto3` | Apache-2.0 | manifest-controller |
 
 ```bash
 pip install pip-licenses

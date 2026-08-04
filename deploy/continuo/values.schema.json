@@ -261,11 +261,16 @@
       "properties": {
         "engine": {
           "type": "string",
-          "description": "continuo-validation-runner-<engine> image name. Not an enum: new engines are added by publishing a new adapter image, not by editing this chart."
+          "description": "continuo-validation-<engine> image name. Not an enum: new engines are added by publishing a new adapter image, not by editing this chart."
         },
         "createWarehouseSecret": {"type": "boolean"},
         "warehouseSecret": {"type": "string"},
-        "warehouseDatabase": {"type": "string"}
+        "warehouseDatabase": {"type": "string"},
+        "imageTag": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tag of the external continuo-validation-<engine> image; versioned independently of the chart appVersion. Optional: an unmodified release upgraded from before this key existed (e.g. `helm upgrade --reuse-values`) omits it entirely, and _helpers.tpl's `continuo.validation.image` falls back to the chart's current default. Present-but-empty (`\"\"`) is still rejected here (minLength) and, where the schema cannot see the merged value, by the same helper."
+        }
       }
     },
 

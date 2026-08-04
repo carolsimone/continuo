@@ -121,14 +121,14 @@ spec:
               value: "continuo"
             - name: K8S_NAMESPACE
               value: "default"
-            # Validation Job images are side-loaded into the kind node cache
-            # (kind load), and the mutable service tags exist in no registry, so
+            # provision-k8s-test-env.sh pulls the pinned validation image from
+            # ghcr.io and side-loads it into the kind node cache (kind load), so
             # validation pods must use the cached image. PullAlways would fail
             # with ErrImagePull here; production omits this and defaults to Always.
             - name: VALIDATION_IMAGE_PULL_POLICY
               value: "IfNotPresent"
             - name: VALIDATION_IMAGE
-              value: "continuo-validation-runner-postgres:latest"
+              value: "ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0"
             # Names the Secret (created by provision-k8s-test-env.sh) whose keys the
             # validation pod receives via envFrom as its warehouse connection.
             - name: VALIDATION_WAREHOUSE_SECRET

@@ -4,8 +4,8 @@
 #
 # Every workflow decides on its own whether a pushed tag is for it; nothing
 # arbitrates between them, so two overlapping globs mean one tag starts two
-# workflows. `v*` matched `validation-contract-v0.3.0` — the glob anchors at the
-# first character, and `validation` starts with a `v` — which sent a Python
+# workflows. A bare `v*` matches any tag family that happens to start with a
+# v — the glob anchors at the first character — which can send an unrelated
 # package tag into the product release pipeline.
 #
 # The check reads the tag globs out of every workflow's `on:` block, turns each

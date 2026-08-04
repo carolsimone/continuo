@@ -34,7 +34,7 @@ func TestSchemaOpJob_RunsEngineImageWithSecretAndOpEnv(t *testing.T) {
 	spec := job.Spec.Template.Spec
 	require.Len(t, spec.Containers, 1)
 	c := spec.Containers[0]
-	assert.Equal(t, "ghcr.io/carolsimone/continuo-validation-runner-postgres:latest", c.Image)
+	assert.Equal(t, "ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0", c.Image)
 	assert.Equal(t, corev1.RestartPolicyNever, spec.RestartPolicy)
 	assert.Nil(t, c.Command, "schema ops run the image's default entrypoint")
 

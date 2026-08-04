@@ -125,9 +125,8 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@$(MAKE) e2e-start-services
 	@echo "Building dbt-base image (required for e2e-setup)..."
 	@DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
-	@echo "Building slim validation-runner (postgres) image (required for e2e-setup)..."
-	@DOCKER_BUILDKIT=1 docker build -t continuo-validation-runner-postgres:latest \
-		-f validation-runner/Dockerfile.postgres validation-runner/
+	@echo "Pulling validation runner (postgres) image (required for e2e-setup)..."
+	@docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0
 	@$(MAKE) e2e-setup
 	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 40m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
@@ -187,6 +186,8 @@ test-manifest:
 guards:
 	bash scripts/check-ci-alignment.sh
 	bash scripts/check-release-tag-trigger.sh
+	bash scripts/check-validation-image-pin.sh
+	bash scripts/check-validation-image-sideload.sh
 	cd pkg && go test ./...
 	diff state/proto/state/v1/state.proto ui-service/proto/state.proto
 
