@@ -304,7 +304,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // Validation runs a slim continuo-owned validation-runner image (PostgreSQL today)
 // that bakes one engine adapter library — never the per-service team image. The SRE
 // selects the engine at deploy time (Helm/compose), which resolves VALIDATION_IMAGE
-// to the matching continuo-validation-runner-<engine> image; the executor runs it
+// to the matching continuo-validation-<engine> image; the executor runs it
 // verbatim. The warehouse connection is not injected inline: the operator-owned
 // Secret named by VALIDATION_WAREHOUSE_SECRET is attached to the container via
 // envFrom, so the warehouse credentials are owned by the operator and separate from
@@ -319,7 +319,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	// VALIDATION_IMAGE names the engine's validation-runner image; the SRE chooses the
 	// engine at deploy time (Helm/compose) and that resolves to the matching
-	// continuo-validation-runner-<engine> image. The executor bakes in no engine — a
+	// continuo-validation-<engine> image. The executor bakes in no engine — a
 	// hardcoded default would silently force one — so an unset image fails the node
 	// permanently with an actionable reason.
 	image := os.Getenv("VALIDATION_IMAGE")
