@@ -6,7 +6,8 @@ import { createGrpcClient } from './grpc-client';
 import { createGrpcGraphClient } from './grpc-graph-client';
 import { createAgentClient } from './agent-client';
 import { createRemediationClient } from './remediation-client';
-import { createGithubAppPullRequestCreator } from './github/pull-request-creator';
+import { resolveGithubAppPullRequestCreator } from './github/pull-request-creator';
+import { normalizePemPrivateKey } from './github/private-key';
 import { createApp } from './app';
 import { attachChatWebSocket } from './ws/chat';
 import { loadAuthConfig } from './auth/config';
@@ -21,10 +22,11 @@ const CONFIG_FILE = process.env.CONFIG_FILE;
 const RELEASE_CONTROLLER_URL = process.env.RELEASE_CONTROLLER_URL || 'http://release-controller:8088';
 const CHAT_BRIDGE_ENABLED = process.env.CHAT_BRIDGE_ENABLED === 'true';
 const GITHUB_APP_ID = process.env.GITHUB_APP_ID || '';
-// Replace literal \n sequences with real newlines so a single-line env value
-// (e.g. from docker-compose) is accepted as valid PEM. This is a no-op for
-// real multiline keys from prod secrets, which contain no backslash-n.
-const GITHUB_APP_PRIVATE_KEY = (process.env.GITHUB_APP_PRIVATE_KEY ?? '').replace(/\\n/g, '\n');
+// Reconstructs a well-formed PEM regardless of how its line breaks arrived
+// (real newlines, \n escapes, spaces, CRLF, or a mix) so a value mangled in
+// transit — e.g. a quoted YAML scalar in a Helm values file — is still
+// accepted. See normalizePemPrivateKey for the encodings this repairs.
+const GITHUB_APP_PRIVATE_KEY = normalizePemPrivateKey(process.env.GITHUB_APP_PRIVATE_KEY ?? '');
 const GITHUB_APP_INSTALLATION_ID = process.env.GITHUB_APP_INSTALLATION_ID || '';
 const GITHUB_API_BASE_URL = process.env.GITHUB_API_BASE_URL || undefined;
 
@@ -37,16 +39,18 @@ async function main() {
   const graphClient = createGrpcGraphClient(ORCHESTRATOR_GRPC_ADDR);
   const remediationClient = createRemediationClient(REMEDIATION_GRPC_ADDR);
 
-  // Optional GitHub App integration for PR creation — absent when env vars are empty.
-  const prCreator =
-    GITHUB_APP_ID && GITHUB_APP_PRIVATE_KEY && GITHUB_APP_INSTALLATION_ID
-      ? createGithubAppPullRequestCreator({
-          appId: GITHUB_APP_ID,
-          privateKey: GITHUB_APP_PRIVATE_KEY,
-          installationId: GITHUB_APP_INSTALLATION_ID,
-          baseUrl: GITHUB_API_BASE_URL,
-        })
-      : undefined;
+  // Optional GitHub App integration for PR creation — disabled (not fatal)
+  // when env vars are absent, since GitHub App credentials are not configured
+  // in every deployment. A malformed key is a distinct case, logged loudly by
+  // resolveGithubAppPullRequestCreator rather than passing silently for the
+  // same "absent" reason, because the operator dashboard as a whole must stay
+  // up even though this one integration cannot.
+  const prCreator = resolveGithubAppPullRequestCreator({
+    appId: GITHUB_APP_ID,
+    privateKey: GITHUB_APP_PRIVATE_KEY,
+    installationId: GITHUB_APP_INSTALLATION_ID,
+    baseUrl: GITHUB_API_BASE_URL,
+  });
 
   const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator);
 

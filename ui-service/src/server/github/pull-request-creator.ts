@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/rest';
 import { createAppAuth } from '@octokit/auth-app';
+import { privateKeyCanSign } from './private-key';
 
 export interface CreatePRInput {
   /** GitHub repository in "owner/name" format */
@@ -205,4 +206,36 @@ export function createGithubAppPullRequestCreator(cfg: {
     },
   });
   return makePullRequestCreator(octokit as unknown as OctokitLike);
+}
+
+/**
+ * Resolves the optional GitHub App PullRequestCreator from configuration.
+ *
+ * Returns undefined ("feature disabled") both when credentials are absent and
+ * when the private key fails a startup signing check — but these two cases
+ * are not equivalent, and only the second one calls `log`. GitHub App
+ * credentials are unconfigured by design in some deployments, so absence on
+ * its own is not an error. A key that fails to sign despite an app ID and
+ * installation ID being present means someone tried to configure this
+ * integration and the key material didn't survive the trip intact, which is
+ * worth surfacing loudly rather than behaving identically to "not set up".
+ */
+export function resolveGithubAppPullRequestCreator(
+  cfg: { appId: string; privateKey: string; installationId: string; baseUrl?: string },
+  log: (message: string) => void = console.error,
+): PullRequestCreator | undefined {
+  if (!cfg.appId || !cfg.privateKey || !cfg.installationId) {
+    return undefined;
+  }
+  if (!privateKeyCanSign(cfg.privateKey)) {
+    log(
+      'GITHUB_APP_PRIVATE_KEY does not parse into a key that can sign — PR creation is disabled. ' +
+        'The app ID and installation ID are configured, so this is a malformed key, not an absent ' +
+        'integration. A common cause is a quoted (non-block) scalar in the Helm values file, which ' +
+        'folds every newline in the PEM into a space without any YAML parse error. Re-issue or ' +
+        're-encode the key with real line breaks preserved (a literal "|" block scalar) and restart.',
+    );
+    return undefined;
+  }
+  return createGithubAppPullRequestCreator(cfg);
 }
