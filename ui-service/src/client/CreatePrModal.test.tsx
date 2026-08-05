@@ -210,6 +210,36 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
+  it('an auto-expanded actionable proposal shows Create PR for an operator', async () => {
+    mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
+    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '' });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    // Card is already open — no click needed. The node id renders twice
+    // (compact row + card title), so assert presence rather than uniqueness.
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+    expect(screen.getByRole('button', { name: /Create PR/i })).toBeInTheDocument();
+  });
+
+  it('an auto-expanded actionable proposal hides Create PR for a viewer, but still shows the card', async () => {
+    mockUseCurrentUser.mockReturnValue({ userId: 'u2', email: 'v@x.com', name: 'Viewer', role: 'viewer' });
+    const proposal = makeProposal({
+      status: 'proposed',
+      source_resolved: true,
+      pr_url: '',
+      rationale: 'Adds the missing GROUP BY column.',
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
+  });
+
   it('after successful PR creation, shows open PR link in the detail card', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
     mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 });

@@ -442,6 +442,76 @@ Rules:
   accent dot, service name, count pill (`.dag-service-vertex-*`), with the
   vertex fill/border painted by rolled-up status.
 
+### Inline actionable rows
+
+A row whose item still needs a human decision renders its `.detail-card`
+expanded, in place, inside the table — never in a separate section above
+or below it. The expansion condition is exactly the predicate that gates
+the card's primary action button; there is no separate "first row" or
+"top of list" special case. The remediation panel is the reference
+implementation:
+
+```jsx
+const isActionable = p.status === 'proposed' && p.source_resolved && !p.pr_url;
+
+<Fragment key={p.id}>
+  <tr
+    className={isActionable ? 'nodes-row--static' : (isSelected ? 'nodes-row--selected' : '')}
+    onClick={isActionable ? undefined : toggle}
+    role={isActionable ? undefined : 'button'}
+    tabIndex={isActionable ? undefined : 0}
+    aria-expanded={isActionable ? undefined : isSelected}
+    onKeyDown={isActionable ? undefined : (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    }}
+  >
+    {/* compact cells, unchanged */}
+  </tr>
+  {(isActionable || isSelected) && (
+    <tr className="nodes-row--static">
+      <td colSpan={5}>
+        <div className="detail-card">{/* rationale, actions */}</div>
+      </td>
+    </tr>
+  )}
+</Fragment>
+```
+
+```css
+/* Non-interactive row: an auto-expanded actionable row, or the row hosting
+   an expanded detail card. Neither responds to click, so neither gets the
+   table's default pointer cursor or hover affordance. */
+.nodes-table tbody tr.nodes-row--static { cursor: default; }
+.nodes-table tbody tr.nodes-row--static:hover { background: none; }
+```
+
+Rules:
+
+- **Expansion depends only on item state, never on viewer role.** Everyone
+  sees the card and its rationale; only the action button inside stays
+  role-gated (`currentUser?.role === 'operator'`, unchanged from the
+  ordinary button-gating rule).
+- **Collapse on resolution.** The moment the predicate goes false (a PR is
+  opened, the item is merged/rejected/skipped/escalated), the row reverts
+  to a normal compact row on the next render — no transition, no manual
+  dismiss.
+- **Manual selection still works for collapsed rows**, using the same
+  click-to-toggle behaviour tables already have. Mark the selected row with
+  `.nodes-row--selected` (already defined for the Nodes table) and scroll
+  its detail row into view (`ref` + `scrollIntoView({ behavior: 'smooth',
+  block: 'nearest' })`) — an auto-expanded row needs neither, since it is
+  already in place and already visible.
+- **Collapsed rows follow the Grouped table rows keyboard/role contract**
+  above: `role="button"`, `tabIndex={0}`, Enter/Space activation,
+  `aria-expanded`. An auto-expanded row gets none of those attributes — it
+  isn't a toggle, so it has nothing to expose to assistive tech beyond the
+  card that's already rendered.
+- **`.nodes-row--static`** removes the table's default pointer cursor and
+  hover background from any row that isn't a click target: the auto-expanded
+  compact row, and the `<tr>` hosting any expanded detail card (auto or
+  manual). Use it whenever a `.nodes-table` row exists but isn't
+  interactive.
+
 ## Snapshot tiles
 
 Used inside the homepage `Topology` tab. One tile per schedule

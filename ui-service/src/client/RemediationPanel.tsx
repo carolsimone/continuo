@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { ProposalDTO } from './types';
 import { fetchProposals } from './remediation-api';
 import { useCurrentUser } from './auth/AuthContext';
@@ -52,12 +52,84 @@ function prStateBadge(prState: string) {
   return <>{prState}</>;
 }
 
+// isActionable is the predicate for a proposal that still needs a human
+// decision: it has a source to fix, no PR has been opened for it yet, and
+// nothing has resolved it. Such a proposal renders its detail card expanded
+// in place instead of waiting for a click.
+function isActionable(p: ProposalDTO): boolean {
+  return p.status === 'proposed' && p.source_resolved && !p.pr_url;
+}
+
+function ProposalDetailCard({
+  proposal,
+  isOperator,
+  onCreatePr,
+}: {
+  proposal: ProposalDTO;
+  isOperator: boolean;
+  onCreatePr: () => void;
+}) {
+  return (
+    <div className="detail-card remediation-detail">
+      <div className="section-header">
+        <div className="section-header__main">
+          <span className="section-header__title">{proposal.node_id}</span>
+        </div>
+        <div className="section-header__sub">
+          release {proposal.release_id} · confidence {proposal.confidence}
+        </div>
+      </div>
+
+      <div className="detail-card__body">
+        <p className="detail-card__rationale">
+          {proposal.rationale}
+        </p>
+
+        {proposal.diff_uri && (
+          <div className="detail-card__row">
+            <DiffView uri={proposal.diff_uri} />
+          </div>
+        )}
+
+        {!proposal.source_resolved && (
+          <div className="info-strip info-strip--warning detail-card__row">
+            <span className="info-strip__icon">⚠</span>
+            No real-source fix — a PR cannot be opened for this proposal.
+          </div>
+        )}
+
+        {proposal.pr_url && (
+          <a
+            className="btn btn--secondary"
+            href={proposal.pr_url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            open PR ↗
+          </a>
+        )}
+
+        {isOperator && proposal.source_resolved && !proposal.pr_url && (
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={onCreatePr}
+          >
+            Create PR
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function RemediationPanel() {
   const currentUser = useCurrentUser();
   const [proposals, setProposals] = useState<ProposalDTO[]>([]);
   const [selected, setSelected] = useState<ProposalDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showCreatePrModal, setShowCreatePrModal] = useState(false);
+  const [createPrProposalId, setCreatePrProposalId] = useState<string | null>(null);
+  const detailRef = useRef<HTMLTableRowElement | null>(null);
 
   useEffect(() => {
     fetchProposals()
@@ -67,6 +139,16 @@ export default function RemediationPanel() {
       })
       .catch(e => setError(e.message));
   }, []);
+
+  // Scroll a manually-opened detail card into view — an auto-expanded card
+  // needs no scroll, it is already in place at its row.
+  useEffect(() => {
+    if (selected) {
+      detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [selected]);
+
+  const createPrProposal = proposals.find(p => p.id === createPrProposalId) ?? null;
 
   return (
     <>
@@ -101,86 +183,65 @@ export default function RemediationPanel() {
               </tr>
             </thead>
             <tbody>
-              {proposals.map(p => (
-                <tr
-                  key={p.id}
-                  onClick={() => setSelected(prev => (prev?.id === p.id ? null : p))}
-                >
-                  <td>{p.node_id}</td>
-                  <td>{p.release_id}</td>
-                  <td>{p.confidence}</td>
-                  <td>{sourceLabel(p.source_resolved)}</td>
-                  <td>{p.status}{p.pr_state ? <> · {prStateBadge(p.pr_state)}</> : null}</td>
-                </tr>
-              ))}
+              {proposals.map(p => {
+                const autoExpanded = isActionable(p);
+                const isSelected = !autoExpanded && selected?.id === p.id;
+                const showCard = autoExpanded || isSelected;
+                const toggle = () => setSelected(prev => (prev?.id === p.id ? null : p));
+
+                return (
+                  <Fragment key={p.id}>
+                    <tr
+                      className={autoExpanded ? 'nodes-row--static' : (isSelected ? 'nodes-row--selected' : '')}
+                      onClick={autoExpanded ? undefined : toggle}
+                      role={autoExpanded ? undefined : 'button'}
+                      tabIndex={autoExpanded ? undefined : 0}
+                      aria-expanded={autoExpanded ? undefined : isSelected}
+                      onKeyDown={autoExpanded ? undefined : (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggle();
+                        }
+                      }}
+                    >
+                      <td>{p.node_id}</td>
+                      <td>{p.release_id}</td>
+                      <td>{p.confidence}</td>
+                      <td>{sourceLabel(p.source_resolved)}</td>
+                      <td>{p.status}{p.pr_state ? <> · {prStateBadge(p.pr_state)}</> : null}</td>
+                    </tr>
+                    {showCard && (
+                      <tr
+                        className="nodes-row--static"
+                        ref={el => { if (isSelected) detailRef.current = el; }}
+                      >
+                        <td colSpan={5}>
+                          <ProposalDetailCard
+                            proposal={p}
+                            isOperator={currentUser?.role === 'operator'}
+                            onCreatePr={() => setCreatePrProposalId(p.id)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </>
       )}
 
-      {selected && (
-        <div className="detail-card remediation-detail">
-          <div className="section-header">
-            <div className="section-header__main">
-              <span className="section-header__title">{selected.node_id}</span>
-            </div>
-            <div className="section-header__sub">
-              release {selected.release_id} · confidence {selected.confidence}
-            </div>
-          </div>
-
-          <div className="detail-card__body">
-            <p className="detail-card__rationale">
-              {selected.rationale}
-            </p>
-
-            {selected.diff_uri && (
-              <div className="detail-card__row">
-                <DiffView uri={selected.diff_uri} />
-              </div>
-            )}
-
-            {!selected.source_resolved && (
-              <div className="info-strip info-strip--warning detail-card__row">
-                <span className="info-strip__icon">⚠</span>
-                No real-source fix — a PR cannot be opened for this proposal.
-              </div>
-            )}
-
-            {selected.pr_url && (
-              <a
-                className="btn btn--secondary"
-                href={selected.pr_url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                open PR ↗
-              </a>
-            )}
-
-            {currentUser?.role === 'operator' && selected.source_resolved && !selected.pr_url && (
-              <button
-                type="button"
-                className="btn btn--secondary"
-                onClick={() => setShowCreatePrModal(true)}
-              >
-                Create PR
-              </button>
-            )}
-
-            {showCreatePrModal && selected && (
-              <CreatePrModal
-                proposal={selected}
-                onClose={() => setShowCreatePrModal(false)}
-                onCreated={(prUrl) => {
-                  setSelected(prev => prev ? { ...prev, pr_url: prUrl } : prev);
-                  setProposals(prev => prev.map(p => p.id === selected.id ? { ...p, pr_url: prUrl } : p));
-                  setShowCreatePrModal(false);
-                }}
-              />
-            )}
-          </div>
-        </div>
+      {createPrProposal && (
+        <CreatePrModal
+          proposal={createPrProposal}
+          onClose={() => setCreatePrProposalId(null)}
+          onCreated={(prUrl) => {
+            setProposals(prev => prev.map(p => (p.id === createPrProposal.id ? { ...p, pr_url: prUrl } : p)));
+            setSelected(prev => (prev && prev.id === createPrProposal.id ? { ...prev, pr_url: prUrl } : prev));
+            setCreatePrProposalId(null);
+          }}
+        />
       )}
     </>
   );

@@ -171,4 +171,81 @@ describe('RemediationPanel', () => {
     const chip = await screen.findByText('rejected');
     expect(chip).toHaveClass('pr-chip', 'pr-chip--rejected');
   });
+
+  it('renders the detail card inline with no click, for an actionable proposal', async () => {
+    const proposal = makeProposal({
+      status: 'proposed',
+      source_resolved: true,
+      pr_url: '',
+      rationale: 'Adds the missing GROUP BY column.',
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    // The node id shows both in the compact row and in the auto-expanded
+    // card's title — no click needed to make the card appear.
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+
+    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['a PR already opened', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9' }],
+    ['merged', { status: 'merged', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'merged' }],
+    ['rejected', { status: 'rejected', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'rejected' }],
+    ['skipped', { status: 'skipped', source_resolved: true, pr_url: '' }],
+    ['escalated', { status: 'escalated', source_resolved: true, pr_url: '' }],
+  ])('renders a compact row with no card until clicked, when %s', async (_label, overrides) => {
+    const proposal = makeProposal({
+      rationale: 'Adds the missing GROUP BY column.',
+      ...overrides,
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
+
+    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+  });
+
+  it('opens a collapsed row on Enter and closes it on Space', async () => {
+    const proposal = makeProposal({
+      status: 'open',
+      rationale: 'Adds the missing GROUP BY column.',
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    const row = screen.getByText('svc.schema.my_model').closest('tr')!;
+    expect(row).toHaveAttribute('role', 'button');
+    expect(row).toHaveAttribute('tabIndex', '0');
+    expect(row).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+    expect(row).toHaveAttribute('aria-expanded', 'true');
+    expect(row).toHaveClass('nodes-row--selected');
+
+    fireEvent.keyDown(row, { key: ' ' });
+    expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
+  });
+
+  it('an auto-expanded row has no role/tabIndex/click handler — it is not manually toggleable', async () => {
+    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '' });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+    // First match is the compact row's cell, not the card's title.
+    const row = screen.getAllByText('svc.schema.my_model')[0].closest('tr')!;
+    expect(row).not.toHaveAttribute('role');
+    expect(row).not.toHaveAttribute('tabIndex');
+  });
 });
