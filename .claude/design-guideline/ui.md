@@ -430,7 +430,7 @@ A `.nodes-table` may group its rows under collapsible per-group header rows:
 Rules:
 
 - The header row spans every column and toggles its group on click and on
-  Enter/Space (`role="button"`, `aria-expanded`).
+  Enter/Space (`role="button"`, `tabIndex={0}`, `aria-expanded`).
 - `.nodes-group-count` uses the same count-pill treatment as
   `.section-header__count` / `.tabs__count` (bare number, `#f1f3f5` pill).
 - The trailing status pill is the group's rolled-up status using the
@@ -446,31 +446,41 @@ Rules:
 
 A row whose item still needs a human decision renders its `.detail-card`
 expanded, in place, inside the table — never in a separate section above
-or below it. The expansion condition is exactly the predicate that gates
-the card's primary action button; there is no separate "first row" or
-"top of list" special case. The remediation panel is the reference
-implementation:
+or below it. There is no separate "first row" or "top of list" special
+case: the trigger is a predicate over the item's own fields, evaluated per
+row. **The card's primary action button is gated by that same predicate**
+— define it once and route both the expansion check and the button gate
+through it, so the two can never drift apart. The remediation panel is the
+reference implementation:
 
 ```jsx
-const isActionable = p.status === 'proposed' && p.source_resolved && !p.pr_url;
+// isActionable is the single source of truth for "this item still needs a
+// human decision." Both the row's auto-expansion and the card's primary
+// action button read it — never duplicate the condition inline.
+function isActionable(p) {
+  return p.status === 'proposed' && p.source_resolved && !p.pr_url;
+}
 
 <Fragment key={p.id}>
   <tr
-    className={isActionable ? 'nodes-row--static' : (isSelected ? 'nodes-row--selected' : '')}
-    onClick={isActionable ? undefined : toggle}
-    role={isActionable ? undefined : 'button'}
-    tabIndex={isActionable ? undefined : 0}
-    aria-expanded={isActionable ? undefined : isSelected}
-    onKeyDown={isActionable ? undefined : (e) => {
+    className={isActionable(p) ? 'nodes-row--static' : (isSelected ? 'nodes-row--selected' : '')}
+    onClick={isActionable(p) ? undefined : toggle}
+    role={isActionable(p) ? undefined : 'button'}
+    tabIndex={isActionable(p) ? undefined : 0}
+    aria-expanded={isActionable(p) ? undefined : isSelected}
+    onKeyDown={isActionable(p) ? undefined : (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
     }}
   >
     {/* compact cells, unchanged */}
   </tr>
-  {(isActionable || isSelected) && (
+  {(isActionable(p) || isSelected) && (
     <tr className="nodes-row--static">
       <td colSpan={5}>
-        <div className="detail-card">{/* rationale, actions */}</div>
+        <div className="detail-card">
+          {/* rationale */}
+          {isOperator && isActionable(p) && <button className="btn btn--secondary">{/* primary action */}</button>}
+        </div>
       </td>
     </tr>
   )}
@@ -480,9 +490,11 @@ const isActionable = p.status === 'proposed' && p.source_resolved && !p.pr_url;
 ```css
 /* Non-interactive row: an auto-expanded actionable row, or the row hosting
    an expanded detail card. Neither responds to click, so neither gets the
-   table's default pointer cursor or hover affordance. */
-.nodes-table tbody tr.nodes-row--static { cursor: default; }
-.nodes-table tbody tr.nodes-row--static:hover { background: none; }
+   table's default pointer cursor, hover affordance, or row divider — a
+   border between an auto-expanded row and its own card would read as a
+   seam between two different rows. */
+.nodes-table tbody tr.nodes-row--static { cursor: default; border-bottom: none; }
+.nodes-table tbody tr.nodes-row--static:hover { background-color: transparent; }
 ```
 
 Rules:
@@ -490,11 +502,29 @@ Rules:
 - **Expansion depends only on item state, never on viewer role.** Everyone
   sees the card and its rationale; only the action button inside stays
   role-gated (`currentUser?.role === 'operator'`, unchanged from the
-  ordinary button-gating rule).
-- **Collapse on resolution.** The moment the predicate goes false (a PR is
-  opened, the item is merged/rejected/skipped/escalated), the row reverts
-  to a normal compact row on the next render — no transition, no manual
-  dismiss.
+  ordinary button-gating rule) in addition to `isActionable`.
+- **One predicate function, two call sites.** Do not write the expansion
+  condition and the button gate as separately-maintained boolean
+  expressions, even if they look identical today — that's exactly the setup
+  that lets them silently diverge later. Extract `isActionable` (or
+  equivalent) and call it from both places.
+- **Collapse on resolution.** The moment `isActionable` goes false — a PR
+  is opened (`pr_url` set), or the item's own lifecycle field moves it off
+  the actionable state (e.g. `status` leaving `proposed` for `skipped` or
+  `escalated`, or a separate `pr_state` field resolving to `merged` /
+  `rejected`) — the row reverts to a normal compact row on the next render.
+  No transition, no manual dismiss. Know which field on your domain object
+  actually carries "resolved" — don't assume outcome and lifecycle state
+  live in the same column.
+- **Creating the PR from an auto-expanded row must not collapse it into
+  nothing.** The action inside the card mutates the same field the
+  predicate reads (e.g. setting `pr_url`), so the row stops being
+  auto-expanded in the same render the action completes. If the "selected"
+  state that keeps a manually-opened row open is a separate piece of state
+  from the auto-expand predicate, the completing action must explicitly set
+  that selected state too — otherwise the row collapses at the exact moment
+  it should show the result (the new `open PR ↗` link) and the operator's
+  one action looks like it did nothing.
 - **Manual selection still works for collapsed rows**, using the same
   click-to-toggle behaviour tables already have. Mark the selected row with
   `.nodes-row--selected` (already defined for the Nodes table) and scroll
@@ -506,11 +536,11 @@ Rules:
   `aria-expanded`. An auto-expanded row gets none of those attributes — it
   isn't a toggle, so it has nothing to expose to assistive tech beyond the
   card that's already rendered.
-- **`.nodes-row--static`** removes the table's default pointer cursor and
-  hover background from any row that isn't a click target: the auto-expanded
-  compact row, and the `<tr>` hosting any expanded detail card (auto or
-  manual). Use it whenever a `.nodes-table` row exists but isn't
-  interactive.
+- **`.nodes-row--static`** removes the table's default pointer cursor,
+  hover background, and row divider from any row that isn't a click target:
+  the auto-expanded compact row, and the `<tr>` hosting any expanded detail
+  card (auto or manual). Use it whenever a `.nodes-table` row exists but
+  isn't interactive.
 
 ## Snapshot tiles
 

@@ -19,7 +19,7 @@ const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   node_id: 'svc.schema.my_model',
   error_signature: 'syntax error',
   attempt: 1,
-  status: 'open',
+  status: 'proposed',
   confidence: 'high',
   rationale: 'The fix addresses the syntax issue in the model.',
   proposed_sql_uri: 's3://bucket/proposed.sql',
@@ -56,8 +56,10 @@ describe('RemediationPanel', () => {
 
   it('renders a row per proposal returned from fetchProposals', async () => {
     const proposals = [
-      makeProposal({ id: 'p1', node_id: 'svc.schema.model_a', release_id: 'rel-1', confidence: 'high' }),
-      makeProposal({ id: 'p2', node_id: 'svc.schema.model_b', release_id: 'rel-2', confidence: 'medium' }),
+      // status: skipped keeps both rows compact, so this test stays about
+      // row rendering rather than the auto-expanded card.
+      makeProposal({ id: 'p1', node_id: 'svc.schema.model_a', release_id: 'rel-1', confidence: 'high', status: 'skipped' }),
+      makeProposal({ id: 'p2', node_id: 'svc.schema.model_b', release_id: 'rel-2', confidence: 'medium', status: 'skipped' }),
     ];
     mockFetchProposals.mockResolvedValue(proposals);
 
@@ -76,6 +78,7 @@ describe('RemediationPanel', () => {
 
   it('clicking a row reveals the proposal rationale', async () => {
     const proposal = makeProposal({
+      status: 'skipped',
       rationale: 'Fixes the JOIN clause that was missing a condition.',
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -130,7 +133,7 @@ describe('RemediationPanel', () => {
   });
 
   it('shows diff view/hide toggle button when a proposal with diff_uri is selected', async () => {
-    const proposal = makeProposal({ diff_uri: 's3://bucket/my.patch' });
+    const proposal = makeProposal({ status: 'skipped', diff_uri: 's3://bucket/my.patch' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
@@ -191,9 +194,13 @@ describe('RemediationPanel', () => {
   });
 
   it.each([
+    // status stays 'proposed' for the PR-lifecycle cases below: remediation-agent
+    // never mutates status after insert, so a merged/rejected/already-opened PR
+    // is recorded on pr_url/pr_state, not on status.
     ['a PR already opened', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9' }],
-    ['merged', { status: 'merged', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'merged' }],
-    ['rejected', { status: 'rejected', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'rejected' }],
+    ['merged', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'merged' }],
+    ['rejected', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'rejected' }],
+    // skipped/escalated are real classifier outcomes distinct from 'proposed'.
     ['skipped', { status: 'skipped', source_resolved: true, pr_url: '' }],
     ['escalated', { status: 'escalated', source_resolved: true, pr_url: '' }],
   ])('renders a compact row with no card until clicked, when %s', async (_label, overrides) => {
@@ -214,7 +221,7 @@ describe('RemediationPanel', () => {
 
   it('opens a collapsed row on Enter and closes it on Space', async () => {
     const proposal = makeProposal({
-      status: 'open',
+      status: 'skipped',
       rationale: 'Adds the missing GROUP BY column.',
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -236,7 +243,7 @@ describe('RemediationPanel', () => {
     expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
   });
 
-  it('an auto-expanded row has no role/tabIndex/click handler — it is not manually toggleable', async () => {
+  it('an auto-expanded row has no role or tabIndex attributes', async () => {
     const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '' });
     mockFetchProposals.mockResolvedValue([proposal]);
 

@@ -29,7 +29,7 @@ const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   node_id: 'svc.schema.my_model',
   error_signature: 'syntax error',
   attempt: 1,
-  status: 'open',
+  status: 'proposed',
   confidence: 'high',
   rationale: 'The fix addresses the syntax issue in the model.',
   proposed_sql_uri: 's3://bucket/proposed.sql',
@@ -160,13 +160,14 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
   it('shows Create PR trigger for operator when source_resolved=true and no pr_url', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
+    // status: proposed + source_resolved + no pr_url is exactly the
+    // actionable predicate, so this proposal's card is already open.
     const proposal = makeProposal({ source_resolved: true, pr_url: '' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
 
     expect(screen.getByRole('button', { name: /Create PR/i })).toBeInTheDocument();
   });
@@ -178,8 +179,7 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
 
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
@@ -240,18 +240,18 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
-  it('after successful PR creation, shows open PR link in the detail card', async () => {
+  it('after successful PR creation, shows open PR link in the detail card without any further click', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
     mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 });
+    // Realistic actionable proposal: the card is already open, no click needed.
     const proposal = makeProposal({ source_resolved: true, pr_url: '' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
 
-    // Open the modal
+    // Open the modal directly — the row is already expanded.
     fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
 
     // Confirm in modal
@@ -261,10 +261,13 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     expect(modalCreateBtn).toBeInTheDocument();
     fireEvent.click(modalCreateBtn!);
 
-    // Wait for PR link to appear in the detail card
+    // Creating the PR resolves the proposal, so it stops auto-expanding —
+    // the row must stay open on its own and show the link with no further
+    // click from the operator.
     await waitFor(() => {
       const link = screen.getByRole('link', { name: /open PR ↗/i });
       expect(link).toHaveAttribute('href', 'https://github.com/org/repo/pull/55');
     });
+    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 });

@@ -109,7 +109,7 @@ function ProposalDetailCard({
           </a>
         )}
 
-        {isOperator && proposal.source_resolved && !proposal.pr_url && (
+        {isOperator && isActionable(proposal) && (
           <button
             type="button"
             className="btn btn--secondary"
@@ -237,8 +237,12 @@ export default function RemediationPanel() {
           proposal={createPrProposal}
           onClose={() => setCreatePrProposalId(null)}
           onCreated={(prUrl) => {
-            setProposals(prev => prev.map(p => (p.id === createPrProposal.id ? { ...p, pr_url: prUrl } : p)));
-            setSelected(prev => (prev && prev.id === createPrProposal.id ? { ...prev, pr_url: prUrl } : prev));
+            const updated = { ...createPrProposal, pr_url: prUrl };
+            setProposals(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+            // The proposal just resolved (isActionable goes false), so it no
+            // longer auto-expands. Select it manually so its row stays open
+            // and shows the new "open PR ↗" link instead of collapsing.
+            setSelected(updated);
             setCreatePrProposalId(null);
           }}
         />
