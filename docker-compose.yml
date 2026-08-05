@@ -163,6 +163,7 @@ services:
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./agent-runner:/app/agent-runner
+      - ./remediation-agent:/app/remediation-agent
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
       - ./config/schedules.yaml:/etc/continuo/schedules.yaml:ro
     networks:
@@ -237,6 +238,7 @@ services:
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./agent-runner:/app/agent-runner
+      - ./remediation-agent:/app/remediation-agent
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
       - ./config/dbt-commands.yaml:/etc/continuo/dbt-commands.yaml:ro
@@ -298,6 +300,7 @@ services:
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./agent-runner:/app/agent-runner
+      - ./remediation-agent:/app/remediation-agent
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
     networks:
@@ -362,6 +365,7 @@ services:
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./agent-runner:/app/agent-runner
+      - ./remediation-agent:/app/remediation-agent
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -535,6 +539,7 @@ services:
       - "50053:50053"
     volumes:
       - ./agent-runner:/app/agent-runner
+      - ./remediation-agent:/app/remediation-agent
       - ./pkg:/app/pkg
       - ./go.work:/app/go.work
     networks:
