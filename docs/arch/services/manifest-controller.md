@@ -12,7 +12,7 @@ The service runs a single Redis consumer.
 
 None. Does not own Postgres or Neo4j.
 
-Writes candidate SQL objects to S3 under the key prefix `candidate-sql/<release_id>/<unique_id>.sql`. Does not own the bucket; the S3 bucket is shared with `k8s-controller` (logs) and `release-controller` (prune-time delete of the same prefix). S3 writes are the only durable side-effect of the candidate parse; the in-memory cross-service registry is rebuilt from scratch for each `release.requested:v1` message and persisted nowhere.
+Writes candidate SQL objects to S3 under the key prefix `candidate-sql/<release_id>/candidate_<unique_id>.sql`, plus one code-bundle contract document per release at `code-bundles/<release_id>/bundle.json`. Does not own the bucket; the S3 bucket is shared with `k8s-controller` (logs) and `release-controller` (prune-time delete of both prefixes). S3 writes are the only durable side-effect of the candidate parse; the in-memory cross-service registry is rebuilt from scratch for each `release.requested:v1` message and persisted nowhere.
 
 ## Inbound Interfaces
 
@@ -37,7 +37,20 @@ None (no HTTP interface; runs as `tail -f /dev/null` in dev; started manually or
 |---|---|
 | `manifest.loaded.candidate:v1` | Published after a `release.requested:v1` load (success or failure); consumed by `release-controller` |
 
-`manifest.loaded.candidate:v1` is a single Redis field `payload` containing JSON. On success: `{release_id, status: "ok", topology}` where `topology` is a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `test_count`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`, `candidate_sql_uri`). `node_type` is the dbt resource type (`dbt-model`, `dbt-seed`, or `dbt-snapshot`). `test_count` is the number of dbt tests attached to the node: the parser's second pass walks every `resource_type: test` manifest node once and attributes it to `attached_node` when the manifest sets it (generic tests), else to each of `depends_on.nodes` that resolves to a tracked node (singular tests), counting each test at most once per target. `release-controller` carries `test_count` through unchanged onto `release.promoted:v1`, where `orchestrator` persists it as `:Table.test_count`. `content_hash` is a macro-aware fingerprint: dbt's per-node source checksum (`checksum.checksum` from the manifest node) folded together with the source checksums of every macro the node transitively depends on (resolved from the manifest's `macros` map via `depends_on.macros`, following macro→macro edges). A node with no macro dependencies keeps its verbatim dbt checksum. `release-controller` diffs it against the prod snapshot to derive the changed-node set for the validation gate, detecting model SQL, seed CSV, snapshot, and shared-macro changes uniformly — a macro edit re-validates every node that depends on it even when those nodes' own `.sql` is untouched. `candidate_sql_uri` is an `s3://` URI pointing to the object at `candidate-sql/<release_id>/<unique_id>.sql`, which holds the node's compiled SQL with every schema-qualified reference that resolves to a known graph node rewritten (via sqlglot) to the candidate schema (`_candidate_<release>`). Seeds carry an empty URI because they have no SELECT to rewrite. An S3 upload failure for any node is fatal: the handler publishes `status=failed` and ACKs — no partial or dangling URI is ever emitted. `image_tag` is left empty — `release-controller` joins in the per-service image tags it assembled for the release. On failure: `{release_id, status: "failed", error_class, error_detail}`. `release-controller` uses this to transition a release from parsing to validating, or to mark it failed.
+`manifest.loaded.candidate:v1` is a single Redis field `payload` containing JSON. On success: `{release_id, status: "ok", topology, code_bundle_uri}` where `topology` is a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `test_count`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`, `candidate_sql_uri`). `node_type` is the dbt resource type (`dbt-model`, `dbt-seed`, or `dbt-snapshot`). `test_count` is the number of dbt tests attached to the node: the parser's second pass walks every `resource_type: test` manifest node once and attributes it to `attached_node` when the manifest sets it (generic tests), else to each of `depends_on.nodes` that resolves to a tracked node (singular tests), counting each test at most once per target. `release-controller` carries `test_count` through unchanged onto `release.promoted:v1`, where `orchestrator` persists it as `:Table.test_count`.
+
+`content_hash` is `"sha256:" + sha256(source_hash|shared_code_hash|config_hash)` — a fold of three independently-computed components, so a change to any one of them flips the whole fingerprint:
+- `source_hash` is dbt's per-node source checksum (`checksum.checksum` from the manifest node); a node dbt did not checksum falls back to a sha256 of its `raw_code`/`compiled_code`, or failing that a stable JSON dump of the node, so it is never empty.
+- `shared_code_hash` is a fold of the source checksums of every macro the node transitively depends on (resolved from the manifest's `macros` map via `depends_on.macros`, following macro→macro edges); `""` for a node with no macro dependencies.
+- `config_hash` is a sha256 of the node's resolved `config`, minus the `meta`, `docs`, `description`, `grants`, and `tags` keys, so an out-of-file config change (a materialization or other setting from `dbt_project.yml` / `schema.yml`) flips the hash even when the node's own `.sql` file is untouched.
+
+`release-controller` diffs `content_hash` against the prod snapshot to derive the changed-node set for the validation gate, detecting model SQL, seed CSV, snapshot, shared-macro, and config changes uniformly — a macro edit or a config change re-validates every node that depends on it even when those nodes' own `.sql` is untouched.
+
+`candidate_sql_uri` is an `s3://` URI pointing to the object at `candidate-sql/<release_id>/candidate_<unique_id>.sql`, which holds the node's compiled SQL with every schema-qualified reference that resolves to a known graph node rewritten (via sqlglot) to the candidate schema (`_candidate_<release>`). Seeds carry an empty URI because they have no SELECT to rewrite. An S3 upload failure for any node is fatal: the handler publishes `status=failed` and ACKs — no partial or dangling URI is ever emitted. `image_tag` is left empty — `release-controller` joins in the per-service image tags it assembled for the release.
+
+`code_bundle_uri` is a top-level `s3://` URI pointing to a single code-bundle contract document for the whole release, uploaded to `code-bundles/<release_id>/bundle.json` (`contract_version: 1`). The document is `{contract_version, release_id, nodes, shared_code}`: `nodes` is keyed by the same `schema_name.table_name` unique_id and carries, per node, `runtime` (`"dbt"`), `raw_code`, `compiled_code`, the node's resolved `config`, the three hash components (`source_hash`, `shared_code_hash`, `config_hash`), `content_hash`, and `code_unit_ids` (the node's direct macro dependency ids); `shared_code` maps each referenced macro id to `{source, checksum, depends_on}`. Nothing in the system consumes this document today — it exists so a downstream consumer never needs to parse a dbt manifest directly. An empty-manifest release (no manifest files found) publishes `code_bundle_uri: ""` along with an empty topology. A code-bundle upload failure is fatal in the same way as a candidate-SQL upload failure: the handler publishes `status=failed` (`error_class=CodeBundleUploadFailed`) and ACKs; the bundle is built and uploaded only after every node's candidate SQL has uploaded successfully, so a bundle failure never leaves a partially-uploaded topology.
+
+On failure: `{release_id, status: "failed", error_class, error_detail}`. `release-controller` uses this to transition a release from parsing to validating, or to mark it failed.
 
 Calls no gRPC services.
 
@@ -79,12 +92,17 @@ Pass 3 — Resolve deps, rewrite SQL, upload to S3, and shape candidate topology
     Rewrites every schema-qualified reference whose (schema, table) pair is in the registry
     to the candidate schema using sqlglot; CTE aliases, unqualified refs, and tables
     not in the registry are left unchanged; seeds carry empty compiled_sql → candidate_sql_uri=""
-  For each non-seed node: upload rewritten SQL to S3 at candidate-sql/<release_id>/<unique_id>.sql
-    → upload failure: publish status=failed (error_class=S3UploadError), ACK (fatal — no partial URI emitted)
-    → success: candidate_sql_uri = s3://<bucket>/candidate-sql/<release_id>/<unique_id>.sql
+  For each non-seed node: upload rewritten SQL to S3 at candidate-sql/<release_id>/candidate_<unique_id>.sql
+    → upload failure: publish status=failed (error_class=CandidateSqlUploadFailed), ACK (fatal — no partial URI emitted)
+    → success: candidate_sql_uri = s3://<bucket>/candidate-sql/<release_id>/candidate_<unique_id>.sql
   Shape each node as {unique_id, schema_name, table_name, service_name, node_type, content_hash, image_tag, upstream_unique_ids, schedule, candidate_sql_uri}
 
-Publish manifest.loaded.candidate:v1 status=ok with the topology, ACK
+Build the release's code bundle {contract_version, release_id, nodes, shared_code} and upload it to
+  code-bundles/<release_id>/bundle.json
+  → upload failure: publish status=failed (error_class=CodeBundleUploadFailed), ACK
+  → success: code_bundle_uri = s3://<bucket>/code-bundles/<release_id>/bundle.json
+
+Publish manifest.loaded.candidate:v1 status=ok with the topology and code_bundle_uri, ACK
 ```
 
 The flow leaves `image_tag` empty by design (`release-controller` joins the per-service tags it assembled for the release onto the candidate topology); it builds its registry in memory and persists nothing; and it reports parse/resolve failures back as a `status=failed` business signal rather than failing silently.
@@ -110,7 +128,8 @@ Both the dependency resolver and the candidate-schema rewriter parse `compiled_s
 | Operation | Description |
 |---|---|
 | `download_file` | Download each manifest JSON named in `manifest_keys` to a temp path; no S3 listing is performed |
-| `PutObject` | Upload the rewritten candidate SQL for each non-seed node to `candidate-sql/<release_id>/<unique_id>.sql`; failure is fatal and aborts the load |
+| `PutObject` | Upload the rewritten candidate SQL for each non-seed node to `candidate-sql/<release_id>/candidate_<unique_id>.sql`; failure is fatal and aborts the load |
+| `PutObject` | Upload one code-bundle contract document per release to `code-bundles/<release_id>/bundle.json`; failure is fatal and aborts the load |
 
 ## Consumer Reliability
 
@@ -139,4 +158,5 @@ None -- manifest-controller is not called via gRPC by any service.
 - An unresolvable reference in pass 3 aborts the load: it is reported as `status=failed` and ACKed, since replaying it would not help.
 - Compiled SQL that fails to tokenize or parse (`sqlglot.errors.TokenError` / `sqlglot.errors.ParseError`) in pass 3 is likewise a permanent failure: it is reported as `status=failed` (error_class=InvalidCompiledSql) and ACKed rather than left for the reclaim sweep, which is reserved for transient infrastructure failures.
 - An S3 upload failure in pass 3 is also fatal: it is reported as `status=failed` and ACKed. No partial URI is ever emitted — either all nodes' SQL objects are uploaded and the topology carries complete `candidate_sql_uri` values, or the entire load is aborted.
+- A code-bundle upload failure is likewise fatal, for the same reason: it is reported as `status=failed` (`error_class=CodeBundleUploadFailed`) and ACKed rather than published with a dangling `code_bundle_uri`. The bundle upload runs only after every node's candidate SQL has already uploaded successfully.
 - Releases enter through `release-controller`'s `POST /releases`, which emits `release.requested:v1` for this service to parse.
