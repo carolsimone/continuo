@@ -62,17 +62,20 @@ type ProposalRepository interface {
 	List(ctx context.Context, filter ProposalFilter) ([]proposal.View, error)
 
 	// BeginPR atomically claims a proposal for PR creation by transitioning
-	// pr_state from '' or 'failed' to 'opening'. It returns the data needed
-	// to open the PR. Returns ErrNotSourceResolved if source_resolved=false,
-	// ErrPRConflict if already claimed, ErrNotFound if the id is unknown.
-	BeginPR(ctx context.Context, id, branch string) (proposal.PRClaim, error)
+	// pr_state from '' or 'failed' to 'opening', stamping pr_claimed_at with
+	// claimedAt. It returns the data needed to open the PR. Returns
+	// ErrNotSourceResolved if source_resolved=false, ErrPRConflict if already
+	// claimed, ErrNotFound if the id is unknown.
+	BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error)
 
 	// RecordPR records a successfully opened PR: sets pr_state='open', pr_url,
-	// pr_number, pr_opened_by, and pr_opened_at on the proposal row.
+	// pr_number, pr_opened_by, and pr_opened_at on the proposal row, and clears
+	// pr_claimed_at back to NULL since the claim is resolved.
 	RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) error
 
 	// FailPR resets a stuck 'opening' claim back to 'failed' so the action can
-	// be retried. It is a no-op when pr_state is not 'opening'.
+	// be retried, and clears pr_claimed_at back to NULL so a later re-claim
+	// ages from its own claim time. It is a no-op when pr_state is not 'opening'.
 	FailPR(ctx context.Context, id string) error
 
 	// ListOpenPullRequests returns proposals whose PR awaits a terminal outcome
@@ -80,8 +83,10 @@ type ProposalRepository interface {
 	ListOpenPullRequests(ctx context.Context, limit int) ([]proposal.OpenPR, error)
 
 	// ListStuckOpening returns proposals claimed for PR creation but not yet
-	// recorded (pr_state='opening'), oldest-claimed first, so the reconciler's
-	// opening sweep resolves the longest-stuck claims before newer ones.
+	// recorded (pr_state='opening'), oldest-created first, so the reconciler's
+	// opening sweep resolves the longest-standing claims before newer ones.
+	// Each row carries its ClaimedAt (pr_claimed_at), which may be nil for a
+	// row that predates the pr_claimed_at column and was never backfilled.
 	// limit<=0 means no limit.
 	ListStuckOpening(ctx context.Context, limit int) ([]proposal.OpeningPR, error)
 

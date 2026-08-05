@@ -79,12 +79,14 @@ type OpenPR struct {
 // whose fate the reconciler's opening sweep resolves: either GitHub already
 // has the pull request (the claim's recording step failed after creation
 // succeeded), or the claim is stale and safe to release back to 'failed' for
-// retry. The row carries no claim timestamp — the reconciler ages a claim by
-// consecutive sweep passes that find no matching PR, not by a stored time.
+// retry. ClaimedAt is the wall-clock moment the claim was taken (pr_claimed_at);
+// it is nil for a row that predates the pr_claimed_at column and was not
+// backfilled a claim time by the migration.
 type OpeningPR struct {
 	ID        string
 	Repo      string
 	ReleaseID string
 	NodeID    string
 	Attempt   int
+	ClaimedAt *time.Time
 }

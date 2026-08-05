@@ -182,7 +182,7 @@ func (r *fakeProposalRepo) List(_ context.Context, _ repository.ProposalFilter) 
 	return nil, nil
 }
 
-func (r *fakeProposalRepo) BeginPR(_ context.Context, _, _ string) (proposal.PRClaim, error) {
+func (r *fakeProposalRepo) BeginPR(_ context.Context, _, _ string, _ time.Time) (proposal.PRClaim, error) {
 	return proposal.PRClaim{}, nil
 }
 

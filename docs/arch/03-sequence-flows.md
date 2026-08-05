@@ -642,15 +642,16 @@ sequenceDiagram
       RA->>GH: GET /repos/{repo}/pulls?head={owner}:{branch_name}&state=all&per_page=1
       alt PR found
         GH-->>RA: [{ number, html_url, created_at }]
-        RA->>PG: Record(id, pr_url, pr_number, opened_by="") -- 1 tx:<br/>pr_state 'opening' -> 'open', pr_opened_at=now()<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1)
+        RA->>PG: Record(id, pr_url, pr_number, opened_by="") -- 1 tx:<br/>pr_state 'opening' -> 'open', pr_opened_at=now(), pr_claimed_at=NULL<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1)
         Note over PG: gap closed -- UI now shows the recovered pr_url
       else PR not found
         GH-->>RA: []
-        Note over RA: increment in-process miss counter for this proposal id
-        alt miss count reaches REMEDIATION_PR_OPENING_GRACE_PERIOD / REMEDIATION_PR_POLL_INTERVAL
-          RA->>PG: FailPullRequest(id) -- pr_state 'opening' -> 'failed'
+        alt pr_claimed_at is NULL
+          Note over RA: unmeasurable claim age (row predates the pr_claimed_at column, not backfilled); leave untouched
+        else now - pr_claimed_at > REMEDIATION_PR_OPENING_GRACE_PERIOD
+          RA->>PG: FailPullRequest(id) -- pr_state 'opening' -> 'failed', pr_claimed_at=NULL
           Note over PG: retryable: BeginPR's claim guard accepts '' or 'failed'
-        else miss count below threshold
+        else within the grace period
           Note over RA: leave row untouched; retried next pass
         end
       end
@@ -658,7 +659,7 @@ sequenceDiagram
   end
 ```
 
-> The proposal row carries no claim timestamp — `created_at` predates the claim by an arbitrary amount, since a proposal can sit reviewable long before an operator claims it for a PR — so the sweep cannot measure a claim's age directly. It substitutes consecutive sweep passes with no matching PR, tracked in an in-process map keyed by proposal id and rebuilt fresh each pass: an id that drops out of the stuck-opening listing (recorded, failed, or otherwise resolved) resets its count to zero, and a process restart resets every count, which only extends the effective grace period, never shortens it. This is why a claim taken moments before a pass runs is never raced out from under an operator: reaching the default 10-pass threshold takes a full run of consecutive misses, comfortably longer than the seconds-scale S3-fetch-then-create-PR round trip a healthy claim completes in. A per-row GitHub error carries the prior miss count forward unchanged — an inconclusive read is neither a hit nor a miss — and does not block the rest of the batch.
+> `BeginPullRequest` stamps `pr_claimed_at` with the wall-clock moment it claims the row (via the service's `Clock` port, not SQL `now()`), and every transition out of `'opening'` (`RecordPullRequest`, `FailPullRequest`) clears it back to `NULL` — so a later re-claim of the same proposal (`opening → failed → opening`) always ages from its own claim time, never a stale one. The sweep compares `now - pr_claimed_at` directly against `REMEDIATION_PR_OPENING_GRACE_PERIOD`: this is why a claim taken moments before a pass runs is never raced out from under an operator, and why the decision no longer depends on how many passes have run or on the reconciler's poll interval — a process restart changes nothing, since the age is read from a stored timestamp rather than accumulated in memory. A row with `pr_claimed_at IS NULL` — the shape of a claim taken before this column existed — is left untouched rather than swept, since an unmeasurable claim can never safely be judged stale; the migration backfills `pr_claimed_at = NOW()` for any row already `'opening'` at deploy time, so this case is expected to be transient. A per-row GitHub error leaves the row untouched regardless of its age — an inconclusive read is not a confirmed miss — and does not block the rest of the batch.
 
 ## Why These Diagrams Are Not Enough On Their Own
 

@@ -254,10 +254,11 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 }
 
 // BeginPR atomically claims a proposal for PR creation: pr_state ” or 'failed'
-// -> 'opening'. The UPDATE…RETURNING is the single-winner guard; concurrent
-// callers see 0 rows and receive ErrPRConflict. Returns ErrNotSourceResolved
-// when source_resolved=false, ErrNotFound when the id is unknown.
-func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string) (proposal.PRClaim, error) {
+// -> 'opening', stamping pr_claimed_at with claimedAt. The UPDATE…RETURNING is
+// the single-winner guard; concurrent callers see 0 rows and receive
+// ErrPRConflict. Returns ErrNotSourceResolved when source_resolved=false,
+// ErrNotFound when the id is unknown.
+func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
 	// Distinguish "not source-resolved" from "already claimed" for a precise error.
 	var sr bool
 	if err := r.q.GetContext(ctx, &sr, `SELECT source_resolved FROM proposal WHERE id=$1`, id); err != nil {
@@ -271,14 +272,14 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string) (pr
 	}
 
 	const stmt = `
-		UPDATE proposal SET pr_state = 'opening'
+		UPDATE proposal SET pr_state = 'opening', pr_claimed_at = $2
 		WHERE id = $1
 		  AND source_resolved
 		  AND pr_state IN ('', 'failed')
 		RETURNING id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
 		          release_id, node_id, attempt, rationale, confidence, model`
 	var row claimRow
-	if err := r.q.GetContext(ctx, &row, stmt, id); err != nil {
+	if err := r.q.GetContext(ctx, &row, stmt, id, claimedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrPRConflict
 		}
@@ -287,12 +288,14 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string) (pr
 	return row.toClaim(branch), nil
 }
 
-// RecordPR records the opened PR and flips pr_state to 'open'.
+// RecordPR records the opened PR, flips pr_state to 'open', and clears
+// pr_claimed_at back to NULL since the claim it tracked is now resolved.
 // Returns ErrNotFound when the id does not exist.
 func (r *ProposalRepository) RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) error {
 	res, err := r.q.ExecContext(ctx,
 		`UPDATE proposal
-		 SET pr_state='open', pr_url=$2, pr_number=$3, pr_opened_by=$4, pr_opened_at=$5
+		 SET pr_state='open', pr_url=$2, pr_number=$3, pr_opened_by=$4, pr_opened_at=$5,
+		     pr_claimed_at=NULL
 		 WHERE id=$1`,
 		id, prURL, prNumber, openedBy, openedAt)
 	if err != nil {
@@ -304,11 +307,13 @@ func (r *ProposalRepository) RecordPR(ctx context.Context, id, prURL string, prN
 	return nil
 }
 
-// FailPR resets a stuck 'opening' claim back to 'failed' so the action can be
-// retried. It is a no-op when pr_state is not 'opening'.
+// FailPR resets a stuck 'opening' claim back to 'failed' and clears
+// pr_claimed_at back to NULL, so a later re-claim of the same proposal ages
+// from its own BeginPR call rather than this resolved one. It is a no-op when
+// pr_state is not 'opening'.
 func (r *ProposalRepository) FailPR(ctx context.Context, id string) error {
 	_, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET pr_state='failed' WHERE id=$1 AND pr_state='opening'`, id)
+		`UPDATE proposal SET pr_state='failed', pr_claimed_at=NULL WHERE id=$1 AND pr_state='opening'`, id)
 	if err != nil {
 		return fmt.Errorf("fail pr: %w", err)
 	}
@@ -358,22 +363,22 @@ func (r *ProposalRepository) ListOpenPullRequests(ctx context.Context, limit int
 // the first caller sees rows-affected=1; every later call is a no-op false.
 // openingRow is the persistence DTO for the ListStuckOpening projection.
 type openingRow struct {
-	ID        string `db:"id"`
-	Repo      string `db:"repo"`
-	ReleaseID string `db:"release_id"`
-	NodeID    string `db:"node_id"`
-	Attempt   int    `db:"attempt"`
+	ID        string     `db:"id"`
+	Repo      string     `db:"repo"`
+	ReleaseID string     `db:"release_id"`
+	NodeID    string     `db:"node_id"`
+	Attempt   int        `db:"attempt"`
+	ClaimedAt *time.Time `db:"pr_claimed_at"`
 }
 
 // ListStuckOpening returns proposals with pr_state='opening', oldest-created
 // first, so the reconciler's opening sweep processes the longest-standing
-// claims first within a batch. The proposal row carries no claim-time column
-// (created_at predates the claim by an arbitrary amount, since a proposal can
-// sit reviewable for a long time before an operator claims it for a PR), so
-// the reconciler ages a claim by how many consecutive sweep passes have found
-// no matching GitHub PR, not by a stored timestamp — see Reconciler.sweepOpening.
+// claims first within a batch. Each row carries its pr_claimed_at (the
+// wall-clock moment BeginPR claimed it), which the reconciler compares
+// against the grace period to decide whether the claim has aged out — see
+// Reconciler.sweepOpening.
 func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int) ([]proposal.OpeningPR, error) {
-	q := `SELECT id, repo, release_id, node_id, attempt
+	q := `SELECT id, repo, release_id, node_id, attempt, pr_claimed_at
 	      FROM proposal WHERE pr_state = 'opening' ORDER BY created_at ASC`
 	args := []any{}
 	if limit > 0 {
@@ -392,6 +397,7 @@ func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int) ([
 			ReleaseID: row.ReleaseID,
 			NodeID:    row.NodeID,
 			Attempt:   row.Attempt,
+			ClaimedAt: row.ClaimedAt,
 		})
 	}
 	return out, nil

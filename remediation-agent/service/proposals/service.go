@@ -74,7 +74,7 @@ func (s *Service) Begin(ctx context.Context, id string) (proposal.PRClaim, error
 		return proposal.PRClaim{}, fmt.Errorf("get proposal: %w", err)
 	}
 	branch := BuildBranch(v.ReleaseID, v.NodeID, v.Attempt)
-	claim, err := s.repo.BeginPR(ctx, id, branch)
+	claim, err := s.repo.BeginPR(ctx, id, branch, s.clock.Now())
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("begin pr: %w", err)
 	}

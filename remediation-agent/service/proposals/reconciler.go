@@ -41,15 +41,11 @@ type PRFailer interface {
 }
 
 // defaultOpeningGracePeriod bounds how long a pr_state='opening' claim can go
-// with no matching GitHub PR before the sweep releases it back to 'failed'.
-// The proposal row has no claim timestamp (created_at predates the claim by
-// an arbitrary amount — a proposal can sit reviewable long before an operator
-// claims it), so the sweep approximates elapsed time by counting consecutive
-// reconcile passes that find no PR for a claim, converted from this duration
-// via the Reconciler's own Interval (see NewReconciler). Ten minutes
-// comfortably exceeds the seconds-scale S3-fetch-then-create-PR round trip a
-// healthy claim completes in, so it never races an in-flight creation, while
-// still recovering a genuinely abandoned claim promptly.
+// with no matching GitHub PR, measured from its pr_claimed_at, before the
+// sweep releases it back to 'failed'. Ten minutes comfortably exceeds the
+// seconds-scale S3-fetch-then-create-PR round trip a healthy claim completes
+// in, so it never races an in-flight creation, while still recovering a
+// genuinely abandoned claim promptly.
 const defaultOpeningGracePeriod = 10 * time.Minute
 
 // ReconcilerDeps holds every collaborator the Reconciler needs, all behind
@@ -74,10 +70,9 @@ type ReconcilerDeps struct {
 	OpeningRecorder OpeningRecorder
 	Failer          PRFailer
 	// OpeningGracePeriod bounds how long a claim with no matching GitHub PR
-	// waits before FailPR releases it, expressed as wall-clock time and
-	// converted to a number of reconcile passes via Interval (see
-	// NewReconciler). It never gates the positive branch (recording a PR that
-	// is found) — only the decision to declare a claim dead. <=0 falls back to
+	// waits — measured from its pr_claimed_at — before FailPR releases it. It
+	// never gates the positive branch (recording a PR that is found) — only
+	// the decision to declare a claim dead. <=0 falls back to
 	// defaultOpeningGracePeriod.
 	OpeningGracePeriod time.Duration
 }
@@ -95,21 +90,11 @@ type Reconciler struct {
 	interval   time.Duration
 	batchLimit int
 
-	openingLister   OpeningLister
-	branchFinder    ports.PullRequestBranchFinder
-	openingRecorder OpeningRecorder
-	failer          PRFailer
-	// openingMissThreshold is the number of consecutive sweep passes a claim
-	// must be seen with no matching GitHub PR before it is failed — the
-	// pass-count stand-in for OpeningGracePeriod (see NewReconciler).
-	openingMissThreshold int
-	// openingMisses counts, per proposal id, consecutive sweepOpening passes
-	// that found no matching PR. Rebuilt from scratch each pass (see
-	// sweepOpening) so an id drops out — and its count resets — as soon as it
-	// is no longer listed as stuck (recorded, failed, or resolved by another
-	// actor). Accessed only from the single reconcile goroutine (and tests), so
-	// it needs no synchronization.
-	openingMisses map[string]int
+	openingLister      OpeningLister
+	branchFinder       ports.PullRequestBranchFinder
+	openingRecorder    OpeningRecorder
+	failer             PRFailer
+	openingGracePeriod time.Duration
 
 	// degraded records whether the last pass that probed GitHub could not read
 	// PR status because of a permission error. Accessed only from the single
@@ -118,10 +103,7 @@ type Reconciler struct {
 }
 
 // NewReconciler constructs a Reconciler, applying defaults for Interval (1m),
-// BatchLimit (50), and OpeningGracePeriod (10m). OpeningGracePeriod is
-// converted to a whole number of reconcile passes (at least 1) by dividing by
-// Interval, since the proposal row carries no claim timestamp to measure
-// elapsed wall-clock time against.
+// BatchLimit (50), and OpeningGracePeriod (10m).
 func NewReconciler(d ReconcilerDeps) *Reconciler {
 	if d.Interval <= 0 {
 		d.Interval = time.Minute
@@ -132,24 +114,19 @@ func NewReconciler(d ReconcilerDeps) *Reconciler {
 	if d.OpeningGracePeriod <= 0 {
 		d.OpeningGracePeriod = defaultOpeningGracePeriod
 	}
-	threshold := int(d.OpeningGracePeriod / d.Interval)
-	if threshold < 1 {
-		threshold = 1
-	}
 	return &Reconciler{
-		lister:               d.Lister,
-		checker:              d.Checker,
-		recorder:             d.Recorder,
-		clock:                d.Clock,
-		logger:               d.Logger,
-		interval:             d.Interval,
-		batchLimit:           d.BatchLimit,
-		openingLister:        d.OpeningLister,
-		branchFinder:         d.BranchFinder,
-		openingRecorder:      d.OpeningRecorder,
-		failer:               d.Failer,
-		openingMissThreshold: threshold,
-		openingMisses:        map[string]int{},
+		lister:             d.Lister,
+		checker:            d.Checker,
+		recorder:           d.Recorder,
+		clock:              d.Clock,
+		logger:             d.Logger,
+		interval:           d.Interval,
+		batchLimit:         d.BatchLimit,
+		openingLister:      d.OpeningLister,
+		branchFinder:       d.BranchFinder,
+		openingRecorder:    d.OpeningRecorder,
+		failer:             d.Failer,
+		openingGracePeriod: d.OpeningGracePeriod,
 	}
 }
 
@@ -230,31 +207,26 @@ func (r *Reconciler) reconcileOpen(ctx context.Context) {
 // including a claim taken moments ago — the claim is recorded exactly as the
 // client-side flow would have, since a found PR is unambiguous regardless of
 // how fresh the claim is. If no PR is found, the claim is released back to
-// 'failed' only once it has been seen with no matching PR for
-// openingMissThreshold consecutive passes; a fresher miss streak is left
-// alone, so a healthy in-flight PR creation (an S3 fetch and a GitHub POST,
-// normally seconds) is never raced. Each row is handled best-effort: one
-// failing row is logged and skipped, and retried next pass.
+// 'failed' only once its ClaimedAt is more than openingGracePeriod in the
+// past, so a healthy in-flight PR creation (an S3 fetch and a GitHub POST,
+// normally seconds) is never raced. A row with a nil ClaimedAt — its age is
+// unknown — is left alone rather than failed, so an unmeasurable claim can
+// never be mistaken for a stale one; see the pr_claimed_at migration for why
+// this case should not occur for a row created after it. Each row is handled
+// best-effort: one failing row is logged and skipped, and retried next pass.
 func (r *Reconciler) sweepOpening(ctx context.Context) {
 	stuck, err := r.openingLister.ListStuckOpening(ctx, r.batchLimit)
 	if err != nil {
 		r.logger.Warn("pr reconciler: list stuck opening claims", "error", err)
 		return
 	}
-	// Rebuilt from scratch each pass: an id absent from this pass's stuck set
-	// (recorded, failed, or resolved by another actor since the last pass)
-	// naturally drops out and its miss streak resets to zero.
-	nextMisses := make(map[string]int, len(stuck))
+	now := r.clock.Now()
 	for _, o := range stuck {
 		branch := BuildBranch(o.ReleaseID, o.NodeID, o.Attempt)
 		ref, found, err := r.branchFinder.FindByBranch(ctx, o.Repo, branch)
 		if err != nil {
 			r.logger.Warn("pr reconciler: find pull request by branch",
 				"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "error", err)
-			// An inconclusive read (transient GitHub error) neither confirms nor
-			// rules out a PR; carry the prior miss count forward unchanged rather
-			// than counting it as a miss or discarding progress toward one.
-			nextMisses[o.ID] = r.openingMisses[o.ID]
 			continue
 		}
 		if found {
@@ -265,10 +237,6 @@ func (r *Reconciler) sweepOpening(ctx context.Context) {
 			}); err != nil {
 				r.logger.Warn("pr reconciler: record recovered pull request",
 					"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "error", err)
-				// The claim is still 'opening' and will be retried next pass; it
-				// is unambiguously alive (GitHub has the PR), so it never counts
-				// toward the miss streak.
-				nextMisses[o.ID] = 0
 				continue
 			}
 			r.logger.Info("pr reconciler: recovered a stranded pull request",
@@ -276,21 +244,23 @@ func (r *Reconciler) sweepOpening(ctx context.Context) {
 				"pr_url", ref.URL, "pr_number", ref.Number)
 			continue
 		}
-		misses := r.openingMisses[o.ID] + 1
-		if misses < r.openingMissThreshold {
-			nextMisses[o.ID] = misses
+		if o.ClaimedAt == nil {
+			// Unknown claim age: never fail a claim we cannot measure, so an
+			// unmeasurable row is retried next pass rather than swept.
+			continue
+		}
+		age := now.Sub(*o.ClaimedAt)
+		if age < r.openingGracePeriod {
 			continue
 		}
 		if err := r.failer.Fail(ctx, o.ID); err != nil {
 			r.logger.Warn("pr reconciler: fail stuck opening claim",
 				"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "error", err)
-			nextMisses[o.ID] = misses
 			continue
 		}
 		r.logger.Info("pr reconciler: released a stale opening claim back to failed",
-			"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "misses", misses)
+			"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "age", age.String())
 	}
-	r.openingMisses = nextMisses
 }
 
 // updateHealth reconciles the degraded flag from one pass. A permission error

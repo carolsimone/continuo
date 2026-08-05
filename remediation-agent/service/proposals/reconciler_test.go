@@ -192,6 +192,16 @@ func TestReconcileOnce_LogsErrorOnceOnDegradeTransition(t *testing.T) {
 	require.Equal(t, 1, counter.errors, "the actionable ERROR must fire only on the degrade transition")
 }
 
+// settableClock is a mutable ports.Clock for tests that need to move time
+// forward between reconcile passes to exercise wall-clock grace-period math.
+type settableClock struct{ now time.Time }
+
+func (c *settableClock) Now() time.Time { return c.now }
+
+// timePtr returns a pointer to t, for building proposal.OpeningPR.ClaimedAt
+// literals inline.
+func timePtr(t time.Time) *time.Time { return &t }
+
 // fakeOpeningLister returns a fixed set of stuck 'opening' claims.
 type fakeOpeningLister struct{ opening []proposal.OpeningPR }
 
@@ -248,7 +258,7 @@ func (f *fakeFailer) Fail(_ context.Context, id string) error {
 func TestReconcileOnce_OpeningSweep_PRFoundRecords(t *testing.T) {
 	branch := proposals.BuildBranch("rel-1", "model.p.orders", 1)
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1},
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: timePtr(fixedClock{}.Now())},
 	}}
 	finder := &fakeBranchFinder{refs: map[string]ports.PullRequestRef{
 		branch: {Number: 9, URL: "https://github.com/acme/r/pull/9"},
@@ -277,13 +287,15 @@ func TestReconcileOnce_OpeningSweep_PRFoundRecords(t *testing.T) {
 }
 
 // TestReconcileOnce_OpeningSweep_PRAbsentAgedFails verifies a stuck 'opening'
-// claim with no matching PR on GitHub is released back to 'failed' once it
-// has been seen missing for OpeningGracePeriod/Interval consecutive passes —
-// the pass-count stand-in for a wall-clock grace period, since the proposal
-// row carries no claim timestamp.
+// claim with no matching PR on GitHub is released back to 'failed' once its
+// ClaimedAt is further in the past than OpeningGracePeriod. A single pass is
+// enough to decide this: age is read directly from the stored wall-clock
+// claim time, not accumulated across passes.
 func TestReconcileOnce_OpeningSweep_PRAbsentAgedFails(t *testing.T) {
+	now := fixedClock{}.Now()
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1},
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+			ClaimedAt: timePtr(now.Add(-4 * time.Minute))},
 	}}
 	finder := &fakeBranchFinder{} // no PR for any branch
 	recorder := &fakeOpeningRecorder{}
@@ -297,30 +309,26 @@ func TestReconcileOnce_OpeningSweep_PRAbsentAgedFails(t *testing.T) {
 		BranchFinder:       finder,
 		OpeningRecorder:    recorder,
 		Failer:             failer,
-		Clock:              fixedClock{},
+		Clock:              &settableClock{now: now},
 		Logger:             slog.Default(),
-		Interval:           time.Minute,
-		OpeningGracePeriod: 3 * time.Minute, // 3 consecutive missing passes
+		OpeningGracePeriod: 3 * time.Minute,
 	})
 
-	// Two misses: still within the grace period, never failed.
 	rec.ReconcileOnce(context.Background())
-	rec.ReconcileOnce(context.Background())
-	require.Empty(t, failer.calls, "a claim within the grace period must never be failed")
 
-	// Third consecutive miss reaches the threshold.
-	rec.ReconcileOnce(context.Background())
 	require.Empty(t, recorder.calls)
-	require.Equal(t, []string{"p1"}, failer.calls)
+	require.Equal(t, []string{"p1"}, failer.calls, "a claim older than the grace period must be failed on a single pass")
 }
 
-// TestReconcileOnce_OpeningSweep_PRAbsentFreshLeftAlone verifies a stuck
-// 'opening' claim with no matching PR, seen missing for only one pass, is
-// left untouched — the sweep must never race a healthy in-flight PR creation
-// (a claim taken moments before this pass ran).
+// TestReconcileOnce_OpeningSweep_PRAbsentFreshLeftAlone proves the invariant
+// that must never break: a claim taken seconds ago, with a GitHub call still
+// plausibly in flight, is left untouched even though no matching PR is found
+// yet — the sweep must never race a healthy in-flight PR creation.
 func TestReconcileOnce_OpeningSweep_PRAbsentFreshLeftAlone(t *testing.T) {
+	now := fixedClock{}.Now()
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1},
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+			ClaimedAt: timePtr(now.Add(-5 * time.Second))},
 	}}
 	finder := &fakeBranchFinder{}
 	recorder := &fakeOpeningRecorder{}
@@ -334,24 +342,64 @@ func TestReconcileOnce_OpeningSweep_PRAbsentFreshLeftAlone(t *testing.T) {
 		BranchFinder:       finder,
 		OpeningRecorder:    recorder,
 		Failer:             failer,
-		Clock:              fixedClock{},
+		Clock:              &settableClock{now: now},
 		Logger:             slog.Default(),
-		Interval:           time.Minute,
 		OpeningGracePeriod: 10 * time.Minute,
 	})
 	rec.ReconcileOnce(context.Background())
 
 	require.Empty(t, recorder.calls)
-	require.Empty(t, failer.calls, "a single miss, far short of the grace period, must never be failed")
+	require.Empty(t, failer.calls, "a claim younger than the grace period must never be failed")
 }
 
-// TestReconcileOnce_OpeningSweep_MissStreakResetsWhenNoLongerStuck verifies
-// that once a claim stops being listed as stuck 'opening' (e.g. another actor
-// recorded or failed it), its miss streak resets: it does not carry over if
-// the id reappears as stuck later.
-func TestReconcileOnce_OpeningSweep_MissStreakResetsWhenNoLongerStuck(t *testing.T) {
+// TestReconcileOnce_OpeningSweep_AgesOutByWallClockNotPassCount verifies the
+// grace-period decision tracks real elapsed time rather than how many passes
+// have run: a claim left alone on earlier passes is failed once enough
+// wall-clock time has actually passed, proven here by advancing a settable
+// clock between calls to ReconcileOnce instead of by calling it more times.
+func TestReconcileOnce_OpeningSweep_AgesOutByWallClockNotPassCount(t *testing.T) {
+	clock := &settableClock{now: fixedClock{}.Now()}
+	claimedAt := clock.now
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1},
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: &claimedAt},
+	}}
+	finder := &fakeBranchFinder{}
+	recorder := &fakeOpeningRecorder{}
+	failer := &fakeFailer{}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:             &fakeLister{},
+		Checker:            &fakeChecker{},
+		Recorder:           &fakeRecorder{},
+		OpeningLister:      opening,
+		BranchFinder:       finder,
+		OpeningRecorder:    recorder,
+		Failer:             failer,
+		Clock:              clock,
+		Logger:             slog.Default(),
+		OpeningGracePeriod: 10 * time.Minute,
+	})
+
+	rec.ReconcileOnce(context.Background())
+	require.Empty(t, failer.calls, "must be untouched immediately after the claim")
+
+	clock.now = clock.now.Add(9 * time.Minute)
+	rec.ReconcileOnce(context.Background())
+	require.Empty(t, failer.calls, "must still be untouched just under the grace period, regardless of pass count")
+
+	clock.now = clock.now.Add(2 * time.Minute) // total elapsed: 11m > 10m grace period
+	rec.ReconcileOnce(context.Background())
+	require.Equal(t, []string{"p1"}, failer.calls, "must fail once wall-clock age exceeds the grace period")
+}
+
+// TestReconcileOnce_OpeningSweep_NilClaimedAtLeftAlone verifies a stuck
+// 'opening' row with no claim time — the shape of a row that predates the
+// pr_claimed_at column and was not backfilled a value — is left untouched
+// rather than failed, no matter how many passes run or how short the grace
+// period is: an unmeasurable claim can never be mistaken for a stale one.
+func TestReconcileOnce_OpeningSweep_NilClaimedAtLeftAlone(t *testing.T) {
+	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: nil},
 	}}
 	finder := &fakeBranchFinder{}
 	recorder := &fakeOpeningRecorder{}
@@ -367,37 +415,29 @@ func TestReconcileOnce_OpeningSweep_MissStreakResetsWhenNoLongerStuck(t *testing
 		Failer:             failer,
 		Clock:              fixedClock{},
 		Logger:             slog.Default(),
-		Interval:           time.Minute,
-		OpeningGracePeriod: 3 * time.Minute,
+		OpeningGracePeriod: time.Nanosecond, // even a near-zero grace period must not matter
 	})
+
 	rec.ReconcileOnce(context.Background())
 	rec.ReconcileOnce(context.Background())
 
-	// The row is no longer stuck (another actor resolved it): the sweep sees
-	// an empty stuck set this pass, so p1's miss streak resets.
-	opening.opening = nil
-	rec.ReconcileOnce(context.Background())
-
-	// The id reappears as stuck (re-claimed): two more misses must not reach
-	// the 3-miss threshold, because the earlier streak did not carry over.
-	opening.opening = []proposal.OpeningPR{
-		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1},
-	}
-	rec.ReconcileOnce(context.Background())
-	rec.ReconcileOnce(context.Background())
-
-	require.Empty(t, failer.calls, "a reset miss streak must not carry over across a gap")
+	require.Empty(t, recorder.calls)
+	require.Empty(t, failer.calls, "a nil ClaimedAt must never be failed, regardless of grace period or pass count")
 }
 
 // TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues verifies a per-row
 // GitHub lookup failure is skipped without blocking the remaining rows, and
-// does not count as a miss for the errored row.
+// never fails the errored row even when its claim has aged past the grace
+// period — an inconclusive read must not be treated as a confirmed miss.
 func TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues(t *testing.T) {
 	branchOK := proposals.BuildBranch("rel-2", "model.p.customers", 1)
 	branchErr := proposals.BuildBranch("rel-1", "model.p.orders", 1)
+	now := fixedClock{}.Now()
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
-		{ID: "p-err", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1},
-		{ID: "p-ok", Repo: "acme/r", ReleaseID: "rel-2", NodeID: "model.p.customers", Attempt: 1},
+		{ID: "p-err", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+			ClaimedAt: timePtr(now.Add(-time.Hour))}, // aged well past the grace period below
+		{ID: "p-ok", Repo: "acme/r", ReleaseID: "rel-2", NodeID: "model.p.customers", Attempt: 1,
+			ClaimedAt: timePtr(now.Add(-time.Second))},
 	}}
 	finder := &fakeBranchFinder{
 		errs: map[string]error{branchErr: errors.New("boom")},
@@ -416,16 +456,15 @@ func TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues(t *testing.T) {
 		BranchFinder:       finder,
 		OpeningRecorder:    recorder,
 		Failer:             failer,
-		Clock:              fixedClock{},
+		Clock:              &settableClock{now: now},
 		Logger:             slog.Default(),
-		Interval:           time.Minute,
-		OpeningGracePeriod: time.Minute, // threshold=1: without the error carve-out this would fail p-err immediately
+		OpeningGracePeriod: time.Minute,
 	})
 	rec.ReconcileOnce(context.Background())
 
 	require.Len(t, recorder.calls, 1)
 	require.Equal(t, "p-ok", recorder.calls[0].ProposalID)
-	require.Empty(t, failer.calls, "the errored row must not be failed — an inconclusive read is not a miss")
+	require.Empty(t, failer.calls, "the errored row must not be failed even though its claim is old — an inconclusive read is not a confirmed miss")
 }
 
 // TestReconcileOnce_OpeningSweepSkippedWithoutDeps verifies a Reconciler built

@@ -565,21 +565,22 @@ func TestBeginPR_SingleWinner(t *testing.T) {
 	}
 	id := seedProposal(t, repo, db, p)
 
-	c1, err := repo.BeginPR(ctx, id, "remediation/r-1/orders_d-attempt1")
+	c1, err := repo.BeginPR(ctx, id, "remediation/r-1/orders_d-attempt1", time.Now().UTC())
 	require.NoError(t, err)
 	require.Equal(t, "owner/continuo-dbt-demo", c1.Repo)
 	require.Equal(t, "remediation/r-1/orders_d-attempt1", c1.Branch)
 	require.Equal(t, id, c1.ID)
 
 	// Second claim on the same proposal must return ErrPRConflict.
-	_, err = repo.BeginPR(ctx, id, "remediation/r-1/orders_d-attempt1")
+	_, err = repo.BeginPR(ctx, id, "remediation/r-1/orders_d-attempt1", time.Now().UTC())
 	require.ErrorIs(t, err, repository.ErrPRConflict)
 }
 
 // TestBeginPR_ListsAsStuckOpening verifies that a claimed proposal
 // (pr_state='opening') is surfaced by ListStuckOpening with the fields the
-// reconciler's opening sweep needs to recompute the deterministic branch, and
-// that it drops out of the listing once recorded.
+// reconciler's opening sweep needs — including the pr_claimed_at BeginPR
+// stamped — to recompute the deterministic branch and age the claim, and
+// that it drops out of the listing (with pr_claimed_at cleared) once recorded.
 func TestBeginPR_ListsAsStuckOpening(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -605,7 +606,8 @@ func TestBeginPR_ListsAsStuckOpening(t *testing.T) {
 	}
 	id := seedProposal(t, repo, db, p)
 
-	_, err := repo.BeginPR(ctx, id, "remediation/r-opening-1/model-p-orders-attempt1")
+	claimedAt := time.Now().UTC().Truncate(time.Microsecond)
+	_, err := repo.BeginPR(ctx, id, "remediation/r-opening-1/model-p-orders-attempt1", claimedAt)
 	require.NoError(t, err)
 
 	stuck, err := repo.ListStuckOpening(ctx, 10)
@@ -616,17 +618,59 @@ func TestBeginPR_ListsAsStuckOpening(t *testing.T) {
 	require.Equal(t, "r-opening-1", stuck[0].ReleaseID)
 	require.Equal(t, "model.p.orders", stuck[0].NodeID)
 	require.Equal(t, 1, stuck[0].Attempt)
+	require.NotNil(t, stuck[0].ClaimedAt, "BeginPR must stamp pr_claimed_at")
+	require.WithinDuration(t, claimedAt, *stuck[0].ClaimedAt, time.Second)
 
-	// Once recorded, the row is no longer a stuck-opening claim.
+	// Once recorded, the row is no longer a stuck-opening claim, and its
+	// pr_claimed_at is cleared so a future re-claim never inherits this one.
 	require.NoError(t, repo.RecordPR(ctx, id, "https://gh/pr/1", 1, "dev", time.Now().UTC()))
 	stuck, err = repo.ListStuckOpening(ctx, 10)
 	require.NoError(t, err)
 	require.Empty(t, stuck, "a recorded PR must no longer be listed as stuck opening")
+
+	var stillClaimed *time.Time
+	require.NoError(t, db.GetContext(ctx, &stillClaimed, `SELECT pr_claimed_at FROM proposal WHERE id=$1`, id))
+	require.Nil(t, stillClaimed, "RecordPR must clear pr_claimed_at back to NULL")
+}
+
+// TestListStuckOpening_NullClaimedAtSurfacesAsNil verifies that a row stuck in
+// 'opening' with no claim time recorded — the shape of a row that predates the
+// pr_claimed_at column and was not backfilled a value — surfaces with a nil
+// ClaimedAt rather than a zero time, so the reconciler can tell "unknown age"
+// apart from "claimed at the zero time".
+func TestListStuckOpening_NullClaimedAtSurfacesAsNil(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-opening-null",
+		NodeID:         "model.p.legacy",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		SourceResolved: true,
+		Repo:           "owner/continuo-dbt-demo",
+		CreatedAt:      time.Now().UTC(),
+	}
+	id := seedProposal(t, repo, db, p)
+
+	// Bypass BeginPR to simulate a row already claimed before this migration
+	// existed: pr_state='opening' with pr_claimed_at left NULL.
+	_, err := db.ExecContext(ctx, `UPDATE proposal SET pr_state='opening' WHERE id=$1`, id)
+	require.NoError(t, err)
+
+	stuck, err := repo.ListStuckOpening(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, stuck, 1)
+	require.Nil(t, stuck[0].ClaimedAt, "a legacy row with no claim time must surface as nil, not a zero time")
 }
 
 // TestFailPR_RemovesFromStuckOpeningAndAllowsReclaim verifies that FailPR
-// drops a claim out of ListStuckOpening and returns pr_state to 'failed',
-// which BeginPR's CAS accepts for a retry.
+// drops a claim out of ListStuckOpening, clears pr_claimed_at, and returns
+// pr_state to 'failed', which BeginPR's CAS accepts for a retry — and that
+// the re-claim ages from its own (second) pr_claimed_at, never the first.
 func TestFailPR_RemovesFromStuckOpeningAndAllowsReclaim(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -652,7 +696,8 @@ func TestFailPR_RemovesFromStuckOpeningAndAllowsReclaim(t *testing.T) {
 	}
 	id := seedProposal(t, repo, db, p)
 
-	_, err := repo.BeginPR(ctx, id, "remediation/r-opening-2/model-p-customers-attempt1")
+	firstClaim := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	_, err := repo.BeginPR(ctx, id, "remediation/r-opening-2/model-p-customers-attempt1", firstClaim)
 	require.NoError(t, err)
 
 	require.NoError(t, repo.FailPR(ctx, id))
@@ -661,10 +706,23 @@ func TestFailPR_RemovesFromStuckOpeningAndAllowsReclaim(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, stuck, "a failed claim must no longer be listed as stuck opening")
 
-	// The proposal is re-claimable after FailPR.
-	claim, err := repo.BeginPR(ctx, id, "remediation/r-opening-2/model-p-customers-attempt1")
+	var clearedClaim *time.Time
+	require.NoError(t, db.GetContext(ctx, &clearedClaim, `SELECT pr_claimed_at FROM proposal WHERE id=$1`, id))
+	require.Nil(t, clearedClaim, "FailPR must clear pr_claimed_at back to NULL")
+
+	// The proposal is re-claimable after FailPR, and ages from the SECOND
+	// claim time, not the first (which was an hour older).
+	secondClaim := time.Now().UTC().Truncate(time.Microsecond)
+	claim, err := repo.BeginPR(ctx, id, "remediation/r-opening-2/model-p-customers-attempt1", secondClaim)
 	require.NoError(t, err, "a 'failed' proposal must be re-claimable")
 	require.Equal(t, id, claim.ID)
+
+	stuck, err = repo.ListStuckOpening(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, stuck, 1)
+	require.NotNil(t, stuck[0].ClaimedAt)
+	require.WithinDuration(t, secondClaim, *stuck[0].ClaimedAt, time.Second,
+		"a re-claim must age from its own claim time, not the earlier failed one")
 }
 
 // TestBeginPR_RejectsUnresolvedSource verifies that BeginPR returns
@@ -691,7 +749,7 @@ func TestBeginPR_RejectsUnresolvedSource(t *testing.T) {
 	}
 	id := seedProposal(t, repo, db, p)
 
-	_, err := repo.BeginPR(ctx, id, "b")
+	_, err := repo.BeginPR(ctx, id, "b", time.Now().UTC())
 	require.ErrorIs(t, err, repository.ErrNotSourceResolved)
 }
 
@@ -722,7 +780,7 @@ func TestRecordPR_ThenGet(t *testing.T) {
 	}
 	id := seedProposal(t, repo, db, p)
 
-	_, err := repo.BeginPR(ctx, id, "b")
+	_, err := repo.BeginPR(ctx, id, "b", time.Now().UTC())
 	require.NoError(t, err)
 
 	openedAt := time.Now().UTC().Truncate(time.Microsecond)
@@ -803,7 +861,7 @@ func TestRecordPROutcome_CASAndListOpen(t *testing.T) {
 	var id string
 	require.NoError(t, db.GetContext(ctx, &id,
 		`SELECT id FROM proposal WHERE release_id='rel-1' AND node_id='model.p.orders'`))
-	_, err := repo.BeginPR(ctx, id, "remediation/rel-1/model-p-orders-attempt1")
+	_, err := repo.BeginPR(ctx, id, "remediation/rel-1/model-p-orders-attempt1", time.Now().UTC())
 	require.NoError(t, err)
 	openedAt := time.Now().UTC()
 	require.NoError(t, repo.RecordPR(ctx, id, "http://gh/pull/1", 1, "dev", openedAt))
@@ -862,7 +920,7 @@ func TestRecordPROutcome_RejectedAndNonOpenRows(t *testing.T) {
 
 	// Row A reaches 'open' then is rejected.
 	a := seed("model.p.a")
-	_, err := repo.BeginPR(ctx, a, "remediation/rel-2/model-p-a-attempt1")
+	_, err := repo.BeginPR(ctx, a, "remediation/rel-2/model-p-a-attempt1", time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, repo.RecordPR(ctx, a, "http://gh/pull/2", 2, "dev", time.Now().UTC()))
 	hit, err := repo.RecordPROutcome(ctx, a, proposal.PROutcomeRejected, time.Now().UTC())
@@ -874,7 +932,7 @@ func TestRecordPROutcome_RejectedAndNonOpenRows(t *testing.T) {
 
 	// Row B stays in 'opening' (claimed, never recorded): not listed, CAS misses.
 	b := seed("model.p.b")
-	_, err = repo.BeginPR(ctx, b, "remediation/rel-2/model-p-b-attempt1")
+	_, err = repo.BeginPR(ctx, b, "remediation/rel-2/model-p-b-attempt1", time.Now().UTC())
 	require.NoError(t, err)
 	open, err := repo.ListOpenPullRequests(ctx, 10)
 	require.NoError(t, err)

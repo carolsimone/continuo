@@ -30,7 +30,8 @@ type fakeRepo struct {
 	// state fed to Get/List
 	view proposal.View
 	// captured outputs
-	lastBranch  string
+	lastBranch    string
+	lastClaimedAt time.Time
 	lastOutbox  *outbox.Entry
 	committed   bool
 	// RecordPR capture
@@ -57,8 +58,9 @@ func (r *fakeRepo) Get(_ context.Context, _ string) (proposal.View, error) {
 func (r *fakeRepo) List(_ context.Context, _ repository.ProposalFilter) ([]proposal.View, error) {
 	return []proposal.View{r.view}, nil
 }
-func (r *fakeRepo) BeginPR(_ context.Context, _ string, branch string) (proposal.PRClaim, error) {
+func (r *fakeRepo) BeginPR(_ context.Context, _ string, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
 	r.lastBranch = branch
+	r.lastClaimedAt = claimedAt
 	return proposal.PRClaim{
 		ID:        r.view.ID,
 		ReleaseID: r.view.ReleaseID,
@@ -135,6 +137,7 @@ func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 	_, err := svc.Begin(context.Background(), "p1")
 	require.NoError(t, err)
 	require.Equal(t, "remediation/r-1/model-p-orders_d-attempt1", repo.lastBranch)
+	require.Equal(t, fixedClock{}.Now(), repo.lastClaimedAt, "Begin must stamp the claim with the service's clock")
 }
 
 // TestService_Record_EmitsPROpenedAtomically verifies that Record writes an
