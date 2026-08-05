@@ -12,6 +12,7 @@ from config.config import (
     validate,
 )
 from adapters.candidate_sql_uploader import CandidateSqlUploader
+from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
@@ -54,6 +55,7 @@ def main() -> None:
         redis_client, MANIFEST_LOADED_CANDIDATE_STREAM,
     )
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
+    code_bundle_uploader = CodeBundleUploader(s3_client, S3_BUCKET)
 
     def handle_release_requested(fields: dict) -> None:
         payload_raw = _decode_field(fields, "payload")
@@ -99,6 +101,7 @@ def main() -> None:
             source=source,
             publisher=candidate_publisher,
             uploader=candidate_uploader,
+            bundle_uploader=code_bundle_uploader,
         ).handle(release_id=release_id)
 
     candidate_consumer = Consumer(

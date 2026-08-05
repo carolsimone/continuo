@@ -47,8 +47,12 @@ def test_candidate_topology_carries_test_count(tmp_path):
     publisher = MagicMock()
     uploader = MagicMock()
     uploader.upload.return_value = ""
+    bundle_uploader = MagicMock()
+    bundle_uploader.upload.return_value = ""
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=uploader)
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=uploader, bundle_uploader=bundle_uploader,
+    )
     handler.handle(release_id="rel-1")
 
     publisher.publish_ok.assert_called_once()

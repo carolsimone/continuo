@@ -1,4 +1,6 @@
+import hashlib
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
@@ -25,6 +27,25 @@ def _make_uploader(uri=""):
     return uploader
 
 
+class FakeBundleUploader:
+    """Records (release_id, bundle) calls and returns a canned URI.
+
+    Pass `fail` to make `upload` raise instead — the failing variant used to
+    exercise the CodeBundleUploadFailed path.
+    """
+
+    def __init__(self, uri: str = "s3://continuo/code-bundles/rel-1/bundle.json", fail: Exception | None = None):
+        self.uploads: list[tuple[str, dict]] = []
+        self._uri = uri
+        self._fail = fail
+
+    def upload(self, release_id: str, bundle: dict) -> str:
+        if self._fail is not None:
+            raise self._fail
+        self.uploads.append((release_id, bundle))
+        return self._uri
+
+
 @pytest.fixture
 def resolved_topology():
     source = _make_source(
@@ -33,7 +54,10 @@ def resolved_topology():
     )
     publisher = MagicMock()
     uploader = _make_uploader()
-    CandidateManifestHandler(source=source, publisher=publisher, uploader=uploader).handle(release_id="rel-1")
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=uploader, bundle_uploader=FakeBundleUploader(),
+    )
+    handler.handle(release_id="rel-1")
     publisher.publish_ok.assert_called_once()
     assert publisher.publish_ok.call_args.kwargs["release_id"] == "rel-1"
     return publisher.publish_ok.call_args.kwargs["topology"]
@@ -45,7 +69,9 @@ def handler_with_mocks():
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
     uploader = _make_uploader()
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=uploader)
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=uploader, bundle_uploader=FakeBundleUploader(),
+    )
     return handler, publisher, uploader
 
 
@@ -85,10 +111,12 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     source.list_manifests.return_value = []
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-empty")
 
-    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[])
+    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[], code_bundle_uri="")
     publisher.publish_failed.assert_not_called()
 
 
@@ -103,7 +131,9 @@ def test_handle_publishes_failed_on_unqualified_reference(monkeypatch):
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-fail")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -123,7 +153,9 @@ def test_handle_publishes_failed_on_invalid_compiled_sql(monkeypatch):
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-fail")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -142,7 +174,9 @@ def test_handle_publishes_failed_on_malformed_manifest(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-malformed")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -162,7 +196,9 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-no-nodes")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -194,7 +230,9 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-empty-fqn")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -207,7 +245,9 @@ def test_handle_propagates_transient_redis_error():
     publisher = MagicMock()
     publisher.publish_ok.side_effect = ConnectionError("redis down")
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     with pytest.raises(ConnectionError):
         handler.handle(release_id="rel-1")
 
@@ -216,7 +256,9 @@ def test_handle_calls_source_cleanup_after_publish():
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-1")
 
     source.cleanup.assert_called_once()
@@ -233,7 +275,9 @@ def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-fail")
 
     source.cleanup.assert_called_once()
@@ -268,7 +312,9 @@ def test_handle_publishes_failed_empty_manifest_for_declared_service(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-empty-svc")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -304,7 +350,9 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-mismatch")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -323,7 +371,9 @@ def test_handle_publishes_ok_matching_declared_service():
     ])
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-ok")
 
     publisher.publish_ok.assert_called_once()
@@ -348,7 +398,9 @@ def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_pa
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-legacy")
 
     # No service declared — falls through to publish_ok with an empty topology
@@ -395,7 +447,131 @@ def test_handle_calls_source_cleanup_even_on_upload_failure():
     uploader = _make_uploader()
     uploader.upload.side_effect = RuntimeError("s3 down")
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=uploader)
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=uploader, bundle_uploader=FakeBundleUploader(),
+    )
     handler.handle(release_id="rel-upload-fail")
 
     source.cleanup.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# code_bundle_uri: one bundle upload per release, fatal-on-upload-failure
+# ---------------------------------------------------------------------------
+
+def test_bundle_uploaded_once_per_release():
+    """One code bundle is built and uploaded per release, covering every
+    published node; publish_ok receives the uploader's returned URI."""
+    source = _make_source(
+        ("manifest_service1.json", "v1"),
+        ("manifest_service2.json", "v2"),
+    )
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader(uri="s3://continuo/code-bundles/rel-1/bundle.json")
+
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=bundle_uploader,
+    )
+    handler.handle(release_id="rel-1")
+
+    assert len(bundle_uploader.uploads) == 1
+    uploaded_release_id, bundle = bundle_uploader.uploads[0]
+    assert uploaded_release_id == "rel-1"
+
+    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    assert set(bundle["nodes"].keys()) == {node["unique_id"] for node in topology}
+    assert publisher.publish_ok.call_args.kwargs["code_bundle_uri"] == "s3://continuo/code-bundles/rel-1/bundle.json"
+
+
+def test_bundle_upload_failure_publishes_failed():
+    """A bundle-upload error is fatal — publish_failed is called with
+    CodeBundleUploadFailed and publish_ok is never called."""
+    source = _make_source(("manifest_service1.json", "v1"))
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader(fail=RuntimeError("s3 down"))
+
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=bundle_uploader,
+    )
+    handler.handle(release_id="rel-1")  # must NOT raise
+
+    publisher.publish_ok.assert_not_called()
+    publisher.publish_failed.assert_called_once()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "CodeBundleUploadFailed"
+
+
+def test_empty_manifests_publish_empty_bundle_uri():
+    """The early no-manifests path publishes code_bundle_uri="" and never
+    touches the bundle uploader."""
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = []
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader()
+
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=bundle_uploader,
+    )
+    handler.handle(release_id="rel-empty")
+
+    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[], code_bundle_uri="")
+    assert bundle_uploader.uploads == []
+
+
+def _manifest_with_single_macro(macro_sql: str, node_name: str, service: str) -> dict:
+    """A single-model manifest whose model depends on macro.svc.m1."""
+    return {
+        "nodes": {
+            f"model.svc.{node_name}": {
+                "resource_type": "model",
+                "name": node_name,
+                "schema": "public",
+                "fqn": [service],
+                "config": {"meta": {"owner": "team"}},
+                "tags": ["nightly"],
+                "checksum": {"name": "sha256", "checksum": f"source-{node_name}"},
+                "depends_on": {"macros": ["macro.svc.m1"]},
+            }
+        },
+        "macros": {
+            "macro.svc.m1": {
+                "unique_id": "macro.svc.m1",
+                "macro_sql": macro_sql,
+                "depends_on": {"macros": []},
+            },
+        },
+    }
+
+
+def test_conflicting_shared_code_keeps_first_and_warns(tmp_path, caplog):
+    """Two manifests shipping the same shared-code unit id with different
+    source (cross-service package skew) keep the first manifest's copy in the
+    bundle and log a warning; per-node hashes are unaffected since each was
+    folded against its own manifest's copy."""
+    first = tmp_path / "first.json"
+    first.write_text(json.dumps(_manifest_with_single_macro("SELECT 'v1'", "node_a", "service-a")))
+    second = tmp_path / "second.json"
+    second.write_text(json.dumps(_manifest_with_single_macro("SELECT 'v2'", "node_b", "service-b")))
+
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(first), version="v1", image_tag=""),
+        ManifestFile(path=str(second), version="v1", image_tag=""),
+    ]
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader()
+
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=bundle_uploader,
+    )
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        handler.handle(release_id="rel-conflict")
+
+    publisher.publish_failed.assert_not_called()
+    assert len(bundle_uploader.uploads) == 1
+    _, bundle = bundle_uploader.uploads[0]
+    assert bundle["shared_code"]["macro.svc.m1"] == {
+        "source": "SELECT 'v1'",
+        "checksum": hashlib.sha256(b"SELECT 'v1'").hexdigest(),
+        "depends_on": [],
+    }
+    assert any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
