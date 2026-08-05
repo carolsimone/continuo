@@ -473,11 +473,14 @@ body {
 .nodes-table tbody tr.nodes-row--selected { background: #f5f3ff; outline: 1px solid #c4b5fd; }
 /* Non-interactive row: an auto-expanded actionable row, or the row hosting
    an expanded detail card. Neither responds to click, so neither gets the
-   table's default pointer cursor or hover affordance. The border is also
-   dropped so an auto-expanded row doesn't draw a hairline against its own
-   card sitting directly beneath it. */
-.nodes-table tbody tr.nodes-row--static { cursor: default; border-bottom: none; }
+   table's default pointer cursor or hover affordance. */
+.nodes-table tbody tr.nodes-row--static { cursor: default; }
 .nodes-table tbody tr.nodes-row--static:hover { background-color: transparent; }
+/* Applied to whichever row sits directly above its own expanded detail
+   card — auto-expanded or manually selected, either way — so the row and
+   its card don't draw a hairline against each other. The card row itself
+   keeps its border, which is what separates it from the next proposal. */
+.nodes-table tbody tr.nodes-row--no-border { border-bottom: none; }
 
 .nodes-table tbody td {
   padding: 9px 14px;

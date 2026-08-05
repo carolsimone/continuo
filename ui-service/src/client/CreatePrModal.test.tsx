@@ -269,5 +269,10 @@ describe('RemediationPanel — Create PR trigger gating', () => {
       expect(link).toHaveAttribute('href', 'https://github.com/org/repo/pull/55');
     });
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
+
+    // The compact row's Status cell must agree with the card right below
+    // it: pr_state moves to 'open' locally, the same value the server just
+    // recorded, instead of staying blank until the next refetch.
+    expect(screen.getByText('proposed · open')).toBeInTheDocument();
   });
 });

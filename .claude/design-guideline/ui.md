@@ -461,9 +461,20 @@ function isActionable(p) {
   return p.status === 'proposed' && p.source_resolved && !p.pr_url;
 }
 
+const showCard = isActionable(p) || isSelected;
+// Whichever row sits directly above its own card — auto-expanded or
+// manually selected — drops its border so it doesn't draw a hairline
+// against that card. The card row keeps its own border; that's what
+// separates it from the next proposal.
+const compactRowClass = [
+  isActionable(p) ? 'nodes-row--static' : '',
+  isSelected ? 'nodes-row--selected' : '',
+  showCard ? 'nodes-row--no-border' : '',
+].filter(Boolean).join(' ');
+
 <Fragment key={p.id}>
   <tr
-    className={isActionable(p) ? 'nodes-row--static' : (isSelected ? 'nodes-row--selected' : '')}
+    className={compactRowClass}
     onClick={isActionable(p) ? undefined : toggle}
     role={isActionable(p) ? undefined : 'button'}
     tabIndex={isActionable(p) ? undefined : 0}
@@ -474,7 +485,7 @@ function isActionable(p) {
   >
     {/* compact cells, unchanged */}
   </tr>
-  {(isActionable(p) || isSelected) && (
+  {showCard && (
     <tr className="nodes-row--static">
       <td colSpan={5}>
         <div className="detail-card">
@@ -490,11 +501,14 @@ function isActionable(p) {
 ```css
 /* Non-interactive row: an auto-expanded actionable row, or the row hosting
    an expanded detail card. Neither responds to click, so neither gets the
-   table's default pointer cursor, hover affordance, or row divider — a
-   border between an auto-expanded row and its own card would read as a
-   seam between two different rows. */
-.nodes-table tbody tr.nodes-row--static { cursor: default; border-bottom: none; }
+   table's default pointer cursor or hover affordance. */
+.nodes-table tbody tr.nodes-row--static { cursor: default; }
 .nodes-table tbody tr.nodes-row--static:hover { background-color: transparent; }
+/* Applied to whichever row sits directly above its own expanded card —
+   auto-expanded or manually selected, either way — so the two don't draw a
+   hairline against each other. The card row itself keeps its border,
+   which is what separates it from the next proposal row. */
+.nodes-table tbody tr.nodes-row--no-border { border-bottom: none; }
 ```
 
 Rules:
@@ -536,11 +550,17 @@ Rules:
   `aria-expanded`. An auto-expanded row gets none of those attributes — it
   isn't a toggle, so it has nothing to expose to assistive tech beyond the
   card that's already rendered.
-- **`.nodes-row--static`** removes the table's default pointer cursor,
-  hover background, and row divider from any row that isn't a click target:
-  the auto-expanded compact row, and the `<tr>` hosting any expanded detail
-  card (auto or manual). Use it whenever a `.nodes-table` row exists but
-  isn't interactive.
+- **`.nodes-row--static`** removes the table's default pointer cursor and
+  hover background from any row that isn't a click target: the auto-expanded
+  compact row, and the `<tr>` hosting any expanded detail card (auto or
+  manual). Use it whenever a `.nodes-table` row exists but isn't
+  interactive.
+- **`.nodes-row--no-border`** removes the row divider from whichever compact
+  row sits directly above its own expanded card — this is independent of
+  `.nodes-row--static`/`.nodes-row--selected`, since a manually-selected row
+  needs the no-border treatment too, not just an auto-expanded one. Never
+  put `border-bottom: none` on the card row itself; the card row's border is
+  what separates one proposal's card from the next proposal's row.
 
 ## Snapshot tiles
 

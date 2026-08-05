@@ -188,11 +188,20 @@ export default function RemediationPanel() {
                 const isSelected = !autoExpanded && selected?.id === p.id;
                 const showCard = autoExpanded || isSelected;
                 const toggle = () => setSelected(prev => (prev?.id === p.id ? null : p));
+                // Whichever row sits directly above its own card — auto-expanded
+                // or manually selected — drops its border so it doesn't draw a
+                // hairline against that card. The card row itself keeps its own
+                // border, which is what separates it from the next proposal.
+                const compactRowClass = [
+                  autoExpanded ? 'nodes-row--static' : '',
+                  isSelected ? 'nodes-row--selected' : '',
+                  showCard ? 'nodes-row--no-border' : '',
+                ].filter(Boolean).join(' ');
 
                 return (
                   <Fragment key={p.id}>
                     <tr
-                      className={autoExpanded ? 'nodes-row--static' : (isSelected ? 'nodes-row--selected' : '')}
+                      className={compactRowClass}
                       onClick={autoExpanded ? undefined : toggle}
                       role={autoExpanded ? undefined : 'button'}
                       tabIndex={autoExpanded ? undefined : 0}
@@ -237,7 +246,11 @@ export default function RemediationPanel() {
           proposal={createPrProposal}
           onClose={() => setCreatePrProposalId(null)}
           onCreated={(prUrl) => {
-            const updated = { ...createPrProposal, pr_url: prUrl };
+            // The server just recorded pr_state='open' alongside the url
+            // (RecordPR); mirror it locally so the compact row's Status cell
+            // agrees with the card right below it instead of still reading
+            // the pre-creation status until the next refetch.
+            const updated = { ...createPrProposal, pr_url: prUrl, pr_state: 'open' };
             setProposals(prev => prev.map(p => (p.id === updated.id ? updated : p)));
             // The proposal just resolved (isActionable goes false), so it no
             // longer auto-expands. Select it manually so its row stays open
