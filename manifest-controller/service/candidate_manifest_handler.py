@@ -91,14 +91,17 @@ class CandidateManifestHandler:
 
             for unit_id, unit in mf_shared.items():
                 existing = shared_code.get(unit_id)
-                if existing is not None and existing["checksum"] != unit["checksum"]:
-                    # Cross-service package skew: two manifests ship the same unit id
-                    # with different source. Per-node hashes already folded each
-                    # manifest's own copy; the bundle keeps the first occurrence.
-                    logger.warning(
-                        "candidate: conflicting shared-code unit across services",
-                        extra={"release_id": release_id, "unit_id": unit_id},
-                    )
+                if existing is not None:
+                    # Per-node hashes already folded each manifest's own copy of
+                    # this unit; the bundle keeps the first occurrence regardless
+                    # of whether a later manifest's checksum matches or conflicts.
+                    if existing["checksum"] != unit["checksum"]:
+                        # Cross-service package skew: two manifests ship the same
+                        # unit id with different source.
+                        logger.warning(
+                            "candidate: conflicting shared-code unit across services",
+                            extra={"release_id": release_id, "unit_id": unit_id},
+                        )
                     continue
                 shared_code[unit_id] = unit
 

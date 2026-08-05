@@ -517,7 +517,9 @@ def test_empty_manifests_publish_empty_bundle_uri():
     assert bundle_uploader.uploads == []
 
 
-def _manifest_with_single_macro(macro_sql: str, node_name: str, service: str) -> dict:
+def _manifest_with_single_macro(
+    macro_sql: str, node_name: str, service: str, macro_depends_on: list[str] | None = None,
+) -> dict:
     """A single-model manifest whose model depends on macro.svc.m1."""
     return {
         "nodes": {
@@ -536,7 +538,7 @@ def _manifest_with_single_macro(macro_sql: str, node_name: str, service: str) ->
             "macro.svc.m1": {
                 "unique_id": "macro.svc.m1",
                 "macro_sql": macro_sql,
-                "depends_on": {"macros": []},
+                "depends_on": {"macros": macro_depends_on or []},
             },
         },
     }
@@ -575,3 +577,42 @@ def test_conflicting_shared_code_keeps_first_and_warns(tmp_path, caplog):
         "depends_on": [],
     }
     assert any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
+
+
+def test_equal_checksum_shared_code_keeps_first_without_warning(tmp_path, caplog):
+    """Two manifests shipping the same shared-code unit id with the SAME source
+    (equal checksum) but a different `depends_on` list still keep the first
+    manifest's entry in the bundle — matching the conflicting-checksum case —
+    but do NOT log the conflict warning, since the source itself agrees."""
+    first = tmp_path / "first.json"
+    first.write_text(json.dumps(
+        _manifest_with_single_macro("SELECT 1", "node_a", "service-a", macro_depends_on=["macro.svc.m2"])
+    ))
+    second = tmp_path / "second.json"
+    second.write_text(json.dumps(
+        _manifest_with_single_macro("SELECT 1", "node_b", "service-b", macro_depends_on=[])
+    ))
+
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(first), version="v1", image_tag=""),
+        ManifestFile(path=str(second), version="v1", image_tag=""),
+    ]
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader()
+
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=bundle_uploader,
+    )
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        handler.handle(release_id="rel-duplicate")
+
+    publisher.publish_failed.assert_not_called()
+    assert len(bundle_uploader.uploads) == 1
+    _, bundle = bundle_uploader.uploads[0]
+    assert bundle["shared_code"]["macro.svc.m1"] == {
+        "source": "SELECT 1",
+        "checksum": hashlib.sha256(b"SELECT 1").hexdigest(),
+        "depends_on": ["macro.svc.m2"],
+    }
+    assert not any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
