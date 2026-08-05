@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
 	grpcadapter "github.com/carolsimone/continuo/remediation-agent/adapters/grpc"
+	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 	"github.com/carolsimone/continuo/remediation-agent/service/proposals"
@@ -27,7 +27,11 @@ type fakeSvc struct {
 	beginErr    error
 	existingURL string // returned by Get when beginErr == ErrPRConflict
 	recordErr   error
-	failErr     error
+	// FailStuckClaim capture/behavior
+	failHit          bool
+	failErr          error
+	lastFailID       string
+	lastFailObserved time.Time
 }
 
 func (f *fakeSvc) List(_ context.Context, _ repository.ProposalFilter) ([]proposal.View, error) {
@@ -49,8 +53,10 @@ func (f *fakeSvc) Record(_ context.Context, _ proposals.RecordInput) error {
 	return f.recordErr
 }
 
-func (f *fakeSvc) Fail(_ context.Context, _ string) error {
-	return f.failErr
+func (f *fakeSvc) FailStuckClaim(_ context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+	f.lastFailID = id
+	f.lastFailObserved = observedClaimedAt
+	return f.failHit, f.failErr
 }
 
 // ---- ListProposals ----
@@ -164,6 +170,7 @@ func TestProposalsServer_GetProposal_InternalError(t *testing.T) {
 // ---- BeginPullRequest ----
 
 func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
+	claimedAt := time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC)
 	claim := proposal.PRClaim{
 		ID:             "p3",
 		Repo:           "repo-x",
@@ -177,6 +184,7 @@ func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 		Rationale:      "fix bar",
 		Confidence:     proposal.Confidence("medium"),
 		Model:          "bar_model",
+		ClaimedAt:      claimedAt,
 		Branch:         "remediation/rel-3/node-3-attempt2",
 	}
 	svc := &fakeSvc{beginClaim: claim}
@@ -197,6 +205,8 @@ func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, "medium", resp.Confidence)
 	assert.Equal(t, "bar_model", resp.Model)
 	assert.Equal(t, "remediation/rel-3/node-3-attempt2", resp.Branch)
+	assert.Equal(t, claimedAt.Format(time.RFC3339), resp.ClaimedAt,
+		"the response must carry the claim's persisted ClaimedAt so FailPullRequest can CAS on it later")
 }
 
 func TestProposalsServer_BeginPullRequest_ConflictMapsToFailedPrecondition(t *testing.T) {
@@ -274,28 +284,66 @@ func TestProposalsServer_RecordPullRequest_InternalError(t *testing.T) {
 // ---- FailPullRequest ----
 
 func TestProposalsServer_FailPullRequest_HappyPath(t *testing.T) {
-	svc := &fakeSvc{}
+	claimedAt := time.Date(2026, 6, 24, 9, 0, 0, 0, time.UTC)
+	svc := &fakeSvc{failHit: true}
 	s := grpcadapter.NewProposalsServer(svc)
 
-	resp, err := s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{Id: "p5"})
+	resp, err := s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{
+		Id:        "p5",
+		ClaimedAt: claimedAt.Format(time.RFC3339),
+	})
 	require.NoError(t, err)
-	assert.NotNil(t, resp)
+	assert.True(t, resp.Released)
+	assert.Equal(t, "p5", svc.lastFailID)
+	assert.True(t, claimedAt.Equal(svc.lastFailObserved),
+		"the handler must parse claimed_at and forward the exact instant to FailStuckClaim")
 }
 
-func TestProposalsServer_FailPullRequest_NotFound(t *testing.T) {
-	svc := &fakeSvc{failErr: repository.ErrNotFound}
+// TestProposalsServer_FailPullRequest_CASMiss_ReturnsReleasedFalseNoError
+// verifies that a CAS miss — the claim already moved on, e.g. released and
+// re-claimed by the reconciler's opening sweep between this caller's own
+// BeginPullRequest and its failure callback — surfaces as released=false
+// with no gRPC error, never as NOT_FOUND or any other error code: a caller
+// that lost the race must never be told its own request failed.
+func TestProposalsServer_FailPullRequest_CASMiss_ReturnsReleasedFalseNoError(t *testing.T) {
+	svc := &fakeSvc{failHit: false}
 	s := grpcadapter.NewProposalsServer(svc)
 
-	_, err := s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{Id: "missing"})
+	resp, err := s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{
+		Id:        "p5",
+		ClaimedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.Released)
+}
+
+func TestProposalsServer_FailPullRequest_MissingClaimedAt_InvalidArgument(t *testing.T) {
+	svc := &fakeSvc{failHit: true}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	_, err := s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{Id: "p5"})
 	require.Error(t, err)
-	assert.Equal(t, codes.NotFound, status.Code(err))
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestProposalsServer_FailPullRequest_UnparseableClaimedAt_InvalidArgument(t *testing.T) {
+	svc := &fakeSvc{failHit: true}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	_, err := s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{
+		Id: "p5", ClaimedAt: "not-a-timestamp",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestProposalsServer_FailPullRequest_InternalError(t *testing.T) {
 	svc := &fakeSvc{failErr: assert.AnError}
 	s := grpcadapter.NewProposalsServer(svc)
 
-	_, err := s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{Id: "p5"})
+	_, err := s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{
+		Id: "p5", ClaimedAt: time.Now().UTC().Format(time.RFC3339),
+	})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 }

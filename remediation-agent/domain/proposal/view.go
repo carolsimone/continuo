@@ -50,6 +50,12 @@ type PRClaim struct {
 	Rationale      string
 	Confidence     Confidence
 	Model          string
+	// ClaimedAt is the pr_claimed_at value BeginPR's CAS persisted for this
+	// claim, read back from the row rather than trusted from the caller's
+	// clock. The caller carries it forward and must present it back to
+	// FailStuckOpeningPR to release this exact claim — never a fresher one
+	// taken by someone else since.
+	ClaimedAt time.Time
 	// Branch is populated by the caller of BeginPR, not from the DB.
 	Branch string
 }

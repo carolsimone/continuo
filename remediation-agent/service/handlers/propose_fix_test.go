@@ -190,10 +190,6 @@ func (r *fakeProposalRepo) RecordPR(_ context.Context, _ string, _ string, _ int
 	return nil
 }
 
-func (r *fakeProposalRepo) FailPR(_ context.Context, _ string) error {
-	return nil
-}
-
 func (r *fakeProposalRepo) FailStuckOpeningPR(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }

@@ -32,8 +32,8 @@ type fakeRepo struct {
 	// captured outputs
 	lastBranch    string
 	lastClaimedAt time.Time
-	lastOutbox  *outbox.Entry
-	committed   bool
+	lastOutbox    *outbox.Entry
+	committed     bool
 	// RecordPR capture
 	lastRecordPR struct {
 		id       string
@@ -53,9 +53,9 @@ type fakeRepo struct {
 	failStuckHit           bool
 }
 
-func (r *fakeRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error) { return 0, nil }
+func (r *fakeRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error)  { return 0, nil }
 func (r *fakeRepo) InsertGenerating(_ context.Context, _ proposal.Proposal) error { return nil }
-func (r *fakeRepo) Upsert(_ context.Context, _ proposal.Proposal) error { return nil }
+func (r *fakeRepo) Upsert(_ context.Context, _ proposal.Proposal) error           { return nil }
 func (r *fakeRepo) Get(_ context.Context, _ string) (proposal.View, error) {
 	return r.view, nil
 }
@@ -80,7 +80,6 @@ func (r *fakeRepo) RecordPR(_ context.Context, id, prURL string, prNumber int, o
 	r.lastRecordPR.openedAt = openedAt
 	return nil
 }
-func (r *fakeRepo) FailPR(_ context.Context, _ string) error { return nil }
 func (r *fakeRepo) FailStuckOpeningPR(_ context.Context, id string, observedClaimedAt time.Time) (bool, error) {
 	r.lastFailStuckID = id
 	r.lastFailStuckClaimedAt = observedClaimedAt
@@ -103,11 +102,11 @@ type fakeUoW struct {
 	repo *fakeRepo
 }
 
-func (u *fakeUoW) Begin(_ context.Context) error              { return nil }
-func (u *fakeUoW) Commit() error                              { u.repo.committed = true; return nil }
-func (u *fakeUoW) Rollback() error                            { return nil }
-func (u *fakeUoW) ProposalRepo() repository.ProposalRepository { return u.repo }
-func (u *fakeUoW) OutboxRepo() outbox.Repository              { return &fakeOutboxRepo{repo: u.repo} }
+func (u *fakeUoW) Begin(_ context.Context) error                       { return nil }
+func (u *fakeUoW) Commit() error                                       { u.repo.committed = true; return nil }
+func (u *fakeUoW) Rollback() error                                     { return nil }
+func (u *fakeUoW) ProposalRepo() repository.ProposalRepository         { return u.repo }
+func (u *fakeUoW) OutboxRepo() outbox.Repository                       { return &fakeOutboxRepo{repo: u.repo} }
 func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return nil }
 
 // fakeOutboxRepo captures the outbox entry passed to Create.
@@ -115,14 +114,17 @@ type fakeOutboxRepo struct {
 	repo *fakeRepo
 }
 
-func (o *fakeOutboxRepo) Create(_ context.Context, e *outbox.Entry) error { o.repo.lastOutbox = e; return nil }
+func (o *fakeOutboxRepo) Create(_ context.Context, e *outbox.Entry) error {
+	o.repo.lastOutbox = e
+	return nil
+}
 func (o *fakeOutboxRepo) GetPendingBatch(_ context.Context, _ int) ([]*outbox.Entry, error) {
 	return nil, nil
 }
-func (o *fakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
+func (o *fakeOutboxRepo) MarkProcessed(_ context.Context, _ uuid.UUID) error        { return nil }
 func (o *fakeOutboxRepo) MarkProcessedBatch(_ context.Context, _ []uuid.UUID) error { return nil }
 func (o *fakeOutboxRepo) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error { return nil }
-func (o *fakeOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
+func (o *fakeOutboxRepo) IncrementRetry(_ context.Context, _ uuid.UUID) error       { return nil }
 
 func (r *fakeRepo) uowFactory() uow.UnitOfWork {
 	return &fakeUoW{repo: r}
@@ -246,8 +248,10 @@ func TestService_RecordOutcome_NoEventWhenAlreadyTerminal(t *testing.T) {
 // TestService_FailStuckClaim_PassesThroughIDAndObservedClaimedAt verifies
 // FailStuckClaim delegates to the repository's CAS variant with the exact id
 // and observedClaimedAt it was given, and returns the repository's hit value
-// unchanged — the reconciler relies on this to distinguish "released" from
-// "a fresher claim raced ahead of me".
+// unchanged. Both of this method's callers rely on that pass-through to
+// distinguish "released" from "a fresher claim raced ahead of me": the
+// reconciler's opening sweep, and the gRPC FailPullRequest handler on the
+// ui-service PR-creation route's own failure callback.
 func TestService_FailStuckClaim_PassesThroughIDAndObservedClaimedAt(t *testing.T) {
 	repo := &fakeRepo{failStuckHit: true}
 	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})

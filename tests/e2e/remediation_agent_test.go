@@ -369,7 +369,9 @@ func TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	require.NoError(t, err, "BeginPullRequest")
 	branch := claim.GetBranch()
 	require.NotEmpty(t, branch, "BeginPullRequest response must carry the claimed branch name")
-	t.Logf("claimed proposal via BeginPullRequest: branch=%s", branch)
+	_, err = time.Parse(time.RFC3339, claim.GetClaimedAt())
+	require.NoError(t, err, "BeginPullRequest response must carry a parseable claimed_at — the token a failure callback must CAS against")
+	t.Logf("claimed proposal via BeginPullRequest: branch=%s claimed_at=%s", branch, claim.GetClaimedAt())
 
 	// 3. Create the PR directly on stub-github for that SAME branch — the
 	//    "create succeeded" half of the scenario. The e2e suite runs inside

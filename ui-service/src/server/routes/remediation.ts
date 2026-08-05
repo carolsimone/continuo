@@ -79,12 +79,19 @@ export function createRemediationRouter(
       return res.status(502).json({ error: 'remediation service request failed' });
     }
 
+    // claimed_at is the pr_claimed_at value BeginPullRequest's CAS persisted
+    // for this claim. Every failure path below must echo it back on
+    // failPullRequest so the repository only resets this exact claim — never
+    // a fresher one taken by someone else (a re-claim, or the reconciler's
+    // opening sweep) since this request began.
+    const claimedAt = claim.claimed_at;
+
     // Fetch the proposed SQL content from S3.
     let content: string;
     try {
       content = await getObject(normalizeKey(claim.proposed_sql_uri));
     } catch {
-      await remediation.failPullRequest({ id });
+      await remediation.failPullRequest({ id, claimed_at: claimedAt });
       return res.status(502).json({ error: 'failed to fetch proposed SQL from S3' });
     }
 
@@ -145,7 +152,7 @@ export function createRemediationRouter(
       });
     } catch {
       // Record the failure so the proposal transitions back to a retryable state.
-      await remediation.failPullRequest({ id });
+      await remediation.failPullRequest({ id, claimed_at: claimedAt });
       return res.status(502).json({ error: 'failed to open pull request' });
     }
 

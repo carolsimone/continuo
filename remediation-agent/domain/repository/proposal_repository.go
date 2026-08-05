@@ -43,6 +43,16 @@ type OpeningCursor struct {
 	ID        string
 }
 
+// OpeningLister is the repository slice the reconciler's opening sweep reads:
+// proposals claimed for PR creation but never recorded, paginated by
+// OpeningCursor so a pass resumes where the previous one left off. It is a
+// narrower view of the ListStuckOpening method ProposalRepository already
+// declares, so a consumer that only needs this one slice does not have to
+// depend on the full repository.
+type OpeningLister interface {
+	ListStuckOpening(ctx context.Context, limit int, cursor *OpeningCursor) (items []proposal.OpeningPR, next *OpeningCursor, err error)
+}
+
 // ProposalRepository persists fix-proposal attempts and answers the attempt-cap
 // query. The repository is bound to its transaction at construction by the
 // UnitOfWork, so methods take only ctx + domain types.
@@ -76,9 +86,11 @@ type ProposalRepository interface {
 
 	// BeginPR atomically claims a proposal for PR creation by transitioning
 	// pr_state from '' or 'failed' to 'opening', stamping pr_claimed_at with
-	// claimedAt. It returns the data needed to open the PR. Returns
-	// ErrNotSourceResolved if source_resolved=false, ErrPRConflict if already
-	// claimed, ErrNotFound if the id is unknown.
+	// claimedAt. It returns the data needed to open the PR, including the
+	// claimed ClaimedAt read back from the row — the caller carries this value
+	// forward and hands it to FailStuckOpeningPR if it later needs to release
+	// this exact claim. Returns ErrNotSourceResolved if source_resolved=false,
+	// ErrPRConflict if already claimed, ErrNotFound if the id is unknown.
 	BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error)
 
 	// RecordPR records a successfully opened PR: sets pr_state='open', pr_url,
@@ -86,23 +98,15 @@ type ProposalRepository interface {
 	// pr_claimed_at back to NULL since the claim is resolved.
 	RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) error
 
-	// FailPR resets a stuck 'opening' claim back to 'failed' so the action can
-	// be retried, and clears pr_claimed_at back to NULL so a later re-claim
-	// ages from its own claim time. It is a no-op when pr_state is not 'opening'.
-	// It is unconditional on the claim's identity: the ui-service PR-creation
-	// route calls it immediately after its own BeginPR in the same request, so
-	// there is no gap in which the claim it just took could have been released
-	// and re-claimed by someone else. FailStuckOpeningPR is the CAS variant for
-	// a caller (the reconciler's opening sweep) that acts on a claim it read
-	// earlier and must not blindly overwrite a fresher one.
-	FailPR(ctx context.Context, id string) error
-
 	// FailStuckOpeningPR resets a stuck 'opening' claim back to 'failed',
 	// clearing pr_claimed_at, but only when the row's current pr_claimed_at
-	// still equals observedClaimedAt — the compare-and-set guard the
-	// reconciler's opening sweep uses so it only ever fails the exact claim it
-	// listed earlier in the same pass, never a fresher one taken in between by
-	// a re-claim. hit reports whether the CAS fired; false covers both "no
+	// still equals observedClaimedAt — the compare-and-set guard that lets a
+	// caller release exactly the claim it itself acquired or observed, never a
+	// fresher one taken by someone else since. Two callers use it: the
+	// ui-service PR-creation route, with the ClaimedAt its own BeginPR
+	// returned, when a downstream S3 or GitHub step fails after the claim; and
+	// the reconciler's opening sweep, with the ClaimedAt it read while listing
+	// stuck claims. hit reports whether the CAS fired; false covers both "no
 	// longer opening" and "re-claimed with a different pr_claimed_at" — neither
 	// is an error, and in both cases the call has correctly left the row alone.
 	FailStuckOpeningPR(ctx context.Context, id string, observedClaimedAt time.Time) (hit bool, err error)

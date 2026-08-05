@@ -37,6 +37,7 @@ function makeRemediation(overrides: Partial<RemediationClient> = {}): Remediatio
       file_path: 'models/mymodel.sql',
       repo: 'owner/repo',
       commit_sha: 'abc123',
+      claimed_at: '2026-06-24T00:00:00Z',
     }),
     recordPullRequest: vi.fn().mockResolvedValue({}),
     failPullRequest: vi.fn().mockResolvedValue({}),
@@ -239,7 +240,7 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
     expect(res.body.error).toMatch(/pull request/i);
-    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1' });
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z' });
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();
   });
 
@@ -294,8 +295,32 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
     expect(res.body.error).toMatch(/S3/i);
-    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1' });
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z' });
     expect(prCreator.create).not.toHaveBeenCalled();
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();
+  });
+
+  // ── POST — failPullRequest echoes the exact claimed_at BeginPullRequest
+  //    returned, so the repository CAS releases only this claim ───────────
+
+  it('echoes the claim-specific claimed_at from beginPullRequest into failPullRequest', async () => {
+    const remediation = makeRemediation({
+      beginPullRequest: vi.fn().mockResolvedValue({
+        proposed_sql_uri: 's3://continuo/proposals/p1/fix.sql',
+        diff_uri: '',
+        branch: 'remediation/p1',
+        file_path: 'models/mymodel.sql',
+        repo: 'owner/repo',
+        commit_sha: 'abc123',
+        claimed_at: '2026-07-01T12:34:56Z',
+      }),
+    });
+    const prCreator = makePrCreator({
+      create: vi.fn().mockRejectedValue(new Error('GitHub API error')),
+    });
+    const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+    await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-07-01T12:34:56Z' });
   });
 });

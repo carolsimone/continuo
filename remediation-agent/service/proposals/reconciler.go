@@ -23,13 +23,6 @@ type OutcomeRecorder interface {
 	RecordOutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) error
 }
 
-// OpeningLister is the repository slice the opening sweep reads: proposals
-// claimed for PR creation but never recorded, paginated by
-// repository.OpeningCursor so a pass resumes where the previous one left off.
-type OpeningLister interface {
-	ListStuckOpening(ctx context.Context, limit int, cursor *repository.OpeningCursor) (items []proposal.OpeningPR, next *repository.OpeningCursor, err error)
-}
-
 // OpeningRecorder is the Service slice the opening sweep drives to record a
 // pull request recovered from GitHub for a stuck claim.
 type OpeningRecorder interface {
@@ -70,7 +63,7 @@ type ReconcilerDeps struct {
 	// OpeningLister, BranchFinder, OpeningRecorder, and Failer drive the
 	// opening sweep. The sweep is skipped entirely when OpeningLister is nil,
 	// so a Reconciler built without them only ever mirrors open-PR outcomes.
-	OpeningLister   OpeningLister
+	OpeningLister   repository.OpeningLister
 	BranchFinder    ports.PullRequestBranchFinder
 	OpeningRecorder OpeningRecorder
 	Failer          PRFailer
@@ -95,7 +88,7 @@ type Reconciler struct {
 	interval   time.Duration
 	batchLimit int
 
-	openingLister      OpeningLister
+	openingLister      repository.OpeningLister
 	branchFinder       ports.PullRequestBranchFinder
 	openingRecorder    OpeningRecorder
 	failer             PRFailer

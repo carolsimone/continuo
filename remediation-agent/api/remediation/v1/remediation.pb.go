@@ -473,7 +473,12 @@ type BeginPullRequestResponse struct {
 	Confidence     string                 `protobuf:"bytes,11,opt,name=confidence,proto3" json:"confidence,omitempty"`
 	Model          string                 `protobuf:"bytes,12,opt,name=model,proto3" json:"model,omitempty"`
 	// branch is the git branch name to open the PR from.
-	Branch        string `protobuf:"bytes,13,opt,name=branch,proto3" json:"branch,omitempty"`
+	Branch string `protobuf:"bytes,13,opt,name=branch,proto3" json:"branch,omitempty"`
+	// claimed_at is an RFC3339-formatted timestamp string: the pr_claimed_at
+	// value this claim actually persisted. FailPullRequest must echo it back
+	// so the repository's compare-and-set only releases this exact claim,
+	// never a fresher one taken by someone else since.
+	ClaimedAt     string `protobuf:"bytes,14,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -599,6 +604,13 @@ func (x *BeginPullRequestResponse) GetBranch() string {
 	return ""
 }
 
+func (x *BeginPullRequestResponse) GetClaimedAt() string {
+	if x != nil {
+		return x.ClaimedAt
+	}
+	return ""
+}
+
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
 type RecordPullRequestRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -706,8 +718,14 @@ func (*RecordPullRequestResponse) Descriptor() ([]byte, []int) {
 
 // FailPullRequestRequest identifies the proposal whose PR attempt failed.
 type FailPullRequestRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// claimed_at is an RFC3339-formatted timestamp string: the claimed_at
+	// BeginPullRequest returned for this claim. The repository compares it
+	// against the row's current pr_claimed_at before resetting anything, so a
+	// claim already released and re-claimed by someone else is left untouched
+	// instead of being reset out from under its new owner.
+	ClaimedAt     string `protobuf:"bytes,2,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -749,8 +767,20 @@ func (x *FailPullRequestRequest) GetId() string {
 	return ""
 }
 
+func (x *FailPullRequestRequest) GetClaimedAt() string {
+	if x != nil {
+		return x.ClaimedAt
+	}
+	return ""
+}
+
 type FailPullRequestResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// released reports whether this call's compare-and-set matched and reset
+	// the claim. false means the claim had already moved on — recorded, or
+	// already failed by another caller — by the time this call ran; that is
+	// not an error.
+	Released      bool `protobuf:"varint,1,opt,name=released,proto3" json:"released,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -783,6 +813,13 @@ func (x *FailPullRequestResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use FailPullRequestResponse.ProtoReflect.Descriptor instead.
 func (*FailPullRequestResponse) Descriptor() ([]byte, []int) {
 	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *FailPullRequestResponse) GetReleased() bool {
+	if x != nil {
+		return x.Released
+	}
+	return false
 }
 
 var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
@@ -834,7 +871,7 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x12GetProposalRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\")\n" +
 	"\x17BeginPullRequestRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"\x8e\x03\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\xad\x03\n" +
 	"\x18BeginPullRequestResponse\x12\x1f\n" +
 	"\vproposal_id\x18\x01 \x01(\tR\n" +
 	"proposalId\x12\x12\n" +
@@ -854,16 +891,21 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"confidence\x18\v \x01(\tR\n" +
 	"confidence\x12\x14\n" +
 	"\x05model\x18\f \x01(\tR\x05model\x12\x16\n" +
-	"\x06branch\x18\r \x01(\tR\x06branch\"{\n" +
+	"\x06branch\x18\r \x01(\tR\x06branch\x12\x1d\n" +
+	"\n" +
+	"claimed_at\x18\x0e \x01(\tR\tclaimedAt\"{\n" +
 	"\x18RecordPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +
 	"\tpr_number\x18\x03 \x01(\x05R\bprNumber\x12\x1b\n" +
 	"\topened_by\x18\x04 \x01(\tR\bopenedBy\"\x1b\n" +
-	"\x19RecordPullRequestResponse\"(\n" +
+	"\x19RecordPullRequestResponse\"G\n" +
 	"\x16FailPullRequestRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"\x19\n" +
-	"\x17FailPullRequestResponse2\xf6\x03\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"claimed_at\x18\x02 \x01(\tR\tclaimedAt\"5\n" +
+	"\x17FailPullRequestResponse\x12\x1a\n" +
+	"\breleased\x18\x01 \x01(\bR\breleased2\xf6\x03\n" +
 	"\x14RemediationProposals\x12\\\n" +
 	"\rListProposals\x12$.remediation.v1.ListProposalsRequest\x1a%.remediation.v1.ListProposalsResponse\x12K\n" +
 	"\vGetProposal\x12\".remediation.v1.GetProposalRequest\x1a\x18.remediation.v1.Proposal\x12e\n" +

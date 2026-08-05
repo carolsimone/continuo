@@ -127,21 +127,18 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	return nil
 }
 
-// Fail resets a stuck 'opening' claim back to 'failed' so the action can be
-// retried. It delegates directly to the non-transactional repository. Called
-// on the ui-service PR-creation route's own failure path immediately after
-// its own Begin in the same request, so there is no gap in which the claim it
-// just took could have been released and re-claimed by someone else.
-func (s *Service) Fail(ctx context.Context, id string) error {
-	return s.repo.FailPR(ctx, id)
-}
-
-// FailStuckClaim releases a stuck 'opening' claim the reconciler's opening
-// sweep listed earlier in the same pass back to 'failed', but only if the
-// row's pr_claimed_at still matches observedClaimedAt — the exact claim the
-// sweep read. A mismatch (the claim was released and re-claimed between the
-// sweep's list and this call) is reported via hit=false rather than an error:
-// the sweep must never overwrite the fresh claim it raced against.
+// FailStuckClaim releases a stuck 'opening' claim back to 'failed', but only
+// if the row's pr_claimed_at still matches observedClaimedAt — the compare-
+// and-set guard that lets a caller release exactly the claim it itself
+// acquired or observed, never a fresher one taken by someone else since. Two
+// callers use this: the ui-service PR-creation route, immediately after its
+// own Begin call in the same request, when a downstream S3 or GitHub step
+// fails — passing the ClaimedAt that Begin returned; and the reconciler's
+// opening sweep, passing the ClaimedAt it read while listing stuck claims
+// earlier in the same pass. A mismatch (the claim was released and
+// re-claimed between the caller's own claim/observation and this call) is
+// reported via hit=false rather than an error: neither caller may ever
+// overwrite a claim it does not currently hold.
 func (s *Service) FailStuckClaim(ctx context.Context, id string, observedClaimedAt time.Time) (bool, error) {
 	return s.repo.FailStuckOpeningPR(ctx, id, observedClaimedAt)
 }
