@@ -64,7 +64,7 @@ type ReconcilerDeps struct {
 
 	// OpeningLister, BranchFinder, OpeningRecorder, and Failer drive the
 	// opening sweep. The sweep is skipped entirely when OpeningLister is nil,
-	// so a Reconciler built without them behaves exactly as before.
+	// so a Reconciler built without them only ever mirrors open-PR outcomes.
 	OpeningLister   OpeningLister
 	BranchFinder    ports.PullRequestBranchFinder
 	OpeningRecorder OpeningRecorder
@@ -150,24 +150,30 @@ func (r *Reconciler) Run(ctx context.Context) {
 
 // ReconcileOnce performs a single reconcile pass: it mirrors terminal outcomes
 // for open PRs, then sweeps stuck 'opening' claims (skipped when the
-// Reconciler was built without opening-sweep dependencies).
+// Reconciler was built without opening-sweep dependencies). The degraded
+// health signal is updated once per pass from the combined result of both
+// loops, since both read the same GitHub token and a permission gap affects
+// either one identically.
 func (r *Reconciler) ReconcileOnce(ctx context.Context) {
-	r.reconcileOpen(ctx)
+	permissionDenied, cleanRead := r.reconcileOpen(ctx)
 	if r.openingLister != nil {
-		r.sweepOpening(ctx)
+		sweepPermissionDenied, sweepCleanRead := r.sweepOpening(ctx)
+		permissionDenied = permissionDenied || sweepPermissionDenied
+		cleanRead = cleanRead || sweepCleanRead
 	}
+	r.updateHealth(permissionDenied, cleanRead)
 }
 
 // reconcileOpen mirrors terminal GitHub PR outcomes onto proposals whose
-// pr_state is 'open'.
-func (r *Reconciler) reconcileOpen(ctx context.Context) {
+// pr_state is 'open'. It returns whether any PRStatus read hit a permission
+// error and whether any read succeeded, for ReconcileOnce to fold into the
+// combined health signal.
+func (r *Reconciler) reconcileOpen(ctx context.Context) (permissionDenied, cleanRead bool) {
 	open, err := r.lister.ListOpenPullRequests(ctx, r.batchLimit)
 	if err != nil {
 		r.logger.Warn("pr reconciler: list open pull requests", "error", err)
-		return
+		return false, false
 	}
-	permissionDenied := false
-	cleanRead := false
 	for _, pr := range open {
 		st, err := r.checker.PRStatus(ctx, pr.Repo, pr.PRNumber)
 		if err != nil {
@@ -198,7 +204,7 @@ func (r *Reconciler) reconcileOpen(ctx context.Context) {
 		r.logger.Info("pr reconciler: proposal PR reached terminal outcome",
 			"proposal_id", pr.ID, "repo", pr.Repo, "pr_number", pr.PRNumber, "outcome", string(outcome))
 	}
-	r.updateHealth(permissionDenied, cleanRead)
+	return permissionDenied, cleanRead
 }
 
 // sweepOpening resolves proposals claimed for PR creation but never recorded
@@ -206,34 +212,42 @@ func (r *Reconciler) reconcileOpen(ctx context.Context) {
 // name and looks the PR up on GitHub directly: if found — at any age,
 // including a claim taken moments ago — the claim is recorded exactly as the
 // client-side flow would have, since a found PR is unambiguous regardless of
-// how fresh the claim is. If no PR is found, the claim is released back to
-// 'failed' only once its ClaimedAt is more than openingGracePeriod in the
-// past, so a healthy in-flight PR creation (an S3 fetch and a GitHub POST,
-// normally seconds) is never raced. A row with a nil ClaimedAt — its age is
-// unknown — is left alone rather than failed, so an unmeasurable claim can
-// never be mistaken for a stale one; see the pr_claimed_at migration for why
-// this case should not occur for a row created after it. Each row is handled
+// how fresh the claim is, using GitHub's own PR-creation time rather than the
+// recovery moment. If no PR is found, the claim is released back to 'failed'
+// only once its ClaimedAt is at least openingGracePeriod in the past, so a
+// healthy in-flight PR creation (an S3 fetch and a GitHub POST, normally
+// seconds) is never raced. A row with a nil ClaimedAt — its age is unknown —
+// is left alone rather than failed, so an unmeasurable claim can never be
+// mistaken for a stale one; each occurrence is logged so a claim stuck this
+// way is visible rather than silently retried forever. Each row is handled
 // best-effort: one failing row is logged and skipped, and retried next pass.
-func (r *Reconciler) sweepOpening(ctx context.Context) {
+// The return values feed the reconciler's combined health signal — see
+// ReconcileOnce.
+func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanRead bool) {
 	stuck, err := r.openingLister.ListStuckOpening(ctx, r.batchLimit)
 	if err != nil {
 		r.logger.Warn("pr reconciler: list stuck opening claims", "error", err)
-		return
+		return false, false
 	}
 	now := r.clock.Now()
 	for _, o := range stuck {
 		branch := BuildBranch(o.ReleaseID, o.NodeID, o.Attempt)
 		ref, found, err := r.branchFinder.FindByBranch(ctx, o.Repo, branch)
 		if err != nil {
+			if errors.Is(err, ports.ErrPermissionDenied) {
+				permissionDenied = true
+			}
 			r.logger.Warn("pr reconciler: find pull request by branch",
 				"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "error", err)
 			continue
 		}
+		cleanRead = true
 		if found {
 			if err := r.openingRecorder.Record(ctx, RecordInput{
 				ProposalID: o.ID,
 				PrURL:      ref.URL,
 				PrNumber:   ref.Number,
+				OpenedAt:   ref.CreatedAt,
 			}); err != nil {
 				r.logger.Warn("pr reconciler: record recovered pull request",
 					"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "error", err)
@@ -246,7 +260,11 @@ func (r *Reconciler) sweepOpening(ctx context.Context) {
 		}
 		if o.ClaimedAt == nil {
 			// Unknown claim age: never fail a claim we cannot measure, so an
-			// unmeasurable row is retried next pass rather than swept.
+			// unmeasurable row is retried next pass rather than swept. Logged
+			// every pass so a claim stuck in this state stays visible instead
+			// of silently occupying a batch slot forever.
+			r.logger.Warn("pr reconciler: stuck opening claim has no pr_claimed_at; leaving untouched",
+				"proposal_id", o.ID, "repo", o.Repo, "branch", branch)
 			continue
 		}
 		age := now.Sub(*o.ClaimedAt)
@@ -261,6 +279,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) {
 		r.logger.Info("pr reconciler: released a stale opening claim back to failed",
 			"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "age", age.String())
 	}
+	return permissionDenied, cleanRead
 }
 
 // updateHealth reconciles the degraded flag from one pass. A permission error
@@ -274,13 +293,13 @@ func (r *Reconciler) updateHealth(permissionDenied, cleanRead bool) {
 	case permissionDenied:
 		if !r.degraded {
 			r.degraded = true
-			r.logger.Error("pr reconciler: cannot read pull request status; PR outcomes will not reconcile until fixed",
+			r.logger.Error("pr reconciler: cannot read pull request status; PR outcomes and the opening sweep will not reconcile until fixed",
 				"action", "grant the GitHub token 'Pull requests: Read' on the target repository")
 		}
 	case cleanRead:
 		if r.degraded {
 			r.degraded = false
-			r.logger.Info("pr reconciler: pull request reads recovered; resuming outcome reconciliation")
+			r.logger.Info("pr reconciler: pull request reads recovered; resuming outcome and opening-sweep reconciliation")
 		}
 	}
 }

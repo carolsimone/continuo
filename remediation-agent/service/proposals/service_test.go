@@ -165,6 +165,37 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	require.NotNil(t, repo.lastOutbox, "expected an outbox entry to be created")
 	require.Equal(t, streams.RemediationPrOpenedV1, repo.lastOutbox.StreamName)
 	require.True(t, repo.committed, "expected the unit of work to be committed")
+	require.Equal(t, fixedClock{}.Now(), repo.lastRecordPR.openedAt,
+		"an unset OpenedAt must fall back to the service clock, as the normal client-side flow relies on")
+}
+
+// TestService_Record_UsesProvidedOpenedAt verifies that a non-zero
+// RecordInput.OpenedAt — as the opening sweep supplies from GitHub's own
+// created_at when recovering a stranded PR — is written through to
+// RecordPR instead of the current clock time.
+func TestService_Record_UsesProvidedOpenedAt(t *testing.T) {
+	repo := &fakeRepo{view: proposal.View{
+		ID:        "p1",
+		ReleaseID: "r-1",
+		NodeID:    "model.p.orders_d",
+		Attempt:   1,
+	}}
+	svc := proposals.New(proposals.Deps{
+		Repo:   repo,
+		NewUoW: repo.uowFactory,
+		Clock:  fixedClock{},
+	})
+	githubCreatedAt := fixedClock{}.Now().Add(-90 * time.Minute)
+	err := svc.Record(context.Background(), proposals.RecordInput{
+		ProposalID: "p1",
+		PrURL:      "u",
+		PrNumber:   7,
+		OpenedBy:   "dev|local",
+		OpenedAt:   githubCreatedAt,
+	})
+	require.NoError(t, err)
+	require.Equal(t, githubCreatedAt, repo.lastRecordPR.openedAt,
+		"a provided OpenedAt must be used verbatim, not overridden by the current clock time")
 }
 
 // TestService_RecordOutcome_EmitsPRClosedAtomically verifies that a fired CAS

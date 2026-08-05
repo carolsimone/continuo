@@ -27,6 +27,13 @@ type RecordInput struct {
 	PrURL      string
 	PrNumber   int
 	OpenedBy   string
+	// OpenedAt is the true moment the PR was created, when the caller knows
+	// it — e.g. GitHub's own created_at for a PR the opening sweep recovers,
+	// which can predate the recovery pass by minutes or hours. Zero means
+	// "unknown": Record falls back to the current clock time, which is what
+	// the normal client-side flow uses, since it has no better value (the PR
+	// was just created by that same call).
+	OpenedAt time.Time
 }
 
 // Deps holds every collaborator the Service needs, all behind ports or
@@ -95,6 +102,10 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	}
 
 	now := s.clock.Now()
+	openedAt := in.OpenedAt
+	if openedAt.IsZero() {
+		openedAt = now
+	}
 
 	u := s.newUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -102,11 +113,11 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	}
 	defer func() { _ = u.Rollback() }()
 
-	if err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, in.PrURL, in.PrNumber, in.OpenedBy, now); err != nil {
+	if err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, in.PrURL, in.PrNumber, in.OpenedBy, openedAt); err != nil {
 		return fmt.Errorf("record pr: %w", err)
 	}
 
-	if err := s.enqueuePROpened(ctx, u, v, in, now); err != nil {
+	if err := s.enqueuePROpened(ctx, u, v, in, now, openedAt); err != nil {
 		return err
 	}
 
@@ -190,7 +201,11 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 
 // enqueuePROpened builds the deterministic remediation.pr_opened:v1 outbox
 // entry and creates it on the repository bound to the caller's transaction.
-func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v proposal.View, in RecordInput, now time.Time) error {
+// now is the outbox row's own bookkeeping timestamp; openedAt is the PR's
+// actual creation time, which the two can legitimately differ on — recovering
+// a stranded PR through the opening sweep resolves it long after GitHub
+// created it.
+func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v proposal.View, in RecordInput, now, openedAt time.Time) error {
 	eventID := event.PROpenedEventID(v.ReleaseID, v.NodeID, v.Attempt)
 	payload := event.PROpened{
 		ProposalID: in.ProposalID,
@@ -199,7 +214,7 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 		PrURL:      in.PrURL,
 		PrNumber:   in.PrNumber,
 		OpenedBy:   in.OpenedBy,
-		OpenedAt:   now.Format("2006-01-02T15:04:05Z07:00"),
+		OpenedAt:   openedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

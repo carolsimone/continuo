@@ -467,6 +467,100 @@ func TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues(t *testing.T) {
 	require.Empty(t, failer.calls, "the errored row must not be failed even though its claim is old — an inconclusive read is not a confirmed miss")
 }
 
+// TestReconcileOnce_OpeningSweepPermissionErrorMarksDegraded verifies a
+// permission-denied error from the opening sweep's branch lookup feeds the
+// same degraded signal as the outcome loop's PRStatus reads: both read the
+// same GitHub token, so a permission gap discovered by either loop must be
+// visible via Degraded(), not silently swallowed into a generic warn.
+func TestReconcileOnce_OpeningSweepPermissionErrorMarksDegraded(t *testing.T) {
+	branch := proposals.BuildBranch("rel-1", "model.p.orders", 1)
+	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+			ClaimedAt: timePtr(fixedClock{}.Now())},
+	}}
+	finder := &fakeBranchFinder{errs: map[string]error{branch: ports.ErrPermissionDenied}}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:          &fakeLister{},
+		Checker:         &fakeChecker{},
+		Recorder:        &fakeRecorder{},
+		OpeningLister:   opening,
+		BranchFinder:    finder,
+		OpeningRecorder: &fakeOpeningRecorder{},
+		Failer:          &fakeFailer{},
+		Clock:           fixedClock{},
+		Logger:          slog.Default(),
+	})
+
+	require.False(t, rec.Degraded(), "health starts healthy")
+	rec.ReconcileOnce(context.Background())
+
+	require.True(t, rec.Degraded(), "a permission error from the opening sweep must degrade health")
+}
+
+// TestReconcileOnce_OpeningSweepNilClaimedAtLogsWarnEveryPass verifies a
+// stuck 'opening' row with no claim time produces a warn log on every pass it
+// is seen, not just once — so an operator has a standing signal for a claim
+// that can never be resolved by age, rather than it silently occupying a
+// batch slot forever.
+func TestReconcileOnce_OpeningSweepNilClaimedAtLogsWarnEveryPass(t *testing.T) {
+	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: nil},
+	}}
+	counter := &levelCounter{}
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:          &fakeLister{},
+		Checker:         &fakeChecker{},
+		Recorder:        &fakeRecorder{},
+		OpeningLister:   opening,
+		BranchFinder:    &fakeBranchFinder{},
+		OpeningRecorder: &fakeOpeningRecorder{},
+		Failer:          &fakeFailer{},
+		Clock:           fixedClock{},
+		Logger:          slog.New(counter),
+	})
+
+	rec.ReconcileOnce(context.Background())
+	rec.ReconcileOnce(context.Background())
+	rec.ReconcileOnce(context.Background())
+
+	require.Equal(t, 3, counter.warnings, "an unmeasurable claim must be logged every pass it is seen, unlike the degrade-transition ERROR")
+}
+
+// TestReconcileOnce_OpeningSweepRecordsGitHubCreatedAt verifies a recovered
+// PR is recorded with GitHub's own creation time, not the moment the sweep
+// happened to run — a claim can be recovered minutes or hours after GitHub
+// actually created the PR, and pr_opened_at should reflect the true value.
+func TestReconcileOnce_OpeningSweepRecordsGitHubCreatedAt(t *testing.T) {
+	branch := proposals.BuildBranch("rel-1", "model.p.orders", 1)
+	githubCreatedAt := fixedClock{}.Now().Add(-45 * time.Minute)
+	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+			ClaimedAt: timePtr(githubCreatedAt)},
+	}}
+	finder := &fakeBranchFinder{refs: map[string]ports.PullRequestRef{
+		branch: {Number: 9, URL: "https://github.com/acme/r/pull/9", CreatedAt: githubCreatedAt},
+	}}
+	recorder := &fakeOpeningRecorder{}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:          &fakeLister{},
+		Checker:         &fakeChecker{},
+		Recorder:        &fakeRecorder{},
+		OpeningLister:   opening,
+		BranchFinder:    finder,
+		OpeningRecorder: recorder,
+		Failer:          &fakeFailer{},
+		Clock:           fixedClock{},
+		Logger:          slog.Default(),
+	})
+	rec.ReconcileOnce(context.Background())
+
+	require.Len(t, recorder.calls, 1)
+	require.Equal(t, githubCreatedAt, recorder.calls[0].OpenedAt,
+		"a recovered PR must be recorded with GitHub's own created_at, not the recovery time")
+}
+
 // TestReconcileOnce_OpeningSweepSkippedWithoutDeps verifies a Reconciler built
 // without opening-sweep collaborators (the pre-existing wiring shape) runs the
 // open-PR mirror only, and never panics on nil opening-sweep fields.
@@ -482,12 +576,18 @@ func TestReconcileOnce_OpeningSweepSkippedWithoutDeps(t *testing.T) {
 }
 
 // levelCounter is a minimal slog.Handler that counts records by level.
-type levelCounter struct{ errors int }
+type levelCounter struct {
+	errors   int
+	warnings int
+}
 
 func (c *levelCounter) Enabled(context.Context, slog.Level) bool { return true }
 func (c *levelCounter) Handle(_ context.Context, r slog.Record) error {
-	if r.Level >= slog.LevelError {
+	switch {
+	case r.Level >= slog.LevelError:
 		c.errors++
+	case r.Level == slog.LevelWarn:
+		c.warnings++
 	}
 	return nil
 }

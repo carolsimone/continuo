@@ -253,7 +253,7 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	return views, nil
 }
 
-// BeginPR atomically claims a proposal for PR creation: pr_state ” or 'failed'
+// BeginPR atomically claims a proposal for PR creation: pr_state '' or 'failed'
 // -> 'opening', stamping pr_claimed_at with claimedAt. The UPDATE…RETURNING is
 // the single-winner guard; concurrent callers see 0 rows and receive
 // ErrPRConflict. Returns ErrNotSourceResolved when source_resolved=false,
