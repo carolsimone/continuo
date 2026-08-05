@@ -78,6 +78,9 @@ func (r *fakeRepo) FailPR(_ context.Context, _ string) error { return nil }
 func (r *fakeRepo) ListOpenPullRequests(_ context.Context, _ int) ([]proposal.OpenPR, error) {
 	return r.openPRs, nil
 }
+func (r *fakeRepo) ListStuckOpening(_ context.Context, _ int) ([]proposal.OpeningPR, error) {
+	return nil, nil
+}
 func (r *fakeRepo) RecordPROutcome(_ context.Context, _ string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
 	r.lastOutcome = outcome
 	r.lastClosedAt = closedAt

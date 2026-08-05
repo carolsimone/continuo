@@ -74,3 +74,17 @@ type OpenPR struct {
 	NodeID    string
 	Attempt   int
 }
+
+// OpeningPR identifies a proposal claimed for PR creation (pr_state='opening')
+// whose fate the reconciler's opening sweep resolves: either GitHub already
+// has the pull request (the claim's recording step failed after creation
+// succeeded), or the claim is stale and safe to release back to 'failed' for
+// retry. The row carries no claim timestamp — the reconciler ages a claim by
+// consecutive sweep passes that find no matching PR, not by a stored time.
+type OpeningPR struct {
+	ID        string
+	Repo      string
+	ReleaseID string
+	NodeID    string
+	Attempt   int
+}

@@ -129,6 +129,70 @@ func TestPRStatus_TooManyRequestsIsTransient(t *testing.T) {
 		"a 429 is a rate limit, not a permission failure")
 }
 
+func TestFindByBranch_Found(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/repos/acme/dbt-repo/pulls", r.URL.Path)
+		require.Equal(t, "acme:remediation/rel-1/orders-attempt1", r.URL.Query().Get("head"))
+		require.Equal(t, "all", r.URL.Query().Get("state"))
+		require.Equal(t, "Bearer tkn", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"number":9,"html_url":"https://github.com/acme/dbt-repo/pull/9","created_at":"2026-07-01T10:00:00Z"}]`))
+	}))
+	defer srv.Close()
+	g := NewSourceReader(srv.URL, "tkn", srv.Client())
+	ref, found, err := g.FindByBranch(context.Background(), "acme/dbt-repo", "remediation/rel-1/orders-attempt1")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, 9, ref.Number)
+	require.Equal(t, "https://github.com/acme/dbt-repo/pull/9", ref.URL)
+	require.Equal(t, time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC), ref.CreatedAt.UTC())
+}
+
+func TestFindByBranch_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	g := NewSourceReader(srv.URL, "tkn", srv.Client())
+	ref, found, err := g.FindByBranch(context.Background(), "acme/dbt-repo", "remediation/rel-1/orders-attempt1")
+	require.NoError(t, err)
+	require.False(t, found, "an empty result set means no PR exists for the branch, not an error")
+	require.Zero(t, ref)
+}
+
+func TestFindByBranch_InvalidRepoIsError(t *testing.T) {
+	g := NewSourceReader("https://api.github.com", "tkn", http.DefaultClient)
+	_, found, err := g.FindByBranch(context.Background(), "not-a-repo-slug", "branch")
+	require.Error(t, err)
+	require.False(t, found)
+}
+
+func TestFindByBranch_ForbiddenIsPermissionDenied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "4999")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Resource not accessible by personal access token"}`))
+	}))
+	defer srv.Close()
+	g := NewSourceReader(srv.URL, "tkn", srv.Client())
+	_, _, err := g.FindByBranch(context.Background(), "acme/dbt-repo", "branch")
+	require.ErrorIs(t, err, ports.ErrPermissionDenied)
+}
+
+func TestFindByBranch_ServerErrorIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"boom"}`))
+	}))
+	defer srv.Close()
+	g := NewSourceReader(srv.URL, "tkn", srv.Client())
+	_, found, err := g.FindByBranch(context.Background(), "acme/dbt-repo", "branch")
+	require.Error(t, err)
+	require.False(t, found)
+	require.NotErrorIs(t, err, ports.ErrPermissionDenied)
+}
+
 func TestPRStatus_UnauthorizedIsPermissionDenied(t *testing.T) {
 	srv := prStatusServer(t, "/repos/acme/dbt-repo/pulls/7", http.StatusUnauthorized,
 		`{"message":"Bad credentials"}`)

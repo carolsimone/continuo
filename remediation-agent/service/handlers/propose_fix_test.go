@@ -198,6 +198,10 @@ func (r *fakeProposalRepo) ListOpenPullRequests(_ context.Context, _ int) ([]pro
 	return nil, nil
 }
 
+func (r *fakeProposalRepo) ListStuckOpening(_ context.Context, _ int) ([]proposal.OpeningPR, error) {
+	return nil, nil
+}
+
 func (r *fakeProposalRepo) RecordPROutcome(_ context.Context, _ string, _ proposal.PROutcome, _ time.Time) (bool, error) {
 	return false, nil
 }

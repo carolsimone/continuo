@@ -73,11 +73,7 @@ func (s *Service) Begin(ctx context.Context, id string) (proposal.PRClaim, error
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("get proposal: %w", err)
 	}
-	branch := fmt.Sprintf("remediation/%s/%s-attempt%d",
-		v.ReleaseID,
-		sanitizeBranchSegment(v.NodeID),
-		v.Attempt,
-	)
+	branch := BuildBranch(v.ReleaseID, v.NodeID, v.Attempt)
 	claim, err := s.repo.BeginPR(ctx, id, branch)
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("begin pr: %w", err)
@@ -221,6 +217,15 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 		CreatedAt:     now,
 	}
 	return u.OutboxRepo().Create(ctx, entry)
+}
+
+// BuildBranch returns the deterministic remediation branch name for a
+// proposal's release/node/attempt: remediation/<release_id>/<node_sanitized>-attempt<n>.
+// Both Begin (computing the branch to claim) and the reconciler's opening
+// sweep (recomputing the same branch to look a stuck claim up on GitHub) call
+// this so the two never drift apart.
+func BuildBranch(releaseID, nodeID string, attempt int) string {
+	return fmt.Sprintf("remediation/%s/%s-attempt%d", releaseID, sanitizeBranchSegment(nodeID), attempt)
 }
 
 // sanitizeBranchSegment replaces every rune that is not in [A-Za-z0-9_-] with

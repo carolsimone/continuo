@@ -625,6 +625,41 @@ sequenceDiagram
 
 > Per-row errors — a failed GitHub read or a failed `RecordOutcome` — are logged and skipped so one bad row never blocks the rest of the batch; that row is retried on the next pass. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked: the reconciler only lists `pr_state='open'` rows, so a terminal row is never re-examined. The outbox publisher drains the `remediation.pr_closed:v1` row on its own loop, same as every other outbox entry; no consumer is wired to the stream — it is an audit seam.
 
+### 12b. Opening Sweep (Stranded-Claim Recovery)
+
+`RecordPullRequest` in Flow 12 is explicitly best-effort: by the time it runs, the PR already exists on GitHub, so ui-service logs loudly and returns the PR link to the operator on failure rather than failing the request. That leaves the proposal row stuck at `pr_state='opening'` with no `pr_url`, which the UI reads as "no PR yet" — inviting a duplicate. The same background reconciler that drives Flow 12a also sweeps these stuck claims, on the same tick.
+
+```mermaid
+sequenceDiagram
+  participant RA as remediation-agent (reconciler)
+  participant GH as GitHub Pulls API
+  participant PG as remediation-agent Postgres
+
+  loop every REMEDIATION_PR_POLL_INTERVAL (default 60s)
+    RA->>PG: ListStuckOpening(limit=50) -- pr_state='opening', oldest-created first
+    loop each stuck-opening row
+      Note over RA: recompute branch_name = remediation/<release_id>/<node>-attempt<n> (BuildBranch)
+      RA->>GH: GET /repos/{repo}/pulls?head={owner}:{branch_name}&state=all&per_page=1
+      alt PR found
+        GH-->>RA: [{ number, html_url, created_at }]
+        RA->>PG: Record(id, pr_url, pr_number, opened_by="") -- 1 tx:<br/>pr_state 'opening' -> 'open', pr_opened_at=now()<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1)
+        Note over PG: gap closed -- UI now shows the recovered pr_url
+      else PR not found
+        GH-->>RA: []
+        Note over RA: increment in-process miss counter for this proposal id
+        alt miss count reaches REMEDIATION_PR_OPENING_GRACE_PERIOD / REMEDIATION_PR_POLL_INTERVAL
+          RA->>PG: FailPullRequest(id) -- pr_state 'opening' -> 'failed'
+          Note over PG: retryable: BeginPR's claim guard accepts '' or 'failed'
+        else miss count below threshold
+          Note over RA: leave row untouched; retried next pass
+        end
+      end
+    end
+  end
+```
+
+> The proposal row carries no claim timestamp — `created_at` predates the claim by an arbitrary amount, since a proposal can sit reviewable long before an operator claims it for a PR — so the sweep cannot measure a claim's age directly. It substitutes consecutive sweep passes with no matching PR, tracked in an in-process map keyed by proposal id and rebuilt fresh each pass: an id that drops out of the stuck-opening listing (recorded, failed, or otherwise resolved) resets its count to zero, and a process restart resets every count, which only extends the effective grace period, never shortens it. This is why a claim taken moments before a pass runs is never raced out from under an operator: reaching the default 10-pass threshold takes a full run of consecutive misses, comfortably longer than the seconds-scale S3-fetch-then-create-PR round trip a healthy claim completes in. A per-row GitHub error carries the prior miss count forward unchanged — an inconclusive read is neither a hit nor a miss — and does not block the rest of the batch.
+
 ## Why These Diagrams Are Not Enough On Their Own
 
 These diagrams show timing and ordering well, but they do not fully show:

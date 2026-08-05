@@ -234,14 +234,21 @@ func main() {
 	}()
 
 	// Mirror terminal GitHub PR outcomes (merged / closed-without-merge) onto
-	// proposal rows on a fixed cadence.
+	// proposal rows, and sweep stuck 'opening' claims — recovering a proposal
+	// whose PR was created on GitHub but never recorded, and releasing a
+	// genuinely abandoned claim back to 'failed' — on a fixed cadence.
 	reconciler := proposals.NewReconciler(proposals.ReconcilerDeps{
-		Lister:   proposalRepo,
-		Checker:  gh,
-		Recorder: proposalSvc,
-		Clock:    ports.SystemClock{},
-		Logger:   logger,
-		Interval: cfg.PRPollInterval,
+		Lister:             proposalRepo,
+		Checker:            gh,
+		Recorder:           proposalSvc,
+		Clock:              ports.SystemClock{},
+		Logger:             logger,
+		Interval:           cfg.PRPollInterval,
+		OpeningLister:      proposalRepo,
+		BranchFinder:       gh,
+		OpeningRecorder:    proposalSvc,
+		Failer:             proposalSvc,
+		OpeningGracePeriod: cfg.PROpeningGracePeriod,
 	})
 	go reconciler.Run(ctx)
 
@@ -254,4 +261,3 @@ func main() {
 	_ = srv.Shutdown(shutdownCtx)
 	logger.Info("remediation-agent stopped")
 }
-

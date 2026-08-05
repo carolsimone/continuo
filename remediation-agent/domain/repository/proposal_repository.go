@@ -79,6 +79,12 @@ type ProposalRepository interface {
 	// (pr_state='open'), oldest-opened first. limit<=0 means no limit.
 	ListOpenPullRequests(ctx context.Context, limit int) ([]proposal.OpenPR, error)
 
+	// ListStuckOpening returns proposals claimed for PR creation but not yet
+	// recorded (pr_state='opening'), oldest-claimed first, so the reconciler's
+	// opening sweep resolves the longest-stuck claims before newer ones.
+	// limit<=0 means no limit.
+	ListStuckOpening(ctx context.Context, limit int) ([]proposal.OpeningPR, error)
+
 	// RecordPROutcome atomically transitions pr_state 'open' -> outcome and sets
 	// pr_closed_at. Returns true when the transition fired; false when the row is
 	// no longer in 'open' (already terminal or never opened) — an idempotent no-op.

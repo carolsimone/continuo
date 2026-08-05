@@ -576,6 +576,97 @@ func TestBeginPR_SingleWinner(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrPRConflict)
 }
 
+// TestBeginPR_ListsAsStuckOpening verifies that a claimed proposal
+// (pr_state='opening') is surfaced by ListStuckOpening with the fields the
+// reconciler's opening sweep needs to recompute the deterministic branch, and
+// that it drops out of the listing once recorded.
+func TestBeginPR_ListsAsStuckOpening(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-opening-1",
+		NodeID:         "model.p.orders",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "rationale",
+		ProposedSQLURI: "s3://bucket/sql/1",
+		DiffURI:        "s3://bucket/diff/1",
+		SourceResolved: true,
+		Repo:           "owner/continuo-dbt-demo",
+		CommitSHA:      "abc123",
+		FilePath:       "services/service-3/models/orders_d.sql",
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+	}
+	id := seedProposal(t, repo, db, p)
+
+	_, err := repo.BeginPR(ctx, id, "remediation/r-opening-1/model-p-orders-attempt1")
+	require.NoError(t, err)
+
+	stuck, err := repo.ListStuckOpening(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, stuck, 1)
+	require.Equal(t, id, stuck[0].ID)
+	require.Equal(t, "owner/continuo-dbt-demo", stuck[0].Repo)
+	require.Equal(t, "r-opening-1", stuck[0].ReleaseID)
+	require.Equal(t, "model.p.orders", stuck[0].NodeID)
+	require.Equal(t, 1, stuck[0].Attempt)
+
+	// Once recorded, the row is no longer a stuck-opening claim.
+	require.NoError(t, repo.RecordPR(ctx, id, "https://gh/pr/1", 1, "dev", time.Now().UTC()))
+	stuck, err = repo.ListStuckOpening(ctx, 10)
+	require.NoError(t, err)
+	require.Empty(t, stuck, "a recorded PR must no longer be listed as stuck opening")
+}
+
+// TestFailPR_RemovesFromStuckOpeningAndAllowsReclaim verifies that FailPR
+// drops a claim out of ListStuckOpening and returns pr_state to 'failed',
+// which BeginPR's CAS accepts for a retry.
+func TestFailPR_RemovesFromStuckOpeningAndAllowsReclaim(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-opening-2",
+		NodeID:         "model.p.customers",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "rationale",
+		ProposedSQLURI: "s3://bucket/sql/1",
+		DiffURI:        "s3://bucket/diff/1",
+		SourceResolved: true,
+		Repo:           "owner/continuo-dbt-demo",
+		CommitSHA:      "abc123",
+		FilePath:       "services/service-3/models/customers_d.sql",
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+	}
+	id := seedProposal(t, repo, db, p)
+
+	_, err := repo.BeginPR(ctx, id, "remediation/r-opening-2/model-p-customers-attempt1")
+	require.NoError(t, err)
+
+	require.NoError(t, repo.FailPR(ctx, id))
+
+	stuck, err := repo.ListStuckOpening(ctx, 10)
+	require.NoError(t, err)
+	require.Empty(t, stuck, "a failed claim must no longer be listed as stuck opening")
+
+	// The proposal is re-claimable after FailPR.
+	claim, err := repo.BeginPR(ctx, id, "remediation/r-opening-2/model-p-customers-attempt1")
+	require.NoError(t, err, "a 'failed' proposal must be re-claimable")
+	require.Equal(t, id, claim.ID)
+}
+
 // TestBeginPR_RejectsUnresolvedSource verifies that BeginPR returns
 // ErrNotSourceResolved when source_resolved=false.
 func TestBeginPR_RejectsUnresolvedSource(t *testing.T) {

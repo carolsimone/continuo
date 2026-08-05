@@ -253,7 +253,7 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	return views, nil
 }
 
-// BeginPR atomically claims a proposal for PR creation: pr_state '' or 'failed'
+// BeginPR atomically claims a proposal for PR creation: pr_state ” or 'failed'
 // -> 'opening'. The UPDATE…RETURNING is the single-winner guard; concurrent
 // callers see 0 rows and receive ErrPRConflict. Returns ErrNotSourceResolved
 // when source_resolved=false, ErrNotFound when the id is unknown.
@@ -356,6 +356,47 @@ func (r *ProposalRepository) ListOpenPullRequests(ctx context.Context, limit int
 // RecordPROutcome atomically transitions pr_state 'open' -> outcome. The WHERE
 // pr_state='open' guard makes concurrent or repeated calls single-winner: only
 // the first caller sees rows-affected=1; every later call is a no-op false.
+// openingRow is the persistence DTO for the ListStuckOpening projection.
+type openingRow struct {
+	ID        string `db:"id"`
+	Repo      string `db:"repo"`
+	ReleaseID string `db:"release_id"`
+	NodeID    string `db:"node_id"`
+	Attempt   int    `db:"attempt"`
+}
+
+// ListStuckOpening returns proposals with pr_state='opening', oldest-created
+// first, so the reconciler's opening sweep processes the longest-standing
+// claims first within a batch. The proposal row carries no claim-time column
+// (created_at predates the claim by an arbitrary amount, since a proposal can
+// sit reviewable for a long time before an operator claims it for a PR), so
+// the reconciler ages a claim by how many consecutive sweep passes have found
+// no matching GitHub PR, not by a stored timestamp — see Reconciler.sweepOpening.
+func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int) ([]proposal.OpeningPR, error) {
+	q := `SELECT id, repo, release_id, node_id, attempt
+	      FROM proposal WHERE pr_state = 'opening' ORDER BY created_at ASC`
+	args := []any{}
+	if limit > 0 {
+		args = append(args, limit)
+		q += " LIMIT $1"
+	}
+	var rows []openingRow
+	if err := r.q.SelectContext(ctx, &rows, q, args...); err != nil {
+		return nil, fmt.Errorf("list stuck opening proposals: %w", err)
+	}
+	out := make([]proposal.OpeningPR, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, proposal.OpeningPR{
+			ID:        row.ID,
+			Repo:      row.Repo,
+			ReleaseID: row.ReleaseID,
+			NodeID:    row.NodeID,
+			Attempt:   row.Attempt,
+		})
+	}
+	return out, nil
+}
+
 func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
 		`UPDATE proposal SET pr_state=$2, pr_closed_at=$3 WHERE id=$1 AND pr_state='open'`,
