@@ -34,6 +34,11 @@ export function createRemediationRouter(
       const result = await remediation.listProposals(params);
       res.json({ proposals: result.proposals ?? [] });
     } catch (err: any) {
+      console.error(
+        '[remediation] listProposals failed (status=%s): %s',
+        err?.code ?? 'unknown',
+        err?.message ?? String(err),
+      );
       res.status(502).json({ error: 'remediation service request failed' });
     }
   });
@@ -47,6 +52,12 @@ export function createRemediationRouter(
       if (err?.code === grpc.status.NOT_FOUND) {
         return res.status(404).json({ error: 'proposal not found' });
       }
+      console.error(
+        '[remediation] getProposal failed for proposal %s (status=%s): %s',
+        req.params.id,
+        err?.code ?? 'unknown',
+        err?.message ?? String(err),
+      );
       res.status(502).json({ error: 'remediation service request failed' });
     }
   });
@@ -76,6 +87,12 @@ export function createRemediationRouter(
         const pr_url = extractPrUrl(message);
         return res.status(409).json({ error: message, pr_url });
       }
+      console.error(
+        '[remediation] beginPullRequest failed for proposal %s (status=%s): %s',
+        id,
+        err?.code ?? 'unknown',
+        err?.message ?? String(err),
+      );
       return res.status(502).json({ error: 'remediation service request failed' });
     }
 
@@ -90,7 +107,12 @@ export function createRemediationRouter(
     let content: string;
     try {
       content = await getObject(normalizeKey(claim.proposed_sql_uri));
-    } catch {
+    } catch (err) {
+      console.error(
+        '[remediation] failed to fetch proposed SQL for proposal %s: %s',
+        id,
+        err instanceof Error ? err.message : String(err),
+      );
       await remediation.failPullRequest({ id, claimed_at: claimedAt });
       return res.status(502).json({ error: 'failed to fetch proposed SQL from S3' });
     }
@@ -105,8 +127,14 @@ export function createRemediationRouter(
       try {
         const diff = await getObject(normalizeKey(claim.diff_uri));
         diffBlock = `\n\n### Proposed diff\n\`\`\`diff\n${diff}\n\`\`\``;
-      } catch {
-        // Diff is best-effort — omit on failure.
+      } catch (err) {
+        // Diff is best-effort — omit on failure, but still log why so a
+        // missing diff in a PR body is diagnosable without a repro.
+        console.warn(
+          '[remediation] failed to fetch proposed diff for proposal %s (continuing without it): %s',
+          id,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
 
@@ -150,7 +178,19 @@ export function createRemediationRouter(
         title,
         body,
       });
-    } catch {
+    } catch (err) {
+      // Log the proposal id plus the error's status/message (Octokit errors
+      // carry both) so a GitHub-side rejection is diagnosable without a
+      // repro. Never log the full error object here: an Octokit
+      // RequestError can carry the outgoing request, including the
+      // Authorization header used to authenticate as the GitHub App.
+      const e = err as { status?: number; message?: string };
+      console.error(
+        '[remediation] pull request creation failed for proposal %s (status=%s): %s',
+        id,
+        e?.status ?? 'unknown',
+        e?.message ?? String(err),
+      );
       // Record the failure so the proposal transitions back to a retryable state.
       await remediation.failPullRequest({ id, claimed_at: claimedAt });
       return res.status(502).json({ error: 'failed to open pull request' });

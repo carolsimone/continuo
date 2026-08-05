@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { makePullRequestCreator } from '../../src/server/github/pull-request-creator';
+import crypto from 'crypto';
+import { makePullRequestCreator, resolveGithubAppPullRequestCreator } from '../../src/server/github/pull-request-creator';
 import type { CreatePRInput } from '../../src/server/github/pull-request-creator';
 
 // Minimal octokit-like fake covering only the methods used
@@ -168,5 +169,62 @@ describe('makePullRequestCreator', () => {
         number: 7,
       });
     });
+  });
+});
+
+describe('resolveGithubAppPullRequestCreator', () => {
+  function validPrivateKey(): string {
+    const { privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    });
+    return privateKey;
+  }
+
+  const baseCfg = { appId: '12345', installationId: '67890' };
+
+  it('returns a PullRequestCreator for a valid key and does not log', () => {
+    const log = vi.fn();
+    const creator = resolveGithubAppPullRequestCreator(
+      { ...baseCfg, privateKey: validPrivateKey() },
+      log,
+    );
+    expect(creator).toBeDefined();
+    expect(creator?.create).toBeInstanceOf(Function);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('returns undefined and logs an actionable error for a malformed key (e.g. space-folded newlines)', () => {
+    const log = vi.fn();
+    const spaceFolded = validPrivateKey().replace(/\n/g, ' ').trim();
+    const creator = resolveGithubAppPullRequestCreator(
+      { ...baseCfg, privateKey: spaceFolded },
+      log,
+    );
+    expect(creator).toBeUndefined();
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).toMatch(/does not parse into a key that can sign/i);
+    expect(log.mock.calls[0][0]).toMatch(/PR creation is disabled/i);
+  });
+
+  it('returns undefined without logging when credentials are entirely absent', () => {
+    const log = vi.fn();
+    const creator = resolveGithubAppPullRequestCreator(
+      { appId: '', privateKey: '', installationId: '' },
+      log,
+    );
+    expect(creator).toBeUndefined();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('returns undefined without logging when only the private key is absent (partial config)', () => {
+    const log = vi.fn();
+    const creator = resolveGithubAppPullRequestCreator(
+      { ...baseCfg, privateKey: '' },
+      log,
+    );
+    expect(creator).toBeUndefined();
+    expect(log).not.toHaveBeenCalled();
   });
 });

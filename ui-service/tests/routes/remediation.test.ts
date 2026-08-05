@@ -244,6 +244,48 @@ describe('remediation router', () => {
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();
   });
 
+  it('logs the proposal id and the Octokit error status/message when prCreator.create throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const remediation = makeRemediation();
+    const githubError = Object.assign(new Error('Bad credentials'), { status: 401 });
+    const prCreator = makePrCreator({
+      create: vi.fn().mockRejectedValue(githubError),
+    });
+    const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(502);
+    // The response body must not leak the underlying cause to the browser.
+    expect(res.body.error).not.toMatch(/Bad credentials/);
+
+    const logged = consoleError.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(logged).toContain('p1');
+    expect(logged).toContain('401');
+    expect(logged).toContain('Bad credentials');
+    // Never log the raw error object — an Octokit error can carry the
+    // Authorization header used to authenticate as the GitHub App.
+    for (const call of consoleError.mock.calls) {
+      expect(call).not.toContain(githubError);
+    }
+
+    consoleError.mockRestore();
+  });
+
+  it('still calls failPullRequest when the GitHub error carries no status (network failure)', async () => {
+    const remediation = makeRemediation();
+    const prCreator = makePrCreator({
+      create: vi.fn().mockRejectedValue(new Error('socket hang up')),
+    });
+    const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(502);
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({
+      id: 'p1',
+      claimed_at: '2026-06-24T00:00:00Z',
+    });
+  });
+
   // ── POST — opened_by forwarded from authenticated user ────────────────────
 
   it('forwards the authenticated user id as opened_by in recordPullRequest', async () => {
@@ -286,6 +328,7 @@ describe('remediation router', () => {
   // ── POST — S3 fetch failure → failPullRequest + 502, no GitHub call ──────
 
   it('calls failPullRequest and returns 502 when proposed SQL fetch from S3 rejects', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const remediation = makeRemediation();
     const prCreator = makePrCreator();
     // First call (proposed SQL) rejects; second call (diff) should never happen.
@@ -298,6 +341,12 @@ describe('remediation router', () => {
     expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z' });
     expect(prCreator.create).not.toHaveBeenCalled();
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();
+    // The cause must be logged, not just swallowed into a generic response.
+    const logged = consoleError.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(logged).toContain('p1');
+    expect(logged).toContain('S3 NoSuchKey');
+
+    consoleError.mockRestore();
   });
 
   // ── POST — failPullRequest echoes the exact claimed_at BeginPullRequest

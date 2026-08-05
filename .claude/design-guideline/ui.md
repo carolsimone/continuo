@@ -430,7 +430,7 @@ A `.nodes-table` may group its rows under collapsible per-group header rows:
 Rules:
 
 - The header row spans every column and toggles its group on click and on
-  Enter/Space (`role="button"`, `aria-expanded`).
+  Enter/Space (`role="button"`, `tabIndex={0}`, `aria-expanded`).
 - `.nodes-group-count` uses the same count-pill treatment as
   `.section-header__count` / `.tabs__count` (bare number, `#f1f3f5` pill).
 - The trailing status pill is the group's rolled-up status using the
@@ -441,6 +441,141 @@ Rules:
 - Collapsed service vertices on the graph canvas mirror the header:
   accent dot, service name, count pill (`.dag-service-vertex-*`), with the
   vertex fill/border painted by rolled-up status.
+
+### Inline actionable rows
+
+A row whose item still needs a human decision renders its `.detail-card`
+expanded, in place, inside the table — never in a separate section above
+or below it. There is no separate "first row" or "top of list" special
+case: the trigger is a predicate over the item's own fields, evaluated per
+row. **The card's primary action button is gated by that same predicate**
+— define it once and route both the expansion check and the button gate
+through it, so the two can never drift apart. The remediation panel is the
+reference implementation:
+
+```jsx
+// isActionable is the single source of truth for "this item still needs a
+// human decision." Both the row's auto-expansion and the card's primary
+// action button read it — never duplicate the condition inline. Express
+// the predicate in terms of the server's own precondition for the action
+// (here, the same '' / 'failed' claim-state check BeginPullRequest's
+// compare-and-set enforces) rather than inferring it from a side effect
+// like an unset URL field — a field that goes from empty to set on the
+// happy path might also stay empty while the item is claimed but not yet
+// resolved, which would wrongly read as still-actionable.
+function isActionable(p) {
+  return p.status === 'proposed' && p.source_resolved
+    && (p.pr_state === '' || p.pr_state === 'failed');
+}
+
+const showCard = isActionable(p) || isSelected;
+// Whichever row sits directly above its own card — auto-expanded or
+// manually selected — drops its border so it doesn't draw a hairline
+// against that card. The card row keeps its own border; that's what
+// separates it from the next proposal.
+const compactRowClass = [
+  isActionable(p) ? 'nodes-row--static' : '',
+  isSelected ? 'nodes-row--selected' : '',
+  showCard ? 'nodes-row--no-border' : '',
+].filter(Boolean).join(' ');
+
+<Fragment key={p.id}>
+  <tr
+    className={compactRowClass}
+    onClick={isActionable(p) ? undefined : toggle}
+    role={isActionable(p) ? undefined : 'button'}
+    tabIndex={isActionable(p) ? undefined : 0}
+    aria-expanded={isActionable(p) ? undefined : isSelected}
+    onKeyDown={isActionable(p) ? undefined : (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    }}
+  >
+    {/* compact cells, unchanged */}
+  </tr>
+  {showCard && (
+    <tr className="nodes-row--static">
+      <td colSpan={5}>
+        <div className="detail-card">
+          {/* rationale */}
+          {isOperator && isActionable(p) && <button className="btn btn--secondary">{/* primary action */}</button>}
+        </div>
+      </td>
+    </tr>
+  )}
+</Fragment>
+```
+
+```css
+/* Non-interactive row: an auto-expanded actionable row, or the row hosting
+   an expanded detail card. Neither responds to click, so neither gets the
+   table's default pointer cursor or hover affordance. */
+.nodes-table tbody tr.nodes-row--static { cursor: default; }
+.nodes-table tbody tr.nodes-row--static:hover { background-color: transparent; }
+/* Applied to whichever row sits directly above its own expanded card —
+   auto-expanded or manually selected, either way — so the two don't draw a
+   hairline against each other. The card row itself keeps its border,
+   which is what separates it from the next proposal row. */
+.nodes-table tbody tr.nodes-row--no-border { border-bottom: none; }
+```
+
+Rules:
+
+- **Expansion depends only on item state, never on viewer role.** Everyone
+  sees the card and its rationale; only the action button inside stays
+  role-gated (`currentUser?.role === 'operator'`, unchanged from the
+  ordinary button-gating rule) in addition to `isActionable`.
+- **One predicate function, two call sites.** Do not write the expansion
+  condition and the button gate as separately-maintained boolean
+  expressions, even if they look identical today — that's exactly the setup
+  that lets them silently diverge later. Extract `isActionable` (or
+  equivalent) and call it from both places.
+- **Collapse on resolution.** The moment `isActionable` goes false — the
+  claim moves out of its retryable state (e.g. `pr_state` leaving `''` /
+  `failed` for `opening`), or the item's own lifecycle field moves it off
+  the actionable state (e.g. `status` leaving `proposed` for `skipped` or
+  `escalated`, or `pr_state` resolving further to `open`, `merged` /
+  `rejected`) — the row reverts to a normal compact row on the next render.
+  No transition, no manual dismiss. Know which field on your domain object
+  actually carries "resolved" — don't assume outcome and lifecycle state
+  live in the same column, and don't gate on a field (like a URL) that is
+  merely a side effect of the state transition rather than the state itself.
+- **Creating the PR from an auto-expanded row must not collapse it into
+  nothing.** The action inside the card mutates the same field the
+  predicate reads (e.g. the server-side claim moving `pr_state` off `''`/
+  `failed`), so the row stops being auto-expanded in the same render the
+  action completes. Only set locally what the client actually knows to be
+  true — the claim step guarantees `pr_state='opening'`, so that is the
+  value to mirror locally, not a terminal state like `open` that a
+  best-effort recording step further downstream has not yet confirmed;
+  follow up with a refetch of the authoritative list so the row settles on
+  whatever the server actually recorded. If the "selected"
+  state that keeps a manually-opened row open is a separate piece of state
+  from the auto-expand predicate, the completing action must explicitly set
+  that selected state too — otherwise the row collapses at the exact moment
+  it should show the result (the new `open PR ↗` link) and the operator's
+  one action looks like it did nothing.
+- **Manual selection still works for collapsed rows**, using the same
+  click-to-toggle behaviour tables already have. Mark the selected row with
+  `.nodes-row--selected` (already defined for the Nodes table) and scroll
+  its detail row into view (`ref` + `scrollIntoView({ behavior: 'smooth',
+  block: 'nearest' })`) — an auto-expanded row needs neither, since it is
+  already in place and already visible.
+- **Collapsed rows follow the Grouped table rows keyboard/role contract**
+  above: `role="button"`, `tabIndex={0}`, Enter/Space activation,
+  `aria-expanded`. An auto-expanded row gets none of those attributes — it
+  isn't a toggle, so it has nothing to expose to assistive tech beyond the
+  card that's already rendered.
+- **`.nodes-row--static`** removes the table's default pointer cursor and
+  hover background from any row that isn't a click target: the auto-expanded
+  compact row, and the `<tr>` hosting any expanded detail card (auto or
+  manual). Use it whenever a `.nodes-table` row exists but isn't
+  interactive.
+- **`.nodes-row--no-border`** removes the row divider from whichever compact
+  row sits directly above its own expanded card — this is independent of
+  `.nodes-row--static`/`.nodes-row--selected`, since a manually-selected row
+  needs the no-border treatment too, not just an auto-expanded one. Never
+  put `border-bottom: none` on the card row itself; the card row's border is
+  what separates one proposal's card from the next proposal's row.
 
 ## Snapshot tiles
 
