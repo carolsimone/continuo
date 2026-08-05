@@ -103,3 +103,7 @@ docs/known-issues/
 # SARIF scan reports, written only when SARIF_DIR is set (CI does; local runs
 # do not). Machine-readable output for code scanning, never source.
 sarif/
+
+# Root-level tooling runs (e.g. npm invoked from the repo root) create this;
+# every real package tree lives in its service directory.
+node_modules/
