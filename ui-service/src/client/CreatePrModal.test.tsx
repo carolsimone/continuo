@@ -29,7 +29,7 @@ const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   node_id: 'svc.schema.my_model',
   error_signature: 'syntax error',
   attempt: 1,
-  status: 'open',
+  status: 'proposed',
   confidence: 'high',
   rationale: 'The fix addresses the syntax issue in the model.',
   proposed_sql_uri: 's3://bucket/proposed.sql',
@@ -160,13 +160,14 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
   it('shows Create PR trigger for operator when source_resolved=true and no pr_url', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
+    // status: proposed + source_resolved + no pr_url is exactly the
+    // actionable predicate, so this proposal's card is already open.
     const proposal = makeProposal({ source_resolved: true, pr_url: '' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
 
     expect(screen.getByRole('button', { name: /Create PR/i })).toBeInTheDocument();
   });
@@ -178,8 +179,7 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
 
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
@@ -199,7 +199,11 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
   it('does NOT show Create PR trigger when pr_url is already set', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
-    const proposal = makeProposal({ source_resolved: true, pr_url: 'https://github.com/org/repo/pull/5' });
+    const proposal = makeProposal({
+      source_resolved: true,
+      pr_url: 'https://github.com/org/repo/pull/5',
+      pr_state: 'open',
+    });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
@@ -210,10 +214,12 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
-  it('after successful PR creation, shows open PR link in the detail card', async () => {
+  it('does NOT show Create PR trigger when pr_state is opening (claim already in flight)', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
-    mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 });
-    const proposal = makeProposal({ source_resolved: true, pr_url: '' });
+    // opening with no pr_url yet: another operator's request is in flight,
+    // or the PR was created but recording it hasn't landed. Either way
+    // BeginPullRequest would 409 against the live claim, so no trigger.
+    const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: 'opening' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
@@ -221,7 +227,59 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     fireEvent.click(screen.getByText('svc.schema.my_model'));
 
-    // Open the modal
+    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
+  });
+
+  it('an auto-expanded actionable proposal shows Create PR for an operator', async () => {
+    mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
+    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '' });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    // Card is already open — no click needed. The node id renders twice
+    // (compact row + card title), so assert presence rather than uniqueness.
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+    expect(screen.getByRole('button', { name: /Create PR/i })).toBeInTheDocument();
+  });
+
+  it('an auto-expanded actionable proposal hides Create PR for a viewer, but still shows the card', async () => {
+    mockUseCurrentUser.mockReturnValue({ userId: 'u2', email: 'v@x.com', name: 'Viewer', role: 'viewer' });
+    const proposal = makeProposal({
+      status: 'proposed',
+      source_resolved: true,
+      pr_url: '',
+      rationale: 'Adds the missing GROUP BY column.',
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
+  });
+
+  it('after successful PR creation, shows the link immediately and settles on the server-reported state via refetch', async () => {
+    mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
+    mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 });
+    // Realistic actionable proposal: the card is already open, no click needed.
+    const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: '' });
+
+    // First call is the initial page load. The second call is the refetch
+    // triggered after creation — held open so the test can assert the
+    // in-between state before letting the authoritative response land.
+    let resolveRefetch!: (proposals: ProposalDTO[]) => void;
+    const refetchPromise = new Promise<ProposalDTO[]>(resolve => { resolveRefetch = resolve; });
+    mockFetchProposals
+      .mockResolvedValueOnce([proposal])
+      .mockReturnValueOnce(refetchPromise);
+
+    renderPanel();
+
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+
+    // Open the modal directly — the row is already expanded.
     fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
 
     // Confirm in modal
@@ -231,10 +289,57 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     expect(modalCreateBtn).toBeInTheDocument();
     fireEvent.click(modalCreateBtn!);
 
-    // Wait for PR link to appear in the detail card
+    // The GitHub PR is confirmed the moment createPullRequest resolves, so
+    // the link renders right away — no further click from the operator.
     await waitFor(() => {
       const link = screen.getByRole('link', { name: /open PR ↗/i });
       expect(link).toHaveAttribute('href', 'https://github.com/org/repo/pull/55');
     });
+    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
+
+    // Recording the PR against the proposal is best-effort server side, so
+    // until the refetch resolves the only state the client can honestly
+    // claim is 'opening' — the one BeginPullRequest already guaranteed.
+    expect(screen.getByText('proposed · opening')).toBeInTheDocument();
+
+    // The refetch lands and reports what the server actually recorded.
+    resolveRefetch([{ ...proposal, pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55, pr_state: 'open' }]);
+
+    await waitFor(() => {
+      expect(screen.getByText('proposed · open')).toBeInTheDocument();
+    });
+  });
+
+  it('when best-effort recording fails, the refetch reports opening rather than a false open', async () => {
+    mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
+    mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56 });
+    const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: '' });
+
+    // The GitHub PR was created but recordPullRequest failed server side,
+    // so the backend is still, honestly, at pr_state='opening'.
+    mockFetchProposals
+      .mockResolvedValueOnce([proposal])
+      .mockResolvedValueOnce([{ ...proposal, pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56, pr_state: 'opening' }]);
+
+    renderPanel();
+
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
+    const modalCreateBtn = screen.getAllByRole('button', { name: /Create PR/i }).find(
+      btn => btn.closest('[role="dialog"]')
+    );
+    fireEvent.click(modalCreateBtn!);
+
+    await waitFor(() => {
+      const link = screen.getByRole('link', { name: /open PR ↗/i });
+      expect(link).toHaveAttribute('href', 'https://github.com/org/repo/pull/56');
+    });
+
+    // The row never claims 'open' — it truthfully stays at 'opening' both
+    // before and after the refetch, since that is what the server reports.
+    await waitFor(() => {
+      expect(screen.getByText('proposed · opening')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('proposed · open')).toBeNull();
   });
 });
