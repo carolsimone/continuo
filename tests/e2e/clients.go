@@ -11,6 +11,7 @@ import (
 	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
+	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -23,22 +24,23 @@ import (
 
 // testClients holds all client connections
 type testClients struct {
-	orchestratorClient  orchestratorv1.OrchestratorQueryClient
-	stateClient         statev1.StateServiceClient
-	redisClient         *goredis.Client
-	neo4jDriver         neo4jdriver.DriverWithContext
-	executorDB          *sqlx.DB
-	orchestratorDB      *sqlx.DB
-	k8sDB               *sqlx.DB
-	stateDB             *sqlx.DB
-	releaseDB           *sqlx.DB
-	dbtDB               *sqlx.DB
-	remediationDB       *sqlx.DB
-	remediationAgentDB  *sqlx.DB
-	s3Client            *s3.Client
-	releaseBase         string
-	logger              *slog.Logger
-	uiBase              string
+	orchestratorClient     orchestratorv1.OrchestratorQueryClient
+	stateClient            statev1.StateServiceClient
+	remediationAgentClient remediationv1.RemediationProposalsClient
+	redisClient            *goredis.Client
+	neo4jDriver            neo4jdriver.DriverWithContext
+	executorDB             *sqlx.DB
+	orchestratorDB         *sqlx.DB
+	k8sDB                  *sqlx.DB
+	stateDB                *sqlx.DB
+	releaseDB              *sqlx.DB
+	dbtDB                  *sqlx.DB
+	remediationDB          *sqlx.DB
+	remediationAgentDB     *sqlx.DB
+	s3Client               *s3.Client
+	releaseBase            string
+	logger                 *slog.Logger
+	uiBase                 string
 }
 
 // setupClients initializes all client connections
@@ -50,6 +52,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	// Get hosts from environment (use service names for docker-compose)
 	orchestratorHost := getEnv("ORCHESTRATOR_HOST", "orchestrator")
 	stateHost := getEnv("STATE_HOST", "state")
+	remediationAgentHost := getEnv("REMEDIATION_AGENT_HOST", "remediation-agent")
 	redisHost := getEnv("REDIS_HOST", "redis")
 	neo4jHost := getEnv("NEO4J_HOST", "neo4j")
 	pgHost := getEnv("POSTGRES_HOST", "postgres")
@@ -68,6 +71,13 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	require.NoError(t, err, "Failed to connect to state service")
+
+	// Setup remediation-agent gRPC client (RemediationProposals, port 50054)
+	remediationAgentConn, err := grpc.NewClient(
+		fmt.Sprintf("%s:50054", remediationAgentHost),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err, "Failed to connect to remediation-agent service")
 
 	// Setup Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
@@ -95,22 +105,23 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	remediationAgentDB := connectPostgres(t, pgHost, "continuo_remediation_agent")
 
 	return &testClients{
-		orchestratorClient: orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
-		stateClient:        statev1.NewStateServiceClient(stateConn),
-		redisClient:        redisClient,
-		neo4jDriver:        neo4jDriver,
-		executorDB:         executorDB,
-		orchestratorDB:     orchestratorDB,
-		k8sDB:              k8sDB,
-		stateDB:            stateDB,
-		releaseDB:          releaseDB,
-		dbtDB:              dbtDB,
-		remediationDB:      remediationDB,
-		remediationAgentDB: remediationAgentDB,
-		s3Client:           newLocalstackS3Client(),
-		releaseBase:        getEnv("RELEASE_CONTROLLER_BASE", "http://release-controller:8088"),
-		logger:             logger,
-		uiBase:             uiBase,
+		orchestratorClient:     orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
+		stateClient:            statev1.NewStateServiceClient(stateConn),
+		remediationAgentClient: remediationv1.NewRemediationProposalsClient(remediationAgentConn),
+		redisClient:            redisClient,
+		neo4jDriver:            neo4jDriver,
+		executorDB:             executorDB,
+		orchestratorDB:         orchestratorDB,
+		k8sDB:                  k8sDB,
+		stateDB:                stateDB,
+		releaseDB:              releaseDB,
+		dbtDB:                  dbtDB,
+		remediationDB:          remediationDB,
+		remediationAgentDB:     remediationAgentDB,
+		s3Client:               newLocalstackS3Client(),
+		releaseBase:            getEnv("RELEASE_CONTROLLER_BASE", "http://release-controller:8088"),
+		logger:                 logger,
+		uiBase:                 uiBase,
 	}
 }
 

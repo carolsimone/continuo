@@ -14,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/remediation-agent/service/proposals"
+	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
@@ -309,11 +309,15 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 // "create-succeeded/record-failed" scenario the opening sweep exists to
 // recover: a proposal claimed for PR creation (pr_state='opening') whose PR
 // already exists on GitHub for its deterministic branch, but was never
-// recorded onto the row. It puts a proposal directly into that exact end
-// state — bypassing the full validation-rejection-to-remediation pipeline
-// covered by TestE2E_RemediationAgent_ProposesFixForRejection above, since
-// this test isolates the reconciler's opening sweep rather than that
-// pipeline — then verifies the sweep finds the PR via stub-github's
+// recorded onto the row. It seeds a proposal row directly (bypassing the full
+// validation-rejection-to-remediation pipeline covered by
+// TestE2E_RemediationAgent_ProposesFixForRejection above, since this test
+// isolates the reconciler's opening sweep rather than that pipeline), claims
+// it via the real BeginPullRequest RPC, then creates the PR directly on
+// stub-github for the branch BeginPullRequest's response reports — reading
+// the persisted branch name from the system rather than re-deriving the
+// naming rule, so a change to that rule can't silently keep this test
+// passing. It then verifies the sweep finds the PR via stub-github's
 // GET /repos/{repo}/pulls?head=... (tests/e2e/stub-github/main.go's
 // listPulls) and records it, well inside the 15s
 // REMEDIATION_PR_OPENING_GRACE_PERIOD this compose stack sets, proving
@@ -354,19 +358,23 @@ func TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR(t *testing.T) {
 		releaseID, nodeID, attempt, repo))
 	t.Logf("seeded proposal id=%s release_id=%s node_id=%s", proposalID, releaseID, nodeID)
 
-	// 2. Simulate BeginPR's own effect directly (claim the row for PR
-	//    creation), the same transition ui-service's BeginPullRequest call
-	//    performs, without going through ui-service itself.
-	_, err := clients.remediationAgentDB.ExecContext(ctx,
-		`UPDATE proposal SET pr_state='opening', pr_claimed_at=NOW() WHERE id=$1`, proposalID)
-	require.NoError(t, err, "claim the proposal for PR creation")
+	// 2. Claim the row for PR creation via the real BeginPullRequest RPC — the
+	//    same public gRPC call ui-service's BeginPullRequest step makes. This
+	//    performs the actual pr_state ''->'opening' transition and
+	//    pr_claimed_at stamp, and returns the branch name the system actually
+	//    computed and is about to look for, so the test reads it from the
+	//    system rather than re-deriving the naming rule itself.
+	claim, err := clients.remediationAgentClient.BeginPullRequest(ctx,
+		&remediationv1.BeginPullRequestRequest{Id: proposalID})
+	require.NoError(t, err, "BeginPullRequest")
+	branch := claim.GetBranch()
+	require.NotEmpty(t, branch, "BeginPullRequest response must carry the claimed branch name")
+	t.Logf("claimed proposal via BeginPullRequest: branch=%s", branch)
 
-	// 3. Create the PR directly on stub-github for the SAME deterministic
-	//    branch the reconciler recomputes (proposals.BuildBranch) — the
+	// 3. Create the PR directly on stub-github for that SAME branch — the
 	//    "create succeeded" half of the scenario. The e2e suite runs inside
 	//    the orchestrator container, so stub-github is reached by its compose
 	//    service name, same as the remediation-agent's own GITHUB_BASE_URL.
-	branch := proposals.BuildBranch(releaseID, nodeID, attempt)
 	prBody, err := json.Marshal(map[string]string{
 		"title": "e2e opening sweep recovery", "head": branch, "base": "main",
 	})

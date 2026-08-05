@@ -244,7 +244,9 @@ func TestListPulls_FiltersByState(t *testing.T) {
 	// Still open: the default "open" state finds it.
 	rec = httptest.NewRecorder()
 	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls?head=stub-state", nil))
-	var openMatches []struct{ Number int `json:"number"` }
+	var openMatches []struct {
+		Number int `json:"number"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &openMatches); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +274,9 @@ func TestListPulls_FiltersByState(t *testing.T) {
 	// "state=all" still finds the now-closed PR.
 	rec = httptest.NewRecorder()
 	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls?head=stub-state&state=all", nil))
-	var allMatches []struct{ Number int `json:"number"` }
+	var allMatches []struct {
+		Number int `json:"number"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &allMatches); err != nil {
 		t.Fatal(err)
 	}
