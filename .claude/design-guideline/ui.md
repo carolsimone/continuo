@@ -456,9 +456,16 @@ reference implementation:
 ```jsx
 // isActionable is the single source of truth for "this item still needs a
 // human decision." Both the row's auto-expansion and the card's primary
-// action button read it — never duplicate the condition inline.
+// action button read it — never duplicate the condition inline. Express
+// the predicate in terms of the server's own precondition for the action
+// (here, the same '' / 'failed' claim-state check BeginPullRequest's
+// compare-and-set enforces) rather than inferring it from a side effect
+// like an unset URL field — a field that goes from empty to set on the
+// happy path might also stay empty while the item is claimed but not yet
+// resolved, which would wrongly read as still-actionable.
 function isActionable(p) {
-  return p.status === 'proposed' && p.source_resolved && !p.pr_url;
+  return p.status === 'proposed' && p.source_resolved
+    && (p.pr_state === '' || p.pr_state === 'failed');
 }
 
 const showCard = isActionable(p) || isSelected;
@@ -522,18 +529,26 @@ Rules:
   expressions, even if they look identical today — that's exactly the setup
   that lets them silently diverge later. Extract `isActionable` (or
   equivalent) and call it from both places.
-- **Collapse on resolution.** The moment `isActionable` goes false — a PR
-  is opened (`pr_url` set), or the item's own lifecycle field moves it off
+- **Collapse on resolution.** The moment `isActionable` goes false — the
+  claim moves out of its retryable state (e.g. `pr_state` leaving `''` /
+  `failed` for `opening`), or the item's own lifecycle field moves it off
   the actionable state (e.g. `status` leaving `proposed` for `skipped` or
-  `escalated`, or a separate `pr_state` field resolving to `merged` /
+  `escalated`, or `pr_state` resolving further to `open`, `merged` /
   `rejected`) — the row reverts to a normal compact row on the next render.
   No transition, no manual dismiss. Know which field on your domain object
   actually carries "resolved" — don't assume outcome and lifecycle state
-  live in the same column.
+  live in the same column, and don't gate on a field (like a URL) that is
+  merely a side effect of the state transition rather than the state itself.
 - **Creating the PR from an auto-expanded row must not collapse it into
   nothing.** The action inside the card mutates the same field the
-  predicate reads (e.g. setting `pr_url`), so the row stops being
-  auto-expanded in the same render the action completes. If the "selected"
+  predicate reads (e.g. the server-side claim moving `pr_state` off `''`/
+  `failed`), so the row stops being auto-expanded in the same render the
+  action completes. Only set locally what the client actually knows to be
+  true — the claim step guarantees `pr_state='opening'`, so that is the
+  value to mirror locally, not a terminal state like `open` that a
+  best-effort recording step further downstream has not yet confirmed;
+  follow up with a refetch of the authoritative list so the row settles on
+  whatever the server actually recorded. If the "selected"
   state that keeps a manually-opened row open is a separate piece of state
   from the auto-expand predicate, the completing action must explicitly set
   that selected state too — otherwise the row collapses at the exact moment

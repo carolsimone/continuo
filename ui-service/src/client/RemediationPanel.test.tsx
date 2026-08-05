@@ -120,7 +120,7 @@ describe('RemediationPanel', () => {
   });
 
   it('shows open PR link when proposal has a pr_url', async () => {
-    const proposal = makeProposal({ pr_url: 'https://github.com/org/repo/pull/42', pr_number: 42 });
+    const proposal = makeProposal({ pr_url: 'https://github.com/org/repo/pull/42', pr_number: 42, pr_state: 'open' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
@@ -195,9 +195,10 @@ describe('RemediationPanel', () => {
 
   it.each([
     // status stays 'proposed' for the PR-lifecycle cases below: remediation-agent
-    // never mutates status after insert, so a merged/rejected/already-opened PR
-    // is recorded on pr_url/pr_state, not on status.
-    ['a PR already opened', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9' }],
+    // never mutates status after insert, so a merged/rejected/already-opened/
+    // in-flight PR is recorded on pr_state, not on status.
+    ['a claim already in flight', { status: 'proposed', source_resolved: true, pr_url: '', pr_state: 'opening' }],
+    ['a PR already opened', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'open' }],
     ['merged', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'merged' }],
     ['rejected', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'rejected' }],
     // skipped/escalated are real classifier outcomes distinct from 'proposed'.
@@ -217,6 +218,48 @@ describe('RemediationPanel', () => {
 
     fireEvent.click(screen.getByText('svc.schema.my_model'));
     expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+  });
+
+  it.each(['', 'failed'])(
+    'auto-expands and shows Create PR when pr_state is %j (retryable claim state)',
+    async (pr_state) => {
+      const proposal = makeProposal({
+        status: 'proposed',
+        source_resolved: true,
+        pr_url: '',
+        pr_state,
+        rationale: 'Adds the missing GROUP BY column.',
+      });
+      mockFetchProposals.mockResolvedValue([proposal]);
+
+      renderPanel();
+
+      await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+      expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+    }
+  );
+
+  it('does not auto-expand and offers no Create PR when pr_state is opening', async () => {
+    const proposal = makeProposal({
+      status: 'proposed',
+      source_resolved: true,
+      pr_url: '',
+      pr_state: 'opening',
+      rationale: 'Adds the missing GROUP BY column.',
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    // No auto-expansion: the rationale is not visible without a click.
+    expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
+
+    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+    // Even once manually opened, the claim is already in flight — no second
+    // Create PR trigger, which would just 409 against the live claim.
+    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
   it('opens a collapsed row on Enter and closes it on Space', async () => {

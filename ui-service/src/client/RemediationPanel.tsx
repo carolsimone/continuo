@@ -53,11 +53,15 @@ function prStateBadge(prState: string) {
 }
 
 // isActionable is the predicate for a proposal that still needs a human
-// decision: it has a source to fix, no PR has been opened for it yet, and
-// nothing has resolved it. Such a proposal renders its detail card expanded
-// in place instead of waiting for a click.
+// decision: it has a source to fix, and its pr_state is a retryable claim
+// state — the same precondition the server's BeginPullRequest CAS enforces
+// ('' or 'failed'). A proposal whose pr_state is 'opening' already has an
+// in-flight or previously-recorded claim — offering another Create PR
+// would just 409. Such a proposal renders its detail card expanded in
+// place instead of waiting for a click.
 function isActionable(p: ProposalDTO): boolean {
-  return p.status === 'proposed' && p.source_resolved && !p.pr_url;
+  return p.status === 'proposed' && p.source_resolved
+    && (p.pr_state === '' || p.pr_state === 'failed');
 }
 
 function ProposalDetailCard({
@@ -131,14 +135,19 @@ export default function RemediationPanel() {
   const [createPrProposalId, setCreatePrProposalId] = useState<string | null>(null);
   const detailRef = useRef<HTMLTableRowElement | null>(null);
 
-  useEffect(() => {
+  // loadProposals is the single path that populates the list from the
+  // server, used both on mount and to refresh authoritative state after an
+  // action (e.g. creating a PR) — never a bespoke fetch.
+  const loadProposals = () => {
     fetchProposals()
       .then(data => {
         setProposals(data);
         setError(null);
       })
       .catch(e => setError(e.message));
-  }, []);
+  };
+
+  useEffect(loadProposals, []);
 
   // Scroll a manually-opened detail card into view — an auto-expanded card
   // needs no scroll, it is already in place at its row.
@@ -246,17 +255,22 @@ export default function RemediationPanel() {
           proposal={createPrProposal}
           onClose={() => setCreatePrProposalId(null)}
           onCreated={(prUrl) => {
-            // The server just recorded pr_state='open' alongside the url
-            // (RecordPR); mirror it locally so the compact row's Status cell
-            // agrees with the card right below it instead of still reading
-            // the pre-creation status until the next refetch.
-            const updated = { ...createPrProposal, pr_url: prUrl, pr_state: 'open' };
+            // The GitHub PR itself is confirmed — show the link right away.
+            // Recording the PR against the proposal is best-effort server
+            // side, so 'open' is not guaranteed yet; 'opening' is the one
+            // state the claim step already guarantees, and it keeps
+            // isActionable false so this row doesn't offer another Create
+            // PR while the true state loads. A refetch right after replaces
+            // this with whatever the server actually recorded.
+            const updated = { ...createPrProposal, pr_url: prUrl, pr_state: 'opening' };
             setProposals(prev => prev.map(p => (p.id === updated.id ? updated : p)));
-            // The proposal just resolved (isActionable goes false), so it no
-            // longer auto-expands. Select it manually so its row stays open
-            // and shows the new "open PR ↗" link instead of collapsing.
+            // The proposal just left the retryable-claim state (isActionable
+            // goes false), so it no longer auto-expands. Select it manually
+            // so its row stays open and shows the new "open PR ↗" link
+            // instead of collapsing.
             setSelected(updated);
             setCreatePrProposalId(null);
+            loadProposals();
           }}
         />
       )}

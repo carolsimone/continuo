@@ -199,7 +199,27 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
   it('does NOT show Create PR trigger when pr_url is already set', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
-    const proposal = makeProposal({ source_resolved: true, pr_url: 'https://github.com/org/repo/pull/5' });
+    const proposal = makeProposal({
+      source_resolved: true,
+      pr_url: 'https://github.com/org/repo/pull/5',
+      pr_state: 'open',
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    fireEvent.click(screen.getByText('svc.schema.my_model'));
+
+    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
+  });
+
+  it('does NOT show Create PR trigger when pr_state is opening (claim already in flight)', async () => {
+    mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
+    // opening with no pr_url yet: another operator's request is in flight,
+    // or the PR was created but recording it hasn't landed. Either way
+    // BeginPullRequest would 409 against the live claim, so no trigger.
+    const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: 'opening' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
@@ -240,12 +260,20 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
-  it('after successful PR creation, shows open PR link in the detail card without any further click', async () => {
+  it('after successful PR creation, shows the link immediately and settles on the server-reported state via refetch', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
     mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 });
     // Realistic actionable proposal: the card is already open, no click needed.
-    const proposal = makeProposal({ source_resolved: true, pr_url: '' });
-    mockFetchProposals.mockResolvedValue([proposal]);
+    const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: '' });
+
+    // First call is the initial page load. The second call is the refetch
+    // triggered after creation — held open so the test can assert the
+    // in-between state before letting the authoritative response land.
+    let resolveRefetch!: (proposals: ProposalDTO[]) => void;
+    const refetchPromise = new Promise<ProposalDTO[]>(resolve => { resolveRefetch = resolve; });
+    mockFetchProposals
+      .mockResolvedValueOnce([proposal])
+      .mockReturnValueOnce(refetchPromise);
 
     renderPanel();
 
@@ -261,18 +289,57 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     expect(modalCreateBtn).toBeInTheDocument();
     fireEvent.click(modalCreateBtn!);
 
-    // Creating the PR resolves the proposal, so it stops auto-expanding —
-    // the row must stay open on its own and show the link with no further
-    // click from the operator.
+    // The GitHub PR is confirmed the moment createPullRequest resolves, so
+    // the link renders right away — no further click from the operator.
     await waitFor(() => {
       const link = screen.getByRole('link', { name: /open PR ↗/i });
       expect(link).toHaveAttribute('href', 'https://github.com/org/repo/pull/55');
     });
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
 
-    // The compact row's Status cell must agree with the card right below
-    // it: pr_state moves to 'open' locally, the same value the server just
-    // recorded, instead of staying blank until the next refetch.
-    expect(screen.getByText('proposed · open')).toBeInTheDocument();
+    // Recording the PR against the proposal is best-effort server side, so
+    // until the refetch resolves the only state the client can honestly
+    // claim is 'opening' — the one BeginPullRequest already guaranteed.
+    expect(screen.getByText('proposed · opening')).toBeInTheDocument();
+
+    // The refetch lands and reports what the server actually recorded.
+    resolveRefetch([{ ...proposal, pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55, pr_state: 'open' }]);
+
+    await waitFor(() => {
+      expect(screen.getByText('proposed · open')).toBeInTheDocument();
+    });
+  });
+
+  it('when best-effort recording fails, the refetch reports opening rather than a false open', async () => {
+    mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
+    mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56 });
+    const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: '' });
+
+    // The GitHub PR was created but recordPullRequest failed server side,
+    // so the backend is still, honestly, at pr_state='opening'.
+    mockFetchProposals
+      .mockResolvedValueOnce([proposal])
+      .mockResolvedValueOnce([{ ...proposal, pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56, pr_state: 'opening' }]);
+
+    renderPanel();
+
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
+    const modalCreateBtn = screen.getAllByRole('button', { name: /Create PR/i }).find(
+      btn => btn.closest('[role="dialog"]')
+    );
+    fireEvent.click(modalCreateBtn!);
+
+    await waitFor(() => {
+      const link = screen.getByRole('link', { name: /open PR ↗/i });
+      expect(link).toHaveAttribute('href', 'https://github.com/org/repo/pull/56');
+    });
+
+    // The row never claims 'open' — it truthfully stays at 'opening' both
+    // before and after the refetch, since that is what the server reports.
+    await waitFor(() => {
+      expect(screen.getByText('proposed · opening')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('proposed · open')).toBeNull();
   });
 });
