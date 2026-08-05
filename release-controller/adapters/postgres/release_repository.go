@@ -300,7 +300,8 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 // and are not in the keepReleaseIDs set. An empty keepReleaseIDs slice means
 // no extra releases are preserved. Returns the number of rows deleted.
 // After deleting each row, it also attempts to remove the corresponding
-// candidate-SQL objects from S3 under the prefix candidate-sql/<release_id>/.
+// candidate-SQL objects from S3 under candidate-sql/<release_id>/ and the
+// release's code-bundle document under code-bundles/<release_id>/.
 // S3 deletion is soft-fail: if it errors, the error is logged and the prune
 // continues. A bucket lifecycle rule is the backstop for any objects left behind.
 //
@@ -339,6 +340,7 @@ func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff tim
 			// Soft-fail: the S3 deleter logs its own failures; a cleanup error must
 			// not abort the prune (the bucket lifecycle rule reclaims anything left).
 			_ = r.deleter.DeletePrefix(ctx, "candidate-sql/"+id+"/")
+			_ = r.deleter.DeletePrefix(ctx, "code-bundles/"+id+"/")
 		}
 	}
 

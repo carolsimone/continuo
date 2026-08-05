@@ -196,6 +196,8 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		"commit_sha":       r.CommitSHA(),
 		"promoted_at":      now.UTC(),
 		"candidate_schema": CandidateSchemaFor(releaseID),
+		"code_bundle_uri":  r.CodeBundleURI(),
+		"bootstrap":        r.IsBootstrap(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

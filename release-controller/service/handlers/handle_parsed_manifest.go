@@ -19,11 +19,12 @@ import (
 // HandleParsedManifestInput carries the result of the manifest-controller
 // parsing a candidate release. Status must be "ok" or "failed".
 type HandleParsedManifestInput struct {
-	ReleaseID   string           `json:"release_id"`
-	Status      string           `json:"status"` // "ok" or "failed"
-	Topology    release.Topology `json:"topology,omitempty"`
-	ErrorClass  string           `json:"error_class,omitempty"`
-	ErrorDetail string           `json:"error_detail,omitempty"`
+	ReleaseID     string           `json:"release_id"`
+	Status        string           `json:"status"` // "ok" or "failed"
+	Topology      release.Topology `json:"topology,omitempty"`
+	CodeBundleURI string           `json:"code_bundle_uri,omitempty"`
+	ErrorClass    string           `json:"error_class,omitempty"`
+	ErrorDetail   string           `json:"error_detail,omitempty"`
 }
 
 // HandleParsedManifest handles the manifest parse result from manifest-controller.
@@ -100,6 +101,7 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 
 func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
 	topo := joinImageTags(in.Topology, r.ImageTags())
+	r.SetCodeBundleURI(in.CodeBundleURI)
 
 	// A bootstrap release skips validation entirely: it seeds current_prod and
 	// swaps topology directly. This is the one-time cutover (or a trusted

@@ -120,6 +120,54 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 	assert.Equal(t, "validation", payload["mode"])
 }
 
+// TestHandleParsedManifest_OK_StoresCodeBundleURI verifies that handleParseOK
+// persists CodeBundleURI (published by manifest-controller on
+// manifest.loaded.candidate:v1) onto the saved release on the normal
+// (non-bootstrap) validating path, so it survives to be carried on
+// release.promoted:v1 once validation passes.
+func TestHandleParsedManifest_OK_StoresCodeBundleURI(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:     "rA",
+		Status:        "ok",
+		Topology:      topo,
+		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
+	}))
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusValidating, r.Status())
+	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", r.CodeBundleURI())
+}
+
+// TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI verifies that
+// handleParseOK persists CodeBundleURI on the bootstrap path (promoteBootstrap),
+// which skips validation entirely but still goes through the same
+// r.SetCodeBundleURI call right after joinImageTags.
+func TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI(t *testing.T) {
+	deps, store := seedToParsingBootstrap(t, "rBoot", map[string]string{"svc-a": "sha-a"})
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:     "rBoot",
+		Status:        "ok",
+		Topology:      topo,
+		CodeBundleURI: "s3://continuo/code-bundles/rBoot/bundle.json",
+	}))
+
+	r, err := store.GetRelease("rBoot")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusPromoted, r.Status())
+	assert.Equal(t, "s3://continuo/code-bundles/rBoot/bundle.json", r.CodeBundleURI())
+}
+
 func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
@@ -332,9 +380,10 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 		{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:     "rA",
+		Status:        "ok",
+		Topology:      topo,
+		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
 	}))
 
 	r, err := store.GetRelease("rA")
@@ -347,6 +396,12 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 	}
 	last := entries[len(entries)-1]
 	assert.Equal(t, streams.ReleasePromotedV1, last.StreamName, "promotes directly")
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(last.Payload, &payload))
+	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", payload["code_bundle_uri"],
+		"empty-diff promote-direct path must carry code_bundle_uri")
+	assert.Equal(t, false, payload["bootstrap"], "non-bootstrap release must carry bootstrap=false")
 
 	cp := store.GetCurrentProd()
 	assert.Equal(t, "rA", cp.ReleaseID(), "current prod advanced to this release")
@@ -693,9 +748,10 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 		{UniqueID: "b", ServiceName: "svc-b", UpstreamUniqueIDs: []string{"a"}}, // cross-service upstream — bootstrap bypasses all guards
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rBoot",
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:     "rBoot",
+		Status:        "ok",
+		Topology:      topo,
+		CodeBundleURI: "s3://continuo/code-bundles/rBoot/bundle.json",
 	}))
 
 	r, err := store.GetRelease("rBoot")
@@ -713,6 +769,12 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 3)
 	assert.Equal(t, streams.ReleasePromotedV1, entries[2].StreamName)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
+	assert.Equal(t, "s3://continuo/code-bundles/rBoot/bundle.json", payload["code_bundle_uri"],
+		"bootstrap promote path must carry code_bundle_uri")
+	assert.Equal(t, true, payload["bootstrap"], "bootstrap release must carry bootstrap=true")
 
 	// Assert the changed service's service_prod row carries the correct values.
 	// Changed service is the lexically-first service ("svc-a", tag "sha-a").

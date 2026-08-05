@@ -494,8 +494,8 @@ func TestReleaseRepository_RoundTripsCandidateSQLURI(t *testing.T) {
 
 // TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes
 // verifies that DeleteResolvedBefore calls the CandidateSQLDeleter with the
-// correct prefix for each pruned release, and that a deleter error does not
-// abort the prune (soft-fail).
+// correct candidate-sql/<id>/ AND code-bundles/<id>/ prefixes for each pruned
+// release, and that a deleter error does not abort the prune (soft-fail).
 func TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
@@ -526,7 +526,9 @@ func TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes(t *t
 		assert.Equal(t, []string{
 			"candidate-sql/prune-a/",
 			"candidate-sql/prune-b/",
-		}, got, "deleter must be called once per pruned release with the correct prefix")
+			"code-bundles/prune-a/",
+			"code-bundles/prune-b/",
+		}, got, "deleter must be called with both the candidate-sql and code-bundles prefix for each pruned release")
 	})
 
 	// Reseed because the previous sub-test deleted prune-a and prune-b.
@@ -540,8 +542,9 @@ func TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes(t *t
 		require.NoError(t, err, "prune must succeed even when S3 deletion fails")
 		assert.Equal(t, 2, n, "both releases must be counted as pruned despite S3 error")
 
-		// Both prefixes were attempted despite the first failing.
+		// Both the candidate-sql and code-bundles prefix were attempted for each
+		// pruned release despite every call failing.
 		got := fd.prefixes()
-		assert.Len(t, got, 2, "deleter must be attempted for every pruned release")
+		assert.Len(t, got, 4, "deleter must be attempted for both prefixes of every pruned release")
 	})
 }
