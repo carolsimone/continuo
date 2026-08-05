@@ -64,7 +64,9 @@ class CandidateManifestHandler:
         all_nodes = []
         for mf in manifests:
             try:
-                nodes = parse_manifest(mf.path, mf.version, mf.image_tag)
+                # The shared-code map (macro/library source-by-unit-id) is wired
+                # into the candidate topology separately; discarded here for now.
+                nodes, _shared_code = parse_manifest(mf.path, mf.version, mf.image_tag)
             except (json.JSONDecodeError, KeyError, IndexError) as exc:
                 # Invalid JSON, a missing top-level `nodes` key, or a node with a
                 # malformed dbt shape (missing schema/fqn, empty fqn) are all
