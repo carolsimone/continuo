@@ -145,6 +145,22 @@ func TestRelease_RehydrateRoundTripsProvenance(t *testing.T) {
 	assert.Equal(t, "deadbeefcafe", r.CommitSHA())
 }
 
+func TestRelease_SetCodeBundleURIRoundTrips(t *testing.T) {
+	r := release.New("sha-abc", "svc1", "sha-abc", false, "acme/demo", "deadbeef", time.Unix(0, 0))
+	assert.Equal(t, "", r.CodeBundleURI(), "unset code_bundle_uri defaults to empty")
+	r.SetCodeBundleURI("s3://b/code-bundles/r/bundle.json")
+	assert.Equal(t, "s3://b/code-bundles/r/bundle.json", r.CodeBundleURI())
+}
+
+func TestRelease_RehydrateRoundTripsCodeBundleURI(t *testing.T) {
+	r := release.Rehydrate(release.RehydrateInput{
+		ID:            "r1",
+		Status:        release.StatusValidating,
+		CodeBundleURI: "s3://b/code-bundles/r/bundle.json",
+	})
+	assert.Equal(t, "s3://b/code-bundles/r/bundle.json", r.CodeBundleURI())
+}
+
 func TestNode_CandidateSQLURIRoundTrips(t *testing.T) {
 	// Node.CandidateSQLURI must round-trip via JSON under the key "candidate_sql_uri".
 	n := release.Node{

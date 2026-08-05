@@ -423,6 +423,7 @@ func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
 	ctx := context.Background()
 
 	r := release.New("rPROV", "svc-a", "img-1", false, "acme/demo", "deadbeefcafe1234", time.Unix(100, 0).UTC())
+	r.SetCodeBundleURI("s3://b/code-bundles/rPROV/bundle.json")
 	require.NoError(t, repo.Save(ctx, r))
 
 	got, err := repo.Get(ctx, "rPROV")
@@ -430,6 +431,32 @@ func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "acme/demo", got.Repo())
 	assert.Equal(t, "deadbeefcafe1234", got.CommitSHA())
+	assert.Equal(t, "s3://b/code-bundles/rPROV/bundle.json", got.CodeBundleURI())
+}
+
+// TestReleaseRepository_CodeBundleURIUpdatesAfterCreation verifies that
+// code_bundle_uri set via SetCodeBundleURI after the initial Save (the
+// SetAssembledImageTags-style mutable path — the URI is unknown at receive
+// time and only known once the parse result arrives) is persisted on a
+// second Save, unlike the truly immutable repo/commit_sha provenance fields.
+func TestReleaseRepository_CodeBundleURIUpdatesAfterCreation(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db, nil)
+	ctx := context.Background()
+
+	r := release.New("rCBU", "svc-a", "img-1", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rCBU")
+	require.NoError(t, err)
+	assert.Equal(t, "", got.CodeBundleURI(), "code_bundle_uri defaults to empty until the parse result arrives")
+
+	got.SetCodeBundleURI("s3://b/code-bundles/rCBU/bundle.json")
+	require.NoError(t, repo.Save(ctx, got))
+
+	reloaded, err := repo.Get(ctx, "rCBU")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://b/code-bundles/rCBU/bundle.json", reloaded.CodeBundleURI())
 }
 
 func TestReleaseRepository_RoundTripsCandidateSQLURI(t *testing.T) {
