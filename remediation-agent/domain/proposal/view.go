@@ -79,9 +79,16 @@ type OpenPR struct {
 // whose fate the reconciler's opening sweep resolves: either GitHub already
 // has the pull request (the claim's recording step failed after creation
 // succeeded), or the claim is stale and safe to release back to 'failed' for
-// retry. ClaimedAt is the wall-clock moment the claim was taken (pr_claimed_at);
-// it is nil for a row that predates the pr_claimed_at column and was not
-// backfilled a claim time by the migration.
+// retry. ClaimedAt is the wall-clock moment the claim was taken (pr_claimed_at).
+// A database trigger stamps it the instant a row's pr_state transitions to
+// 'opening' if it is still NULL at that point, so every claim — including one
+// taken by a proposal-service binary that predates the column and never sets
+// it — carries a value; ClaimedAt is nil only if that trigger did not run
+// (schema corruption or a manual edit), and the sweep treats a nil the same
+// way regardless of cause: an unmeasurable claim is never failed. CreatedAt is
+// the proposal row's own creation time (immutable across pr_state
+// transitions), used as the primary key of the sweep's pagination ordering —
+// see repository.OpeningCursor.
 type OpeningPR struct {
 	ID        string
 	Repo      string
@@ -89,4 +96,5 @@ type OpeningPR struct {
 	NodeID    string
 	Attempt   int
 	ClaimedAt *time.Time
+	CreatedAt time.Time
 }

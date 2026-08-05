@@ -30,6 +30,19 @@ type ProposalFilter struct {
 	Limit   int
 }
 
+// OpeningCursor is the keyset position for paginating stuck 'opening' claims
+// oldest-first (created_at, id), mirroring release-controller's ListCursor.
+// It lets ListStuckOpening resume after the last row a previous page
+// returned instead of always re-reading the same oldest prefix: the
+// reconciler's opening sweep carries the cursor its previous pass returned
+// into the next call, so a persistently unresolvable row (a standing GitHub
+// error, for instance) never keeps every row behind it out of every pass. A
+// nil cursor requests the first page.
+type OpeningCursor struct {
+	CreatedAt time.Time
+	ID        string
+}
+
 // ProposalRepository persists fix-proposal attempts and answers the attempt-cap
 // query. The repository is bound to its transaction at construction by the
 // UnitOfWork, so methods take only ctx + domain types.
@@ -76,19 +89,39 @@ type ProposalRepository interface {
 	// FailPR resets a stuck 'opening' claim back to 'failed' so the action can
 	// be retried, and clears pr_claimed_at back to NULL so a later re-claim
 	// ages from its own claim time. It is a no-op when pr_state is not 'opening'.
+	// It is unconditional on the claim's identity: the ui-service PR-creation
+	// route calls it immediately after its own BeginPR in the same request, so
+	// there is no gap in which the claim it just took could have been released
+	// and re-claimed by someone else. FailStuckOpeningPR is the CAS variant for
+	// a caller (the reconciler's opening sweep) that acts on a claim it read
+	// earlier and must not blindly overwrite a fresher one.
 	FailPR(ctx context.Context, id string) error
+
+	// FailStuckOpeningPR resets a stuck 'opening' claim back to 'failed',
+	// clearing pr_claimed_at, but only when the row's current pr_claimed_at
+	// still equals observedClaimedAt — the compare-and-set guard the
+	// reconciler's opening sweep uses so it only ever fails the exact claim it
+	// listed earlier in the same pass, never a fresher one taken in between by
+	// a re-claim. hit reports whether the CAS fired; false covers both "no
+	// longer opening" and "re-claimed with a different pr_claimed_at" — neither
+	// is an error, and in both cases the call has correctly left the row alone.
+	FailStuckOpeningPR(ctx context.Context, id string, observedClaimedAt time.Time) (hit bool, err error)
 
 	// ListOpenPullRequests returns proposals whose PR awaits a terminal outcome
 	// (pr_state='open'), oldest-opened first. limit<=0 means no limit.
 	ListOpenPullRequests(ctx context.Context, limit int) ([]proposal.OpenPR, error)
 
-	// ListStuckOpening returns proposals claimed for PR creation but not yet
-	// recorded (pr_state='opening'), oldest-created first, so the reconciler's
-	// opening sweep resolves the longest-standing claims before newer ones.
-	// Each row carries its ClaimedAt (pr_claimed_at), which may be nil for a
-	// row that predates the pr_claimed_at column and was never backfilled.
-	// limit<=0 means no limit.
-	ListStuckOpening(ctx context.Context, limit int) ([]proposal.OpeningPR, error)
+	// ListStuckOpening returns up to limit proposals claimed for PR creation
+	// but not yet recorded (pr_state='opening'), ordered oldest-created first
+	// (created_at, id), resuming strictly after cursor (nil for the first
+	// page). next is the cursor of the last row in this page, non-nil only
+	// when more rows exist beyond it — nil signals "reached the end of the
+	// 'opening' set", which the reconciler's opening sweep uses to wrap back to
+	// the first page so a full rotation through every stuck row repeats
+	// indefinitely rather than starving rows past the batch limit. limit<=0
+	// defaults to 50. Each row carries its ClaimedAt (pr_claimed_at) — see
+	// proposal.OpeningPR for why it is essentially always non-nil.
+	ListStuckOpening(ctx context.Context, limit int, cursor *OpeningCursor) (items []proposal.OpeningPR, next *OpeningCursor, err error)
 
 	// RecordPROutcome atomically transitions pr_state 'open' -> outcome and sets
 	// pr_closed_at. Returns true when the transition fired; false when the row is

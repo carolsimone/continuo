@@ -320,6 +320,27 @@ func (r *ProposalRepository) FailPR(ctx context.Context, id string) error {
 	return nil
 }
 
+// FailStuckOpeningPR resets a stuck 'opening' claim back to 'failed' and
+// clears pr_claimed_at, but only when the row's current pr_claimed_at still
+// equals observedClaimedAt: the WHERE clause is the compare-and-set guard, so
+// a claim released and re-claimed since the caller observed it (a different
+// pr_claimed_at, or a pr_state that already moved on) leaves 0 rows affected
+// rather than clobbering the fresh claim.
+func (r *ProposalRepository) FailStuckOpeningPR(ctx context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal SET pr_state='failed', pr_claimed_at=NULL
+		 WHERE id=$1 AND pr_state='opening' AND pr_claimed_at=$2`,
+		id, observedClaimedAt)
+	if err != nil {
+		return false, fmt.Errorf("fail stuck opening pr: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fail stuck opening pr: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
 // openPRRow is the persistence DTO for the ListOpenPullRequests projection.
 type openPRRow struct {
 	ID        string `db:"id"`
@@ -369,26 +390,42 @@ type openingRow struct {
 	NodeID    string     `db:"node_id"`
 	Attempt   int        `db:"attempt"`
 	ClaimedAt *time.Time `db:"pr_claimed_at"`
+	CreatedAt time.Time  `db:"created_at"`
 }
 
-// ListStuckOpening returns proposals with pr_state='opening', oldest-created
-// first, so the reconciler's opening sweep processes the longest-standing
-// claims first within a batch. Each row carries its pr_claimed_at (the
-// wall-clock moment BeginPR claimed it), which the reconciler compares
-// against the grace period to decide whether the claim has aged out — see
-// Reconciler.sweepOpening.
-func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int) ([]proposal.OpeningPR, error) {
-	q := `SELECT id, repo, release_id, node_id, attempt, pr_claimed_at
-	      FROM proposal WHERE pr_state = 'opening' ORDER BY created_at ASC`
-	args := []any{}
-	if limit > 0 {
-		args = append(args, limit)
-		q += " LIMIT $1"
+// ListStuckOpening returns up to limit proposals with pr_state='opening',
+// ordered oldest-created first (created_at, id) and resuming strictly after
+// cursor (nil for the first page). It over-fetches by one row to tell
+// "more rows exist" apart from "this was the last page": when limit+1 rows
+// come back, the (limit+1)th is dropped from the result and becomes next,
+// the cursor of the row now at the end of the page; otherwise next is nil.
+func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cursor *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
+	if limit <= 0 {
+		limit = 50
 	}
+	q := `SELECT id, repo, release_id, node_id, attempt, pr_claimed_at, created_at
+	      FROM proposal WHERE pr_state = 'opening'`
+	args := make([]any, 0, 3)
+	if cursor != nil {
+		args = append(args, cursor.CreatedAt, cursor.ID)
+		q += fmt.Sprintf(" AND (created_at, id) > ($%d, $%d)", len(args)-1, len(args))
+	}
+	q += " ORDER BY created_at ASC, id ASC"
+	args = append(args, limit+1)
+	q += fmt.Sprintf(" LIMIT $%d", len(args))
+
 	var rows []openingRow
 	if err := r.q.SelectContext(ctx, &rows, q, args...); err != nil {
-		return nil, fmt.Errorf("list stuck opening proposals: %w", err)
+		return nil, nil, fmt.Errorf("list stuck opening proposals: %w", err)
 	}
+
+	var next *repository.OpeningCursor
+	if len(rows) > limit {
+		last := rows[limit-1]
+		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+		rows = rows[:limit]
+	}
+
 	out := make([]proposal.OpeningPR, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, proposal.OpeningPR{
@@ -398,9 +435,10 @@ func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int) ([
 			NodeID:    row.NodeID,
 			Attempt:   row.Attempt,
 			ClaimedAt: row.ClaimedAt,
+			CreatedAt: row.CreatedAt,
 		})
 	}
-	return out, nil
+	return out, next, nil
 }
 
 func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {

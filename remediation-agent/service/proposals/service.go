@@ -128,9 +128,22 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 }
 
 // Fail resets a stuck 'opening' claim back to 'failed' so the action can be
-// retried. It delegates directly to the non-transactional repository.
+// retried. It delegates directly to the non-transactional repository. Called
+// on the ui-service PR-creation route's own failure path immediately after
+// its own Begin in the same request, so there is no gap in which the claim it
+// just took could have been released and re-claimed by someone else.
 func (s *Service) Fail(ctx context.Context, id string) error {
 	return s.repo.FailPR(ctx, id)
+}
+
+// FailStuckClaim releases a stuck 'opening' claim the reconciler's opening
+// sweep listed earlier in the same pass back to 'failed', but only if the
+// row's pr_claimed_at still matches observedClaimedAt — the exact claim the
+// sweep read. A mismatch (the claim was released and re-claimed between the
+// sweep's list and this call) is reported via hit=false rather than an error:
+// the sweep must never overwrite the fresh claim it raced against.
+func (s *Service) FailStuckClaim(ctx context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+	return s.repo.FailStuckOpeningPR(ctx, id, observedClaimedAt)
 }
 
 // RecordOutcome mirrors a terminal PR outcome observed on GitHub onto the

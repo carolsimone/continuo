@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/remediation-agent/service/proposals"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
@@ -227,7 +228,10 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	//     pr_url and pr_number from stub-github.
 	createPRResp := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
 	require.NotEmpty(t, createPRResp.PRUrl, "pr_url must be non-empty on first create")
-	require.Equal(t, 1, createPRResp.PRNumber, "pr_number must be 1 (stub-github)")
+	// stub-github assigns PR numbers on an auto-incrementing, shared-process
+	// counter (see tests/e2e/stub-github/main.go), so only positivity is
+	// guaranteed here, not a specific value.
+	require.Greater(t, createPRResp.PRNumber, 0, "pr_number must be a positive stub-github PR number")
 	t.Logf("PR created: pr_url=%s pr_number=%d", createPRResp.PRUrl, createPRResp.PRNumber)
 
 	// (h) Idempotency: a second POST to the same endpoint must not create a second
@@ -241,7 +245,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	t.Logf("idempotency confirmed: second POST returned 409 with pr_url=%s", dupResp.PRUrl)
 
 	// (i) Assert the DB proposal row now reflects pr_state='open', a non-empty
-	//     pr_url, and pr_number=1.
+	//     pr_url, and the same pr_number the create call returned.
 	var finalRow prRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
 		err := clients.remediationAgentDB.GetContext(ctx, &finalRow,
@@ -255,7 +259,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 
 	require.Equal(t, "open", finalRow.PRState, "proposal pr_state must be 'open'")
 	require.NotEmpty(t, finalRow.PRUrl, "proposal pr_url must be non-empty")
-	require.Equal(t, 1, finalRow.PRNumber, "proposal pr_number must be 1")
+	require.Equal(t, createPRResp.PRNumber, finalRow.PRNumber, "proposal pr_number must match the number the create call returned")
 	t.Logf("proposal PR state confirmed: pr_state=%s pr_url=%s pr_number=%d",
 		finalRow.PRState, finalRow.PRUrl, finalRow.PRNumber)
 
@@ -299,6 +303,129 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 		    AND payload->>'proposal_id' = $1`, proposalID))
 	require.GreaterOrEqual(t, outboxCount, 1, "expected a remediation.pr_closed:v1 outbox row for this proposal")
 	t.Logf("close-loop confirmed: pr_state=merged pr_closed_at=%s", closedRow.PRClosedAt)
+}
+
+// TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR drives the
+// "create-succeeded/record-failed" scenario the opening sweep exists to
+// recover: a proposal claimed for PR creation (pr_state='opening') whose PR
+// already exists on GitHub for its deterministic branch, but was never
+// recorded onto the row. It puts a proposal directly into that exact end
+// state — bypassing the full validation-rejection-to-remediation pipeline
+// covered by TestE2E_RemediationAgent_ProposesFixForRejection above, since
+// this test isolates the reconciler's opening sweep rather than that
+// pipeline — then verifies the sweep finds the PR via stub-github's
+// GET /repos/{repo}/pulls?head=... (tests/e2e/stub-github/main.go's
+// listPulls) and records it, well inside the 15s
+// REMEDIATION_PR_OPENING_GRACE_PERIOD this compose stack sets, proving
+// recovery rather than the fail path.
+//
+// There is no fault-injection hook in ui-service to force its own
+// RecordPullRequest call to fail after a successful PR creation, so this test
+// does not drive that failure directly; it reproduces the row state that
+// failure leaves behind, which is exactly what the opening sweep resolves
+// regardless of how the row got stuck there.
+func TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	releaseID := "e2e-opening-sweep-" + uuid.NewString()[:8]
+	const nodeID = "model.p.opening_sweep"
+	const repo = "e2e-owner/e2e-opening-sweep-repo"
+	const attempt = 1
+
+	// 1. Seed a proposal row directly in 'proposed'/source_resolved=true — the
+	//    only precondition the PR-creation path checks — sidestepping the full
+	//    validation-rejection pipeline, which this test does not exercise.
+	var proposalID string
+	require.NoError(t, clients.remediationAgentDB.GetContext(ctx, &proposalID, `
+		INSERT INTO proposal
+			(source, release_id, node_id, error_signature, attempt, status,
+			 source_resolved, repo, commit_sha, file_path, model, created_at)
+		VALUES ('validation', $1, $2, 'e2e-opening-sweep', $3, 'proposed',
+			true, $4, 'deadbeef', 'models/opening_sweep.sql', 'claude-3-5-sonnet', NOW())
+		RETURNING id`,
+		releaseID, nodeID, attempt, repo))
+	t.Logf("seeded proposal id=%s release_id=%s node_id=%s", proposalID, releaseID, nodeID)
+
+	// 2. Simulate BeginPR's own effect directly (claim the row for PR
+	//    creation), the same transition ui-service's BeginPullRequest call
+	//    performs, without going through ui-service itself.
+	_, err := clients.remediationAgentDB.ExecContext(ctx,
+		`UPDATE proposal SET pr_state='opening', pr_claimed_at=NOW() WHERE id=$1`, proposalID)
+	require.NoError(t, err, "claim the proposal for PR creation")
+
+	// 3. Create the PR directly on stub-github for the SAME deterministic
+	//    branch the reconciler recomputes (proposals.BuildBranch) — the
+	//    "create succeeded" half of the scenario. The e2e suite runs inside
+	//    the orchestrator container, so stub-github is reached by its compose
+	//    service name, same as the remediation-agent's own GITHUB_BASE_URL.
+	branch := proposals.BuildBranch(releaseID, nodeID, attempt)
+	prBody, err := json.Marshal(map[string]string{
+		"title": "e2e opening sweep recovery", "head": branch, "base": "main",
+	})
+	require.NoError(t, err)
+	postURL := fmt.Sprintf("http://stub-github:9200/repos/%s/pulls", repo)
+	postReq, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, bytes.NewReader(prBody))
+	require.NoError(t, err, "build stub-github create-PR request")
+	postReq.Header.Set("Content-Type", "application/json")
+	postResp, err := (&http.Client{Timeout: 10 * time.Second}).Do(postReq)
+	require.NoError(t, err, "POST %s", postURL)
+	defer postResp.Body.Close()
+	require.Equal(t, http.StatusCreated, postResp.StatusCode, "stub-github PR creation must succeed")
+
+	var created struct {
+		Number    int    `json:"number"`
+		HTMLURL   string `json:"html_url"`
+		CreatedAt string `json:"created_at"`
+	}
+	require.NoError(t, json.NewDecoder(postResp.Body).Decode(&created))
+	require.NotZero(t, created.Number)
+	t.Logf("stub-github PR created: number=%d html_url=%s created_at=%s branch=%s",
+		created.Number, created.HTMLURL, created.CreatedAt, branch)
+
+	githubCreatedAt, err := time.Parse(time.RFC3339, created.CreatedAt)
+	require.NoError(t, err, "parse stub-github created_at")
+
+	// 4. The row is now in exactly the "create-succeeded/record-failed" end
+	//    state: pr_state='opening' with a claim time, and a PR that exists on
+	//    GitHub for its branch but was never recorded. Wait for the
+	//    reconciler's opening sweep (polling every REMEDIATION_PR_POLL_INTERVAL,
+	//    5s in this compose stack) to find it via GET pulls?head=... and
+	//    record it — well inside REMEDIATION_PR_OPENING_GRACE_PERIOD (15s),
+	//    proving recovery, not the fail path.
+	var row struct {
+		PRState     string     `db:"pr_state"`
+		PRUrl       string     `db:"pr_url"`
+		PRNumber    int        `db:"pr_number"`
+		PRClaimedAt *time.Time `db:"pr_claimed_at"`
+		PROpenedAt  *time.Time `db:"pr_opened_at"`
+	}
+	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
+		err := clients.remediationAgentDB.GetContext(ctx, &row,
+			`SELECT pr_state, pr_url, pr_number, pr_claimed_at, pr_opened_at FROM proposal WHERE id = $1`,
+			proposalID)
+		if err != nil {
+			return false, nil
+		}
+		return row.PRState == "open", nil
+	}, fmt.Sprintf("timeout waiting for the opening sweep to recover proposal %s", proposalID))
+
+	require.Equal(t, "open", row.PRState, "the opening sweep must have recorded the found PR")
+	require.Equal(t, created.HTMLURL, row.PRUrl)
+	require.Equal(t, created.Number, row.PRNumber)
+	require.Nil(t, row.PRClaimedAt, "recording must clear pr_claimed_at back to NULL")
+	require.NotNil(t, row.PROpenedAt)
+	require.WithinDuration(t, githubCreatedAt, *row.PROpenedAt, time.Second,
+		"a recovered PR must use GitHub's own created_at, not the recovery moment")
+	t.Logf("opening sweep recovered the stranded PR: pr_state=%s pr_url=%s pr_number=%d pr_opened_at=%s",
+		row.PRState, row.PRUrl, row.PRNumber, row.PROpenedAt)
 }
 
 // remediationProposedPayload mirrors the remediation.proposed:v1 wire shape

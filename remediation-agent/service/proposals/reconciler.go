@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
+	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
 
@@ -23,9 +24,10 @@ type OutcomeRecorder interface {
 }
 
 // OpeningLister is the repository slice the opening sweep reads: proposals
-// claimed for PR creation but never recorded.
+// claimed for PR creation but never recorded, paginated by
+// repository.OpeningCursor so a pass resumes where the previous one left off.
 type OpeningLister interface {
-	ListStuckOpening(ctx context.Context, limit int) ([]proposal.OpeningPR, error)
+	ListStuckOpening(ctx context.Context, limit int, cursor *repository.OpeningCursor) (items []proposal.OpeningPR, next *repository.OpeningCursor, err error)
 }
 
 // OpeningRecorder is the Service slice the opening sweep drives to record a
@@ -35,9 +37,12 @@ type OpeningRecorder interface {
 }
 
 // PRFailer is the Service slice the opening sweep drives to release a stale
-// claim back to 'failed' when no pull request is found for it.
+// claim back to 'failed' when no pull request is found for it. The CAS guard
+// on observedClaimedAt ensures the sweep only ever fails the exact claim it
+// listed earlier in the same pass, never a fresher one taken by a re-claim in
+// between; hit reports whether the CAS fired.
 type PRFailer interface {
-	Fail(ctx context.Context, id string) error
+	FailStuckClaim(ctx context.Context, id string, observedClaimedAt time.Time) (hit bool, err error)
 }
 
 // defaultOpeningGracePeriod bounds how long a pr_state='opening' claim can go
@@ -100,6 +105,14 @@ type Reconciler struct {
 	// PR status because of a permission error. Accessed only from the single
 	// reconcile goroutine (and tests), so it needs no synchronization.
 	degraded bool
+
+	// openingCursor is the opening sweep's rotation position: nil requests the
+	// first page. sweepOpening advances it to the cursor ListStuckOpening
+	// returns after every pass, and a nil next page wraps it back to nil so a
+	// full rotation through every stuck row repeats indefinitely — see
+	// sweepOpening. Accessed only from the single reconcile goroutine (and
+	// tests), so it needs no synchronization, same as degraded above.
+	openingCursor *repository.OpeningCursor
 }
 
 // NewReconciler constructs a Reconciler, applying defaults for Interval (1m),
@@ -208,27 +221,41 @@ func (r *Reconciler) reconcileOpen(ctx context.Context) (permissionDenied, clean
 }
 
 // sweepOpening resolves proposals claimed for PR creation but never recorded
-// (pr_state='opening'). For each one it recomputes the deterministic branch
-// name and looks the PR up on GitHub directly: if found — at any age,
-// including a claim taken moments ago — the claim is recorded exactly as the
-// client-side flow would have, since a found PR is unambiguous regardless of
-// how fresh the claim is, using GitHub's own PR-creation time rather than the
-// recovery moment. If no PR is found, the claim is released back to 'failed'
-// only once its ClaimedAt is at least openingGracePeriod in the past, so a
-// healthy in-flight PR creation (an S3 fetch and a GitHub POST, normally
-// seconds) is never raced. A row with a nil ClaimedAt — its age is unknown —
-// is left alone rather than failed, so an unmeasurable claim can never be
-// mistaken for a stale one; each occurrence is logged so a claim stuck this
-// way is visible rather than silently retried forever. Each row is handled
-// best-effort: one failing row is logged and skipped, and retried next pass.
-// The return values feed the reconciler's combined health signal — see
-// ReconcileOnce.
+// (pr_state='opening'). It reads one page of up to batchLimit rows starting
+// after openingCursor, and advances that cursor to the page's next value
+// before handling any row below — so however this page's rows resolve
+// (recorded, failed, or left alone on error), the following pass always
+// starts past them instead of re-reading the same rows; a nil next page wraps
+// the cursor back to the start, so a full rotation through every stuck row
+// repeats indefinitely and a handful of persistently unresolvable rows (a
+// standing GitHub error, for instance) can never keep the rows behind them
+// out of every pass.
+//
+// For each row it recomputes the deterministic branch name and looks the PR
+// up on GitHub directly: if found — at any age, including a claim taken
+// moments ago — the claim is recorded exactly as the client-side flow would
+// have, since a found PR is unambiguous regardless of how fresh the claim is,
+// using GitHub's own PR-creation time rather than the recovery moment. If no
+// PR is found, the claim is released back to 'failed' only once its ClaimedAt
+// is at least openingGracePeriod in the past, so a healthy in-flight PR
+// creation (an S3 fetch and a GitHub POST, normally seconds) is never raced;
+// the release is a compare-and-set on the exact ClaimedAt this pass observed,
+// so a claim released and re-claimed by someone else between the list above
+// and this point is left untouched rather than clobbered. A row with a nil
+// ClaimedAt — its age is unknown — is left alone rather than failed, so an
+// unmeasurable claim can never be mistaken for a stale one; each occurrence is
+// logged so a claim stuck this way is visible rather than silently retried
+// forever. Each row is handled best-effort: one failing row is logged and
+// skipped, and retried next pass. The return values feed the reconciler's
+// combined health signal — see ReconcileOnce.
 func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanRead bool) {
-	stuck, err := r.openingLister.ListStuckOpening(ctx, r.batchLimit)
+	stuck, next, err := r.openingLister.ListStuckOpening(ctx, r.batchLimit, r.openingCursor)
 	if err != nil {
 		r.logger.Warn("pr reconciler: list stuck opening claims", "error", err)
 		return false, false
 	}
+	r.openingCursor = next
+
 	now := r.clock.Now()
 	for _, o := range stuck {
 		branch := BuildBranch(o.ReleaseID, o.NodeID, o.Attempt)
@@ -271,9 +298,15 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 		if age < r.openingGracePeriod {
 			continue
 		}
-		if err := r.failer.Fail(ctx, o.ID); err != nil {
+		hit, err := r.failer.FailStuckClaim(ctx, o.ID, *o.ClaimedAt)
+		if err != nil {
 			r.logger.Warn("pr reconciler: fail stuck opening claim",
 				"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "error", err)
+			continue
+		}
+		if !hit {
+			r.logger.Info("pr reconciler: stuck opening claim was re-claimed before it could be failed; leaving the fresh claim untouched",
+				"proposal_id", o.ID, "repo", o.Repo, "branch", branch)
 			continue
 		}
 		r.logger.Info("pr reconciler: released a stale opening claim back to failed",

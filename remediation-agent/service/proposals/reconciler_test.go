@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
+	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 	"github.com/carolsimone/continuo/remediation-agent/service/proposals"
 )
@@ -205,8 +206,34 @@ func timePtr(t time.Time) *time.Time { return &t }
 // fakeOpeningLister returns a fixed set of stuck 'opening' claims.
 type fakeOpeningLister struct{ opening []proposal.OpeningPR }
 
-func (f *fakeOpeningLister) ListStuckOpening(_ context.Context, _ int) ([]proposal.OpeningPR, error) {
-	return f.opening, nil
+// ListStuckOpening simulates the real repository's keyset pagination: rows
+// must already be sorted by (CreatedAt, ID) in f.opening, since callers rely
+// on that same ordering to build a resumable cursor.
+func (f *fakeOpeningLister) ListStuckOpening(_ context.Context, limit int, cursor *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
+	start := 0
+	if cursor != nil {
+		start = len(f.opening)
+		for i, o := range f.opening {
+			if o.CreatedAt.After(cursor.CreatedAt) || (o.CreatedAt.Equal(cursor.CreatedAt) && o.ID > cursor.ID) {
+				start = i
+				break
+			}
+		}
+	}
+	end := len(f.opening)
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+	if start > end {
+		start = end
+	}
+	page := append([]proposal.OpeningPR{}, f.opening[start:end]...)
+	var next *repository.OpeningCursor
+	if end < len(f.opening) {
+		last := page[len(page)-1]
+		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+	return page, next, nil
 }
 
 // fakeBranchFinder returns a canned PR ref (or error) per branch.
@@ -237,18 +264,30 @@ func (f *fakeOpeningRecorder) Record(_ context.Context, in proposals.RecordInput
 	return nil
 }
 
-// fakeFailer captures FailPR calls made to release a stale claim.
+// fakeFailer captures FailStuckClaim calls made to release a stale claim,
+// simulating the real repository's compare-and-set: an id listed in
+// reClaimed reports hit=false (as if a re-claim raced ahead of this call)
+// without being recorded as failed.
 type fakeFailer struct {
-	calls []string
-	err   error
+	calls         []string
+	observedClaim map[string]time.Time
+	reClaimed     map[string]bool
+	err           error
 }
 
-func (f *fakeFailer) Fail(_ context.Context, id string) error {
+func (f *fakeFailer) FailStuckClaim(_ context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+	if f.observedClaim == nil {
+		f.observedClaim = map[string]time.Time{}
+	}
+	f.observedClaim[id] = observedClaimedAt
 	if f.err != nil {
-		return f.err
+		return false, f.err
+	}
+	if f.reClaimed[id] {
+		return false, nil
 	}
 	f.calls = append(f.calls, id)
-	return nil
+	return true, nil
 }
 
 // TestReconcileOnce_OpeningSweep_PRFoundRecords verifies a stuck 'opening'
@@ -525,6 +564,112 @@ func TestReconcileOnce_OpeningSweepNilClaimedAtLogsWarnEveryPass(t *testing.T) {
 	rec.ReconcileOnce(context.Background())
 
 	require.Equal(t, 3, counter.warnings, "an unmeasurable claim must be logged every pass it is seen, unlike the degrade-transition ERROR")
+}
+
+// TestReconcileOnce_OpeningSweep_ReClaimedRowLeftUntouched is the regression
+// test for the lost-update C1 fixes: when the claim the sweep is about to
+// fail was released and re-claimed since this pass listed it (simulated here
+// via fakeFailer.reClaimed, which mirrors the real repository's CAS miss),
+// the sweep must not record the row as failed, must not treat the miss as an
+// error, and must pass the ORIGINALLY-OBSERVED claim time — not some other
+// value — into the CAS call.
+func TestReconcileOnce_OpeningSweep_ReClaimedRowLeftUntouched(t *testing.T) {
+	now := fixedClock{}.Now()
+	observedClaim := now.Add(-time.Hour) // aged well past the grace period below
+	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
+		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
+			ClaimedAt: timePtr(observedClaim)},
+	}}
+	finder := &fakeBranchFinder{} // no PR for any branch
+	recorder := &fakeOpeningRecorder{}
+	failer := &fakeFailer{reClaimed: map[string]bool{"p1": true}}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:             &fakeLister{},
+		Checker:            &fakeChecker{},
+		Recorder:           &fakeRecorder{},
+		OpeningLister:      opening,
+		BranchFinder:       finder,
+		OpeningRecorder:    recorder,
+		Failer:             failer,
+		Clock:              &settableClock{now: now},
+		Logger:             slog.Default(),
+		OpeningGracePeriod: 3 * time.Minute,
+	})
+
+	rec.ReconcileOnce(context.Background())
+
+	require.Empty(t, recorder.calls)
+	require.Empty(t, failer.calls, "a CAS miss must never be recorded as a successful fail")
+	require.Equal(t, observedClaim, failer.observedClaim["p1"],
+		"the sweep must pass the claim time it actually observed, not the row's current (re-claimed) one")
+}
+
+// TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows is the
+// regression test for the starvation C3 fixes: with a batch limit smaller
+// than the stuck set, and the oldest rows permanently unresolvable (a
+// standing GitHub error, never found and never aged out), later rows must
+// still be visited within a bounded number of passes — proving the sweep
+// advances past a stuck prefix instead of re-reading the same oldest rows
+// forever.
+func TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows(t *testing.T) {
+	now := fixedClock{}.Now()
+	branch := func(n string) string { return proposals.BuildBranch("rel-1", n, 1) }
+
+	// Five rows, strictly increasing CreatedAt (and thus stable sweep order).
+	// p1 and p2 error on every pass and never resolve; p3-p5 succeed.
+	nodes := []string{"p1", "p2", "p3", "p4", "p5"}
+	var opening []proposal.OpeningPR
+	for i, n := range nodes {
+		opening = append(opening, proposal.OpeningPR{
+			ID: n, Repo: "acme/r", ReleaseID: "rel-1", NodeID: n, Attempt: 1,
+			ClaimedAt: timePtr(now),
+			CreatedAt: now.Add(time.Duration(i) * time.Second),
+		})
+	}
+	lister := &fakeOpeningLister{opening: opening}
+	finder := &fakeBranchFinder{
+		errs: map[string]error{branch("p1"): errors.New("boom"), branch("p2"): errors.New("boom")},
+		refs: map[string]ports.PullRequestRef{
+			branch("p3"): {Number: 3, URL: "https://github.com/acme/r/pull/3"},
+			branch("p4"): {Number: 4, URL: "https://github.com/acme/r/pull/4"},
+			branch("p5"): {Number: 5, URL: "https://github.com/acme/r/pull/5"},
+		},
+	}
+	recorder := &fakeOpeningRecorder{}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:          &fakeLister{},
+		Checker:         &fakeChecker{},
+		Recorder:        &fakeRecorder{},
+		OpeningLister:   lister,
+		BranchFinder:    finder,
+		OpeningRecorder: recorder,
+		Failer:          &fakeFailer{},
+		Clock:           fixedClock{},
+		Logger:          slog.Default(),
+		BatchLimit:      2, // smaller than len(nodes): a single pass cannot see every row
+	})
+
+	// Pass 1 sees [p1, p2]: both error, nothing recorded.
+	rec.ReconcileOnce(context.Background())
+	require.Empty(t, recorder.calls, "pass 1 only sees the two permanently-erroring rows")
+
+	// Pass 2 must resume AFTER p2, not re-read [p1, p2] again: it sees
+	// [p3, p4] and records both.
+	rec.ReconcileOnce(context.Background())
+	require.Len(t, recorder.calls, 2, "pass 2 must have advanced past the stuck prefix to reach p3 and p4")
+
+	// Pass 3 sees the remainder, [p5], and wraps the cursor back to the start.
+	rec.ReconcileOnce(context.Background())
+	require.Len(t, recorder.calls, 3, "pass 3 must reach p5, the row furthest behind the stuck prefix")
+
+	got := make([]string, len(recorder.calls))
+	for i, c := range recorder.calls {
+		got[i] = c.ProposalID
+	}
+	require.ElementsMatch(t, []string{"p3", "p4", "p5"}, got,
+		"every resolvable row must be visited within one full rotation, despite p1/p2 never resolving")
 }
 
 // TestReconcileOnce_OpeningSweepRecordsGitHubCreatedAt verifies a recovered

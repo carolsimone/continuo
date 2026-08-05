@@ -47,6 +47,10 @@ type fakeRepo struct {
 	lastClosedAt  time.Time
 	outcomeCASHit bool
 	openPRs       []proposal.OpenPR
+	// FailStuckOpeningPR capture
+	lastFailStuckID        string
+	lastFailStuckClaimedAt time.Time
+	failStuckHit           bool
 }
 
 func (r *fakeRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error) { return 0, nil }
@@ -77,11 +81,16 @@ func (r *fakeRepo) RecordPR(_ context.Context, id, prURL string, prNumber int, o
 	return nil
 }
 func (r *fakeRepo) FailPR(_ context.Context, _ string) error { return nil }
+func (r *fakeRepo) FailStuckOpeningPR(_ context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+	r.lastFailStuckID = id
+	r.lastFailStuckClaimedAt = observedClaimedAt
+	return r.failStuckHit, nil
+}
 func (r *fakeRepo) ListOpenPullRequests(_ context.Context, _ int) ([]proposal.OpenPR, error) {
 	return r.openPRs, nil
 }
-func (r *fakeRepo) ListStuckOpening(_ context.Context, _ int) ([]proposal.OpeningPR, error) {
-	return nil, nil
+func (r *fakeRepo) ListStuckOpening(_ context.Context, _ int, _ *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
+	return nil, nil, nil
 }
 func (r *fakeRepo) RecordPROutcome(_ context.Context, _ string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
 	r.lastOutcome = outcome
@@ -232,4 +241,28 @@ func TestService_RecordOutcome_NoEventWhenAlreadyTerminal(t *testing.T) {
 	err := svc.RecordOutcome(context.Background(), "p1", proposal.PROutcomeRejected, time.Now())
 	require.NoError(t, err, "a CAS miss is an idempotent no-op, not an error")
 	require.Nil(t, repo.lastOutbox, "no event may be emitted when the CAS misses")
+}
+
+// TestService_FailStuckClaim_PassesThroughIDAndObservedClaimedAt verifies
+// FailStuckClaim delegates to the repository's CAS variant with the exact id
+// and observedClaimedAt it was given, and returns the repository's hit value
+// unchanged — the reconciler relies on this to distinguish "released" from
+// "a fresher claim raced ahead of me".
+func TestService_FailStuckClaim_PassesThroughIDAndObservedClaimedAt(t *testing.T) {
+	repo := &fakeRepo{failStuckHit: true}
+	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
+
+	observed := fixedClock{}.Now().Add(-time.Hour)
+	hit, err := svc.FailStuckClaim(context.Background(), "p1", observed)
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Equal(t, "p1", repo.lastFailStuckID)
+	require.Equal(t, observed, repo.lastFailStuckClaimedAt)
+
+	// A repository-reported miss (re-claimed since observed) passes through
+	// as false, not an error.
+	repo.failStuckHit = false
+	hit, err = svc.FailStuckClaim(context.Background(), "p1", observed)
+	require.NoError(t, err)
+	require.False(t, hit, "a CAS miss must surface as hit=false, never an error")
 }

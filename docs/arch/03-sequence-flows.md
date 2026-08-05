@@ -636,21 +636,29 @@ sequenceDiagram
   participant PG as remediation-agent Postgres
 
   loop every REMEDIATION_PR_POLL_INTERVAL (default 60s)
-    RA->>PG: ListStuckOpening(limit=50) -- pr_state='opening', oldest-created first
+    RA->>PG: ListStuckOpening(limit=50, cursor) -- pr_state='opening', (created_at, id) order, resumes after cursor
+    PG-->>RA: rows, next_cursor
+    Note over RA: cursor := next_cursor (nil wraps to the start) -- advanced before any row below is handled
     loop each stuck-opening row
       Note over RA: recompute branch_name = remediation/<release_id>/<node>-attempt<n> (BuildBranch)
       RA->>GH: GET /repos/{repo}/pulls?head={owner}:{branch_name}&state=all&per_page=1
       alt PR found
         GH-->>RA: [{ number, html_url, created_at }]
-        RA->>PG: Record(id, pr_url, pr_number, opened_by="") -- 1 tx:<br/>pr_state 'opening' -> 'open', pr_opened_at=now(), pr_claimed_at=NULL<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1)
+        RA->>PG: Record(id, pr_url, pr_number, opened_by="") -- 1 tx:<br/>pr_state 'opening' -> 'open', pr_opened_at=created_at, pr_claimed_at=NULL<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1)
         Note over PG: gap closed -- UI now shows the recovered pr_url
       else PR not found
         GH-->>RA: []
         alt pr_claimed_at is NULL
-          Note over RA: unmeasurable claim age (row predates the pr_claimed_at column, not backfilled); leave untouched
+          Note over RA: unmeasurable claim age (the proposal_stamp_pr_claimed_at trigger did not run -- schema corruption or a manual edit); leave untouched
         else now - pr_claimed_at > REMEDIATION_PR_OPENING_GRACE_PERIOD
-          RA->>PG: FailPullRequest(id) -- pr_state 'opening' -> 'failed', pr_claimed_at=NULL
-          Note over PG: retryable: BeginPR's claim guard accepts '' or 'failed'
+          RA->>PG: FailStuckOpeningPR(id, observed_pr_claimed_at) -- CAS:<br/>pr_state 'opening' -> 'failed', pr_claimed_at=NULL<br/>WHERE pr_state='opening' AND pr_claimed_at=observed_pr_claimed_at
+          alt CAS hit
+            PG-->>RA: true
+            Note over PG: retryable: BeginPR's claim guard accepts '' or 'failed'
+          else CAS miss (released and re-claimed since this row was listed)
+            PG-->>RA: false
+            Note over RA: leave the fresh claim untouched -- never overwrite a claim this pass did not observe
+          end
         else within the grace period
           Note over RA: leave row untouched; retried next pass
         end
@@ -659,7 +667,7 @@ sequenceDiagram
   end
 ```
 
-> `BeginPullRequest` stamps `pr_claimed_at` with the wall-clock moment it claims the row (via the service's `Clock` port, not SQL `now()`), and every transition out of `'opening'` (`RecordPullRequest`, `FailPullRequest`) clears it back to `NULL` — so a later re-claim of the same proposal (`opening → failed → opening`) always ages from its own claim time. The sweep compares `now - pr_claimed_at` directly against `REMEDIATION_PR_OPENING_GRACE_PERIOD`, read from a stored timestamp rather than tracked in memory: a claim taken moments before a pass runs is never raced out from under an operator, because its age is always far short of the grace period regardless of the reconciler's poll interval or how many passes have run. A row with `pr_claimed_at IS NULL` — an `'opening'` claim with no recorded claim time — is left untouched rather than swept, since an unmeasurable claim can never safely be judged stale; the migration backfills `pr_claimed_at = NOW()` for any row already `'opening'` when it runs, so this case is expected to be rare. A per-row GitHub error leaves the row untouched regardless of its age — an inconclusive read is not a confirmed miss — and does not block the rest of the batch.
+> `BeginPullRequest` stamps `pr_claimed_at` with the wall-clock moment it claims the row (via the service's `Clock` port, not SQL `now()`); a `BEFORE UPDATE` trigger (`proposal_stamp_pr_claimed_at`) stamps it with `clock_timestamp()` instead whenever a row's `pr_state` is becoming `'opening'` and the column is still `NULL` — closing the gap for a claim taken by a binary that predates the column and cannot be taught to set it itself, so every claim carries a value regardless of writer version. Every transition out of `'opening'` (`RecordPullRequest`, `FailPullRequest`, `FailStuckOpeningPR`) clears `pr_claimed_at` back to `NULL` — so a later re-claim of the same proposal (`opening → failed → opening`) always ages from its own claim time. The sweep compares `now - pr_claimed_at` directly against `REMEDIATION_PR_OPENING_GRACE_PERIOD`, read from a stored timestamp rather than tracked in memory: a claim taken moments before a pass runs is never raced out from under an operator, because its age is always far short of the grace period regardless of the reconciler's poll interval or how many passes have run. The release itself is a compare-and-set on the exact `pr_claimed_at` this pass observed (`FailStuckOpeningPR`), not a blind `pr_state='opening'` write: a claim released and re-claimed by a second reconciler instance or an operator's retry between the list above and this point leaves the CAS a no-op, so the fresh claim is never clobbered — this is the fresh-claim invariant every write against an `'opening'` row must preserve. A row with `pr_claimed_at IS NULL` — unmeasurable regardless of cause — is left untouched rather than swept, since an unmeasurable claim can never safely be judged stale. A per-row GitHub error leaves the row untouched regardless of its age — an inconclusive read is not a confirmed miss — and does not block the rest of the batch. Because the cursor advances to the next page before any row in the current page is handled, a page of persistently unresolvable rows (a standing GitHub error, or a claim that never ages out) never keeps the rows behind it out of every pass: a page shorter than the limit wraps the cursor back to the start, so a full rotation through every stuck row repeats indefinitely instead of a single stuck prefix monopolizing every pass.
 
 ## Why These Diagrams Are Not Enough On Their Own
 
