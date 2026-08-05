@@ -214,7 +214,7 @@ Before updating `current_prod`, `promoteToProduction` computes the set of change
 | `DeleteObjects` | Delete the `candidate-sql/<release_id>/` prefix for each pruned release during retention; soft-fail (a delete error is logged but does not abort the prune). |
 | `DeleteObjects` | Delete the `code-bundles/<release_id>/` prefix for each pruned release during retention; soft-fail (a delete error is logged but does not abort the prune). |
 
-The S3 bucket is not managed by release-controller's Helm chart. A native S3 lifecycle expiry rule (30 days) on the `candidate-sql/` prefix is configured via a one-time bootstrap for production and the LocalStack init script for development; the prune-time delete is the primary reclaim path there, with the lifecycle rule as backstop. The `code-bundles/` prefix carries no such lifecycle rule — the prune-time delete is its only reclaim path.
+The S3 bucket is not managed by release-controller's Helm chart. A native S3 lifecycle expiry rule (30 days) on the `candidate-sql/` prefix is configured via a one-time bootstrap for production and the LocalStack init script for development; the prune-time delete is the primary reclaim path there, with the lifecycle rule as backstop. The `code-bundles/` prefix carries the same 30-day lifecycle rule, configured the same way, with the prune-time delete as its primary reclaim path and the lifecycle rule as backstop.
 
 ## gRPC Callers
 

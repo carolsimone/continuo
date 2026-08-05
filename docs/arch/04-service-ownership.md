@@ -126,7 +126,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | none (S3 objects at `candidate-sql/<release_id>/candidate_<unique_id>.sql` and `code-bundles/<release_id>/bundle.json` are written but not owned; retention is managed by release-controller prune — the S3 lifecycle rule backstops only `candidate-sql/`) |
+| Durable state | none (S3 objects at `candidate-sql/<release_id>/candidate_<unique_id>.sql` and `code-bundles/<release_id>/bundle.json` are written but not owned; retention is managed by release-controller prune, backstopped by a 30-day S3 lifecycle rule on each of the `candidate-sql/` and `code-bundles/` prefixes) |
 | gRPC server methods owned | none |
 | Redis consumes | `release.requested:v1` |
 | Redis produces | `manifest.loaded.candidate:v1` (per-node `candidate_sql_uri` — `s3://` reference to the rewritten SQL object, empty string for seeds; top-level `code_bundle_uri` — `s3://` reference to the release's code-bundle contract document, empty string for an empty-manifest release) |
@@ -142,7 +142,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | gRPC server methods owned | none |
 | Redis consumes | `compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.result:v1` |
 | Redis produces | `release.requested:v1`, `validation.requested:v1` (per node: `candidate_sql_uri`), `release.promoted:v1` (top-level `code_bundle_uri`, `bootstrap`), `release.rejected:v1` (on `validation_failed`: includes top-level `repo` + `commit_sha` and per failing node `candidate_sql_uri`) |
-| S3 writes | `DeleteObjects` — prune-time delete of `candidate-sql/<release_id>/` (30-day S3 lifecycle rule is the backstop) and `code-bundles/<release_id>/` (no lifecycle rule; prune is the only reclaim path) prefixes per pruned release, both soft-fail |
+| S3 writes | `DeleteObjects` — prune-time delete of `candidate-sql/<release_id>/` and `code-bundles/<release_id>/` prefixes per pruned release, both soft-fail and both backstopped by a 30-day S3 lifecycle rule on the respective prefix |
 | Outbound gRPC calls | none |
 
 ### Invariants
