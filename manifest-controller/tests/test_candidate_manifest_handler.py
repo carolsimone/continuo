@@ -376,8 +376,8 @@ def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_pa
 def test_publishes_candidate_sql_uri_and_uploads(handler_with_mocks):
     """Each node's candidate SQL is uploaded to S3; the topology carries
     candidate_sql_uri (not the inline candidate_sql string) — and the SQL text
-    actually handed to the uploader is the schema-rewritten candidate_sql, not
-    an empty string, a dependency_sqls entry, or the un-rewritten original."""
+    actually handed to the uploader is the candidate-schema-rewritten SQL, so
+    passing "" or the un-rewritten source would fail this test."""
     handler, publisher, uploader = handler_with_mocks
     uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/public.orders.sql"
 
