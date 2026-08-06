@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -211,4 +212,102 @@ func TestContentHash_MatchesKnownVectors(t *testing.T) {
 		require.Equal(t, "sha256:f42ea5fccab40f3245fe21bbbaa0f306d382c493cb2129574bda6a4121046a2a",
 			computeContentHash(seedNode, map[string]interface{}{}))
 	})
+
+	t.Run("middle source_hash fallback tier: empty checksum, non-empty raw_code", func(t *testing.T) {
+		// Mirrors a node dbt did not checksum but that DOES have raw_code —
+		// the middle tier of _node_source_hash's fallback chain, between "use
+		// dbt's checksum verbatim" and "dump the whole node as JSON".
+		// compiled_code is populated too, to prove raw_code wins when both
+		// are present (matching `node.get("raw_code") or node.get("compiled_code")`).
+		//
+		// Generated with:
+		//	docker exec -w /app manifest-controller uv run python -c "
+		//	import json
+		//	from service.parser import _node_source_hash, _shared_code_hash, _config_hash, _content_hash, _transitive_macro_ids
+		//	manifest = json.load(open('/tmp/synthetic_manifest2.json'))
+		//	for node_id, node in manifest['nodes'].items():
+		//	    trans = _transitive_macro_ids(node.get('depends_on', {}).get('macros', []), manifest['macros'])
+		//	    print(_content_hash(_node_source_hash(node), _shared_code_hash(trans, manifest['macros']), _config_hash(node)))
+		//	"
+		// where synthetic_manifest2.json's node config is {"materialized": "view"}.
+		n := map[string]interface{}{
+			"resource_type": "model",
+			"schema":        "e2e_schema",
+			"name":          "raw_code_fallback",
+			"checksum": map[string]interface{}{
+				"name": "sha256", "checksum": "",
+			},
+			"depends_on":    map[string]interface{}{"macros": []interface{}{}},
+			"config":        map[string]interface{}{"materialized": "view"},
+			"raw_code":      "select 1 as id",
+			"compiled_code": "select 1 as id -- compiled, should not be used",
+		}
+
+		require.Equal(t, "sha256:3ea0f972fa1b56aa2dc2f56ee784b6a5796312f9a813d59ae70fd8855f10d16d",
+			nodeSourceHash(n), "empty checksum + non-empty raw_code must hash raw_code, not compiled_code")
+
+		require.Equal(t, "sha256:67975814a3fa3704d6c624e5deaaa0f9a2149f1b88210cded975891da64e6132",
+			computeContentHash(n, map[string]interface{}{}))
+	})
+
+	t.Run("config_hash: DEL escaping and float re-serialization", func(t *testing.T) {
+		// Generated with:
+		//	docker exec -w /app manifest-controller uv run python -c "
+		//	import json, hashlib
+		//	CONFIG_HASH_DENYLIST = {'meta', 'docs', 'description', 'grants', 'tags'}
+		//	node = {'config': {'materialized': 'table', 'del_field': '\x7f', 'lookback': 2.5, 'batch_size': 25000000000.0}}
+		//	cfg = {k: v for k, v in (node.get('config') or {}).items() if k not in CONFIG_HASH_DENYLIST}
+		//	s = json.dumps(cfg, sort_keys=True, default=str)
+		//	print(repr(s)); print(hashlib.sha256(s.encode()).hexdigest())
+		//	"
+		// del_field exercises the DEL (0x7F) escape; lookback and batch_size
+		// exercise float re-serialization — 2.5 needs no reformatting, but
+		// 25000000000.0 is exactly the case where Go's strconv 'g' format
+		// diverges from Python's repr (Go: "2.5e+10", Python: "25000000000.0").
+		cfg := map[string]interface{}{
+			"materialized": "table",
+			"del_field":    "\x7f",
+			"lookback":     json.Number("2.5"),
+			"batch_size":   json.Number("25000000000.0"),
+		}
+		wantCfgJSON := "{\"batch_size\": 25000000000.0, \"del_field\": \"\\u007f\", \"lookback\": 2.5, \"materialized\": \"table\"}"
+		require.Equal(t, wantCfgJSON, canonicalJSON(cfg))
+		require.Equal(t, "e8fa4f53da1b542df95f0a8d79073549efabb1db33b17b0dc4f1ce06f0b6dce8", sha256Hex(canonicalJSON(cfg)))
+	})
+}
+
+// TestFormatPythonFloatRepr pins formatPythonFloatRepr against CPython's
+// float repr / json.dumps output (the same underlying dtoa the two share —
+// verified with `python3 -c "import json; print(json.dumps(v))"` for every
+// value below). Covers both sides of CPython's fixed-vs-exponential
+// threshold (decpt <= -4 and decpt > 16), negative numbers, negative zero,
+// and values where Go's default strconv 'g' formatting would diverge from
+// Python (e.g. 25000000000.0, 1.0, 123456789.123456).
+func TestFormatPythonFloatRepr(t *testing.T) {
+	cases := []struct {
+		f    float64
+		want string
+	}{
+		{1.5, "1.5"},
+		{1.0, "1.0"},
+		{0.1, "0.1"},
+		{100.0, "100.0"},
+		{1e17, "1e+17"},
+		{1e16, "1e+16"},
+		{1e-5, "1e-05"},
+		{1e-4, "0.0001"},
+		{123456789.123456, "123456789.123456"},
+		{-1.5, "-1.5"},
+		{0.0, "0.0"},
+		{3.14159, "3.14159"},
+		{2.5e10, "25000000000.0"},
+		{1e21, "1e+21"},
+		{1e-10, "1e-10"},
+		{9999999999999998.0, "9999999999999998.0"},
+		{1234567890123456.0, "1234567890123456.0"},
+		{math.Copysign(0, -1), "-0.0"},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, formatPythonFloatRepr(c.f), "f=%v", c.f)
+	}
 }

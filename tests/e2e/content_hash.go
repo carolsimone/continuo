@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -178,12 +179,19 @@ func sha256Hex(s string) string {
 
 // canonicalJSON serializes a decoded JSON value the way Python's
 // json.dumps(v, sort_keys=True, default=str) does: object keys sorted,
-// ", " between elements, ": " between key and value, and non-ASCII
-// characters escaped as \uXXXX (ensure_ascii=True, the Python default).
-// Go's encoding/json.Marshal matches NONE of this (no key sorting for
-// map[string]interface{} beyond Go's own — actually equal for maps, but
-// different separators and it emits raw UTF-8 instead of \u-escaping), so a
-// byte-identical reimplementation is required to hash-match parser.py.
+// ", " between elements, ": " between key and value, every non-ASCII
+// character AND DEL (0x7F) escaped as \uXXXX (ensure_ascii=True, the Python
+// default — Python's printable-ASCII range is 0x20-0x7E, not 0x20-0x7F), and
+// JSON float literals rendered via formatPythonFloatRepr to match CPython's
+// float repr digit-and-threshold rules exactly. Go's encoding/json.Marshal
+// matches none of this (different separators, raw UTF-8 instead of
+// \u-escaping, and it collapses the JSON int/float distinction through
+// float64), so this byte-identical reimplementation is required to
+// hash-match parser.py. Verified against the real Python parser for every
+// value shape actually present in the e2e fixtures, plus a battery of float
+// boundary vectors (see content_hash_test.go and formatPythonFloatRepr's doc
+// comment) — dbt config values are small human-authored numbers in practice,
+// never scientific-notation-scale floats.
 func canonicalJSON(v interface{}) string {
 	var b strings.Builder
 	writeCanonicalJSON(&b, v)
@@ -201,7 +209,7 @@ func writeCanonicalJSON(b *strings.Builder, v interface{}) {
 			b.WriteString("false")
 		}
 	case json.Number:
-		b.WriteString(t.String())
+		writeCanonicalNumber(b, t)
 	case string:
 		writeCanonicalJSONString(b, t)
 	case []interface{}:
@@ -259,7 +267,10 @@ func writeCanonicalJSONString(b *strings.Builder, s string) {
 			b.WriteString(`\f`)
 		default:
 			switch {
-			case r < 0x20:
+			case r < 0x20 || r == 0x7F:
+				// Python's ensure_ascii printable range is 0x20-0x7E: DEL
+				// (0x7F) is a control character to json.dumps and gets
+				// \u-escaped just like the characters below 0x20.
 				fmt.Fprintf(b, `\u%04x`, r)
 			case r < 0x80:
 				b.WriteRune(r)
@@ -274,4 +285,95 @@ func writeCanonicalJSONString(b *strings.Builder, s string) {
 		}
 	}
 	b.WriteByte('"')
+}
+
+// writeCanonicalNumber writes a decoded JSON number the way Python's
+// json.dumps would re-serialize it after json.loads parsed the same source
+// document. n is the raw literal token from the input (encoding/json's
+// json.Number preserves it verbatim).
+func writeCanonicalNumber(b *strings.Builder, n json.Number) {
+	s := n.String()
+	if !strings.ContainsAny(s, ".eE") {
+		// A JSON integer literal (no '.', 'e', or 'E'): Python's json.loads
+		// parses this as an arbitrary-precision int, and json.dumps
+		// reproduces the identical decimal digit string — so the raw token
+		// is already canonical, byte for byte.
+		b.WriteString(s)
+		return
+	}
+	f, err := n.Float64()
+	if err != nil {
+		// Unreachable for a token encoding/json's own scanner accepted as a
+		// number literal; fall back to the raw token rather than panicking.
+		b.WriteString(s)
+		return
+	}
+	b.WriteString(formatPythonFloatRepr(f))
+}
+
+// formatPythonFloatRepr renders f exactly as CPython's float.__repr__ does —
+// which is also exactly what json.dumps emits for a float, since the C JSON
+// encoder calls the same repr machinery (verified directly: json.dumps(v) ==
+// repr(v) for every vector below). Go's strconv.FormatFloat(f, 'g', -1, 64)
+// finds the same shortest round-trip DIGITS (both are shortest-round-trip
+// algorithms operating on the same IEEE 754 float64), but picks a different
+// fixed-vs-exponential threshold and never adds a trailing ".0" — e.g. Go
+// renders 2.5e10 as "2.5e+10" where Python's repr is "25000000000.0", and Go
+// renders 1.0 as "1" where Python's repr is "1.0". This function extracts
+// the shortest-round-trip digits via strconv's 'e' form and reformats them
+// using CPython's actual decision rule (float_repr_style in
+// Python/pystrtod.c): fixed notation when the decimal point falls at
+// position -4 < decpt <= 16 (equivalently -5 <= exponent < 16), scientific
+// notation ("d.ddde±dd", minimum 2-digit signed exponent) otherwise.
+// Verified byte-for-byte against Python's json.dumps/repr for a broad vector
+// set spanning both thresholds, negative numbers, negative zero, and
+// trailing/leading zero cases (see content_hash_test.go). Not exhaustively
+// proven over the full float64 space, but dbt config values are small
+// human-authored numbers in practice — this is not a code path any real e2e
+// fixture exercises today (see content_hash.go's package doc).
+func formatPythonFloatRepr(f float64) string {
+	sci := strconv.AppendFloat(nil, f, 'e', -1, 64)
+	s := string(sci)
+
+	neg := false
+	if s[0] == '-' {
+		neg = true
+		s = s[1:]
+	}
+	eIdx := strings.IndexByte(s, 'e')
+	mantissa := s[:eIdx] // "d" or "d.ddd", no sign
+	exp, _ := strconv.Atoi(s[eIdx+1:])
+	digits := strings.Replace(mantissa, ".", "", 1) // significant digits only
+
+	var out string
+	switch {
+	case exp < -4 || exp >= 16:
+		m := digits[:1]
+		if len(digits) > 1 {
+			m += "." + digits[1:]
+		}
+		sign := "+"
+		e := exp
+		if e < 0 {
+			sign = "-"
+			e = -e
+		}
+		expStr := strconv.Itoa(e)
+		if len(expStr) < 2 {
+			expStr = "0" + expStr
+		}
+		out = m + "e" + sign + expStr
+	case exp >= 0:
+		if exp+1 >= len(digits) {
+			out = digits + strings.Repeat("0", exp+1-len(digits)) + ".0"
+		} else {
+			out = digits[:exp+1] + "." + digits[exp+1:]
+		}
+	default:
+		out = "0." + strings.Repeat("0", -exp-1) + digits
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
 }
