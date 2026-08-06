@@ -706,6 +706,9 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_DEFAULT_REGION: us-east-1
+      # SQL dialect for dependency resolution and the candidate-schema rewrite.
+      # Mirrors the chart's validation.engine; the local stack runs Postgres.
+      WAREHOUSE_ENGINE: postgres
     volumes:
       - ./pkg:/app/pkg:ro
     depends_on:

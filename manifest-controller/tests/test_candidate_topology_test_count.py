@@ -52,6 +52,7 @@ def test_candidate_topology_carries_test_count(tmp_path):
 
     handler = CandidateManifestHandler(
         source=source, publisher=publisher, uploader=uploader, bundle_uploader=bundle_uploader,
+        dialect="postgres",
     )
     handler.handle(release_id="rel-1")
 

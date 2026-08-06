@@ -23,6 +23,23 @@ spec:
       {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 6 }}
   template:
     metadata:
+      annotations:
+        # Every service reads the shared ConfigMap through envFrom, and
+        # Kubernetes never refreshes environment variables in a running pod when
+        # that ConfigMap changes. Without this checksum, `helm upgrade` with a
+        # different REDIS_HOST, S3_BUCKET, LOG_LEVEL or WAREHOUSE_ENGINE renders
+        # an identical Deployment, so nothing rolls and every pod keeps serving
+        # the previous configuration indefinitely. The engine case is the one
+        # that corrupts output rather than merely going stale: executor-
+        # controller rolls on an engine change because its validation image ref
+        # changes, so manifest-controller would keep uploading the old engine's
+        # SQL to the new engine's validator.
+        #
+        # The ConfigMap holds only values derived deterministically from
+        # values.yaml — generated credentials live in Secrets — so this digest is
+        # stable across upgrades that change nothing, and an unchanged install
+        # does not roll.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 8 }}
     spec:
