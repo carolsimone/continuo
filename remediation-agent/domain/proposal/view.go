@@ -50,6 +50,12 @@ type PRClaim struct {
 	Rationale      string
 	Confidence     Confidence
 	Model          string
+	// ClaimedAt is the pr_claimed_at value BeginPR's CAS persisted for this
+	// claim, read back from the row rather than trusted from the caller's
+	// clock. The caller carries it forward and must present it back to
+	// FailStuckOpeningPR to release this exact claim — never a fresher one
+	// taken by someone else since.
+	ClaimedAt time.Time
 	// Branch is populated by the caller of BeginPR, not from the DB.
 	Branch string
 }
@@ -73,4 +79,26 @@ type OpenPR struct {
 	ReleaseID string
 	NodeID    string
 	Attempt   int
+}
+
+// OpeningPR identifies a proposal claimed for PR creation (pr_state='opening')
+// whose fate the reconciler's opening sweep resolves: either GitHub already
+// has the pull request (the claim's recording step failed after creation
+// succeeded), or the claim is stale and safe to release back to 'failed' for
+// retry. ClaimedAt is the wall-clock moment the claim was taken
+// (pr_claimed_at), and is essentially always non-nil — every claim carries a
+// value regardless of which writer took it. A nil ClaimedAt means the claim
+// time is unknown, and the sweep treats it as such: an unmeasurable claim is
+// never judged stale, so it is never swept, only logged and left for the next
+// pass. CreatedAt is the proposal row's own creation time (immutable across
+// pr_state transitions), used as the primary key of the sweep's pagination
+// ordering — see repository.OpeningCursor.
+type OpeningPR struct {
+	ID        string
+	Repo      string
+	ReleaseID string
+	NodeID    string
+	Attempt   int
+	ClaimedAt *time.Time
+	CreatedAt time.Time
 }

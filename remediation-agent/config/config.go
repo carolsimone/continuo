@@ -38,6 +38,12 @@ type Config struct {
 	// so a misconfigured interval can never produce a hot loop.
 	PRPollInterval time.Duration
 
+	// PROpeningGracePeriod bounds how long a proposal can sit claimed for PR
+	// creation (pr_state='opening') with no matching pull request on GitHub
+	// before the reconciler's opening sweep releases it back to 'failed' for
+	// retry. Non-positive values fall back to the default.
+	PROpeningGracePeriod time.Duration
+
 	HTTPPort         string
 	GRPCPort         string
 	MaxAttempts      int
@@ -66,6 +72,12 @@ const defaultLLMCacheTTL = time.Hour
 // proposal table at most one poll behind GitHub without pressuring rate limits.
 const defaultPRPollInterval = time.Minute
 
+// defaultPROpeningGracePeriod bounds how long the opening sweep waits before
+// releasing a stuck 'opening' claim with no matching GitHub PR. Ten minutes
+// comfortably exceeds the seconds-scale S3-fetch-then-create-PR round trip a
+// healthy claim completes in, so the sweep never races an in-flight creation.
+const defaultPROpeningGracePeriod = 10 * time.Minute
+
 // Load reads configuration from env vars, recording missing/invalid required
 // values on v so main can fail fast with a complete list.
 func Load(v *pkgconfig.Validator) Config {
@@ -78,21 +90,22 @@ func Load(v *pkgconfig.Validator) Config {
 			Password: v.Require("POSTGRES_PASSWORD"),
 			SSLMode:  pkgconfig.EnvOrDefault("DB_SSLMODE", "disable"),
 		},
-		Redis:              pkgconfig.LoadRedis(v),
-		S3:                 pkgconfig.LoadS3(v),
-		LLMProvider:        v.Require("LLM_PROVIDER"),
-		LLMAPIKey:          pkgconfig.EnvOrDefault("LLM_API_KEY", ""),
-		LLMModel:           v.Require("LLM_MODEL"),
-		LLMBaseURL:         pkgconfig.EnvOrDefault("LLM_BASE_URL", ""),
-		LLMCacheTTL:        pkgconfig.EnvDurationOrDefault("LLM_CACHE_TTL", defaultLLMCacheTTL),
-		GitHubToken:        pkgconfig.EnvOrDefault("GITHUB_TOKEN", ""),
-		GitHubBaseURL:      pkgconfig.EnvOrDefault("GITHUB_BASE_URL", "https://api.github.com"),
-		PRPollInterval:     pkgconfig.EnvDurationOrDefault("REMEDIATION_PR_POLL_INTERVAL", defaultPRPollInterval),
-		HTTPPort:           pkgconfig.EnvOrDefault("REMEDIATION_AGENT_HTTP_PORT", "8092"),
-		GRPCPort:           pkgconfig.EnvOrDefault("REMEDIATION_AGENT_GRPC_PORT", "50054"),
-		MaxAttempts:        pkgconfig.EnvIntOrDefault("REMEDIATION_AGENT_MAX_ATTEMPTS", 3),
-		OrchestratorAddr:   pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
-		ServiceRepoMapPath: pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
+		Redis:                pkgconfig.LoadRedis(v),
+		S3:                   pkgconfig.LoadS3(v),
+		LLMProvider:          v.Require("LLM_PROVIDER"),
+		LLMAPIKey:            pkgconfig.EnvOrDefault("LLM_API_KEY", ""),
+		LLMModel:             v.Require("LLM_MODEL"),
+		LLMBaseURL:           pkgconfig.EnvOrDefault("LLM_BASE_URL", ""),
+		LLMCacheTTL:          pkgconfig.EnvDurationOrDefault("LLM_CACHE_TTL", defaultLLMCacheTTL),
+		GitHubToken:          pkgconfig.EnvOrDefault("GITHUB_TOKEN", ""),
+		GitHubBaseURL:        pkgconfig.EnvOrDefault("GITHUB_BASE_URL", "https://api.github.com"),
+		PRPollInterval:       pkgconfig.EnvDurationOrDefault("REMEDIATION_PR_POLL_INTERVAL", defaultPRPollInterval),
+		PROpeningGracePeriod: pkgconfig.EnvDurationOrDefault("REMEDIATION_PR_OPENING_GRACE_PERIOD", defaultPROpeningGracePeriod),
+		HTTPPort:             pkgconfig.EnvOrDefault("REMEDIATION_AGENT_HTTP_PORT", "8092"),
+		GRPCPort:             pkgconfig.EnvOrDefault("REMEDIATION_AGENT_GRPC_PORT", "50054"),
+		MaxAttempts:          pkgconfig.EnvIntOrDefault("REMEDIATION_AGENT_MAX_ATTEMPTS", 3),
+		OrchestratorAddr:     pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
+		ServiceRepoMapPath:   pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
 	}
 	switch cfg.LLMProvider {
 	case "anthropic", "openai":
@@ -114,6 +127,9 @@ func Load(v *pkgconfig.Validator) Config {
 	}
 	if cfg.PRPollInterval <= 0 {
 		cfg.PRPollInterval = defaultPRPollInterval
+	}
+	if cfg.PROpeningGracePeriod <= 0 {
+		cfg.PROpeningGracePeriod = defaultPROpeningGracePeriod
 	}
 	cfg.ServiceRepoPaths = loadServiceRepos(cfg.ServiceRepoMapPath)
 	return cfg

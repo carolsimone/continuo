@@ -182,20 +182,24 @@ func (r *fakeProposalRepo) List(_ context.Context, _ repository.ProposalFilter) 
 	return nil, nil
 }
 
-func (r *fakeProposalRepo) BeginPR(_ context.Context, _, _ string) (proposal.PRClaim, error) {
+func (r *fakeProposalRepo) BeginPR(_ context.Context, _, _ string, _ time.Time) (proposal.PRClaim, error) {
 	return proposal.PRClaim{}, nil
 }
 
-func (r *fakeProposalRepo) RecordPR(_ context.Context, _ string, _ string, _ int, _ string, _ time.Time) error {
-	return nil
+func (r *fakeProposalRepo) RecordPR(_ context.Context, _ string, _ string, _ int, _ string, _ time.Time) (bool, error) {
+	return true, nil
 }
 
-func (r *fakeProposalRepo) FailPR(_ context.Context, _ string) error {
-	return nil
+func (r *fakeProposalRepo) FailStuckOpeningPR(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
 }
 
 func (r *fakeProposalRepo) ListOpenPullRequests(_ context.Context, _ int) ([]proposal.OpenPR, error) {
 	return nil, nil
+}
+
+func (r *fakeProposalRepo) ListStuckOpening(_ context.Context, _ int, _ *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
+	return nil, nil, nil
 }
 
 func (r *fakeProposalRepo) RecordPROutcome(_ context.Context, _ string, _ proposal.PROutcome, _ time.Time) (bool, error) {

@@ -27,7 +27,12 @@ type ProposalService interface {
 	Get(ctx context.Context, id string) (proposal.View, error)
 	Begin(ctx context.Context, id string) (proposal.PRClaim, error)
 	Record(ctx context.Context, in proposals.RecordInput) error
-	Fail(ctx context.Context, id string) error
+	// FailStuckClaim releases the 'opening' claim identified by id back to
+	// 'failed', but only if the row's current pr_claimed_at still equals
+	// observedClaimedAt — the compare-and-set guard that keeps this call from
+	// resetting a claim someone else already took over. hit reports whether
+	// the CAS fired; false is not an error.
+	FailStuckClaim(ctx context.Context, id string, observedClaimedAt time.Time) (hit bool, err error)
 }
 
 // Compile-time assertion: *proposals.Service satisfies ProposalService.
@@ -78,7 +83,9 @@ func (s *ProposalsServer) GetProposal(ctx context.Context, req *remediationv1.Ge
 }
 
 // BeginPullRequest atomically claims a proposal for PR creation and returns
-// the data needed to open the GitHub pull-request. Returns FAILED_PRECONDITION
+// the data needed to open the GitHub pull-request, including claimed_at — the
+// persisted pr_claimed_at for this claim, which the caller must present back
+// to FailPullRequest to release this exact claim. Returns FAILED_PRECONDITION
 // when the proposal is already claimed (carrying the existing pr_url in the
 // message) or when source resolution has not completed. Returns NOT_FOUND when
 // the proposal does not exist.
@@ -114,13 +121,28 @@ func (s *ProposalsServer) RecordPullRequest(ctx context.Context, req *remediatio
 	return &remediationv1.RecordPullRequestResponse{}, nil
 }
 
-// FailPullRequest marks a proposal's PR attempt as failed so it can be
-// retried. Returns NOT_FOUND when the proposal does not exist.
+// FailPullRequest releases the 'opening' claim identified by req.Id back to
+// 'failed' so it can be retried, but only if the row's current pr_claimed_at
+// still equals req.ClaimedAt — the compare-and-set guard that keeps a caller
+// from resetting a claim someone else (a re-claim, or the reconciler's
+// opening sweep) has already taken over since. req.ClaimedAt must be the
+// value BeginPullRequest returned for this same claim. Returns
+// INVALID_ARGUMENT when claimed_at is missing or not RFC3339. The response's
+// released field is false, not an error, when the CAS did not fire because
+// the claim had already moved on.
 func (s *ProposalsServer) FailPullRequest(ctx context.Context, req *remediationv1.FailPullRequestRequest) (*remediationv1.FailPullRequestResponse, error) {
-	if err := s.svc.Fail(ctx, req.Id); err != nil {
+	if req.ClaimedAt == "" {
+		return nil, status.Error(codes.InvalidArgument, "claimed_at is required")
+	}
+	claimedAt, err := time.Parse(time.RFC3339, req.ClaimedAt)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid claimed_at: %v", err)
+	}
+	hit, err := s.svc.FailStuckClaim(ctx, req.Id, claimedAt)
+	if err != nil {
 		return nil, toGRPCError(err)
 	}
-	return &remediationv1.FailPullRequestResponse{}, nil
+	return &remediationv1.FailPullRequestResponse{Released: hit}, nil
 }
 
 // toGRPCError converts domain sentinel errors to the appropriate gRPC status
@@ -195,5 +217,6 @@ func claimToProto(c proposal.PRClaim) *remediationv1.BeginPullRequestResponse {
 		Confidence:     string(c.Confidence),
 		Model:          c.Model,
 		Branch:         c.Branch,
+		ClaimedAt:      c.ClaimedAt.Format(time.RFC3339),
 	}
 }

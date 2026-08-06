@@ -37,6 +37,7 @@ function makeRemediation(overrides: Partial<RemediationClient> = {}): Remediatio
       file_path: 'models/mymodel.sql',
       repo: 'owner/repo',
       commit_sha: 'abc123',
+      claimed_at: '2026-06-24T00:00:00Z',
     }),
     recordPullRequest: vi.fn().mockResolvedValue({}),
     failPullRequest: vi.fn().mockResolvedValue({}),
@@ -239,7 +240,7 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
     expect(res.body.error).toMatch(/pull request/i);
-    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1' });
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z' });
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();
   });
 
@@ -279,7 +280,10 @@ describe('remediation router', () => {
 
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
-    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1' });
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({
+      id: 'p1',
+      claimed_at: '2026-06-24T00:00:00Z',
+    });
   });
 
   // ── POST — opened_by forwarded from authenticated user ────────────────────
@@ -334,7 +338,7 @@ describe('remediation router', () => {
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
     expect(res.body.error).toMatch(/S3/i);
-    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1' });
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-06-24T00:00:00Z' });
     expect(prCreator.create).not.toHaveBeenCalled();
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();
     // The cause must be logged, not just swallowed into a generic response.
@@ -343,5 +347,98 @@ describe('remediation router', () => {
     expect(logged).toContain('S3 NoSuchKey');
 
     consoleError.mockRestore();
+  });
+
+  // ── POST — failPullRequest echoes the exact claimed_at BeginPullRequest
+  //    returned, so the repository CAS releases only this claim ───────────
+
+  // ── POST — version skew: an empty/absent claimed_at must never crash the
+  //    process or hang the request ─────────────────────────────────────────
+
+  it('skips failPullRequest and still returns 502 when claimed_at is empty (version skew)', async () => {
+    const remediation = makeRemediation({
+      beginPullRequest: vi.fn().mockResolvedValue({
+        proposed_sql_uri: 's3://continuo/proposals/p1/fix.sql',
+        diff_uri: '',
+        branch: 'remediation/p1',
+        file_path: 'models/mymodel.sql',
+        repo: 'owner/repo',
+        commit_sha: 'abc123',
+        claimed_at: '', // proto3 default when the peer predates the field
+      }),
+    });
+    const prCreator = makePrCreator({
+      create: vi.fn().mockRejectedValue(new Error('GitHub API error')),
+    });
+    const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(502);
+    expect(remediation.failPullRequest).not.toHaveBeenCalled();
+  });
+
+  it('skips failPullRequest on the S3-fetch failure path too when claimed_at is empty', async () => {
+    const remediation = makeRemediation({
+      beginPullRequest: vi.fn().mockResolvedValue({
+        proposed_sql_uri: 's3://continuo/proposals/p1/fix.sql',
+        diff_uri: '',
+        branch: 'remediation/p1',
+        file_path: 'models/mymodel.sql',
+        repo: 'owner/repo',
+        commit_sha: 'abc123',
+        claimed_at: '',
+      }),
+    });
+    const prCreator = makePrCreator();
+    const getObject = vi.fn().mockRejectedValue(new Error('S3 NoSuchKey'));
+    const app = appWith({ remediation, prCreator, getObject });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(502);
+    expect(remediation.failPullRequest).not.toHaveBeenCalled();
+  });
+
+  it('does not produce an unhandled rejection and still returns 502 when failPullRequest itself rejects', async () => {
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const remediation = makeRemediation({
+        failPullRequest: vi.fn().mockRejectedValue(grpcError(3, 'claimed_at is required')),
+      });
+      const prCreator = makePrCreator({
+        create: vi.fn().mockRejectedValue(new Error('GitHub API error')),
+      });
+      const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+      const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+      expect(res.status).toBe(502);
+      // Give any stray microtask a chance to surface as an unhandled rejection
+      // before asserting none did.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('echoes the claim-specific claimed_at from beginPullRequest into failPullRequest', async () => {
+    const remediation = makeRemediation({
+      beginPullRequest: vi.fn().mockResolvedValue({
+        proposed_sql_uri: 's3://continuo/proposals/p1/fix.sql',
+        diff_uri: '',
+        branch: 'remediation/p1',
+        file_path: 'models/mymodel.sql',
+        repo: 'owner/repo',
+        commit_sha: 'abc123',
+        claimed_at: '2026-07-01T12:34:56Z',
+      }),
+    });
+    const prCreator = makePrCreator({
+      create: vi.fn().mockRejectedValue(new Error('GitHub API error')),
+    });
+    const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+    await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({ id: 'p1', claimed_at: '2026-07-01T12:34:56Z' });
   });
 });

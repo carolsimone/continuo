@@ -28,10 +28,13 @@
 //	    model, exercising the remediation-agent upstream-diff read path.
 //
 //	POST /repos/{owner}/{repo}/pulls
-//	    Opens a PR (stub). Returns 201 with deterministic number and html_url.
+//	    Opens a PR (stub). Returns 201 with an auto-incrementing number and html_url.
 //
-//	GET  /repos/{owner}/{repo}/pulls
-//	    Returns an empty list (no existing PRs).
+//	GET  /repos/{owner}/{repo}/pulls?head=&state=
+//	    Returns PRs matching the head branch (bare "branch" or "owner:branch")
+//	    and state ("open" default, "closed", or "all") — the remediation-agent
+//	    opening sweep's branch lookup and the ui-service PR creator's
+//	    422-already-exists retry both call this.
 //
 //	GET  /repos/{owner}/{repo}/pulls/{n}
 //	    Returns the current PR state (404 when never opened).
@@ -45,11 +48,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ftableESource is the canned dbt model source for ftable_e as it exists in
@@ -85,22 +91,33 @@ const ftableCPatch = "@@ -1,3 +1,3 @@\n select id, name\n-  , legacy_col\n+  , r
 const stubClosedAt = "2026-01-01T00:00:00Z"
 
 // prStates tracks each opened stub PR's lifecycle so the reconciler read path
-// observes merges/closes performed by tests.
+// observes merges/closes performed by tests, and so a branch lookup (GET
+// pulls?head=...) can find a PR a POST already created for that branch.
 var (
-	prMu     sync.Mutex
-	prStates = map[int]*stubPRState{}
+	prMu         sync.Mutex
+	prStates     = map[int]*stubPRState{}
+	nextPRNumber = stubPRNumber
 )
 
+// stubPRState is one opened stub PR's full lifecycle state. Head is the
+// branch name as posted (no "owner:" prefix — see listPulls for how a
+// GET ...?head=owner:branch query is matched against it).
 type stubPRState struct {
-	Closed bool
-	Merged bool
+	Number    int
+	Head      string
+	Base      string
+	CreatedAt string
+	Closed    bool
+	Merged    bool
 }
 
-// resetPRs clears all PR state (test helper).
+// resetPRs clears all PR state and rewinds the PR-number counter back to
+// stubPRNumber (test helper).
 func resetPRs() {
 	prMu.Lock()
 	defer prMu.Unlock()
 	prStates = map[int]*stubPRState{}
+	nextPRNumber = stubPRNumber
 }
 
 func main() {
@@ -265,11 +282,11 @@ func handleCommits(w http.ResponseWriter, r *http.Request) {
 
 // handlePulls routes /repos/{o}/{r}/pulls[...]:
 //
-//	GET  pulls            -> empty list (no existing PRs for branch lookups)
-//	POST pulls            -> open stub PR #1 (registers lifecycle state)
-//	GET  pulls/{n}        -> current PR state (404 when never opened)
-//	PUT  pulls/{n}/merge  -> mark merged
-//	PATCH pulls/{n}       -> {"state":"closed"} marks closed without merge
+//	GET  pulls?head=&state=  -> PRs matching head branch and state (see listPulls)
+//	POST pulls                -> opens a new stub PR (registers lifecycle state)
+//	GET  pulls/{n}             -> current PR state (404 when never opened)
+//	PUT  pulls/{n}/merge       -> mark merged
+//	PATCH pulls/{n}            -> {"state":"closed"} marks closed without merge
 func handlePulls(w http.ResponseWriter, r *http.Request) {
 	// Isolate the segment after ".../pulls".
 	_, after, _ := strings.Cut(r.URL.Path, "/pulls")
@@ -277,21 +294,30 @@ func handlePulls(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case after == "" && r.Method == http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("[]"))
+		listPulls(w, r)
 
 	case after == "" && r.Method == http.MethodPost:
+		var body struct {
+			Head string `json:"head"`
+			Base string `json:"base"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+
 		prMu.Lock()
-		prStates[stubPRNumber] = &stubPRState{}
+		n := nextPRNumber
+		nextPRNumber++
+		st := &stubPRState{
+			Number:    n,
+			Head:      body.Head,
+			Base:      body.Base,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		prStates[n] = st
 		prMu.Unlock()
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"number":   stubPRNumber,
-			"html_url": "http://stub-github/pull/1",
-			"state":    "open",
-		})
+		_ = json.NewEncoder(w).Encode(pullJSON(st))
 
 	case strings.HasSuffix(after, "/merge") && r.Method == http.MethodPut:
 		n, err := strconv.Atoi(strings.TrimSuffix(after, "/merge"))
@@ -364,23 +390,91 @@ func writePullJSON(w http.ResponseWriter, n int) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(pullJSON(&snapshot))
+}
+
+// pullJSON renders st in the shape the GitHub pulls API returns, shared by
+// the single-PR read path (writePullJSON), the create response, and the
+// head/state list path (listPulls).
+func pullJSON(st *stubPRState) map[string]interface{} {
 	state := "open"
 	var mergedAt, closedAt interface{}
-	if snapshot.Closed {
+	if st.Closed {
 		state = "closed"
 		closedAt = stubClosedAt
-		if snapshot.Merged {
+		if st.Merged {
 			mergedAt = stubClosedAt
 		}
 	}
+	createdAt := st.CreatedAt
+	if createdAt == "" {
+		createdAt = stubClosedAt
+	}
+	return map[string]interface{}{
+		"number":     st.Number,
+		"state":      state,
+		"merged":     st.Merged,
+		"merged_at":  mergedAt,
+		"closed_at":  closedAt,
+		"created_at": createdAt,
+		"html_url":   fmt.Sprintf("http://stub-github/pull/%d", st.Number),
+	}
+}
+
+// listPulls responds to GET /repos/{o}/{r}/pulls?head=&state=&per_page=,
+// filtering the stored PRs by head branch and by state, matching the real
+// GitHub pulls-list endpoint the remediation-agent's FindByBranch and the
+// ui-service PR creator's 422-retry both call:
+//
+//   - head accepts either "branch" or "owner:branch" (the reconciler's
+//     FindByBranch always sends "owner:branch"; a bare branch also matches,
+//     since a stub PR's own Head is stored without the owner prefix). An
+//     empty head matches every PR, same as omitting the parameter on GitHub.
+//   - state is "open" (the default, matching GitHub's own default when the
+//     parameter is omitted), "closed", or "all".
+//
+// Results are ordered newest-first (highest PR number first), same as
+// GitHub, though in practice at most one PR ever exists per branch here.
+func listPulls(w http.ResponseWriter, r *http.Request) {
+	head := r.URL.Query().Get("head")
+	if _, branch, ok := strings.Cut(head, ":"); ok {
+		head = branch
+	}
+	state := r.URL.Query().Get("state")
+	if state == "" {
+		state = "open"
+	}
+
+	prMu.Lock()
+	var matches []stubPRState
+	for _, st := range prStates {
+		if head != "" && st.Head != head {
+			continue
+		}
+		switch state {
+		case "all":
+		case "closed":
+			if !st.Closed {
+				continue
+			}
+		default: // "open"
+			if st.Closed {
+				continue
+			}
+		}
+		matches = append(matches, *st)
+	}
+	prMu.Unlock()
+
+	sort.Slice(matches, func(i, j int) bool { return matches[i].Number > matches[j].Number })
+
+	out := make([]map[string]interface{}, 0, len(matches))
+	for i := range matches {
+		out = append(out, pullJSON(&matches[i]))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"number":    n,
-		"state":     state,
-		"merged":    snapshot.Merged,
-		"merged_at": mergedAt,
-		"closed_at": closedAt,
-		"html_url":  "http://stub-github/pull/1",
-	})
+	_ = json.NewEncoder(w).Encode(out)
 }
