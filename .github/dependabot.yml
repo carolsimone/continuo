@@ -39,6 +39,18 @@ updates:
       # landing unprompted alongside routine patches.
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # The Kubernetes libraries are versioned v0.x, so a whole Kubernetes
+      # release registers as a minor bump and lands in the grouped pull request
+      # unreviewed. They have to track the cluster: client-go is supported
+      # against an API server within one minor version either way, and kind runs
+      # kindest/node:v1.34.0, so v0.35.x is the ceiling that stays inside that
+      # window. v0.36.0 also requires go 1.26.0, which would raise the go
+      # directive of executor-controller and k8s-controller above go.work's
+      # 1.25.12 — leaving the workspace unloadable, and moving the CI toolchain
+      # with it, since CI resolves Go from go-version-file: go.work.
+      # Raise this ceiling when the kind node image moves to 1.35 or later.
+      - dependency-name: "k8s.io/*"
+        versions: [">=0.36.0"]
     groups:
       go-minor-patch:
         applies-to: version-updates
