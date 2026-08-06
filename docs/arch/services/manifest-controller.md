@@ -74,11 +74,12 @@ Pass 2 — Build registry (in memory only; no CSV persisted)
 Pass 3 — Resolve deps, rewrite SQL, upload to S3, and shape candidate topology
   For each node: resolve_upstream_deps(node, lookup) (sqlglot rules below)
     UnqualifiedTableReferenceError → publish status=failed (error_class=UnqualifiedTableReference), ACK
-    InvalidCompiledSqlError (compiled_sql does not parse as SQL) → publish status=failed (error_class=InvalidCompiledSql), ACK
-  For each node: rewrite_to_candidate_schema(compiled_sql, lookup, candidate_schema)
+    InvalidCompiledSqlError (a dependency SQL does not parse as SQL) → publish status=failed (error_class=InvalidCompiledSql), ACK
+  For each node: rewrite_to_candidate_schema(node.candidate_sql, lookup, candidate_schema)
     Rewrites every schema-qualified reference whose (schema, table) pair is in the registry
     to the candidate schema using sqlglot; CTE aliases, unqualified refs, and tables
-    not in the registry are left unchanged; seeds carry empty compiled_sql → candidate_sql_uri=""
+    not in the registry are left unchanged; seeds carry an empty candidate_sql (and an empty
+    dependency_sqls) → candidate_sql_uri=""
   For each non-seed node: upload rewritten SQL to S3 at candidate-sql/<release_id>/<unique_id>.sql
     → upload failure: publish status=failed (error_class=S3UploadError), ACK (fatal — no partial URI emitted)
     → success: candidate_sql_uri = s3://<bucket>/candidate-sql/<release_id>/<unique_id>.sql
@@ -101,9 +102,9 @@ Failure-handling distinction: a parse or resolve failure that re-delivery cannot
 | Table not in registry | Skipped (external/source table) |
 | Table in registry | Resolved as `UpstreamDep` |
 | dbt seed reference | Resolved as `UpstreamDep` (seeds are registered in pass 2) |
-| `compiled_sql` does not parse as PostgreSQL (e.g. an un-suppressed Jinja expression leaking literal text, such as a trailing comma inside `{{ config(...) }}` rendering as `('',)`, or an unterminated string literal failing the tokenizer) | `InvalidCompiledSqlError` raised → node fails to load |
+| A dependency SQL does not parse as PostgreSQL (e.g. an un-suppressed Jinja expression leaking literal text, such as a trailing comma inside `{{ config(...) }}` rendering as `('',)`, or an unterminated string literal failing the tokenizer) | `InvalidCompiledSqlError` raised → node fails to load |
 
-Both the dependency resolver and the candidate-schema rewriter parse `compiled_sql` with sqlglot's `postgres` dialect — the only warehouse this system targets — so postgres-specific syntax (e.g. `ARRAY[...] @> ARRAY[...]`) resolves normally.
+The dependency resolver parses each entry of `dependency_sqls`; the candidate-schema rewriter parses `candidate_sql`. Both use sqlglot's `postgres` dialect — the only warehouse this system targets — so postgres-specific syntax (e.g. `ARRAY[...] @> ARRAY[...]`) resolves normally.
 
 ## S3 Behavior
 
