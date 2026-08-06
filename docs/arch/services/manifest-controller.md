@@ -37,7 +37,7 @@ None (no HTTP interface; runs as `tail -f /dev/null` in dev; started manually or
 |---|---|
 | `manifest.loaded.candidate:v1` | Published after a `release.requested:v1` load (success or failure); consumed by `release-controller` |
 
-`manifest.loaded.candidate:v1` is a single Redis field `payload` containing JSON. On success: `{release_id, status: "ok", topology}` where `topology` is a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `test_count`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`, `candidate_sql_uri`). `node_type` is the dbt resource type (`dbt-model`, `dbt-seed`, or `dbt-snapshot`). `test_count` is the number of dbt tests attached to the node: the parser's second pass walks every `resource_type: test` manifest node once and attributes it to `attached_node` when the manifest sets it (generic tests), else to each of `depends_on.nodes` that resolves to a tracked node (singular tests), counting each test at most once per target. `release-controller` carries `test_count` through unchanged onto `release.promoted:v1`, where `orchestrator` persists it as `:Table.test_count`. `content_hash` is a macro-aware fingerprint: dbt's per-node source checksum (`checksum.checksum` from the manifest node) folded together with the source checksums of every macro the node transitively depends on (resolved from the manifest's `macros` map via `depends_on.macros`, following macro→macro edges). A node with no macro dependencies keeps its verbatim dbt checksum. `release-controller` diffs it against the prod snapshot to derive the changed-node set for the validation gate, detecting model SQL, seed CSV, snapshot, and shared-macro changes uniformly — a macro edit re-validates every node that depends on it even when those nodes' own `.sql` is untouched. `candidate_sql_uri` is an `s3://` URI pointing to the object at `candidate-sql/<release_id>/<unique_id>.sql`, which holds the node's compiled SQL with every schema-qualified reference that resolves to a known graph node rewritten (via sqlglot) to the candidate schema (`_candidate_<release>`). Seeds carry an empty URI because they have no SELECT to rewrite. An S3 upload failure for any node is fatal: the handler publishes `status=failed` and ACKs — no partial or dangling URI is ever emitted. `image_tag` is left empty — `release-controller` joins in the per-service image tags it assembled for the release. On failure: `{release_id, status: "failed", error_class, error_detail}`. `release-controller` uses this to transition a release from parsing to validating, or to mark it failed.
+`manifest.loaded.candidate:v1` is a single Redis field `payload` containing JSON. On success: `{release_id, status: "ok", topology}` where `topology` is a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `test_count`, `content_hash`, `image_tag`, `original_file_path`, `upstream_unique_ids`, `schedule`, `candidate_sql_uri`). `node_type` is the dbt resource type (`dbt-model`, `dbt-seed`, or `dbt-snapshot`). `test_count` is the number of dbt tests attached to the node: the parser's second pass walks every `resource_type: test` manifest node once and attributes it to `attached_node` when the manifest sets it (generic tests), else to each of `depends_on.nodes` that resolves to a tracked node (singular tests), counting each test at most once per target. `release-controller` carries `test_count` through unchanged onto `release.promoted:v1`, where `orchestrator` persists it as `:Table.test_count`. `content_hash` is a macro-aware fingerprint: dbt's per-node source checksum (`checksum.checksum` from the manifest node) folded together with the source checksums of every macro the node transitively depends on (resolved from the manifest's `macros` map via `depends_on.macros`, following macro→macro edges). A node with no macro dependencies keeps its verbatim dbt checksum. `release-controller` diffs it against the prod snapshot to derive the changed-node set for the validation gate, detecting model SQL, seed CSV, snapshot, and shared-macro changes uniformly — a macro edit re-validates every node that depends on it even when those nodes' own `.sql` is untouched. `candidate_sql_uri` is an `s3://` URI pointing to the object at `candidate-sql/<release_id>/<unique_id>.sql`, which holds the node's compiled SQL with every schema-qualified reference that resolves to a known graph node rewritten (via sqlglot) to the candidate schema (`_candidate_<release>`). Seeds carry an empty URI because they have no SELECT to rewrite. An S3 upload failure for any node is fatal: the handler publishes `status=failed` and ACKs — no partial or dangling URI is ever emitted. `image_tag` is left empty — `release-controller` joins in the per-service image tags it assembled for the release. On failure: `{release_id, status: "failed", error_class, error_detail}`. `release-controller` uses this to transition a release from parsing to validating, or to mark it failed.
 
 Calls no gRPC services.
 
@@ -74,15 +74,16 @@ Pass 2 — Build registry (in memory only; no CSV persisted)
 Pass 3 — Resolve deps, rewrite SQL, upload to S3, and shape candidate topology
   For each node: resolve_upstream_deps(node, lookup) (sqlglot rules below)
     UnqualifiedTableReferenceError → publish status=failed (error_class=UnqualifiedTableReference), ACK
-    InvalidCompiledSqlError (compiled_sql does not parse as SQL) → publish status=failed (error_class=InvalidCompiledSql), ACK
-  For each node: rewrite_to_candidate_schema(compiled_sql, lookup, candidate_schema)
+    InvalidCompiledSqlError (a dependency SQL does not parse as SQL) → publish status=failed (error_class=InvalidCompiledSql), ACK
+  For each node: rewrite_to_candidate_schema(node.candidate_sql, lookup, candidate_schema)
     Rewrites every schema-qualified reference whose (schema, table) pair is in the registry
     to the candidate schema using sqlglot; CTE aliases, unqualified refs, and tables
-    not in the registry are left unchanged; seeds carry empty compiled_sql → candidate_sql_uri=""
+    not in the registry are left unchanged; seeds carry an empty candidate_sql (and an empty
+    dependency_sqls) → candidate_sql_uri=""
   For each non-seed node: upload rewritten SQL to S3 at candidate-sql/<release_id>/<unique_id>.sql
-    → upload failure: publish status=failed (error_class=S3UploadError), ACK (fatal — no partial URI emitted)
+    → upload failure: publish status=failed (error_class=CandidateSqlUploadFailed), ACK (fatal — no partial URI emitted)
     → success: candidate_sql_uri = s3://<bucket>/candidate-sql/<release_id>/<unique_id>.sql
-  Shape each node as {unique_id, schema_name, table_name, service_name, node_type, content_hash, image_tag, upstream_unique_ids, schedule, candidate_sql_uri}
+  Shape each node as {unique_id, schema_name, table_name, service_name, node_type, test_count, content_hash, image_tag, original_file_path, upstream_unique_ids, schedule, candidate_sql_uri}
 
 Publish manifest.loaded.candidate:v1 status=ok with the topology, ACK
 ```
@@ -101,9 +102,9 @@ Failure-handling distinction: a parse or resolve failure that re-delivery cannot
 | Table not in registry | Skipped (external/source table) |
 | Table in registry | Resolved as `UpstreamDep` |
 | dbt seed reference | Resolved as `UpstreamDep` (seeds are registered in pass 2) |
-| `compiled_sql` does not parse as PostgreSQL (e.g. an un-suppressed Jinja expression leaking literal text, such as a trailing comma inside `{{ config(...) }}` rendering as `('',)`, or an unterminated string literal failing the tokenizer) | `InvalidCompiledSqlError` raised → node fails to load |
+| A dependency SQL does not parse as PostgreSQL (e.g. an un-suppressed Jinja expression leaking literal text, such as a trailing comma inside `{{ config(...) }}` rendering as `('',)`, or an unterminated string literal failing the tokenizer) | `InvalidCompiledSqlError` raised → node fails to load |
 
-Both the dependency resolver and the candidate-schema rewriter parse `compiled_sql` with sqlglot's `postgres` dialect — the only warehouse this system targets — so postgres-specific syntax (e.g. `ARRAY[...] @> ARRAY[...]`) resolves normally.
+The dependency resolver parses each entry of `dependency_sqls`; the candidate-schema rewriter parses `candidate_sql`. Both use sqlglot's `postgres` dialect — the only warehouse this system targets — so postgres-specific syntax (e.g. `ARRAY[...] @> ARRAY[...]`) resolves normally.
 
 ## S3 Behavior
 

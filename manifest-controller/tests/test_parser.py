@@ -308,3 +308,26 @@ def test_parse_manifest_drops_local_stub_nodes(tmp_path):
     names = {n.table_name for n in nodes}
     assert "keep" in names
     assert "stub" not in names
+
+
+def test_parser_fills_dependency_and_candidate_sql_from_compiled_code(tmp_path):
+    node = _node(name="orders", schema="public", fqn=["svc", "orders"], owner="o", tags=["daily"])
+    node["compiled_code"] = "select 1 as x"
+    manifest = {"nodes": {"model.svc.orders": node}}
+    manifest_path = _write(tmp_path, manifest)
+
+    nodes = parse_manifest(manifest_path, "v1")
+
+    model = next(n for n in nodes if n.node_type == "dbt-model")
+    assert model.dependency_sqls == ["select 1 as x"]
+    assert model.candidate_sql == "select 1 as x"
+
+
+def test_parser_seed_yields_empty_dependency_sqls():
+    # Seed nodes have no compiled_code; manifest_valid.json's my_seed already
+    # carries compiled_code="", so no extra fixture needs to be built here.
+    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+
+    seed = next(n for n in nodes if n.node_type == "dbt-seed")
+    assert seed.dependency_sqls == []
+    assert seed.candidate_sql == ""
