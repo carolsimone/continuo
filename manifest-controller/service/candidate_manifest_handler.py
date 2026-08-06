@@ -142,7 +142,7 @@ class CandidateManifestHandler:
             # blue/green validation can build each node against its upstream closure.
             # Seeds carry no compiled SQL and yield an empty string.
             candidate_sql = rewrite_to_candidate_schema(
-                node.compiled_sql, lookup, candidate_schema,
+                node.candidate_sql, lookup, candidate_schema,
                 self_schema=node.schema_name, self_table=node.table_name,
             )
 

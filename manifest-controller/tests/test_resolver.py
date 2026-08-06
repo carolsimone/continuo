@@ -17,7 +17,9 @@ def _make_registry(*table_names: str) -> dict:
     return NodeRegistry(entries=entries).to_lookup()
 
 
-def _make_node(table_name: str, sql: str) -> ManifestNode:
+def _make_node(table_name: str, sql: str = "", *, dependency_sqls: list[str] | None = None) -> ManifestNode:
+    if dependency_sqls is None:
+        dependency_sqls = [sql] if sql else []
     return ManifestNode(
         table_name=table_name,
         schema_name="public",
@@ -25,7 +27,8 @@ def _make_node(table_name: str, sql: str) -> ManifestNode:
         owner="data-platform",
         schedule_name="daily",
         criticality="SECONDARY",
-        compiled_sql=sql,
+        dependency_sqls=dependency_sqls,
+        candidate_sql=sql,
     )
 
 
@@ -151,3 +154,24 @@ def test_postgres_dialect_sql_resolves():
     deps = resolve_upstream_deps(node, registry)
     assert len(deps) == 1
     assert deps[0].table_name == "users"
+
+
+def test_deps_unioned_and_deduped_across_multiple_dependency_sqls():
+    registry = _make_registry("table_a", "table_b", "table_c")
+    node = _make_node("orders", dependency_sqls=[
+        "select a from public.table_a join public.table_b on 1=1",
+        "select id from public.table_a",          # table_a repeats
+        "select x from public.table_c",
+    ])
+    deps = resolve_upstream_deps(node, registry)
+    assert sorted(d.table_name for d in deps) == ["table_a", "table_b", "table_c"]
+
+
+def test_empty_dependency_sqls_yields_no_deps():
+    assert resolve_upstream_deps(_make_node("orders", dependency_sqls=[]), {}) == []
+
+
+def test_parse_error_in_any_query_raises_invalid_compiled_sql():
+    node = _make_node("orders", dependency_sqls=["select 1", "select from from"])
+    with pytest.raises(InvalidCompiledSqlError):
+        resolve_upstream_deps(node, {})
