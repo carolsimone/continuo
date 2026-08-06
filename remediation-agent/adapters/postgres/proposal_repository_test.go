@@ -624,7 +624,9 @@ func TestBeginPR_ListsAsStuckOpening(t *testing.T) {
 
 	// Once recorded, the row is no longer a stuck-opening claim, and its
 	// pr_claimed_at is cleared so a future re-claim never inherits this one.
-	require.NoError(t, repo.RecordPR(ctx, id, "https://gh/pr/1", 1, "dev", time.Now().UTC()))
+	hit, err := repo.RecordPR(ctx, id, "https://gh/pr/1", 1, "dev", time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, hit)
 	stuck, _, err = repo.ListStuckOpening(ctx, 10, nil)
 	require.NoError(t, err)
 	require.Empty(t, stuck, "a recorded PR must no longer be listed as stuck opening")
@@ -709,19 +711,17 @@ func TestOpeningTransition_TriggerDoesNotOverrideExplicitClaimedAt(t *testing.T)
 		"the trigger must not override a pr_claimed_at the writer set explicitly, even a backdated one")
 }
 
-// TestOpeningTransition_ExitClearsStaleTimestampFromWriterThatOmitsColumn is
-// the regression test for the rolling-upgrade race the trigger's exit branch
-// closes: an old binary that predates pr_claimed_at can leave 'opening'
-// (its FailPR-equivalent UPDATE never mentions the column) and later
-// re-enter 'opening' on the same row (its BeginPR-equivalent UPDATE does not
-// mention it either), all without ever writing to pr_claimed_at itself. Both
-// UPDATEs are simulated here exactly as such a binary would issue them —
-// bare SET pr_state, no pr_claimed_at in sight. Before the exit branch
-// existed, the column would still hold the first claim's timestamp when the
-// second claim began, so the second claim could be judged stale (and swept)
-// using an age computed from a claim that already ended. The trigger must
-// instead clear the column on the exit UPDATE and re-stamp it fresh on the
-// re-entry UPDATE, so the second claim's age is always its own.
+// TestOpeningTransition_ExitClearsStaleTimestampFromWriterThatOmitsColumn
+// verifies the invariant the trigger's exit branch guarantees: an old binary
+// that predates pr_claimed_at can leave 'opening' (its FailPR-equivalent
+// UPDATE never mentions the column) and later re-enter 'opening' on the same
+// row (its BeginPR-equivalent UPDATE does not mention it either), all without
+// ever writing to pr_claimed_at itself. Both UPDATEs are simulated here
+// exactly as such a binary would issue them — bare SET pr_state, no
+// pr_claimed_at in sight. The trigger clears the column on the exit UPDATE
+// and re-stamps it fresh on the re-entry UPDATE, so the second claim's age is
+// always computed from its own claim time, never inherited from a claim that
+// already ended.
 func TestOpeningTransition_ExitClearsStaleTimestampFromWriterThatOmitsColumn(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -1019,7 +1019,16 @@ func TestRecordPR_ThenGet(t *testing.T) {
 	require.NoError(t, err)
 
 	openedAt := time.Now().UTC().Truncate(time.Microsecond)
-	require.NoError(t, repo.RecordPR(ctx, id, "https://gh/pr/7", 7, "dev|local", openedAt))
+	hit, err := repo.RecordPR(ctx, id, "https://gh/pr/7", 7, "dev|local", openedAt)
+	require.NoError(t, err)
+	require.True(t, hit, "RecordPR must fire the CAS while the row is still 'opening'")
+
+	// A second RecordPR call against the same now-'open' row is a no-op: the
+	// CAS misses because pr_state is no longer 'opening', so nothing is
+	// overwritten by a caller racing to record the same claim a second time.
+	hit, err = repo.RecordPR(ctx, id, "https://gh/pr/should-not-apply", 99, "someone-else", time.Now().UTC())
+	require.NoError(t, err)
+	require.False(t, hit, "RecordPR must not fire once the row has left 'opening'")
 
 	v, err := repo.Get(ctx, id)
 	require.NoError(t, err)
@@ -1028,10 +1037,12 @@ func TestRecordPR_ThenGet(t *testing.T) {
 	require.Equal(t, 7, v.PrNumber)
 	require.Equal(t, "dev|local", v.PrOpenedBy)
 	require.NotNil(t, v.PrOpenedAt)
+	require.Equal(t, "https://gh/pr/7", v.PrURL, "the CAS-missed second RecordPR call must not have overwritten pr_url")
+	require.Equal(t, 7, v.PrNumber, "the CAS-missed second RecordPR call must not have overwritten pr_number")
 
 	// FailStuckOpeningPR on an 'open' row is a no-op (0 rows updated, hit=false),
 	// should not error, regardless of the observed timestamp passed in.
-	hit, err := repo.FailStuckOpeningPR(ctx, id, time.Now().UTC())
+	hit, err = repo.FailStuckOpeningPR(ctx, id, time.Now().UTC())
 	require.NoError(t, err)
 	require.False(t, hit, "FailStuckOpeningPR must not affect an 'open' row")
 	v2, err := repo.Get(ctx, id)
@@ -1102,7 +1113,8 @@ func TestRecordPROutcome_CASAndListOpen(t *testing.T) {
 	_, err := repo.BeginPR(ctx, id, "remediation/rel-1/model-p-orders-attempt1", time.Now().UTC())
 	require.NoError(t, err)
 	openedAt := time.Now().UTC()
-	require.NoError(t, repo.RecordPR(ctx, id, "http://gh/pull/1", 1, "dev", openedAt))
+	_, err = repo.RecordPR(ctx, id, "http://gh/pull/1", 1, "dev", openedAt)
+	require.NoError(t, err)
 
 	// The open PR is listed with the fields the reconciler needs.
 	open, err := repo.ListOpenPullRequests(ctx, 10)
@@ -1160,7 +1172,8 @@ func TestRecordPROutcome_RejectedAndNonOpenRows(t *testing.T) {
 	a := seed("model.p.a")
 	_, err := repo.BeginPR(ctx, a, "remediation/rel-2/model-p-a-attempt1", time.Now().UTC())
 	require.NoError(t, err)
-	require.NoError(t, repo.RecordPR(ctx, a, "http://gh/pull/2", 2, "dev", time.Now().UTC()))
+	_, err = repo.RecordPR(ctx, a, "http://gh/pull/2", 2, "dev", time.Now().UTC())
+	require.NoError(t, err)
 	hit, err := repo.RecordPROutcome(ctx, a, proposal.PROutcomeRejected, time.Now().UTC())
 	require.NoError(t, err)
 	require.True(t, hit)

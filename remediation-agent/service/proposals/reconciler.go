@@ -11,12 +11,6 @@ import (
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
 
-// OpenPRLister is the repository slice the reconciler reads: proposals whose
-// PR awaits a terminal outcome.
-type OpenPRLister interface {
-	ListOpenPullRequests(ctx context.Context, limit int) ([]proposal.OpenPR, error)
-}
-
 // OutcomeRecorder is the Service slice the reconciler drives; the concrete
 // *Service satisfies it.
 type OutcomeRecorder interface {
@@ -49,7 +43,7 @@ const defaultOpeningGracePeriod = 10 * time.Minute
 // ReconcilerDeps holds every collaborator the Reconciler needs, all behind
 // ports or narrow interfaces.
 type ReconcilerDeps struct {
-	Lister   OpenPRLister
+	Lister   repository.OpenPRLister
 	Checker  ports.PullRequestStatusChecker
 	Recorder OutcomeRecorder
 	Clock    ports.Clock
@@ -80,7 +74,7 @@ type ReconcilerDeps struct {
 // merged/rejected outcomes. Rows are handled best-effort: one failing row is
 // logged and skipped so it never blocks the rest, and is retried next pass.
 type Reconciler struct {
-	lister     OpenPRLister
+	lister     repository.OpenPRLister
 	checker    ports.PullRequestStatusChecker
 	recorder   OutcomeRecorder
 	clock      ports.Clock

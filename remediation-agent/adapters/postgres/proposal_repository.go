@@ -23,6 +23,7 @@ type Queryer interface {
 type ProposalRepository struct{ q Queryer }
 
 var _ repository.ProposalRepository = (*ProposalRepository)(nil)
+var _ repository.OpenPRLister = (*ProposalRepository)(nil)
 var _ repository.OpeningLister = (*ProposalRepository)(nil)
 
 // NewProposalRepository binds a repository to a Queryer (pass *sqlx.Tx for the
@@ -296,22 +297,27 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, cla
 }
 
 // RecordPR records the opened PR, flips pr_state to 'open', and clears
-// pr_claimed_at back to NULL since the claim it tracked is now resolved.
-// Returns ErrNotFound when the id does not exist.
-func (r *ProposalRepository) RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) error {
+// pr_claimed_at back to NULL since the claim it tracked is now resolved — but
+// only when the row is still 'opening': the WHERE clause is the same
+// compare-and-set guard FailStuckOpeningPR and RecordPROutcome apply, so a
+// row already moved on (recorded or failed by another caller, including an
+// unknown id) leaves 0 rows affected rather than a blind write. hit reports
+// whether the CAS fired.
+func (r *ProposalRepository) RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
 		`UPDATE proposal
 		 SET pr_state='open', pr_url=$2, pr_number=$3, pr_opened_by=$4, pr_opened_at=$5,
 		     pr_claimed_at=NULL
-		 WHERE id=$1`,
+		 WHERE id=$1 AND pr_state='opening'`,
 		id, prURL, prNumber, openedBy, openedAt)
 	if err != nil {
-		return fmt.Errorf("record pr: %w", err)
+		return false, fmt.Errorf("record pr: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return repository.ErrNotFound
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("record pr: rows affected: %w", err)
 	}
-	return nil
+	return n > 0, nil
 }
 
 // FailStuckOpeningPR resets a stuck 'opening' claim back to 'failed' and

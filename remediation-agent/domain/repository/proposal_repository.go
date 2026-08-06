@@ -43,6 +43,15 @@ type OpeningCursor struct {
 	ID        string
 }
 
+// OpenPRLister is the repository slice the reconciler's outcome-mirroring
+// pass reads: proposals whose PR awaits a terminal outcome, oldest-opened
+// first. It is a narrower view of the ListOpenPullRequests method
+// ProposalRepository already declares, so a consumer that only needs this one
+// slice does not have to depend on the full repository.
+type OpenPRLister interface {
+	ListOpenPullRequests(ctx context.Context, limit int) ([]proposal.OpenPR, error)
+}
+
 // OpeningLister is the repository slice the reconciler's opening sweep reads:
 // proposals claimed for PR creation but never recorded, paginated by
 // OpeningCursor so a pass resumes where the previous one left off. It is a
@@ -93,10 +102,20 @@ type ProposalRepository interface {
 	// ErrPRConflict if already claimed, ErrNotFound if the id is unknown.
 	BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error)
 
-	// RecordPR records a successfully opened PR: sets pr_state='open', pr_url,
-	// pr_number, pr_opened_by, and pr_opened_at on the proposal row, and clears
-	// pr_claimed_at back to NULL since the claim is resolved.
-	RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) error
+	// RecordPR atomically transitions pr_state 'opening' -> 'open', writing
+	// pr_url, pr_number, pr_opened_by, and pr_opened_at, and clearing
+	// pr_claimed_at back to NULL since the claim is resolved. hit reports
+	// whether the CAS fired; false means the row was no longer 'opening' —
+	// already recorded or failed by another caller since this one's own
+	// BeginPR claim — the same compare-and-set contract FailStuckOpeningPR and
+	// RecordPROutcome apply to every other write against an in-flight PR
+	// claim. Two callers race to record the same claim: the ui-service
+	// PR-creation route, right after the GitHub PR it just created, and the
+	// reconciler's opening sweep, after finding that same PR already exists
+	// on GitHub for a claim it read as stuck. Whichever reaches the row first
+	// wins the CAS; the other's call is a harmless no-op, since both would
+	// have written the same pr_url and pr_number for the same branch.
+	RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) (hit bool, err error)
 
 	// FailStuckOpeningPR resets a stuck 'opening' claim back to 'failed',
 	// clearing pr_claimed_at, but only when the row's current pr_claimed_at

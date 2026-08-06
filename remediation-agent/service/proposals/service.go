@@ -93,6 +93,12 @@ func (s *Service) Begin(ctx context.Context, id string) (proposal.PRClaim, error
 // calls RecordPR on the proposal row and creates a remediation.pr_opened:v1
 // outbox entry atomically. The outbox entry ID is deterministic so a
 // re-emission of the same PR-opened fact dedups to one downstream event.
+// RecordPR's CAS guard makes this method itself idempotent: two callers can
+// race to record the same claim — the ui-service PR-creation route and the
+// reconciler's opening sweep, when the sweep finds a PR on GitHub for a claim
+// it read as stuck before the route's own recording call lands — and only
+// the first to reach the row writes anything or emits the event; the second
+// is a no-op, not an error.
 func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	// Fetch the proposal to obtain release_id, node_id, and attempt — required
 	// for deterministic outbox entry id and event payload construction.
@@ -113,8 +119,12 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	}
 	defer func() { _ = u.Rollback() }()
 
-	if err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, in.PrURL, in.PrNumber, in.OpenedBy, openedAt); err != nil {
+	hit, err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, in.PrURL, in.PrNumber, in.OpenedBy, openedAt)
+	if err != nil {
 		return fmt.Errorf("record pr: %w", err)
+	}
+	if !hit {
+		return nil
 	}
 
 	if err := s.enqueuePROpened(ctx, u, v, in, now, openedAt); err != nil {

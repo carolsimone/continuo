@@ -42,6 +42,9 @@ type fakeRepo struct {
 		openedBy string
 		openedAt time.Time
 	}
+	// recordPRCASHit controls RecordPR's returned hit value; defaults to true
+	// so existing tests that do not care about the CAS outcome keep passing.
+	recordPRCASHit bool
 	// RecordPROutcome capture
 	lastOutcome   proposal.PROutcome
 	lastClosedAt  time.Time
@@ -72,13 +75,13 @@ func (r *fakeRepo) BeginPR(_ context.Context, _ string, branch string, claimedAt
 		Attempt:   r.view.Attempt,
 	}, nil
 }
-func (r *fakeRepo) RecordPR(_ context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) error {
+func (r *fakeRepo) RecordPR(_ context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
 	r.lastRecordPR.id = id
 	r.lastRecordPR.prURL = prURL
 	r.lastRecordPR.prNumber = prNumber
 	r.lastRecordPR.openedBy = openedBy
 	r.lastRecordPR.openedAt = openedAt
-	return nil
+	return r.recordPRCASHit, nil
 }
 func (r *fakeRepo) FailStuckOpeningPR(_ context.Context, id string, observedClaimedAt time.Time) (bool, error) {
 	r.lastFailStuckID = id
@@ -155,12 +158,15 @@ func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 // outbox entry with StreamName == streams.RemediationPrOpenedV1 and commits
 // the unit of work.
 func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
-	repo := &fakeRepo{view: proposal.View{
-		ID:        "p1",
-		ReleaseID: "r-1",
-		NodeID:    "model.p.orders_d",
-		Attempt:   1,
-	}}
+	repo := &fakeRepo{
+		view: proposal.View{
+			ID:        "p1",
+			ReleaseID: "r-1",
+			NodeID:    "model.p.orders_d",
+			Attempt:   1,
+		},
+		recordPRCASHit: true,
+	}
 	svc := proposals.New(proposals.Deps{
 		Repo:   repo,
 		NewUoW: repo.uowFactory,
@@ -185,12 +191,15 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 // created_at when recovering a stranded PR — is written through to
 // RecordPR instead of the current clock time.
 func TestService_Record_UsesProvidedOpenedAt(t *testing.T) {
-	repo := &fakeRepo{view: proposal.View{
-		ID:        "p1",
-		ReleaseID: "r-1",
-		NodeID:    "model.p.orders_d",
-		Attempt:   1,
-	}}
+	repo := &fakeRepo{
+		view: proposal.View{
+			ID:        "p1",
+			ReleaseID: "r-1",
+			NodeID:    "model.p.orders_d",
+			Attempt:   1,
+		},
+		recordPRCASHit: true,
+	}
 	svc := proposals.New(proposals.Deps{
 		Repo:   repo,
 		NewUoW: repo.uowFactory,
@@ -207,6 +216,28 @@ func TestService_Record_UsesProvidedOpenedAt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, githubCreatedAt, repo.lastRecordPR.openedAt,
 		"a provided OpenedAt must be used verbatim, not overridden by the current clock time")
+}
+
+// TestService_Record_NoEventWhenCASMisses verifies a CAS miss (row no longer
+// 'opening', e.g. already recorded by the reconciler's opening sweep or the
+// ui-service route racing to record the same claim) produces no outbox entry,
+// no commit, and no error — Record is idempotent under that race.
+func TestService_Record_NoEventWhenCASMisses(t *testing.T) {
+	repo := &fakeRepo{
+		view:           proposal.View{ID: "p1", ReleaseID: "r-1", NodeID: "model.p.orders_d", Attempt: 1},
+		recordPRCASHit: false,
+	}
+	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
+
+	err := svc.Record(context.Background(), proposals.RecordInput{
+		ProposalID: "p1",
+		PrURL:      "u",
+		PrNumber:   7,
+		OpenedBy:   "dev|local",
+	})
+	require.NoError(t, err, "a CAS miss is an idempotent no-op, not an error")
+	require.Nil(t, repo.lastOutbox, "no event may be emitted when the CAS misses")
+	require.False(t, repo.committed, "the transaction must not commit when nothing was written")
 }
 
 // TestService_RecordOutcome_EmitsPRClosedAtomically verifies that a fired CAS

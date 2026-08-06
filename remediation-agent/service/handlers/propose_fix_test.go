@@ -186,8 +186,8 @@ func (r *fakeProposalRepo) BeginPR(_ context.Context, _, _ string, _ time.Time) 
 	return proposal.PRClaim{}, nil
 }
 
-func (r *fakeProposalRepo) RecordPR(_ context.Context, _ string, _ string, _ int, _ string, _ time.Time) error {
-	return nil
+func (r *fakeProposalRepo) RecordPR(_ context.Context, _ string, _ string, _ int, _ string, _ time.Time) (bool, error) {
+	return true, nil
 }
 
 func (r *fakeProposalRepo) FailStuckOpeningPR(_ context.Context, _ string, _ time.Time) (bool, error) {
