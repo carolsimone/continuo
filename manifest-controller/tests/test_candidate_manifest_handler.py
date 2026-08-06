@@ -544,11 +544,12 @@ def _manifest_with_single_macro(
     }
 
 
-def test_conflicting_shared_code_keeps_first_and_warns(tmp_path, caplog):
-    """Two manifests shipping the same shared-code unit id with different
-    source (cross-service package skew) keep the first manifest's copy in the
-    bundle and log a warning; per-node hashes are unaffected since each was
-    folded against its own manifest's copy."""
+def test_shared_code_namespaced_by_service_for_colliding_unit_ids(tmp_path, caplog):
+    """Two manifests shipping the same dbt macro id (macro.svc.m1) but pinning
+    different package versions (cross-service skew) are namespaced by service
+    in the bundle: BOTH copies survive, each under its own `<service>:<unit_id>`
+    key with its own source/checksum, and each manifest's node's code_unit_ids
+    points at its own service's namespaced copy — no collision, no warning."""
     first = tmp_path / "first.json"
     first.write_text(json.dumps(_manifest_with_single_macro("SELECT 'v1'", "node_a", "service-a")))
     second = tmp_path / "second.json"
@@ -556,8 +557,8 @@ def test_conflicting_shared_code_keeps_first_and_warns(tmp_path, caplog):
 
     source = create_autospec(ManifestSource)
     source.list_manifests.return_value = [
-        ManifestFile(path=str(first), version="v1", image_tag=""),
-        ManifestFile(path=str(second), version="v1", image_tag=""),
+        ManifestFile(path=str(first), version="v1", image_tag="", declared_service="service-a"),
+        ManifestFile(path=str(second), version="v1", image_tag="", declared_service="service-b"),
     ]
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
@@ -566,24 +567,34 @@ def test_conflicting_shared_code_keeps_first_and_warns(tmp_path, caplog):
         source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=bundle_uploader,
     )
     with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
-        handler.handle(release_id="rel-conflict")
+        handler.handle(release_id="rel-namespaced")
 
     publisher.publish_failed.assert_not_called()
     assert len(bundle_uploader.uploads) == 1
     _, bundle = bundle_uploader.uploads[0]
-    assert bundle["shared_code"]["macro.svc.m1"] == {
+
+    assert bundle["shared_code"]["service-a:macro.svc.m1"] == {
         "source": "SELECT 'v1'",
         "checksum": hashlib.sha256(b"SELECT 'v1'").hexdigest(),
         "depends_on": [],
     }
-    assert any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
+    assert bundle["shared_code"]["service-b:macro.svc.m1"] == {
+        "source": "SELECT 'v2'",
+        "checksum": hashlib.sha256(b"SELECT 'v2'").hexdigest(),
+        "depends_on": [],
+    }
+    assert bundle["nodes"]["public.node_a"]["code_unit_ids"] == ["service-a:macro.svc.m1"]
+    assert bundle["nodes"]["public.node_b"]["code_unit_ids"] == ["service-b:macro.svc.m1"]
+    assert not any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
+    assert not any("re-defined" in rec.getMessage() for rec in caplog.records)
 
 
-def test_equal_checksum_shared_code_keeps_first_without_warning(tmp_path, caplog):
-    """Two manifests shipping the same shared-code unit id with the SAME source
-    (equal checksum) but a different `depends_on` list still keep the first
-    manifest's entry in the bundle — matching the conflicting-checksum case —
-    but do NOT log the conflict warning, since the source itself agrees."""
+def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_path, caplog):
+    """A shared-code unit's own `depends_on` list is namespaced with the same
+    `<service>:` prefix as the bundle's shared_code map keys — so a consumer
+    walking unit->unit edges never needs to re-derive the namespace. Exercises
+    the fallback path where declared_service is unset: the namespace is
+    derived from the manifest's own node service instead."""
     first = tmp_path / "first.json"
     first.write_text(json.dumps(
         _manifest_with_single_macro("SELECT 1", "node_a", "service-a", macro_depends_on=["macro.svc.m2"])
@@ -605,14 +616,21 @@ def test_equal_checksum_shared_code_keeps_first_without_warning(tmp_path, caplog
         source=source, publisher=publisher, uploader=_make_uploader(), bundle_uploader=bundle_uploader,
     )
     with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
-        handler.handle(release_id="rel-duplicate")
+        handler.handle(release_id="rel-depends-on")
 
     publisher.publish_failed.assert_not_called()
     assert len(bundle_uploader.uploads) == 1
     _, bundle = bundle_uploader.uploads[0]
-    assert bundle["shared_code"]["macro.svc.m1"] == {
+
+    assert bundle["shared_code"]["service-a:macro.svc.m1"] == {
         "source": "SELECT 1",
         "checksum": hashlib.sha256(b"SELECT 1").hexdigest(),
-        "depends_on": ["macro.svc.m2"],
+        "depends_on": ["service-a:macro.svc.m2"],
+    }
+    assert bundle["shared_code"]["service-b:macro.svc.m1"] == {
+        "source": "SELECT 1",
+        "checksum": hashlib.sha256(b"SELECT 1").hexdigest(),
+        "depends_on": [],
     }
     assert not any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
+    assert not any("re-defined" in rec.getMessage() for rec in caplog.records)

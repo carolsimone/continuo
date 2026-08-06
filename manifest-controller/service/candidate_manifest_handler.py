@@ -89,21 +89,37 @@ class CandidateManifestHandler:
                 )
                 return
 
+            # Namespace this manifest's shared-code units by service so two
+            # manifests pinning different versions of the same dbt package
+            # never collide on a bare macro id — each service's copy of a
+            # same-named macro gets its own bundle entry, and every node keeps
+            # pointing at the copy its own manifest actually hashed against.
+            # Per-node hashes fold each manifest's own copy of a unit already
+            # (see parser._shared_code_hash), so this never changes a hash —
+            # it only disambiguates which copy the bundle records for a unit id.
+            namespace = mf.declared_service or (nodes[0].service_name if nodes else "")
+
             for unit_id, unit in mf_shared.items():
-                existing = shared_code.get(unit_id)
-                if existing is not None:
-                    # Per-node hashes already folded each manifest's own copy of
-                    # this unit; the bundle keeps the first occurrence regardless
-                    # of whether a later manifest's checksum matches or conflicts.
-                    if existing["checksum"] != unit["checksum"]:
-                        # Cross-service package skew: two manifests ship the same
-                        # unit id with different source.
-                        logger.warning(
-                            "candidate: conflicting shared-code unit across services",
-                            extra={"release_id": release_id, "unit_id": unit_id},
-                        )
-                    continue
-                shared_code[unit_id] = unit
+                namespaced_id = f"{namespace}:{unit_id}"
+                namespaced_unit = {
+                    **unit,
+                    "depends_on": [f"{namespace}:{dep_id}" for dep_id in unit["depends_on"]],
+                }
+                existing = shared_code.get(namespaced_id)
+                if existing is not None and existing["checksum"] != namespaced_unit["checksum"]:
+                    # Namespacing makes cross-manifest collisions impossible by
+                    # construction; this can only fire if a single manifest's
+                    # own unit id were somehow re-defined, which parse_manifest's
+                    # dict merge already precludes. Kept as a defensive tripwire.
+                    logger.warning(
+                        "candidate: shared-code unit re-defined with a different "
+                        "checksum under the same namespace",
+                        extra={"release_id": release_id, "unit_id": namespaced_id},
+                    )
+                shared_code[namespaced_id] = namespaced_unit
+
+            for node in nodes:
+                node.code_unit_ids = [f"{namespace}:{uid}" for uid in node.code_unit_ids]
 
             if mf.declared_service:
                 # Validate that the manifest actually belongs to the declared service.
