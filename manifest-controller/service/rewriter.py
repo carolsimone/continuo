@@ -1,4 +1,4 @@
-"""Rewrite a node's compiled SQL so its schema-qualified references point at the
+"""Rewrite a node's candidate SQL so its schema-qualified references point at the
 blue/green candidate schema instead of production.
 
 Blue/green validation builds a changed node's full upstream closure as empty

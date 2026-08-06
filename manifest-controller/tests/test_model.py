@@ -16,7 +16,8 @@ def test_manifest_node_manifest_version_defaults_to_empty():
         owner="data-platform",
         schedule_name="daily",
         criticality="SECONDARY",
-        dependency_sqls=["SELECT 1"], candidate_sql="SELECT 1",
+        dependency_sqls=["SELECT 1"],
+        candidate_sql="SELECT 1",
     )
     assert node.manifest_version == ""
 
@@ -38,7 +39,8 @@ def test_manifest_node_defaults_criticality():
         owner="data-platform",
         schedule_name="daily",
         criticality="SECONDARY",
-        dependency_sqls=["SELECT 1"], candidate_sql="SELECT 1",
+        dependency_sqls=["SELECT 1"],
+        candidate_sql="SELECT 1",
     )
     assert node.criticality == "SECONDARY"
     assert node.upstream_deps == []

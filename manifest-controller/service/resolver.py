@@ -47,8 +47,9 @@ def resolve_upstream_deps(
             if key not in registry:
                 # Table is not in the registry — it's an external table or source
                 # not owned by any known service. Skip it.
-                # Note: dbt seeds ARE registered (pass 2 writes them to the registry CSV),
-                # so seed references are resolved as upstream deps, not skipped here.
+                # Note: dbt seeds ARE registered (pass 2 builds the in-memory registry
+                # from every parsed node, seeds included), so seed references are
+                # resolved as upstream deps, not skipped here.
                 continue
             seen.add(key)
             entry = registry[key]
