@@ -18,7 +18,7 @@ def build_code_bundle(release_id: str, nodes: list[ManifestNode], shared_code: d
             f"{n.schema_name}.{n.table_name}": {
                 "runtime": n.runtime,
                 "raw_code": n.raw_code,
-                "compiled_code": n.compiled_sql,
+                "compiled_code": n.candidate_sql,
                 "config": n.config,
                 "source_hash": n.source_hash,
                 "shared_code_hash": n.shared_code_hash,

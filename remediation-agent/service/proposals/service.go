@@ -27,6 +27,13 @@ type RecordInput struct {
 	PrURL      string
 	PrNumber   int
 	OpenedBy   string
+	// OpenedAt is the true moment the PR was created, when the caller knows
+	// it — e.g. GitHub's own created_at for a PR the opening sweep recovers,
+	// which can predate the recovery pass by minutes or hours. Zero means
+	// "unknown": Record falls back to the current clock time, which is what
+	// the normal client-side flow uses, since it has no better value (the PR
+	// was just created by that same call).
+	OpenedAt time.Time
 }
 
 // Deps holds every collaborator the Service needs, all behind ports or
@@ -73,12 +80,8 @@ func (s *Service) Begin(ctx context.Context, id string) (proposal.PRClaim, error
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("get proposal: %w", err)
 	}
-	branch := fmt.Sprintf("remediation/%s/%s-attempt%d",
-		v.ReleaseID,
-		sanitizeBranchSegment(v.NodeID),
-		v.Attempt,
-	)
-	claim, err := s.repo.BeginPR(ctx, id, branch)
+	branch := BuildBranch(v.ReleaseID, v.NodeID, v.Attempt)
+	claim, err := s.repo.BeginPR(ctx, id, branch, s.clock.Now())
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("begin pr: %w", err)
 	}
@@ -90,6 +93,12 @@ func (s *Service) Begin(ctx context.Context, id string) (proposal.PRClaim, error
 // calls RecordPR on the proposal row and creates a remediation.pr_opened:v1
 // outbox entry atomically. The outbox entry ID is deterministic so a
 // re-emission of the same PR-opened fact dedups to one downstream event.
+// RecordPR's CAS guard makes this method itself idempotent: two callers can
+// race to record the same claim — the ui-service PR-creation route and the
+// reconciler's opening sweep, when the sweep finds a PR on GitHub for a claim
+// it read as stuck before the route's own recording call lands — and only
+// the first to reach the row writes anything or emits the event; the second
+// is a no-op, not an error.
 func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	// Fetch the proposal to obtain release_id, node_id, and attempt — required
 	// for deterministic outbox entry id and event payload construction.
@@ -99,6 +108,10 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	}
 
 	now := s.clock.Now()
+	openedAt := in.OpenedAt
+	if openedAt.IsZero() {
+		openedAt = now
+	}
 
 	u := s.newUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -106,11 +119,15 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	}
 	defer func() { _ = u.Rollback() }()
 
-	if err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, in.PrURL, in.PrNumber, in.OpenedBy, now); err != nil {
+	hit, err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, in.PrURL, in.PrNumber, in.OpenedBy, openedAt)
+	if err != nil {
 		return fmt.Errorf("record pr: %w", err)
 	}
+	if !hit {
+		return nil
+	}
 
-	if err := s.enqueuePROpened(ctx, u, v, in, now); err != nil {
+	if err := s.enqueuePROpened(ctx, u, v, in, now, openedAt); err != nil {
 		return err
 	}
 
@@ -120,10 +137,20 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	return nil
 }
 
-// Fail resets a stuck 'opening' claim back to 'failed' so the action can be
-// retried. It delegates directly to the non-transactional repository.
-func (s *Service) Fail(ctx context.Context, id string) error {
-	return s.repo.FailPR(ctx, id)
+// FailStuckClaim releases a stuck 'opening' claim back to 'failed', but only
+// if the row's pr_claimed_at still matches observedClaimedAt — the compare-
+// and-set guard that lets a caller release exactly the claim it itself
+// acquired or observed, never a fresher one taken by someone else since. Two
+// callers use this: the ui-service PR-creation route, immediately after its
+// own Begin call in the same request, when a downstream S3 or GitHub step
+// fails — passing the ClaimedAt that Begin returned; and the reconciler's
+// opening sweep, passing the ClaimedAt it read while listing stuck claims
+// earlier in the same pass. A mismatch (the claim was released and
+// re-claimed between the caller's own claim/observation and this call) is
+// reported via hit=false rather than an error: neither caller may ever
+// overwrite a claim it does not currently hold.
+func (s *Service) FailStuckClaim(ctx context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+	return s.repo.FailStuckOpeningPR(ctx, id, observedClaimedAt)
 }
 
 // RecordOutcome mirrors a terminal PR outcome observed on GitHub onto the
@@ -194,7 +221,11 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 
 // enqueuePROpened builds the deterministic remediation.pr_opened:v1 outbox
 // entry and creates it on the repository bound to the caller's transaction.
-func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v proposal.View, in RecordInput, now time.Time) error {
+// now is the outbox row's own bookkeeping timestamp; openedAt is the PR's
+// actual creation time, which the two can legitimately differ on — recovering
+// a stranded PR through the opening sweep resolves it long after GitHub
+// created it.
+func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v proposal.View, in RecordInput, now, openedAt time.Time) error {
 	eventID := event.PROpenedEventID(v.ReleaseID, v.NodeID, v.Attempt)
 	payload := event.PROpened{
 		ProposalID: in.ProposalID,
@@ -203,7 +234,7 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 		PrURL:      in.PrURL,
 		PrNumber:   in.PrNumber,
 		OpenedBy:   in.OpenedBy,
-		OpenedAt:   now.Format("2006-01-02T15:04:05Z07:00"),
+		OpenedAt:   openedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -221,6 +252,15 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 		CreatedAt:     now,
 	}
 	return u.OutboxRepo().Create(ctx, entry)
+}
+
+// BuildBranch returns the deterministic remediation branch name for a
+// proposal's release/node/attempt: remediation/<release_id>/<node_sanitized>-attempt<n>.
+// Both Begin (computing the branch to claim) and the reconciler's opening
+// sweep (recomputing the same branch to look a stuck claim up on GitHub) call
+// this so the two never drift apart.
+func BuildBranch(releaseID, nodeID string, attempt int) string {
+	return fmt.Sprintf("remediation/%s/%s-attempt%d", releaseID, sanitizeBranchSegment(nodeID), attempt)
 }
 
 // sanitizeBranchSegment replaces every rune that is not in [A-Za-z0-9_-] with

@@ -23,6 +23,8 @@ type Queryer interface {
 type ProposalRepository struct{ q Queryer }
 
 var _ repository.ProposalRepository = (*ProposalRepository)(nil)
+var _ repository.OpenPRLister = (*ProposalRepository)(nil)
+var _ repository.OpeningLister = (*ProposalRepository)(nil)
 
 // NewProposalRepository binds a repository to a Queryer (pass *sqlx.Tx for the
 // transactional write path).
@@ -176,18 +178,19 @@ const proposalColumns = `id, source, release_id, node_id, error_signature, attem
 
 // claimRow is the persistence DTO for the BeginPR RETURNING projection.
 type claimRow struct {
-	ID             string `db:"id"`
-	Repo           string `db:"repo"`
-	CommitSHA      string `db:"commit_sha"`
-	FilePath       string `db:"file_path"`
-	ProposedSQLURI string `db:"proposed_sql_uri"`
-	DiffURI        string `db:"diff_uri"`
-	ReleaseID      string `db:"release_id"`
-	NodeID         string `db:"node_id"`
-	Attempt        int    `db:"attempt"`
-	Rationale      string `db:"rationale"`
-	Confidence     string `db:"confidence"`
-	Model          string `db:"model"`
+	ID             string    `db:"id"`
+	Repo           string    `db:"repo"`
+	CommitSHA      string    `db:"commit_sha"`
+	FilePath       string    `db:"file_path"`
+	ProposedSQLURI string    `db:"proposed_sql_uri"`
+	DiffURI        string    `db:"diff_uri"`
+	ReleaseID      string    `db:"release_id"`
+	NodeID         string    `db:"node_id"`
+	Attempt        int       `db:"attempt"`
+	Rationale      string    `db:"rationale"`
+	Confidence     string    `db:"confidence"`
+	Model          string    `db:"model"`
+	ClaimedAt      time.Time `db:"pr_claimed_at"`
 }
 
 func (row claimRow) toClaim(branch string) proposal.PRClaim {
@@ -204,6 +207,7 @@ func (row claimRow) toClaim(branch string) proposal.PRClaim {
 		Rationale:      row.Rationale,
 		Confidence:     proposal.Confidence(row.Confidence),
 		Model:          row.Model,
+		ClaimedAt:      row.ClaimedAt,
 		Branch:         branch,
 	}
 }
@@ -253,11 +257,15 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	return views, nil
 }
 
-// BeginPR atomically claims a proposal for PR creation: pr_state '' or 'failed'
-// -> 'opening'. The UPDATE…RETURNING is the single-winner guard; concurrent
-// callers see 0 rows and receive ErrPRConflict. Returns ErrNotSourceResolved
-// when source_resolved=false, ErrNotFound when the id is unknown.
-func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string) (proposal.PRClaim, error) {
+// BeginPR atomically claims a proposal for PR creation: an empty pr_state or
+// 'failed' -> 'opening', stamping pr_claimed_at with claimedAt. The UPDATE…RETURNING is
+// the single-winner guard; concurrent callers see 0 rows and receive
+// ErrPRConflict. The RETURNING clause reads pr_claimed_at back from the row
+// rather than trusting the claimedAt argument verbatim, so the returned
+// PRClaim.ClaimedAt is always the value actually persisted — the one a later
+// FailStuckOpeningPR call must CAS against. Returns ErrNotSourceResolved when
+// source_resolved=false, ErrNotFound when the id is unknown.
+func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
 	// Distinguish "not source-resolved" from "already claimed" for a precise error.
 	var sr bool
 	if err := r.q.GetContext(ctx, &sr, `SELECT source_resolved FROM proposal WHERE id=$1`, id); err != nil {
@@ -271,14 +279,15 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string) (pr
 	}
 
 	const stmt = `
-		UPDATE proposal SET pr_state = 'opening'
+		UPDATE proposal SET pr_state = 'opening', pr_claimed_at = $2
 		WHERE id = $1
 		  AND source_resolved
 		  AND pr_state IN ('', 'failed')
 		RETURNING id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
-		          release_id, node_id, attempt, rationale, confidence, model`
+		          release_id, node_id, attempt, rationale, confidence, model,
+		          pr_claimed_at`
 	var row claimRow
-	if err := r.q.GetContext(ctx, &row, stmt, id); err != nil {
+	if err := r.q.GetContext(ctx, &row, stmt, id, claimedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrPRConflict
 		}
@@ -287,32 +296,52 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string) (pr
 	return row.toClaim(branch), nil
 }
 
-// RecordPR records the opened PR and flips pr_state to 'open'.
-// Returns ErrNotFound when the id does not exist.
-func (r *ProposalRepository) RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) error {
+// RecordPR records the opened PR, flips pr_state to 'open', and clears
+// pr_claimed_at back to NULL since the claim it tracked is now resolved — but
+// only when the row is still 'opening': the WHERE clause is the same
+// compare-and-set guard FailStuckOpeningPR and RecordPROutcome apply, so a
+// row already moved on (recorded or failed by another caller, including an
+// unknown id) leaves 0 rows affected rather than a blind write. hit reports
+// whether the CAS fired.
+func (r *ProposalRepository) RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
 		`UPDATE proposal
-		 SET pr_state='open', pr_url=$2, pr_number=$3, pr_opened_by=$4, pr_opened_at=$5
-		 WHERE id=$1`,
+		 SET pr_state='open', pr_url=$2, pr_number=$3, pr_opened_by=$4, pr_opened_at=$5,
+		     pr_claimed_at=NULL
+		 WHERE id=$1 AND pr_state='opening'`,
 		id, prURL, prNumber, openedBy, openedAt)
 	if err != nil {
-		return fmt.Errorf("record pr: %w", err)
+		return false, fmt.Errorf("record pr: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return repository.ErrNotFound
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("record pr: rows affected: %w", err)
 	}
-	return nil
+	return n > 0, nil
 }
 
-// FailPR resets a stuck 'opening' claim back to 'failed' so the action can be
-// retried. It is a no-op when pr_state is not 'opening'.
-func (r *ProposalRepository) FailPR(ctx context.Context, id string) error {
-	_, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET pr_state='failed' WHERE id=$1 AND pr_state='opening'`, id)
+// FailStuckOpeningPR resets a stuck 'opening' claim back to 'failed' and
+// clears pr_claimed_at, but only when the row's current pr_claimed_at still
+// equals observedClaimedAt: the WHERE clause is the compare-and-set guard, so
+// a claim released and re-claimed since the caller observed or acquired it (a
+// different pr_claimed_at, or a pr_state that already moved on) leaves 0 rows
+// affected rather than clobbering the fresh claim. Used both by the
+// reconciler's opening sweep (CAS'd on the ClaimedAt it read while listing
+// stuck claims) and by the ui-service PR-creation route's own failure
+// callback (CAS'd on the ClaimedAt its own BeginPR call returned).
+func (r *ProposalRepository) FailStuckOpeningPR(ctx context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal SET pr_state='failed', pr_claimed_at=NULL
+		 WHERE id=$1 AND pr_state='opening' AND pr_claimed_at=$2`,
+		id, observedClaimedAt)
 	if err != nil {
-		return fmt.Errorf("fail pr: %w", err)
+		return false, fmt.Errorf("fail stuck opening pr: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fail stuck opening pr: rows affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 // openPRRow is the persistence DTO for the ListOpenPullRequests projection.
@@ -356,6 +385,65 @@ func (r *ProposalRepository) ListOpenPullRequests(ctx context.Context, limit int
 // RecordPROutcome atomically transitions pr_state 'open' -> outcome. The WHERE
 // pr_state='open' guard makes concurrent or repeated calls single-winner: only
 // the first caller sees rows-affected=1; every later call is a no-op false.
+// openingRow is the persistence DTO for the ListStuckOpening projection.
+type openingRow struct {
+	ID        string     `db:"id"`
+	Repo      string     `db:"repo"`
+	ReleaseID string     `db:"release_id"`
+	NodeID    string     `db:"node_id"`
+	Attempt   int        `db:"attempt"`
+	ClaimedAt *time.Time `db:"pr_claimed_at"`
+	CreatedAt time.Time  `db:"created_at"`
+}
+
+// ListStuckOpening returns up to limit proposals with pr_state='opening',
+// ordered oldest-created first (created_at, id) and resuming strictly after
+// cursor (nil for the first page). It over-fetches by one row to tell
+// "more rows exist" apart from "this was the last page": when limit+1 rows
+// come back, the (limit+1)th is dropped from the result and becomes next,
+// the cursor of the row now at the end of the page; otherwise next is nil.
+func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cursor *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := `SELECT id, repo, release_id, node_id, attempt, pr_claimed_at, created_at
+	      FROM proposal WHERE pr_state = 'opening'`
+	args := make([]any, 0, 3)
+	if cursor != nil {
+		args = append(args, cursor.CreatedAt, cursor.ID)
+		q += fmt.Sprintf(" AND (created_at, id) > ($%d, $%d)", len(args)-1, len(args))
+	}
+	q += " ORDER BY created_at ASC, id ASC"
+	args = append(args, limit+1)
+	q += fmt.Sprintf(" LIMIT $%d", len(args))
+
+	var rows []openingRow
+	if err := r.q.SelectContext(ctx, &rows, q, args...); err != nil {
+		return nil, nil, fmt.Errorf("list stuck opening proposals: %w", err)
+	}
+
+	var next *repository.OpeningCursor
+	if len(rows) > limit {
+		last := rows[limit-1]
+		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+		rows = rows[:limit]
+	}
+
+	out := make([]proposal.OpeningPR, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, proposal.OpeningPR{
+			ID:        row.ID,
+			Repo:      row.Repo,
+			ReleaseID: row.ReleaseID,
+			NodeID:    row.NodeID,
+			Attempt:   row.Attempt,
+			ClaimedAt: row.ClaimedAt,
+			CreatedAt: row.CreatedAt,
+		})
+	}
+	return out, next, nil
+}
+
 func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
 		`UPDATE proposal SET pr_state=$2, pr_closed_at=$3 WHERE id=$1 AND pr_state='open'`,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -169,6 +170,118 @@ func TestPullLifecycle_ClosePath(t *testing.T) {
 	}
 	if pr.State != "closed" || pr.Merged {
 		t.Fatalf("want closed/unmerged, got %+v", pr)
+	}
+}
+
+// TestListPulls_FindsPRByHeadBranch verifies GET pulls?head=owner:branch
+// finds a PR a prior POST created for that branch — the read path the
+// remediation-agent opening sweep's FindByBranch depends on to recover a
+// stranded claim (a PR created on GitHub but never recorded).
+func TestListPulls_FindsPRByHeadBranch(t *testing.T) {
+	resetPRs()
+
+	// Open a PR for branch "remediation/rel-1/model-attempt1".
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPost, "/repos/o/r/pulls",
+		strings.NewReader(`{"title":"fix","head":"remediation/rel-1/model-attempt1","base":"main"}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create PR: got %d", rec.Code)
+	}
+	var created struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	// A branch lookup in "owner:branch" form (as FindByBranch sends it) finds it.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet,
+		"/repos/o/r/pulls?head=o%3Aremediation%2Frel-1%2Fmodel-attempt1&state=all&per_page=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list pulls: got %d", rec.Code)
+	}
+	var found []struct {
+		Number    int    `json:"number"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &found); err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || found[0].Number != created.Number {
+		t.Fatalf("expected exactly one match with number %d, got %+v", created.Number, found)
+	}
+	if found[0].CreatedAt == "" {
+		t.Error("expected a non-empty created_at on the matched PR")
+	}
+
+	// An unrelated branch finds nothing.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls?head=o%3Aother-branch&state=all", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &found); err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("expected no match for an unrelated branch, got %+v", found)
+	}
+}
+
+// TestListPulls_FiltersByState verifies the state query parameter: "open"
+// (the default) excludes a closed PR, and "all" includes it.
+func TestListPulls_FiltersByState(t *testing.T) {
+	resetPRs()
+
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPost, "/repos/o/r/pulls",
+		strings.NewReader(`{"title":"fix","head":"stub-state","base":"main"}`)))
+	var created struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+
+	// Still open: the default "open" state finds it.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls?head=stub-state", nil))
+	var openMatches []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &openMatches); err != nil {
+		t.Fatal(err)
+	}
+	if len(openMatches) != 1 {
+		t.Fatalf("expected one open match, got %+v", openMatches)
+	}
+
+	// Close it, then the default "open" filter must exclude it.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPatch, fmt.Sprintf("/repos/o/r/pulls/%d", created.Number),
+		strings.NewReader(`{"state":"closed"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close PR: got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls?head=stub-state", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &openMatches); err != nil {
+		t.Fatal(err)
+	}
+	if len(openMatches) != 0 {
+		t.Fatalf("expected no open match after closing, got %+v", openMatches)
+	}
+
+	// "state=all" still finds the now-closed PR.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/pulls?head=stub-state&state=all", nil))
+	var allMatches []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &allMatches); err != nil {
+		t.Fatal(err)
+	}
+	if len(allMatches) != 1 {
+		t.Fatalf("expected one match with state=all, got %+v", allMatches)
 	}
 }
 

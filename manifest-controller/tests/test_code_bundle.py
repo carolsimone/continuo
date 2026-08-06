@@ -6,7 +6,7 @@ def _mk(table="revenue", schema="analytics", **over):
     defaults = dict(
         table_name=table, schema_name=schema, service_name="service-a",
         owner="team-a", schedule_name="daily", criticality="SECONDARY",
-        compiled_sql="select 1", node_type="dbt-model",
+        candidate_sql="select 1", node_type="dbt-model",
         raw_code="select 1 -- raw", config={"materialized": "table"},
         source_hash="s", shared_code_hash="m", config_hash="c",
         content_hash="sha256:x", code_unit_ids=["macro.svc.m1"],
@@ -32,7 +32,7 @@ def test_bundle_shape_and_keys():
 
 
 def test_seed_ships_empty_code():
-    seed = _mk(table="countries", node_type="dbt-seed", compiled_sql="", raw_code="",
+    seed = _mk(table="countries", node_type="dbt-seed", candidate_sql="", raw_code="",
                code_unit_ids=[], shared_code_hash="")
     bundle = build_code_bundle("rel-1", [seed], {})
     node = bundle["nodes"]["analytics.countries"]

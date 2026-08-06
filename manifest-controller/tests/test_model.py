@@ -16,7 +16,8 @@ def test_manifest_node_manifest_version_defaults_to_empty():
         owner="data-platform",
         schedule_name="daily",
         criticality="SECONDARY",
-        compiled_sql="SELECT 1",
+        dependency_sqls=["SELECT 1"],
+        candidate_sql="SELECT 1",
     )
     assert node.manifest_version == ""
 
@@ -38,10 +39,23 @@ def test_manifest_node_defaults_criticality():
         owner="data-platform",
         schedule_name="daily",
         criticality="SECONDARY",
-        compiled_sql="SELECT 1",
+        dependency_sqls=["SELECT 1"],
+        candidate_sql="SELECT 1",
     )
     assert node.criticality == "SECONDARY"
     assert node.upstream_deps == []
+
+
+def test_manifest_node_carries_dependency_sqls_and_candidate_sql():
+    node = ManifestNode(
+        table_name="t", schema_name="s", service_name="svc", owner="o",
+        schedule_name="daily", criticality="SECONDARY",
+        dependency_sqls=["select * from s.up"],
+        candidate_sql="select * from s.up",
+    )
+    assert node.dependency_sqls == ["select * from s.up"]
+    assert node.candidate_sql == "select * from s.up"
+    assert not hasattr(node, "compiled_sql")
 
 
 def test_node_registry_entry():

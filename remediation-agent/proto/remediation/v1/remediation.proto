@@ -91,6 +91,11 @@ message BeginPullRequestResponse {
   string model = 12;
   // branch is the git branch name to open the PR from.
   string branch = 13;
+  // claimed_at is an RFC3339-formatted timestamp string: the pr_claimed_at
+  // value this claim actually persisted. FailPullRequest must echo it back
+  // so the repository's compare-and-set only releases this exact claim,
+  // never a fresher one taken by someone else since.
+  string claimed_at = 14;
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
@@ -106,6 +111,18 @@ message RecordPullRequestResponse {}
 // FailPullRequestRequest identifies the proposal whose PR attempt failed.
 message FailPullRequestRequest {
   string id = 1;
+  // claimed_at is an RFC3339-formatted timestamp string: the claimed_at
+  // BeginPullRequest returned for this claim. The repository compares it
+  // against the row's current pr_claimed_at before resetting anything, so a
+  // claim already released and re-claimed by someone else is left untouched
+  // instead of being reset out from under its new owner.
+  string claimed_at = 2;
 }
 
-message FailPullRequestResponse {}
+message FailPullRequestResponse {
+  // released reports whether this call's compare-and-set matched and reset
+  // the claim. false means the claim had already moved on — recorded, or
+  // already failed by another caller — by the time this call ran; that is
+  // not an error.
+  bool released = 1;
+}

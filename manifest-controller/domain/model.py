@@ -31,7 +31,8 @@ class ManifestNode:
     owner: str
     schedule_name: str
     criticality: str  # "REGULATORY" | "CORE" | "SECONDARY"
-    compiled_sql: str
+    dependency_sqls: list[str] = field(default_factory=list)
+    candidate_sql: str = ""
     node_type: str = "dbt-model"  # dbt-model | dbt-seed | dbt-snapshot
     content_hash: str = ""  # sha256:-prefixed fold of source_hash|shared_code_hash|config_hash
     manifest_version: str = ""

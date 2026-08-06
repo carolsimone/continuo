@@ -16,6 +16,43 @@ function extractPrUrl(message: string): string | undefined {
   return m ? m[0] : undefined;
 }
 
+// safeFailPullRequest releases a stuck 'opening' claim back to 'failed' so it
+// can be retried immediately. This is a best-effort courtesy, not a
+// requirement for correctness: the reconciler's opening sweep recovers any
+// claim left in 'opening' on its own, independent of whether this call ever
+// runs. claimedAt is empty when the caller never received one — a
+// remediation-agent instance still on a pre-claimed_at protocol during a
+// rolling upgrade sends an empty proto3 default — and the RPC rejects an
+// empty claimed_at outright, so that case is skipped rather than attempted.
+// Any other failure is logged and swallowed rather than propagated: this
+// function runs from inside a catch block with no try of its own around it,
+// so a rejection here would otherwise surface as an unhandled promise
+// rejection and, under this service's default Node settings, crash the
+// process.
+async function safeFailPullRequest(
+  remediation: RemediationClient,
+  id: string,
+  claimedAt: string | undefined,
+): Promise<void> {
+  if (!claimedAt) {
+    console.warn(
+      '[remediation] skipping failPullRequest for proposal %s: no claimed_at available (version skew) — the opening sweep will recover this claim',
+      id,
+    );
+    return;
+  }
+  try {
+    await remediation.failPullRequest({ id, claimed_at: claimedAt });
+  } catch (err: any) {
+    console.error(
+      '[remediation] failPullRequest failed for proposal %s (status=%s): %s — the opening sweep will recover this claim',
+      id,
+      err?.code ?? 'unknown',
+      err?.message ?? String(err),
+    );
+  }
+}
+
 export function createRemediationRouter(
   remediation: RemediationClient,
   prCreator: PullRequestCreator | undefined,
@@ -34,6 +71,11 @@ export function createRemediationRouter(
       const result = await remediation.listProposals(params);
       res.json({ proposals: result.proposals ?? [] });
     } catch (err: any) {
+      console.error(
+        '[remediation] listProposals failed (status=%s): %s',
+        err?.code ?? 'unknown',
+        err?.message ?? String(err),
+      );
       res.status(502).json({ error: 'remediation service request failed' });
     }
   });
@@ -47,6 +89,12 @@ export function createRemediationRouter(
       if (err?.code === grpc.status.NOT_FOUND) {
         return res.status(404).json({ error: 'proposal not found' });
       }
+      console.error(
+        '[remediation] getProposal failed for proposal %s (status=%s): %s',
+        req.params.id,
+        err?.code ?? 'unknown',
+        err?.message ?? String(err),
+      );
       res.status(502).json({ error: 'remediation service request failed' });
     }
   });
@@ -76,15 +124,33 @@ export function createRemediationRouter(
         const pr_url = extractPrUrl(message);
         return res.status(409).json({ error: message, pr_url });
       }
+      console.error(
+        '[remediation] beginPullRequest failed for proposal %s (status=%s): %s',
+        id,
+        err?.code ?? 'unknown',
+        err?.message ?? String(err),
+      );
       return res.status(502).json({ error: 'remediation service request failed' });
     }
+
+    // claimed_at is the pr_claimed_at value BeginPullRequest's CAS persisted
+    // for this claim. Every failure path below must echo it back on
+    // failPullRequest so the repository only resets this exact claim — never
+    // a fresher one taken by someone else (a re-claim, or the reconciler's
+    // opening sweep) since this request began.
+    const claimedAt = claim.claimed_at;
 
     // Fetch the proposed SQL content from S3.
     let content: string;
     try {
       content = await getObject(normalizeKey(claim.proposed_sql_uri));
-    } catch {
-      await remediation.failPullRequest({ id });
+    } catch (err) {
+      console.error(
+        '[remediation] failed to fetch proposed SQL for proposal %s: %s',
+        id,
+        err instanceof Error ? err.message : String(err),
+      );
+      await safeFailPullRequest(remediation, id, claimedAt);
       return res.status(502).json({ error: 'failed to fetch proposed SQL from S3' });
     }
 
@@ -98,8 +164,14 @@ export function createRemediationRouter(
       try {
         const diff = await getObject(normalizeKey(claim.diff_uri));
         diffBlock = `\n\n### Proposed diff\n\`\`\`diff\n${diff}\n\`\`\``;
-      } catch {
-        // Diff is best-effort — omit on failure.
+      } catch (err) {
+        // Diff is best-effort — omit on failure, but still log why so a
+        // missing diff in a PR body is diagnosable without a repro.
+        console.warn(
+          '[remediation] failed to fetch proposed diff for proposal %s (continuing without it): %s',
+          id,
+          err instanceof Error ? err.message : String(err),
+        );
       }
     }
 
@@ -143,16 +215,29 @@ export function createRemediationRouter(
         title,
         body,
       });
-    } catch {
+    } catch (err) {
+      // Log the proposal id plus the error's status/message (Octokit errors
+      // carry both) so a GitHub-side rejection is diagnosable without a
+      // repro. Never log the full error object here: an Octokit
+      // RequestError can carry the outgoing request, including the
+      // Authorization header used to authenticate as the GitHub App.
+      const e = err as { status?: number; message?: string };
+      console.error(
+        '[remediation] pull request creation failed for proposal %s (status=%s): %s',
+        id,
+        e?.status ?? 'unknown',
+        e?.message ?? String(err),
+      );
       // Record the failure so the proposal transitions back to a retryable state.
-      await remediation.failPullRequest({ id });
+      await safeFailPullRequest(remediation, id, claimedAt);
       return res.status(502).json({ error: 'failed to open pull request' });
     }
 
     // Record the opened PR against the proposal. This is best-effort bookkeeping:
     // the PR already exists on GitHub at this point, so a recording failure must
-    // not prevent the client from receiving the PR link. Log loudly on failure
-    // so an operator can reconcile the proposal state manually if needed.
+    // not prevent the client from receiving the PR link. Log loudly on failure so
+    // the stuck row is diagnosable; the reconciler's opening sweep recovers it
+    // automatically on its next pass, so no manual intervention is required.
     try {
       await remediation.recordPullRequest({
         id,
@@ -162,7 +247,7 @@ export function createRemediationRouter(
       });
     } catch (err) {
       console.error(
-        '[remediation] recordPullRequest failed for proposal %s (PR %s); proposal may remain in pr_state=opening — reconcile manually:',
+        '[remediation] recordPullRequest failed for proposal %s (PR %s); proposal may remain in pr_state=opening — the reconciler opening sweep recovers it automatically (see REMEDIATION_PR_OPENING_GRACE_PERIOD):',
         id,
         pr.url,
         err,

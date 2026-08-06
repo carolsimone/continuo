@@ -65,8 +65,14 @@ def resolved_topology():
 
 @pytest.fixture
 def handler_with_mocks():
-    """Return (handler, publisher, uploader) with a one-node manifest source."""
-    source = _make_source(("manifest_service1.json", "v1"))
+    """Return (handler, publisher, uploader) with a two-node, two-manifest source
+    (service1's "users" and service2's "orders", which selects from
+    test_schema.users) — this cross-service reference is what gives the
+    candidate-schema rewrite something real to do."""
+    source = _make_source(
+        ("manifest_service1.json", "v1"),
+        ("manifest_service2.json", "v2"),
+    )
     publisher = MagicMock()
     uploader = _make_uploader()
     handler = CandidateManifestHandler(
@@ -415,8 +421,10 @@ def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_pa
 # ---------------------------------------------------------------------------
 
 def test_publishes_candidate_sql_uri_and_uploads(handler_with_mocks):
-    """Each node's compiled SQL is uploaded to S3; the topology carries
-    candidate_sql_uri (not the inline candidate_sql string)."""
+    """Each node's candidate SQL is uploaded to S3; the topology carries
+    candidate_sql_uri (not the inline candidate_sql string) — and the SQL text
+    actually handed to the uploader is the candidate-schema-rewritten SQL, so
+    passing "" or the un-rewritten source would fail this test."""
     handler, publisher, uploader = handler_with_mocks
     uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/public.orders.sql"
 
@@ -426,6 +434,11 @@ def test_publishes_candidate_sql_uri_and_uploads(handler_with_mocks):
     node = publisher.publish_ok.call_args.kwargs["topology"][0]
     assert "candidate_sql" not in node
     assert node["candidate_sql_uri"] == "s3://continuo/candidate-sql/rel-1/public.orders.sql"
+
+    # service2's "orders" node selects from test_schema.users (service1), so its
+    # candidate_sql is genuinely rewritten onto the release's candidate schema.
+    sqls = {c.kwargs["unique_id"]: c.kwargs["sql"] for c in uploader.upload.call_args_list}
+    assert sqls["test_schema.orders"] == 'SELECT * FROM "_candidate_rel_1".users'
 
 
 def test_upload_failure_is_fatal(handler_with_mocks):
