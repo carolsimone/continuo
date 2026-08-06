@@ -30,13 +30,13 @@ def candidate_schema_name(release_id: str) -> str:
 
 
 def rewrite_to_candidate_schema(
-    compiled_sql: str,
+    sql: str,
     registry: dict[tuple[str, str], NodeRegistryEntry],
     candidate_schema: str,
     self_schema: str = "",
     self_table: str = "",
 ) -> str:
-    """Return compiled_sql with every known-node schema-qualified reference
+    """Return sql with every known-node schema-qualified reference
     redirected to candidate_schema. Empty input (e.g. a seed, which has no SQL)
     is returned unchanged.
 
@@ -46,10 +46,10 @@ def rewrite_to_candidate_schema(
     to the candidate schema would read a relation that no longer exists. This
     mirrors the dependency resolver, which also skips self-references.
     """
-    if not compiled_sql:
-        return compiled_sql
+    if not sql:
+        return sql
 
-    parsed = sqlglot.parse_one(compiled_sql, dialect="postgres")
+    parsed = sqlglot.parse_one(sql, dialect="postgres")
     cte_names = {cte.alias.lower() for cte in parsed.find_all(exp.CTE)}
     self_ref = (self_schema.lower(), self_table.lower())
 
