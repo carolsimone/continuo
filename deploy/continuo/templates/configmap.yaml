@@ -23,5 +23,6 @@ data:
   S3_BUCKET: {{ include "continuo.s3.bucket" . | quote }}
   S3_ENV: {{ include "continuo.s3.env" . | quote }}
   AWS_DEFAULT_REGION: {{ include "continuo.s3.region" . | quote }}
+  WAREHOUSE_ENGINE: {{ .Values.validation.engine | default "postgres" | quote }}
   ENV: {{ .Values.global.env | quote }}
   LOG_LEVEL: {{ .Values.global.logLevel | quote }}

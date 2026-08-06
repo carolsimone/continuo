@@ -21,6 +21,17 @@ shipped in those.
 - The validation image is now the externally released `continuo-validation-<engine>` (from github.com/carolsimone/continuo-validation), replacing the chart-appVersion-tagged `continuo-validation-runner-<engine>`; `global.imageTag` no longer applies to it.
 
 ### Fixed
+- `manifest-controller` now reads and re-renders SQL in the dialect of the
+  engine the install actually targets, instead of always assuming Postgres. The
+  shared ConfigMap gained a `WAREHOUSE_ENGINE` key derived from the existing
+  `validation.engine` value — no new values key, so unmodified overrides keep
+  working. On a `validation.engine: trino` install, the candidate SQL uploaded
+  for blue/green validation was previously re-rendered through sqlglot's
+  `postgres` dialect, emitting constructs Trino rejects (a cast came out as
+  `CAST(x AS TEXT)` rather than `CAST(x AS VARCHAR)`), so validation could fail
+  on SQL the warehouse would otherwise have accepted. An engine with no dialect
+  mapping now fails the service at startup rather than silently emitting another
+  engine's SQL.
 - Redis-backed services (`manifest-controller`, `ui-service`) no longer start
   before the bundled Redis is reachable. They previously raced the Redis
   StatefulSet, crashed on connect, and entered CrashLoopBackOff — whose

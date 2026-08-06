@@ -7,7 +7,17 @@ from domain.model import ManifestNode, NodeRegistryEntry, UpstreamDep
 def resolve_upstream_deps(
     node: ManifestNode,
     registry: dict[tuple[str, str], NodeRegistryEntry],
+    *,
+    dialect: str,
 ) -> list[UpstreamDep]:
+    """Resolve a node's upstream deps from the table references in its
+    dependency SQLs.
+
+    dialect is the sqlglot dialect of the warehouse the install targets; it
+    decides which syntax parses, so a query valid on one engine can raise
+    InvalidCompiledSqlError under another. It is required rather than defaulted
+    so a caller cannot silently fall back to one engine's rules.
+    """
     deps: list[UpstreamDep] = []
     seen: set[tuple[str, str]] = set()
 
@@ -16,7 +26,7 @@ def resolve_upstream_deps(
             continue
 
         try:
-            parsed = sqlglot.parse_one(dep_sql, dialect="postgres")
+            parsed = sqlglot.parse_one(dep_sql, dialect=dialect)
         except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
             raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=str(exc)) from exc
 

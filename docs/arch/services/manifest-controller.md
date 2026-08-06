@@ -102,9 +102,11 @@ Failure-handling distinction: a parse or resolve failure that re-delivery cannot
 | Table not in registry | Skipped (external/source table) |
 | Table in registry | Resolved as `UpstreamDep` |
 | dbt seed reference | Resolved as `UpstreamDep` (seeds are registered in pass 2) |
-| A dependency SQL does not parse as PostgreSQL (e.g. an un-suppressed Jinja expression leaking literal text, such as a trailing comma inside `{{ config(...) }}` rendering as `('',)`, or an unterminated string literal failing the tokenizer) | `InvalidCompiledSqlError` raised → node fails to load |
+| A dependency SQL does not parse under the configured engine's dialect (e.g. an un-suppressed Jinja expression leaking literal text, such as a trailing comma inside `{{ config(...) }}` rendering as `('',)`, or an unterminated string literal failing the tokenizer) | `InvalidCompiledSqlError` raised → node fails to load |
 
-The dependency resolver parses each entry of `dependency_sqls`; the candidate-schema rewriter parses `candidate_sql`. Both use sqlglot's `postgres` dialect — the only warehouse this system targets — so postgres-specific syntax (e.g. `ARRAY[...] @> ARRAY[...]`) resolves normally.
+The dependency resolver parses each entry of `dependency_sqls`; the candidate-schema rewriter parses `candidate_sql` and re-renders it. Both use the sqlglot dialect of the warehouse engine the install targets, so engine-specific syntax (e.g. Postgres' `ARRAY[...] @> ARRAY[...]`) resolves normally on that engine.
+
+The engine comes from `WAREHOUSE_ENGINE`, which the chart sets on the shared ConfigMap from `validation.engine` (`postgres` by default). `main.py` resolves it to a dialect once at boot and injects it into `CandidateManifestHandler`, which passes it to both the resolver and the rewriter — so the SQL uploaded to S3 is in the dialect the validation runner will execute against. An engine with no dialect mapping fails `config.validate()` at startup rather than silently emitting another engine's SQL: sqlglot's `postgres` dialect renders a cast as `CAST(x AS TEXT)`, which Trino rejects.
 
 ## S3 Behavior
 
