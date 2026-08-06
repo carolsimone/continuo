@@ -21,6 +21,20 @@ shipped in those.
 - The validation image is now the externally released `continuo-validation-<engine>` (from github.com/carolsimone/continuo-validation), replacing the chart-appVersion-tagged `continuo-validation-runner-<engine>`; `global.imageTag` no longer applies to it.
 
 ### Fixed
+- Service pods now carry a `checksum/config` annotation over the shared
+  ConfigMap, so `helm upgrade` restarts the pods whose configuration actually
+  changed. Services read that ConfigMap through `envFrom`, and Kubernetes never
+  refreshes environment variables in a running pod, so changing `REDIS_HOST`,
+  `S3_BUCKET`, `LOG_LEVEL` or `validation.engine` previously rendered an
+  identical Deployment and every pod kept serving the old value indefinitely.
+  The engine case corrupted output rather than merely going stale:
+  `executor-controller` rolls on an engine change because its validation image
+  reference changes, so `manifest-controller` would have kept uploading the
+  previous engine's SQL to the new engine's validator. **Upgrade note:** an
+  upgrade that changes any shared ConfigMap value now performs a rolling
+  restart of the affected services; an upgrade that changes none does not, as
+  the digest covers only values derived deterministically from `values.yaml`
+  (generated credentials live in Secrets).
 - `manifest-controller` now reads and re-renders SQL in the dialect of the
   engine the install actually targets, instead of always assuming Postgres. The
   shared ConfigMap gained a `WAREHOUSE_ENGINE` key derived from the existing
