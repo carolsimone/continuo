@@ -35,6 +35,8 @@ def rewrite_to_candidate_schema(
     candidate_schema: str,
     self_schema: str = "",
     self_table: str = "",
+    *,
+    dialect: str,
 ) -> str:
     """Return sql with every known-node schema-qualified reference
     redirected to candidate_schema. Empty input (e.g. a seed, which has no SQL)
@@ -45,11 +47,17 @@ def rewrite_to_candidate_schema(
     runner drops and recreates <candidate>.<table>, so a self-reference rewritten
     to the candidate schema would read a relation that no longer exists. This
     mirrors the dependency resolver, which also skips self-references.
+
+    dialect is the sqlglot dialect of the warehouse the install targets. It is
+    used to both read and re-render the SQL, so it decides the syntax of the
+    text uploaded for validation — the postgres dialect renders a cast as
+    CAST(x AS TEXT) where Trino needs CAST(x AS VARCHAR). It is required rather
+    than defaulted so a caller cannot silently emit one engine's SQL to another.
     """
     if not sql:
         return sql
 
-    parsed = sqlglot.parse_one(sql, dialect="postgres")
+    parsed = sqlglot.parse_one(sql, dialect=dialect)
     cte_names = {cte.alias.lower() for cte in parsed.find_all(exp.CTE)}
     self_ref = (self_schema.lower(), self_table.lower())
 
@@ -65,4 +73,4 @@ def rewrite_to_candidate_schema(
         if key in registry:
             table.set("db", exp.to_identifier(candidate_schema, quoted=True))
 
-    return parsed.sql(dialect="postgres")
+    return parsed.sql(dialect=dialect)

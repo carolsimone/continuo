@@ -5,6 +5,7 @@ import pytest
 from adapters.sources import ManifestSource
 from domain.model import ManifestFile
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
+from service import candidate_manifest_handler
 from service.candidate_manifest_handler import CandidateManifestHandler
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -25,6 +26,18 @@ def _make_uploader(uri=""):
     return uploader
 
 
+def _handler(source, publisher, uploader, dialect="postgres") -> CandidateManifestHandler:
+    """Build a handler pinned to the postgres dialect unless a test names another.
+
+    The handler takes dialect from the composition root, which resolves it from
+    the configured warehouse engine; these cases are about parse/resolve/upload
+    behaviour, so they pin the default engine here.
+    """
+    return CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=uploader, dialect=dialect,
+    )
+
+
 @pytest.fixture
 def resolved_topology():
     source = _make_source(
@@ -33,7 +46,7 @@ def resolved_topology():
     )
     publisher = MagicMock()
     uploader = _make_uploader()
-    CandidateManifestHandler(source=source, publisher=publisher, uploader=uploader).handle(release_id="rel-1")
+    _handler(source, publisher, uploader).handle(release_id="rel-1")
     publisher.publish_ok.assert_called_once()
     assert publisher.publish_ok.call_args.kwargs["release_id"] == "rel-1"
     return publisher.publish_ok.call_args.kwargs["topology"]
@@ -51,7 +64,7 @@ def handler_with_mocks():
     )
     publisher = MagicMock()
     uploader = _make_uploader()
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=uploader)
+    handler = _handler(source, publisher, uploader)
     return handler, publisher, uploader
 
 
@@ -96,7 +109,7 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     source.list_manifests.return_value = []
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-empty")
 
     publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[])
@@ -104,7 +117,7 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
 
 
 def test_handle_publishes_failed_on_unqualified_reference(monkeypatch):
-    def _raise(node, lookup):
+    def _raise(node, lookup, *, dialect):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name="fact")
 
     monkeypatch.setattr(
@@ -114,7 +127,7 @@ def test_handle_publishes_failed_on_unqualified_reference(monkeypatch):
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-fail")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -124,7 +137,7 @@ def test_handle_publishes_failed_on_unqualified_reference(monkeypatch):
 
 
 def test_handle_publishes_failed_on_invalid_compiled_sql(monkeypatch):
-    def _raise(node, lookup):
+    def _raise(node, lookup, *, dialect):
         raise InvalidCompiledSqlError(node_table_name="table_gg", detail="Invalid expression / Unexpected token.")
 
     monkeypatch.setattr(
@@ -134,7 +147,7 @@ def test_handle_publishes_failed_on_invalid_compiled_sql(monkeypatch):
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-fail")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -153,7 +166,7 @@ def test_handle_publishes_failed_on_malformed_manifest(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-malformed")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -173,7 +186,7 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-no-nodes")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -205,7 +218,7 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-empty-fqn")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -218,7 +231,7 @@ def test_handle_propagates_transient_redis_error():
     publisher = MagicMock()
     publisher.publish_ok.side_effect = ConnectionError("redis down")
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     with pytest.raises(ConnectionError):
         handler.handle(release_id="rel-1")
 
@@ -227,14 +240,14 @@ def test_handle_calls_source_cleanup_after_publish():
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-1")
 
     source.cleanup.assert_called_once()
 
 
 def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
-    def _raise(node, lookup):
+    def _raise(node, lookup, *, dialect):
         raise UnqualifiedTableReferenceError(table_name="orders", node_table_name="fact")
 
     monkeypatch.setattr(
@@ -244,7 +257,7 @@ def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-fail")
 
     source.cleanup.assert_called_once()
@@ -279,7 +292,7 @@ def test_handle_publishes_failed_empty_manifest_for_declared_service(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-empty-svc")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -315,7 +328,7 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-mismatch")  # must NOT raise
 
     publisher.publish_failed.assert_called_once()
@@ -334,7 +347,7 @@ def test_handle_publishes_ok_matching_declared_service():
     ])
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-ok")
 
     publisher.publish_ok.assert_called_once()
@@ -359,7 +372,7 @@ def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_pa
     ]
     publisher = MagicMock()
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=_make_uploader())
+    handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-legacy")
 
     # No service declared — falls through to publish_ok with an empty topology
@@ -394,6 +407,41 @@ def test_publishes_candidate_sql_uri_and_uploads(handler_with_mocks):
     assert sqls["test_schema.orders"] == 'SELECT * FROM "_candidate_rel_1".users'
 
 
+def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
+    """The handler hands its configured dialect to both SQL stages.
+
+    Which dialect is correct is decided at the composition root from the
+    warehouse engine; the handler's job is to thread it through rather than let
+    either stage fall back to an engine of its own. The fixtures' SQL renders
+    identically on postgres and trino, so asserting on the uploaded text would
+    pass whatever the handler passed down — these spies pin the wiring instead.
+    Rendering itself is pinned in test_rewriter.py.
+    """
+    seen: dict[str, list[str]] = {"resolve": [], "rewrite": []}
+    real_resolve = candidate_manifest_handler.resolve_upstream_deps
+    real_rewrite = candidate_manifest_handler.rewrite_to_candidate_schema
+
+    def spy_resolve(node, registry, *, dialect):
+        seen["resolve"].append(dialect)
+        return real_resolve(node, registry, dialect=dialect)
+
+    def spy_rewrite(*args, dialect, **kwargs):
+        seen["rewrite"].append(dialect)
+        return real_rewrite(*args, dialect=dialect, **kwargs)
+
+    monkeypatch.setattr(candidate_manifest_handler, "resolve_upstream_deps", spy_resolve)
+    monkeypatch.setattr(candidate_manifest_handler, "rewrite_to_candidate_schema", spy_rewrite)
+
+    source = _make_source(
+        ("manifest_service1.json", "v1"),
+        ("manifest_service2.json", "v2"),
+    )
+    _handler(source, MagicMock(), _make_uploader(), dialect="trino").handle(release_id="rel-1")
+
+    assert seen["resolve"] and set(seen["resolve"]) == {"trino"}
+    assert seen["rewrite"] and set(seen["rewrite"]) == {"trino"}
+
+
 def test_upload_failure_is_fatal(handler_with_mocks):
     """An S3 upload error is fatal — publish_failed is called and publish_ok is not."""
     handler, publisher, uploader = handler_with_mocks
@@ -413,7 +461,7 @@ def test_handle_calls_source_cleanup_even_on_upload_failure():
     uploader = _make_uploader()
     uploader.upload.side_effect = RuntimeError("s3 down")
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=uploader)
+    handler = _handler(source, publisher, uploader)
     handler.handle(release_id="rel-upload-fail")
 
     source.cleanup.assert_called_once()

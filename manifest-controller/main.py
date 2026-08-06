@@ -10,6 +10,7 @@ from config.config import (
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
     MANIFEST_LOADED_CANDIDATE_STREAM,
     validate,
+    warehouse_dialect,
 )
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.health.server import start_health_server
@@ -55,6 +56,12 @@ def main() -> None:
     )
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
 
+    # Resolved once at boot: validate() has already rejected an unsupported
+    # engine, so every release parses and re-renders SQL for the warehouse this
+    # install actually targets.
+    dialect = warehouse_dialect()
+    logger.info("manifest-controller SQL dialect: %s", dialect)
+
     def handle_release_requested(fields: dict) -> None:
         payload_raw = _decode_field(fields, "payload")
         if not payload_raw:
@@ -99,6 +106,7 @@ def main() -> None:
             source=source,
             publisher=candidate_publisher,
             uploader=candidate_uploader,
+            dialect=dialect,
         ).handle(release_id=release_id)
 
     candidate_consumer = Consumer(

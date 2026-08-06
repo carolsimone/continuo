@@ -258,6 +258,13 @@ validation:
   # adapter — so the only barrier to a new engine is publishing its library/image and
   # giving it (points 2–4) its own connection. See the fail message in _helpers.tpl
   # `continuo.validation.image`.
+  #
+  # `engine` also reaches the control plane: it is published to every service as
+  # WAREHOUSE_ENGINE on the shared ConfigMap, and manifest-controller uses it to
+  # pick the SQL dialect it parses dbt's compiled SQL with and re-renders the
+  # candidate SQL in. That rewritten SQL is what the validation runner executes,
+  # so the engine here must be the engine your warehouse actually is —
+  # manifest-controller refuses to start on an engine it has no dialect for.
   engine: postgres
   # Tag of the continuo-validation-<engine> image. Validation ships from its own
   # repository (github.com/carolsimone/continuo-validation) on its own release

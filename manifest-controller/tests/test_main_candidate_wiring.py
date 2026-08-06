@@ -101,10 +101,11 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     captured = {}
 
     class FakeCandidateHandler:
-        def __init__(self, source, publisher, uploader):
+        def __init__(self, source, publisher, uploader, dialect):
             captured["source"] = source
             captured["publisher"] = publisher
             captured["uploader"] = uploader
+            captured["dialect"] = dialect
 
         def handle(self, release_id):
             captured["release_id"] = release_id
@@ -132,6 +133,43 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
         ("service-1", "service-1/rel-77/manifest.json"),
         ("service-2", "service-2/rel-77/manifest.json"),
     ]
+    assert captured["dialect"] == "postgres"
+
+
+def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
+    """main resolves WAREHOUSE_ENGINE once and injects the dialect.
+
+    The composition root owns engine selection so the SQL stages never read
+    config themselves; this pins that a non-default engine actually reaches the
+    handler rather than every install silently running postgres.
+    """
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setenv("WAREHOUSE_ENGINE", "trino")
+    captured = {}
+
+    class FakeCandidateHandler:
+        def __init__(self, source, publisher, uploader, dialect):
+            captured["dialect"] = dialect
+
+        def handle(self, release_id):
+            pass
+
+    monkeypatch.setattr(main, "CandidateManifestHandler", FakeCandidateHandler)
+    monkeypatch.setattr(main, "S3Source", lambda **kw: SimpleNamespace(cleanup=lambda: None))
+
+    main.main()
+    candidate_consumer = next(
+        c for c in _RecordingConsumer.instances if c.stream_name == RELEASE_REQUESTED_V1
+    )
+    payload = json.dumps({
+        "release_id": "rel-78",
+        "manifest_keys": [
+            {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-78/manifest.json"},
+        ],
+    })
+    candidate_consumer.message_handler({b"payload": payload.encode()})
+
+    assert captured["dialect"] == "trino"
 
 
 def test_main_candidate_handler_rejects_missing_payload(monkeypatch):

@@ -48,7 +48,9 @@ def test_candidate_topology_carries_test_count(tmp_path):
     uploader = MagicMock()
     uploader.upload.return_value = ""
 
-    handler = CandidateManifestHandler(source=source, publisher=publisher, uploader=uploader)
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, uploader=uploader, dialect="postgres",
+    )
     handler.handle(release_id="rel-1")
 
     publisher.publish_ok.assert_called_once()

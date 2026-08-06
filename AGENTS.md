@@ -60,6 +60,18 @@ Rules:
 - The AST wiring detector in `pkg/streams/wiring_test.go` rejects hardcoded versioned-stream literals in service `main.go` files; new occurrences in handlers, bindings, or tests should be removed for the same reason.
 - Adding a new stream or group means editing `pkg/streams/contract.yaml`, regenerating (`go generate ./pkg/streams/...`), and committing the regenerated files. CI's `go generate && git diff --exit-code` check enforces freshness.
 
+# Install-level configuration must reach the code
+A property of the operator's environment — warehouse engine, region, auth mode, timezone, an external component's version — is declared once in `deploy/continuo/values.yaml` and must travel from there to every process that acts on it. Two halves of the same bug, both of which have shipped here:
+
+- **A hardcoded literal.** An environment-dependent value baked into code (`dialect="postgres"`, a region, a port, a schema name) works for whoever wrote it and is wrong for every other install.
+- **A declared value that stops at the chart.** A key that only feeds a Helm template — picking an image, naming a Secret — makes the system *look* configurable while every service still runs the author's default. This is the harder half to see: grepping the key name finds `values.yaml`, and you conclude it is wired.
+
+Rules:
+- A values key that describes the user's environment must reach the services that act on it — normally as a key on the shared ConfigMap in `templates/configmap.yaml`, mirrored into `docker-compose.yml` and any other deployment path. If it is genuinely install-time-only (image selection, Secret naming), that is fine, but say so in the values comment so the next reader need not re-derive it.
+- Services **fail closed** at startup on a value they cannot honour, rather than degrading to a default mid-operation. `_helpers.tpl` already fails an install on an unsupported `validation.engine`; the service must refuse to boot rather than emit another engine's output.
+- Where the same set of allowed values is enumerated in two places, pin them to each other with a test (`test_supported_engines_match_the_chart` in `manifest-controller/tests/test_config.py`), so the chart cannot start accepting a value the code cannot honour.
+- When you remove a hardcoded literal, sweep every site of that concept rather than only the one that was flagged, and separate the **read** sites from the **write/generate** sites. The generate site is usually the real defect: its output leaves the process as an artifact another system executes, so a wrong value there surfaces far from its cause. `manifest-controller/tests/test_dialect_guard.py` is the forcing function for the SQL-dialect case; add the equivalent guard when you fix a new instance of this class.
+
 # Architecture documentation
 The architecture pack under `docs/arch/` is part of the working agreement for this repository.
 Before completing any task that changes service behavior, interfaces, storage ownership, Redis flows, gRPC interactions, Kubernetes behavior, or S3 usage, the LLM must review and update the relevant files in `docs/arch/`.

@@ -28,6 +28,11 @@ class CandidateManifestHandler:
 
     On parse/resolve failures that re-delivery cannot fix, publishes
     status=failed and returns normally so the consumer ACKs.
+
+    dialect is the sqlglot dialect of the warehouse the install targets,
+    supplied by the composition root from the configured engine. It governs
+    both dependency resolution and the candidate-schema rewrite, so the
+    uploaded SQL is in the dialect the validation runner will execute.
     """
 
     def __init__(
@@ -35,10 +40,12 @@ class CandidateManifestHandler:
         source: ManifestSource,
         publisher: CandidateManifestPublisher,
         uploader: CandidateSqlUploader,
+        dialect: str,
     ) -> None:
         self._source = source
         self._publisher = publisher
         self._uploader = uploader
+        self._dialect = dialect
 
     def handle(self, release_id: str) -> None:
         try:
@@ -122,7 +129,7 @@ class CandidateManifestHandler:
         topology: list[dict] = []
         for node in all_nodes:
             try:
-                node.upstream_deps = resolve_upstream_deps(node, lookup)
+                node.upstream_deps = resolve_upstream_deps(node, lookup, dialect=self._dialect)
             except UnqualifiedTableReferenceError as exc:
                 self._publisher.publish_failed(
                     release_id=release_id,
@@ -144,6 +151,7 @@ class CandidateManifestHandler:
             candidate_sql = rewrite_to_candidate_schema(
                 node.candidate_sql, lookup, candidate_schema,
                 self_schema=node.schema_name, self_table=node.table_name,
+                dialect=self._dialect,
             )
 
             unique_id = f"{node.schema_name}.{node.table_name}"
