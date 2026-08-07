@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 from domain.model import ManifestNode
+from service.content_hash import content_hash_fold
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +78,6 @@ def _shared_code_hash(unit_ids: set[str], macros: dict) -> str:
     return hashlib.sha256("".join(unit_hashes).encode()).hexdigest()
 
 
-def _content_hash(source_hash: str, shared_code_hash: str, config_hash: str) -> str:
-    """Single change-detection fingerprint: any component change flips it."""
-    return "sha256:" + hashlib.sha256(
-        f"{source_hash}|{shared_code_hash}|{config_hash}".encode()
-    ).hexdigest()
-
 _RESOURCE_TYPE_TO_NODE_TYPE = {
     "model":    "dbt-model",
     "seed":     "dbt-seed",
@@ -152,7 +147,7 @@ def parse_manifest(
             dependency_sqls=[node["compiled_code"]] if node.get("compiled_code") else [],
             candidate_sql=node.get("compiled_code", ""),
             node_type=_RESOURCE_TYPE_TO_NODE_TYPE[resource_type],
-            content_hash=_content_hash(source_hash, shared_hash, config_hash),
+            content_hash=content_hash_fold(source_hash, shared_hash, config_hash),
             manifest_version=manifest_version,
             image_tag=image_tag,
             original_file_path=node.get("original_file_path", ""),
