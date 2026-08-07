@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import pytest
@@ -7,74 +8,76 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_parse_valid_manifest():
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
     assert len(nodes) == 4
     names = {n.table_name for n in nodes}
     assert names == {"orders", "users", "my_seed", "my_snapshot"}
 
 
 def test_parse_sets_node_type_model():
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
     orders = next(n for n in nodes if n.table_name == "orders")
     assert orders.node_type == "dbt-model"
 
 
 def test_parse_sets_node_type_seed():
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
     my_seed = next(n for n in nodes if n.table_name == "my_seed")
     assert my_seed.node_type == "dbt-seed"
 
 
 def test_parse_sets_node_type_snapshot():
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
     my_snapshot = next(n for n in nodes if n.table_name == "my_snapshot")
     assert my_snapshot.node_type == "dbt-snapshot"
 
 
 def test_parse_sets_criticality_default():
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
     users = next(n for n in nodes if n.table_name == "users")
     assert users.criticality == "SECONDARY"
 
 
 def test_parse_sets_criticality_from_meta():
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
     orders = next(n for n in nodes if n.table_name == "orders")
     assert orders.criticality == "CORE"
 
 
 def test_parse_sets_schedule_from_first_tag():
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
     assert all(n.schedule_name == "daily" for n in nodes)
 
 
 def test_parse_sets_service_from_fqn():
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
     assert all(n.service_name == "service-1" for n in nodes)
 
 
 def test_parse_skips_node_missing_owner():
-    nodes = parse_manifest(str(FIXTURES / "manifest_missing_owner.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_missing_owner.json"), manifest_version="v1")
     assert nodes == []
 
 
 def test_parse_skips_node_missing_tags():
-    nodes = parse_manifest(str(FIXTURES / "manifest_missing_tags.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_missing_tags.json"), manifest_version="v1")
     assert nodes == []
 
 
 def test_parse_seed_without_tags_defaults_schedule_to_seed():
-    nodes = parse_manifest(str(FIXTURES / "manifest_seed_no_tags.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_seed_no_tags.json"), manifest_version="v1")
     assert len(nodes) == 1
     assert nodes[0].schedule_name == "seed"
 
 
 def test_parse_stamps_manifest_version_on_all_nodes():
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v7")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v7")
     assert all(n.manifest_version == "v7" for n in nodes)
 
 
-def test_parse_sets_content_hash_from_checksum(tmp_path):
+def test_parse_sets_source_hash_from_checksum(tmp_path):
+    # dbt's own per-node checksum feeds the source_hash component verbatim; the
+    # published content_hash is the derived three-part sha256:-prefixed fold.
     manifest = {
         "nodes": {
             "model.svc.users": {
@@ -91,10 +94,11 @@ def test_parse_sets_content_hash_from_checksum(tmp_path):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
 
-    nodes = parse_manifest(str(path), manifest_version="v1")
+    nodes, _ = parse_manifest(str(path), manifest_version="v1")
 
     assert len(nodes) == 1
-    assert nodes[0].content_hash == "deadbeefcafef00d"
+    assert nodes[0].source_hash == "deadbeefcafef00d"
+    assert nodes[0].content_hash.startswith("sha256:")
 
 
 def _manifest_with(raw_code: str | None) -> dict:
@@ -118,7 +122,7 @@ def test_parse_falls_back_to_nonempty_hash_when_checksum_absent(tmp_path):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(_manifest_with(raw_code="select 1")))
 
-    nodes = parse_manifest(str(path), manifest_version="v1")
+    nodes, _ = parse_manifest(str(path), manifest_version="v1")
 
     assert len(nodes) == 1
     assert nodes[0].content_hash != ""
@@ -129,7 +133,8 @@ def test_parse_fallback_hash_is_deterministic_and_change_sensitive(tmp_path):
     def hash_for(raw_code, fname):
         p = tmp_path / fname
         p.write_text(json.dumps(_manifest_with(raw_code=raw_code)))
-        return parse_manifest(str(p), manifest_version="v1")[0].content_hash
+        nodes, _ = parse_manifest(str(p), manifest_version="v1")
+        return nodes[0].content_hash
 
     h1 = hash_for("select 1", "a.json")
     h1_again = hash_for("select 1", "a_again.json")
@@ -166,7 +171,8 @@ def _manifest_with_macros(model_macros: dict[str, str]) -> dict:
 def _hash_of(manifest: dict, tmp_path, fname: str) -> str:
     p = tmp_path / fname
     p.write_text(json.dumps(manifest))
-    return parse_manifest(str(p), manifest_version="v1")[0].content_hash
+    nodes, _ = parse_manifest(str(p), manifest_version="v1")
+    return nodes[0].content_hash
 
 
 def test_macro_change_flips_dependent_model_hash(tmp_path):
@@ -225,11 +231,16 @@ def test_transitive_macro_change_flips_model_hash(tmp_path):
     assert h_before != h_after, "a change to a transitively-reached macro must flip the model's hash"
 
 
-def test_node_without_macros_keeps_raw_dbt_checksum(tmp_path):
-    # The macro-aware scheme must not alter the fingerprint of a model with no
-    # macro dependencies: it stays the verbatim dbt checksum (no extra churn).
-    h = _hash_of(_manifest_with_macros({}), tmp_path, "n.json")
-    assert h == "modelsource0001"
+def test_node_without_macros_has_empty_shared_code_hash(tmp_path):
+    # A model with no macro dependencies gets shared_code_hash == "" and its
+    # source_hash is the verbatim dbt checksum, untouched by macro-folding.
+    p = tmp_path / "n.json"
+    p.write_text(json.dumps(_manifest_with_macros({})))
+    nodes, _ = parse_manifest(str(p), manifest_version="v1")
+    node = nodes[0]
+    assert node.source_hash == "modelsource0001"
+    assert node.shared_code_hash == ""
+    assert node.content_hash.startswith("sha256:")
 
 
 def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
@@ -248,7 +259,7 @@ def test_parse_manifest_stamps_image_tag_on_every_node(tmp_path):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
 
-    nodes = parse_manifest(str(path), manifest_version="v3", image_tag="abc123-1714300000")
+    nodes, _ = parse_manifest(str(path), manifest_version="v3", image_tag="abc123-1714300000")
 
     assert len(nodes) == 1
     assert nodes[0].image_tag == "abc123-1714300000"
@@ -272,13 +283,13 @@ def test_parse_manifest_captures_original_file_path(tmp_path):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))
 
-    nodes = parse_manifest(str(path), manifest_version="v1")
+    nodes, _ = parse_manifest(str(path), manifest_version="v1")
 
     assert len(nodes) == 1
     assert nodes[0].original_file_path == "models/staging/stg_orders.sql"
 
 
-def _node(name: str, schema: str, fqn: list, owner: str, tags: list) -> dict:
+def _minimal_node(name: str, schema: str, fqn: list, owner: str, tags: list) -> dict:
     return {
         "resource_type": "model",
         "name": name,
@@ -299,24 +310,137 @@ def test_parse_manifest_drops_local_stub_nodes(tmp_path):
     manifest = {
         "macros": {},
         "nodes": {
-            "model.svc.keep": _node(name="keep", schema="analytics", fqn=["svc", "keep"], owner="o", tags=["daily"]),
-            "model.svc.stub": _node(name="stub", schema="analytics", fqn=["svc", "stub"], owner="o", tags=["daily", "local_stub"]),
+            "model.svc.keep": _minimal_node(name="keep", schema="analytics", fqn=["svc", "keep"], owner="o", tags=["daily"]),
+            "model.svc.stub": _minimal_node(name="stub", schema="analytics", fqn=["svc", "stub"], owner="o", tags=["daily", "local_stub"]),
         },
     }
     path = _write(tmp_path, manifest)
-    nodes = parse_manifest(path, "v1")
+    nodes, _ = parse_manifest(path, "v1")
     names = {n.table_name for n in nodes}
     assert "keep" in names
     assert "stub" not in names
 
 
+def _node(**over):
+    node = {
+        "resource_type": "model",
+        "name": "revenue",
+        "schema": "analytics",
+        "fqn": ["service_a", "revenue"],
+        "tags": ["daily"],
+        "checksum": {"checksum": "abc123"},
+        "raw_code": "select 1 as x",
+        "compiled_code": "select 1 as x",
+        "config": {"meta": {"owner": "team-a"}, "materialized": "table"},
+        "depends_on": {"macros": [], "nodes": []},
+        "original_file_path": "models/revenue.sql",
+    }
+    node.update(over)
+    return node
+
+
+def _manifest_path(tmp_path, nodes, macros=None, name="manifest.json"):
+    p = tmp_path / name
+    p.write_text(json.dumps({"nodes": nodes, "macros": macros or {}}))
+    return str(p)
+
+
+def test_out_of_file_config_change_flips_content_hash(tmp_path):
+    table = _manifest_path(tmp_path, {"model.svc.revenue": _node()}, name="a.json")
+    incr = _manifest_path(
+        tmp_path,
+        {"model.svc.revenue": _node(config={"meta": {"owner": "team-a"}, "materialized": "incremental"})},
+        name="b.json",
+    )
+    (n1,), _ = parse_manifest(table, "v1")
+    (n2,), _ = parse_manifest(incr, "v1")
+    assert n1.source_hash == n2.source_hash          # file bytes identical
+    assert n1.config_hash != n2.config_hash
+    assert n1.content_hash != n2.content_hash        # the gate now sees it
+
+
+def test_denylisted_config_keys_do_not_flip_hash(tmp_path):
+    base = _manifest_path(tmp_path, {"model.svc.revenue": _node()}, name="a.json")
+    noisy = _manifest_path(
+        tmp_path,
+        {"model.svc.revenue": _node(config={
+            "meta": {"owner": "someone-else"}, "materialized": "table",
+            "tags": ["x"], "docs": {"show": False}, "description": "d", "grants": {"select": ["r"]},
+        })},
+        name="b.json",
+    )
+    (n1,), _ = parse_manifest(base, "v1")
+    (n2,), _ = parse_manifest(noisy, "v1")
+    assert n1.content_hash == n2.content_hash
+
+
+def test_unknown_config_key_participates(tmp_path):
+    base = _manifest_path(tmp_path, {"model.svc.revenue": _node()}, name="a.json")
+    future = _manifest_path(
+        tmp_path,
+        {"model.svc.revenue": _node(config={"meta": {"owner": "team-a"}, "materialized": "table",
+                                            "some_future_key": True})},
+        name="b.json",
+    )
+    (n1,), _ = parse_manifest(base, "v1")
+    (n2,), _ = parse_manifest(future, "v1")
+    assert n1.content_hash != n2.content_hash
+
+
+def test_transitive_shared_code_change_flips_hash(tmp_path):
+    macros_v1 = {
+        "macro.svc.m1": {"macro_sql": "select 1", "depends_on": {"macros": ["macro.svc.m2"]}},
+        "macro.svc.m2": {"macro_sql": "select 2", "depends_on": {"macros": []}},
+    }
+    macros_v2 = {
+        "macro.svc.m1": {"macro_sql": "select 1", "depends_on": {"macros": ["macro.svc.m2"]}},
+        "macro.svc.m2": {"macro_sql": "select 2 -- edited", "depends_on": {"macros": []}},
+    }
+    node = _node(depends_on={"macros": ["macro.svc.m1"], "nodes": []})
+    p1 = _manifest_path(tmp_path, {"model.svc.revenue": node}, macros_v1, name="a.json")
+    p2 = _manifest_path(tmp_path, {"model.svc.revenue": node}, macros_v2, name="b.json")
+    (n1,), _ = parse_manifest(p1, "v1")
+    (n2,), _ = parse_manifest(p2, "v1")
+    assert n1.source_hash == n2.source_hash
+    assert n1.shared_code_hash != n2.shared_code_hash
+    assert n1.content_hash != n2.content_hash
+
+
+def test_shared_code_map_covers_transitive_units(tmp_path):
+    macros = {
+        "macro.svc.m1": {"macro_sql": "select 1", "depends_on": {"macros": ["macro.svc.m2"]}},
+        "macro.svc.m2": {"macro_sql": "select 2", "depends_on": {"macros": []}},
+        "macro.svc.unused": {"macro_sql": "select 9", "depends_on": {"macros": []}},
+    }
+    node = _node(depends_on={"macros": ["macro.svc.m1"], "nodes": []})
+    p = _manifest_path(tmp_path, {"model.svc.revenue": node}, macros)
+    (n,), shared = parse_manifest(p, "v1")
+    assert set(shared) == {"macro.svc.m1", "macro.svc.m2"}   # unused macro excluded
+    assert shared["macro.svc.m1"]["source"] == "select 1"
+    assert shared["macro.svc.m1"]["depends_on"] == ["macro.svc.m2"]
+    assert shared["macro.svc.m2"]["checksum"] == hashlib.sha256(b"select 2").hexdigest()
+    assert n.code_unit_ids == ["macro.svc.m1"]               # direct deps only
+
+
+def test_node_carries_new_fields(tmp_path):
+    p = _manifest_path(tmp_path, {"model.svc.revenue": _node()})
+    (n,), shared = parse_manifest(p, "v1")
+    assert n.runtime == "dbt"
+    assert n.raw_code == "select 1 as x"
+    assert n.config["materialized"] == "table"
+    assert n.source_hash and n.config_hash
+    assert n.shared_code_hash == ""                          # no shared-code deps
+    assert n.content_hash.startswith("sha256:")
+    assert shared == {}
+
+
 def test_parser_fills_dependency_and_candidate_sql_from_compiled_code(tmp_path):
-    node = _node(name="orders", schema="public", fqn=["svc", "orders"], owner="o", tags=["daily"])
+    node = _minimal_node(name="orders", schema="public", fqn=["svc", "orders"], owner="o", tags=["daily"])
     node["compiled_code"] = "select 1 as x"
     manifest = {"nodes": {"model.svc.orders": node}}
     manifest_path = _write(tmp_path, manifest)
 
-    nodes = parse_manifest(manifest_path, "v1")
+    nodes, _ = parse_manifest(manifest_path, "v1")
 
     model = next(n for n in nodes if n.node_type == "dbt-model")
     assert model.dependency_sqls == ["select 1 as x"]
@@ -326,7 +450,7 @@ def test_parser_fills_dependency_and_candidate_sql_from_compiled_code(tmp_path):
 def test_parser_seed_yields_empty_dependency_sqls():
     # Seed nodes have no compiled_code; manifest_valid.json's my_seed already
     # carries compiled_code="", so no extra fixture needs to be built here.
-    nodes = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
+    nodes, _ = parse_manifest(str(FIXTURES / "manifest_valid.json"), manifest_version="v1")
 
     seed = next(n for n in nodes if n.node_type == "dbt-seed")
     assert seed.dependency_sqls == []

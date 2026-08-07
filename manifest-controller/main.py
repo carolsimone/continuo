@@ -13,6 +13,7 @@ from config.config import (
     warehouse_dialect,
 )
 from adapters.candidate_sql_uploader import CandidateSqlUploader
+from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
@@ -55,6 +56,7 @@ def main() -> None:
         redis_client, MANIFEST_LOADED_CANDIDATE_STREAM,
     )
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
+    code_bundle_uploader = CodeBundleUploader(s3_client, S3_BUCKET)
 
     # Resolved once at boot: validate() has already rejected an unsupported
     # engine, so every release parses and re-renders SQL for the warehouse this
@@ -106,6 +108,7 @@ def main() -> None:
             source=source,
             publisher=candidate_publisher,
             uploader=candidate_uploader,
+            bundle_uploader=code_bundle_uploader,
             dialect=dialect,
         ).handle(release_id=release_id)
 

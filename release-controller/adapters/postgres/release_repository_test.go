@@ -423,6 +423,7 @@ func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
 	ctx := context.Background()
 
 	r := release.New("rPROV", "svc-a", "img-1", false, "acme/demo", "deadbeefcafe1234", time.Unix(100, 0).UTC())
+	r.SetCodeBundleURI("s3://b/code-bundles/rPROV/bundle.json")
 	require.NoError(t, repo.Save(ctx, r))
 
 	got, err := repo.Get(ctx, "rPROV")
@@ -430,6 +431,32 @@ func TestReleaseRepository_RoundTripsProvenance(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "acme/demo", got.Repo())
 	assert.Equal(t, "deadbeefcafe1234", got.CommitSHA())
+	assert.Equal(t, "s3://b/code-bundles/rPROV/bundle.json", got.CodeBundleURI())
+}
+
+// TestReleaseRepository_CodeBundleURIUpdatesAfterCreation verifies that
+// code_bundle_uri set via SetCodeBundleURI after the initial Save (the
+// SetAssembledImageTags-style mutable path — the URI is unknown at receive
+// time and only known once the parse result arrives) is persisted on a
+// second Save, unlike the truly immutable repo/commit_sha provenance fields.
+func TestReleaseRepository_CodeBundleURIUpdatesAfterCreation(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db, nil)
+	ctx := context.Background()
+
+	r := release.New("rCBU", "svc-a", "img-1", false, "acme/demo", "deadbeef", time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rCBU")
+	require.NoError(t, err)
+	assert.Equal(t, "", got.CodeBundleURI(), "code_bundle_uri defaults to empty until the parse result arrives")
+
+	got.SetCodeBundleURI("s3://b/code-bundles/rCBU/bundle.json")
+	require.NoError(t, repo.Save(ctx, got))
+
+	reloaded, err := repo.Get(ctx, "rCBU")
+	require.NoError(t, err)
+	assert.Equal(t, "s3://b/code-bundles/rCBU/bundle.json", reloaded.CodeBundleURI())
 }
 
 func TestReleaseRepository_RoundTripsCandidateSQLURI(t *testing.T) {
@@ -467,8 +494,8 @@ func TestReleaseRepository_RoundTripsCandidateSQLURI(t *testing.T) {
 
 // TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes
 // verifies that DeleteResolvedBefore calls the CandidateSQLDeleter with the
-// correct prefix for each pruned release, and that a deleter error does not
-// abort the prune (soft-fail).
+// correct candidate-sql/<id>/ AND code-bundles/<id>/ prefixes for each pruned
+// release, and that a deleter error does not abort the prune (soft-fail).
 func TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
@@ -499,7 +526,9 @@ func TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes(t *t
 		assert.Equal(t, []string{
 			"candidate-sql/prune-a/",
 			"candidate-sql/prune-b/",
-		}, got, "deleter must be called once per pruned release with the correct prefix")
+			"code-bundles/prune-a/",
+			"code-bundles/prune-b/",
+		}, got, "deleter must be called with both the candidate-sql and code-bundles prefix for each pruned release")
 	})
 
 	// Reseed because the previous sub-test deleted prune-a and prune-b.
@@ -513,8 +542,9 @@ func TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes(t *t
 		require.NoError(t, err, "prune must succeed even when S3 deletion fails")
 		assert.Equal(t, 2, n, "both releases must be counted as pruned despite S3 error")
 
-		// Both prefixes were attempted despite the first failing.
+		// Both the candidate-sql and code-bundles prefix were attempted for each
+		// pruned release despite every call failing.
 		got := fd.prefixes()
-		assert.Len(t, got, 2, "deleter must be attempted for every pruned release")
+		assert.Len(t, got, 4, "deleter must be attempted for both prefixes of every pruned release")
 	})
 }

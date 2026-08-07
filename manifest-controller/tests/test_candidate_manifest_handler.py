@@ -1,4 +1,6 @@
+import hashlib
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
@@ -26,15 +28,40 @@ def _make_uploader(uri=""):
     return uploader
 
 
-def _handler(source, publisher, uploader, dialect="postgres") -> CandidateManifestHandler:
-    """Build a handler pinned to the postgres dialect unless a test names another.
+class FakeBundleUploader:
+    """Records (release_id, bundle) calls and returns a canned URI.
 
-    The handler takes dialect from the composition root, which resolves it from
-    the configured warehouse engine; these cases are about parse/resolve/upload
-    behaviour, so they pin the default engine here.
+    Pass `fail` to make `upload` raise instead — the failing variant used to
+    exercise the CodeBundleUploadFailed path.
+    """
+
+    def __init__(self, uri: str = "s3://continuo/code-bundles/rel-1/bundle.json", fail: Exception | None = None):
+        self.uploads: list[tuple[str, dict]] = []
+        self._uri = uri
+        self._fail = fail
+
+    def upload(self, release_id: str, bundle: dict) -> str:
+        if self._fail is not None:
+            raise self._fail
+        self.uploads.append((release_id, bundle))
+        return self._uri
+
+
+def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgres") -> CandidateManifestHandler:
+    """Build a handler pinned to the postgres dialect and a fake bundle uploader
+    unless a test names otherwise.
+
+    The handler takes both dialect and bundle_uploader from the composition
+    root in production — dialect resolved from the configured warehouse
+    engine, bundle_uploader wired to real S3; these cases are about
+    parse/resolve/upload behaviour, so they pin harmless defaults here.
     """
     return CandidateManifestHandler(
-        source=source, publisher=publisher, uploader=uploader, dialect=dialect,
+        source=source,
+        publisher=publisher,
+        uploader=uploader,
+        bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
+        dialect=dialect,
     )
 
 
@@ -90,18 +117,13 @@ def test_handle_publishes_ok_with_node_type_on_each_node(resolved_topology):
     assert {node["node_type"] for node in resolved_topology} == {"dbt-model"}
 
 
-def test_handle_publishes_ok_with_content_hash_from_node_checksum(resolved_topology):
-    # Each published node carries dbt's native per-node source checksum,
-    # read from checksum.checksum in the source manifest fixtures.
-    expected = {}
-    for name in ("manifest_service1.json", "manifest_service2.json"):
-        manifest = json.loads((FIXTURES / name).read_text())
-        for node in manifest["nodes"].values():
-            expected[node["name"]] = node["checksum"]["checksum"]
-
+def test_handle_publishes_ok_with_well_formed_content_hash(resolved_topology):
+    # Each published node carries a non-empty content_hash — the three-part
+    # sha256:-prefixed fold of source/shared-code/config hashes — derived from,
+    # but no longer verbatim equal to, dbt's per-node checksum.
     for node in resolved_topology:
         assert node["content_hash"], f"{node['table_name']} missing content_hash"
-        assert node["content_hash"] == expected[node["table_name"]]
+        assert node["content_hash"].startswith("sha256:")
 
 
 def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
@@ -112,7 +134,7 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-empty")
 
-    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[])
+    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[], code_bundle_uri="")
     publisher.publish_failed.assert_not_called()
 
 
@@ -465,3 +487,174 @@ def test_handle_calls_source_cleanup_even_on_upload_failure():
     handler.handle(release_id="rel-upload-fail")
 
     source.cleanup.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# code_bundle_uri: one bundle upload per release, fatal-on-upload-failure
+# ---------------------------------------------------------------------------
+
+def test_bundle_uploaded_once_per_release():
+    """One code bundle is built and uploaded per release, covering every
+    published node; publish_ok receives the uploader's returned URI."""
+    source = _make_source(
+        ("manifest_service1.json", "v1"),
+        ("manifest_service2.json", "v2"),
+    )
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader(uri="s3://continuo/code-bundles/rel-1/bundle.json")
+
+    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
+    handler.handle(release_id="rel-1")
+
+    assert len(bundle_uploader.uploads) == 1
+    uploaded_release_id, bundle = bundle_uploader.uploads[0]
+    assert uploaded_release_id == "rel-1"
+
+    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    assert set(bundle["nodes"].keys()) == {node["unique_id"] for node in topology}
+    assert publisher.publish_ok.call_args.kwargs["code_bundle_uri"] == "s3://continuo/code-bundles/rel-1/bundle.json"
+
+
+def test_bundle_upload_failure_publishes_failed():
+    """A bundle-upload error is fatal — publish_failed is called with
+    CodeBundleUploadFailed and publish_ok is never called."""
+    source = _make_source(("manifest_service1.json", "v1"))
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader(fail=RuntimeError("s3 down"))
+
+    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
+    handler.handle(release_id="rel-1")  # must NOT raise
+
+    publisher.publish_ok.assert_not_called()
+    publisher.publish_failed.assert_called_once()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "CodeBundleUploadFailed"
+
+
+def test_empty_manifests_publish_empty_bundle_uri():
+    """The early no-manifests path publishes code_bundle_uri="" and never
+    touches the bundle uploader."""
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = []
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader()
+
+    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
+    handler.handle(release_id="rel-empty")
+
+    publisher.publish_ok.assert_called_once_with(release_id="rel-empty", topology=[], code_bundle_uri="")
+    assert bundle_uploader.uploads == []
+
+
+def _manifest_with_single_macro(
+    macro_sql: str, node_name: str, service: str, macro_depends_on: list[str] | None = None,
+) -> dict:
+    """A single-model manifest whose model depends on macro.svc.m1."""
+    return {
+        "nodes": {
+            f"model.svc.{node_name}": {
+                "resource_type": "model",
+                "name": node_name,
+                "schema": "public",
+                "fqn": [service],
+                "config": {"meta": {"owner": "team"}},
+                "tags": ["nightly"],
+                "checksum": {"name": "sha256", "checksum": f"source-{node_name}"},
+                "depends_on": {"macros": ["macro.svc.m1"]},
+            }
+        },
+        "macros": {
+            "macro.svc.m1": {
+                "unique_id": "macro.svc.m1",
+                "macro_sql": macro_sql,
+                "depends_on": {"macros": macro_depends_on or []},
+            },
+        },
+    }
+
+
+def test_shared_code_namespaced_by_service_for_colliding_unit_ids(tmp_path, caplog):
+    """Two manifests shipping the same dbt macro id (macro.svc.m1) but pinning
+    different package versions (cross-service skew) are namespaced by service
+    in the bundle: BOTH copies survive, each under its own `<service>:<unit_id>`
+    key with its own source/checksum, and each manifest's node's code_unit_ids
+    points at its own service's namespaced copy — no collision, no warning."""
+    first = tmp_path / "first.json"
+    first.write_text(json.dumps(_manifest_with_single_macro("SELECT 'v1'", "node_a", "service-a")))
+    second = tmp_path / "second.json"
+    second.write_text(json.dumps(_manifest_with_single_macro("SELECT 'v2'", "node_b", "service-b")))
+
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(first), version="v1", image_tag="", declared_service="service-a"),
+        ManifestFile(path=str(second), version="v1", image_tag="", declared_service="service-b"),
+    ]
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader()
+
+    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        handler.handle(release_id="rel-namespaced")
+
+    publisher.publish_failed.assert_not_called()
+    assert len(bundle_uploader.uploads) == 1
+    _, bundle = bundle_uploader.uploads[0]
+
+    assert bundle["shared_code"]["service-a:macro.svc.m1"] == {
+        "source": "SELECT 'v1'",
+        "checksum": hashlib.sha256(b"SELECT 'v1'").hexdigest(),
+        "depends_on": [],
+    }
+    assert bundle["shared_code"]["service-b:macro.svc.m1"] == {
+        "source": "SELECT 'v2'",
+        "checksum": hashlib.sha256(b"SELECT 'v2'").hexdigest(),
+        "depends_on": [],
+    }
+    assert bundle["nodes"]["public.node_a"]["code_unit_ids"] == ["service-a:macro.svc.m1"]
+    assert bundle["nodes"]["public.node_b"]["code_unit_ids"] == ["service-b:macro.svc.m1"]
+    assert not any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
+    assert not any("re-defined" in rec.getMessage() for rec in caplog.records)
+
+
+def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_path, caplog):
+    """A shared-code unit's own `depends_on` list is namespaced with the same
+    `<service>:` prefix as the bundle's shared_code map keys — so a consumer
+    walking unit->unit edges never needs to re-derive the namespace. Exercises
+    the fallback path where declared_service is unset: the namespace is
+    derived from the manifest's own node service instead."""
+    first = tmp_path / "first.json"
+    first.write_text(json.dumps(
+        _manifest_with_single_macro("SELECT 1", "node_a", "service-a", macro_depends_on=["macro.svc.m2"])
+    ))
+    second = tmp_path / "second.json"
+    second.write_text(json.dumps(
+        _manifest_with_single_macro("SELECT 1", "node_b", "service-b", macro_depends_on=[])
+    ))
+
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(first), version="v1", image_tag=""),
+        ManifestFile(path=str(second), version="v1", image_tag=""),
+    ]
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader()
+
+    handler = _handler(source, publisher, _make_uploader(), bundle_uploader=bundle_uploader)
+    with caplog.at_level(logging.WARNING, logger="service.candidate_manifest_handler"):
+        handler.handle(release_id="rel-depends-on")
+
+    publisher.publish_failed.assert_not_called()
+    assert len(bundle_uploader.uploads) == 1
+    _, bundle = bundle_uploader.uploads[0]
+
+    assert bundle["shared_code"]["service-a:macro.svc.m1"] == {
+        "source": "SELECT 1",
+        "checksum": hashlib.sha256(b"SELECT 1").hexdigest(),
+        "depends_on": ["service-a:macro.svc.m2"],
+    }
+    assert bundle["shared_code"]["service-b:macro.svc.m1"] == {
+        "source": "SELECT 1",
+        "checksum": hashlib.sha256(b"SELECT 1").hexdigest(),
+        "depends_on": [],
+    }
+    assert not any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
+    assert not any("re-defined" in rec.getMessage() for rec in caplog.records)

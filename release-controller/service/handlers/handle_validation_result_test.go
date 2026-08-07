@@ -449,11 +449,13 @@ type promotedNodeWire struct {
 
 // promotedPayload is the JSON shape released into release.promoted:v1.
 type promotedPayload struct {
-	ReleaseID  string             `json:"release_id"`
-	Repo       string             `json:"repo"`
-	CommitSHA  string             `json:"commit_sha"`
-	PromotedAt time.Time          `json:"promoted_at"`
-	Topology   []promotedNodeWire `json:"topology"`
+	ReleaseID     string             `json:"release_id"`
+	Repo          string             `json:"repo"`
+	CommitSHA     string             `json:"commit_sha"`
+	PromotedAt    time.Time          `json:"promoted_at"`
+	Topology      []promotedNodeWire `json:"topology"`
+	CodeBundleURI string             `json:"code_bundle_uri"`
+	Bootstrap     bool               `json:"bootstrap"`
 }
 
 // TestHandleValidationResult_Promote_StampsChangedAndProvenance verifies that a
@@ -622,4 +624,44 @@ func TestHandleValidationResult_Promote_EmitsTestCount(t *testing.T) {
 	require.NoError(t, json.Unmarshal(last.Payload, &p))
 	require.Len(t, p.Topology, 1)
 	assert.Equal(t, 3, p.Topology[0].TestCount, "release.promoted:v1 must carry per-node test_count")
+}
+
+// TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap verifies
+// that on the normal validation-pass promotion path (HandleValidationResult ->
+// promoteToProduction), release.promoted:v1 carries the release's
+// code_bundle_uri (persisted at parse time by handleParseOK from
+// manifest-controller's manifest.loaded.candidate:v1) and bootstrap=false for a
+// non-bootstrap release.
+func TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:     "rA",
+		Status:        "ok",
+		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
+		Topology: release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{}},
+		},
+	}))
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{{NodeID: "a", Status: "ok"}})
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA", AggregateStatus: "ok",
+	}))
+
+	entries := outboxEntries(store)
+	last := entries[len(entries)-1]
+	require.Equal(t, streams.ReleasePromotedV1, last.StreamName)
+	var p promotedPayload
+	require.NoError(t, json.Unmarshal(last.Payload, &p))
+	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", p.CodeBundleURI,
+		"release.promoted:v1 must carry code_bundle_uri on the validation-pass path")
+	assert.False(t, p.Bootstrap, "non-bootstrap release must carry bootstrap=false")
 }

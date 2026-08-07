@@ -636,31 +636,36 @@ func getS3Object(t *testing.T, ctx context.Context, clients *testClients, key st
 }
 
 // parseManifestNodes extracts the model/seed/snapshot nodes from a dbt
-// manifest.json, mirroring manifest-controller's identity derivation:
-// unique_id = "<schema>.<name>" and content_hash = checksum.checksum.
+// manifest.json, mirroring manifest-controller's identity derivation
+// (unique_id = "<schema>.<name>") and RECOMPUTING content_hash with the same
+// three-part formula the live manifest-controller uses (see content_hash.go
+// / manifest-controller/service/parser.py: _content_hash). Seeding
+// current_prod from dbt's raw per-node checksum alone (the old, two-part-era
+// behavior) would never match the live formula's output, making every
+// candidate node look "changed" regardless of whether it actually changed.
 func parseManifestNodes(t *testing.T, body []byte) []manifestNode {
 	t.Helper()
-	var manifest struct {
-		Nodes map[string]struct {
-			ResourceType string `json:"resource_type"`
-			Schema       string `json:"schema"`
-			Name         string `json:"name"`
-			Checksum     struct {
-				Checksum string `json:"checksum"`
-			} `json:"checksum"`
-		} `json:"nodes"`
-	}
-	require.NoError(t, json.Unmarshal(body, &manifest), "parse manifest.json")
+	doc, err := decodeJSONDoc(body)
+	require.NoError(t, err, "parse manifest.json")
+	macros := asObjectMap(doc["macros"])
+	rawNodes := asObjectMap(doc["nodes"])
 
 	supported := map[string]bool{"model": true, "seed": true, "snapshot": true}
 	var nodes []manifestNode
-	for _, n := range manifest.Nodes {
-		if !supported[n.ResourceType] || n.Checksum.Checksum == "" {
+	for _, nv := range rawNodes {
+		n, ok := nv.(map[string]interface{})
+		if !ok {
 			continue
 		}
+		resourceType, _ := n["resource_type"].(string)
+		if !supported[resourceType] {
+			continue
+		}
+		schema, _ := n["schema"].(string)
+		name, _ := n["name"].(string)
 		nodes = append(nodes, manifestNode{
-			uniqueID:    n.Schema + "." + n.Name,
-			contentHash: n.Checksum.Checksum,
+			uniqueID:    schema + "." + name,
+			contentHash: computeContentHash(n, macros),
 		})
 	}
 	return nodes

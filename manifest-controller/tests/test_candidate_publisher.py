@@ -56,4 +56,11 @@ def test_publish_ok_with_empty_topology():
     pub, redis_mock = _make()
     pub.publish_ok(release_id="rel-3", topology=[])
     body = json.loads(redis_mock.xadd.call_args[0][1]["payload"])
-    assert body == {"release_id": "rel-3", "status": "ok", "topology": []}
+    assert body == {"release_id": "rel-3", "status": "ok", "topology": [], "code_bundle_uri": ""}
+
+
+def test_publish_ok_carries_code_bundle_uri():
+    pub, redis_mock = _make()
+    pub.publish_ok(release_id="rel-1", topology=[], code_bundle_uri="s3://b/code-bundles/rel-1/bundle.json")
+    body = json.loads(redis_mock.xadd.call_args.args[1]["payload"])
+    assert body["code_bundle_uri"] == "s3://b/code-bundles/rel-1/bundle.json"

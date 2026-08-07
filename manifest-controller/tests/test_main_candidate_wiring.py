@@ -46,6 +46,7 @@ def _common_monkeypatches(monkeypatch):
     monkeypatch.setattr(main, "MANIFEST_LOADED_CANDIDATE_STREAM", MANIFEST_LOADED_CANDIDATE_V1)
     monkeypatch.setattr(main, "CandidateManifestPublisher", lambda *a, **kw: object())
     monkeypatch.setattr(main, "CandidateSqlUploader", lambda *a, **kw: object())
+    monkeypatch.setattr(main, "CodeBundleUploader", lambda *a, **kw: object())
     monkeypatch.setattr(main.redis, "from_url", lambda *a, **kw: object())
     monkeypatch.setitem(
         sys.modules, "boto3",
@@ -101,10 +102,11 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     captured = {}
 
     class FakeCandidateHandler:
-        def __init__(self, source, publisher, uploader, dialect):
+        def __init__(self, source, publisher, uploader, bundle_uploader, dialect):
             captured["source"] = source
             captured["publisher"] = publisher
             captured["uploader"] = uploader
+            captured["bundle_uploader"] = bundle_uploader
             captured["dialect"] = dialect
 
         def handle(self, release_id):
@@ -133,6 +135,7 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
         ("service-1", "service-1/rel-77/manifest.json"),
         ("service-2", "service-2/rel-77/manifest.json"),
     ]
+    assert captured["bundle_uploader"] is not None
     assert captured["dialect"] == "postgres"
 
 
@@ -148,7 +151,7 @@ def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
     captured = {}
 
     class FakeCandidateHandler:
-        def __init__(self, source, publisher, uploader, dialect):
+        def __init__(self, source, publisher, uploader, bundle_uploader, dialect):
             captured["dialect"] = dialect
 
         def handle(self, release_id):

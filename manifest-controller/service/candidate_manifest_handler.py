@@ -1,10 +1,12 @@
 import json
 import logging
 from adapters.candidate_sql_uploader import CandidateSqlUploader
+from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.sources import ManifestSource
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from domain.model import NodeRegistry, NodeRegistryEntry
+from service.code_bundle import build_code_bundle
 from service.parser import parse_manifest
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name, rewrite_to_candidate_schema
@@ -26,6 +28,12 @@ class CandidateManifestHandler:
     the inline SQL string. Upload failures are fatal — publish_failed is
     called and the handler returns so the consumer ACKs without dangling refs.
 
+    A single code-bundle document (one per release, covering every published
+    node plus the shared-code units they depend on) is built and uploaded via
+    bundle_uploader immediately before publish_ok; the resulting s3:// URI is
+    published as code_bundle_uri. A bundle-upload failure is fatal for the
+    same reason as a candidate-SQL upload failure.
+
     On parse/resolve failures that re-delivery cannot fix, publishes
     status=failed and returns normally so the consumer ACKs.
 
@@ -40,11 +48,13 @@ class CandidateManifestHandler:
         source: ManifestSource,
         publisher: CandidateManifestPublisher,
         uploader: CandidateSqlUploader,
+        bundle_uploader: CodeBundleUploader,
         dialect: str,
     ) -> None:
         self._source = source
         self._publisher = publisher
         self._uploader = uploader
+        self._bundle_uploader = bundle_uploader
         self._dialect = dialect
 
     def handle(self, release_id: str) -> None:
@@ -60,7 +70,7 @@ class CandidateManifestHandler:
                 "candidate: no manifest files found — publishing empty topology",
                 extra={"release_id": release_id},
             )
-            self._publisher.publish_ok(release_id=release_id, topology=[])
+            self._publisher.publish_ok(release_id=release_id, topology=[], code_bundle_uri="")
             return
 
         logger.info(
@@ -69,9 +79,10 @@ class CandidateManifestHandler:
         )
 
         all_nodes = []
+        shared_code: dict[str, dict] = {}
         for mf in manifests:
             try:
-                nodes = parse_manifest(mf.path, mf.version, mf.image_tag)
+                nodes, mf_shared = parse_manifest(mf.path, mf.version, mf.image_tag)
             except (json.JSONDecodeError, KeyError, IndexError) as exc:
                 # Invalid JSON, a missing top-level `nodes` key, or a node with a
                 # malformed dbt shape (missing schema/fqn, empty fqn) are all
@@ -84,6 +95,38 @@ class CandidateManifestHandler:
                     error_detail=f"{mf.path}: {exc!r}",
                 )
                 return
+
+            # Namespace this manifest's shared-code units by service so two
+            # manifests pinning different versions of the same dbt package
+            # never collide on a bare macro id — each service's copy of a
+            # same-named macro gets its own bundle entry, and every node keeps
+            # pointing at the copy its own manifest actually hashed against.
+            # Per-node hashes fold each manifest's own copy of a unit already
+            # (see parser._shared_code_hash), so this never changes a hash —
+            # it only disambiguates which copy the bundle records for a unit id.
+            namespace = mf.declared_service or (nodes[0].service_name if nodes else "")
+
+            for unit_id, unit in mf_shared.items():
+                namespaced_id = f"{namespace}:{unit_id}"
+                namespaced_unit = {
+                    **unit,
+                    "depends_on": [f"{namespace}:{dep_id}" for dep_id in unit["depends_on"]],
+                }
+                existing = shared_code.get(namespaced_id)
+                if existing is not None and existing["checksum"] != namespaced_unit["checksum"]:
+                    # Namespacing makes cross-manifest collisions impossible by
+                    # construction; this can only fire if a single manifest's
+                    # own unit id were somehow re-defined, which parse_manifest's
+                    # dict merge already precludes. Kept as a defensive tripwire.
+                    logger.warning(
+                        "candidate: shared-code unit re-defined with a different "
+                        "checksum under the same namespace",
+                        extra={"release_id": release_id, "unit_id": namespaced_id},
+                    )
+                shared_code[namespaced_id] = namespaced_unit
+
+            for node in nodes:
+                node.code_unit_ids = [f"{namespace}:{uid}" for uid in node.code_unit_ids]
 
             if mf.declared_service:
                 # Validate that the manifest actually belongs to the declared service.
@@ -193,7 +236,22 @@ class CandidateManifestHandler:
                 "candidate_sql_uri":   candidate_sql_uri,
             })
 
-        self._publisher.publish_ok(release_id=release_id, topology=topology)
+        bundle = build_code_bundle(release_id, all_nodes, shared_code)
+        try:
+            code_bundle_uri = self._bundle_uploader.upload(release_id, bundle)
+        except Exception as exc:
+            # Same fatal semantics as candidate-SQL uploads: never publish a
+            # topology that references a bundle that failed to land.
+            self._publisher.publish_failed(
+                release_id=release_id,
+                error_class="CodeBundleUploadFailed",
+                error_detail=str(exc),
+            )
+            return
+
+        self._publisher.publish_ok(
+            release_id=release_id, topology=topology, code_bundle_uri=code_bundle_uri,
+        )
         logger.info(
             "candidate: parse complete",
             extra={"release_id": release_id, "published_nodes": len(topology)},

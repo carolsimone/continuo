@@ -20,8 +20,13 @@ class CandidateManifestPublisher:
         self._redis = redis_client
         self._stream = stream_name
 
-    def publish_ok(self, release_id: str, topology: list[dict]) -> None:
-        body = {"release_id": release_id, "status": "ok", "topology": topology}
+    def publish_ok(self, release_id: str, topology: list[dict], code_bundle_uri: str = "") -> None:
+        body = {
+            "release_id": release_id,
+            "status": "ok",
+            "topology": topology,
+            "code_bundle_uri": code_bundle_uri,
+        }
         self._redis.xadd(self._stream, {"payload": json.dumps(body)}, maxlen=STREAM_MAXLEN)
         logger.info(
             "Published manifest.loaded.candidate ok",

@@ -34,12 +34,19 @@ class ManifestNode:
     dependency_sqls: list[str] = field(default_factory=list)
     candidate_sql: str = ""
     node_type: str = "dbt-model"  # dbt-model | dbt-seed | dbt-snapshot
-    content_hash: str = ""  # dbt's per-node source checksum (checksum.checksum)
+    content_hash: str = ""  # sha256:-prefixed fold of source_hash|shared_code_hash|config_hash
     manifest_version: str = ""
     image_tag: str = ""
     original_file_path: str = ""  # dbt original_file_path (project-relative)
     test_count: int = 0  # number of dbt tests attached to this node
     upstream_deps: list[UpstreamDep] = field(default_factory=list)
+    raw_code: str = ""  # node's own source (dbt raw_code), pre-compilation
+    config: dict = field(default_factory=dict)  # node's resolved dbt config
+    source_hash: str = ""  # fingerprint of this node's own source (see _node_source_hash)
+    shared_code_hash: str = ""  # fold of transitive shared-code checksums; "" if none
+    config_hash: str = ""  # fingerprint of resolved config, denylist-filtered
+    code_unit_ids: list[str] = field(default_factory=list)  # direct shared-code (macro) deps
+    runtime: str = "dbt"
 
 
 @dataclass
