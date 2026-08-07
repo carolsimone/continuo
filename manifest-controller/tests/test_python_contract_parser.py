@@ -126,3 +126,89 @@ def test_empty_nodes_list_yields_no_nodes(tmp_path):
 def test_image_tag_defaults_to_empty(tmp_path):
     nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()), "v1")
     assert nodes[0].image_tag == ""
+
+
+@pytest.mark.parametrize(
+    "mutation, match",
+    [
+        ({"owner": ""}, "owner"),
+        ({"schedule": "   "}, "schedule"),
+        ({"criticality": "HIGH"}, "criticality"),
+        ({"extra_columns": "ignore"}, "extra_columns"),
+        ({"description": 7}, "description"),
+        ({"reads": {"joined": "  "}}, "reads"),
+        ({"reads": ["select 1"]}, "reads"),
+        ({"output_columns": []}, "output_columns"),
+        ({"output_columns": [{"name": "id"}]}, "missing"),
+        ({"output_columns": [{"name": "id", "type": "INT", "nullable": "yes"}]}, "nullable"),
+        ({"output_columns": [{"name": "id", "type": "INT", "sortkey": True}]}, "unknown"),
+        ({"surprise_field": 1}, "unknown fields"),
+        ({"config": "btree"}, "config"),
+        ({"source_hash": ""}, "source_hash"),
+        ({"shared_code_hash": None}, "shared_code_hash"),
+        ({"content_hash": "sha256:doesnotmatchparts"}, "fold"),
+    ],
+)
+def test_malformed_entries_fail_the_whole_artifact(tmp_path, mutation, match):
+    entry = make_entry(**mutation)
+    with pytest.raises(MalformedContractError, match=match):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "schema", "table", "owner", "schedule", "criticality", "script",
+        "reads", "output_columns",
+        "source_hash", "shared_code_hash", "config_hash", "content_hash",
+    ],
+)
+def test_missing_required_field_fails(tmp_path, field):
+    entry = make_entry(remove=(field,))
+    with pytest.raises(MalformedContractError, match="missing"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_wrong_contract_version_fails(tmp_path):
+    path = write_contract(tmp_path, make_entry(), contract_version=2)
+    with pytest.raises(MalformedContractError, match="contract_version"):
+        parse_python_contract(path, "v1")
+
+
+def test_unknown_top_level_field_fails(tmp_path):
+    path = write_contract(tmp_path, make_entry(), compiled_at="2026-08-07")
+    with pytest.raises(MalformedContractError, match="unknown top-level"):
+        parse_python_contract(path, "v1")
+
+
+def test_empty_service_fails(tmp_path):
+    path = write_contract(tmp_path, make_entry(), service="")
+    with pytest.raises(MalformedContractError, match="service"):
+        parse_python_contract(path, "v1")
+
+
+def test_nodes_not_a_list_fails(tmp_path):
+    path = write_contract(tmp_path, nodes="nope")
+    with pytest.raises(MalformedContractError, match="nodes"):
+        parse_python_contract(path, "v1")
+
+
+def test_non_mapping_document_fails(tmp_path):
+    path = tmp_path / "contract.yaml"
+    path.write_text("- just\n- a\n- list\n")
+    with pytest.raises(MalformedContractError, match="mapping"):
+        parse_python_contract(str(path), "v1")
+
+
+def test_duplicate_relation_fails(tmp_path):
+    first = make_entry()
+    second = make_entry(owner="finance")
+    with pytest.raises(MalformedContractError, match="duplicate"):
+        parse_python_contract(write_contract(tmp_path, first, second), "v1")
+
+
+def test_invalid_yaml_fails_as_malformed_contract(tmp_path):
+    path = tmp_path / "contract.yaml"
+    path.write_text("nodes: [unclosed")
+    with pytest.raises(MalformedContractError, match="yaml"):
+        parse_python_contract(str(path), "v1")
