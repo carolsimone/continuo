@@ -7,7 +7,7 @@ dependencies = [
     "redis>=8.1.0",
     "grpcio>=1.62.0",
     "protobuf>=7.35.1",
-    "boto3>=1.43.59",
+    "boto3>=1.43.62",
 ]
 
 [project.optional-dependencies]
