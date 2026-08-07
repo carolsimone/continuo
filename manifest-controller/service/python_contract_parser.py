@@ -161,6 +161,11 @@ def _parse_entry(
         "config": config,
     }
 
+    try:
+        raw_code = json.dumps(raw_entry, sort_keys=True, indent=2)
+    except (TypeError, ValueError):
+        _fail(f"{label}: config is not JSON-serializable")
+
     return ManifestNode(
         table_name=table,
         schema_name=schema,
@@ -175,7 +180,7 @@ def _parse_entry(
         manifest_version=manifest_version,
         image_tag=image_tag,
         original_file_path=script,
-        raw_code=json.dumps(raw_entry, sort_keys=True, indent=2),
+        raw_code=raw_code,
         config=config,
         source_hash=source_hash,
         shared_code_hash=shared_code_hash,
@@ -197,17 +202,20 @@ def parse_python_contract(
 
     if not isinstance(doc, dict):
         _fail(f"contract document must be a mapping, got {type(doc).__name__}")
+    if "contract_version" in doc and (
+        type(doc["contract_version"]) is not int
+        or doc["contract_version"] != CONTRACT_VERSION
+    ):
+        _fail(
+            f"unsupported contract_version {doc['contract_version']!r}"
+            f" — this parser speaks version {CONTRACT_VERSION}"
+        )
     unknown = set(doc) - _TOP_LEVEL_KEYS
     if unknown:
         _fail(f"unknown top-level fields {sorted(unknown)}")
     missing = _TOP_LEVEL_KEYS - set(doc)
     if missing:
         _fail(f"missing top-level fields {sorted(missing)}")
-    if doc["contract_version"] != CONTRACT_VERSION:
-        _fail(
-            f"unsupported contract_version {doc['contract_version']!r}"
-            f" — this parser speaks version {CONTRACT_VERSION}"
-        )
     service = _non_empty_str(doc["service"], "service")
     if not isinstance(doc["nodes"], list):
         _fail("nodes must be a list")

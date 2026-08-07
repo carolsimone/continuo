@@ -1,3 +1,4 @@
+import datetime
 import json
 
 import pytest
@@ -212,3 +213,33 @@ def test_invalid_yaml_fails_as_malformed_contract(tmp_path):
     path.write_text("nodes: [unclosed")
     with pytest.raises(MalformedContractError, match="yaml"):
         parse_python_contract(str(path), "v1")
+
+
+def test_non_serializable_config_value_fails(tmp_path):
+    entry = make_entry(config={"refresh_after": datetime.date(2026, 8, 7)})
+    with pytest.raises(MalformedContractError, match="JSON-serializable"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_boolean_contract_version_fails(tmp_path):
+    path = write_contract(tmp_path, make_entry(), contract_version=True)
+    with pytest.raises(MalformedContractError, match="contract_version"):
+        parse_python_contract(path, "v1")
+
+
+def test_future_version_with_new_top_level_field_reports_the_version(tmp_path):
+    path = write_contract(tmp_path, make_entry(), contract_version=2, compiled_at="x")
+    with pytest.raises(MalformedContractError, match="contract_version"):
+        parse_python_contract(path, "v1")
+
+
+def test_non_mapping_node_entry_fails(tmp_path):
+    path = write_contract(tmp_path, "oops")
+    with pytest.raises(MalformedContractError, match="mapping"):
+        parse_python_contract(path, "v1")
+
+
+def test_non_mapping_column_fails(tmp_path):
+    entry = make_entry(output_columns=["id"])
+    with pytest.raises(MalformedContractError, match="mapping"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
