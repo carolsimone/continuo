@@ -243,3 +243,32 @@ def test_non_mapping_column_fails(tmp_path):
     entry = make_entry(output_columns=["id"])
     with pytest.raises(MalformedContractError, match="mapping"):
         parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_duplicate_column_name_fails(tmp_path):
+    entry = make_entry(output_columns=[
+        {"name": "id", "type": "INTEGER"},
+        {"name": "ID", "type": "TEXT"},
+    ])
+    with pytest.raises(MalformedContractError, match="duplicate column"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_composite_criticality_fails_as_contract_error(tmp_path):
+    entry = make_entry(criticality=[])
+    with pytest.raises(MalformedContractError, match="criticality"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_composite_extra_columns_fails_as_contract_error(tmp_path):
+    entry = make_entry(extra_columns={})
+    with pytest.raises(MalformedContractError, match="extra_columns"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_mixed_type_unknown_entry_keys_fail_as_contract_error(tmp_path):
+    entry = make_entry()
+    entry[1] = "x"
+    entry["surprise"] = 2
+    with pytest.raises(MalformedContractError, match="unknown fields"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")

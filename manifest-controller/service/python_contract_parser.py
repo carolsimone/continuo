@@ -60,13 +60,14 @@ def _parse_columns(raw, label: str) -> list[dict]:
     if not isinstance(raw, list) or not raw:
         _fail(f"{label}: output_columns must be a non-empty list")
     columns = []
+    seen_names: set[str] = set()
     for i, col in enumerate(raw):
         col_label = f"{label}: output_columns[{i}]"
         if not isinstance(col, dict):
             _fail(f"{col_label} must be a mapping")
         unknown = set(col) - _COLUMN_ALLOWED_KEYS
         if unknown:
-            _fail(f"{col_label} has unknown keys {sorted(unknown)}")
+            _fail(f"{col_label} has unknown keys {sorted(unknown, key=str)}")
         missing = _COLUMN_REQUIRED_KEYS - set(col)
         if missing:
             _fail(f"{col_label} is missing {sorted(missing)}")
@@ -75,6 +76,10 @@ def _parse_columns(raw, label: str) -> list[dict]:
         nullable = col.get("nullable", True)
         if not isinstance(nullable, bool):
             _fail(f"{col_label}.nullable must be a bool, got {nullable!r}")
+        name_key = name.lower()
+        if name_key in seen_names:
+            _fail(f"{label}: duplicate column name {name!r}")
+        seen_names.add(name_key)
         columns.append({"name": name, "type": col_type, "nullable": nullable})
     return columns
 
@@ -89,7 +94,7 @@ def _parse_entry(
     unknown = set(entry) - _REQUIRED_ENTRY_KEYS - _OPTIONAL_ENTRY_KEYS
     if unknown:
         _fail(
-            f"{label}: unknown fields {sorted(unknown)}"
+            f"{label}: unknown fields {sorted(unknown, key=str)}"
             " — schema changes require a contract_version bump"
         )
     missing = _REQUIRED_ENTRY_KEYS - set(entry)
@@ -103,14 +108,14 @@ def _parse_entry(
     script = _non_empty_str(entry["script"], f"{label}: script")
 
     criticality = entry["criticality"]
-    if criticality not in CRITICALITIES:
+    if not isinstance(criticality, str) or criticality not in CRITICALITIES:
         _fail(
             f"{label}: criticality must be one of {sorted(CRITICALITIES)},"
             f" got {criticality!r}"
         )
 
     extra_columns = entry.get("extra_columns", "raise")
-    if extra_columns not in EXTRA_COLUMNS_POLICIES:
+    if not isinstance(extra_columns, str) or extra_columns not in EXTRA_COLUMNS_POLICIES:
         _fail(
             f"{label}: extra_columns must be one of"
             f" {sorted(EXTRA_COLUMNS_POLICIES)}, got {extra_columns!r}"
@@ -212,7 +217,7 @@ def parse_python_contract(
         )
     unknown = set(doc) - _TOP_LEVEL_KEYS
     if unknown:
-        _fail(f"unknown top-level fields {sorted(unknown)}")
+        _fail(f"unknown top-level fields {sorted(unknown, key=str)}")
     missing = _TOP_LEVEL_KEYS - set(doc)
     if missing:
         _fail(f"missing top-level fields {sorted(missing)}")
