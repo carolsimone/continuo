@@ -16,3 +16,9 @@ class InvalidCompiledSqlError(ValueError):
         self.node_table_name = node_table_name
         self.detail = detail
         super().__init__(f"Invalid compiled SQL in node '{node_table_name}': {detail}")
+
+
+class MalformedContractError(ValueError):
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(f"Malformed python contract: {detail}")

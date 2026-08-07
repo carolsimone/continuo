@@ -1,0 +1,237 @@
+"""Parses a python-service wire contract (contract_version 1) into ManifestNodes.
+
+The artifact is one yaml document per service, produced by the domain repo's
+CI: {contract_version: 1, service: <name>, nodes: [...]}. Every entry carries
+CI-computed hash parts (source_hash, shared_code_hash, config_hash) and their
+fold (content_hash); the fold is recomputed here and a mismatch rejects the
+artifact. Any malformed entry rejects the WHOLE artifact: the producing CI
+validates before upload, so a bad entry here means a broken pipeline, and a
+silently dropped node would retire it from production on promote. Schema
+evolution goes through contract_version — an unknown field is an error.
+"""
+import json
+import logging
+
+import yaml
+
+from domain.exceptions import MalformedContractError
+from domain.model import ManifestNode, NodeType, Runtime
+from service.content_hash import content_hash_fold
+
+logger = logging.getLogger(__name__)
+
+CONTRACT_VERSION = 1
+CRITICALITIES = {"REGULATORY", "CORE", "SECONDARY"}
+EXTRA_COLUMNS_POLICIES = {"raise", "warn"}
+
+_TOP_LEVEL_KEYS = {"contract_version", "service", "nodes"}
+_REQUIRED_ENTRY_KEYS = {
+    "schema", "table", "owner", "schedule", "criticality", "script",
+    "reads", "output_columns",
+    "source_hash", "shared_code_hash", "config_hash", "content_hash",
+}
+_OPTIONAL_ENTRY_KEYS = {"description", "extra_columns", "config"}
+_COLUMN_REQUIRED_KEYS = {"name", "type"}
+_COLUMN_ALLOWED_KEYS = {"name", "type", "nullable"}
+
+
+def _fail(detail: str) -> None:
+    raise MalformedContractError(detail)
+
+
+def _non_empty_str(value, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        _fail(f"{label} must be a non-empty string, got {value!r}")
+    return value
+
+
+def _parse_reads(raw, label: str) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        _fail(f"{label}: reads must be a mapping of read name -> SQL")
+    reads: dict[str, str] = {}
+    for name, sql in raw.items():
+        _non_empty_str(name, f"{label}: read name")
+        _non_empty_str(sql, f"{label}: reads[{name!r}]")
+        reads[name] = sql
+    return reads
+
+
+def _parse_columns(raw, label: str) -> list[dict]:
+    if not isinstance(raw, list) or not raw:
+        _fail(f"{label}: output_columns must be a non-empty list")
+    columns = []
+    seen_names: set[str] = set()
+    for i, col in enumerate(raw):
+        col_label = f"{label}: output_columns[{i}]"
+        if not isinstance(col, dict):
+            _fail(f"{col_label} must be a mapping")
+        unknown = set(col) - _COLUMN_ALLOWED_KEYS
+        if unknown:
+            _fail(f"{col_label} has unknown keys {sorted(unknown, key=str)}")
+        missing = _COLUMN_REQUIRED_KEYS - set(col)
+        if missing:
+            _fail(f"{col_label} is missing {sorted(missing)}")
+        name = _non_empty_str(col["name"], f"{col_label}.name")
+        col_type = _non_empty_str(col["type"], f"{col_label}.type")
+        nullable = col.get("nullable", True)
+        if not isinstance(nullable, bool):
+            _fail(f"{col_label}.nullable must be a bool, got {nullable!r}")
+        name_key = name.lower()
+        if name_key in seen_names:
+            _fail(f"{label}: duplicate column name {name!r}")
+        seen_names.add(name_key)
+        columns.append({"name": name, "type": col_type, "nullable": nullable})
+    return columns
+
+
+def _parse_entry(
+    entry, service: str, manifest_version: str, image_tag: str
+) -> ManifestNode:
+    if not isinstance(entry, dict):
+        _fail(f"node entry must be a mapping, got {type(entry).__name__}")
+    label = f"{entry.get('schema', '?')}.{entry.get('table', '?')}"
+
+    unknown = set(entry) - _REQUIRED_ENTRY_KEYS - _OPTIONAL_ENTRY_KEYS
+    if unknown:
+        _fail(
+            f"{label}: unknown fields {sorted(unknown, key=str)}"
+            " — schema changes require a contract_version bump"
+        )
+    missing = _REQUIRED_ENTRY_KEYS - set(entry)
+    if missing:
+        _fail(f"{label}: missing required fields {sorted(missing)}")
+
+    schema = _non_empty_str(entry["schema"], f"{label}: schema")
+    table = _non_empty_str(entry["table"], f"{label}: table")
+    owner = _non_empty_str(entry["owner"], f"{label}: owner")
+    schedule = _non_empty_str(entry["schedule"], f"{label}: schedule")
+    script = _non_empty_str(entry["script"], f"{label}: script")
+
+    criticality = entry["criticality"]
+    if not isinstance(criticality, str) or criticality not in CRITICALITIES:
+        _fail(
+            f"{label}: criticality must be one of {sorted(CRITICALITIES)},"
+            f" got {criticality!r}"
+        )
+
+    extra_columns = entry.get("extra_columns", "raise")
+    if not isinstance(extra_columns, str) or extra_columns not in EXTRA_COLUMNS_POLICIES:
+        _fail(
+            f"{label}: extra_columns must be one of"
+            f" {sorted(EXTRA_COLUMNS_POLICIES)}, got {extra_columns!r}"
+        )
+
+    config = entry.get("config", {})
+    if not isinstance(config, dict):
+        _fail(f"{label}: config must be a mapping")
+
+    description = entry.get("description", "")
+    if not isinstance(description, str):
+        _fail(f"{label}: description must be a string")
+
+    reads = _parse_reads(entry["reads"], label)
+    columns = _parse_columns(entry["output_columns"], label)
+
+    source_hash = _non_empty_str(entry["source_hash"], f"{label}: source_hash")
+    config_hash = _non_empty_str(entry["config_hash"], f"{label}: config_hash")
+    content_hash = _non_empty_str(entry["content_hash"], f"{label}: content_hash")
+    shared_code_hash = entry["shared_code_hash"]
+    if not isinstance(shared_code_hash, str):
+        _fail(
+            f"{label}: shared_code_hash must be a string"
+            ' ("" when the script has no in-repo imports)'
+        )
+
+    expected = content_hash_fold(source_hash, shared_code_hash, config_hash)
+    if content_hash != expected:
+        _fail(
+            f"{label}: content_hash does not equal the fold of its parts"
+            " — the producing CI's hasher is broken or the artifact was altered"
+        )
+
+    # The node's source as the control plane sees it (the script itself never
+    # reaches manifest-controller): the normalized entry, hash fields excluded,
+    # serialized deterministically for the code bundle and the remediation LLM.
+    raw_entry = {
+        "schema": schema,
+        "table": table,
+        "owner": owner,
+        "schedule": schedule,
+        "criticality": criticality,
+        "script": script,
+        "description": description,
+        "extra_columns": extra_columns,
+        "reads": dict(reads),
+        "output_columns": columns,
+        "config": config,
+    }
+
+    try:
+        raw_code = json.dumps(raw_entry, sort_keys=True, indent=2)
+    except (TypeError, ValueError):
+        _fail(f"{label}: config is not JSON-serializable")
+
+    return ManifestNode(
+        table_name=table,
+        schema_name=schema,
+        service_name=service,
+        owner=owner,
+        schedule_name=schedule,
+        criticality=criticality,
+        dependency_sqls=[reads[name] for name in sorted(reads)],
+        candidate_sql="",
+        node_type=NodeType.PYTHON_MODEL,
+        content_hash=content_hash,
+        manifest_version=manifest_version,
+        image_tag=image_tag,
+        original_file_path=script,
+        raw_code=raw_code,
+        config=config,
+        source_hash=source_hash,
+        shared_code_hash=shared_code_hash,
+        config_hash=config_hash,
+        code_unit_ids=[],
+        output_columns=columns,
+        runtime=Runtime.PYTHON,
+    )
+
+
+def parse_python_contract(
+    contract_path: str, manifest_version: str, image_tag: str = ""
+) -> tuple[list[ManifestNode], dict]:
+    with open(contract_path) as f:
+        try:
+            doc = yaml.safe_load(f)
+        except yaml.YAMLError as exc:
+            raise MalformedContractError(f"invalid yaml: {exc}") from exc
+
+    if not isinstance(doc, dict):
+        _fail(f"contract document must be a mapping, got {type(doc).__name__}")
+    if "contract_version" in doc and (
+        type(doc["contract_version"]) is not int
+        or doc["contract_version"] != CONTRACT_VERSION
+    ):
+        _fail(
+            f"unsupported contract_version {doc['contract_version']!r}"
+            f" — this parser speaks version {CONTRACT_VERSION}"
+        )
+    unknown = set(doc) - _TOP_LEVEL_KEYS
+    if unknown:
+        _fail(f"unknown top-level fields {sorted(unknown, key=str)}")
+    missing = _TOP_LEVEL_KEYS - set(doc)
+    if missing:
+        _fail(f"missing top-level fields {sorted(missing)}")
+    service = _non_empty_str(doc["service"], "service")
+    if not isinstance(doc["nodes"], list):
+        _fail("nodes must be a list")
+
+    nodes: list[ManifestNode] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in doc["nodes"]:
+        node = _parse_entry(entry, service, manifest_version, image_tag)
+        key = (node.schema_name.lower(), node.table_name.lower())
+        if key in seen:
+            _fail(f"duplicate node {node.schema_name}.{node.table_name}")
+        seen.add(key)
+        nodes.append(node)
+    return nodes, {}

@@ -109,6 +109,7 @@ dependencies = [
     { name = "boto3" },
     { name = "grpcio" },
     { name = "protobuf" },
+    { name = "pyyaml" },
     { name = "redis" },
     { name = "sqlglot" },
 ]
@@ -118,7 +119,6 @@ dev = [
     { name = "grpcio-tools" },
     { name = "pytest" },
     { name = "pytest-mock" },
-    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -129,7 +129,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=7.35.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1.1" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
-    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "redis", specifier = ">=8.1.0" },
     { name = "sqlglot", specifier = ">=30.14.0" },
 ]
