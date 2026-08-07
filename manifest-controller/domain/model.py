@@ -33,7 +33,9 @@ class ManifestNode:
     criticality: str  # "REGULATORY" | "CORE" | "SECONDARY"
     dependency_sqls: list[str] = field(default_factory=list)
     candidate_sql: str = ""
-    node_type: str = "dbt-model"  # dbt-model | dbt-seed | dbt-snapshot
+    output_columns: list[dict] = field(default_factory=list)  # python nodes' declared
+    # output shape ({name, type, nullable}); empty for dbt nodes
+    node_type: str = "dbt-model"  # dbt-model | dbt-seed | dbt-snapshot | python-model
     content_hash: str = ""  # sha256:-prefixed fold of source_hash|shared_code_hash|config_hash
     manifest_version: str = ""
     image_tag: str = ""
@@ -46,7 +48,7 @@ class ManifestNode:
     shared_code_hash: str = ""  # fold of transitive shared-code checksums; "" if none
     config_hash: str = ""  # fingerprint of resolved config, denylist-filtered
     code_unit_ids: list[str] = field(default_factory=list)  # direct shared-code (macro) deps
-    runtime: str = "dbt"
+    runtime: str = "dbt"  # dbt | python
 
 
 @dataclass
