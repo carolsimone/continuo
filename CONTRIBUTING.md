@@ -99,6 +99,11 @@ If you change the Helm chart under `deploy/continuo/`, you must also update
 under `## [Unreleased]`, and pass `bash scripts/install-test/lint.sh`. CI enforces all
 three.
 
+## Code of conduct
+
+Participation in this project is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Reporting security issues
 
 Please don't open a public issue — see [SECURITY.md](SECURITY.md).
