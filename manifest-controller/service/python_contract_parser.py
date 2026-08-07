@@ -15,7 +15,7 @@ import logging
 import yaml
 
 from domain.exceptions import MalformedContractError
-from domain.model import ManifestNode
+from domain.model import ManifestNode, NodeType, Runtime
 from service.content_hash import content_hash_fold
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ def _parse_entry(
         criticality=criticality,
         dependency_sqls=[reads[name] for name in sorted(reads)],
         candidate_sql="",
-        node_type="python-model",
+        node_type=NodeType.PYTHON_MODEL,
         content_hash=content_hash,
         manifest_version=manifest_version,
         image_tag=image_tag,
@@ -192,7 +192,7 @@ def _parse_entry(
         config_hash=config_hash,
         code_unit_ids=[],
         output_columns=columns,
-        runtime="python",
+        runtime=Runtime.PYTHON,
     )
 
 

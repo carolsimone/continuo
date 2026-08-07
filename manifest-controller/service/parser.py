@@ -1,7 +1,7 @@
 import hashlib
 import json
 import logging
-from domain.model import ManifestNode
+from domain.model import ManifestNode, NodeType
 from service.content_hash import content_hash_fold
 
 logger = logging.getLogger(__name__)
@@ -79,9 +79,9 @@ def _shared_code_hash(unit_ids: set[str], macros: dict) -> str:
 
 
 _RESOURCE_TYPE_TO_NODE_TYPE = {
-    "model":    "dbt-model",
-    "seed":     "dbt-seed",
-    "snapshot": "dbt-snapshot",
+    "model":    NodeType.DBT_MODEL,
+    "seed":     NodeType.DBT_SEED,
+    "snapshot": NodeType.DBT_SNAPSHOT,
 }
 
 # Resource types that have a default schedule when no tags are present.

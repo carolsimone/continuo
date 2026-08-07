@@ -1,5 +1,18 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+class NodeType(StrEnum):
+    DBT_MODEL = "dbt-model"
+    DBT_SEED = "dbt-seed"
+    DBT_SNAPSHOT = "dbt-snapshot"
+    PYTHON_MODEL = "python-model"
+
+
+class Runtime(StrEnum):
+    DBT = "dbt"
+    PYTHON = "python"
 
 
 @dataclass
@@ -35,7 +48,7 @@ class ManifestNode:
     candidate_sql: str = ""
     output_columns: list[dict] = field(default_factory=list)  # python nodes' declared
     # output shape ({name, type, nullable}); empty for dbt nodes
-    node_type: str = "dbt-model"  # dbt-model | dbt-seed | dbt-snapshot | python-model
+    node_type: NodeType = NodeType.DBT_MODEL
     content_hash: str = ""  # sha256:-prefixed fold of source_hash|shared_code_hash|config_hash
     manifest_version: str = ""
     image_tag: str = ""
@@ -48,7 +61,7 @@ class ManifestNode:
     shared_code_hash: str = ""  # fold of transitive shared-code checksums; "" if none
     config_hash: str = ""  # fingerprint of resolved config, denylist-filtered
     code_unit_ids: list[str] = field(default_factory=list)  # direct shared-code (macro) deps
-    runtime: str = "dbt"  # dbt | python
+    runtime: Runtime = Runtime.DBT
 
 
 @dataclass

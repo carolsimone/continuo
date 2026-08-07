@@ -1,4 +1,14 @@
-from domain.model import ManifestFile, ManifestNode, NodeRegistry, NodeRegistryEntry, UpstreamDep
+import json
+
+from domain.model import (
+    ManifestFile,
+    ManifestNode,
+    NodeRegistry,
+    NodeRegistryEntry,
+    NodeType,
+    Runtime,
+    UpstreamDep,
+)
 from domain.exceptions import UnqualifiedTableReferenceError
 
 
@@ -83,3 +93,11 @@ def test_upstream_dep():
     dep = UpstreamDep(table_name="users", schema_name="public", service_name="user_service")
     assert dep.table_name == "users"
     assert dep.service_name == "user_service"
+
+
+def test_node_type_and_runtime_enums_serialize_as_plain_strings():
+    assert json.dumps({"node_type": NodeType.PYTHON_MODEL, "runtime": Runtime.DBT}) == (
+        '{"node_type": "python-model", "runtime": "dbt"}'
+    )
+    assert NodeType.DBT_MODEL == "dbt-model"
+    assert Runtime.PYTHON == "python"
