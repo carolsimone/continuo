@@ -23,8 +23,9 @@ class CandidateManifestHandler:
     The registry is built in-memory solely for dependency resolution
     and is not persisted anywhere.
 
-    Each node's compiled candidate SQL is uploaded to S3 via the uploader;
-    the topology carries candidate_sql_uri (an s3:// reference) rather than
+    Each node's candidate artifact — the object its validation Job fetches to
+    build it as an empty table — is uploaded to S3 via the uploader; the
+    topology carries candidate_artifact_uri (an s3:// reference) rather than
     the inline SQL string. Upload failures are fatal — publish_failed is
     called and the handler returns so the consumer ACKs without dangling refs.
 
@@ -203,7 +204,7 @@ class CandidateManifestHandler:
             # topology event; an upload failure is fatal because publishing a node
             # without its SQL would leave release-controller with a dangling reference.
             try:
-                candidate_sql_uri = self._uploader.upload(
+                candidate_artifact_uri = self._uploader.upload(
                     release_id=release_id,
                     unique_id=unique_id,
                     sql=candidate_sql,
@@ -214,26 +215,26 @@ class CandidateManifestHandler:
                 # guarantees no dangling reference is ever published.
                 self._publisher.publish_failed(
                     release_id=release_id,
-                    error_class="CandidateSqlUploadFailed",
+                    error_class="CandidateArtifactUploadFailed",
                     error_detail=str(exc),
                 )
                 return
 
             topology.append({
-                "unique_id":           unique_id,
-                "schema_name":         node.schema_name,
-                "table_name":          node.table_name,
-                "service_name":        node.service_name,
-                "node_type":           node.node_type,
-                "test_count":          node.test_count,
-                "content_hash":        node.content_hash,
-                "image_tag":           node.image_tag,
-                "original_file_path":  node.original_file_path,
-                "upstream_unique_ids": [
+                "unique_id":              unique_id,
+                "schema_name":            node.schema_name,
+                "table_name":             node.table_name,
+                "service_name":           node.service_name,
+                "node_type":              node.node_type,
+                "test_count":             node.test_count,
+                "content_hash":           node.content_hash,
+                "image_tag":              node.image_tag,
+                "original_file_path":     node.original_file_path,
+                "upstream_unique_ids":    [
                     f"{dep.schema_name}.{dep.table_name}" for dep in node.upstream_deps
                 ],
-                "schedule":            node.schedule_name,
-                "candidate_sql_uri":   candidate_sql_uri,
+                "schedule":               node.schedule_name,
+                "candidate_artifact_uri": candidate_artifact_uri,
             })
 
         bundle = build_code_bundle(release_id, all_nodes, shared_code)
