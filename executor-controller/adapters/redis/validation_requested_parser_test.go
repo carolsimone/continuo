@@ -16,7 +16,7 @@ import (
 // validationPayload mirrors the flat JSON body release-controller emits in the
 // "payload" field of a validation.requested:v1 message (see
 // release-controller/service/handlers/handle_parsed_manifest.go). Per-node
-// identity is keyed by "unique_id". candidate_sql_uri carries an S3 URI
+// identity is keyed by "unique_id". candidate_artifact_uri carries an S3 URI
 // pointing to the pre-rewritten compiled SQL for model/snapshot nodes.
 func validationPayload() map[string]any {
 	return map[string]any{
@@ -24,13 +24,13 @@ func validationPayload() map[string]any {
 		"mode":       "validation",
 		"nodes": []map[string]any{
 			{
-				"unique_id":         "model.shop.orders",
-				"service_name":      "shop",
-				"node_type":         "dbt-model",
-				"schema_name":       "public",
-				"table_name":        "orders",
-				"image_tag":         "sha-abc",
-				"candidate_sql_uri": "s3://continuo-artifacts/candidate-sql/rel-123/model.shop.orders.sql",
+				"unique_id":              "model.shop.orders",
+				"service_name":           "shop",
+				"node_type":              "dbt-model",
+				"schema_name":            "public",
+				"table_name":             "orders",
+				"image_tag":              "sha-abc",
+				"candidate_artifact_uri": "s3://continuo-artifacts/candidate-sql/rel-123/model.shop.orders.sql",
 			},
 			{
 				"unique_id":    "model.shop.customers",
@@ -83,12 +83,12 @@ func TestParseValidationRequested_HappyPath(t *testing.T) {
 	assert.Equal(t, "orders", evt.Nodes[0].TableName)
 	assert.Equal(t, pkg_model.NodeTypeDbtModel, evt.Nodes[0].NodeType)
 	assert.Equal(t, "sha-abc", evt.Nodes[0].ImageTag)
-	assert.Equal(t, "s3://continuo-artifacts/candidate-sql/rel-123/model.shop.orders.sql", evt.Nodes[0].CandidateSQLURI,
-		"candidate_sql_uri must round-trip from wire payload to ValidationNode")
+	assert.Equal(t, "s3://continuo-artifacts/candidate-sql/rel-123/model.shop.orders.sql", evt.Nodes[0].CandidateArtifactURI,
+		"candidate_artifact_uri must round-trip from wire payload to ValidationNode")
 	assert.Equal(t, "model.shop.customers", evt.Nodes[1].NodeID)
 	assert.Equal(t, pkg_model.NodeTypeDbtSeed, evt.Nodes[1].NodeType)
-	assert.Empty(t, evt.Nodes[1].CandidateSQLURI,
-		"seed node without candidate_sql_uri must have empty string")
+	assert.Empty(t, evt.Nodes[1].CandidateArtifactURI,
+		"seed node without candidate_artifact_uri must have empty string")
 }
 
 func TestParseValidationRequested_OutboxEntryIDAbsentIsNilUUID(t *testing.T) {
@@ -203,7 +203,7 @@ func TestParseValidationRequested_CarriesValidationOpAndProdSchema(t *testing.T)
 	     "validation_op":"clone_from_prod","prod_schema":"analytics"},
 	    {"unique_id":"model.shop.orders","service_name":"shop","node_type":"dbt-model",
 	     "schema_name":"shop","table_name":"orders","image_tag":"t2",
-	     "candidate_sql_uri":"s3://b/o.sql","validation_op":"build_from_sql","prod_schema":""}
+	     "candidate_artifact_uri":"s3://b/o.sql","validation_op":"build_from_sql","prod_schema":""}
 	  ]}`
 	msg := goredis.XMessage{Values: map[string]any{"payload": payload}}
 
@@ -228,4 +228,19 @@ func TestParseValidationRequested_AbsentOpDefaultsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "", evt.Nodes[0].ValidationOp)
 	assert.Equal(t, "", evt.Nodes[0].ProdSchema)
+}
+
+// TestParseValidationRequested_LegacyKeyNotDecoded pins that the rename from
+// candidate_sql_uri to candidate_artifact_uri carries no compatibility alias:
+// a wire payload still using the legacy key must decode to an empty
+// CandidateArtifactURI, not silently populate it.
+func TestParseValidationRequested_LegacyKeyNotDecoded(t *testing.T) {
+	payload := `{"release_id":"r","mode":"validation","node_ids_in_order":["model.a"],
+	  "nodes":[{"unique_id":"model.a","service_name":"s","node_type":"dbt-model",
+	  "schema_name":"sc","table_name":"a","image_tag":"t",
+	  "candidate_sql_uri":"s3://b/o.sql"}]}`
+	evt, err := ParseValidationRequested(goredis.XMessage{Values: map[string]any{"payload": payload}})
+	require.NoError(t, err)
+	assert.Empty(t, evt.Nodes[0].CandidateArtifactURI,
+		"the legacy candidate_sql_uri key must not be decoded — no compatibility alias is read")
 }

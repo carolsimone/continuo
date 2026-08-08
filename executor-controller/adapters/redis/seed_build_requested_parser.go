@@ -32,7 +32,7 @@ type seedBuildNodeDTO struct {
 }
 
 // ParseSeedBuildRequested translates a seed.build.requested:v1 XMessage into a
-// typed domain event. Seeds have no upstream_node_ids or candidate_sql_uri;
+// typed domain event. Seeds have no upstream_node_ids or candidate_artifact_uri;
 // each seed's node_type must be "dbt-seed".
 //
 // All errors are permanent (malformed input never becomes valid on retry); the

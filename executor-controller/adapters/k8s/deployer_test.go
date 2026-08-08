@@ -18,21 +18,21 @@ import (
 // silently drops a field flips one of these assertions.
 func TestCompileParamsFromSpec_MapsAllFields(t *testing.T) {
 	spec := deploy.ValidationJobSpec{
-		JobName:             "compile-svc-rel123",
-		ReleaseID:           "rel123",
-		NodeID:              "svc.orders",
-		ServiceName:         "service-1",
-		SchemaName:          "analytics",
-		TableName:           "orders",
-		NodeType:            string(pkg_model.NodeTypeDbtModel),
-		ImageTag:            "abc123",
-		CandidateSchema:     "candidate_rel123",
-		CandidateSQLURI:     "s3://continuo/svc/orders.sql",
-		ValidationOp:        "build_from_sql",
-		ProdSchema:          "prod_schema",
-		ManifestS3URI:       "s3://continuo/svc/rel123/manifest.json",
-		ParseProdS3URI:      "s3://continuo/svc/rel123/parse/prod.msgpack",
-		ParseCandidateS3URI: "s3://continuo/svc/rel123/parse/candidate.msgpack",
+		JobName:              "compile-svc-rel123",
+		ReleaseID:            "rel123",
+		NodeID:               "svc.orders",
+		ServiceName:          "service-1",
+		SchemaName:           "analytics",
+		TableName:            "orders",
+		NodeType:             string(pkg_model.NodeTypeDbtModel),
+		ImageTag:             "abc123",
+		CandidateSchema:      "candidate_rel123",
+		CandidateArtifactURI: "s3://continuo/svc/orders.sql",
+		ValidationOp:         "build_from_sql",
+		ProdSchema:           "prod_schema",
+		ManifestS3URI:        "s3://continuo/svc/rel123/manifest.json",
+		ParseProdS3URI:       "s3://continuo/svc/rel123/parse/prod.msgpack",
+		ParseCandidateS3URI:  "s3://continuo/svc/rel123/parse/candidate.msgpack",
 	}
 
 	params, err := compileParamsFromSpec(spec, "default")
@@ -52,13 +52,13 @@ func TestCompileParamsFromSpec_MapsAllFields(t *testing.T) {
 	assert.Equal(t, "default", params.Namespace)
 
 	// Fields DeployCompile deliberately does NOT set (SchemaName/TableName/
-	// ValidationOp/ProdSchema/CandidateSQLURI belong to DeployValidation and
+	// ValidationOp/ProdSchema/CandidateArtifactURI belong to DeployValidation and
 	// DeploySeedBuild, not the compile Job).
 	assert.Empty(t, params.SchemaName)
 	assert.Empty(t, params.TableName)
 	assert.Empty(t, params.ValidationOp)
 	assert.Empty(t, params.ProdSchema)
-	assert.Empty(t, params.CandidateSQLURI)
+	assert.Empty(t, params.CandidateArtifactURI)
 }
 
 // TestCompileParamsFromSpec_EmptyNodeType verifies compile Jobs tolerate an
