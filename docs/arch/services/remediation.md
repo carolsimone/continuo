@@ -98,7 +98,7 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
 1. Parse the event; extract stage ("compile" | "seed_build" | "validation") and,
    for each entry in per_node where status="failed":
    build FailureEvidence {source (derived from stage), release_id, node_id,
-   dbt_log_uri, run_results_uri, candidate_sql_uri, repo, commit_sha}.
+   dbt_log_uri, run_results_uri, candidate_artifact_uri, repo, commit_sha}.
    When `stage` is absent, the `reason` field is used as the source fallback.
 2. Fetch dbt log text from S3 at dbt_log_uri.
    - If not found: logText = "" (→ unknown:log_unavailable).
@@ -152,7 +152,7 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 | `category` | `logic`, `test`, or `unknown`. |
 | `error_signature` | Release-stable normalized dedup key (SHA-256 hex). |
 | `dbt_log_uri` | S3 URI of the full dbt execution log. |
-| `candidate_sql_uri` | S3 URI of the candidate SQL file (candidate-schema form; omitted for seeds and compile failures). |
+| `candidate_artifact_uri` | S3 URI of the candidate SQL file (candidate-schema form; omitted for seeds and compile failures). |
 | `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log) and seed_build failures (threaded from the candidate topology's `OriginalFilePath`). Empty for validation failures. When present for seed_build, the agent bypasses the Ancestry (orchestrator) lookup. |
 | `service` | Owning dbt service name for the failing node. Non-empty for seed_build failures (threaded from the candidate topology's ServiceName). Empty for compile (NodeID is the service) and validation. |
 | `repo` | GitHub owner/name from the originating release. |

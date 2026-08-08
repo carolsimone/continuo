@@ -107,7 +107,7 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 
 ```
 1. Decode trigger: extract source, release_id, node_id, error_signature,
-   category, dbt_log_uri, candidate_sql_uri, file_path, service, repo, commit_sha.
+   category, dbt_log_uri, candidate_artifact_uri, file_path, service, repo, commit_sha.
 
 1a. Read-only dedup pre-check (no write): before any row is written, check
     whether this trigger was already handled, on either dedup axis scoped to the
@@ -255,10 +255,10 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 `validationFixer` (`service/fixer/validation.go`) is the one class that carries a pre-compiled candidate SQL and still runs two LLM calls: a first diagnosis against that candidate, then a best-effort second pass that applies the diagnosis to the real model source.
 
 ```
-1. Empty candidate_sql_uri on the trigger: proposal(status=skipped), done. This
+1. Empty candidate_artifact_uri on the trigger: proposal(status=skipped), done. This
    is decided before any evidence is fetched, so a transiently unreadable dbt log
    URI cannot turn the intended skip into a redelivery.
-2. Fetch the candidate SQL from S3 at candidate_sql_uri (required; any error is
+2. Fetch the candidate SQL from S3 at candidate_artifact_uri (required; any error is
    transient and the trigger is redelivered), then fetch and sanitize the dbt log
    via loadDBTLog (not-found → ""; any other error is transient and redelivered).
    Both reads happen only after the empty-candidate skip above.
