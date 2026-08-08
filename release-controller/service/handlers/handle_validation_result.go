@@ -119,9 +119,9 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	// candidate_sql_uri is transient, release-specific validation data; the promoted
+	// candidate_artifact_uri is transient, release-specific validation data; the promoted
 	// topology (current_prod and the release.promoted event) must not carry it.
-	promotedTopo := r.CandidateTopology().WithoutCandidateSQLURI()
+	promotedTopo := r.CandidateTopology().WithoutCandidateArtifactURI()
 
 	// Determine which nodes actually changed versus the prod being replaced, so
 	// the release.promoted event can tag them. Computed against cp's snapshot
@@ -245,34 +245,34 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		return fmt.Errorf("save release: %w", err)
 	}
 
-	// Build a map from node UniqueID to CandidateSQLURI so each per-node entry
-	// in the rejected payload can carry the S3 pointer to the SQL that was
-	// validated — mirroring the dbt_log_uri pattern as a pointer, not inline SQL.
+	// Build a map from node UniqueID to CandidateArtifactURI so each per-node entry
+	// in the rejected payload can carry the S3 pointer to the artifact that was
+	// validated — mirroring the dbt_log_uri pattern as a pointer, not inline content.
 	uriByNodeID := make(map[string]string, len(r.CandidateTopology()))
 	for _, n := range r.CandidateTopology() {
-		uriByNodeID[n.UniqueID] = n.CandidateSQLURI
+		uriByNodeID[n.UniqueID] = n.CandidateArtifactURI
 	}
 
 	type perNodeEntry struct {
-		NodeID          string `json:"node_id"`
-		Status          string `json:"status"`
-		DBTLogURI       string `json:"dbt_log_uri,omitempty"`
-		RunResultsURI   string `json:"run_results_uri,omitempty"`
-		CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
+		NodeID               string `json:"node_id"`
+		Status               string `json:"status"`
+		DBTLogURI            string `json:"dbt_log_uri,omitempty"`
+		RunResultsURI        string `json:"run_results_uri,omitempty"`
+		CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
 	}
 	// Source the per-node audit rows from the projected read model, enriched with
-	// each node's candidate SQL pointer from the candidate topology.
+	// each node's candidate artifact pointer from the candidate topology.
 	var perNode []perNodeEntry
 	for _, nr := range r.PerNodeResults() {
 		if nr.Stage != "validation" {
 			continue
 		}
 		perNode = append(perNode, perNodeEntry{
-			NodeID:          nr.NodeID,
-			Status:          nr.Status,
-			DBTLogURI:       nr.DBTLogURI,
-			RunResultsURI:   nr.RunResultsURI,
-			CandidateSQLURI: uriByNodeID[nr.NodeID],
+			NodeID:               nr.NodeID,
+			Status:               nr.Status,
+			DBTLogURI:            nr.DBTLogURI,
+			RunResultsURI:        nr.RunResultsURI,
+			CandidateArtifactURI: uriByNodeID[nr.NodeID],
 		})
 	}
 

@@ -52,20 +52,20 @@ func (DeployTask) isCommand() {}
 // unmarshalled back on dispatch — this is the same repo-wide, recorded
 // domain/command serialization debt as DeployTask.Mode, not a new one.
 type ValidationDeployTask struct {
-	ReleaseID       string   `json:"release_id"`
-	NodeID          string   `json:"node_id"`
-	ServiceName     string   `json:"service_name"`
-	SchemaName      string   `json:"schema_name"`
-	TableName       string   `json:"table_name"`
-	NodeType        string   `json:"node_type"`
-	ImageTag        string   `json:"image_tag"`
-	JobName         string   `json:"job_name"`
-	CandidateSchema string   `json:"candidate_schema"`
-	CandidateSQLURI string   `json:"candidate_sql_uri"`
-	ValidationOp    string   `json:"validation_op"`
-	ProdSchema      string   `json:"prod_schema"`
-	UpstreamNodeIDs []string `json:"upstream_node_ids"`
-	ManifestS3URI   string   `json:"manifest_s3_uri"`
+	ReleaseID            string   `json:"release_id"`
+	NodeID               string   `json:"node_id"`
+	ServiceName          string   `json:"service_name"`
+	SchemaName           string   `json:"schema_name"`
+	TableName            string   `json:"table_name"`
+	NodeType             string   `json:"node_type"`
+	ImageTag             string   `json:"image_tag"`
+	JobName              string   `json:"job_name"`
+	CandidateSchema      string   `json:"candidate_schema"`
+	CandidateArtifactURI string   `json:"candidate_artifact_uri"`
+	ValidationOp         string   `json:"validation_op"`
+	ProdSchema           string   `json:"prod_schema"`
+	UpstreamNodeIDs      []string `json:"upstream_node_ids"`
+	ManifestS3URI        string   `json:"manifest_s3_uri"`
 	// ParseProdS3URI / ParseCandidateS3URI are the S3 destinations for the
 	// compile Job's exported partial-parse artifacts. Empty (older
 	// compile.requested messages without candidate_schema) disables the
@@ -102,20 +102,20 @@ func (c DeployTask) ToJobSpec() deploy.JobSpec {
 // dispatcher, not in the K8s Job pod.
 func (c ValidationDeployTask) ToValidationJobSpec() deploy.ValidationJobSpec {
 	return deploy.ValidationJobSpec{
-		JobName:             c.JobName,
-		ReleaseID:           c.ReleaseID,
-		NodeID:              c.NodeID,
-		ServiceName:         c.ServiceName,
-		SchemaName:          c.SchemaName,
-		TableName:           c.TableName,
-		NodeType:            c.NodeType,
-		ImageTag:            c.ImageTag,
-		CandidateSchema:     c.CandidateSchema,
-		CandidateSQLURI:     c.CandidateSQLURI,
-		ValidationOp:        c.ValidationOp,
-		ProdSchema:          c.ProdSchema,
-		ManifestS3URI:       c.ManifestS3URI,
-		ParseProdS3URI:      c.ParseProdS3URI,
-		ParseCandidateS3URI: c.ParseCandidateS3URI,
+		JobName:              c.JobName,
+		ReleaseID:            c.ReleaseID,
+		NodeID:               c.NodeID,
+		ServiceName:          c.ServiceName,
+		SchemaName:           c.SchemaName,
+		TableName:            c.TableName,
+		NodeType:             c.NodeType,
+		ImageTag:             c.ImageTag,
+		CandidateSchema:      c.CandidateSchema,
+		CandidateArtifactURI: c.CandidateArtifactURI,
+		ValidationOp:         c.ValidationOp,
+		ProdSchema:           c.ProdSchema,
+		ManifestS3URI:        c.ManifestS3URI,
+		ParseProdS3URI:       c.ParseProdS3URI,
+		ParseCandidateS3URI:  c.ParseCandidateS3URI,
 	}
 }

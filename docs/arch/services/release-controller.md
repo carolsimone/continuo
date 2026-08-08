@@ -18,7 +18,7 @@ Postgres (its own database). Tables:
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
 | `message_processing` | Inbound dedup ledger (`outbox_entry_id` / message id) for idempotent consumption. |
 
-The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. When a new candidate is promoted, its candidate topology (carrying `content_hash` + joined `image_tag`) replaces the snapshot, forming the change-detection base for the next release. The `candidate_sql_uri` field is stored in `releases.candidate_topology` (as a JSONB field) during validation but is stripped on promotion — it is transient validation data and is not carried into `current_prod`. `code_bundle_uri` is a release-level column, not a per-node topology field; it is set once from the parse result and is carried forward unchanged onto `release.promoted:v1` rather than stripped.
+The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. When a new candidate is promoted, its candidate topology (carrying `content_hash` + joined `image_tag`) replaces the snapshot, forming the change-detection base for the next release. The `candidate_artifact_uri` field is stored in `releases.candidate_topology` (as a JSONB field) during validation but is stripped on promotion — it is transient validation data and is not carried into `current_prod`. `code_bundle_uri` is a release-level column, not a per-node topology field; it is set once from the parse result and is carried forward unchanged onto `release.promoted:v1` rather than stripped.
 
 ## Inbound Interfaces
 
@@ -59,7 +59,7 @@ the `livenessProbe` at `/livez` (`deploy/continuo/values.yaml`:
 | `seed.build.requested:v1` | executor-controller | A parsed release has new/changed dbt-seed nodes that need building into the candidate schema before validation. |
 | `validation.requested:v1` | executor-controller | A candidate has changed nodes to validate. |
 | `release.promoted:v1` | orchestrator | A release is promoted to production. Payload: `{release_id, topology, image_tags, repo, commit_sha, promoted_at, candidate_schema, code_bundle_uri, bootstrap}`. Each entry in `topology` carries the standard node fields plus a `changed` boolean that is `true` when the node's `content_hash` differs from the prior `current_prod` (or when `current_prod` was empty). The top-level `repo`, `commit_sha`, and `promoted_at` are the source-change provenance for this release; orchestrator stamps them onto each changed `:Table` node. `code_bundle_uri` is the release's code-bundle S3 URI carried through unchanged from the parse result; `bootstrap` reflects whether this release skipped validation. Neither field is consumed by orchestrator today. |
-| `release.rejected:v1` | `remediation` (group `remediation-release-rejected`) | A release fails at any pipeline stage. The payload is uniform across all three legs: `{release_id, stage, reason, repo, commit_sha, failing_nodes, per_node[{node_id, status, dbt_log_uri, run_results_uri}]}`. `stage` is `compile`, `seed_build`, or `validation`; `reason` is `compile_failed`, `seed_build_failed`, or `validation_failed`. For the compile leg, the single `per_node` entry's `node_id` is the service name (a synthetic compile unit, not a dbt node); for validation, entries additionally carry `candidate_sql_uri`. The remediation classifier discriminates by `stage`, fetches the dbt log from S3 for each failing entry, and emits a `remediation.requested:v1` trigger for each healable failure. |
+| `release.rejected:v1` | `remediation` (group `remediation-release-rejected`) | A release fails at any pipeline stage. The payload is uniform across all three legs: `{release_id, stage, reason, repo, commit_sha, failing_nodes, per_node[{node_id, status, dbt_log_uri, run_results_uri}]}`. `stage` is `compile`, `seed_build`, or `validation`; `reason` is `compile_failed`, `seed_build_failed`, or `validation_failed`. For the compile leg, the single `per_node` entry's `node_id` is the service name (a synthetic compile unit, not a dbt node); for validation, entries additionally carry `candidate_artifact_uri`. The remediation classifier discriminates by `stage`, fetches the dbt log from S3 for each failing entry, and emits a `remediation.requested:v1` trigger for each healable failure. |
 
 All events are written to the outbox inside the same transaction as the state change and published with an injected `outbox_entry_id` for consumer-side dedup.
 
@@ -130,7 +130,7 @@ status=ok:
       transition to Validating, emit validation.requested:v1
         (mode=validation, candidate_schema=_candidate_<release_id>,
          nodes carry upstream_node_ids = all in-set upstreams, intra- and cross-service,
-         and candidate_sql_uri = the S3 URI for the node's rewritten SQL)
+         and candidate_artifact_uri = the S3 URI for the node's rewritten SQL)
   advance queue
 ```
 A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.
@@ -179,8 +179,8 @@ all stored (and present) nodes ok and aggregate_status ok → handleValidationOK
    transition to Promoted, emit release.promoted:v1
 any stored node not ok (failed or skipped) / aggregate_status not ok → Reject(reason=validation_failed),
    emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,
-        per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_sql_uri}], repo, commit_sha}
-        (per_node sourced from the stored read model, enriched with each node's candidate_sql_uri)
+        per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_artifact_uri}], repo, commit_sha}
+        (per_node sourced from the stored read model, enriched with each node's candidate_artifact_uri)
 advance queue
 ```
 

@@ -49,17 +49,17 @@ func fetchJob(t *testing.T, c *K8sClient, namespace, name string) *batchv1.Job {
 
 func validationParams() ValidationJobParams {
 	return ValidationJobParams{
-		JobName:         "validate-orders-rel123",
-		ReleaseID:       "rel123",
-		NodeID:          "svc.orders",
-		ServiceName:     "service-1",
-		SchemaName:      "analytics",
-		TableName:       "orders",
-		NodeType:        pkg_model.NodeTypeDbtModel,
-		ImageTag:        "abc-1714300000",
-		CandidateSchema: "_candidate_rel_123",
-		CandidateSQLURI: "s3://continuo-artifacts/candidate-sql/rel123/svc.orders.sql",
-		Namespace:       "default",
+		JobName:              "validate-orders-rel123",
+		ReleaseID:            "rel123",
+		NodeID:               "svc.orders",
+		ServiceName:          "service-1",
+		SchemaName:           "analytics",
+		TableName:            "orders",
+		NodeType:             pkg_model.NodeTypeDbtModel,
+		ImageTag:             "abc-1714300000",
+		CandidateSchema:      "_candidate_rel_123",
+		CandidateArtifactURI: "s3://continuo-artifacts/candidate-sql/rel123/svc.orders.sql",
+		Namespace:            "default",
 		// ValidationOp/ProdSchema intentionally empty here -> defaults exercised.
 	}
 }
@@ -85,7 +85,7 @@ func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testin
 	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
 	c := newValidationTestClient()
-	p := validationParams() // op defaults to build_from_sql, CandidateSQLURI set
+	p := validationParams() // op defaults to build_from_sql, CandidateArtifactURI set
 
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
@@ -100,7 +100,7 @@ func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testin
 	assert.Equal(t, "ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0", main.Image)
 	assert.Equal(t, []string{"python", "/validation_runner.py"}, main.Command)
 	// The main container fetches its own SQL: it carries the URI + S3 creds.
-	assert.Equal(t, p.CandidateSQLURI, envByName(spec, "CANDIDATE_SQL_URI"))
+	assert.Equal(t, p.CandidateArtifactURI, envByName(spec, "CANDIDATE_SQL_URI"))
 	assert.Equal(t, "http://minio:9000", envByName(spec, "S3_ENDPOINT_URL"))
 	assert.Equal(t, "test-secret", envByName(spec, "AWS_SECRET_ACCESS_KEY"))
 	// CANDIDATE_SQL_PATH / the shared-file indirection is gone.
@@ -217,7 +217,7 @@ func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {
 	p.JobName = "validate-orders-rel123-clone"
 	p.ValidationOp = "clone_from_prod"
 	p.ProdSchema = "analytics"
-	p.CandidateSQLURI = "" // clone nodes have no candidate SQL
+	p.CandidateArtifactURI = "" // clone nodes have no candidate SQL
 
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
@@ -326,7 +326,7 @@ func TestCreateValidationJob_AttachesWarehouseSecretEnvFrom(t *testing.T) {
 	p := validationParams()
 	p.ValidationOp = "clone_from_prod"
 	p.ProdSchema = "analytics"
-	p.CandidateSQLURI = ""
+	p.CandidateArtifactURI = ""
 
 	require.NoError(t, c.CreateValidationJob(context.Background(), p))
 	main := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec.Containers[0]
@@ -381,7 +381,7 @@ func TestCreateValidationJob_SetsValidationOpAndProdSchema(t *testing.T) {
 	p2.JobName = "validate-orders-rel123-clone"
 	p2.ValidationOp = "clone_from_prod"
 	p2.ProdSchema = "analytics"
-	p2.CandidateSQLURI = ""
+	p2.CandidateArtifactURI = ""
 	require.NoError(t, c.CreateValidationJob(context.Background(), p2))
 	job2 := fetchJob(t, c, p2.Namespace, p2.JobName)
 	assert.Equal(t, "clone_from_prod", envByName(job2.Spec.Template.Spec, "VALIDATION_OP"))
@@ -389,12 +389,12 @@ func TestCreateValidationJob_SetsValidationOpAndProdSchema(t *testing.T) {
 }
 
 // TestCreateValidationJob_BuildFromSql_EmptyCandidateURIErrors verifies that a
-// build_from_sql validation job with no CandidateSQLURI fails with a permanent
+// build_from_sql validation job with no CandidateArtifactURI fails with a permanent
 // error at job-build time rather than producing a pod that fails at runtime.
 func TestCreateValidationJob_BuildFromSql_EmptyCandidateURIErrors(t *testing.T) {
 	c := newValidationTestClient()
 	p := validationParams()
-	p.CandidateSQLURI = "" // omit the required URI
+	p.CandidateArtifactURI = "" // omit the required URI
 
 	err := c.CreateValidationJob(context.Background(), p)
 	require.Error(t, err)

@@ -459,17 +459,17 @@ func TestReleaseRepository_CodeBundleURIUpdatesAfterCreation(t *testing.T) {
 	assert.Equal(t, "s3://b/code-bundles/rCBU/bundle.json", reloaded.CodeBundleURI())
 }
 
-func TestReleaseRepository_RoundTripsCandidateSQLURI(t *testing.T) {
+func TestReleaseRepository_RoundTripsCandidateArtifactURI(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db, nil)
 	ctx := context.Background()
 
 	// Build a release that already has a candidate topology containing a node
-	// with a CandidateSQLURI. Rehydrate bypasses the state machine so we can
+	// with a CandidateArtifactURI. Rehydrate bypasses the state machine so we can
 	// inject the topology directly, mirroring how the repository reconstructs
 	// releases from Postgres.
 	topo := release.Topology{
-		{UniqueID: "n", CandidateSQLURI: "s3://b/candidate-sql/r/n.sql"},
+		{UniqueID: "n", CandidateArtifactURI: "s3://b/candidate-sql/r/n.sql"},
 	}
 	r := release.Rehydrate(release.RehydrateInput{
 		ID:                "rCSURI",
@@ -488,8 +488,8 @@ func TestReleaseRepository_RoundTripsCandidateSQLURI(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Len(t, got.CandidateTopology(), 1)
-	assert.Equal(t, "s3://b/candidate-sql/r/n.sql", got.CandidateTopology()[0].CandidateSQLURI,
-		"candidate_sql_uri must survive a JSONB round-trip through Postgres")
+	assert.Equal(t, "s3://b/candidate-sql/r/n.sql", got.CandidateTopology()[0].CandidateArtifactURI,
+		"candidate_artifact_uri must survive a JSONB round-trip through Postgres")
 }
 
 // TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes

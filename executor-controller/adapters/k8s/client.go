@@ -205,7 +205,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 // ValidationJobParams represents the parameters needed to create a
 // mode=validation K8s Job. It mirrors JobParams for the production fields a
 // validation node still needs and adds the validation-only fields (release/node
-// identity, candidate schema, candidate SQL URI).
+// identity, candidate schema, candidate artifact URI).
 type ValidationJobParams struct {
 	JobName     string
 	ReleaseID   string
@@ -223,8 +223,8 @@ type ValidationJobParams struct {
 	ValidationOp string
 	ProdSchema   string
 
-	CandidateSchema string
-	CandidateSQLURI string
+	CandidateSchema      string
+	CandidateArtifactURI string
 
 	// ManifestS3URI is the S3 destination where the compile Job uploads the
 	// compiled manifest.json. Populated only for mode=compile Jobs.
@@ -375,14 +375,14 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 
 	case "build_from_sql":
 		// The validation container fetches its own compiled SQL from S3 (boto3) and
-		// builds it WITH NO DATA — no sidecar, no shared emptyDir. CandidateSQLURI must
+		// builds it WITH NO DATA — no sidecar, no shared emptyDir. CandidateArtifactURI must
 		// be set: changed models/snapshots always carry one; nodes without candidate SQL
 		// (unchanged upstreams, seeds) use clone_from_prod.
-		if p.CandidateSQLURI == "" {
-			return corev1.PodSpec{}, fmt.Errorf("%w: candidate_sql_uri missing from build_from_sql validation job params for node %s",
+		if p.CandidateArtifactURI == "" {
+			return corev1.PodSpec{}, fmt.Errorf("%w: candidate_artifact_uri missing from build_from_sql validation job params for node %s",
 				events.ErrPermanent, p.NodeID)
 		}
-		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_URI", Value: p.CandidateSQLURI})
+		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_URI", Value: p.CandidateArtifactURI})
 		mainContainer.Env = append(mainContainer.Env, s3CredEnvVars()...)
 		return corev1.PodSpec{
 			RestartPolicy:   corev1.RestartPolicyNever,

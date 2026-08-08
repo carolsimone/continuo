@@ -36,18 +36,18 @@ type JobSpec struct {
 // JobSpec it carries no adapter concerns such as the namespace; NodeType stays
 // a string so the domain port does not depend on pkg_model.
 type ValidationJobSpec struct {
-	JobName         string
-	ReleaseID       string
-	NodeID          string
-	ServiceName     string
-	SchemaName      string
-	TableName       string
-	NodeType        string
-	ImageTag        string
-	CandidateSchema string
-	CandidateSQLURI string
-	ValidationOp    string
-	ProdSchema      string
+	JobName              string
+	ReleaseID            string
+	NodeID               string
+	ServiceName          string
+	SchemaName           string
+	TableName            string
+	NodeType             string
+	ImageTag             string
+	CandidateSchema      string
+	CandidateArtifactURI string
+	ValidationOp         string
+	ProdSchema           string
 	// ManifestS3URI is the S3 destination where the compile Job uploads the
 	// compiled manifest.json. Populated only for mode=compile dispatches; empty
 	// for validation and seed-build dispatches.

@@ -29,20 +29,20 @@ func AggregateIDForRelease(releaseID string) uuid.UUID {
 // failing node. It carries no error text — the agent reads the full log from
 // DBTLogURI and redacts before any external-LLM call.
 type RemediationRequested struct {
-	EventID         string `json:"event_id"`
-	Source          string `json:"source"`
-	ReleaseID       string `json:"release_id"`
-	NodeID          string `json:"node_id"`
-	Category        string `json:"category"`
-	ErrorSignature  string `json:"error_signature"`
-	DBTLogURI       string `json:"dbt_log_uri"`
-	CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
-	FilePath        string `json:"file_path,omitempty"`
+	EventID              string `json:"event_id"`
+	Source               string `json:"source"`
+	ReleaseID            string `json:"release_id"`
+	NodeID               string `json:"node_id"`
+	Category             string `json:"category"`
+	ErrorSignature       string `json:"error_signature"`
+	DBTLogURI            string `json:"dbt_log_uri"`
+	CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
+	FilePath             string `json:"file_path,omitempty"`
 	// Service is the owning dbt service name for the failing node. Set for
 	// seed_build failures from the candidate topology so the agent can locate
 	// the source file without a Ancestry lookup.
-	Service         string `json:"service,omitempty"`
-	Repo            string `json:"repo"`
-	CommitSHA       string `json:"commit_sha"`
-	ClassifiedAt    string `json:"classified_at"`
+	Service      string `json:"service,omitempty"`
+	Repo         string `json:"repo"`
+	CommitSHA    string `json:"commit_sha"`
+	ClassifiedAt string `json:"classified_at"`
 }

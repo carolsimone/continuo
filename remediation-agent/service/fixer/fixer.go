@@ -24,17 +24,17 @@ import (
 // error class actually needs it, so a class that can skip early does not depend
 // on the log being readable.
 type Input struct {
-	Source          string
-	ReleaseID       string
-	NodeID          string
-	ErrorSignature  string
-	Repo            string
-	CommitSHA       string
-	FilePath        string
-	Service         string
-	DBTLogURI       string
-	CandidateSQLURI string
-	Attempt         int
+	Source               string
+	ReleaseID            string
+	NodeID               string
+	ErrorSignature       string
+	Repo                 string
+	CommitSHA            string
+	FilePath             string
+	Service              string
+	DBTLogURI            string
+	CandidateArtifactURI string
+	Attempt              int
 }
 
 // Services bundles the ports a Fixer uses to produce a proposal.

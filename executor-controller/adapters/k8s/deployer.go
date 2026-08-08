@@ -59,19 +59,19 @@ func (d *Deployer) DeployValidation(ctx context.Context, spec deploy.ValidationJ
 		return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
 	}
 	return d.client.CreateValidationJob(ctx, ValidationJobParams{
-		JobName:         spec.JobName,
-		ReleaseID:       spec.ReleaseID,
-		NodeID:          spec.NodeID,
-		ServiceName:     spec.ServiceName,
-		SchemaName:      spec.SchemaName,
-		TableName:       spec.TableName,
-		NodeType:        nodeType,
-		ImageTag:        spec.ImageTag,
-		CandidateSchema: spec.CandidateSchema,
-		CandidateSQLURI: spec.CandidateSQLURI,
-		ValidationOp:    spec.ValidationOp,
-		ProdSchema:      spec.ProdSchema,
-		Namespace:       d.namespace,
+		JobName:              spec.JobName,
+		ReleaseID:            spec.ReleaseID,
+		NodeID:               spec.NodeID,
+		ServiceName:          spec.ServiceName,
+		SchemaName:           spec.SchemaName,
+		TableName:            spec.TableName,
+		NodeType:             nodeType,
+		ImageTag:             spec.ImageTag,
+		CandidateSchema:      spec.CandidateSchema,
+		CandidateArtifactURI: spec.CandidateArtifactURI,
+		ValidationOp:         spec.ValidationOp,
+		ProdSchema:           spec.ProdSchema,
+		Namespace:            d.namespace,
 	})
 }
 

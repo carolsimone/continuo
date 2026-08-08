@@ -17,20 +17,20 @@ import (
 // requestedPayload mirrors the remediation.requested:v1 wire shape produced by
 // the remediation classifier. Only the fields the agent needs are decoded.
 type requestedPayload struct {
-	EventID         string `json:"event_id"`
-	Source          string `json:"source"`
-	ReleaseID       string `json:"release_id"`
-	NodeID          string `json:"node_id"`
-	Category        string `json:"category"`
-	ErrorSignature  string `json:"error_signature"`
-	DBTLogURI       string `json:"dbt_log_uri"`
-	CandidateSQLURI string `json:"candidate_sql_uri"`
-	FilePath        string `json:"file_path"`
+	EventID              string `json:"event_id"`
+	Source               string `json:"source"`
+	ReleaseID            string `json:"release_id"`
+	NodeID               string `json:"node_id"`
+	Category             string `json:"category"`
+	ErrorSignature       string `json:"error_signature"`
+	DBTLogURI            string `json:"dbt_log_uri"`
+	CandidateArtifactURI string `json:"candidate_artifact_uri"`
+	FilePath             string `json:"file_path"`
 	// Service is the owning dbt service for the failing node. Set for seed_build
 	// failures where the source location is threaded from the candidate topology.
-	Service         string `json:"service"`
-	Repo            string `json:"repo"`
-	CommitSHA       string `json:"commit_sha"`
+	Service   string `json:"service"`
+	Repo      string `json:"repo"`
+	CommitSHA string `json:"commit_sha"`
 }
 
 // triggerFromRequested decodes a remediation.requested:v1 payload into a
@@ -42,20 +42,20 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 		return handlers.Trigger{}, fmt.Errorf("unmarshal remediation.requested payload: %w", err)
 	}
 	return handlers.Trigger{
-		Source:          p.Source,
-		ReleaseID:       p.ReleaseID,
-		NodeID:          p.NodeID,
-		Category:        p.Category,
-		ErrorSignature:  p.ErrorSignature,
-		DBTLogURI:       p.DBTLogURI,
-		CandidateSQLURI: p.CandidateSQLURI,
-		FilePath:        p.FilePath,
-		Service:         p.Service,
-		Repo:            p.Repo,
-		CommitSHA:       p.CommitSHA,
-		MessageID:       msg.ID,
-		OutboxEntryID:   messageprocessing.ExtractOutboxEntryID(msg.Values),
-		RawPayload:      raw,
+		Source:               p.Source,
+		ReleaseID:            p.ReleaseID,
+		NodeID:               p.NodeID,
+		Category:             p.Category,
+		ErrorSignature:       p.ErrorSignature,
+		DBTLogURI:            p.DBTLogURI,
+		CandidateArtifactURI: p.CandidateArtifactURI,
+		FilePath:             p.FilePath,
+		Service:              p.Service,
+		Repo:                 p.Repo,
+		CommitSHA:            p.CommitSHA,
+		MessageID:            msg.ID,
+		OutboxEntryID:        messageprocessing.ExtractOutboxEntryID(msg.Values),
+		RawPayload:           raw,
 	}, nil
 }
 
