@@ -32,7 +32,7 @@ type Trigger struct {
 	ErrorSignature  string
 	Category        string
 	DBTLogURI       string
-	CandidateSQLURI string
+	CandidateArtifactURI string
 	// FilePath is the offending dbt-project-relative source path. For compile
 	// failures it is extracted from the dbt log. For seed_build failures it is
 	// threaded from the candidate topology (OriginalFilePath on release.Node).
@@ -145,7 +145,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		FilePath:        t.FilePath,
 		Service:         t.Service,
 		DBTLogURI:       t.DBTLogURI,
-		CandidateSQLURI: t.CandidateSQLURI,
+		CandidateArtifactURI: t.CandidateArtifactURI,
 		Attempt:         attempt,
 	}
 	svc := fixer.Services{

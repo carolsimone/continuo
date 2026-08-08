@@ -48,7 +48,7 @@ type FailureEvidence struct {
 	NodeID          string
 	DBTLogURI       string
 	RunResultsURI   string
-	CandidateSQLURI string
+	CandidateArtifactURI string
 	Repo            string
 	CommitSHA       string
 	FilePath string // optional; offending source path for compile (from dbt log) or seed_build (from candidate topology); empty → resolve via Ancestry(NodeID)

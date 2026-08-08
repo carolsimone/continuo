@@ -33,7 +33,7 @@ type Input struct {
 	FilePath        string
 	Service         string
 	DBTLogURI       string
-	CandidateSQLURI string
+	CandidateArtifactURI string
 	Attempt         int
 }
 

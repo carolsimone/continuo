@@ -369,7 +369,7 @@ func baseTrigger() Trigger {
 		ErrorSignature:  "sig",
 		Category:        "logic",
 		DBTLogURI:       "s3://b/log",
-		CandidateSQLURI: "s3://b/sql",
+		CandidateArtifactURI: "s3://b/sql",
 		Repo:            "o/r",
 		CommitSHA:       "abc",
 		MessageID:       "1-0",
@@ -420,7 +420,7 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		NodeID:          "core",
 		ErrorSignature:  "compile-err",
 		FilePath:        "models/daily_transactions.sql",
-		CandidateSQLURI: "",
+		CandidateArtifactURI: "",
 		DBTLogURI:       "s3://c.log",
 		Repo:            "o/r",
 		CommitSHA:       "sha",
@@ -515,7 +515,7 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		// release-controller, bypassing the need for an Ancestry call.
 		FilePath:        "seeds/customers.csv",
 		Service:         "svc",
-		CandidateSQLURI: "",
+		CandidateArtifactURI: "",
 		DBTLogURI:       "s3://b/log",
 		Repo:            "o/r",
 		CommitSHA:       "sha",
@@ -589,7 +589,7 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 		ErrorSignature:  "seed-err",
 		FilePath:        "",
 		Service:         "",
-		CandidateSQLURI: "",
+		CandidateArtifactURI: "",
 		DBTLogURI:       "s3://b/log",
 		Repo:            "o/r",
 		CommitSHA:       "sha",
@@ -746,7 +746,7 @@ func TestProposeFix_AttemptCapEscalates(t *testing.T) {
 func TestProposeFix_EmptyCandidateSQLSkips(t *testing.T) {
 	u := newFakeUoW()
 	tr := baseTrigger()
-	tr.CandidateSQLURI = ""
+	tr.CandidateArtifactURI = ""
 	llm := newFakeLLM(ports.ProposeResult{}, nil)
 
 	if err := ProposeFix(context.Background(), deps(u, fakeEvidence{}, &llm, &fakeArtifacts{}), tr); err != nil {
@@ -768,7 +768,7 @@ func TestProposeFix_EmptyCandidateSQLSkips(t *testing.T) {
 func TestProposeFix_EmptyCandidateSQLSkipsDespiteLogError(t *testing.T) {
 	u := newFakeUoW()
 	tr := baseTrigger()
-	tr.CandidateSQLURI = ""
+	tr.CandidateArtifactURI = ""
 	llm := newFakeLLM(ports.ProposeResult{}, nil)
 	ev := fakeEvidence{err: fmt.Errorf("s3 503: log temporarily unreadable")}
 
@@ -968,7 +968,7 @@ func TestProposeFix_EscalateWritesNoGenerating(t *testing.T) {
 func TestProposeFix_InternalSkipFinalizesGenerating(t *testing.T) {
 	u := newFakeUoW()
 	tr := baseTrigger()
-	tr.CandidateSQLURI = ""
+	tr.CandidateArtifactURI = ""
 	llm := newFakeLLM(ports.ProposeResult{}, nil)
 
 	if err := ProposeFix(context.Background(), deps(u, fakeEvidence{}, &llm, &fakeArtifacts{}), tr); err != nil {

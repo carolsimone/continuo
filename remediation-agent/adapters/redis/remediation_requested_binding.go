@@ -24,7 +24,7 @@ type requestedPayload struct {
 	Category        string `json:"category"`
 	ErrorSignature  string `json:"error_signature"`
 	DBTLogURI       string `json:"dbt_log_uri"`
-	CandidateSQLURI string `json:"candidate_sql_uri"`
+	CandidateArtifactURI string `json:"candidate_artifact_uri"`
 	FilePath        string `json:"file_path"`
 	// Service is the owning dbt service for the failing node. Set for seed_build
 	// failures where the source location is threaded from the candidate topology.
@@ -48,7 +48,7 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 		Category:        p.Category,
 		ErrorSignature:  p.ErrorSignature,
 		DBTLogURI:       p.DBTLogURI,
-		CandidateSQLURI: p.CandidateSQLURI,
+		CandidateArtifactURI: p.CandidateArtifactURI,
 		FilePath:        p.FilePath,
 		Service:         p.Service,
 		Repo:            p.Repo,

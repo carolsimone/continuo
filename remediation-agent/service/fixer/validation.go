@@ -93,11 +93,11 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	// Validation with no candidate SQL: nothing to fix. This is decided before
 	// any log fetch so a transiently unreadable log cannot turn the intended
 	// skip into a redelivery.
-	if in.CandidateSQLURI == "" {
+	if in.CandidateArtifactURI == "" {
 		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
 	}
 
-	candidateSQL, err := svc.Evidence.Fetch(ctx, in.CandidateSQLURI)
+	candidateSQL, err := svc.Evidence.Fetch(ctx, in.CandidateArtifactURI)
 	if err != nil {
 		return Result{}, fmt.Errorf("fetch candidate sql: %w", err)
 	}

@@ -18,7 +18,7 @@ var requestedPayloadFixture = map[string]any{
 	"category":          "sql_syntax_error",
 	"error_signature":   "column \"foo\" does not exist",
 	"dbt_log_uri":       "s3://bucket/logs/orders_daily.log",
-	"candidate_sql_uri": "s3://bucket/sql/orders_daily.sql",
+	"candidate_artifact_uri": "s3://bucket/sql/orders_daily.sql",
 	"file_path":         "models/orders_daily.sql",
 	"repo":              "acme/dbt-project",
 	"commit_sha":        "deadbeef1234",
@@ -42,7 +42,7 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 	require.Equal(t, "sql_syntax_error", trigger.Category)
 	require.Equal(t, "column \"foo\" does not exist", trigger.ErrorSignature)
 	require.Equal(t, "s3://bucket/logs/orders_daily.log", trigger.DBTLogURI)
-	require.Equal(t, "s3://bucket/sql/orders_daily.sql", trigger.CandidateSQLURI)
+	require.Equal(t, "s3://bucket/sql/orders_daily.sql", trigger.CandidateArtifactURI)
 	require.Equal(t, "models/orders_daily.sql", trigger.FilePath)
 	require.Equal(t, "acme/dbt-project", trigger.Repo)
 	require.Equal(t, "deadbeef1234", trigger.CommitSHA)

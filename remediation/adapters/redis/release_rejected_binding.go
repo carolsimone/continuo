@@ -27,7 +27,7 @@ type rejectedPayload struct {
 		Status          string `json:"status"`
 		DBTLogURI       string `json:"dbt_log_uri"`
 		RunResultsURI   string `json:"run_results_uri"`
-		CandidateSQLURI string `json:"candidate_sql_uri"`
+		CandidateArtifactURI string `json:"candidate_artifact_uri"`
 		// FilePath and Service carry the seed source location from the candidate
 		// topology (set by release-controller on seed_build rejections). When
 		// present, the remediation agent can locate the source file without
@@ -103,7 +103,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			NodeID:          n.NodeID,
 			DBTLogURI:       n.DBTLogURI,
 			RunResultsURI:   n.RunResultsURI,
-			CandidateSQLURI: n.CandidateSQLURI,
+			CandidateArtifactURI: n.CandidateArtifactURI,
 			FilePath:        n.FilePath,
 			Service:         n.Service,
 			Repo:            p.Repo,

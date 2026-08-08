@@ -119,7 +119,7 @@ func enqueueTrigger(ctx context.Context, u uow.UnitOfWork, deps Deps, ev failure
 		Category:        string(c.Category),
 		ErrorSignature:  c.Signature,
 		DBTLogURI:       ev.DBTLogURI,
-		CandidateSQLURI: ev.CandidateSQLURI,
+		CandidateArtifactURI: ev.CandidateArtifactURI,
 		FilePath:        ev.FilePath,
 		Service:         ev.Service,
 		Repo:            ev.Repo,

@@ -36,7 +36,7 @@ type RemediationRequested struct {
 	Category        string `json:"category"`
 	ErrorSignature  string `json:"error_signature"`
 	DBTLogURI       string `json:"dbt_log_uri"`
-	CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
+	CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
 	FilePath        string `json:"file_path,omitempty"`
 	// Service is the owning dbt service name for the failing node. Set for
 	// seed_build failures from the candidate topology so the agent can locate
