@@ -39,8 +39,8 @@ func topoSeedPlusModel() release.Topology {
 			SchemaName: "schema_fin", TableName: "fx"},
 		{UniqueID: "model.fin.report", ServiceName: "svc-fin", NodeType: "dbt-model",
 			SchemaName: "schema_fin", TableName: "report",
-			UpstreamUniqueIDs: []string{"seed.core.fx"},
-			CandidateSQLURI:   "s3://continuo/svc-fin/rel-seed-ok/candidate_report.sql"},
+			UpstreamUniqueIDs:    []string{"seed.core.fx"},
+			CandidateArtifactURI: "s3://continuo/svc-fin/rel-seed-ok/candidate_report.sql"},
 	}
 }
 

@@ -292,7 +292,7 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 }
 
 // seedToValidatingWithURIs is like seedToValidating but uses a two-node topology
-// where each node carries a CandidateSQLURI so the rejected payload enrichment
+// where each node carries a CandidateArtifactURI so the rejected payload enrichment
 // can be verified. Node "b" (svc-a) fails validation; node "a" passes.
 func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
@@ -314,9 +314,9 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{},
-			CandidateSQLURI: "s3://continuo/svc-a/" + releaseID + "/candidate_a.sql"},
+			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_a.sql"},
 		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"},
-			CandidateSQLURI: "s3://continuo/svc-a/" + releaseID + "/candidate_b.sql"},
+			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_b.sql"},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: releaseID,
@@ -326,15 +326,15 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 	return deps, store
 }
 
-// TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance asserts
+// TestHandleValidationResult_Rejected_CarriesCandidateArtifactURIAndProvenance asserts
 // that the release.rejected:v1 outbox payload emitted for a validation failure
 // carries:
-//   - per_node[*].candidate_sql_uri  — S3 URI pointer to the candidate SQL for each node
+//   - per_node[*].candidate_artifact_uri  — S3 URI pointer to the candidate artifact for each node
 //   - top-level "repo" and "commit_sha" — provenance fields from the release aggregate
 //
-// This allows the consumer to fetch the exact SQL that was validated when
-// investigating a failure without inline SQL bloat in the event.
-func TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance(t *testing.T) {
+// This allows the consumer to fetch the exact artifact that was validated when
+// investigating a failure without inlining it into the event.
+func TestHandleValidationResult_Rejected_CarriesCandidateArtifactURIAndProvenance(t *testing.T) {
 	deps, store := seedToValidatingWithURIs(t, "rA")
 	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
 		{NodeID: "a", Status: "ok"},
@@ -369,13 +369,13 @@ func TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance(t *
 	require.NoError(t, json.Unmarshal(topLevel["commit_sha"], &commitSHA))
 	assert.Equal(t, "deadbeef", commitSHA, "top-level commit_sha must come from release aggregate")
 
-	// Decode per_node and check candidate_sql_uri per entry
+	// Decode per_node and check candidate_artifact_uri per entry
 	var perNode []struct {
-		NodeID          string `json:"node_id"`
-		Status          string `json:"status"`
-		DBTLogURI       string `json:"dbt_log_uri,omitempty"`
-		RunResultsURI   string `json:"run_results_uri,omitempty"`
-		CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
+		NodeID               string `json:"node_id"`
+		Status               string `json:"status"`
+		DBTLogURI            string `json:"dbt_log_uri,omitempty"`
+		RunResultsURI        string `json:"run_results_uri,omitempty"`
+		CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
 	}
 	require.NoError(t, json.Unmarshal(topLevel["per_node"], &perNode))
 	require.Len(t, perNode, 2)
@@ -383,13 +383,13 @@ func TestHandleValidationResult_Rejected_CarriesCandidateSQLURIAndProvenance(t *
 	byID := map[string]string{}
 	runResultsByID := map[string]string{}
 	for _, pn := range perNode {
-		byID[pn.NodeID] = pn.CandidateSQLURI
+		byID[pn.NodeID] = pn.CandidateArtifactURI
 		runResultsByID[pn.NodeID] = pn.RunResultsURI
 	}
 	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a.sql", byID["a"],
-		"ok nodes must also carry candidate_sql_uri (pointer, not inline SQL)")
+		"ok nodes must also carry candidate_artifact_uri (pointer, not inline content)")
 	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_b.sql", byID["b"],
-		"failing node must carry candidate_sql_uri")
+		"failing node must carry candidate_artifact_uri")
 	assert.Equal(t, "run-results/rA/b.json", runResultsByID["b"],
 		"failing node must carry run_results_uri through to release.rejected:v1")
 }

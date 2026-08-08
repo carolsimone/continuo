@@ -58,23 +58,24 @@ type Node struct {
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
 	Schedule          string   `json:"schedule"`
 	OriginalFilePath  string   `json:"original_file_path"`
-	// CandidateSQLURI is an S3 URI pointing to the node's compiled SQL with
-	// schema-qualified references rewritten to the candidate schema (produced by
-	// manifest-controller). It is carried only into validation.requested so the
-	// executor can fetch and execute the SQL to build the node as an empty table
-	// in the candidate schema. This is transient validation data and must not be
+	// CandidateArtifactURI is an S3 URI pointing to the object the node's
+	// validation Job must fetch to build the node as an empty table in the
+	// candidate schema: for a dbt node the compiled SQL with schema-qualified
+	// references rewritten to the candidate schema, for a python node the
+	// validation spec (declared reads plus output columns). Which shape it is
+	// follows from NodeType. This is transient validation data and must not be
 	// persisted to current_prod or published in the promoted topology.
-	CandidateSQLURI string `json:"candidate_sql_uri,omitempty"`
+	CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
 }
 
-// WithoutCandidateSQLURI returns a copy of the topology with per-node
-// CandidateSQLURI cleared. The URI is release-specific transient validation
-// data — it must not be persisted to current_prod or published in the promoted
-// topology.
-func (t Topology) WithoutCandidateSQLURI() Topology {
+// WithoutCandidateArtifactURI returns a copy of the topology with per-node
+// CandidateArtifactURI cleared. The URI is release-specific transient
+// validation data — it must not be persisted to current_prod or published in
+// the promoted topology.
+func (t Topology) WithoutCandidateArtifactURI() Topology {
 	out := make(Topology, len(t))
 	for i, n := range t {
-		n.CandidateSQLURI = ""
+		n.CandidateArtifactURI = ""
 		out[i] = n
 	}
 	return out
