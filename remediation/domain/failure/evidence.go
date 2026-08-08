@@ -43,14 +43,14 @@ func (c Category) Healable() bool {
 // adapters translate a source event (e.g. release.rejected:v1) into this
 // value object; the classifier never sees the originating event.
 type FailureEvidence struct {
-	Source          Source
-	ReleaseID       string
-	NodeID          string
-	DBTLogURI       string
-	RunResultsURI   string
+	Source               Source
+	ReleaseID            string
+	NodeID               string
+	DBTLogURI            string
+	RunResultsURI        string
 	CandidateArtifactURI string
-	Repo            string
-	CommitSHA       string
-	FilePath string // optional; offending source path for compile (from dbt log) or seed_build (from candidate topology); empty → resolve via Ancestry(NodeID)
-	Service  string // optional; owning dbt service for source resolution; set for seed_build failures; empty for compile (NodeID is the service)
+	Repo                 string
+	CommitSHA            string
+	FilePath             string // optional; offending source path for compile (from dbt log) or seed_build (from candidate topology); empty → resolve via Ancestry(NodeID)
+	Service              string // optional; owning dbt service for source resolution; set for seed_build failures; empty for compile (NodeID is the service)
 }

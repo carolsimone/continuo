@@ -11,17 +11,17 @@ import (
 // requestedPayloadFixture is a remediation.requested:v1 wire payload with all
 // fields populated.
 var requestedPayloadFixture = map[string]any{
-	"event_id":          "evt-abc-123",
-	"source":            "validation",
-	"release_id":        "rel-456",
-	"node_id":           "orders.model.orders_daily",
-	"category":          "sql_syntax_error",
-	"error_signature":   "column \"foo\" does not exist",
-	"dbt_log_uri":       "s3://bucket/logs/orders_daily.log",
+	"event_id":               "evt-abc-123",
+	"source":                 "validation",
+	"release_id":             "rel-456",
+	"node_id":                "orders.model.orders_daily",
+	"category":               "sql_syntax_error",
+	"error_signature":        "column \"foo\" does not exist",
+	"dbt_log_uri":            "s3://bucket/logs/orders_daily.log",
 	"candidate_artifact_uri": "s3://bucket/sql/orders_daily.sql",
-	"file_path":         "models/orders_daily.sql",
-	"repo":              "acme/dbt-project",
-	"commit_sha":        "deadbeef1234",
+	"file_path":              "models/orders_daily.sql",
+	"repo":                   "acme/dbt-project",
+	"commit_sha":             "deadbeef1234",
 }
 
 func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {

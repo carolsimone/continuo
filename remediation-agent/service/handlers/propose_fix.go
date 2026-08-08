@@ -26,12 +26,12 @@ import (
 // Trigger is the decoded remediation.requested:v1 payload that drives one
 // ProposeFix invocation.
 type Trigger struct {
-	Source          string
-	ReleaseID       string
-	NodeID          string
-	ErrorSignature  string
-	Category        string
-	DBTLogURI       string
+	Source               string
+	ReleaseID            string
+	NodeID               string
+	ErrorSignature       string
+	Category             string
+	DBTLogURI            string
 	CandidateArtifactURI string
 	// FilePath is the offending dbt-project-relative source path. For compile
 	// failures it is extracted from the dbt log. For seed_build failures it is
@@ -136,17 +136,17 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	// validation trigger with no candidate SQL — is not blocked by a transiently
 	// unreadable log.
 	in := fixer.Input{
-		Source:          t.Source,
-		ReleaseID:       t.ReleaseID,
-		NodeID:          t.NodeID,
-		ErrorSignature:  t.ErrorSignature,
-		Repo:            t.Repo,
-		CommitSHA:       t.CommitSHA,
-		FilePath:        t.FilePath,
-		Service:         t.Service,
-		DBTLogURI:       t.DBTLogURI,
+		Source:               t.Source,
+		ReleaseID:            t.ReleaseID,
+		NodeID:               t.NodeID,
+		ErrorSignature:       t.ErrorSignature,
+		Repo:                 t.Repo,
+		CommitSHA:            t.CommitSHA,
+		FilePath:             t.FilePath,
+		Service:              t.Service,
+		DBTLogURI:            t.DBTLogURI,
 		CandidateArtifactURI: t.CandidateArtifactURI,
-		Attempt:         attempt,
+		Attempt:              attempt,
 	}
 	svc := fixer.Services{
 		LLM: deps.LLM, Source: deps.Source, Evidence: deps.Evidence,

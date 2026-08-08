@@ -112,19 +112,19 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 
 func enqueueTrigger(ctx context.Context, u uow.UnitOfWork, deps Deps, ev failure.FailureEvidence, c failure.Classification) error {
 	payload := event.RemediationRequested{
-		EventID:         event.RemediationEventID(ev.ReleaseID, ev.NodeID).String(),
-		Source:          string(ev.Source),
-		ReleaseID:       ev.ReleaseID,
-		NodeID:          ev.NodeID,
-		Category:        string(c.Category),
-		ErrorSignature:  c.Signature,
-		DBTLogURI:       ev.DBTLogURI,
+		EventID:              event.RemediationEventID(ev.ReleaseID, ev.NodeID).String(),
+		Source:               string(ev.Source),
+		ReleaseID:            ev.ReleaseID,
+		NodeID:               ev.NodeID,
+		Category:             string(c.Category),
+		ErrorSignature:       c.Signature,
+		DBTLogURI:            ev.DBTLogURI,
 		CandidateArtifactURI: ev.CandidateArtifactURI,
-		FilePath:        ev.FilePath,
-		Service:         ev.Service,
-		Repo:            ev.Repo,
-		CommitSHA:       ev.CommitSHA,
-		ClassifiedAt:    deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),
+		FilePath:             ev.FilePath,
+		Service:              ev.Service,
+		Repo:                 ev.Repo,
+		CommitSHA:            ev.CommitSHA,
+		ClassifiedAt:         deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

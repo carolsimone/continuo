@@ -363,16 +363,16 @@ func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
 
 func baseTrigger() Trigger {
 	return Trigger{
-		Source:          "validation",
-		ReleaseID:       "r1",
-		NodeID:          "s.n",
-		ErrorSignature:  "sig",
-		Category:        "logic",
-		DBTLogURI:       "s3://b/log",
+		Source:               "validation",
+		ReleaseID:            "r1",
+		NodeID:               "s.n",
+		ErrorSignature:       "sig",
+		Category:             "logic",
+		DBTLogURI:            "s3://b/log",
 		CandidateArtifactURI: "s3://b/sql",
-		Repo:            "o/r",
-		CommitSHA:       "abc",
-		MessageID:       "1-0",
+		Repo:                 "o/r",
+		CommitSHA:            "abc",
+		MessageID:            "1-0",
 	}
 }
 
@@ -415,16 +415,16 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		ServiceRepoPaths: map[string]string{"core": ""},
 	}
 	tr := Trigger{
-		Source:          "compile",
-		ReleaseID:       "r1",
-		NodeID:          "core",
-		ErrorSignature:  "compile-err",
-		FilePath:        "models/daily_transactions.sql",
+		Source:               "compile",
+		ReleaseID:            "r1",
+		NodeID:               "core",
+		ErrorSignature:       "compile-err",
+		FilePath:             "models/daily_transactions.sql",
 		CandidateArtifactURI: "",
-		DBTLogURI:       "s3://c.log",
-		Repo:            "o/r",
-		CommitSHA:       "sha",
-		MessageID:       "7-0",
+		DBTLogURI:            "s3://c.log",
+		Repo:                 "o/r",
+		CommitSHA:            "sha",
+		MessageID:            "7-0",
 	}
 
 	if err := ProposeFix(context.Background(), d, tr); err != nil {
@@ -513,13 +513,13 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		ErrorSignature: "seed-err",
 		// FilePath and Service are threaded from the candidate topology by
 		// release-controller, bypassing the need for an Ancestry call.
-		FilePath:        "seeds/customers.csv",
-		Service:         "svc",
+		FilePath:             "seeds/customers.csv",
+		Service:              "svc",
 		CandidateArtifactURI: "",
-		DBTLogURI:       "s3://b/log",
-		Repo:            "o/r",
-		CommitSHA:       "sha",
-		MessageID:       "8-0",
+		DBTLogURI:            "s3://b/log",
+		Repo:                 "o/r",
+		CommitSHA:            "sha",
+		MessageID:            "8-0",
 	}
 
 	if err := ProposeFix(context.Background(), d, tr); err != nil {
@@ -583,17 +583,17 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 	}
 	// No FilePath or Service on the trigger: must fall back to Ancestry.
 	tr := Trigger{
-		Source:          "seed_build",
-		ReleaseID:       "r1",
-		NodeID:          "svc.customers",
-		ErrorSignature:  "seed-err",
-		FilePath:        "",
-		Service:         "",
+		Source:               "seed_build",
+		ReleaseID:            "r1",
+		NodeID:               "svc.customers",
+		ErrorSignature:       "seed-err",
+		FilePath:             "",
+		Service:              "",
 		CandidateArtifactURI: "",
-		DBTLogURI:       "s3://b/log",
-		Repo:            "o/r",
-		CommitSHA:       "sha",
-		MessageID:       "8-1",
+		DBTLogURI:            "s3://b/log",
+		Repo:                 "o/r",
+		CommitSHA:            "sha",
+		MessageID:            "8-1",
 	}
 
 	if err := ProposeFix(context.Background(), d, tr); err != nil {
