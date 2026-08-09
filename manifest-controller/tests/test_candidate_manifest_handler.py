@@ -798,3 +798,111 @@ def test_a_python_kind_entry_is_published_as_a_python_model(tmp_path):
     assert topology[0]["unique_id"] == "test_schema.py_metrics"
     assert topology[0]["candidate_artifact_uri"].endswith(".json")
     assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
+
+
+# ---------------------------------------------------------------------------
+# wire-shape pin and mixed-DAG resolution
+# ---------------------------------------------------------------------------
+
+def test_the_dbt_topology_entry_wire_shape_is_frozen(handler_with_mocks):
+    """Adding a runtime must not change one byte of what a dbt node publishes.
+    If this fails, a key was added, removed, renamed, or retyped — decide
+    deliberately, do not just update the expectation."""
+    handler, publisher, _uploader = handler_with_mocks
+    handler.handle(release_id="rel-1")
+
+    entry = next(
+        n for n in publisher.publish_ok.call_args.kwargs["topology"]
+        if n["unique_id"] == "test_schema.orders"
+    )
+
+    assert json.dumps(entry, sort_keys=True) == json.dumps({
+        "unique_id": "test_schema.orders",
+        "schema_name": "test_schema",
+        "table_name": "orders",
+        "service_name": "service-2",
+        "node_type": "dbt-model",
+        "test_count": 0,
+        "content_hash": "sha256:dfe4669111f4209fd63db2ad347b82aaaf149563a5f749edb454c70b7c4a3f0b",
+        "image_tag": "",
+        "original_file_path": "",
+        "upstream_unique_ids": ["test_schema.users"],
+        "schedule": "daily",
+        "candidate_artifact_uri": "",
+    }, sort_keys=True)
+
+
+def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tmp_path):
+    """The point of one topology: a python node reading a dbt table and a dbt
+    node reading a python table must both resolve as upstream edges."""
+    publisher = MagicMock()
+    spec_uploader = MagicMock()
+    spec_uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json"
+    source = _source_of(
+        ManifestFile(path=str(FIXTURES / "manifest_service2.json"), version="v2",
+                     declared_service="service-2"),
+        ManifestFile(path=_python_contract(tmp_path, _python_entry()), version="v1",
+                     declared_service="service-py", kind=ManifestKind.PYTHON),
+        ManifestFile(path=str(FIXTURES / "manifest_service4.json"), version="v4",
+                     declared_service="service-4"),
+    )
+
+    # _python_handler's default dbt uploader (via _make_uploader()) returns "",
+    # which can never satisfy the ".sql"-suffix assertion below, so this test
+    # builds the handler directly and gives the dbt uploader a realistic URI —
+    # the same way handler_with_mocks/PythonSpecArtifactBuilder cases do for
+    # their own runtime — to keep "each kind points at its own shape" real.
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, bundle_uploader=FakeBundleUploader(),
+        artifact_builders={
+            Runtime.DBT: DbtSqlArtifactBuilder(
+                _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql")),
+            Runtime.PYTHON: PythonSpecArtifactBuilder(spec_uploader),
+        },
+        dialect="postgres",
+    )
+    handler.handle(release_id="rel-1")
+
+    topology = {n["unique_id"]: n for n in publisher.publish_ok.call_args.kwargs["topology"]}
+    assert set(topology) == {
+        "test_schema.orders", "test_schema.py_metrics", "test_schema.summary",
+    }
+    # python reads dbt
+    assert topology["test_schema.py_metrics"]["upstream_unique_ids"] == ["test_schema.orders"]
+    # dbt reads python
+    assert topology["test_schema.summary"]["upstream_unique_ids"] == ["test_schema.py_metrics"]
+    # each kind published exactly one artifact key, pointing at its own shape
+    assert topology["test_schema.py_metrics"]["candidate_artifact_uri"].endswith(".json")
+    assert topology["test_schema.orders"]["candidate_artifact_uri"].endswith(".sql")
+    # the python node's read was redirected at the candidate schema — the
+    # rewriter force-quotes only the schema identifier, never the table, so
+    # the real form is `"_candidate_rel_1".orders` (schema quoted, table bare).
+    spec = spec_uploader.upload.call_args.kwargs["spec"]
+    assert '"_candidate_rel_1".orders' in spec["reads"][0]
+
+
+def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
+    """The bundle contract is runtime-agnostic by construction; a python node
+    needs no new key, because its parsed entry is already its raw_code."""
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry()), version="v1",
+        declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, bundle_uploader=bundle_uploader,
+        artifact_builders={
+            Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader()),
+            Runtime.PYTHON: PythonSpecArtifactBuilder(_make_uploader("s3://x.json")),
+        },
+        dialect="postgres",
+    )
+
+    handler.handle(release_id="rel-1")
+
+    _release_id, bundle = bundle_uploader.uploads[0]
+    node = bundle["nodes"]["test_schema.py_metrics"]
+    assert node["runtime"] == "python"
+    assert node["compiled_code"] == ""
+    assert '"output_columns"' in node["raw_code"]
