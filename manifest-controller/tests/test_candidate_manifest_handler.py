@@ -4,12 +4,14 @@ import logging
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
+import yaml
 from adapters.sources import ManifestSource
-from domain.model import ManifestFile, Runtime
+from domain.model import ManifestFile, ManifestKind, Runtime
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
+from service.content_hash import content_hash_fold
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -61,6 +63,22 @@ def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgre
         publisher=publisher,
         bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
         artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
+        dialect=dialect,
+    )
+
+
+def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres"):
+    """A handler for the parse-dispatch cases.
+
+    These cases all fail (or are rejected) before any node reaches the artifact
+    builders, so the default map carries dbt only; tests that publish a python
+    node pass their own map.
+    """
+    return CandidateManifestHandler(
+        source=source,
+        publisher=publisher,
+        bundle_uploader=FakeBundleUploader(),
+        artifact_builders=artifact_builders or {Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
         dialect=dialect,
     )
 
@@ -658,3 +676,96 @@ def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_pa
     }
     assert not any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
     assert not any("re-defined" in rec.getMessage() for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# kind dispatch: one release may carry a dbt manifest and a python contract
+# ---------------------------------------------------------------------------
+
+def _python_entry(**overrides):
+    entry = {
+        "schema": "test_schema", "table": "py_metrics",
+        "owner": "team-py", "schedule": "daily", "criticality": "SECONDARY",
+        "script": "scripts/py_metrics.py",
+        "reads": {"orders": "select id from test_schema.orders"},
+        "output_columns": [{"name": "id", "type": "INTEGER", "nullable": False}],
+        "source_hash": "aaa111", "shared_code_hash": "bbb222", "config_hash": "ccc333",
+    }
+    entry.update(overrides)
+    entry.setdefault("content_hash", content_hash_fold(
+        entry["source_hash"], entry["shared_code_hash"], entry["config_hash"]))
+    return entry
+
+
+def _python_contract(tmp_path, *entries, service="service-py", name="contract.yaml"):
+    doc = {"contract_version": 1, "service": service, "nodes": list(entries)}
+    path = tmp_path / name
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    return str(path)
+
+
+def _source_of(*files):
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = list(files)
+    return source
+
+
+def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
+    """The producing CI validates before upload, so a bad entry here means a
+    broken pipeline — and a silently dropped node would retire from production
+    on promote."""
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry(criticality="URGENT")),
+        version="v1", declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_not_called()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedContract"
+
+
+def test_an_empty_python_contract_fails_the_release(tmp_path):
+    """An artifact declaring no nodes would silently retire every node of that
+    service on promote — the same hazard as an empty dbt manifest, so the same
+    guard and the same error class."""
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path), version="v1",
+        declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["error_class"] == "EmptyManifest"
+    assert "contract declares no nodes" in kwargs["error_detail"]
+
+
+def test_a_python_contract_for_another_service_fails_the_release(tmp_path):
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry(), service="someone-else"),
+        version="v1", declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "ServiceMismatch"
+
+
+def test_an_unknown_kind_fails_the_release_permanently():
+    """A kind this build cannot parse is a permanent payload error: report it so
+    the operator sees a rejected release, rather than retrying forever."""
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path="/nonexistent", version="v1",
+        declared_service="service-x", kind="spark",
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["error_class"] == "UnknownManifestKind"
+    assert "spark" in kwargs["error_detail"]

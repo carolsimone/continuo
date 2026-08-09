@@ -1,4 +1,3 @@
-import json
 import logging
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
@@ -7,7 +6,7 @@ from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReference
 from domain.model import NodeRegistry, NodeRegistryEntry
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
-from service.parser import parse_manifest
+from service.manifest_parsers import parser_for
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name
 
@@ -15,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 class CandidateManifestHandler:
-    """Parses a per-release set of dbt manifests and publishes the resolved
-    candidate topology back to release-controller.
+    """Parses a per-release set of dbt manifests and python contracts and
+    publishes the resolved candidate topology back to release-controller.
 
     image_tag is left empty by design; release-controller joins the
     per-service tags from the POST /releases body onto the topology.
@@ -83,17 +82,32 @@ class CandidateManifestHandler:
         all_nodes = []
         shared_code: dict[str, dict] = {}
         for mf in manifests:
-            try:
-                nodes, mf_shared = parse_manifest(mf.path, mf.version, mf.image_tag)
-            except (json.JSONDecodeError, KeyError, IndexError) as exc:
-                # Invalid JSON, a missing top-level `nodes` key, or a node with a
-                # malformed dbt shape (missing schema/fqn, empty fqn) are all
-                # permanent — re-delivery cannot fix them, so report failed and
-                # let the consumer ACK. Transient errors (e.g. a download/IO
-                # failure) are deliberately not caught here so they stay pending.
+            parser = parser_for(mf.kind)
+            if parser is None:
+                # A kind this build cannot parse is permanent: re-delivery
+                # cannot fix it, and the operator needs to see a rejected
+                # release rather than a message retrying forever.
                 self._publisher.publish_failed(
                     release_id=release_id,
-                    error_class="MalformedManifest",
+                    error_class="UnknownManifestKind",
+                    error_detail=(
+                        f"{mf.declared_service or mf.path}: unknown manifest "
+                        f"kind {mf.kind!r}"
+                    ),
+                )
+                return
+
+            try:
+                nodes, mf_shared = parser.parse(mf.path, mf.version, mf.image_tag)
+            except parser.permanent_errors as exc:
+                # Invalid JSON or yaml, a missing required key, or a malformed
+                # node are all permanent — re-delivery cannot fix them, so
+                # report failed and let the consumer ACK. Transient errors
+                # (e.g. a download/IO failure) are deliberately not caught here
+                # so they stay pending.
+                self._publisher.publish_failed(
+                    release_id=release_id,
+                    error_class=parser.error_class,
                     error_detail=f"{mf.path}: {exc!r}",
                 )
                 return
@@ -139,9 +153,7 @@ class CandidateManifestHandler:
                     self._publisher.publish_failed(
                         release_id=release_id,
                         error_class="EmptyManifest",
-                        error_detail=(
-                            f"{mf.declared_service}: manifest contains no model/seed nodes"
-                        ),
+                        error_detail=f"{mf.declared_service}: {parser.empty_detail}",
                     )
                     return
 
