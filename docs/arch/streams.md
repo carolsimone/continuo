@@ -75,6 +75,17 @@ A few streams carry a `stage` discriminator that changes how consumers process
 the message. These are documented here as cross-cutting facts; full payload
 schemas live in the service dossiers.
 
+**`release.requested:v1`** — emitted by release-controller when a release
+transitions from Compiling to Parsing. The payload is `{release_id,
+manifest_keys}`; each `manifest_keys` entry is `{service, s3_uri, kind}`,
+where `kind` (`"dbt"` | `"python"`) selects which of manifest-controller's two
+parsers reads that entry's artifact — a dbt `manifest.json` or a python
+service's `contract.yaml`. `kind` is absent from a producer that predates
+python support, which manifest-controller defaults to `"dbt"`, so no upstream
+change is required to keep publishing the stream. See
+`docs/arch/services/manifest-controller.md` for the per-kind parse and
+failure behavior.
+
 **`release.rejected:v1`** — emitted by release-controller for every terminal
 rejection regardless of which leg failed. The payload always includes:
 `release_id`, `stage` (`compile` | `seed_build` | `validation`; absent for parse-phase rejections), `reason`,
