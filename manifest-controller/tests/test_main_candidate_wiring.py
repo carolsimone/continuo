@@ -102,10 +102,10 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     captured = {}
 
     class FakeCandidateHandler:
-        def __init__(self, source, publisher, uploader, bundle_uploader, dialect):
+        def __init__(self, source, publisher, bundle_uploader, artifact_builders, dialect):
             captured["source"] = source
             captured["publisher"] = publisher
-            captured["uploader"] = uploader
+            captured["artifact_builders"] = artifact_builders
             captured["bundle_uploader"] = bundle_uploader
             captured["dialect"] = dialect
 
@@ -151,7 +151,7 @@ def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
     captured = {}
 
     class FakeCandidateHandler:
-        def __init__(self, source, publisher, uploader, bundle_uploader, dialect):
+        def __init__(self, source, publisher, bundle_uploader, artifact_builders, dialect):
             captured["dialect"] = dialect
 
         def handle(self, release_id):

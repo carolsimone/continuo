@@ -3,7 +3,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 
 from adapters.sources import ManifestSource
-from domain.model import ManifestFile
+from domain.model import ManifestFile, Runtime
+from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 
 
@@ -51,7 +52,8 @@ def test_candidate_topology_carries_test_count(tmp_path):
     bundle_uploader.upload.return_value = ""
 
     handler = CandidateManifestHandler(
-        source=source, publisher=publisher, uploader=uploader, bundle_uploader=bundle_uploader,
+        source=source, publisher=publisher, bundle_uploader=bundle_uploader,
+        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect="postgres",
     )
     handler.handle(release_id="rel-1")

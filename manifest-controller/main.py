@@ -19,6 +19,8 @@ from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
 from adapters.sources.s3 import S3Source
 from adapters.sources.s3_uri import parse_s3_uri
+from domain.model import Runtime
+from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 
 logging.basicConfig(
@@ -107,8 +109,8 @@ def main() -> None:
         CandidateManifestHandler(
             source=source,
             publisher=candidate_publisher,
-            uploader=candidate_uploader,
             bundle_uploader=code_bundle_uploader,
+            artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(candidate_uploader)},
             dialect=dialect,
         ).handle(release_id=release_id)
 

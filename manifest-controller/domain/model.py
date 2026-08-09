@@ -63,6 +63,15 @@ class ManifestNode:
     code_unit_ids: list[str] = field(default_factory=list)  # direct shared-code (macro) deps
     runtime: Runtime = Runtime.DBT
 
+    @property
+    def unique_id(self) -> str:
+        """The node's identity across the whole system: "<schema>.<table>".
+
+        The same string keys the topology entry, the code-bundle node map, and
+        the node's candidate-artifact S3 object, so it is derived in one place.
+        """
+        return f"{self.schema_name}.{self.table_name}"
+
 
 @dataclass
 class NodeRegistryEntry:

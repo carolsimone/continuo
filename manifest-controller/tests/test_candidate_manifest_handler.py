@@ -5,9 +5,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
 from adapters.sources import ManifestSource
-from domain.model import ManifestFile
+from domain.model import ManifestFile, Runtime
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from service import candidate_manifest_handler
+from service import candidate_artifacts, candidate_manifest_handler
+from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -51,16 +52,15 @@ def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgre
     """Build a handler pinned to the postgres dialect and a fake bundle uploader
     unless a test names otherwise.
 
-    The handler takes both dialect and bundle_uploader from the composition
-    root in production — dialect resolved from the configured warehouse
-    engine, bundle_uploader wired to real S3; these cases are about
-    parse/resolve/upload behaviour, so they pin harmless defaults here.
+    `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
+    artifact builder here so these cases keep asserting directly on the upload
+    calls the builder makes.
     """
     return CandidateManifestHandler(
         source=source,
         publisher=publisher,
-        uploader=uploader,
         bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
+        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect=dialect,
     )
 
@@ -441,7 +441,7 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
     """
     seen: dict[str, list[str]] = {"resolve": [], "rewrite": []}
     real_resolve = candidate_manifest_handler.resolve_upstream_deps
-    real_rewrite = candidate_manifest_handler.rewrite_to_candidate_schema
+    real_rewrite = candidate_artifacts.rewrite_to_candidate_schema
 
     def spy_resolve(node, registry, *, dialect):
         seen["resolve"].append(dialect)
@@ -452,7 +452,7 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
         return real_rewrite(*args, dialect=dialect, **kwargs)
 
     monkeypatch.setattr(candidate_manifest_handler, "resolve_upstream_deps", spy_resolve)
-    monkeypatch.setattr(candidate_manifest_handler, "rewrite_to_candidate_schema", spy_rewrite)
+    monkeypatch.setattr(candidate_artifacts, "rewrite_to_candidate_schema", spy_rewrite)
 
     source = _make_source(
         ("manifest_service1.json", "v1"),
