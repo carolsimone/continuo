@@ -1,0 +1,17 @@
+{
+  "nodes": {
+    "model.service-4.summary": {
+      "unique_id": "model.service-4.summary",
+      "name": "summary",
+      "schema": "test_schema",
+      "fqn": ["service-4", "summary"],
+      "tags": ["daily"],
+      "resource_type": "model",
+      "config": {
+        "meta": { "owner": "team-d", "criticality": "SECONDARY" }
+      },
+      "compiled_code": "SELECT * FROM test_schema.py_metrics",
+      "checksum": { "name": "sha256", "checksum": "11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff" }
+    }
+  }
+}

@@ -1,22 +1,21 @@
-import json
 import logging
-from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.sources import ManifestSource
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from domain.model import NodeRegistry, NodeRegistryEntry
+from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
-from service.parser import parse_manifest
+from service.manifest_parsers import parser_for
 from service.resolver import resolve_upstream_deps
-from service.rewriter import candidate_schema_name, rewrite_to_candidate_schema
+from service.rewriter import candidate_schema_name
 
 logger = logging.getLogger(__name__)
 
 
 class CandidateManifestHandler:
-    """Parses a per-release set of dbt manifests and publishes the resolved
-    candidate topology back to release-controller.
+    """Parses a per-release set of dbt manifests and python contracts and
+    publishes the resolved candidate topology back to release-controller.
 
     image_tag is left empty by design; release-controller joins the
     per-service tags from the POST /releases body onto the topology.
@@ -24,8 +23,9 @@ class CandidateManifestHandler:
     and is not persisted anywhere.
 
     Each node's candidate artifact — the object its validation Job fetches to
-    build it as an empty table — is uploaded to S3 via the uploader; the
-    topology carries candidate_artifact_uri (an s3:// reference) rather than
+    build it as an empty table — is built and uploaded by the artifact_builders
+    entry selected by the node's runtime; the topology carries the resulting
+    topology keys (e.g. candidate_artifact_uri, an s3:// reference) rather than
     the inline SQL string. Upload failures are fatal — publish_failed is
     called and the handler returns so the consumer ACKs without dangling refs.
 
@@ -48,14 +48,14 @@ class CandidateManifestHandler:
         self,
         source: ManifestSource,
         publisher: CandidateManifestPublisher,
-        uploader: CandidateSqlUploader,
         bundle_uploader: CodeBundleUploader,
+        artifact_builders: dict[str, CandidateArtifactBuilder],
         dialect: str,
     ) -> None:
         self._source = source
         self._publisher = publisher
-        self._uploader = uploader
         self._bundle_uploader = bundle_uploader
+        self._artifact_builders = artifact_builders
         self._dialect = dialect
 
     def handle(self, release_id: str) -> None:
@@ -82,17 +82,32 @@ class CandidateManifestHandler:
         all_nodes = []
         shared_code: dict[str, dict] = {}
         for mf in manifests:
-            try:
-                nodes, mf_shared = parse_manifest(mf.path, mf.version, mf.image_tag)
-            except (json.JSONDecodeError, KeyError, IndexError) as exc:
-                # Invalid JSON, a missing top-level `nodes` key, or a node with a
-                # malformed dbt shape (missing schema/fqn, empty fqn) are all
-                # permanent — re-delivery cannot fix them, so report failed and
-                # let the consumer ACK. Transient errors (e.g. a download/IO
-                # failure) are deliberately not caught here so they stay pending.
+            parser = parser_for(mf.kind)
+            if parser is None:
+                # A kind this build cannot parse is permanent: re-delivery
+                # cannot fix it, and the operator needs to see a rejected
+                # release rather than a message retrying forever.
                 self._publisher.publish_failed(
                     release_id=release_id,
-                    error_class="MalformedManifest",
+                    error_class="UnknownManifestKind",
+                    error_detail=(
+                        f"{mf.declared_service or mf.path}: unknown manifest "
+                        f"kind {mf.kind!r}"
+                    ),
+                )
+                return
+
+            try:
+                nodes, mf_shared = parser.parse(mf.path, mf.version, mf.image_tag)
+            except parser.permanent_errors as exc:
+                # Invalid JSON or yaml, a missing required key, or a malformed
+                # node are all permanent — re-delivery cannot fix them, so
+                # report failed and let the consumer ACK. Transient errors
+                # (e.g. a download/IO failure) are deliberately not caught here
+                # so they stay pending.
+                self._publisher.publish_failed(
+                    release_id=release_id,
+                    error_class=parser.error_class,
                     error_detail=f"{mf.path}: {exc!r}",
                 )
                 return
@@ -138,9 +153,7 @@ class CandidateManifestHandler:
                     self._publisher.publish_failed(
                         release_id=release_id,
                         error_class="EmptyManifest",
-                        error_detail=(
-                            f"{mf.declared_service}: manifest contains no model/seed nodes"
-                        ),
+                        error_detail=f"{mf.declared_service}: {parser.empty_detail}",
                     )
                     return
 
@@ -169,6 +182,12 @@ class CandidateManifestHandler:
         ])
         lookup = registry.to_lookup()
         candidate_schema = candidate_schema_name(release_id)
+        ctx = RewriteContext(
+            release_id=release_id,
+            registry=lookup,
+            candidate_schema=candidate_schema,
+            dialect=self._dialect,
+        )
 
         topology: list[dict] = []
         for node in all_nodes:
@@ -189,30 +208,26 @@ class CandidateManifestHandler:
                 )
                 return
 
-            # Rewrite all known-node schema references to the candidate schema so
-            # blue/green validation can build each node against its upstream closure.
-            # Seeds carry no candidate_sql and yield an empty string.
-            candidate_sql = rewrite_to_candidate_schema(
-                node.candidate_sql, lookup, candidate_schema,
-                self_schema=node.schema_name, self_table=node.table_name,
-                dialect=self._dialect,
-            )
-
-            unique_id = f"{node.schema_name}.{node.table_name}"
-
-            # Upload the rewritten SQL to S3 and store only the s3:// URI in the
-            # topology event; an upload failure is fatal because publishing a node
-            # without its SQL would leave release-controller with a dangling reference.
-            try:
-                candidate_artifact_uri = self._uploader.upload(
+            builder = self._artifact_builders.get(node.runtime)
+            if builder is None:
+                # Unreachable with a correctly wired composition root; failing
+                # closed here beats publishing a node with no validation input.
+                self._publisher.publish_failed(
                     release_id=release_id,
-                    unique_id=unique_id,
-                    sql=candidate_sql,
+                    error_class="UnsupportedRuntime",
+                    error_detail=(
+                        f"{node.unique_id}: no candidate-artifact builder for "
+                        f"runtime {node.runtime!r}"
+                    ),
                 )
+                return
+
+            # An upload failure is fatal: publishing a node whose validation
+            # input never landed would leave release-controller with a dangling
+            # reference. Fail the release so the operator re-triggers it.
+            try:
+                artifact_keys = builder.build(node, ctx)
             except Exception as exc:
-                # Collapse all upload errors to a permanent failure so the load is
-                # failed (operator re-triggers) rather than left pending — this
-                # guarantees no dangling reference is ever published.
                 self._publisher.publish_failed(
                     release_id=release_id,
                     error_class="CandidateArtifactUploadFailed",
@@ -221,20 +236,20 @@ class CandidateManifestHandler:
                 return
 
             topology.append({
-                "unique_id":              unique_id,
-                "schema_name":            node.schema_name,
-                "table_name":             node.table_name,
-                "service_name":           node.service_name,
-                "node_type":              node.node_type,
-                "test_count":             node.test_count,
-                "content_hash":           node.content_hash,
-                "image_tag":              node.image_tag,
-                "original_file_path":     node.original_file_path,
-                "upstream_unique_ids":    [
+                "unique_id":           node.unique_id,
+                "schema_name":         node.schema_name,
+                "table_name":          node.table_name,
+                "service_name":        node.service_name,
+                "node_type":           node.node_type,
+                "test_count":          node.test_count,
+                "content_hash":        node.content_hash,
+                "image_tag":           node.image_tag,
+                "original_file_path":  node.original_file_path,
+                "upstream_unique_ids": [
                     f"{dep.schema_name}.{dep.table_name}" for dep in node.upstream_deps
                 ],
-                "schedule":               node.schedule_name,
-                "candidate_artifact_uri": candidate_artifact_uri,
+                "schedule":            node.schedule_name,
+                **artifact_keys,
             })
 
         bundle = build_code_bundle(release_id, all_nodes, shared_code)

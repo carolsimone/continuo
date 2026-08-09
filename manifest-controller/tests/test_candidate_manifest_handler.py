@@ -4,11 +4,14 @@ import logging
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
+import yaml
 from adapters.sources import ManifestSource
-from domain.model import ManifestFile
+from domain.model import ManifestFile, ManifestKind, Runtime
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from service import candidate_manifest_handler
+from service import candidate_artifacts, candidate_manifest_handler
+from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
+from service.content_hash import content_hash_fold
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -51,17 +54,45 @@ def _handler(source, publisher, uploader, bundle_uploader=None, dialect="postgre
     """Build a handler pinned to the postgres dialect and a fake bundle uploader
     unless a test names otherwise.
 
-    The handler takes both dialect and bundle_uploader from the composition
-    root in production — dialect resolved from the configured warehouse
-    engine, bundle_uploader wired to real S3; these cases are about
-    parse/resolve/upload behaviour, so they pin harmless defaults here.
+    `uploader` is the dbt candidate-SQL uploader; it is wrapped in the dbt
+    artifact builder here so these cases keep asserting directly on the upload
+    calls the builder makes.
     """
     return CandidateManifestHandler(
         source=source,
         publisher=publisher,
-        uploader=uploader,
         bundle_uploader=bundle_uploader if bundle_uploader is not None else FakeBundleUploader(),
+        artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(uploader)},
         dialect=dialect,
+    )
+
+
+def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgres"):
+    """A handler for the parse-dispatch cases.
+
+    These cases all fail (or are rejected) before any node reaches the artifact
+    builders, so the default map carries dbt only; tests that publish a python
+    node pass their own map.
+    """
+    return CandidateManifestHandler(
+        source=source,
+        publisher=publisher,
+        bundle_uploader=FakeBundleUploader(),
+        artifact_builders=artifact_builders or {Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
+        dialect=dialect,
+    )
+
+
+def _python_handler(source, publisher, spec_uploader=None, dialect="postgres"):
+    """A handler wired for both kinds, for cases that publish a python node."""
+    return _dispatch_handler(
+        source, publisher, dialect=dialect,
+        artifact_builders={
+            Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader()),
+            Runtime.PYTHON: PythonSpecArtifactBuilder(
+                spec_uploader if spec_uploader is not None
+                else _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json")),
+        },
     )
 
 
@@ -441,7 +472,7 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
     """
     seen: dict[str, list[str]] = {"resolve": [], "rewrite": []}
     real_resolve = candidate_manifest_handler.resolve_upstream_deps
-    real_rewrite = candidate_manifest_handler.rewrite_to_candidate_schema
+    real_rewrite = candidate_artifacts.rewrite_to_candidate_schema
 
     def spy_resolve(node, registry, *, dialect):
         seen["resolve"].append(dialect)
@@ -452,7 +483,7 @@ def test_configured_dialect_reaches_the_resolver_and_the_rewriter(monkeypatch):
         return real_rewrite(*args, dialect=dialect, **kwargs)
 
     monkeypatch.setattr(candidate_manifest_handler, "resolve_upstream_deps", spy_resolve)
-    monkeypatch.setattr(candidate_manifest_handler, "rewrite_to_candidate_schema", spy_rewrite)
+    monkeypatch.setattr(candidate_artifacts, "rewrite_to_candidate_schema", spy_rewrite)
 
     source = _make_source(
         ("manifest_service1.json", "v1"),
@@ -658,3 +689,238 @@ def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_pa
     }
     assert not any("conflicting shared-code" in rec.getMessage() for rec in caplog.records)
     assert not any("re-defined" in rec.getMessage() for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# kind dispatch: one release may carry a dbt manifest and a python contract
+# ---------------------------------------------------------------------------
+
+def _python_entry(**overrides):
+    entry = {
+        "schema": "test_schema", "table": "py_metrics",
+        "owner": "team-py", "schedule": "daily", "criticality": "SECONDARY",
+        "script": "scripts/py_metrics.py",
+        "reads": {"orders": "select id from test_schema.orders"},
+        "output_columns": [{"name": "id", "type": "INTEGER", "nullable": False}],
+        "source_hash": "aaa111", "shared_code_hash": "bbb222", "config_hash": "ccc333",
+    }
+    entry.update(overrides)
+    entry.setdefault("content_hash", content_hash_fold(
+        entry["source_hash"], entry["shared_code_hash"], entry["config_hash"]))
+    return entry
+
+
+def _python_contract(tmp_path, *entries, service="service-py", name="contract.yaml"):
+    doc = {"contract_version": 1, "service": service, "nodes": list(entries)}
+    path = tmp_path / name
+    path.write_text(yaml.safe_dump(doc, sort_keys=False))
+    return str(path)
+
+
+def _source_of(*files):
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = list(files)
+    return source
+
+
+def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
+    """The producing CI validates before upload, so a bad entry here means a
+    broken pipeline — and a silently dropped node would retire from production
+    on promote."""
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry(criticality="URGENT")),
+        version="v1", declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_not_called()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedContract"
+
+
+def test_an_empty_python_contract_fails_the_release(tmp_path):
+    """An artifact declaring no nodes would silently retire every node of that
+    service on promote — the same hazard as an empty dbt manifest, so the same
+    guard and the same error class."""
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path), version="v1",
+        declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["error_class"] == "EmptyManifest"
+    assert "contract declares no nodes" in kwargs["error_detail"]
+
+
+def test_a_python_contract_for_another_service_fails_the_release(tmp_path):
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry(), service="someone-else"),
+        version="v1", declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "ServiceMismatch"
+
+
+def test_an_unknown_kind_fails_the_release_permanently():
+    """A kind this build cannot parse is a permanent payload error: report it so
+    the operator sees a rejected release, rather than retrying forever."""
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path="/nonexistent", version="v1",
+        declared_service="service-x", kind="spark",
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    kwargs = publisher.publish_failed.call_args.kwargs
+    assert kwargs["error_class"] == "UnknownManifestKind"
+    assert "spark" in kwargs["error_detail"]
+
+
+def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
+    """An explicitly empty kind is not a kind this build can parse, so it takes
+    the same permanent-failure path as any other unrecognized value. Silently
+    reading it as dbt would parse a python contract with the dbt parser and
+    surface MalformedManifest — an error class that sends the operator looking
+    at the wrong artifact entirely."""
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path="/nonexistent", version="v1",
+        declared_service="service-x", kind="",
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_not_called()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "UnknownManifestKind"
+
+
+def test_a_python_kind_entry_is_published_as_a_python_model(tmp_path):
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry()), version="v1",
+        declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _python_handler(source, publisher).handle(release_id="rel-1")
+
+    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    assert [n["node_type"] for n in topology] == ["python-model"]
+    assert topology[0]["unique_id"] == "test_schema.py_metrics"
+    assert topology[0]["candidate_artifact_uri"].endswith(".json")
+    assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
+
+
+# ---------------------------------------------------------------------------
+# wire-shape pin and mixed-DAG resolution
+# ---------------------------------------------------------------------------
+
+def test_the_dbt_topology_entry_wire_shape_is_frozen(handler_with_mocks):
+    """Adding a runtime must not change one byte of what a dbt node publishes.
+    If this fails, a key was added, removed, renamed, or retyped — decide
+    deliberately, do not just update the expectation."""
+    handler, publisher, _uploader = handler_with_mocks
+    handler.handle(release_id="rel-1")
+
+    entry = next(
+        n for n in publisher.publish_ok.call_args.kwargs["topology"]
+        if n["unique_id"] == "test_schema.orders"
+    )
+
+    assert json.dumps(entry, sort_keys=True) == json.dumps({
+        "unique_id": "test_schema.orders",
+        "schema_name": "test_schema",
+        "table_name": "orders",
+        "service_name": "service-2",
+        "node_type": "dbt-model",
+        "test_count": 0,
+        "content_hash": "sha256:dfe4669111f4209fd63db2ad347b82aaaf149563a5f749edb454c70b7c4a3f0b",
+        "image_tag": "",
+        "original_file_path": "",
+        "upstream_unique_ids": ["test_schema.users"],
+        "schedule": "daily",
+        "candidate_artifact_uri": "",
+    }, sort_keys=True)
+
+
+def test_a_release_mixes_dbt_and_python_and_resolves_edges_in_both_directions(tmp_path):
+    """The point of one topology: a python node reading a dbt table and a dbt
+    node reading a python table must both resolve as upstream edges."""
+    publisher = MagicMock()
+    spec_uploader = MagicMock()
+    spec_uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json"
+    source = _source_of(
+        ManifestFile(path=str(FIXTURES / "manifest_service2.json"), version="v2",
+                     declared_service="service-2"),
+        ManifestFile(path=_python_contract(tmp_path, _python_entry()), version="v1",
+                     declared_service="service-py", kind=ManifestKind.PYTHON),
+        ManifestFile(path=str(FIXTURES / "manifest_service4.json"), version="v4",
+                     declared_service="service-4"),
+    )
+
+    # _python_handler's default dbt uploader (via _make_uploader()) returns "",
+    # which can never satisfy the ".sql"-suffix assertion below, so this test
+    # builds the handler directly and gives the dbt uploader a realistic URI —
+    # the same way handler_with_mocks/PythonSpecArtifactBuilder cases do for
+    # their own runtime — to keep "each kind points at its own shape" real.
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, bundle_uploader=FakeBundleUploader(),
+        artifact_builders={
+            Runtime.DBT: DbtSqlArtifactBuilder(
+                _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders.sql")),
+            Runtime.PYTHON: PythonSpecArtifactBuilder(spec_uploader),
+        },
+        dialect="postgres",
+    )
+    handler.handle(release_id="rel-1")
+
+    topology = {n["unique_id"]: n for n in publisher.publish_ok.call_args.kwargs["topology"]}
+    assert set(topology) == {
+        "test_schema.orders", "test_schema.py_metrics", "test_schema.summary",
+    }
+    # python reads dbt
+    assert topology["test_schema.py_metrics"]["upstream_unique_ids"] == ["test_schema.orders"]
+    # dbt reads python
+    assert topology["test_schema.summary"]["upstream_unique_ids"] == ["test_schema.py_metrics"]
+    # each kind published exactly one artifact key, pointing at its own shape
+    assert topology["test_schema.py_metrics"]["candidate_artifact_uri"].endswith(".json")
+    assert topology["test_schema.orders"]["candidate_artifact_uri"].endswith(".sql")
+    # the python node's read was redirected at the candidate schema — the
+    # rewriter force-quotes only the schema identifier, never the table, so
+    # the real form is `"_candidate_rel_1".orders` (schema quoted, table bare).
+    spec = spec_uploader.upload.call_args.kwargs["spec"]
+    assert '"_candidate_rel_1".orders' in spec["reads"][0]
+
+
+def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
+    """The bundle contract is runtime-agnostic by construction; a python node
+    needs no new key, because its parsed entry is already its raw_code."""
+    publisher = MagicMock()
+    bundle_uploader = FakeBundleUploader()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry()), version="v1",
+        declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+    handler = CandidateManifestHandler(
+        source=source, publisher=publisher, bundle_uploader=bundle_uploader,
+        artifact_builders={
+            Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader()),
+            Runtime.PYTHON: PythonSpecArtifactBuilder(_make_uploader("s3://x.json")),
+        },
+        dialect="postgres",
+    )
+
+    handler.handle(release_id="rel-1")
+
+    _release_id, bundle = bundle_uploader.uploads[0]
+    node = bundle["nodes"]["test_schema.py_metrics"]
+    assert node["runtime"] == "python"
+    assert node["compiled_code"] == ""
+    assert '"output_columns"' in node["raw_code"]

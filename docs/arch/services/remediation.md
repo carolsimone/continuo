@@ -152,7 +152,7 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 | `category` | `logic`, `test`, or `unknown`. |
 | `error_signature` | Release-stable normalized dedup key (SHA-256 hex). |
 | `dbt_log_uri` | S3 URI of the full dbt execution log. |
-| `candidate_artifact_uri` | S3 URI of the candidate SQL file (candidate-schema form; omitted for seeds and compile failures). |
+| `candidate_artifact_uri` | S3 URI of the node's candidate artifact — rewritten SQL for a dbt node, a validation spec for a python node (candidate-schema form; omitted for seeds and compile failures). |
 | `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log) and seed_build failures (threaded from the candidate topology's `OriginalFilePath`). Empty for validation failures. When present for seed_build, the agent bypasses the Ancestry (orchestrator) lookup. |
 | `service` | Owning dbt service name for the failing node. Non-empty for seed_build failures (threaded from the candidate topology's ServiceName). Empty for compile (NodeID is the service) and validation. |
 | `repo` | GitHub owner/name from the originating release. |

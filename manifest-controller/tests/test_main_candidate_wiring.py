@@ -2,6 +2,7 @@ import json
 import sys
 from types import SimpleNamespace
 import main
+from domain.model import ManifestRequest
 from streams_contract import (
     RELEASE_REQUESTED_V1,
     MANIFEST_LOADED_CANDIDATE_V1,
@@ -102,10 +103,10 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     captured = {}
 
     class FakeCandidateHandler:
-        def __init__(self, source, publisher, uploader, bundle_uploader, dialect):
+        def __init__(self, source, publisher, bundle_uploader, artifact_builders, dialect):
             captured["source"] = source
             captured["publisher"] = publisher
-            captured["uploader"] = uploader
+            captured["artifact_builders"] = artifact_builders
             captured["bundle_uploader"] = bundle_uploader
             captured["dialect"] = dialect
 
@@ -132,8 +133,8 @@ def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):
     src = captured["source"]
     assert src.kwargs["bucket"] == "continuo"
     assert src.kwargs["keys"] == [
-        ("service-1", "service-1/rel-77/manifest.json"),
-        ("service-2", "service-2/rel-77/manifest.json"),
+        ManifestRequest(service="service-1", key="service-1/rel-77/manifest.json"),
+        ManifestRequest(service="service-2", key="service-2/rel-77/manifest.json"),
     ]
     assert captured["bundle_uploader"] is not None
     assert captured["dialect"] == "postgres"
@@ -151,7 +152,7 @@ def test_main_passes_the_configured_engines_dialect_to_the_handler(monkeypatch):
     captured = {}
 
     class FakeCandidateHandler:
-        def __init__(self, source, publisher, uploader, bundle_uploader, dialect):
+        def __init__(self, source, publisher, bundle_uploader, artifact_builders, dialect):
             captured["dialect"] = dialect
 
         def handle(self, release_id):
@@ -248,3 +249,98 @@ def test_main_candidate_handler_rejects_manifest_key_missing_service_field(monke
     })
     with pytest.raises(ValueError, match="missing or empty 'service' field"):
         candidate_consumer.message_handler({b"payload": payload.encode()})
+
+
+def test_manifest_keys_kind_defaults_to_dbt_and_is_threaded_when_present(monkeypatch):
+    """release-controller does not send kind yet, so an entry without it must
+    parse as dbt; an entry that carries it must reach the source verbatim."""
+    _common_monkeypatches(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(main, "S3Source",
+                        lambda **kw: captured.setdefault("keys", kw["keys"]) or object())
+    monkeypatch.setattr(main, "CandidateManifestHandler",
+                        lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    monkeypatch.setattr(main, "Consumer", _RecordingConsumer)
+    monkeypatch.setattr(main.threading, "Thread", _NoopThread)
+    monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
+    _RecordingConsumer.instances = []
+
+    main.main()
+
+    handler = _RecordingConsumer.instances[0].message_handler
+    handler({b"payload": json.dumps({
+        "release_id": "rel-1",
+        "manifest_keys": [
+            {"service": "service-1", "s3_uri": "s3://continuo/service-1/rel-1/manifest.json"},
+            {"service": "marketing-py", "kind": "python",
+             "s3_uri": "s3://continuo/marketing-py/rel-1/contract.yaml"},
+        ],
+    }).encode()})
+
+    assert [(r.service, r.kind) for r in captured["keys"]] == [
+        ("service-1", "dbt"), ("marketing-py", "python"),
+    ]
+
+
+def test_an_explicitly_empty_kind_is_not_defaulted_to_dbt(monkeypatch):
+    """Only an absent kind defaults. A producer that set the field to "" chose a
+    value, and it is not a kind this build can parse — passing it through keeps
+    the handler's UnknownManifestKind failure available. Defaulting it would
+    parse a python contract with the dbt parser and misreport the release as
+    MalformedManifest, pointing the operator at the wrong artifact."""
+    _common_monkeypatches(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(main, "S3Source",
+                        lambda **kw: captured.setdefault("keys", kw["keys"]) or object())
+    monkeypatch.setattr(main, "CandidateManifestHandler",
+                        lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    monkeypatch.setattr(main, "Consumer", _RecordingConsumer)
+    monkeypatch.setattr(main.threading, "Thread", _NoopThread)
+    monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
+    _RecordingConsumer.instances = []
+
+    main.main()
+
+    handler = _RecordingConsumer.instances[0].message_handler
+    handler({b"payload": json.dumps({
+        "release_id": "rel-1",
+        "manifest_keys": [
+            {"service": "service-1", "kind": "",
+             "s3_uri": "s3://continuo/service-1/rel-1/manifest.json"},
+        ],
+    }).encode()})
+
+    assert [r.kind for r in captured["keys"]] == [""]
+
+
+def test_both_runtimes_have_an_artifact_builder(monkeypatch):
+    """A runtime with no builder fails the release at parse time; the
+    composition root is the only place that can prevent it."""
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main, "CandidateSpecUploader", lambda *a, **kw: object())
+    captured = {}
+    monkeypatch.setattr(main, "S3Source", lambda **kw: object())
+
+    def _fake_handler(**kw):
+        # `dict.setdefault(...) or SimpleNamespace(...)` would return the
+        # (truthy, non-empty) builders dict itself rather than the namespace,
+        # since a non-empty dict is truthy; capture explicitly instead so the
+        # fake still returns something with a .handle() to call below.
+        captured["builders"] = kw["artifact_builders"]
+        return SimpleNamespace(handle=lambda release_id: None)
+
+    monkeypatch.setattr(main, "CandidateManifestHandler", _fake_handler)
+    monkeypatch.setattr(main, "Consumer", _RecordingConsumer)
+    monkeypatch.setattr(main.threading, "Thread", _NoopThread)
+    monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
+    _RecordingConsumer.instances = []
+
+    main.main()
+    _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps({
+        "release_id": "rel-1",
+        "manifest_keys": [
+            {"service": "s1", "s3_uri": "s3://continuo/s1/rel-1/manifest.json"},
+        ],
+    }).encode()})
+
+    assert set(captured["builders"]) == {"dbt", "python"}

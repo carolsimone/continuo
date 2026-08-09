@@ -12,6 +12,7 @@ from config.config import (
     validate,
     warehouse_dialect,
 )
+from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
@@ -19,6 +20,8 @@ from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
 from adapters.sources.s3 import S3Source
 from adapters.sources.s3_uri import parse_s3_uri
+from domain.model import ManifestKind, ManifestRequest, Runtime
+from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 
 logging.basicConfig(
@@ -56,6 +59,7 @@ def main() -> None:
         redis_client, MANIFEST_LOADED_CANDIDATE_STREAM,
     )
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
+    candidate_spec_uploader = CandidateSpecUploader(s3_client, S3_BUCKET)
     code_bundle_uploader = CodeBundleUploader(s3_client, S3_BUCKET)
 
     # Resolved once at boot: validate() has already rejected an unsupported
@@ -85,7 +89,7 @@ def main() -> None:
         # the service-mismatch/empty-manifest validation in the handler cannot be
         # silently bypassed.
         buckets = []
-        keyed_pairs: list[tuple[str, str]] = []
+        requests: list[ManifestRequest] = []
         for entry in manifest_keys_raw:
             svc = entry.get("service") if isinstance(entry, dict) else None
             if not svc:
@@ -96,19 +100,34 @@ def main() -> None:
             buckets.append(bucket)
             # parse_s3_uri appends a trailing slash to all non-empty paths; strip it
             # because object keys never end with "/" in S3.
-            keyed_pairs.append((svc, key.rstrip("/")))
+            # Only an ABSENT kind defaults to dbt — that is the compatibility
+            # path for producers that predate python support. Any value the
+            # producer actually set is passed through verbatim, empty string
+            # included, so the handler reports it as a permanent
+            # UnknownManifestKind failure the operator sees. Defaulting a
+            # present-but-invalid value would parse a python contract with the
+            # dbt parser and misreport it as MalformedManifest, sending the
+            # operator to the wrong artifact.
+            requests.append(ManifestRequest(
+                service=svc,
+                key=key.rstrip("/"),
+                kind=entry.get("kind", ManifestKind.DBT),
+            ))
         if len(set(buckets)) > 1:
             raise ValueError(
                 f"release.requested:v1 manifest_keys span multiple buckets: {set(buckets)}"
             )
         shared_bucket = buckets[0] if buckets else S3_BUCKET
-        source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=keyed_pairs)
+        source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=requests)
         # Cleanup is owned by CandidateManifestHandler.handle() via its own finally block.
         CandidateManifestHandler(
             source=source,
             publisher=candidate_publisher,
-            uploader=candidate_uploader,
             bundle_uploader=code_bundle_uploader,
+            artifact_builders={
+                Runtime.DBT: DbtSqlArtifactBuilder(candidate_uploader),
+                Runtime.PYTHON: PythonSpecArtifactBuilder(candidate_spec_uploader),
+            },
             dialect=dialect,
         ).handle(release_id=release_id)
 

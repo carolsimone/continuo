@@ -15,7 +15,7 @@ def build_code_bundle(release_id: str, nodes: list[ManifestNode], shared_code: d
         "contract_version": CONTRACT_VERSION,
         "release_id": release_id,
         "nodes": {
-            f"{n.schema_name}.{n.table_name}": {
+            n.unique_id: {
                 "runtime": n.runtime,
                 "raw_code": n.raw_code,
                 "compiled_code": n.candidate_sql,
