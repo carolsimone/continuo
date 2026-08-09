@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from domain.model import ManifestNode, NodeRegistryEntry
-from service.ports import CandidateSqlUploaderPort
+from service.ports import CandidateSpecUploaderPort, CandidateSqlUploaderPort
 from service.rewriter import rewrite_to_candidate_schema
 
 
@@ -59,5 +59,39 @@ class DbtSqlArtifactBuilder(CandidateArtifactBuilder):
             release_id=ctx.release_id,
             unique_id=node.unique_id,
             sql=candidate_sql,
+        )
+        return {"candidate_artifact_uri": uri}
+
+
+class PythonSpecArtifactBuilder(CandidateArtifactBuilder):
+    """python nodes: a validation spec, because there is no SELECT to shape the
+    output from.
+
+    Reads are rewritten with the same self-reference exclusion dbt uses: the
+    validation Job bind-checks the reads BEFORE creating the node's own empty
+    table, so a self-reference redirected to the candidate schema would bind
+    against a relation that does not exist yet.
+    """
+
+    def __init__(self, uploader: CandidateSpecUploaderPort) -> None:
+        self._uploader = uploader
+
+    def build(self, node: ManifestNode, ctx: RewriteContext) -> dict[str, str]:
+        reads = [
+            rewrite_to_candidate_schema(
+                sql, ctx.registry, ctx.candidate_schema,
+                self_schema=node.schema_name, self_table=node.table_name,
+                dialect=ctx.dialect,
+            )
+            for sql in node.dependency_sqls
+        ]
+        uri = self._uploader.upload(
+            release_id=ctx.release_id,
+            unique_id=node.unique_id,
+            spec={
+                "reads": reads,
+                "output_columns": node.output_columns,
+                "config": node.config,
+            },
         )
         return {"candidate_artifact_uri": uri}

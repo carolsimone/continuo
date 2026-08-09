@@ -1,7 +1,9 @@
 from unittest.mock import MagicMock
 
 from domain.model import ManifestNode, NodeRegistryEntry, NodeType, Runtime
-from service.candidate_artifacts import DbtSqlArtifactBuilder, RewriteContext
+from service.candidate_artifacts import (
+    DbtSqlArtifactBuilder, PythonSpecArtifactBuilder, RewriteContext,
+)
 
 
 def _ctx(**overrides):
@@ -62,3 +64,84 @@ def test_dbt_builder_leaves_a_self_reference_on_the_production_schema():
     DbtSqlArtifactBuilder(uploader).build(node, _ctx())
 
     assert "_candidate_rel_1" not in uploader.upload.call_args.kwargs["sql"]
+
+
+def test_python_builder_uploads_rewritten_reads_columns_and_config():
+    """The spec is the python node's whole validation input: every declared read
+    redirected at the candidate schema so bind-checking hits the release's own
+    upstreams, plus the declared output shape and physical layout."""
+    uploader = MagicMock()
+    uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json"
+    node = ManifestNode(
+        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        owner="team-py", schedule_name="daily", criticality="SECONDARY",
+        dependency_sqls=[
+            "select id from test_schema.users",
+            "select count(*) from test_schema.elsewhere",
+        ],
+        candidate_sql="",
+        output_columns=[{"name": "id", "type": "INTEGER", "nullable": False}],
+        config={"indexes": [{"columns": ["id"], "unique": True}]},
+        node_type=NodeType.PYTHON_MODEL, runtime=Runtime.PYTHON,
+    )
+
+    keys = PythonSpecArtifactBuilder(uploader).build(node, _ctx())
+
+    called = uploader.upload.call_args.kwargs
+    assert called["unique_id"] == "test_schema.py_metrics"
+    spec = called["spec"]
+    # A read on a registered node is redirected; a table no service owns is not.
+    # rewrite_to_candidate_schema force-quotes only the schema identifier, not
+    # the table, so the rewritten form is "_candidate_rel_1".users.
+    assert '"_candidate_rel_1".users' in spec["reads"][0]
+    assert "_candidate_rel_1" not in spec["reads"][1]
+    assert spec["output_columns"] == [{"name": "id", "type": "INTEGER", "nullable": False}]
+    assert spec["config"] == {"indexes": [{"columns": ["id"], "unique": True}]}
+    assert keys == {
+        "candidate_artifact_uri":
+            "s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json",
+    }
+
+
+def test_python_builder_preserves_read_order():
+    """dependency_sqls is already ordered by read name, and the runner
+    bind-checks in list order: keep it stable so the object is reproducible."""
+    uploader = MagicMock()
+    uploader.upload.return_value = "s3://x"
+    node = ManifestNode(
+        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        owner="team-py", schedule_name="daily", criticality="SECONDARY",
+        dependency_sqls=["select 1 as a", "select 2 as b", "select 3 as c"],
+        output_columns=[{"name": "a", "type": "INTEGER", "nullable": True}],
+        node_type=NodeType.PYTHON_MODEL, runtime=Runtime.PYTHON,
+    )
+
+    PythonSpecArtifactBuilder(uploader).build(node, _ctx())
+
+    reads = uploader.upload.call_args.kwargs["spec"]["reads"]
+    assert [r.split()[1] for r in reads] == ["1", "2", "3"]
+
+
+def test_python_builder_leaves_a_self_reference_on_the_production_schema():
+    """check_binds runs BEFORE build_empty_from_columns in the same Job, so a
+    self-reference redirected to the candidate schema would bind against a table
+    that does not exist yet."""
+    uploader = MagicMock()
+    uploader.upload.return_value = "s3://x"
+    registry = {
+        ("test_schema", "py_metrics"): NodeRegistryEntry(
+            table_name="py_metrics", schema_name="test_schema",
+            service_name="service-py", owner="team-py",
+        ),
+    }
+    node = ManifestNode(
+        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        owner="team-py", schedule_name="daily", criticality="SECONDARY",
+        dependency_sqls=["select id from test_schema.py_metrics"],
+        output_columns=[{"name": "id", "type": "INTEGER", "nullable": True}],
+        node_type=NodeType.PYTHON_MODEL, runtime=Runtime.PYTHON,
+    )
+
+    PythonSpecArtifactBuilder(uploader).build(node, _ctx(registry=registry))
+
+    assert "_candidate_rel_1" not in uploader.upload.call_args.kwargs["spec"]["reads"][0]

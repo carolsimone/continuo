@@ -9,7 +9,7 @@ from adapters.sources import ManifestSource
 from domain.model import ManifestFile, ManifestKind, Runtime
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
-from service.candidate_artifacts import DbtSqlArtifactBuilder
+from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.content_hash import content_hash_fold
 
@@ -80,6 +80,19 @@ def _dispatch_handler(source, publisher, artifact_builders=None, dialect="postgr
         bundle_uploader=FakeBundleUploader(),
         artifact_builders=artifact_builders or {Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader())},
         dialect=dialect,
+    )
+
+
+def _python_handler(source, publisher, spec_uploader=None, dialect="postgres"):
+    """A handler wired for both kinds, for cases that publish a python node."""
+    return _dispatch_handler(
+        source, publisher, dialect=dialect,
+        artifact_builders={
+            Runtime.DBT: DbtSqlArtifactBuilder(_make_uploader()),
+            Runtime.PYTHON: PythonSpecArtifactBuilder(
+                spec_uploader if spec_uploader is not None
+                else _make_uploader("s3://continuo/candidate-sql/rel-1/candidate_test_schema.py_metrics.json")),
+        },
     )
 
 
@@ -769,3 +782,19 @@ def test_an_unknown_kind_fails_the_release_permanently():
     kwargs = publisher.publish_failed.call_args.kwargs
     assert kwargs["error_class"] == "UnknownManifestKind"
     assert "spark" in kwargs["error_detail"]
+
+
+def test_a_python_kind_entry_is_published_as_a_python_model(tmp_path):
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path=_python_contract(tmp_path, _python_entry()), version="v1",
+        declared_service="service-py", kind=ManifestKind.PYTHON,
+    ))
+
+    _python_handler(source, publisher).handle(release_id="rel-1")
+
+    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    assert [n["node_type"] for n in topology] == ["python-model"]
+    assert topology[0]["unique_id"] == "test_schema.py_metrics"
+    assert topology[0]["candidate_artifact_uri"].endswith(".json")
+    assert topology[0]["original_file_path"] == "scripts/py_metrics.py"
