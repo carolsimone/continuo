@@ -542,19 +542,20 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 	assert.Empty(t, byID["b_up"], "b_up has no in-set upstreams")
 }
 
-// TestHandleParseOK_EmitsCandidateSQLURIPerNode verifies each node's
-// candidate_sql_uri (the S3 URI of the compiled SQL rewritten to the candidate
-// schema by manifest-controller) is carried into the validation.requested:v1
-// payload under the key "candidate_sql_uri", where the executor fetches the
-// SQL to build the empty candidate table.
-func TestHandleParseOK_EmitsCandidateSQLURIPerNode(t *testing.T) {
+// TestHandleParseOK_EmitsCandidateArtifactURIPerNode verifies each node's
+// candidate_artifact_uri (the S3 URI of the object validation must fetch to
+// build the node in the candidate schema, produced by manifest-controller) is
+// carried into the validation.requested:v1 payload under the key
+// "candidate_artifact_uri", where the executor fetches it to build the empty
+// candidate table.
+func TestHandleParseOK_EmitsCandidateArtifactURIPerNode(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	topo := release.Topology{
 		{UniqueID: "a1", ServiceName: "svc-a", ContentHash: "h_a1",
-			CandidateSQLURI: "s3://continuo/svc-a/rA/candidate_a1.sql"},
+			CandidateArtifactURI: "s3://continuo/svc-a/rA/candidate_a1.sql"},
 		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"a1"},
-			CandidateSQLURI: "s3://continuo/svc-a/rA/candidate_a2.sql"},
+			CandidateArtifactURI: "s3://continuo/svc-a/rA/candidate_a2.sql"},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
@@ -566,17 +567,17 @@ func TestHandleParseOK_EmitsCandidateSQLURIPerNode(t *testing.T) {
 	var rawPayload map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(entry.Payload, &rawPayload))
 	var nodes []struct {
-		UniqueID        string `json:"unique_id"`
-		CandidateSQLURI string `json:"candidate_sql_uri"`
-		ValidationOp    string `json:"validation_op"`
-		ProdSchema      string `json:"prod_schema"`
+		UniqueID             string `json:"unique_id"`
+		CandidateArtifactURI string `json:"candidate_artifact_uri"`
+		ValidationOp         string `json:"validation_op"`
+		ProdSchema           string `json:"prod_schema"`
 	}
 	require.NoError(t, json.Unmarshal(rawPayload["nodes"], &nodes))
 	got := map[string]string{}
 	op := map[string]string{}
 	prodSchema := map[string]string{}
 	for _, n := range nodes {
-		got[n.UniqueID] = n.CandidateSQLURI
+		got[n.UniqueID] = n.CandidateArtifactURI
 		op[n.UniqueID] = n.ValidationOp
 		prodSchema[n.UniqueID] = n.ProdSchema
 	}

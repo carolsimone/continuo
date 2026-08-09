@@ -34,17 +34,17 @@ func TestValidationDeployTask_SatisfiesCommand(t *testing.T) {
 
 func TestValidationDeployTask_JSONRoundTrip(t *testing.T) {
 	orig := command.ValidationDeployTask{
-		ReleaseID:       "rel_123",
-		NodeID:          "node_456",
-		ServiceName:     "dbt",
-		SchemaName:      "public",
-		TableName:       "orders",
-		NodeType:        "dbt-model",
-		ImageTag:        "sha-abc",
-		JobName:         "validate-public-orders",
-		CandidateSchema: "_candidate_rel_123",
-		CandidateSQLURI: "s3://continuo-artifacts/candidate-sql/rel_123/node_456.sql",
-		UpstreamNodeIDs: []string{"model.shop.upstream_a", "model.shop.upstream_b"},
+		ReleaseID:            "rel_123",
+		NodeID:               "node_456",
+		ServiceName:          "dbt",
+		SchemaName:           "public",
+		TableName:            "orders",
+		NodeType:             "dbt-model",
+		ImageTag:             "sha-abc",
+		JobName:              "validate-public-orders",
+		CandidateSchema:      "_candidate_rel_123",
+		CandidateArtifactURI: "s3://continuo-artifacts/candidate-sql/rel_123/node_456.sql",
+		UpstreamNodeIDs:      []string{"model.shop.upstream_a", "model.shop.upstream_b"},
 	}
 
 	raw, err := json.Marshal(orig)
@@ -57,17 +57,17 @@ func TestValidationDeployTask_JSONRoundTrip(t *testing.T) {
 
 func TestValidationDeployTask_ToValidationJobSpec(t *testing.T) {
 	c := command.ValidationDeployTask{
-		ReleaseID:       "rel_123",
-		NodeID:          "node_456",
-		ServiceName:     "svc",
-		SchemaName:      "public",
-		TableName:       "orders",
-		NodeType:        "dbt-model",
-		ImageTag:        "sha-abc",
-		JobName:         "validate-public-orders",
-		CandidateSchema: "_candidate_rel_123",
-		CandidateSQLURI: "s3://continuo-artifacts/candidate-sql/rel_123/node_456.sql",
-		UpstreamNodeIDs: []string{"model.shop.upstream"},
+		ReleaseID:            "rel_123",
+		NodeID:               "node_456",
+		ServiceName:          "svc",
+		SchemaName:           "public",
+		TableName:            "orders",
+		NodeType:             "dbt-model",
+		ImageTag:             "sha-abc",
+		JobName:              "validate-public-orders",
+		CandidateSchema:      "_candidate_rel_123",
+		CandidateArtifactURI: "s3://continuo-artifacts/candidate-sql/rel_123/node_456.sql",
+		UpstreamNodeIDs:      []string{"model.shop.upstream"},
 	}
 	spec := c.ToValidationJobSpec()
 	assert.Equal(t, c.JobName, spec.JobName)
@@ -79,7 +79,7 @@ func TestValidationDeployTask_ToValidationJobSpec(t *testing.T) {
 	assert.Equal(t, c.NodeType, spec.NodeType)
 	assert.Equal(t, c.ImageTag, spec.ImageTag)
 	assert.Equal(t, c.CandidateSchema, spec.CandidateSchema)
-	assert.Equal(t, c.CandidateSQLURI, spec.CandidateSQLURI)
+	assert.Equal(t, c.CandidateArtifactURI, spec.CandidateArtifactURI)
 }
 
 func TestValidationDeployTask_ToValidationJobSpec_CarriesParseCacheURIs(t *testing.T) {
@@ -102,7 +102,7 @@ func TestValidationDeployTask_ToValidationJobSpec_CarriesOp(t *testing.T) {
 	cmd := command.ValidationDeployTask{
 		ReleaseID: "r", NodeID: "model.a", ServiceName: "s", SchemaName: "sc",
 		TableName: "a", NodeType: "dbt-model", ImageTag: "t", JobName: "j",
-		CandidateSchema: "_candidate_r", CandidateSQLURI: "s3://b/a.sql",
+		CandidateSchema: "_candidate_r", CandidateArtifactURI: "s3://b/a.sql",
 		ValidationOp: "clone_from_prod", ProdSchema: "analytics",
 	}
 	spec := cmd.ToValidationJobSpec()

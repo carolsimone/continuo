@@ -20,22 +20,25 @@ import (
 // dispatched. An empty slice means the node is a root and can be dispatched
 // immediately.
 //
-// CandidateSQLURI is an S3 URI (s3://bucket/key) pointing to the node's
-// compiled SQL with every schema-qualified reference already rewritten to the
-// candidate schema. For model/snapshot nodes it is passed as the
-// CANDIDATE_SQL_URI env var on the validation Job's main container, which
-// fetches the object directly from S3 and builds an empty CTAS table without a
-// dbt recompile. Empty for seed nodes (unchanged seeds are cloned from prod;
-// new/changed seeds are pre-built).
+// CandidateArtifactURI is an S3 URI (s3://bucket/key) pointing to the object
+// the node's validation Job must fetch to build the node as an empty table in
+// the candidate schema: for a dbt node the compiled SQL with every
+// schema-qualified reference already rewritten to the candidate schema, for a
+// python node the validation spec. Which shape it is follows from NodeType.
+// For model/snapshot nodes it is passed as the CANDIDATE_SQL_URI env var on
+// the validation Job's main container, which fetches the object directly from
+// S3 and builds an empty CTAS table without a dbt recompile. Empty for seed
+// nodes (unchanged seeds are cloned from prod; new/changed seeds are
+// pre-built).
 type ValidationNode struct {
-	NodeID          string // dbt unique_id
-	ServiceName     string
-	SchemaName      string
-	TableName       string
-	NodeType        pkg_model.NodeType
-	ImageTag        string
-	UpstreamNodeIDs []string
-	CandidateSQLURI string
+	NodeID               string // dbt unique_id
+	ServiceName          string
+	SchemaName           string
+	TableName            string
+	NodeType             pkg_model.NodeType
+	ImageTag             string
+	UpstreamNodeIDs      []string
+	CandidateArtifactURI string
 	// ValidationOp selects the runner operation for this node:
 	// "build_from_sql" (default) | "clone_from_prod". ProdSchema is the source
 	// schema for clone_from_prod (empty otherwise). Set per node by

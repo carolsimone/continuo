@@ -68,7 +68,7 @@ func TestBuildValidationPodSpecHardening(t *testing.T) {
 func TestBuildValidationPodSpecBuildFromSQLHardening(t *testing.T) {
 	p := validationParams()
 	p.ValidationOp = "build_from_sql"
-	p.CandidateSQLURI = "s3://bucket/candidate.sql"
+	p.CandidateArtifactURI = "s3://bucket/candidate.sql"
 	spec, err := buildValidationPodSpec(p)
 	require.NoError(t, err)
 	assertPodHardening(t, spec)

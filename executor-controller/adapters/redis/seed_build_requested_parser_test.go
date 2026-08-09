@@ -14,7 +14,7 @@ import (
 
 // seedBuildPayload mirrors the flat JSON body release-controller emits in the
 // "payload" field of a seed.build.requested:v1 message. Seeds have no
-// upstream_node_ids or candidate_sql_uri.
+// upstream_node_ids or candidate_artifact_uri.
 func seedBuildPayload() map[string]any {
 	return map[string]any{
 		"release_id": "rel-456",
@@ -169,7 +169,7 @@ func TestParseSeedBuildRequested_SeedsMismatchOrderList(t *testing.T) {
 	require.Error(t, err)
 }
 
-// Verify seeds have no upstream_node_ids or candidate_sql_uri fields — they
+// Verify seeds have no upstream_node_ids or candidate_artifact_uri fields — they
 // are simply absent from the SeedBuildNode struct (no validation needed, just
 // confirming the parsed struct has no stray fields).
 func TestParseSeedBuildRequested_SeedHasNoUpstreamsOrSQLURI(t *testing.T) {
@@ -177,7 +177,7 @@ func TestParseSeedBuildRequested_SeedHasNoUpstreamsOrSQLURI(t *testing.T) {
 	evt, err := ParseSeedBuildRequested(msg)
 	require.NoError(t, err)
 	require.Len(t, evt.Seeds, 2)
-	// SeedBuildNode has no UpstreamNodeIDs / CandidateSQLURI fields by design.
+	// SeedBuildNode has no UpstreamNodeIDs / CandidateArtifactURI fields by design.
 	// Just confirm the parse succeeds and node identity is correct.
 	assert.Equal(t, "seed.shop.country_codes", evt.Seeds[0].NodeID)
 }

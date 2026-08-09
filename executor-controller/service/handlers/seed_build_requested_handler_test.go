@@ -60,7 +60,7 @@ func TestSeedBuildRequestedHandler_EnqueuesOneSeedBuildDeploymentPerSeed(t *test
 	assert.Equal(t, "_candidate_rel_seed_2026", cmd.CandidateSchema)
 	assert.NotEmpty(t, cmd.JobName, "handler must populate JobName via BuildValidationJobName")
 	// Seed-build tasks have no SQL URI, upstreams, validation op, or prod schema.
-	assert.Empty(t, cmd.CandidateSQLURI)
+	assert.Empty(t, cmd.CandidateArtifactURI)
 	assert.Empty(t, cmd.UpstreamNodeIDs)
 	assert.Empty(t, cmd.ValidationOp)
 	assert.Empty(t, cmd.ProdSchema)

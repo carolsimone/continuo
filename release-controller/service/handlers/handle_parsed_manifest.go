@@ -249,7 +249,7 @@ func newChangedSeedIDs(topo release.Topology, validationIDs []string, changedClo
 
 // seedBuildNodesInOrder returns one map per seed node (sorted by seedIDs order)
 // carrying the fields executor-controller needs to build the seed into the
-// candidate schema with the team image. No candidate_sql_uri / validation_op:
+// candidate schema with the team image. No candidate_artifact_uri / validation_op:
 // seeds are built, not adapter-validated; no upstreams: seeds are roots.
 func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
@@ -380,16 +380,16 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 		}
 		op, prodSchema := validationOpFor(n, changedClosureSet)
 		out = append(out, map[string]any{
-			"unique_id":         n.UniqueID,
-			"service_name":      n.ServiceName,
-			"node_type":         n.NodeType,
-			"schema_name":       n.SchemaName,
-			"table_name":        n.TableName,
-			"image_tag":         n.ImageTag,
-			"upstream_node_ids": release.InSetUpstreams(topo, id, inSet),
-			"candidate_sql_uri": n.CandidateSQLURI,
-			"validation_op":     op,
-			"prod_schema":       prodSchema,
+			"unique_id":              n.UniqueID,
+			"service_name":           n.ServiceName,
+			"node_type":              n.NodeType,
+			"schema_name":            n.SchemaName,
+			"table_name":             n.TableName,
+			"image_tag":              n.ImageTag,
+			"upstream_node_ids":      release.InSetUpstreams(topo, id, inSet),
+			"candidate_artifact_uri": n.CandidateArtifactURI,
+			"validation_op":          op,
+			"prod_schema":            prodSchema,
 		})
 	}
 	return out

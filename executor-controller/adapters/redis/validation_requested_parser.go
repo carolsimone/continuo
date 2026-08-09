@@ -25,16 +25,16 @@ type validationRequestedDTO struct {
 }
 
 type validationRequestedNode struct {
-	UniqueID        string   `json:"unique_id"`
-	ServiceName     string   `json:"service_name"`
-	NodeType        string   `json:"node_type"`
-	SchemaName      string   `json:"schema_name"`
-	TableName       string   `json:"table_name"`
-	ImageTag        string   `json:"image_tag"`
-	UpstreamNodeIDs []string `json:"upstream_node_ids"`
-	CandidateSQLURI string   `json:"candidate_sql_uri"`
-	ValidationOp    string   `json:"validation_op"`
-	ProdSchema      string   `json:"prod_schema"`
+	UniqueID             string   `json:"unique_id"`
+	ServiceName          string   `json:"service_name"`
+	NodeType             string   `json:"node_type"`
+	SchemaName           string   `json:"schema_name"`
+	TableName            string   `json:"table_name"`
+	ImageTag             string   `json:"image_tag"`
+	UpstreamNodeIDs      []string `json:"upstream_node_ids"`
+	CandidateArtifactURI string   `json:"candidate_artifact_uri"`
+	ValidationOp         string   `json:"validation_op"`
+	ProdSchema           string   `json:"prod_schema"`
 }
 
 // ParseValidationRequested translates a validation.requested:v1 XMessage into
@@ -88,16 +88,16 @@ func ParseValidationRequested(msg goredis.XMessage) (events.ValidationRequested,
 				fmt.Errorf("node[%d] (%s) invalid node_type: %w", i, n.UniqueID, err)
 		}
 		nodes = append(nodes, events.ValidationNode{
-			NodeID:          n.UniqueID,
-			ServiceName:     n.ServiceName,
-			SchemaName:      n.SchemaName,
-			TableName:       n.TableName,
-			NodeType:        nodeType,
-			ImageTag:        n.ImageTag,
-			UpstreamNodeIDs: n.UpstreamNodeIDs,
-			CandidateSQLURI: n.CandidateSQLURI,
-			ValidationOp:    n.ValidationOp,
-			ProdSchema:      n.ProdSchema,
+			NodeID:               n.UniqueID,
+			ServiceName:          n.ServiceName,
+			SchemaName:           n.SchemaName,
+			TableName:            n.TableName,
+			NodeType:             nodeType,
+			ImageTag:             n.ImageTag,
+			UpstreamNodeIDs:      n.UpstreamNodeIDs,
+			CandidateArtifactURI: n.CandidateArtifactURI,
+			ValidationOp:         n.ValidationOp,
+			ProdSchema:           n.ProdSchema,
 		})
 		nodeIDSet[n.UniqueID] = struct{}{}
 	}

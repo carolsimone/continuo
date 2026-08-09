@@ -23,11 +23,11 @@ type rejectedPayload struct {
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
 	PerNode   []struct {
-		NodeID          string `json:"node_id"`
-		Status          string `json:"status"`
-		DBTLogURI       string `json:"dbt_log_uri"`
-		RunResultsURI   string `json:"run_results_uri"`
-		CandidateSQLURI string `json:"candidate_sql_uri"`
+		NodeID               string `json:"node_id"`
+		Status               string `json:"status"`
+		DBTLogURI            string `json:"dbt_log_uri"`
+		RunResultsURI        string `json:"run_results_uri"`
+		CandidateArtifactURI string `json:"candidate_artifact_uri"`
 		// FilePath and Service carry the seed source location from the candidate
 		// topology (set by release-controller on seed_build rejections). When
 		// present, the remediation agent can locate the source file without
@@ -98,16 +98,16 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			continue
 		}
 		out = append(out, failure.FailureEvidence{
-			Source:          src,
-			ReleaseID:       p.ReleaseID,
-			NodeID:          n.NodeID,
-			DBTLogURI:       n.DBTLogURI,
-			RunResultsURI:   n.RunResultsURI,
-			CandidateSQLURI: n.CandidateSQLURI,
-			FilePath:        n.FilePath,
-			Service:         n.Service,
-			Repo:            p.Repo,
-			CommitSHA:       p.CommitSHA,
+			Source:               src,
+			ReleaseID:            p.ReleaseID,
+			NodeID:               n.NodeID,
+			DBTLogURI:            n.DBTLogURI,
+			RunResultsURI:        n.RunResultsURI,
+			CandidateArtifactURI: n.CandidateArtifactURI,
+			FilePath:             n.FilePath,
+			Service:              n.Service,
+			Repo:                 p.Repo,
+			CommitSHA:            p.CommitSHA,
 		})
 	}
 	return out, nil

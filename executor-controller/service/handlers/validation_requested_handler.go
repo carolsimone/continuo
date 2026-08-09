@@ -45,19 +45,19 @@ func (h *ValidationRequestedHandler) Handle(
 	for _, n := range evt.Nodes {
 		jobName := BuildValidationJobName(evt.ReleaseID, n.NodeID)
 		cmd := command.ValidationDeployTask{
-			ReleaseID:       evt.ReleaseID,
-			NodeID:          n.NodeID,
-			ServiceName:     n.ServiceName,
-			SchemaName:      n.SchemaName,
-			TableName:       n.TableName,
-			NodeType:        string(n.NodeType),
-			ImageTag:        n.ImageTag,
-			JobName:         jobName,
-			CandidateSchema: evt.CandidateSchema,
-			UpstreamNodeIDs: n.UpstreamNodeIDs,
-			CandidateSQLURI: n.CandidateSQLURI,
-			ValidationOp:    n.ValidationOp,
-			ProdSchema:      n.ProdSchema,
+			ReleaseID:            evt.ReleaseID,
+			NodeID:               n.NodeID,
+			ServiceName:          n.ServiceName,
+			SchemaName:           n.SchemaName,
+			TableName:            n.TableName,
+			NodeType:             string(n.NodeType),
+			ImageTag:             n.ImageTag,
+			JobName:              jobName,
+			CandidateSchema:      evt.CandidateSchema,
+			UpstreamNodeIDs:      n.UpstreamNodeIDs,
+			CandidateArtifactURI: n.CandidateArtifactURI,
+			ValidationOp:         n.ValidationOp,
+			ProdSchema:           n.ProdSchema,
 		}
 		if err := createValidationDeployment(ctx, u, cmd, msgProcID, now, len(n.UpstreamNodeIDs) > 0); err != nil {
 			return fmt.Errorf("enqueue validation node %s: %w", n.NodeID, err)

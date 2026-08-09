@@ -405,14 +405,14 @@ def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# candidate_sql_uri: upload-per-node and fatal-on-upload-failure
+# candidate_artifact_uri: upload-per-node and fatal-on-upload-failure
 # ---------------------------------------------------------------------------
 
-def test_publishes_candidate_sql_uri_and_uploads(handler_with_mocks):
+def test_publishes_candidate_artifact_uri_and_uploads(handler_with_mocks):
     """Each node's candidate SQL is uploaded to S3; the topology carries
-    candidate_sql_uri (not the inline candidate_sql string) — and the SQL text
-    actually handed to the uploader is the candidate-schema-rewritten SQL, so
-    passing "" or the un-rewritten source would fail this test."""
+    candidate_artifact_uri (not the inline candidate_sql string) — and the SQL
+    text actually handed to the uploader is the candidate-schema-rewritten
+    SQL, so passing "" or the un-rewritten source would fail this test."""
     handler, publisher, uploader = handler_with_mocks
     uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/public.orders.sql"
 
@@ -421,7 +421,7 @@ def test_publishes_candidate_sql_uri_and_uploads(handler_with_mocks):
     publisher.publish_ok.assert_called_once()
     node = publisher.publish_ok.call_args.kwargs["topology"][0]
     assert "candidate_sql" not in node
-    assert node["candidate_sql_uri"] == "s3://continuo/candidate-sql/rel-1/public.orders.sql"
+    assert node["candidate_artifact_uri"] == "s3://continuo/candidate-sql/rel-1/public.orders.sql"
 
     # service2's "orders" node selects from test_schema.users (service1), so its
     # candidate_sql is genuinely rewritten onto the release's candidate schema.
@@ -473,7 +473,7 @@ def test_upload_failure_is_fatal(handler_with_mocks):
 
     publisher.publish_ok.assert_not_called()
     publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "CandidateSqlUploadFailed"
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "CandidateArtifactUploadFailed"
 
 
 def test_handle_calls_source_cleanup_even_on_upload_failure():

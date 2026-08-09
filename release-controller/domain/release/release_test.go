@@ -161,25 +161,34 @@ func TestRelease_RehydrateRoundTripsCodeBundleURI(t *testing.T) {
 	assert.Equal(t, "s3://b/code-bundles/r/bundle.json", r.CodeBundleURI())
 }
 
-func TestNode_CandidateSQLURIRoundTrips(t *testing.T) {
-	// Node.CandidateSQLURI must round-trip via JSON under the key "candidate_sql_uri".
+func TestNode_CandidateArtifactURIRoundTrips(t *testing.T) {
+	// Node.CandidateArtifactURI must round-trip via JSON under the key "candidate_artifact_uri".
 	n := release.Node{
-		UniqueID:        "a",
-		CandidateSQLURI: "s3://continuo/svc-a/rA/candidate_a.sql",
+		UniqueID:             "a",
+		CandidateArtifactURI: "s3://continuo/svc-a/rA/candidate_a.sql",
 	}
 	b, err := json.Marshal(n)
 	require.NoError(t, err)
 
 	var m map[string]any
 	require.NoError(t, json.Unmarshal(b, &m))
-	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a.sql", m["candidate_sql_uri"],
-		"JSON key must be candidate_sql_uri")
+	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a.sql", m["candidate_artifact_uri"],
+		"JSON key must be candidate_artifact_uri")
 	_, hasCandidateSQL := m["candidate_sql"]
 	assert.False(t, hasCandidateSQL, "old candidate_sql key must not appear")
 
 	var n2 release.Node
 	require.NoError(t, json.Unmarshal(b, &n2))
-	assert.Equal(t, n.CandidateSQLURI, n2.CandidateSQLURI, "round-trip preserves value")
+	assert.Equal(t, n.CandidateArtifactURI, n2.CandidateArtifactURI, "round-trip preserves value")
+}
+
+func TestNodeMarshalsCandidateArtifactURI(t *testing.T) {
+	n := release.Node{UniqueID: "analytics.orders", CandidateArtifactURI: "s3://b/candidate-sql/rel-1/candidate_analytics.orders.sql"}
+	b, err := json.Marshal(n)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"candidate_artifact_uri":"s3://b/candidate-sql/rel-1/candidate_analytics.orders.sql"`)
+	assert.NotContains(t, string(b), "candidate_sql_uri",
+		"the legacy key must not be emitted — no compatibility alias is written")
 }
 
 func TestNode_TestCountRoundTrips(t *testing.T) {
@@ -197,20 +206,20 @@ func TestNode_TestCountRoundTrips(t *testing.T) {
 	}
 }
 
-func TestTopology_WithoutCandidateSQLURI_ClearsField(t *testing.T) {
-	// WithoutCandidateSQLURI must return a copy with every node's CandidateSQLURI
+func TestTopology_WithoutCandidateArtifactURI_ClearsField(t *testing.T) {
+	// WithoutCandidateArtifactURI must return a copy with every node's CandidateArtifactURI
 	// cleared, leaving other fields intact.
 	topo := release.Topology{
-		{UniqueID: "a", CandidateSQLURI: "s3://continuo/svc-a/rA/a.sql", TableName: "tbl_a"},
-		{UniqueID: "b", CandidateSQLURI: "s3://continuo/svc-a/rA/b.sql", TableName: "tbl_b"},
+		{UniqueID: "a", CandidateArtifactURI: "s3://continuo/svc-a/rA/a.sql", TableName: "tbl_a"},
+		{UniqueID: "b", CandidateArtifactURI: "s3://continuo/svc-a/rA/b.sql", TableName: "tbl_b"},
 	}
-	stripped := topo.WithoutCandidateSQLURI()
+	stripped := topo.WithoutCandidateArtifactURI()
 	for _, n := range stripped {
-		assert.Empty(t, n.CandidateSQLURI, "CandidateSQLURI must be cleared in stripped topology")
+		assert.Empty(t, n.CandidateArtifactURI, "CandidateArtifactURI must be cleared in stripped topology")
 	}
 	assert.Equal(t, "tbl_a", stripped[0].TableName, "other fields must be preserved")
 	// original must be unmodified
-	assert.NotEmpty(t, topo[0].CandidateSQLURI, "original topology must not be mutated")
+	assert.NotEmpty(t, topo[0].CandidateArtifactURI, "original topology must not be mutated")
 }
 
 var (
