@@ -130,7 +130,8 @@ status=ok:
       transition to Validating, emit validation.requested:v1
         (mode=validation, candidate_schema=_candidate_<release_id>,
          nodes carry upstream_node_ids = all in-set upstreams, intra- and cross-service,
-         and candidate_artifact_uri = the S3 URI for the node's rewritten SQL)
+         and candidate_artifact_uri = the S3 URI for the node's candidate artifact,
+         rewritten SQL for a dbt node or a validation spec for a python node)
   advance queue
 ```
 A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.
