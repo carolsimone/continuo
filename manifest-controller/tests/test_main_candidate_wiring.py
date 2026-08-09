@@ -282,6 +282,37 @@ def test_manifest_keys_kind_defaults_to_dbt_and_is_threaded_when_present(monkeyp
     ]
 
 
+def test_an_explicitly_empty_kind_is_not_defaulted_to_dbt(monkeypatch):
+    """Only an absent kind defaults. A producer that set the field to "" chose a
+    value, and it is not a kind this build can parse — passing it through keeps
+    the handler's UnknownManifestKind failure available. Defaulting it would
+    parse a python contract with the dbt parser and misreport the release as
+    MalformedManifest, pointing the operator at the wrong artifact."""
+    _common_monkeypatches(monkeypatch)
+    captured = {}
+    monkeypatch.setattr(main, "S3Source",
+                        lambda **kw: captured.setdefault("keys", kw["keys"]) or object())
+    monkeypatch.setattr(main, "CandidateManifestHandler",
+                        lambda **kw: SimpleNamespace(handle=lambda release_id: None))
+    monkeypatch.setattr(main, "Consumer", _RecordingConsumer)
+    monkeypatch.setattr(main.threading, "Thread", _NoopThread)
+    monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
+    _RecordingConsumer.instances = []
+
+    main.main()
+
+    handler = _RecordingConsumer.instances[0].message_handler
+    handler({b"payload": json.dumps({
+        "release_id": "rel-1",
+        "manifest_keys": [
+            {"service": "service-1", "kind": "",
+             "s3_uri": "s3://continuo/service-1/rel-1/manifest.json"},
+        ],
+    }).encode()})
+
+    assert [r.kind for r in captured["keys"]] == [""]
+
+
 def test_both_runtimes_have_an_artifact_builder(monkeypatch):
     """A runtime with no builder fails the release at parse time; the
     composition root is the only place that can prevent it."""

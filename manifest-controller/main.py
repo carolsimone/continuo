@@ -100,14 +100,18 @@ def main() -> None:
             buckets.append(bucket)
             # parse_s3_uri appends a trailing slash to all non-empty paths; strip it
             # because object keys never end with "/" in S3.
-            # kind is absent from producers that predate python support, so it
-            # defaults to dbt. An unrecognized value is passed through verbatim:
-            # the handler reports it as a permanent failure, which the operator
-            # sees, rather than a decode exception that retries forever.
+            # Only an ABSENT kind defaults to dbt — that is the compatibility
+            # path for producers that predate python support. Any value the
+            # producer actually set is passed through verbatim, empty string
+            # included, so the handler reports it as a permanent
+            # UnknownManifestKind failure the operator sees. Defaulting a
+            # present-but-invalid value would parse a python contract with the
+            # dbt parser and misreport it as MalformedManifest, sending the
+            # operator to the wrong artifact.
             requests.append(ManifestRequest(
                 service=svc,
                 key=key.rstrip("/"),
-                kind=entry.get("kind") or ManifestKind.DBT,
+                kind=entry.get("kind", ManifestKind.DBT),
             ))
         if len(set(buckets)) > 1:
             raise ValueError(

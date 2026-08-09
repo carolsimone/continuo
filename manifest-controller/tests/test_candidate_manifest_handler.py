@@ -784,6 +784,24 @@ def test_an_unknown_kind_fails_the_release_permanently():
     assert "spark" in kwargs["error_detail"]
 
 
+def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
+    """An explicitly empty kind is not a kind this build can parse, so it takes
+    the same permanent-failure path as any other unrecognized value. Silently
+    reading it as dbt would parse a python contract with the dbt parser and
+    surface MalformedManifest — an error class that sends the operator looking
+    at the wrong artifact entirely."""
+    publisher = MagicMock()
+    source = _source_of(ManifestFile(
+        path="/nonexistent", version="v1",
+        declared_service="service-x", kind="",
+    ))
+
+    _dispatch_handler(source, publisher).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_not_called()
+    assert publisher.publish_failed.call_args.kwargs["error_class"] == "UnknownManifestKind"
+
+
 def test_a_python_kind_entry_is_published_as_a_python_model(tmp_path):
     publisher = MagicMock()
     source = _source_of(ManifestFile(
