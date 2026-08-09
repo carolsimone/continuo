@@ -12,6 +12,7 @@ from config.config import (
     validate,
     warehouse_dialect,
 )
+from adapters.candidate_spec_uploader import CandidateSpecUploader
 from adapters.candidate_sql_uploader import CandidateSqlUploader
 from adapters.code_bundle_uploader import CodeBundleUploader
 from adapters.health.server import start_health_server
@@ -20,7 +21,7 @@ from adapters.redis.consumer import Consumer
 from adapters.sources.s3 import S3Source
 from adapters.sources.s3_uri import parse_s3_uri
 from domain.model import ManifestKind, ManifestRequest, Runtime
-from service.candidate_artifacts import DbtSqlArtifactBuilder
+from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 
 logging.basicConfig(
@@ -58,6 +59,7 @@ def main() -> None:
         redis_client, MANIFEST_LOADED_CANDIDATE_STREAM,
     )
     candidate_uploader = CandidateSqlUploader(s3_client, S3_BUCKET)
+    candidate_spec_uploader = CandidateSpecUploader(s3_client, S3_BUCKET)
     code_bundle_uploader = CodeBundleUploader(s3_client, S3_BUCKET)
 
     # Resolved once at boot: validate() has already rejected an unsupported
@@ -118,7 +120,10 @@ def main() -> None:
             source=source,
             publisher=candidate_publisher,
             bundle_uploader=code_bundle_uploader,
-            artifact_builders={Runtime.DBT: DbtSqlArtifactBuilder(candidate_uploader)},
+            artifact_builders={
+                Runtime.DBT: DbtSqlArtifactBuilder(candidate_uploader),
+                Runtime.PYTHON: PythonSpecArtifactBuilder(candidate_spec_uploader),
+            },
             dialect=dialect,
         ).handle(release_id=release_id)
 

@@ -280,3 +280,36 @@ def test_manifest_keys_kind_defaults_to_dbt_and_is_threaded_when_present(monkeyp
     assert [(r.service, r.kind) for r in captured["keys"]] == [
         ("service-1", "dbt"), ("marketing-py", "python"),
     ]
+
+
+def test_both_runtimes_have_an_artifact_builder(monkeypatch):
+    """A runtime with no builder fails the release at parse time; the
+    composition root is the only place that can prevent it."""
+    _common_monkeypatches(monkeypatch)
+    monkeypatch.setattr(main, "CandidateSpecUploader", lambda *a, **kw: object())
+    captured = {}
+    monkeypatch.setattr(main, "S3Source", lambda **kw: object())
+
+    def _fake_handler(**kw):
+        # `dict.setdefault(...) or SimpleNamespace(...)` would return the
+        # (truthy, non-empty) builders dict itself rather than the namespace,
+        # since a non-empty dict is truthy; capture explicitly instead so the
+        # fake still returns something with a .handle() to call below.
+        captured["builders"] = kw["artifact_builders"]
+        return SimpleNamespace(handle=lambda release_id: None)
+
+    monkeypatch.setattr(main, "CandidateManifestHandler", _fake_handler)
+    monkeypatch.setattr(main, "Consumer", _RecordingConsumer)
+    monkeypatch.setattr(main.threading, "Thread", _NoopThread)
+    monkeypatch.setattr(main, "start_health_server", lambda *a, **kw: None)
+    _RecordingConsumer.instances = []
+
+    main.main()
+    _RecordingConsumer.instances[0].message_handler({b"payload": json.dumps({
+        "release_id": "rel-1",
+        "manifest_keys": [
+            {"service": "s1", "s3_uri": "s3://continuo/s1/rel-1/manifest.json"},
+        ],
+    }).encode()})
+
+    assert set(captured["builders"]) == {"dbt", "python"}
