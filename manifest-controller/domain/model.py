@@ -15,12 +15,34 @@ class Runtime(StrEnum):
     PYTHON = "python"
 
 
+class ManifestKind(StrEnum):
+    """Which artifact dialect a service's release payload speaks.
+
+    Carried per manifest_keys entry on release.requested:v1. Absent means dbt,
+    so a producer that predates python support needs no change.
+    """
+    DBT = "dbt"
+    PYTHON = "python"
+
+
+@dataclass(frozen=True)
+class ManifestRequest:
+    """One service's artifact to fetch for a release: its S3 object key plus the
+    kind that decides which parser reads it."""
+    service: str
+    key: str
+    kind: str = ManifestKind.DBT
+
+
 @dataclass
 class ManifestFile:
     path: str
     version: str
     image_tag: str = ""
     declared_service: str = ""
+    # The raw wire value, not narrowed to ManifestKind: an unrecognized kind is
+    # a permanent failure the handler reports, not an exception at decode time.
+    kind: str = ManifestKind.DBT
 
 
 @dataclass

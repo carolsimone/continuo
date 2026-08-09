@@ -19,7 +19,7 @@ from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from adapters.redis.consumer import Consumer
 from adapters.sources.s3 import S3Source
 from adapters.sources.s3_uri import parse_s3_uri
-from domain.model import Runtime
+from domain.model import ManifestKind, ManifestRequest, Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 
@@ -87,7 +87,7 @@ def main() -> None:
         # the service-mismatch/empty-manifest validation in the handler cannot be
         # silently bypassed.
         buckets = []
-        keyed_pairs: list[tuple[str, str]] = []
+        requests: list[ManifestRequest] = []
         for entry in manifest_keys_raw:
             svc = entry.get("service") if isinstance(entry, dict) else None
             if not svc:
@@ -98,13 +98,21 @@ def main() -> None:
             buckets.append(bucket)
             # parse_s3_uri appends a trailing slash to all non-empty paths; strip it
             # because object keys never end with "/" in S3.
-            keyed_pairs.append((svc, key.rstrip("/")))
+            # kind is absent from producers that predate python support, so it
+            # defaults to dbt. An unrecognized value is passed through verbatim:
+            # the handler reports it as a permanent failure, which the operator
+            # sees, rather than a decode exception that retries forever.
+            requests.append(ManifestRequest(
+                service=svc,
+                key=key.rstrip("/"),
+                kind=entry.get("kind") or ManifestKind.DBT,
+            ))
         if len(set(buckets)) > 1:
             raise ValueError(
                 f"release.requested:v1 manifest_keys span multiple buckets: {set(buckets)}"
             )
         shared_bucket = buckets[0] if buckets else S3_BUCKET
-        source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=keyed_pairs)
+        source = S3Source(bucket=shared_bucket, env=S3_ENV, s3_client=s3_client, keys=requests)
         # Cleanup is owned by CandidateManifestHandler.handle() via its own finally block.
         CandidateManifestHandler(
             source=source,
