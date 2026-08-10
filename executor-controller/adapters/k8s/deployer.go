@@ -34,13 +34,6 @@ func (d *Deployer) Deploy(ctx context.Context, spec deploy.JobSpec) error {
 	if err != nil {
 		return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
 	}
-	if nodeType == pkg_model.NodeTypePythonModel {
-		// Python-model runtime dispatch (running the user's image) is not
-		// implemented yet. Failing the task permanently here is deliberate:
-		// the alternative is falling through to the dbt command builder and
-		// running a wrong command on the node.
-		return fmt.Errorf("python-model runtime dispatch not implemented: %w", pkgevents.ErrPermanent)
-	}
 	return d.client.CreateQueryJob(ctx, JobParams{
 		JobName:      spec.JobName,
 		TaskID:       spec.TaskID,

@@ -155,10 +155,19 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		return nil
 	}
 
-	// Step 2: Build Job spec
-	podSpec, err := buildPodSpec(params,
-		c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName),
-		c.commands.PartialParsePath(params.ServiceName))
+	// Step 2: Build Job spec. Python-model nodes run the domain repository's own
+	// image under the runtime harness's environment; every other node type runs
+	// the team's dbt image under a resolved dbt command. The Job metadata below
+	// is shared, so both kinds route through k8s-controller's production
+	// lifecycle identically.
+	var podSpec corev1.PodSpec
+	if params.NodeType == pkg_model.NodeTypePythonModel {
+		podSpec, err = buildPythonPodSpec(params)
+	} else {
+		podSpec, err = buildPodSpec(params,
+			c.commands.NodeCommand(params.ServiceName, params.Operation, params.NodeType, params.TableName),
+			c.commands.PartialParsePath(params.ServiceName))
+	}
 	if err != nil {
 		return fmt.Errorf("failed to build pod spec: %w", err)
 	}
@@ -172,6 +181,11 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		"table_name":   params.TableName,
 		"schema_name":  params.SchemaName,
 		"service_name": params.ServiceName,
+	}
+	// The runtime label distinguishes python pods for operators without
+	// changing the app selector that CountActive uses for the concurrency cap.
+	if params.NodeType == pkg_model.NodeTypePythonModel {
+		jobLabels["runtime"] = "python"
 	}
 	// Stamp the mode label only when the caller provides one. Normal production
 	// jobs (empty Mode) get NO mode label — their wire format is unchanged and
@@ -1234,4 +1248,85 @@ func buildPodSpec(params JobParams, command []string, partialParsePath string) (
 	}
 
 	return spec, nil
+}
+
+// pythonImageHasExplicitTag reports whether ref names an explicit tag or
+// digest. A reference without one resolves to :latest implicitly, which makes
+// the code that actually ran unidentifiable from the release that promoted it.
+// The tag separator is searched only in the final path segment, so the port in
+// a registry host ("registry.local:5000/name") is not mistaken for one.
+func pythonImageHasExplicitTag(ref string) bool {
+	if strings.Contains(ref, "@") {
+		return true
+	}
+	lastSegment := ref
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		lastSegment = ref[i+1:]
+	}
+	return strings.Contains(lastSegment, ":")
+}
+
+// buildPythonPodSpec constructs the PodSpec for a python-model run Job.
+//
+// The pod is a single container running the node's own image verbatim: the
+// release's image_tag is a complete registry reference, built by the domain
+// repository FROM the engine-matched continuo-python-runtime base, and that
+// image's entrypoint is the harness that selects the node from the contract
+// files baked inside it. The executor therefore sets no command and resolves no
+// dbt command dialect.
+//
+// The environment is exactly the three variables the harness requires: NODE_ID
+// (whose trailing schema.table segments select the node), TABLE_NAME, and
+// TARGET_SCHEMA. These deliberately differ from the dbt Job env — the harness
+// recognizes no SCHEMA/DBT_TARGET_SCHEMA fallback — and CONTRACT_DIR and
+// APP_ROOT are left to the image, which declares its own layout. The warehouse
+// connection arrives via envFrom of the same operator-owned Secret dbt Jobs
+// attach; its engine-native keys are what the image's baked runtime adapter
+// reads.
+//
+// None of the dbt Job's pod plumbing applies: no parse-cache hydrate
+// initContainer, no shared volume, and no S3 credentials, which a domain image
+// never receives — its contract files travel inside the image itself.
+func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
+	switch p.Operation {
+	case pkg_model.OperationRun, pkg_model.OperationBuild:
+		// build materializes and tests in one step; a python node declares no
+		// tests, so it reduces to the same dispatch as run.
+	default:
+		return corev1.PodSpec{}, fmt.Errorf("%w: operation %q is not supported for python-model node %s.%s",
+			events.ErrPermanent, p.Operation, p.SchemaName, p.TableName)
+	}
+
+	if p.ImageTag == "" {
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for python-model node %s.%s",
+			events.ErrPermanent, p.SchemaName, p.TableName)
+	}
+	if !pythonImageHasExplicitTag(p.ImageTag) {
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag %q for python-model node %s.%s carries no explicit tag or digest",
+			events.ErrPermanent, p.ImageTag, p.SchemaName, p.TableName)
+	}
+
+	whFrom, err := warehouseSecretEnvFrom("python job " + p.JobName)
+	if err != nil {
+		return corev1.PodSpec{}, err
+	}
+
+	return corev1.PodSpec{
+		RestartPolicy:   corev1.RestartPolicyNever,
+		SecurityContext: jobPodSecurityContext(),
+		Containers: []corev1.Container{
+			{
+				Name:            "python-job",
+				Image:           p.ImageTag,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				Env: []corev1.EnvVar{
+					{Name: "NODE_ID", Value: p.SchemaName + "." + p.TableName},
+					{Name: "TABLE_NAME", Value: p.TableName},
+					{Name: "TARGET_SCHEMA", Value: p.SchemaName},
+				},
+				EnvFrom:         whFrom,
+				SecurityContext: baseContainerSecurityContext(),
+			},
+		},
+	}, nil
 }
