@@ -57,6 +57,27 @@ http://continuo-dex:5556/dex/.well-known/openid-configuration` verifies the
 port-forward without touching `/etc/hosts` at all (bundled Dex serves plain
 HTTP, not HTTPS).
 
+Run that `sudo` line in a real terminal window. sudo reads the password from
+the controlling terminal (`/dev/tty`), never from standard input unless you
+pass `-S`, so in a context with no terminal — an IDE terminal pane, an agent
+shell, a non-login shell — it does not prompt at all and exits with `sudo: a
+terminal is required to read the password`. The pipe into `tee` is unrelated to
+this: sudo ignores standard input either way. The password it wants is your
+local account password, not the Dex demo login below.
+
+Avoiding `/etc/hosts` entirely: point the browser's own resolver at the
+loopback port-forward instead of the system hosts file. This needs no root, and
+is the way out if sudo is unavailable. For Chrome, the separate
+`--user-data-dir` is required — an already-running Chrome ignores flags passed
+to a second launch.
+
+```bash
+open -na "Google Chrome" --args \
+  --host-resolver-rules="MAP continuo-dex 127.0.0.1" \
+  --user-data-dir="$HOME/.continuo-chrome" \
+  http://localhost:8090
+```
+
 The bundled datastores and the Dex demo user (`admin@example.com` /
 `password`, a bcrypt hash lifted verbatim from Dex's own example config) are
 for evaluation only. Passwords for bundled datastores are generated on first

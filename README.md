@@ -82,7 +82,7 @@ kind create cluster --name continuo
 
 # 2. Install Continuo from the published Helm chart (pre-built images, no clone needed)
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.1.1 -n continuo --create-namespace
+  --version 0.2.0 -n continuo --create-namespace
 
 # 3. Wait for everything to come up
 kubectl -n continuo get pods -w
@@ -91,7 +91,9 @@ kubectl -n continuo get pods -w
 kubectl -n continuo port-forward svc/ui-service 8090:8090 &
 kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
 
-# 5. One-time: let your browser resolve the in-cluster login issuer
+# 5. One-time: let your browser resolve the in-cluster login issuer.
+#    sudo prompts on the terminal, so run this in a real terminal window
+#    (not an IDE/agent shell). No sudo? See deploy/continuo/README.md.
 echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
 
 # 6. Open it
