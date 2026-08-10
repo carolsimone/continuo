@@ -2,6 +2,11 @@
 set -eo pipefail
 
 CLUSTER_NAME="continuo"
+
+# Tag the python e2e fixture domain image is built and side-loaded under. The
+# e2e posts this exact string as a release's image_tag; the executor runs a
+# python-model node's image verbatim, so the two must agree.
+PY_FIXTURE_IMAGE="continuo-e2e-py-probe:latest"
 KIND_VERSION="v0.30.0"
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
@@ -67,6 +72,12 @@ echo "Building dbt base image..."
 DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 echo "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
+# The python e2e fixture: a domain image built the way a real domain repository
+# builds one — the published runtime base plus that service's contracts and
+# scripts. The e2e posts this exact tag as the release's image_tag, and the
+# executor runs it verbatim.
+echo "Building python e2e fixture image..."
+DOCKER_BUILDKIT=1 docker build -t "${PY_FIXTURE_IMAGE}" tests/e2e/fixtures/py-probe/
 echo "Pulling continuo-validation (postgres) image..."
 docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0
 echo "Building service images (batched)..."
@@ -139,6 +150,9 @@ kind load docker-image continuo-executor-controller:latest --name ${CLUSTER_NAME
 kind load docker-image continuo-k8s-controller:latest --name ${CLUSTER_NAME}
 kind load docker-image dbt-base:latest --name ${CLUSTER_NAME}
 kind load docker-image s3-sidecar:latest --name ${CLUSTER_NAME}
+# Built locally from a pulled base, so a plain `kind load docker-image` works —
+# kind_load_pulled_image is only needed for images pulled directly.
+kind load docker-image "${PY_FIXTURE_IMAGE}" --name ${CLUSTER_NAME}
 # The validation image is pulled, not built locally, so a plain `kind load
 # docker-image` fails on a containerd-backed image store — see
 # scripts/lib/common.sh:kind_load_pulled_image.

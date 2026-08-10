@@ -1,0 +1,33 @@
+nodes:
+  # Conforming node: returns exactly the declared columns and types, so the run
+  # path materializes real rows in the warehouse.
+  - schema: e2e_schema
+    table: py_probe
+    owner: e2e
+    schedule: daily
+    criticality: SECONDARY
+    script: scripts/py_probe.py
+    description: "conforming python node for the e2e run path"
+    reads:
+      # pg_catalog is always present and outside Continuo's registry, so this
+      # read produces no upstream edge and the fixture stays independent of
+      # warehouse table state.
+      tables: select schemaname from pg_catalog.pg_tables
+    output_columns:
+      - {name: id, type: INTEGER, nullable: false}
+      - {name: label, type: VARCHAR(16)}
+
+  # Non-conforming node: passes validation, which only creates an empty typed
+  # table from the declared columns and never runs the script, then fails at run
+  # time with ConformError when the harness's strict cast rejects the result.
+  - schema: e2e_schema
+    table: py_bad_shape
+    owner: e2e
+    schedule: daily
+    criticality: SECONDARY
+    script: scripts/py_bad_shape.py
+    description: "python node whose script returns a non-conforming column type"
+    reads:
+      tables: select schemaname from pg_catalog.pg_tables
+    output_columns:
+      - {name: id, type: INTEGER, nullable: false}
