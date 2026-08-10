@@ -93,12 +93,19 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	resetReleaseControllerQueue(t, ctx, clients)
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, pyE2EService)
-	t.Cleanup(func() {
-		// A leftover pointer would drag svc-py-e2e's contract into every later
-		// test's assembled manifest set.
-		_, _ = clients.releaseDB.ExecContext(context.Background(),
-			`DELETE FROM service_prod WHERE service_name = $1`, pyE2EService)
-	})
+	// A leftover pointer would drag svc-py-e2e's contract into every later
+	// test's assembled manifest set, so this MUST run before the DB pool
+	// closes. Registered as a plain defer (not t.Cleanup) and placed after
+	// `defer clients.close(ctx)` above: defers run LIFO, so this one — the
+	// later-registered defer — fires first, while releaseDB is still open.
+	// Moving this back into t.Cleanup would run it after all deferred calls,
+	// including clients.close(ctx), against an already-closed pool.
+	defer func() {
+		if _, err := clients.releaseDB.ExecContext(context.Background(),
+			`DELETE FROM service_prod WHERE service_name = $1`, pyE2EService); err != nil {
+			t.Errorf("cleanup: delete %s service_prod row: %v", pyE2EService, err)
+		}
+	}()
 
 	// CI-analogue: the contract artifact is uploaded BEFORE the POST (§13.5).
 	contractKey := fmt.Sprintf("%s/%s/contract.yaml", pyE2EService, releaseID)
