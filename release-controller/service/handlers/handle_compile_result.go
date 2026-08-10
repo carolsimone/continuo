@@ -20,21 +20,6 @@ type HandleCompileResultInput struct {
 	ErrorDetail string       `json:"error_detail,omitempty"`
 }
 
-// manifestKeyDTO is the wire shape for one service's manifest entry in the
-// release.requested:v1 payload. Kept here (single definition) and used by
-// both HandleCompileResult and any caller that needs to assemble the payload.
-type manifestKeyDTO struct {
-	Service string `json:"service"`
-	S3URI   string `json:"s3_uri"`
-}
-
-// releaseRequestedPayload is the exact wire shape of release.requested:v1 as
-// consumed by manifest-controller. The shape must not change.
-type releaseRequestedPayload struct {
-	ReleaseID    string           `json:"release_id"`
-	ManifestKeys []manifestKeyDTO `json:"manifest_keys"`
-}
-
 // compileRejection maps the compile Job's failed container to the reject
 // reason and the operator/remediation-facing detail. The parse and upload
 // containers are continuo's parse-export leg — their failures must never be
@@ -192,29 +177,8 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	imageTag := r.ImageTags()[r.ChangedService()]
 	set := AssembleManifestSet(pointers, d.Bucket, r.ChangedService(), in.ReleaseID, imageTag, r.ManifestKind())
 
-	keys := make([]manifestKeyDTO, len(set.ManifestKeys))
-	for i, k := range set.ManifestKeys {
-		keys[i] = manifestKeyDTO{Service: k.Service, S3URI: k.S3URI}
-	}
-	releasePayload, err := json.Marshal(releaseRequestedPayload{
-		ReleaseID:    in.ReleaseID,
-		ManifestKeys: keys,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(in.ReleaseID),
-		EventType:     "release_requested",
-		Payload:       releasePayload,
-		StreamName:    streams.ReleaseRequestedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := emitReleaseRequested(ctx, u, in.ReleaseID, set.ManifestKeys, now); err != nil {
+		return err
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
