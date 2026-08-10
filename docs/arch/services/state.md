@@ -57,6 +57,12 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 | `parse_cache` | `varchar(16)` NULL | Whether the executing Job's team container ran with the hydrated partial-parse cache: `hydrated` / `degraded` / `unknown`. NULL for executions that predate hydration or whose Job had no `hydrate-parse-cache` initContainer (e.g. `S3_BUCKET` unset). Persisted verbatim from the `parse_cache` field on `task.execution.recorded:v1`, which k8s-controller derives from that initContainer's termination message. Migration: V30. |
 | `parse_cache_reason` | `text` NULL | The degrade reason, set only when `parse_cache='degraded'` (e.g. an S3 fetch failure). NULL otherwise. Migration: V30. |
 
+### Structured-result column on `task_execution`
+
+| Column | Type | Purpose |
+|---|---|---|
+| `run_results_uri` | `varchar(500)` NULL | S3 key of the structured result block the executing pod printed as its last stdout line. `python-model` containers always print one — its message carries a deterministic error class (`ContractError` / `ReadError` / `ScriptError` / `ConformError` / `LoadError`) — while dbt containers never do, so the column is NULL for every dbt execution. Persisted verbatim from `run_results_uri` on `task.execution.recorded:v1`. Exposed on `TaskExecution` and on the per-node run history. Migration: V32. |
+
 ### `scheduler_tracker` indexes for schedule_name access
 
 | Index | Definition | Purpose |
@@ -183,7 +189,7 @@ Response: an ordered list of node-run rows, most recent first (`scheduler_tracke
 
 - run-level: `run_id` (= `scheduler_tracker.schedule_id`), `schedule_name`, `kind` (`cron` | `trigger` | `rerun` | `rebase` | `single_node_run`), `terminal_status` (empty string while the run is in flight)
 - task-level: `task_id`, `task_status`, `retry_count`, `image_tag`, `manifest_version`, `operation` (`run` | `test` | `build`)
-- exec-level: `started_at`, `completed_at`, `error_message`, `log_s3_key` — empty/null when no execution record has been written yet (e.g. a task still in `PENDING`)
+- exec-level: `started_at`, `completed_at`, `error_message`, `log_s3_key`, `run_results_uri` — empty/null when no execution record has been written yet (e.g. a task still in `PENDING`), and `run_results_uri` is additionally empty for any execution whose container printed no structured result block (every dbt execution)
 
 All timestamps are RFC3339 strings; empty string indicates the field is not yet populated.
 
@@ -502,7 +508,7 @@ Dedup against `message_processing` is performed by the binding before the handle
 Published by: `k8s-controller`
 
 Effects:
-1. Insert row in `task_execution`, including `parse_cache`/`parse_cache_reason` verbatim from the payload (NULL when the payload omits them)
+1. Insert row in `task_execution`, including `parse_cache`/`parse_cache_reason`/`run_results_uri` verbatim from the payload (NULL when the payload omits them)
 
 Dedup against `message_processing` is performed by the binding before the handler runs.
 
