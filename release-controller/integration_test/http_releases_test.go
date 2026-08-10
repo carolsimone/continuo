@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -109,4 +110,30 @@ func TestIntegration_GetReleaseIncludesPerNode(t *testing.T) {
 	perNode, ok := resp["per_node_results"].([]any)
 	require.True(t, ok)
 	assert.Len(t, perNode, 2)
+}
+
+// TestIntegration_PostReleases_UnknownKind_Returns400 verifies that POST
+// /releases rejects an unrecognised kind with HTTP 400 (rather than silently
+// defaulting or accepting it) and persists no release row.
+func TestIntegration_PostReleases_UnknownKind_Returns400(t *testing.T) {
+	srv, deps, db := setup(t)
+	defer db.Close()
+
+	body, _ := json.Marshal(handlers.ReceiveCandidateInput{
+		Service:   "svc-bad",
+		ReleaseID: "rBadKind",
+		ImageTag:  "t",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeefcafe1234",
+		Kind:      "r",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/releases", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "unknown manifest kind")
+
+	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rBadKind")
+	require.NoError(t, err)
+	assert.Nil(t, r, "no release row should be persisted for a rejected kind")
 }

@@ -257,7 +257,9 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 // seedToValidatingPython mirrors seedToValidating but registers the release as
 // Kind: "python" for a distinct service, so promotion tests can assert the
 // service_prod pointer written for a python-kind release points at
-// contract.yaml rather than manifest.json.
+// contract.yaml rather than manifest.json. A python release has no compile
+// leg: AdvanceQueue activates it straight into Parsing, so — unlike
+// seedToValidating — there is no HandleCompileResult call here.
 func seedToValidatingPython(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	deps, store := newDeps(time.Unix(100, 0).UTC())
@@ -272,10 +274,6 @@ func seedToValidatingPython(t *testing.T, releaseID string) (*handlers.Deps, *fa
 		Kind:      "python",
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	// Simulate the compile leg completing (Compiling → Parsing).
-	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
-		ReleaseID: releaseID, Status: "ok",
-	}))
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-py", UpstreamUniqueIDs: []string{}},

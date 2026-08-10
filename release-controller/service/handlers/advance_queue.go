@@ -12,19 +12,27 @@ import (
 	"github.com/google/uuid"
 )
 
-// AdvanceQueue promotes the oldest Received release to Compiling and emits
-// compile.requested:v1 into the outbox — but only if no release is already
-// active (Compiling, Parsing, SeedBuilding, or Validating). Safe to call
-// repeatedly; it is a no-op when the queue is empty or when a release is
-// already in flight.
+// AdvanceQueue promotes the oldest Received release to active — but only if
+// no release is already active (Compiling, Parsing, SeedBuilding, or
+// Validating). Safe to call repeatedly; it is a no-op when the queue is empty
+// or when a release is already in flight.
 //
-// The assembled image-tag set (for all services) is computed here so that
-// SetAssembledImageTags can record the full multi-service map on the release.
-// The other services' service_prod pointers can change as earlier-queued
-// releases are promoted, so we must read them at activation time to guarantee
-// we see the live state. The manifest-key set is assembled again in
-// HandleCompileResult (ok path), reading live service_prod a second time when
-// the release advances to Parsing.
+// The assembled manifest set (for all services) is computed once here, before
+// the branch below, so both paths record the same SetAssembledImageTags map
+// and read the other services' service_prod pointers exactly once. Those
+// pointers can change as earlier-queued releases are promoted, so we must
+// read them at activation time to guarantee we see the live state.
+//
+// The release's kind then decides how it proceeds:
+//   - dbt: TransitionToCompiling and emit compile.requested:v1 — CI's manifest
+//     still needs a fresh dbt compile before it can be parsed. The
+//     manifest-key set is assembled again in HandleCompileResult (ok path),
+//     reading live service_prod a second time when the release advances to
+//     Parsing.
+//   - python: no compile leg exists — CI already compiled and uploaded the
+//     contract artifact before POST /releases — so the release goes straight
+//     to TransitionToParsing and emits release.requested:v1 with the set
+//     assembled here.
 func AdvanceQueue(ctx context.Context, d *Deps) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -92,14 +100,34 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	}
 
 	now := d.Clock.Now()
-	if err := next.TransitionToCompiling(now); err != nil {
-		return fmt.Errorf("transition to compiling: %w", err)
-	}
-
 	imageTag := next.ImageTags()[next.ChangedService()]
 	set := AssembleManifestSet(pointers, d.Bucket, next.ChangedService(), next.ID(), imageTag, next.ManifestKind())
 	next.SetAssembledImageTags(set.ImageTags)
 
+	if next.ManifestKind() == release.ManifestKindPython {
+		// A python release has no compile leg: CI compiled and uploaded the
+		// contract artifact before POST /releases, so activation goes straight
+		// to Parsing and requests the manifest load with keys assembled from
+		// the same live service_prod read the activation guard used.
+		if err := next.TransitionToParsing(now); err != nil {
+			return fmt.Errorf("transition to parsing: %w", err)
+		}
+		if err := u.ReleaseRepo().Save(ctx, next); err != nil {
+			return fmt.Errorf("save release: %w", err)
+		}
+		if err := emitReleaseRequested(ctx, u, next.ID(), set.ManifestKeys, now); err != nil {
+			return err
+		}
+		if err := u.Commit(); err != nil {
+			return fmt.Errorf("commit: %w", err)
+		}
+		d.Telemetry.ReleaseParseRequested(ctx, next.ID())
+		return nil
+	}
+
+	if err := next.TransitionToCompiling(now); err != nil {
+		return fmt.Errorf("transition to compiling: %w", err)
+	}
 	if err := u.ReleaseRepo().Save(ctx, next); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}

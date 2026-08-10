@@ -155,6 +155,10 @@ test-deps-down:
 # own database continuo_<svc>. Creds (continuo_svc/continuo) come from docker-compose.yml.
 # Includes -tags integration (closes the coverage gap). On macOS add
 # TESTCONTAINERS_RYUK_DISABLED=true; on CI Linux runners RYUK works, so omit it.
+# release-controller pins GOFLAGS=-p=1: its adapters/postgres and
+# integration_test packages both TRUNCATE the same shared live-DB tables, so
+# running them as parallel package binaries (the default `go test ./...`
+# behaviour) races between one package's TRUNCATE and another's assertions.
 .PHONY: test-go
 test-go: test-deps-up
 	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES)); do \
@@ -163,7 +167,7 @@ test-go: test-deps-up
 	    state) db=continuo_state;; orchestrator) db=continuo_orchestrator;; \
 	    executor-controller) db=continuo_executor;; k8s-controller) db=continuo_k8s;; \
 	    release-controller) db=continuo_release; \
-	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable";; \
+	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
 	    remediation-agent) db=continuo_remediation_agent;; agent-runner) db=continuo_agent;; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \
