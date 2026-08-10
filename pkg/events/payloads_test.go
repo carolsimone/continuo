@@ -230,3 +230,39 @@ func TestCheckK8s_OmitsEmptyOperation(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(b), "operation")
 }
+
+// TestTaskExecutionRecorded_OmitsEmptyRunResultsURI pins the wire-compatibility
+// guarantee: an execution whose container printed no structured result block —
+// every dbt job — serializes exactly as it did before the field existed, on
+// both the JSON and the Redis flat-map representations.
+func TestTaskExecutionRecorded_OmitsEmptyRunResultsURI(t *testing.T) {
+	in := events.TaskExecutionRecorded{
+		ExecutionID:      uuid.New().String(),
+		TaskID:           uuid.New().String(),
+		JobName:          "job-1",
+		ExecutionSeconds: 1.5,
+	}
+
+	b, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "run_results_uri")
+	assert.NotContains(t, in.ToMap(), "run_results_uri")
+}
+
+// TestTaskExecutionRecorded_CarriesRunResultsURI verifies the structured
+// result's S3 key reaches both representations under the same name the
+// validation events use, so one consumer vocabulary spans validation and
+// production executions.
+func TestTaskExecutionRecorded_CarriesRunResultsURI(t *testing.T) {
+	const key = "run-results/task-executions/svc/sc/tbl/exec-1.json"
+	in := events.TaskExecutionRecorded{
+		ExecutionID:     uuid.New().String(),
+		TaskID:          uuid.New().String(),
+		RunResultsS3Key: key,
+	}
+
+	b, err := json.Marshal(in)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"run_results_uri":"`+key+`"`)
+	assert.Equal(t, key, in.ToMap()["run_results_uri"])
+}
