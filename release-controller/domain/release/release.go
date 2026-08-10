@@ -199,6 +199,11 @@ func (r *Release) RecordValidationResults(results []NodeValidationResult) {
 	r.RecordStageResults("validation", results)
 }
 
+// TransitionToParsing moves a Received release directly into Parsing at
+// activation, skipping the Compiling leg. This is the python path: CI already
+// compiled and uploaded the contract artifact before POST /releases, so there
+// is no dbt compile step to wait for. The dbt path instead goes through
+// TransitionToCompiling and reaches Parsing later, via TransitionFromCompiling.
 func (r *Release) TransitionToParsing(now time.Time) error {
 	if r.status != StatusReceived {
 		return fmt.Errorf("cannot transition to parsing from %s", r.status)
@@ -211,7 +216,8 @@ func (r *Release) TransitionToParsing(now time.Time) error {
 
 // TransitionToCompiling moves a Received release into Compiling — the leg where
 // continuo runs the changed service's dbt compile to produce its manifest before
-// parsing. Replaces the direct Received->Parsing step at activation.
+// parsing. This is the dbt path only; a python release has no compile leg and
+// activates straight into Parsing via TransitionToParsing instead.
 func (r *Release) TransitionToCompiling(now time.Time) error {
 	if r.status != StatusReceived {
 		return fmt.Errorf("cannot transition to compiling from %s", r.status)

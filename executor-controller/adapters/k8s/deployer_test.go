@@ -26,14 +26,39 @@ func TestDeploy_PythonModel_FailsClosedPermanently(t *testing.T) {
 	assert.Contains(t, err.Error(), "python-model runtime dispatch not implemented")
 }
 
-// TestDeployValidation_PythonModel_IsNotGuarded documents that only the RUN
-// path (Deploy) is guarded against python-model: DeployValidation must still
-// accept it, since python-model nodes go through validation (build_from_columns)
-// same as dbt nodes. A nil client would panic past the parse in DeployValidation,
-// so this asserts the parse step alone succeeds for python-model.
+// TestDeployValidation_PythonModel_IsNotGuarded proves that only the RUN path
+// (Deploy) is guarded against python-model: DeployValidation must still create
+// the Job for it, since python-model nodes go through validation
+// (build_from_columns) same as dbt nodes. It exercises DeployValidation itself
+// (through a fake-clientset K8sClient), not just ParseNodeType, so a future
+// change that leaks Deploy's "python-model runtime dispatch not implemented"
+// guard into DeployValidation would fail this test.
 func TestDeployValidation_PythonModel_IsNotGuarded(t *testing.T) {
-	_, err := pkg_model.ParseNodeType("python-model")
-	require.NoError(t, err)
+	client := newValidationTestClient()
+	d := NewDeployer(client, "default")
+
+	spec := deploy.ValidationJobSpec{
+		JobName:              "validate-py-rel123",
+		ReleaseID:            "rel123",
+		NodeID:               "svc-py.py_probe",
+		ServiceName:          "svc-py",
+		SchemaName:           "analytics",
+		TableName:            "py_probe",
+		NodeType:             string(pkg_model.NodeTypePythonModel),
+		ImageTag:             "img",
+		CandidateSchema:      "candidate_rel123",
+		CandidateArtifactURI: "s3://continuo-artifacts/candidate-sql/rel123/svc-py.py_probe.json",
+		ValidationOp:         "build_from_columns",
+	}
+
+	err := d.DeployValidation(context.Background(), spec)
+	require.NoError(t, err, "python-model must proceed past node-type parsing on the validation path, not hit the run-path guard")
+
+	job := fetchJob(t, client, "default", "validate-py-rel123")
+	podSpec := job.Spec.Template.Spec
+	assert.Equal(t, "s3://continuo-artifacts/candidate-sql/rel123/svc-py.py_probe.json", envByName(podSpec, "CANDIDATE_SPEC_URI"),
+		"the Job actually built for a python-model validation node, not a stub")
+	assert.Equal(t, "build_from_columns", envByName(podSpec, "VALIDATION_OP"))
 }
 
 // TestCompileParamsFromSpec_MapsAllFields pins DeployCompile's spec→params

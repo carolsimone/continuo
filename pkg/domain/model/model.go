@@ -47,7 +47,8 @@ const (
 	AnnotationNodeID    = "continuo.dev/node-id"
 )
 
-// NodeType represents the dbt resource type for a graph node.
+// NodeType represents the resource type for a graph node (dbt-model/seed/snapshot,
+// or python-model).
 type NodeType string
 
 const (
