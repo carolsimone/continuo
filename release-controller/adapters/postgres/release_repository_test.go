@@ -69,6 +69,26 @@ func TestReleaseRepository_SaveAndGet(t *testing.T) {
 	assert.Equal(t, "rA", got.ID())
 	assert.Equal(t, release.StatusReceived, got.Status())
 	assert.Equal(t, "svc", got.ChangedService())
+	assert.Equal(t, release.ManifestKindDbt, got.ManifestKind())
+}
+
+// TestReleaseRepository_ManifestKindRoundTrips verifies that the manifest
+// kind a Release was constructed with (dbt or python) survives a Save/Get
+// round trip through the releases.kind column, which is immutable after
+// insert.
+func TestReleaseRepository_ManifestKindRoundTrips(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db, nil)
+	ctx := context.Background()
+
+	r := release.New("rel-kind", "svc-py", "img:1", false, "acme/py", "cafebabe",
+		release.ManifestKindPython, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rel-kind")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, release.ManifestKindPython, got.ManifestKind())
 }
 
 func TestReleaseRepository_BootstrapRoundTrips(t *testing.T) {
@@ -480,6 +500,7 @@ func TestReleaseRepository_RoundTripsCandidateArtifactURI(t *testing.T) {
 		ValidationNodeIDs: []string{"n"},
 		Repo:              "acme/demo",
 		CommitSHA:         "deadbeef",
+		ManifestKind:      release.ManifestKindDbt,
 		CreatedAt:         time.Unix(100, 0).UTC(),
 	})
 	require.NoError(t, repo.Save(ctx, r))
