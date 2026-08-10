@@ -54,13 +54,17 @@ const (
 	NodeTypeDbtModel    NodeType = "dbt-model"
 	NodeTypeDbtSeed     NodeType = "dbt-seed"
 	NodeTypeDbtSnapshot NodeType = "dbt-snapshot"
+	// NodeTypePythonModel is a Continuo-native python node (contract.yaml +
+	// user image). Validation routes it to build_from_columns; runtime
+	// dispatch is not implemented yet and fails closed in the executor.
+	NodeTypePythonModel NodeType = "python-model"
 )
 
 // ParseNodeType converts a raw string to NodeType.
 // Returns an error for empty or unrecognised values.
 func ParseNodeType(s string) (NodeType, error) {
 	switch NodeType(s) {
-	case NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot:
+	case NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot, NodeTypePythonModel:
 		return NodeType(s), nil
 	default:
 		return "", fmt.Errorf("unknown node_type %q", s)
