@@ -173,7 +173,7 @@ test-go: test-deps-up
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \
-	  (cd $$s && POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=$$db \
+	  (cd $$s && env POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=$$db \
 	     POSTGRES_USER=continuo_svc POSTGRES_PASSWORD=continuo DB_SSLMODE=disable \
 	     NEO4J_HOST=localhost $$extra \
 	     go test -tags integration -count=1 ./... -timeout 20m) || rc=1; \

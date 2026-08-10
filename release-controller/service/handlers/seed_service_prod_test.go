@@ -127,3 +127,66 @@ func TestSeedServiceProd_EmptyTopologyReturnsZero(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 }
+
+func TestSeedServiceProd_DerivesManifestKindPerService(t *testing.T) {
+	now := time.Unix(1_000_000, 0).UTC()
+
+	// service-1 is a dbt service; service-2 is a python service.
+	cp := buildCurrentProd("rel-1",
+		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "dbt-model"},
+		release.Node{UniqueID: "n2", ServiceName: "service-2", ImageTag: "t2", NodeType: "python-model"},
+	)
+	existingKeys := map[string]string{
+		"service-1": "s3://bucket/service-1/manifest.json",
+		"service-2": "s3://bucket/service-2/contract.yaml",
+	}
+
+	store := newFakeStore()
+	repo := &fakeServiceProdRepo{store: store}
+
+	n, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	sp1, err := repo.Get(context.Background(), "service-1")
+	require.NoError(t, err)
+	require.NotNil(t, sp1)
+	assert.Equal(t, release.ManifestKindDbt, sp1.ManifestKind())
+
+	sp2, err := repo.Get(context.Background(), "service-2")
+	require.NoError(t, err)
+	require.NotNil(t, sp2)
+	assert.Equal(t, release.ManifestKindPython, sp2.ManifestKind())
+}
+
+func TestSeedServiceProd_MixedKindServiceErrorsAndWritesNothing(t *testing.T) {
+	now := time.Unix(1_000_000, 0).UTC()
+
+	// service-1 mixes a dbt node and a python node — this must be rejected
+	// before anything is written, including the clean service-2 pointer.
+	cp := buildCurrentProd("rel-1",
+		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "dbt-model"},
+		release.Node{UniqueID: "n2", ServiceName: "service-1", ImageTag: "t1", NodeType: "python-model"},
+		release.Node{UniqueID: "n3", ServiceName: "service-2", ImageTag: "t2", NodeType: "dbt-model"},
+	)
+	existingKeys := map[string]string{
+		"service-1": "s3://bucket/service-1/manifest.json",
+		"service-2": "s3://bucket/service-2/manifest.json",
+	}
+
+	store := newFakeStore()
+	repo := &fakeServiceProdRepo{store: store}
+
+	n, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "service-1")
+	assert.Equal(t, 0, n)
+
+	sp1, err := repo.Get(context.Background(), "service-1")
+	require.NoError(t, err)
+	assert.Nil(t, sp1, "mixed-kind service must not be written")
+
+	sp2, err := repo.Get(context.Background(), "service-2")
+	require.NoError(t, err)
+	assert.Nil(t, sp2, "no service must be written when validation fails")
+}
