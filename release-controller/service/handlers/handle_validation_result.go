@@ -144,6 +144,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		releaseID,
 		CanonicalManifestKey(d.Bucket, changed, releaseID),
 		r.ImageTags()[changed],
+		r.ManifestKind(),
 		now,
 	)
 	if err := u.ServiceProdRepo().Upsert(ctx, sp); err != nil {

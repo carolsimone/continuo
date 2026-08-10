@@ -53,8 +53,8 @@ func TestPruneResolvedReleases_IncludesServiceProdReleaseIDs(t *testing.T) {
 	// current_prod points at cp-1
 	store.SeedCurrentProd(release.RehydrateCurrentProd("cp-1", release.Topology{}, now))
 	// service_prod rows point at different releases for each service
-	store.SeedServiceProd(release.NewServiceProd("svc-a", "sp-a", "s3://a", "t1", now))
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "sp-b", "s3://b", "t2", now))
+	store.SeedServiceProd(release.NewServiceProd("svc-a", "sp-a", "s3://a", "t1", release.ManifestKindDbt, now))
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "sp-b", "s3://b", "t2", release.ManifestKindDbt, now))
 
 	var captured *fakeReleaseRepo
 	deps.NewUoW = func() uow.UnitOfWork {
@@ -103,7 +103,7 @@ func TestPruneResolvedReleases_DeduplicatesOverlappingIDs(t *testing.T) {
 	store := newFakeStore()
 	// current_prod and a service_prod row both reference the same release.
 	store.SeedCurrentProd(release.RehydrateCurrentProd("shared-1", release.Topology{}, now))
-	store.SeedServiceProd(release.NewServiceProd("svc-a", "shared-1", "s3://a", "t1", now))
+	store.SeedServiceProd(release.NewServiceProd("svc-a", "shared-1", "s3://a", "t1", release.ManifestKindDbt, now))
 
 	var captured *fakeReleaseRepo
 	deps.NewUoW = func() uow.UnitOfWork {

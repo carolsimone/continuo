@@ -13,8 +13,8 @@ import (
 func TestAssembleManifestSet_ReplacesChangedServiceAndMergesOthers(t *testing.T) {
 	now := time.Unix(0, 0).UTC()
 	existing := []*release.ServiceProd{
-		release.NewServiceProd("service-1", "rOLD1", "k1", "t1", now),
-		release.NewServiceProd("service-2", "rOLD2", "kOLD", "tOLD", now),
+		release.NewServiceProd("service-1", "rOLD1", "k1", "t1", release.ManifestKindDbt, now),
+		release.NewServiceProd("service-2", "rOLD2", "kOLD", "tOLD", release.ManifestKindDbt, now),
 	}
 
 	result := handlers.AssembleManifestSet(

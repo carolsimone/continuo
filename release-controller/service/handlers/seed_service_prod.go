@@ -53,7 +53,7 @@ func SeedServiceProd(
 	}
 
 	for _, svc := range orderSeen {
-		sp := release.NewServiceProd(svc, cp.ReleaseID(), existingKeys[svc], entries[svc].imageTag, now)
+		sp := release.NewServiceProd(svc, cp.ReleaseID(), existingKeys[svc], entries[svc].imageTag, release.ManifestKindDbt, now)
 		if err := repo.Upsert(ctx, sp); err != nil {
 			return 0, fmt.Errorf("upsert service_prod for %q: %w", svc, err)
 		}

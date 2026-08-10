@@ -304,7 +304,7 @@ func TestReleaseRepository_DeleteResolvedBeforeKeepsServiceProdRefs(t *testing.T
 	mkPromoted("sp-ref", 100)
 	mkPromoted("sp-unref", 100)
 	// svc-a still points at sp-ref (its last promoted release).
-	require.NoError(t, spRepo.Upsert(ctx, release.NewServiceProd("svc-a", "sp-ref", "s3://a", "t1", time.Unix(100, 0).UTC())))
+	require.NoError(t, spRepo.Upsert(ctx, release.NewServiceProd("svc-a", "sp-ref", "s3://a", "t1", release.ManifestKindDbt, time.Unix(100, 0).UTC())))
 
 	// Collect keep IDs by reading service_prod (mirroring what PruneResolvedReleases does).
 	sps, err := spRepo.List(ctx)

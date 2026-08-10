@@ -64,7 +64,7 @@ func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string
 		if s == changedSvc {
 			continue
 		}
-		store.SeedServiceProd(release.NewServiceProd(s, releaseID+"-prev", "s3://continuo/"+s+"/prev/manifest.json", tg, time.Unix(0, 0)))
+		store.SeedServiceProd(release.NewServiceProd(s, releaseID+"-prev", "s3://continuo/"+s+"/prev/manifest.json", tg, release.ManifestKindDbt, time.Unix(0, 0)))
 	}
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
@@ -492,7 +492,7 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 	// so AdvanceQueue assembles both image tags. Seed service_prod BEFORE AdvanceQueue.
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "sha-b", time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "sha-b", release.ManifestKindDbt, time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
@@ -699,7 +699,7 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	// Seed service_prod BEFORE AdvanceQueue so the assembly picks it up.
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", release.ManifestKindDbt, time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-alpha", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
