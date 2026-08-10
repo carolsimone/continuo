@@ -6,9 +6,35 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestDeploy_PythonModel_FailsClosedPermanently verifies the run-path guard:
+// python-model runtime dispatch (running the user's image with the normative
+// env) is not implemented yet, so Deploy must fail permanently rather than
+// fall through to the dbt command builder and run a wrong command on the
+// node. The guard fires before any client use, so a nil client is safe here.
+func TestDeploy_PythonModel_FailsClosedPermanently(t *testing.T) {
+	d := NewDeployer(nil, "ns")
+	err := d.Deploy(context.Background(), deploy.JobSpec{
+		JobName: "j1", NodeType: "python-model", TableName: "py_probe", ServiceName: "svc-py",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
+	assert.Contains(t, err.Error(), "python-model runtime dispatch not implemented")
+}
+
+// TestDeployValidation_PythonModel_IsNotGuarded documents that only the RUN
+// path (Deploy) is guarded against python-model: DeployValidation must still
+// accept it, since python-model nodes go through validation (build_from_columns)
+// same as dbt nodes. A nil client would panic past the parse in DeployValidation,
+// so this asserts the parse step alone succeeds for python-model.
+func TestDeployValidation_PythonModel_IsNotGuarded(t *testing.T) {
+	_, err := pkg_model.ParseNodeType("python-model")
+	require.NoError(t, err)
+}
 
 // TestCompileParamsFromSpec_MapsAllFields pins DeployCompile's spec→params
 // field threading: every field a fully-populated deploy.ValidationJobSpec

@@ -314,7 +314,9 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // single main container; the runner fetches the compiled SQL from S3 itself. There
 // is no init container and no shared emptyDir for this path. clone_from_prod nodes
 // have no candidate SQL and never touch S3, so they remain single-container with no
-// emptyDir and no S3 credentials.
+// emptyDir and no S3 credentials. build_from_columns (python-model nodes) receive
+// CANDIDATE_SPEC_URI + S3 credentials instead: the runner fetches the published
+// JSON validation spec (declared reads + output columns), not compiled SQL.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 	// VALIDATION_IMAGE names the engine's continuo-validation-<engine> image; the SRE
 	// chooses the engine at deploy time (Helm/compose). The executor bakes in no
@@ -383,6 +385,24 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 				events.ErrPermanent, p.NodeID)
 		}
 		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_URI", Value: p.CandidateArtifactURI})
+		mainContainer.Env = append(mainContainer.Env, s3CredEnvVars()...)
+		return corev1.PodSpec{
+			RestartPolicy:   corev1.RestartPolicyNever,
+			SecurityContext: jobPodSecurityContext(),
+			Containers:      []corev1.Container{mainContainer},
+		}, nil
+
+	case "build_from_columns":
+		// Python nodes: the runner fetches the JSON validation spec (declared
+		// reads + output columns) from S3, bind-checks each read, and creates
+		// the empty typed table. CANDIDATE_SPEC_URI is the published runner's
+		// env contract for this op — CANDIDATE_SQL_URI belongs to
+		// build_from_sql and is never set here.
+		if p.CandidateArtifactURI == "" {
+			return corev1.PodSpec{}, fmt.Errorf("%w: candidate_artifact_uri missing from build_from_columns validation job params for node %s",
+				events.ErrPermanent, p.NodeID)
+		}
+		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SPEC_URI", Value: p.CandidateArtifactURI})
 		mainContainer.Env = append(mainContainer.Env, s3CredEnvVars()...)
 		return corev1.PodSpec{
 			RestartPolicy:   corev1.RestartPolicyNever,

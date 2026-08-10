@@ -210,6 +210,58 @@ func envByName(spec corev1.PodSpec, name string) string {
 	return ""
 }
 
+// envMap flattens a container's env vars into a name->value map for tests
+// that need to assert presence/absence of several keys at once.
+func envMap(env []corev1.EnvVar) map[string]string {
+	m := make(map[string]string, len(env))
+	for _, e := range env {
+		m[e.Name] = e.Value
+	}
+	return m
+}
+
+// TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI verifies python-model
+// validation nodes (VALIDATION_OP=build_from_columns) get CANDIDATE_SPEC_URI +
+// S3 credentials on the main container — the runner's env contract for
+// fetching the published JSON validation spec — and never CANDIDATE_SQL_URI,
+// which belongs exclusively to build_from_sql.
+func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/continuo-validation-postgres:test")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
+	p := ValidationJobParams{
+		JobName: "vj", ReleaseID: "r1", NodeID: "e2e_schema.py_probe",
+		ServiceName: "svc-py", SchemaName: "e2e_schema", TableName: "py_probe",
+		NodeType: pkg_model.NodeTypePythonModel, ImageTag: "img",
+		CandidateSchema: "cand_r1", ValidationOp: "build_from_columns",
+		CandidateArtifactURI: "s3://b/candidate-sql/r1/candidate_e2e_schema.py_probe.json",
+		Namespace:            "ns",
+	}
+	spec, err := buildValidationPodSpec(p)
+	require.NoError(t, err)
+	env := envMap(spec.Containers[0].Env)
+	assert.Equal(t, "s3://b/candidate-sql/r1/candidate_e2e_schema.py_probe.json", env["CANDIDATE_SPEC_URI"])
+	_, hasSQLURI := env["CANDIDATE_SQL_URI"]
+	assert.False(t, hasSQLURI, "build_from_columns must not set CANDIDATE_SQL_URI")
+	assert.Equal(t, "build_from_columns", env["VALIDATION_OP"])
+	assert.NotEmpty(t, env["AWS_ACCESS_KEY_ID"], "spec fetch needs S3 credentials")
+}
+
+// TestBuildValidationPodSpec_BuildFromColumns_EmptyURIFailsPermanently mirrors
+// the build_from_sql empty-URI guard: a build_from_columns node with no
+// CandidateArtifactURI can never succeed, so it fails permanently with an
+// actionable reason instead of launching a pod that can only error.
+func TestBuildValidationPodSpec_BuildFromColumns_EmptyURIFailsPermanently(t *testing.T) {
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/continuo-validation-postgres:test")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	p := ValidationJobParams{JobName: "vj", NodeID: "n1", NodeType: pkg_model.NodeTypePythonModel,
+		ValidationOp: "build_from_columns", Namespace: "ns"}
+	_, err := buildValidationPodSpec(p)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, events.ErrPermanent)
+	assert.Contains(t, err.Error(), "candidate_artifact_uri missing from build_from_columns")
+}
+
 func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
 	c := newValidationTestClient()
