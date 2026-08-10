@@ -64,6 +64,7 @@ func (h *NodeRunHandler) ListNodeRuns(
 			ErrorMessage:    stringPtrOrEmpty(r.ErrorMessage),
 			LogS3Key:        stringPtrOrEmpty(r.LogS3Key),
 			Operation:       r.Operation,
+			RunResultsUri:   stringPtrOrEmpty(r.RunResultsURI),
 		})
 	}
 	return &statev1.ListNodeRunsResponse{Runs: out}, nil

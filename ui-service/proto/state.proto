@@ -165,6 +165,7 @@ message TaskExecution {
   string cancelled_by = 11;
   string cancellation_reason = 12;
   string log_s3_key = 13;              // S3 object key for full pod log; empty if upload failed
+  string run_results_uri = 14;         // S3 object key for the structured result block; empty when the container emitted none
 }
 
 // ============================================================================
@@ -389,6 +390,7 @@ message NodeRun {
   string error_message    = 13; // "" when none
   string log_s3_key       = 14; // "" when none
   string operation        = 15; // run | test | build
+  string run_results_uri  = 16; // "" when none
 }
 
 message ListNodesRequest {

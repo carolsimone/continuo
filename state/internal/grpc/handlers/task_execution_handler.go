@@ -152,5 +152,9 @@ func domainToProtoTaskExecution(e *postgres.TaskExecution) *statev1.TaskExecutio
 		execution.LogS3Key = *e.LogS3Key
 	}
 
+	if e.RunResultsURI != nil {
+		execution.RunResultsUri = *e.RunResultsURI
+	}
+
 	return execution
 }
