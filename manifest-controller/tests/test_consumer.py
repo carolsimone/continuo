@@ -338,3 +338,69 @@ def test_last_heartbeat_advances_while_loop_runs(monkeypatch):
 
     assert c.last_heartbeat > initial
     assert t.is_alive()
+
+
+def test_create_group_waits_out_a_redis_that_is_not_up_yet(monkeypatch):
+    """A cold start can beat its own Redis: on Kubernetes the Service DNS name
+    may not resolve yet, and under compose the server may not be accepting
+    connections. That is transient and self-clearing, so construction waits it
+    out instead of letting the error kill the process."""
+    _defang_sleep(monkeypatch)
+    redis_mock = MagicMock()
+    unreachable = redis_exceptions.ConnectionError(
+        "Error -2 connecting to continuo-redis:6379. Name or service not known."
+    )
+    redis_mock.xgroup_create.side_effect = [unreachable, unreachable, None]
+
+    Consumer(
+        redis_client=redis_mock,
+        stream_name=_STREAM,
+        group_name=_GROUP,
+        message_handler=MagicMock(),
+    )
+
+    assert redis_mock.xgroup_create.call_count == 3
+
+
+def test_create_group_gives_up_once_the_startup_window_expires(monkeypatch):
+    """Bounded, not infinite. A Redis that is genuinely unreachable or
+    misconfigured must still fail the process, rather than leave it alive and
+    silent — main.py starts the health server only after this constructor
+    returns, so an endless wait would report no health at all."""
+    _defang_sleep(monkeypatch)
+    monkeypatch.setattr(consumer_mod, "_STARTUP_CONNECT_TIMEOUT_S", 0.05)
+    redis_mock = MagicMock()
+    redis_mock.xgroup_create.side_effect = redis_exceptions.ConnectionError(
+        "Error -2 connecting to continuo-redis:6379. Name or service not known."
+    )
+
+    with pytest.raises(redis_exceptions.ConnectionError):
+        Consumer(
+            redis_client=redis_mock,
+            stream_name=_STREAM,
+            group_name=_GROUP,
+            message_handler=MagicMock(),
+        )
+
+    assert redis_mock.xgroup_create.call_count > 1
+
+
+def test_create_group_does_not_retry_a_permanent_error(monkeypatch):
+    """Only a failure to reach Redis is worth waiting on. A permanent error
+    surfaces immediately instead of burning the whole startup window on
+    something no amount of waiting will fix."""
+    _defang_sleep(monkeypatch)
+    redis_mock = MagicMock()
+    redis_mock.xgroup_create.side_effect = redis_exceptions.ResponseError(
+        "WRONGTYPE Operation against a key holding the wrong kind of value"
+    )
+
+    with pytest.raises(redis_exceptions.ResponseError):
+        Consumer(
+            redis_client=redis_mock,
+            stream_name=_STREAM,
+            group_name=_GROUP,
+            message_handler=MagicMock(),
+        )
+
+    assert redis_mock.xgroup_create.call_count == 1
