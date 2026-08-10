@@ -3,12 +3,13 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -32,10 +33,18 @@ const (
 	// into kind. The release posts it as image_tag and the executor runs it
 	// verbatim, so this string must match setup.sh's PY_FIXTURE_IMAGE.
 	pyFixtureImage = "continuo-e2e-py-probe:latest"
-
-	pyFixtureDir          = "/app/tests/e2e/fixtures/py-probe"
-	pyFixtureContractPath = pyFixtureDir + "/contracts/py_probe.yml"
 )
+
+// The fixture's authored contract and scripts are embedded from the same files
+// the fixture image's Dockerfile COPYs, so the artifact this test uploads and
+// the artifact the container runs cannot drift. Embedding rather than reading
+// from disk also frees the test from assuming where the repository is mounted.
+//
+//go:embed fixtures/py-probe/contracts/py_probe.yml
+var pyFixtureContract []byte
+
+//go:embed fixtures/py-probe/scripts
+var pyFixtureScripts embed.FS
 
 // pythonContractYAML renders the merged contract_version-1 wire artifact for the
 // python e2e service from the fixture image's own authored contract file,
@@ -54,19 +63,16 @@ const (
 func pythonContractYAML(t *testing.T) string {
 	t.Helper()
 
-	authored, err := os.ReadFile(pyFixtureContractPath)
-	require.NoError(t, err, "read fixture contract %s", pyFixtureContractPath)
-
 	var doc struct {
 		Nodes []map[string]any `yaml:"nodes"`
 	}
-	require.NoError(t, yaml.Unmarshal(authored, &doc), "parse fixture contract")
+	require.NoError(t, yaml.Unmarshal(pyFixtureContract, &doc), "parse fixture contract")
 	require.NotEmpty(t, doc.Nodes, "fixture contract declares no nodes")
 
 	for _, node := range doc.Nodes {
 		scriptPath, _ := node["script"].(string)
 		require.NotEmpty(t, scriptPath, "fixture node is missing a script path")
-		script, err := os.ReadFile(filepath.Join(pyFixtureDir, scriptPath))
+		script, err := fs.ReadFile(pyFixtureScripts, path.Join("fixtures/py-probe", scriptPath))
 		require.NoError(t, err, "read fixture script %s", scriptPath)
 
 		entryJSON, err := json.Marshal(node)
