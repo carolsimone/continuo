@@ -717,12 +717,13 @@ func seedServiceProdExcept(t *testing.T, ctx context.Context, clients *testClien
 		}
 		s3URI := canonicalManifestS3URI(svc, e2eBaselineReleaseID)
 		_, err := clients.releaseDB.ExecContext(ctx,
-			`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, updated_at)
-			 VALUES ($1, $2, $3, $4, now())
+			`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+			 VALUES ($1, $2, $3, $4, 'dbt', now())
 			 ON CONFLICT (service_name) DO UPDATE SET
 			   release_id = EXCLUDED.release_id,
 			   manifest_s3_key = EXCLUDED.manifest_s3_key,
 			   image_tag = EXCLUDED.image_tag,
+			   manifest_kind = EXCLUDED.manifest_kind,
 			   updated_at = EXCLUDED.updated_at`,
 			svc, e2eBaselineReleaseID, s3URI, si.imageTag)
 		require.NoError(t, err, "seed service_prod for %s", svc)
