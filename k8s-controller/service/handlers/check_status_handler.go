@@ -216,7 +216,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 	}
 
 	// Row 2: task_execution_recorded
-	if err := h.writeTaskExecutionRecordedWithLogS3Key(ctx, repo, cmd, executionID, result, "", ""); err != nil {
+	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, "", "", ""); err != nil {
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
@@ -521,7 +521,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount
 
-	executionID, logS3Key, _, logTail := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, runResultsS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
 
 	errorMsg := h.truncateErrorMessage(logTail)
 	if errorMsg == "" {
@@ -534,7 +534,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 	}
 
 	// Row 2: task_execution_recorded
-	if err := h.writeTaskExecutionRecordedWithLogS3Key(ctx, repo, cmd, executionID, result, errorMsg, logS3Key); err != nil {
+	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, errorMsg, logS3Key, runResultsS3Key); err != nil {
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
@@ -573,7 +573,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
 
-	executionID, logS3Key, _, logTail := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, runResultsS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
 
 	errorMsg := h.truncateErrorMessage(logTail)
 	if errorMsg == "" {
@@ -592,7 +592,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	}
 
 	// Row 2: task_execution_recorded (for the failed attempt)
-	if err := h.writeTaskExecutionRecordedWithLogS3Key(ctx, repo, cmd, executionID, result, errorMsg, logS3Key); err != nil {
+	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, errorMsg, logS3Key, runResultsS3Key); err != nil {
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
@@ -809,14 +809,17 @@ func parseCacheFromResult(result *model.K8sPodResult) (state, reason string) {
 	}
 }
 
-// writeTaskExecutionRecordedWithLogS3Key writes a task_execution_recorded canonical outbox row.
-func (h *CheckStatusHandler) writeTaskExecutionRecordedWithLogS3Key(
+// writeTaskExecutionRecorded writes a task_execution_recorded canonical outbox
+// row. logS3Key and runResultsS3Key name the S3 objects the pod's output was
+// uploaded to: the text log, and the structured result block when the pod
+// printed one. Either is empty when its upload failed or did not apply.
+func (h *CheckStatusHandler) writeTaskExecutionRecorded(
 	ctx context.Context,
 	repo pkgoutbox.Repository,
 	cmd command.CheckJobStatus,
 	executionID uuid.UUID,
 	result *model.K8sPodResult,
-	errorMsg, logS3Key string,
+	errorMsg, logS3Key, runResultsS3Key string,
 ) error {
 	exec := pkgevents.TaskExecutionRecorded{
 		ExecutionID:      executionID.String(),
@@ -825,6 +828,7 @@ func (h *CheckStatusHandler) writeTaskExecutionRecordedWithLogS3Key(
 		ExecutionSeconds: result.ExecutionSeconds,
 		ErrorMessage:     errorMsg,
 		LogS3Key:         logS3Key,
+		RunResultsS3Key:  runResultsS3Key,
 	}
 	if result.StartedAt != nil {
 		exec.StartedAt = result.StartedAt.UTC().Format(time.RFC3339)

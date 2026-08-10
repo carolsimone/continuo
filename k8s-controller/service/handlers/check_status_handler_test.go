@@ -20,6 +20,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
 )
 
@@ -949,7 +950,7 @@ func TestHandleSucceeded(t *testing.T) {
 	}
 }
 
-// TestHandleSucceeded_ParseCache verifies that writeTaskExecutionRecordedWithLogS3Key
+// TestHandleSucceeded_ParseCache verifies that writeTaskExecutionRecorded
 // derives ParseCache/ParseCacheReason from the hydrate-parse-cache initContainer's
 // termination message: "hydrated" -> state hydrated/no reason; "degraded:<reason>"
 // -> state degraded/reason; and an absent hydrate-parse-cache entry (pre-feature
@@ -1913,3 +1914,117 @@ func TestHandle_PromoteSeedMode_RunningJob_SuppressesRunningAnnouncement(t *test
 // Compile-time interface checks.
 var _ ports.LogUploader = (*fakeLogUploader)(nil)
 var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)
+
+// pythonResultBlockLog returns a pod log shaped like a python-model container's
+// output: diagnostics first, terminated by exactly one sentinel-framed result
+// block as the last line.
+func pythonResultBlockLog(status, message string) string {
+	return "running node analytics.orders -> analytics.orders\n" +
+		validationresult.SentinelBegin + "\n" +
+		`{"schema_version":1,"status":"` + status + `","message":"` + message +
+		`","failures":1,"unique_id":"analytics.orders"}` + "\n" +
+		validationresult.SentinelEnd + "\n"
+}
+
+// decodeExecutionPayload returns the task_execution_recorded payload written to
+// the outbox, failing the test when no such row exists.
+func decodeExecutionPayload(t *testing.T, entries []*pkgoutbox.Entry) pkgevents.TaskExecutionRecorded {
+	t.Helper()
+	entry := findEntryByEventType(entries, "task_execution_recorded")
+	if entry == nil {
+		t.Fatal("no task_execution_recorded entry written")
+	}
+	var payload pkgevents.TaskExecutionRecorded
+	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal task_execution_recorded payload: %v", err)
+	}
+	return payload
+}
+
+// TestHandleFailedPermanent_RunResultsURI verifies a permanently-failed
+// production Job whose pod printed a result block records the uploaded JSON's
+// S3 key, instead of writing the object and dropping its address. It also pins
+// the division of labour between the two uploads: the text log has the block
+// stripped, and the block's own JSON carries the error class.
+func TestHandleFailedPermanent_RunResultsURI(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: failedResult(),
+		podLog: pythonResultBlockLog("error", "ConformError: column 'id' cannot be safely cast to INTEGER"),
+	}
+	handler, uploader := newHandlerWithUploader(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-failed",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	if payload.RunResultsS3Key == "" {
+		t.Fatal("run_results_uri must be recorded when the pod printed a result block")
+	}
+	if !strings.HasPrefix(payload.RunResultsS3Key, "run-results/task-executions/svc-py/analytics/orders/") {
+		t.Errorf("unexpected run-results key %q", payload.RunResultsS3Key)
+	}
+	if got := uploader.uploaded[payload.RunResultsS3Key]; !strings.Contains(got, "ConformError") {
+		t.Errorf("uploaded run-results JSON must carry the error class, got %q", got)
+	}
+	if logged := uploader.uploaded[payload.LogS3Key]; strings.Contains(logged, validationresult.SentinelBegin) {
+		t.Error("the uploaded text log must have the sentinel block stripped")
+	}
+}
+
+// TestHandleFailedWithRetry_RunResultsURI verifies the retry path records the
+// key too — a node that will be retried is exactly the one whose first failure
+// an operator wants to read.
+func TestHandleFailedWithRetry_RunResultsURI(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: failedResult(),
+		podLog: pythonResultBlockLog("error", "ReadError: unknown read 'orders'"),
+	}
+	handler := newHandler(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-retry",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if payload := decodeExecutionPayload(t, outbox.entries); payload.RunResultsS3Key == "" {
+		t.Fatal("run_results_uri must be recorded on the retry path too")
+	}
+}
+
+// TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI pins the dbt case:
+// a pod log with no sentinel block produces a payload with no run_results_uri
+// at all, so dbt wire payloads are unchanged.
+func TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{status: failedResult(), podLog: "Database Error in model orders\n"}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-dbt-failed",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entry := findEntryByEventType(outbox.entries, "task_execution_recorded")
+	if entry == nil {
+		t.Fatal("no task_execution_recorded entry written")
+	}
+	if strings.Contains(string(entry.Payload), "run_results_uri") {
+		t.Errorf("dbt payload must not carry run_results_uri, got %s", entry.Payload)
+	}
+}
