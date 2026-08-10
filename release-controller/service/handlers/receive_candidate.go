@@ -23,6 +23,11 @@ type ReceiveCandidateInput struct {
 	Bootstrap bool   `json:"bootstrap"`
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
+	// Kind selects how this service's artifact is parsed: "dbt"
+	// (manifest.json — the default when absent, so existing CI callers are
+	// untouched) or "python" (contract.yaml, uploaded by the domain repo's CI
+	// before this POST). Anything else is rejected (HTTP 400).
+	Kind string `json:"kind"`
 }
 
 func (i ReceiveCandidateInput) validate() error {
@@ -41,7 +46,18 @@ func (i ReceiveCandidateInput) validate() error {
 	if i.CommitSHA == "" {
 		return errors.New("commit_sha is required")
 	}
+	if _, err := i.manifestKind(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// manifestKind normalizes the optional wire kind: absent/empty means dbt.
+func (i ReceiveCandidateInput) manifestKind() (release.ManifestKind, error) {
+	if i.Kind == "" {
+		return release.ManifestKindDbt, nil
+	}
+	return release.ParseManifestKind(i.Kind)
 }
 
 // ReceiveCandidate persists a new Release row in StatusReceived, idempotent on
@@ -49,6 +65,10 @@ func (i ReceiveCandidateInput) validate() error {
 // 202 Accepted to CI.
 func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) error {
 	if err := in.validate(); err != nil {
+		return err
+	}
+	kind, err := in.manifestKind()
+	if err != nil {
 		return err
 	}
 	u := d.NewUoW()
@@ -62,7 +82,7 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return u.Commit()
 	}
 
-	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, d.Clock.Now())
+	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, kind, d.Clock.Now())
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}

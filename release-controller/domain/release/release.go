@@ -100,6 +100,7 @@ type Release struct {
 	repo                string
 	commitSHA           string
 	codeBundleURI       string
+	manifestKind        ManifestKind
 }
 
 // New creates a new Release for a single-service delta. imageTags is initialised
@@ -107,7 +108,9 @@ type Release struct {
 // map in AdvanceQueue when the release transitions to Parsing (see
 // SetAssembledImageTags for the rationale). repo (GitHub owner/name) and
 // commitSHA (full SHA) record the source change and are immutable after creation.
-func New(id, changedService, imageTag string, bootstrap bool, repo, commitSHA string, now time.Time) *Release {
+// kind records how the service's artifact is parsed (dbt manifest.json or python
+// contract.yaml) and is immutable after creation.
+func New(id, changedService, imageTag string, bootstrap bool, repo, commitSHA string, kind ManifestKind, now time.Time) *Release {
 	return &Release{
 		id:             id,
 		status:         StatusReceived,
@@ -118,6 +121,7 @@ func New(id, changedService, imageTag string, bootstrap bool, repo, commitSHA st
 		commitSHA:      commitSHA,
 		createdAt:      now,
 		transitions:    []Transition{{To: StatusReceived, At: now}},
+		manifestKind:   kind,
 	}
 }
 
@@ -129,6 +133,7 @@ func (r *Release) IsBootstrap() bool            { return r.bootstrap }
 func (r *Release) Repo() string                 { return r.repo }
 func (r *Release) CommitSHA() string            { return r.commitSHA }
 func (r *Release) CodeBundleURI() string        { return r.codeBundleURI }
+func (r *Release) ManifestKind() ManifestKind   { return r.manifestKind }
 
 // SetCodeBundleURI records the S3 URI of the release's code-bundle document,
 // received with the parse result and carried into release.promoted:v1.
@@ -316,6 +321,7 @@ type RehydrateInput struct {
 	Repo              string
 	CommitSHA         string
 	CodeBundleURI     string
+	ManifestKind      ManifestKind
 }
 
 // Rehydrate reconstructs a Release from persistence. Bypasses state-machine
@@ -337,5 +343,6 @@ func Rehydrate(in RehydrateInput) *Release {
 		repo:              in.Repo,
 		commitSHA:         in.CommitSHA,
 		codeBundleURI:     in.CodeBundleURI,
+		manifestKind:      in.ManifestKind,
 	}
 }
