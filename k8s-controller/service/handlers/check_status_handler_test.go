@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ type fakeK8sClient struct {
 	labels      map[string]string
 	annotations map[string]string
 	podLog      string // full pod log returned by GetPodLogs (tail mirrors it)
+	podLogsErr  error  // when set, GetPodLogs fails
 }
 
 func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
@@ -39,6 +41,9 @@ func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8s
 }
 
 func (f *fakeK8sClient) GetPodLogs(_ context.Context, _, _ string, _ int64) (string, string, error) {
+	if f.podLogsErr != nil {
+		return "", "", f.podLogsErr
+	}
 	return f.podLog, f.podLog, nil
 }
 
@@ -2026,5 +2031,113 @@ func TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI(t *testing.T) {
 	}
 	if strings.Contains(string(entry.Payload), "run_results_uri") {
 		t.Errorf("dbt payload must not carry run_results_uri, got %s", entry.Payload)
+	}
+}
+
+// succeededResult returns a terminal Succeeded pod result.
+func succeededResult() *model.K8sPodResult {
+	now := time.Now()
+	return &model.K8sPodResult{
+		Status:           model.JobStatusSucceeded,
+		StartedAt:        &now,
+		CompletedAt:      &now,
+		ExecutionSeconds: 2.0,
+	}
+}
+
+// TestHandleSucceeded_UploadsLog verifies a successful production Job's pod log
+// reaches S3 and its key reaches the wire. Without it the log is unreachable
+// once the Job's TTL reaps the pod, leaving a finished run with timings and no
+// evidence of what it did.
+func TestHandleSucceeded_UploadsLog(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: succeededResult(),
+		podLog: "1 of 1 OK created sql table model analytics.orders\n",
+	}
+	handler, uploader := newHandlerWithUploader(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-ok",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	if payload.LogS3Key == "" {
+		t.Fatal("a successful job must record its log key")
+	}
+	if !strings.HasPrefix(payload.LogS3Key, "logs/task-executions/service-1/analytics/orders/") {
+		t.Errorf("unexpected log key %q", payload.LogS3Key)
+	}
+	if !strings.Contains(uploader.uploaded[payload.LogS3Key], "1 of 1 OK") {
+		t.Error("the pod log content must be uploaded")
+	}
+	if payload.ErrorMessage != "" {
+		t.Errorf("a successful job must not carry an error message, got %q", payload.ErrorMessage)
+	}
+}
+
+// TestHandleSucceeded_UploadsRunResults verifies a successful python-model Job's
+// result block is captured too, and stripped from the text log.
+func TestHandleSucceeded_UploadsRunResults(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: succeededResult(),
+		podLog: pythonResultBlockLog("success", "rows=42"),
+	}
+	handler, uploader := newHandlerWithUploader(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-ok",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	if payload.RunResultsS3Key == "" {
+		t.Fatal("a successful job that printed a result block must record its key")
+	}
+	if !strings.Contains(uploader.uploaded[payload.RunResultsS3Key], "rows=42") {
+		t.Error("the uploaded run-results JSON must carry the block's message")
+	}
+	if strings.Contains(uploader.uploaded[payload.LogS3Key], validationresult.SentinelBegin) {
+		t.Error("the uploaded text log must have the sentinel block stripped")
+	}
+}
+
+// TestHandleSucceeded_LogFetchFailureStillSucceeds pins the soft-failure
+// guarantee: adding an S3 dependency to the success path must never be able to
+// turn a successful run into a failed one.
+func TestHandleSucceeded_LogFetchFailureStillSucceeds(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{status: succeededResult(), podLogsErr: errors.New("pod gone")}
+	handler := newHandler(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-ok-nolog",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("a failed log fetch must not fail the handler: %v", err)
+	}
+
+	statusEntry := findEntryByEventType(outbox.entries, "task_status_updated")
+	if statusEntry == nil || !strings.Contains(string(statusEntry.Payload), "SUCCEEDED") {
+		t.Fatal("the task must still be recorded as SUCCEEDED")
+	}
+	entry := findEntryByEventType(outbox.entries, "task_execution_recorded")
+	if entry == nil {
+		t.Fatal("the execution row must still be written")
+	}
+	if strings.Contains(string(entry.Payload), "log_s3_key") {
+		t.Errorf("no log key should be recorded when the fetch failed, got %s", entry.Payload)
 	}
 }

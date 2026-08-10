@@ -205,7 +205,14 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 //   - node_status_updated (→ node.updated:v1)
 func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
 	repo := u.OutboxRepo()
-	executionID := uuid.New()
+
+	// A successful run's pod output is uploaded exactly as a failed one's is:
+	// the pod is garbage-collected at the Job's TTL, so leaving it unuploaded
+	// reduces a finished run to timings with no evidence of what it did. Each
+	// upload soft-fails to an empty key, so S3 being unavailable cannot turn a
+	// success into a failure. The log tail is discarded — a successful
+	// execution carries no error message.
+	executionID, logS3Key, runResultsS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
 
 	// Row 1: task_status_updated. Stamp the attempt that ran (cmd.RetryCount)
 	// so the SUCCEEDED carries the same retry_count as that attempt's RUNNING;
@@ -216,7 +223,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 	}
 
 	// Row 2: task_execution_recorded
-	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, "", "", ""); err != nil {
+	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, "", logS3Key, runResultsS3Key); err != nil {
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
@@ -451,9 +458,10 @@ func (h *CheckStatusHandler) handlePromoteSeedTerminal(ctx context.Context, u uo
 }
 
 // fetchAndUploadLogs fetches pod logs and uploads them to S3. The text log (with
-// any structured-result sentinel block stripped) is uploaded under logs/...; for
-// validation Jobs whose pod emitted a structured block, that JSON is uploaded
-// separately under run-results/... and its key returned as runResultsS3Key.
+// any structured-result sentinel block stripped) is uploaded under logs/...; when
+// the pod emitted a structured block, that JSON is uploaded separately under
+// run-results/... and its key returned as runResultsS3Key. Validation pods and
+// python-model containers emit one; dbt containers do not.
 // Returns the log tail (for error_message), both S3 keys, and a pre-generated
 // execution ID. Each upload soft-fails independently to an empty key on error.
 func (h *CheckStatusHandler) fetchAndUploadLogs(
