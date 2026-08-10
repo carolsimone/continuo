@@ -27,10 +27,10 @@ const (
 // pythonContractYAML renders a minimal, valid contract_version-1 artifact for
 // the python e2e service. The single node reads from pg_catalog — always
 // present in the warehouse and outside Continuo's registry, so it produces no
-// upstream edge and no rewrite, keeping this test independent of warehouse
-// table state (cross-kind edges are step 8's mixed-DAG suite). The hash parts
-// fold exactly as manifest-controller recomputes them, so the artifact passes
-// the parser's content_hash check.
+// upstream edge and no rewrite. This test deliberately avoids cross-kind
+// upstream edges so it stays independent of warehouse table state. The hash
+// parts fold exactly as manifest-controller recomputes them, so the artifact
+// passes the parser's content_hash check.
 func pythonContractYAML() string {
 	sourceHash := sha256Hex("def run(ctx):\n    return ctx.read(\"tables\")\n")
 	configHash := sha256Hex("{}")
@@ -56,11 +56,11 @@ nodes:
 `, pyE2EService, sourceHash, configHash, contentHash)
 }
 
-// TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes proves step 5's
-// turn-on end to end: a kind=python release skips the compile leg, parses the
-// contract, validates its node via a real build_from_columns Job against the
-// published runner image, promotes, swaps the Neo4j topology, and records the
-// python kind + contract pointer on service_prod.
+// TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes proves the
+// python release path end to end: a kind=python release skips the compile
+// leg, parses the contract, validates its node via a real build_from_columns
+// Job against the published runner image, promotes, swaps the Neo4j
+// topology, and records the python kind + contract pointer on service_prod.
 func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -107,7 +107,9 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 		}
 	}()
 
-	// CI-analogue: the contract artifact is uploaded BEFORE the POST (§13.5).
+	// CI-analogue: the contract artifact is uploaded BEFORE the POST, mirroring
+	// the ordering contract for domain-repo CI (upload completes before
+	// /releases is called).
 	contractKey := fmt.Sprintf("%s/%s/contract.yaml", pyE2EService, releaseID)
 	putS3Object(t, ctx, clients, contractKey, []byte(pythonContractYAML()))
 
