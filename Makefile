@@ -158,17 +158,20 @@ test-deps-down:
 .PHONY: test-go
 test-go: test-deps-up
 	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES)); do \
+	  extra=; \
 	  case $$s in \
 	    state) db=continuo_state;; orchestrator) db=continuo_orchestrator;; \
 	    executor-controller) db=continuo_executor;; k8s-controller) db=continuo_k8s;; \
-	    release-controller) db=continuo_release;; remediation) db=continuo_remediation;; \
+	    release-controller) db=continuo_release; \
+	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable";; \
+	    remediation) db=continuo_remediation;; \
 	    remediation-agent) db=continuo_remediation_agent;; agent-runner) db=continuo_agent;; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \
 	  (cd $$s && POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=$$db \
 	     POSTGRES_USER=continuo_svc POSTGRES_PASSWORD=continuo DB_SSLMODE=disable \
-	     NEO4J_HOST=localhost \
+	     NEO4J_HOST=localhost $$extra \
 	     go test -tags integration -count=1 ./... -timeout 20m) || rc=1; \
 	done; exit $$rc
 

@@ -30,8 +30,16 @@ func TestIntegration_ParseRejection_AdvancesQueuedRelease(t *testing.T) {
 		Repo: "acme/demo", CommitSHA: "deadbeefcafe1234",
 	}))
 
-	// Advance: rA becomes Parsing; rB stays Received.
+	// Advance: rA becomes Compiling; rB stays Received.
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	// Drive rA through the compile leg to Parsing: a manifest-controller parse
+	// result only ever arrives for a release that reached Parsing (release.requested:v1
+	// is emitted from HandleCompileResult's ok path), so simulating a parse
+	// failure must start from that same state.
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
 
 	// Simulate a failed parse for rA.
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -41,9 +49,10 @@ func TestIntegration_ParseRejection_AdvancesQueuedRelease(t *testing.T) {
 	// The Redis binding calls AdvanceQueue after each parse result; simulate the same.
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
-	// rA must be Rejected; rB must now be Parsing (queue unblocked).
+	// rA must be Rejected; rB must now be Compiling (queue unblocked — Compiling
+	// is where AdvanceQueue lands a newly-activated release since the compile leg).
 	rA, _ := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	rB, _ := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rB")
 	assert.Equal(t, release.StatusRejected, rA.Status())
-	assert.Equal(t, release.StatusParsing, rB.Status())
+	assert.Equal(t, release.StatusCompiling, rB.Status())
 }

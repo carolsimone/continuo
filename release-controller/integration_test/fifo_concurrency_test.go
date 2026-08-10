@@ -39,7 +39,11 @@ func TestIntegration_FIFO_SerializesConcurrentCandidates(t *testing.T) {
 	active, err := deps.NewUoW().ReleaseRepo().ActiveRelease(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, active, "exactly one release must be active")
-	assert.Equal(t, release.StatusParsing, active.Status())
+	// AdvanceQueue promotes the oldest Received candidate to Compiling (the
+	// compile leg runs before Parsing); Compiling is an active status, so it
+	// still blocks queue advancement exactly like Parsing did before the
+	// compile leg existed.
+	assert.Equal(t, release.StatusCompiling, active.Status())
 
 	// Calling AdvanceQueue again must not start a second active release
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
