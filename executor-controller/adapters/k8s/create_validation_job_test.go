@@ -24,7 +24,7 @@ import (
 // individually. Tests exercising the missing-image / missing-secret paths override
 // them with t.Setenv.
 func TestMain(m *testing.M) {
-	os.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0")
+	os.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0")
 	os.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	os.Exit(m.Run())
 }
@@ -97,7 +97,7 @@ func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testin
 
 	main := spec.Containers[0]
 	assert.Equal(t, "dbt-job", main.Name)
-	assert.Equal(t, "ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0", main.Image)
+	assert.Equal(t, "ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0", main.Image)
 	assert.Equal(t, []string{"python", "/validation_runner.py"}, main.Command)
 	// The main container fetches its own SQL: it carries the URI + S3 creds.
 	assert.Equal(t, p.CandidateArtifactURI, envByName(spec, "CANDIDATE_SQL_URI"))
