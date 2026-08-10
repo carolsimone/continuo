@@ -34,13 +34,20 @@ type fakeK8sClient struct {
 	annotations map[string]string
 	podLog      string // full pod log returned by GetPodLogs (tail mirrors it)
 	podLogsErr  error  // when set, GetPodLogs fails
+	// blockPodLogs makes GetPodLogs hang until its context expires, standing in
+	// for an unreachable kubelet or a stalled API read.
+	blockPodLogs bool
 }
 
 func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
 	return f.status, f.err
 }
 
-func (f *fakeK8sClient) GetPodLogs(_ context.Context, _, _ string, _ int64) (string, string, error) {
+func (f *fakeK8sClient) GetPodLogs(ctx context.Context, _, _ string, _ int64) (string, string, error) {
+	if f.blockPodLogs {
+		<-ctx.Done()
+		return "", "", ctx.Err()
+	}
 	if f.podLogsErr != nil {
 		return "", "", f.podLogsErr
 	}
@@ -2139,5 +2146,57 @@ func TestHandleSucceeded_LogFetchFailureStillSucceeds(t *testing.T) {
 	}
 	if strings.Contains(string(entry.Payload), "log_s3_key") {
 		t.Errorf("no log key should be recorded when the fetch failed, got %s", entry.Payload)
+	}
+}
+
+// TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome is the regression guard
+// for the ordering hazard the log upload introduces on the success path: the
+// I/O runs before the terminal outbox writes and shares their context, so an
+// unbounded slow pod-log read or S3 stall would consume the whole handler
+// budget and leave nothing to persist the task's outcome with. The task would
+// then be retried and eventually poison-ACKed while still recorded as RUNNING.
+//
+// The fake blocks until its own context expires, which the handler's own
+// LogIOTimeout must cut short well inside the parent budget.
+func TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{status: succeededResult(), blockPodLogs: true}
+
+	cfg := &handlers.HandlerConfig{
+		K8sNamespace:          "default",
+		CheckDelaySeconds:     30,
+		ErrorMessageMaxLen:    4096,
+		LogTailLines:          50,
+		DefaultTaskMaxRetries: 3,
+		LogIOTimeout:          50 * time.Millisecond,
+	}
+	handler := handlers.NewCheckStatusHandler(k8s, &fakeLogUploader{}, cfg, noopCancelledRepo(), slog.Default())
+
+	// A parent budget far larger than the I/O cap: the terminal writes must
+	// still have almost all of it left once the log fetch is abandoned.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-slow-logs",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		MaxRetries: 3,
+	}
+	if err := handler.Handle(ctx, newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("a stalled log fetch must not fail the handler: %v", err)
+	}
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("the parent context must still be live for the terminal writes, got %v", err)
+	}
+
+	statusEntry := findEntryByEventType(outbox.entries, "task_status_updated")
+	if statusEntry == nil || !strings.Contains(string(statusEntry.Payload), "SUCCEEDED") {
+		t.Fatal("the task must still be recorded as SUCCEEDED")
+	}
+	if findEntryByEventType(outbox.entries, "task_execution_recorded") == nil {
+		t.Fatal("the execution row must still be written")
+	}
+	if findEntryByEventType(outbox.entries, "node_status_updated") == nil {
+		t.Fatal("the node status row must still be written")
 	}
 }

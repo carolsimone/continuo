@@ -86,6 +86,7 @@ export interface TaskExecution {
   started_at: string | null;
   completed_at: string | null;
   log_s3_key: string | null;
+  run_results_uri: string | null;
 }
 
 export interface NodeRun {
@@ -104,6 +105,7 @@ export interface NodeRun {
   completed_at: string | null;
   error_message: string | null;
   log_s3_key: string | null;
+  run_results_uri: string | null;
 }
 
 export interface NodeRunsResponse {

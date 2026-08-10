@@ -39,6 +39,7 @@ export function createExecutionsRouter(stateClient: GrpcClient) {
           started_at: toISO(e.started_at),
           completed_at: toISO(e.completed_at),
           log_s3_key: e.log_s3_key || null,
+          run_results_uri: e.run_results_uri || null,
         }));
         res.json({ total_count: Number(response.total_count ?? 0), executions });
       }

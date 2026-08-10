@@ -28,6 +28,7 @@ type nodeRun struct {
 	CompletedAt     string `json:"completed_at,omitempty"`
 	ErrorMessage    string `json:"error_message,omitempty"`
 	LogS3Key        string `json:"log_s3_key,omitempty"`
+	RunResultsURI   string `json:"run_results_uri,omitempty"`
 	Operation       string `json:"operation"`
 }
 
@@ -69,9 +70,13 @@ Output (stdout, JSON): up to 50 runs, newest first.
    "terminal_status":string,"task_id":string,"task_status":string,
    "retry_count":number,"image_tag":string,"manifest_version":string,
    "created_at":string,"started_at":string,"completed_at":string,
-   "error_message":string,"log_s3_key":string,"operation":string}]}
-  terminal_status, started_at, completed_at, error_message, and log_s3_key are
-  omitted when empty. An unknown node returns {"runs":[]}, not an error.
+   "error_message":string,"log_s3_key":string,"operation":string,
+   "run_results_uri":string}]}
+  terminal_status, started_at, completed_at, error_message, log_s3_key, and
+  run_results_uri are omitted when empty. run_results_uri points at the
+  structured result block the run's container printed — python-model nodes
+  always emit one, dbt nodes never do. An unknown node returns {"runs":[]},
+  not an error.
 
 Errors:
   usage      (exit 2)  wrong number of arguments, or --operation is not run|test|build
@@ -139,6 +144,7 @@ func toHistoryPayload(runs []*statev1.NodeRun) historyPayload {
 			CompletedAt:     r.GetCompletedAt(),
 			ErrorMessage:    r.GetErrorMessage(),
 			LogS3Key:        r.GetLogS3Key(),
+			RunResultsURI:   r.GetRunResultsUri(),
 			Operation:       r.GetOperation(),
 		})
 	}

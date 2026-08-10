@@ -74,6 +74,13 @@ type K8sStatusChecker interface {
 	GetJobMeta(ctx context.Context, namespace, jobName string) (labels, annotations map[string]string, err error)
 }
 
+// DefaultLogIOTimeout bounds the best-effort pod-log fetch and its S3 uploads
+// when HandlerConfig leaves LogIOTimeout unset. It must stay comfortably below
+// the consumer's per-handler deadline: the log I/O runs before the terminal
+// outbox writes and shares their context, so whatever it spends is taken from
+// the budget those writes need to persist a task's outcome.
+const DefaultLogIOTimeout = 20 * time.Second
+
 // HandlerConfig contains handler configuration
 type HandlerConfig struct {
 	K8sNamespace          string
@@ -81,6 +88,9 @@ type HandlerConfig struct {
 	ErrorMessageMaxLen    int
 	LogTailLines          int64
 	DefaultTaskMaxRetries int // used when max_retries is absent from the inbound message
+	// LogIOTimeout bounds the pod-log fetch and its S3 uploads. Zero selects
+	// DefaultLogIOTimeout.
+	LogIOTimeout time.Duration
 }
 
 // CheckStatusHandler handles CheckJobStatus commands
@@ -464,13 +474,30 @@ func (h *CheckStatusHandler) handlePromoteSeedTerminal(ctx context.Context, u uo
 // python-model containers emit one; dbt containers do not.
 // Returns the log tail (for error_message), both S3 keys, and a pre-generated
 // execution ID. Each upload soft-fails independently to an empty key on error.
+//
+// All of this I/O runs under its own deadline, derived from — but shorter than —
+// the caller's handler budget. It is best-effort observability that precedes the
+// terminal outbox writes, and those writes share the caller's context with the
+// transaction they run in: a slow pod-log read or an unreachable S3 that
+// consumed the whole handler budget here would leave no budget to persist the
+// task's outcome, so a finished task would be retried and eventually poison-ACKed
+// while still recorded as RUNNING. Capping the I/O keeps the outcome writable
+// even when the log never arrives. Cancellation still propagates from the parent,
+// so a shutting-down consumer is not held open by an upload.
 func (h *CheckStatusHandler) fetchAndUploadLogs(
 	ctx context.Context,
 	cmd command.CheckJobStatus,
 ) (executionID uuid.UUID, logS3Key, runResultsURI, tail string) {
 	executionID = uuid.New()
 
-	fullLog, logTail, err := h.k8sClient.GetPodLogs(ctx, h.config.K8sNamespace, cmd.JobName, h.config.LogTailLines)
+	budget := h.config.LogIOTimeout
+	if budget <= 0 {
+		budget = DefaultLogIOTimeout
+	}
+	ioCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
+	fullLog, logTail, err := h.k8sClient.GetPodLogs(ioCtx, h.config.K8sNamespace, cmd.JobName, h.config.LogTailLines)
 	if err != nil {
 		h.logger.Warn("Failed to fetch pod logs",
 			"job_name", cmd.JobName,
@@ -490,7 +517,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	} else {
 		key := fmt.Sprintf("logs/task-executions/%s/%s/%s/%s.log",
 			cmd.ServiceName, cmd.SchemaName, cmd.TableName, executionID.String())
-		if err := h.logUploader.UploadLog(ctx, key, cleanLog); err != nil {
+		if err := h.logUploader.UploadLog(ioCtx, key, cleanLog); err != nil {
 			h.logger.Warn("Failed to upload pod log to S3 — continuing without full log",
 				"job_name", cmd.JobName,
 				"key", key,
@@ -505,7 +532,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	if structured != "" {
 		rrKey := fmt.Sprintf("run-results/task-executions/%s/%s/%s/%s.json",
 			cmd.ServiceName, cmd.SchemaName, cmd.TableName, executionID.String())
-		if err := h.logUploader.UploadLog(ctx, rrKey, structured); err != nil {
+		if err := h.logUploader.UploadLog(ioCtx, rrKey, structured); err != nil {
 			h.logger.Warn("Failed to upload run-results to S3 — continuing without structured result",
 				"job_name", cmd.JobName,
 				"key", rrKey,

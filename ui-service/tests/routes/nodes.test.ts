@@ -48,6 +48,7 @@ describe('nodes router', () => {
             started_at: '2026-05-10T10:00:05Z',
             completed_at: '2026-05-10T10:01:00Z',
             error_message: '', log_s3_key: '', operation: 'run',
+            run_results_uri: 'run-results/task-executions/svc/schema/tbl/e1.json',
           },
         ],
       }),
@@ -58,6 +59,10 @@ describe('nodes router', () => {
     expect(res.body.runs).toHaveLength(1);
     expect(res.body.runs[0].run_id).toBe('r1');
     expect(res.body.runs[0].kind).toBe('cron');
+    // The structured result key must survive the DTO reconstruction: this route
+    // rebuilds each run field by field, so a new state field is dropped unless
+    // it is mapped explicitly.
+    expect(res.body.runs[0].run_results_uri).toBe('run-results/task-executions/svc/schema/tbl/e1.json');
     expect(res.body.runs[0].retry_count).toBe(0);
     expect(res.body.runs[0].operation).toBe('run');
     expect(mockListNodeRuns).toHaveBeenCalledWith(
