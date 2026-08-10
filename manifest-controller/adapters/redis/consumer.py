@@ -3,6 +3,8 @@ import time
 import uuid
 from collections.abc import Callable
 from redis import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +12,23 @@ logger = logging.getLogger(__name__)
 # may legitimately hold a message for the duration of an S3 download + sqlglot
 # resolve, so the window is wide enough that reclaim never steals in-flight work.
 _RECLAIM_MIN_IDLE_MS = 60_000
+
+# How long the initial consumer-group creation keeps waiting for a Redis it
+# cannot reach yet, and how long it pauses between attempts. A process can win
+# the race against its own Redis on a cold start — on Kubernetes the Service
+# DNS name may not resolve, under compose the server may not be accepting
+# connections — and that failure clears itself within seconds. Without this
+# wait the exception escapes the constructor and ends the process, which costs
+# far more than the wait: CrashLoopBackOff then holds the pod down on an
+# exponential delay (10s, 20s, 40s, 80s...) long after Redis is ready.
+#
+# Bounded rather than infinite, because the two failure modes need different
+# answers. main.py only starts the health server once the consumer is
+# constructed, so waiting forever on a genuinely unreachable or misconfigured
+# Redis would leave a process that never serves a probe and never consumes
+# anything, with nothing to signal it. Giving up restores that signal.
+_STARTUP_CONNECT_TIMEOUT_S = 60.0
+_STARTUP_CONNECT_BACKOFF_S = 3.0
 
 
 class Consumer:
@@ -30,7 +49,36 @@ class Consumer:
         # outage" (heartbeat keeps advancing) apart from "the loop stopped
         # running" (heartbeat goes and stays stale) — see adapters/health.
         self.last_heartbeat = time.monotonic()
-        self._create_group()
+        self._create_group_awaiting_redis()
+
+    def _create_group_awaiting_redis(self) -> None:
+        """Create the consumer group, waiting out a Redis that is not
+        reachable yet.
+
+        Only a failure to reach Redis is retried. Any other error — a bad
+        argument, a key of the wrong type — is permanent, so it is raised on
+        the first attempt instead of burning the whole startup window on
+        something no amount of waiting will fix.
+        """
+        deadline = time.monotonic() + _STARTUP_CONNECT_TIMEOUT_S
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                self._create_group()
+                return
+            except (RedisConnectionError, RedisTimeoutError) as e:
+                if time.monotonic() >= deadline:
+                    logger.error(
+                        "Redis still unreachable after %.0fs and %d attempts; giving up: %s",
+                        _STARTUP_CONNECT_TIMEOUT_S, attempt, e,
+                    )
+                    raise
+                logger.warning(
+                    "Redis not reachable yet (attempt %d), retrying in %.0fs: %s",
+                    attempt, _STARTUP_CONNECT_BACKOFF_S, e,
+                )
+                time.sleep(_STARTUP_CONNECT_BACKOFF_S)
 
     def _create_group(self) -> None:
         try:

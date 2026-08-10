@@ -157,6 +157,7 @@ The engine comes from `WAREHOUSE_ENGINE`, which the chart sets on the shared Con
 
 - The `release.requested:v1` consumer runs on a daemon thread with a connection-pooled `redis` client and maintains its own consumer-group offset.
 - Consumer group is created with `id="0"` (reads from the beginning on first create; `BUSYGROUP` error on re-create is ignored)
+- The initial group creation waits out a Redis it cannot reach yet, retrying every 3 seconds for up to 60 seconds before giving up. A cold start can beat its own Redis — on Kubernetes the Service DNS name may not resolve, under compose the server may not be accepting connections — and letting that error end the process costs more than the wait, since CrashLoopBackOff then holds the pod down on an exponential delay well past the point Redis is ready. The wait is bounded rather than infinite because the health server only starts once the consumer is constructed: waiting forever on a genuinely unreachable Redis would leave a process that serves no probe and consumes nothing, with nothing to signal it. Only connection and timeout failures are retried; any other error is permanent and raised on the first attempt
 - Consumer name is `consumer-{random_hex}` (unique per process restart)
 - `NOGROUP` error recovery: consumer group is recreated and the loop retries after 3 seconds
 - Message is ACKed only after the handler returns without raising; a failure leaves the message in the group PEL
