@@ -75,14 +75,17 @@ A few streams carry a `stage` discriminator that changes how consumers process
 the message. These are documented here as cross-cutting facts; full payload
 schemas live in the service dossiers.
 
-**`release.requested:v1`** — emitted by release-controller when a release
-transitions from Compiling to Parsing. The payload is `{release_id,
-manifest_keys}`; each `manifest_keys` entry is `{service, s3_uri, kind}`,
-where `kind` (`"dbt"` | `"python"`) selects which of manifest-controller's two
-parsers reads that entry's artifact — a dbt `manifest.json` or a python
-service's `contract.yaml`. `kind` is absent from a producer that predates
-python support, which manifest-controller defaults to `"dbt"`, so no upstream
-change is required to keep publishing the stream. See
+**`release.requested:v1`** — emitted by release-controller once a release is
+ready to parse: a `dbt` release emits it on transitioning from Compiling to
+Parsing (`compile.completed:v1` ok path); a `python` release has no compile
+leg, so it emits it directly on activating from Received to Parsing. The
+payload is `{release_id, manifest_keys}`; each `manifest_keys` entry is
+`{service, s3_uri, kind}`, with `kind` (`"dbt"` | `"python"`) explicit on
+every entry — release-controller always sets it, never omits it — selecting
+which of manifest-controller's two parsers reads that entry's artifact: a dbt
+`manifest.json` or a python service's `contract.yaml`. manifest-controller's
+decoder tolerates an absent `kind` by defaulting to `"dbt"` regardless, so a
+future or third-party producer that omits the field still parses. See
 `docs/arch/services/manifest-controller.md` for the per-kind parse and
 failure behavior.
 

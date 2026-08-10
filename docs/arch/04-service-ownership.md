@@ -137,7 +137,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | Postgres `releases` (per-candidate state, `changed_service`, assembled per-service `image_tags`, candidate topology including per-node `candidate_artifact_uri`, the release-level `code_bundle_uri` set from the parse result, validation results, transitions, immutable provenance `repo` + `commit_sha`), `current_prod` (singleton live `topology_snapshot` + promoted `release_id`; `candidate_artifact_uri` is stripped on promotion), `service_prod` (one row per dbt service: live `manifest_s3_key` + `image_tag` + `release_id`), `message_processing`, `release_controller_outbox` |
+| Durable state | Postgres `releases` (per-candidate state, `kind` (`dbt`/`python`), `changed_service`, assembled per-service `image_tags`, candidate topology including per-node `candidate_artifact_uri`, the release-level `code_bundle_uri` set from the parse result, validation results, transitions, immutable provenance `repo` + `commit_sha`), `current_prod` (singleton live `topology_snapshot` + promoted `release_id`; `candidate_artifact_uri` is stripped on promotion), `service_prod` (one row per service, dbt or python: live `manifest_s3_key` + `manifest_kind` + `image_tag` + `release_id`), `message_processing`, `release_controller_outbox` |
 | HTTP server | `POST /releases` (single-service candidate; requires `repo` + `commit_sha`), `GET /releases`, `GET /releases/{id}` (returns `repo` + `commit_sha`), `GET /current-prod`, `GET /healthz` |
 | gRPC server methods owned | none |
 | Redis consumes | `compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.result:v1` |
