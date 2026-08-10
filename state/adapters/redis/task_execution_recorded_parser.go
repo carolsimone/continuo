@@ -14,8 +14,8 @@ import (
 // into a typed domain event. Fields are read as flat string values from
 // msg.Values. execution_id and task_id are required and must be valid UUIDs.
 // Optional fields (job_name, started_at, completed_at, execution_seconds,
-// error_message, log_s3_key, parse_cache, parse_cache_reason) are nil when
-// their wire value is empty.
+// error_message, log_s3_key, run_results_uri, parse_cache, parse_cache_reason)
+// are nil when their wire value is empty.
 // Malformed RFC3339 timestamps produce an error, matching the existing
 // handler's discard semantics. execution_seconds silently defaults to nil
 // when unparseable or non-positive. Errors are parse-permanent.
@@ -64,6 +64,9 @@ func ParseTaskExecutionRecorded(msg goredis.XMessage) (events.TaskExecutionRecor
 	}
 	if v, _ := msg.Values["log_s3_key"].(string); v != "" {
 		out.LogS3Key = &v
+	}
+	if v, _ := msg.Values["run_results_uri"].(string); v != "" {
+		out.RunResultsURI = &v
 	}
 	if v, _ := msg.Values["parse_cache"].(string); v != "" {
 		out.ParseCache = &v

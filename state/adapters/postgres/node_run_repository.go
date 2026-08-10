@@ -53,7 +53,7 @@ func NewNodeRunRepository(db *sqlx.DB, logger *slog.Logger) NodeRunRepository {
 //   - run-level: run_id, schedule_name, kind, terminal_status
 //   - task-level: task_status, retry_count, image_tag, manifest_version
 //   - exec-level (latest execution per task): started_at, completed_at,
-//     error_message, log_s3_key
+//     error_message, log_s3_key, run_results_uri
 //
 // Tasks with no execution row yield rows with nil timings.
 // limit is clamped to (0, 50]; non-positive or oversized values default to 50.
@@ -83,7 +83,7 @@ func (r *nodeRunRepository) List(
 		latest_exec AS (
 			SELECT DISTINCT ON (te.task_id)
 			       te.task_id, te.started_at, te.completed_at,
-			       te.error_message, te.log_s3_key
+			       te.error_message, te.log_s3_key, te.run_results_uri
 			FROM task_execution te
 			JOIN target_tasks tt ON tt.task_id = te.task_id
 			ORDER BY te.task_id, te.created_at DESC
@@ -102,6 +102,7 @@ func (r *nodeRunRepository) List(
 		       le.completed_at      AS completed_at,
 		       le.error_message     AS error_message,
 		       le.log_s3_key        AS log_s3_key,
+		       le.run_results_uri   AS run_results_uri,
 		       tt.operation         AS operation
 		FROM target_tasks tt
 		JOIN scheduler_tracker s ON s.schedule_id = tt.schedule_id
@@ -143,6 +144,7 @@ type nodeRunRow struct {
 	CompletedAt     *time.Time     `db:"completed_at"`
 	ErrorMessage    *string        `db:"error_message"`
 	LogS3Key        *string        `db:"log_s3_key"`
+	RunResultsURI   *string        `db:"run_results_uri"`
 	Operation       string         `db:"operation"`
 }
 
@@ -162,6 +164,7 @@ func toNodeRun(row nodeRunRow) *projection.NodeRun {
 		CompletedAt:     row.CompletedAt,
 		ErrorMessage:    row.ErrorMessage,
 		LogS3Key:        row.LogS3Key,
+		RunResultsURI:   row.RunResultsURI,
 		Operation:       row.Operation,
 	}
 }

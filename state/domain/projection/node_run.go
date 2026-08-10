@@ -16,7 +16,8 @@ import (
 //
 // One NodeRun corresponds to one task_tracker row, not one scheduler run. Per-
 // task timing comes from the latest task_execution row for that task_id; rows
-// with no execution yet carry nil timings and empty ErrorMessage / LogS3Key.
+// with no execution yet carry nil timings and empty ErrorMessage / LogS3Key /
+// RunResultsURI.
 type NodeRun struct {
 	ScheduleID      uuid.UUID
 	ScheduleName    string
@@ -32,5 +33,6 @@ type NodeRun struct {
 	CompletedAt     *time.Time
 	ErrorMessage    *string
 	LogS3Key        *string
+	RunResultsURI   *string
 	Operation       string
 }

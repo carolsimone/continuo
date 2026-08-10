@@ -414,7 +414,8 @@ type TaskExecution struct {
 	CancelledAt          *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=cancelled_at,json=cancelledAt,proto3" json:"cancelled_at,omitempty"`
 	CancelledBy          string                 `protobuf:"bytes,11,opt,name=cancelled_by,json=cancelledBy,proto3" json:"cancelled_by,omitempty"`
 	CancellationReason   string                 `protobuf:"bytes,12,opt,name=cancellation_reason,json=cancellationReason,proto3" json:"cancellation_reason,omitempty"`
-	LogS3Key             string                 `protobuf:"bytes,13,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"` // S3 object key for full pod log; empty if upload failed
+	LogS3Key             string                 `protobuf:"bytes,13,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`                // S3 object key for full pod log; empty if upload failed
+	RunResultsUri        string                 `protobuf:"bytes,14,opt,name=run_results_uri,json=runResultsUri,proto3" json:"run_results_uri,omitempty"` // S3 object key for the structured result block; empty when the container emitted none
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -536,6 +537,13 @@ func (x *TaskExecution) GetCancellationReason() string {
 func (x *TaskExecution) GetLogS3Key() string {
 	if x != nil {
 		return x.LogS3Key
+	}
+	return ""
+}
+
+func (x *TaskExecution) GetRunResultsUri() string {
+	if x != nil {
+		return x.RunResultsUri
 	}
 	return ""
 }
@@ -2229,12 +2237,13 @@ type NodeRun struct {
 	RetryCount      int32                  `protobuf:"varint,7,opt,name=retry_count,json=retryCount,proto3" json:"retry_count,omitempty"`
 	ImageTag        string                 `protobuf:"bytes,8,opt,name=image_tag,json=imageTag,proto3" json:"image_tag,omitempty"`
 	ManifestVersion string                 `protobuf:"bytes,9,opt,name=manifest_version,json=manifestVersion,proto3" json:"manifest_version,omitempty"`
-	CreatedAt       string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`          // RFC3339
-	StartedAt       string                 `protobuf:"bytes,11,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`          // RFC3339, "" if no execution yet
-	CompletedAt     string                 `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`    // RFC3339, "" if not finished
-	ErrorMessage    string                 `protobuf:"bytes,13,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // "" when none
-	LogS3Key        string                 `protobuf:"bytes,14,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`           // "" when none
-	Operation       string                 `protobuf:"bytes,15,opt,name=operation,proto3" json:"operation,omitempty"`                           // run | test | build
+	CreatedAt       string                 `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`               // RFC3339
+	StartedAt       string                 `protobuf:"bytes,11,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`               // RFC3339, "" if no execution yet
+	CompletedAt     string                 `protobuf:"bytes,12,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`         // RFC3339, "" if not finished
+	ErrorMessage    string                 `protobuf:"bytes,13,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`      // "" when none
+	LogS3Key        string                 `protobuf:"bytes,14,opt,name=log_s3_key,json=logS3Key,proto3" json:"log_s3_key,omitempty"`                // "" when none
+	Operation       string                 `protobuf:"bytes,15,opt,name=operation,proto3" json:"operation,omitempty"`                                // run | test | build
+	RunResultsUri   string                 `protobuf:"bytes,16,opt,name=run_results_uri,json=runResultsUri,proto3" json:"run_results_uri,omitempty"` // "" when none
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2370,6 +2379,13 @@ func (x *NodeRun) GetLogS3Key() string {
 func (x *NodeRun) GetOperation() string {
 	if x != nil {
 		return x.Operation
+	}
+	return ""
+}
+
+func (x *NodeRun) GetRunResultsUri() string {
+	if x != nil {
+		return x.RunResultsUri
 	}
 	return ""
 }
@@ -2754,7 +2770,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	" \x01(\x05R\n" +
 	"maxRetries\x12=\n" +
 	"\fcancelled_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\vcancelledAt\x12!\n" +
-	"\fcancelled_by\x18\f \x01(\tR\vcancelledBy\"\xbc\x04\n" +
+	"\fcancelled_by\x18\f \x01(\tR\vcancelledBy\"\xe4\x04\n" +
 	"\rTaskExecution\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x129\n" +
@@ -2774,7 +2790,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\fcancelled_by\x18\v \x01(\tR\vcancelledBy\x12/\n" +
 	"\x13cancellation_reason\x18\f \x01(\tR\x12cancellationReason\x12\x1c\n" +
 	"\n" +
-	"log_s3_key\x18\r \x01(\tR\blogS3Key\"6\n" +
+	"log_s3_key\x18\r \x01(\tR\blogS3Key\x12&\n" +
+	"\x0frun_results_uri\x18\x0e \x01(\tR\rrunResultsUri\"6\n" +
 	"\x13GetSchedulerRequest\x12\x1f\n" +
 	"\vschedule_id\x18\x01 \x01(\tR\n" +
 	"scheduleId\"\x8d\x01\n" +
@@ -2891,7 +2908,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x1c\n" +
 	"\toperation\x18\x05 \x01(\tR\toperation\"=\n" +
 	"\x14ListNodeRunsResponse\x12%\n" +
-	"\x04runs\x18\x01 \x03(\v2\x11.state.v1.NodeRunR\x04runs\"\xe7\x03\n" +
+	"\x04runs\x18\x01 \x03(\v2\x11.state.v1.NodeRunR\x04runs\"\x8f\x04\n" +
 	"\aNodeRun\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
 	"\rschedule_name\x18\x02 \x01(\tR\fscheduleName\x12\x12\n" +
@@ -2913,7 +2930,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\rerror_message\x18\r \x01(\tR\ferrorMessage\x12\x1c\n" +
 	"\n" +
 	"log_s3_key\x18\x0e \x01(\tR\blogS3Key\x12\x1c\n" +
-	"\toperation\x18\x0f \x01(\tR\toperation\"\x99\x01\n" +
+	"\toperation\x18\x0f \x01(\tR\toperation\x12&\n" +
+	"\x0frun_results_uri\x18\x10 \x01(\tR\rrunResultsUri\"\x99\x01\n" +
 	"\x10ListNodesRequest\x12\x16\n" +
 	"\x06search\x18\x01 \x01(\tR\x06search\x12!\n" +
 	"\fservice_name\x18\x02 \x01(\tR\vserviceName\x12\x14\n" +

@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/google/uuid"
 )
 
@@ -31,13 +33,24 @@ type fakeK8sClient struct {
 	labels      map[string]string
 	annotations map[string]string
 	podLog      string // full pod log returned by GetPodLogs (tail mirrors it)
+	podLogsErr  error  // when set, GetPodLogs fails
+	// blockPodLogs makes GetPodLogs hang until its context expires, standing in
+	// for an unreachable kubelet or a stalled API read.
+	blockPodLogs bool
 }
 
 func (f *fakeK8sClient) GetJobStatus(_ context.Context, _, _ string) (*model.K8sPodResult, error) {
 	return f.status, f.err
 }
 
-func (f *fakeK8sClient) GetPodLogs(_ context.Context, _, _ string, _ int64) (string, string, error) {
+func (f *fakeK8sClient) GetPodLogs(ctx context.Context, _, _ string, _ int64) (string, string, error) {
+	if f.blockPodLogs {
+		<-ctx.Done()
+		return "", "", ctx.Err()
+	}
+	if f.podLogsErr != nil {
+		return "", "", f.podLogsErr
+	}
 	return f.podLog, f.podLog, nil
 }
 
@@ -949,7 +962,7 @@ func TestHandleSucceeded(t *testing.T) {
 	}
 }
 
-// TestHandleSucceeded_ParseCache verifies that writeTaskExecutionRecordedWithLogS3Key
+// TestHandleSucceeded_ParseCache verifies that writeTaskExecutionRecorded
 // derives ParseCache/ParseCacheReason from the hydrate-parse-cache initContainer's
 // termination message: "hydrated" -> state hydrated/no reason; "degraded:<reason>"
 // -> state degraded/reason; and an absent hydrate-parse-cache entry (pre-feature
@@ -1913,3 +1926,277 @@ func TestHandle_PromoteSeedMode_RunningJob_SuppressesRunningAnnouncement(t *test
 // Compile-time interface checks.
 var _ ports.LogUploader = (*fakeLogUploader)(nil)
 var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)
+
+// pythonResultBlockLog returns a pod log shaped like a python-model container's
+// output: diagnostics first, terminated by exactly one sentinel-framed result
+// block as the last line.
+func pythonResultBlockLog(status, message string) string {
+	return "running node analytics.orders -> analytics.orders\n" +
+		validationresult.SentinelBegin + "\n" +
+		`{"schema_version":1,"status":"` + status + `","message":"` + message +
+		`","failures":1,"unique_id":"analytics.orders"}` + "\n" +
+		validationresult.SentinelEnd + "\n"
+}
+
+// decodeExecutionPayload returns the task_execution_recorded payload written to
+// the outbox, failing the test when no such row exists.
+func decodeExecutionPayload(t *testing.T, entries []*pkgoutbox.Entry) pkgevents.TaskExecutionRecorded {
+	t.Helper()
+	entry := findEntryByEventType(entries, "task_execution_recorded")
+	if entry == nil {
+		t.Fatal("no task_execution_recorded entry written")
+	}
+	var payload pkgevents.TaskExecutionRecorded
+	if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal task_execution_recorded payload: %v", err)
+	}
+	return payload
+}
+
+// TestHandleFailedPermanent_RunResultsURI verifies a permanently-failed
+// production Job whose pod printed a result block records the uploaded JSON's
+// S3 key, instead of writing the object and dropping its address. It also pins
+// the division of labour between the two uploads: the text log has the block
+// stripped, and the block's own JSON carries the error class.
+func TestHandleFailedPermanent_RunResultsURI(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: failedResult(),
+		podLog: pythonResultBlockLog("error", "ConformError: column 'id' cannot be safely cast to INTEGER"),
+	}
+	handler, uploader := newHandlerWithUploader(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-failed",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	if payload.RunResultsURI == "" {
+		t.Fatal("run_results_uri must be recorded when the pod printed a result block")
+	}
+	if !strings.HasPrefix(payload.RunResultsURI, "run-results/task-executions/svc-py/analytics/orders/") {
+		t.Errorf("unexpected run-results key %q", payload.RunResultsURI)
+	}
+	if got := uploader.uploaded[payload.RunResultsURI]; !strings.Contains(got, "ConformError") {
+		t.Errorf("uploaded run-results JSON must carry the error class, got %q", got)
+	}
+	if logged := uploader.uploaded[payload.LogS3Key]; strings.Contains(logged, validationresult.SentinelBegin) {
+		t.Error("the uploaded text log must have the sentinel block stripped")
+	}
+}
+
+// TestHandleFailedWithRetry_RunResultsURI verifies the retry path records the
+// key too — a node that will be retried is exactly the one whose first failure
+// an operator wants to read.
+func TestHandleFailedWithRetry_RunResultsURI(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: failedResult(),
+		podLog: pythonResultBlockLog("error", "ReadError: unknown read 'orders'"),
+	}
+	handler := newHandler(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-retry",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if payload := decodeExecutionPayload(t, outbox.entries); payload.RunResultsURI == "" {
+		t.Fatal("run_results_uri must be recorded on the retry path too")
+	}
+}
+
+// TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI pins the dbt case:
+// a pod log with no sentinel block produces a payload with no run_results_uri
+// at all, so dbt wire payloads are unchanged.
+func TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{status: failedResult(), podLog: "Database Error in model orders\n"}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-dbt-failed",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	entry := findEntryByEventType(outbox.entries, "task_execution_recorded")
+	if entry == nil {
+		t.Fatal("no task_execution_recorded entry written")
+	}
+	if strings.Contains(string(entry.Payload), "run_results_uri") {
+		t.Errorf("dbt payload must not carry run_results_uri, got %s", entry.Payload)
+	}
+}
+
+// succeededResult returns a terminal Succeeded pod result.
+func succeededResult() *model.K8sPodResult {
+	now := time.Now()
+	return &model.K8sPodResult{
+		Status:           model.JobStatusSucceeded,
+		StartedAt:        &now,
+		CompletedAt:      &now,
+		ExecutionSeconds: 2.0,
+	}
+}
+
+// TestHandleSucceeded_UploadsLog verifies a successful production Job's pod log
+// reaches S3 and its key reaches the wire. Without it the log is unreachable
+// once the Job's TTL reaps the pod, leaving a finished run with timings and no
+// evidence of what it did.
+func TestHandleSucceeded_UploadsLog(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: succeededResult(),
+		podLog: "1 of 1 OK created sql table model analytics.orders\n",
+	}
+	handler, uploader := newHandlerWithUploader(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-ok",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	if payload.LogS3Key == "" {
+		t.Fatal("a successful job must record its log key")
+	}
+	if !strings.HasPrefix(payload.LogS3Key, "logs/task-executions/service-1/analytics/orders/") {
+		t.Errorf("unexpected log key %q", payload.LogS3Key)
+	}
+	if !strings.Contains(uploader.uploaded[payload.LogS3Key], "1 of 1 OK") {
+		t.Error("the pod log content must be uploaded")
+	}
+	if payload.ErrorMessage != "" {
+		t.Errorf("a successful job must not carry an error message, got %q", payload.ErrorMessage)
+	}
+}
+
+// TestHandleSucceeded_UploadsRunResults verifies a successful python-model Job's
+// result block is captured too, and stripped from the text log.
+func TestHandleSucceeded_UploadsRunResults(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: succeededResult(),
+		podLog: pythonResultBlockLog("success", "rows=42"),
+	}
+	handler, uploader := newHandlerWithUploader(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-ok",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	if payload.RunResultsURI == "" {
+		t.Fatal("a successful job that printed a result block must record its key")
+	}
+	if !strings.Contains(uploader.uploaded[payload.RunResultsURI], "rows=42") {
+		t.Error("the uploaded run-results JSON must carry the block's message")
+	}
+	if strings.Contains(uploader.uploaded[payload.LogS3Key], validationresult.SentinelBegin) {
+		t.Error("the uploaded text log must have the sentinel block stripped")
+	}
+}
+
+// TestHandleSucceeded_LogFetchFailureStillSucceeds pins the soft-failure
+// guarantee: adding an S3 dependency to the success path must never be able to
+// turn a successful run into a failed one.
+func TestHandleSucceeded_LogFetchFailureStillSucceeds(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{status: succeededResult(), podLogsErr: errors.New("pod gone")}
+	handler := newHandler(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-ok-nolog",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("a failed log fetch must not fail the handler: %v", err)
+	}
+
+	statusEntry := findEntryByEventType(outbox.entries, "task_status_updated")
+	if statusEntry == nil || !strings.Contains(string(statusEntry.Payload), "SUCCEEDED") {
+		t.Fatal("the task must still be recorded as SUCCEEDED")
+	}
+	entry := findEntryByEventType(outbox.entries, "task_execution_recorded")
+	if entry == nil {
+		t.Fatal("the execution row must still be written")
+	}
+	if strings.Contains(string(entry.Payload), "log_s3_key") {
+		t.Errorf("no log key should be recorded when the fetch failed, got %s", entry.Payload)
+	}
+}
+
+// TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome is the regression guard
+// for the ordering hazard the log upload introduces on the success path: the
+// I/O runs before the terminal outbox writes and shares their context, so an
+// unbounded slow pod-log read or S3 stall would consume the whole handler
+// budget and leave nothing to persist the task's outcome with. The task would
+// then be retried and eventually poison-ACKed while still recorded as RUNNING.
+//
+// The fake blocks until its own context expires, which the handler's own
+// LogIOTimeout must cut short well inside the parent budget.
+func TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{status: succeededResult(), blockPodLogs: true}
+
+	cfg := &handlers.HandlerConfig{
+		K8sNamespace:          "default",
+		CheckDelaySeconds:     30,
+		ErrorMessageMaxLen:    4096,
+		LogTailLines:          50,
+		DefaultTaskMaxRetries: 3,
+		LogIOTimeout:          50 * time.Millisecond,
+	}
+	handler := handlers.NewCheckStatusHandler(k8s, &fakeLogUploader{}, cfg, noopCancelledRepo(), slog.Default())
+
+	// A parent budget far larger than the I/O cap: the terminal writes must
+	// still have almost all of it left once the log fetch is abandoned.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-slow-logs",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		MaxRetries: 3,
+	}
+	if err := handler.Handle(ctx, newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("a stalled log fetch must not fail the handler: %v", err)
+	}
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("the parent context must still be live for the terminal writes, got %v", err)
+	}
+
+	statusEntry := findEntryByEventType(outbox.entries, "task_status_updated")
+	if statusEntry == nil || !strings.Contains(string(statusEntry.Payload), "SUCCEEDED") {
+		t.Fatal("the task must still be recorded as SUCCEEDED")
+	}
+	if findEntryByEventType(outbox.entries, "task_execution_recorded") == nil {
+		t.Fatal("the execution row must still be written")
+	}
+	if findEntryByEventType(outbox.entries, "node_status_updated") == nil {
+		t.Fatal("the node status row must still be written")
+	}
+}

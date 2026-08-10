@@ -27,6 +27,7 @@ describe('GET /api/schedulers/:id/executions', () => {
             started_at: null,
             completed_at: null,
             log_s3_key: 'logs/task-executions/svc/sc/tbl/exec-1.log',
+            run_results_uri: 'run-results/task-executions/svc/sc/tbl/exec-1.json',
           },
         ],
         total_count: 1,
@@ -41,6 +42,9 @@ describe('GET /api/schedulers/:id/executions', () => {
     expect(res.body.executions[0].task_id).toBe('task-1');
     expect(res.body.executions[0].error_message).toBe('boom');
     expect(res.body.executions[0].log_s3_key).toBe('logs/task-executions/svc/sc/tbl/exec-1.log');
+    // The structured result key must survive the DTO reconstruction: state
+    // persists it, but this route rebuilds each execution field by field.
+    expect(res.body.executions[0].run_results_uri).toBe('run-results/task-executions/svc/sc/tbl/exec-1.json');
   });
 
   it('returns 500 on gRPC error', async () => {

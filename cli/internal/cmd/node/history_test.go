@@ -114,6 +114,7 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 		TerminalStatus: "succeeded", TaskId: "task_1", TaskStatus: "succeeded",
 		RetryCount: 0, ImageTag: "img:v9", ManifestVersion: "m42",
 		CreatedAt: "2026-07-10T10:00:00Z", CompletedAt: "2026-07-10T10:05:00Z",
+		RunResultsUri: "run-results/task-executions/finance/analytics/orders/e1.json",
 	}}}}
 
 	stdout, stderr, exit := runHistory(t, fake, []string{"finance", "analytics", "orders"}, false)
@@ -137,6 +138,10 @@ func TestHistory_SuccessMapsAllFields(t *testing.T) {
 	assert.Equal(t, "succeeded", r["terminal_status"])
 	assert.Equal(t, "img:v9", r["image_tag"])
 	assert.Equal(t, "m42", r["manifest_version"])
+	// The structured result key must reach the CLI payload: it is vendored
+	// through this module.s own proto copy, so a state-side addition is invisible
+	// here until that copy is regenerated.
+	assert.Equal(t, "run-results/task-executions/finance/analytics/orders/e1.json", r["run_results_uri"])
 }
 
 func TestHistory_OperationFlagIsForwarded(t *testing.T) {
@@ -182,6 +187,7 @@ func TestHistory_OmitsEmptyOptionalFields(t *testing.T) {
 	assert.NotContains(t, stdout, "completed_at")
 	assert.NotContains(t, stdout, "error_message")
 	assert.NotContains(t, stdout, "log_s3_key")
+	assert.NotContains(t, stdout, "run_results_uri")
 }
 
 func TestHistory_WrongArgCountExits2(t *testing.T) {

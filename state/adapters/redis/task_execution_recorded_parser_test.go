@@ -69,3 +69,28 @@ func TestParseTaskExecutionRecorded_BadStartedAt(t *testing.T) {
 	_, err := ParseTaskExecutionRecorded(msg)
 	require.Error(t, err)
 }
+
+// TestParseTaskExecutionRecorded_RunResultsURI verifies the structured-result
+// key is read off the wire, and stays nil when absent — which is every dbt
+// execution, since dbt containers print no result block.
+func TestParseTaskExecutionRecorded_RunResultsURI(t *testing.T) {
+	const key = "run-results/task-executions/svc/sc/tbl/e.json"
+
+	present := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{
+		"execution_id":    uuid.New().String(),
+		"task_id":         uuid.New().String(),
+		"run_results_uri": key,
+	}}
+	evt, err := ParseTaskExecutionRecorded(present)
+	require.NoError(t, err)
+	require.NotNil(t, evt.RunResultsURI)
+	assert.Equal(t, key, *evt.RunResultsURI)
+
+	absent := goredis.XMessage{ID: "1-1", Values: map[string]interface{}{
+		"execution_id": uuid.New().String(),
+		"task_id":      uuid.New().String(),
+	}}
+	evt, err = ParseTaskExecutionRecorded(absent)
+	require.NoError(t, err)
+	assert.Nil(t, evt.RunResultsURI, "no wire key means no value, not an empty string")
+}

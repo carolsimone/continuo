@@ -82,6 +82,7 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
           completed_at:     r.completed_at || null,
           error_message:    r.error_message || null,
           log_s3_key:       r.log_s3_key   || null,
+          run_results_uri:  r.run_results_uri || null,
           operation:        r.operation ?? 'run',
         }));
         res.json({ runs });

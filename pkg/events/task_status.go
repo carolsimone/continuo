@@ -37,6 +37,11 @@ type TaskExecutionRecorded struct {
 	ExecutionSeconds float64 `json:"execution_seconds"`
 	ErrorMessage     string  `json:"error_message,omitempty"`
 	LogS3Key         string  `json:"log_s3_key,omitempty"`
+	// RunResultsURI is the S3 object key of the structured result block the
+	// pod printed on stdout, when it printed one. Python-model containers
+	// always emit one; dbt containers never do, so the field is absent from
+	// their payloads.
+	RunResultsURI string `json:"run_results_uri,omitempty"`
 	// ParseCache reports whether the Job's team container ran with the
 	// hydrated partial-parse cache: "hydrated" | "degraded" | "unknown";
 	// empty (omitted) for Jobs without a hydrate initContainer.
@@ -65,6 +70,9 @@ func (e TaskExecutionRecorded) ToMap() map[string]interface{} {
 	}
 	if e.LogS3Key != "" {
 		m["log_s3_key"] = e.LogS3Key
+	}
+	if e.RunResultsURI != "" {
+		m["run_results_uri"] = e.RunResultsURI
 	}
 	if e.ParseCache != "" {
 		m["parse_cache"] = e.ParseCache
