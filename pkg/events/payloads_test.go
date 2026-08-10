@@ -258,7 +258,7 @@ func TestTaskExecutionRecorded_CarriesRunResultsURI(t *testing.T) {
 	in := events.TaskExecutionRecorded{
 		ExecutionID:     uuid.New().String(),
 		TaskID:          uuid.New().String(),
-		RunResultsS3Key: key,
+		RunResultsURI: key,
 	}
 
 	b, err := json.Marshal(in)

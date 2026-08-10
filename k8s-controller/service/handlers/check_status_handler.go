@@ -212,7 +212,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 	// upload soft-fails to an empty key, so S3 being unavailable cannot turn a
 	// success into a failure. The log tail is discarded — a successful
 	// execution carries no error message.
-	executionID, logS3Key, runResultsS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd)
 
 	// Row 1: task_status_updated. Stamp the attempt that ran (cmd.RetryCount)
 	// so the SUCCEEDED carries the same retry_count as that attempt's RUNNING;
@@ -223,7 +223,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 	}
 
 	// Row 2: task_execution_recorded
-	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, "", logS3Key, runResultsS3Key); err != nil {
+	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, "", logS3Key, runResultsURI); err != nil {
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
@@ -261,7 +261,7 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
+	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd)
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -276,8 +276,8 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 		"outcome":     outcome,
 		"dbt_log_uri": logS3Key,
 	}
-	if runResultsS3Key != "" {
-		payloadMap["run_results_uri"] = runResultsS3Key
+	if runResultsURI != "" {
+		payloadMap["run_results_uri"] = runResultsURI
 	}
 	payload, err := json.Marshal(payloadMap)
 	if err != nil {
@@ -322,7 +322,7 @@ func (h *CheckStatusHandler) handleSeedBuildTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
+	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd)
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -337,8 +337,8 @@ func (h *CheckStatusHandler) handleSeedBuildTerminal(
 		"outcome":     outcome,
 		"dbt_log_uri": logS3Key,
 	}
-	if runResultsS3Key != "" {
-		payloadMap["run_results_uri"] = runResultsS3Key
+	if runResultsURI != "" {
+		payloadMap["run_results_uri"] = runResultsURI
 	}
 	payload, err := json.Marshal(payloadMap)
 	if err != nil {
@@ -386,7 +386,7 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsS3Key, _ := h.fetchAndUploadLogs(ctx, cmd)
+	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd)
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -401,8 +401,8 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 		"outcome":     outcome,
 		"dbt_log_uri": logS3Key,
 	}
-	if runResultsS3Key != "" {
-		payloadMap["run_results_uri"] = runResultsS3Key
+	if runResultsURI != "" {
+		payloadMap["run_results_uri"] = runResultsURI
 	}
 	if result.FailedContainer != "" {
 		payloadMap["failed_container"] = result.FailedContainer
@@ -460,14 +460,14 @@ func (h *CheckStatusHandler) handlePromoteSeedTerminal(ctx context.Context, u uo
 // fetchAndUploadLogs fetches pod logs and uploads them to S3. The text log (with
 // any structured-result sentinel block stripped) is uploaded under logs/...; when
 // the pod emitted a structured block, that JSON is uploaded separately under
-// run-results/... and its key returned as runResultsS3Key. Validation pods and
+// run-results/... and its key returned as runResultsURI. Validation pods and
 // python-model containers emit one; dbt containers do not.
 // Returns the log tail (for error_message), both S3 keys, and a pre-generated
 // execution ID. Each upload soft-fails independently to an empty key on error.
 func (h *CheckStatusHandler) fetchAndUploadLogs(
 	ctx context.Context,
 	cmd command.CheckJobStatus,
-) (executionID uuid.UUID, logS3Key, runResultsS3Key, tail string) {
+) (executionID uuid.UUID, logS3Key, runResultsURI, tail string) {
 	executionID = uuid.New()
 
 	fullLog, logTail, err := h.k8sClient.GetPodLogs(ctx, h.config.K8sNamespace, cmd.JobName, h.config.LogTailLines)
@@ -512,12 +512,12 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 				"error", err,
 			)
 		} else {
-			runResultsS3Key = rrKey
+			runResultsURI = rrKey
 			h.logger.Info("Uploaded run-results to S3", "key", rrKey, "job_name", cmd.JobName)
 		}
 	}
 
-	return executionID, logS3Key, runResultsS3Key, tail
+	return executionID, logS3Key, runResultsURI, tail
 }
 
 // handleFailedPermanent handles permanently failed jobs (retry_count >= max_retries).
@@ -529,7 +529,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount
 
-	executionID, logS3Key, runResultsS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd)
 
 	errorMsg := h.truncateErrorMessage(logTail)
 	if errorMsg == "" {
@@ -542,7 +542,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 	}
 
 	// Row 2: task_execution_recorded
-	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, errorMsg, logS3Key, runResultsS3Key); err != nil {
+	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, errorMsg, logS3Key, runResultsURI); err != nil {
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
@@ -581,7 +581,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
 
-	executionID, logS3Key, runResultsS3Key, logTail := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd)
 
 	errorMsg := h.truncateErrorMessage(logTail)
 	if errorMsg == "" {
@@ -600,7 +600,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	}
 
 	// Row 2: task_execution_recorded (for the failed attempt)
-	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, errorMsg, logS3Key, runResultsS3Key); err != nil {
+	if err := h.writeTaskExecutionRecorded(ctx, repo, cmd, executionID, result, errorMsg, logS3Key, runResultsURI); err != nil {
 		return fmt.Errorf("task_execution_recorded: %w", err)
 	}
 
@@ -818,7 +818,7 @@ func parseCacheFromResult(result *model.K8sPodResult) (state, reason string) {
 }
 
 // writeTaskExecutionRecorded writes a task_execution_recorded canonical outbox
-// row. logS3Key and runResultsS3Key name the S3 objects the pod's output was
+// row. logS3Key and runResultsURI name the S3 objects the pod's output was
 // uploaded to: the text log, and the structured result block when the pod
 // printed one. Either is empty when its upload failed or did not apply.
 func (h *CheckStatusHandler) writeTaskExecutionRecorded(
@@ -827,7 +827,9 @@ func (h *CheckStatusHandler) writeTaskExecutionRecorded(
 	cmd command.CheckJobStatus,
 	executionID uuid.UUID,
 	result *model.K8sPodResult,
-	errorMsg, logS3Key, runResultsS3Key string,
+	errorMsg string,
+	logS3Key string,
+	runResultsURI string,
 ) error {
 	exec := pkgevents.TaskExecutionRecorded{
 		ExecutionID:      executionID.String(),
@@ -836,7 +838,7 @@ func (h *CheckStatusHandler) writeTaskExecutionRecorded(
 		ExecutionSeconds: result.ExecutionSeconds,
 		ErrorMessage:     errorMsg,
 		LogS3Key:         logS3Key,
-		RunResultsS3Key:  runResultsS3Key,
+		RunResultsURI:    runResultsURI,
 	}
 	if result.StartedAt != nil {
 		exec.StartedAt = result.StartedAt.UTC().Format(time.RFC3339)

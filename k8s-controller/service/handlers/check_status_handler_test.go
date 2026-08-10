@@ -1969,13 +1969,13 @@ func TestHandleFailedPermanent_RunResultsURI(t *testing.T) {
 	}
 
 	payload := decodeExecutionPayload(t, outbox.entries)
-	if payload.RunResultsS3Key == "" {
+	if payload.RunResultsURI == "" {
 		t.Fatal("run_results_uri must be recorded when the pod printed a result block")
 	}
-	if !strings.HasPrefix(payload.RunResultsS3Key, "run-results/task-executions/svc-py/analytics/orders/") {
-		t.Errorf("unexpected run-results key %q", payload.RunResultsS3Key)
+	if !strings.HasPrefix(payload.RunResultsURI, "run-results/task-executions/svc-py/analytics/orders/") {
+		t.Errorf("unexpected run-results key %q", payload.RunResultsURI)
 	}
-	if got := uploader.uploaded[payload.RunResultsS3Key]; !strings.Contains(got, "ConformError") {
+	if got := uploader.uploaded[payload.RunResultsURI]; !strings.Contains(got, "ConformError") {
 		t.Errorf("uploaded run-results JSON must carry the error class, got %q", got)
 	}
 	if logged := uploader.uploaded[payload.LogS3Key]; strings.Contains(logged, validationresult.SentinelBegin) {
@@ -2003,7 +2003,7 @@ func TestHandleFailedWithRetry_RunResultsURI(t *testing.T) {
 		t.Fatalf("Handle: %v", err)
 	}
 
-	if payload := decodeExecutionPayload(t, outbox.entries); payload.RunResultsS3Key == "" {
+	if payload := decodeExecutionPayload(t, outbox.entries); payload.RunResultsURI == "" {
 		t.Fatal("run_results_uri must be recorded on the retry path too")
 	}
 }
@@ -2101,10 +2101,10 @@ func TestHandleSucceeded_UploadsRunResults(t *testing.T) {
 	}
 
 	payload := decodeExecutionPayload(t, outbox.entries)
-	if payload.RunResultsS3Key == "" {
+	if payload.RunResultsURI == "" {
 		t.Fatal("a successful job that printed a result block must record its key")
 	}
-	if !strings.Contains(uploader.uploaded[payload.RunResultsS3Key], "rows=42") {
+	if !strings.Contains(uploader.uploaded[payload.RunResultsURI], "rows=42") {
 		t.Error("the uploaded run-results JSON must carry the block's message")
 	}
 	if strings.Contains(uploader.uploaded[payload.LogS3Key], validationresult.SentinelBegin) {
