@@ -20,8 +20,8 @@ func TestServiceProdRepository_UpsertListGet(t *testing.T) {
 
 	now := time.Unix(1_000_000, 0).UTC()
 
-	svcA := release.NewServiceProd("svc-a", "sha-1", "s3://bucket/svc-a/v1.json", "image-a:sha-1", now)
-	svcB := release.NewServiceProd("svc-b", "sha-2", "s3://bucket/svc-b/v1.json", "image-b:sha-2", now)
+	svcA := release.NewServiceProd("svc-a", "sha-1", "s3://bucket/svc-a/v1.json", "image-a:sha-1", release.ManifestKindDbt, now)
+	svcB := release.NewServiceProd("svc-b", "sha-2", "s3://bucket/svc-b/v1.json", "image-b:sha-2", release.ManifestKindDbt, now)
 
 	require.NoError(t, repo.Upsert(ctx, svcA))
 	require.NoError(t, repo.Upsert(ctx, svcB))
@@ -33,7 +33,7 @@ func TestServiceProdRepository_UpsertListGet(t *testing.T) {
 
 	// Re-upserting svc-a with new values is idempotent on the primary key
 	// and updates the row; the list length stays at 2.
-	updatedA := release.NewServiceProd("svc-a", "sha-99", "s3://bucket/svc-a/v2.json", "image-a:sha-99", now.Add(time.Hour))
+	updatedA := release.NewServiceProd("svc-a", "sha-99", "s3://bucket/svc-a/v2.json", "image-a:sha-99", release.ManifestKindDbt, now.Add(time.Hour))
 	require.NoError(t, repo.Upsert(ctx, updatedA))
 
 	all, err = repo.List(ctx)
@@ -52,4 +52,13 @@ func TestServiceProdRepository_UpsertListGet(t *testing.T) {
 	missing, err := repo.Get(ctx, "svc-does-not-exist")
 	require.NoError(t, err)
 	assert.Nil(t, missing)
+
+	// manifest_kind survives the Upsert -> Get roundtrip.
+	spPy := release.NewServiceProd("svc-py", "rel-1", "s3://b/svc-py/rel-1/contract.yaml",
+		"img:1", release.ManifestKindPython, now)
+	require.NoError(t, repo.Upsert(ctx, spPy))
+	gotPy, err := repo.Get(ctx, "svc-py")
+	require.NoError(t, err)
+	require.NotNil(t, gotPy)
+	assert.Equal(t, release.ManifestKindPython, gotPy.ManifestKind())
 }

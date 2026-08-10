@@ -112,3 +112,36 @@ func TestReceiveCandidate_RejectsEmptyCommitSHA(t *testing.T) {
 	})
 	assert.Error(t, err)
 }
+
+func TestReceiveCandidate_DefaultsAbsentKindToDbt(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc", ReleaseID: "rK1", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	r, err := store.GetRelease("rK1")
+	require.NoError(t, err)
+	assert.Equal(t, release.ManifestKindDbt, r.ManifestKind())
+}
+
+func TestReceiveCandidate_PersistsPythonKind(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc", ReleaseID: "rK2", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Kind: "python",
+	}))
+	r, err := store.GetRelease("rK2")
+	require.NoError(t, err)
+	assert.Equal(t, release.ManifestKindPython, r.ManifestKind())
+}
+
+func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc", ReleaseID: "rK3", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+		Kind: "r",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown manifest kind")
+	r, _ := store.GetRelease("rK3")
+	assert.Nil(t, r, "an invalid kind must not persist a release")
+}

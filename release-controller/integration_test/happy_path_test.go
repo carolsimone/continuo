@@ -63,8 +63,18 @@ func TestIntegration_HappyPath(t *testing.T) {
 	srv.Routes().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusAccepted, w.Code)
 
-	// 2. Verify release is Parsing (AdvanceQueue ran on POST)
+	// 2. Verify release is Compiling (AdvanceQueue ran on POST, promoting the
+	// release into the compile leg rather than straight to Parsing).
 	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusCompiling, r.Status())
+
+	// 2b. Simulate the dbt compile job completing ok: Compiling -> Parsing.
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+	}))
+	r, err = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusParsing, r.Status())
 
@@ -113,8 +123,9 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NoError(t, db.Get(&spCount, `SELECT count(*) FROM service_prod WHERE service_name = 'service-1'`))
 	assert.Equal(t, 1, spCount, "service_prod must have a row for the promoted service")
 
-	// 7. Outbox has 3 entries (release.requested + validation.requested + release.promoted)
+	// 7. Outbox has 4 entries (compile.requested + release.requested +
+	// validation.requested + release.promoted)
 	var count int
 	require.NoError(t, db.Get(&count, `SELECT count(*) FROM release_controller_outbox`))
-	assert.Equal(t, 3, count)
+	assert.Equal(t, 4, count)
 }

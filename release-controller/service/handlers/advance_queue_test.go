@@ -63,8 +63,8 @@ func TestAdvanceQueue_OtherServicesIncluded_ImageTagsAssembledOnRelease(t *testi
 	deps.Bucket = "bucket"
 
 	// Pre-seed two other services' production pointers.
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", time.Unix(0, 0)))
-	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rNEW", ImageTag: "tag-a-new", Repo: "acme/demo", CommitSHA: "deadbeef",
@@ -138,8 +138,8 @@ func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
 	store.SeedCurrentProd(cp)
 
 	// svc-b and svc-c are covered by pointers; svc-a is the changed service.
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", time.Unix(0, 0)))
-	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "rOLD1", "s3://bucket/svc-b/rOLD1/manifest.json", "tag-b-old", release.ManifestKindDbt, time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-c", "rOLD2", "s3://bucket/svc-c/rOLD2/manifest.json", "tag-c-old", release.ManifestKindDbt, time.Unix(0, 0)))
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
@@ -175,6 +175,61 @@ func TestAdvanceQueue_NoQueued_DoesNothing(t *testing.T) {
 	deps.Bucket = "b"
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	assert.Empty(t, outboxEntries(store))
+}
+
+func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "b"
+	store.SeedServiceProd(release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t-old", release.ManifestKindDbt, time.Unix(0, 0)))
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-py", ReleaseID: "rPy", ImageTag: "img:1", Repo: "acme/py", CommitSHA: "cafebabe",
+		Kind: "python",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	r, _ := store.GetRelease("rPy")
+	assert.Equal(t, release.StatusParsing, r.Status(), "python releases activate straight into Parsing")
+	assert.Equal(t, map[string]string{"svc-py": "img:1", "svc-dbt": "t-old"}, r.ImageTags())
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 1)
+	assert.Equal(t, streams.ReleaseRequestedV1, entries[0].StreamName, "no compile.requested for a python release")
+
+	var p struct {
+		ReleaseID    string `json:"release_id"`
+		ManifestKeys []struct {
+			Service string `json:"service"`
+			S3URI   string `json:"s3_uri"`
+			Kind    string `json:"kind"`
+		} `json:"manifest_keys"`
+	}
+	require.NoError(t, json.Unmarshal(entries[0].Payload, &p))
+	assert.Equal(t, "rPy", p.ReleaseID)
+	require.Len(t, p.ManifestKeys, 2)
+	byService := map[string]string{}
+	uris := map[string]string{}
+	for _, k := range p.ManifestKeys {
+		byService[k.Service] = k.Kind
+		uris[k.Service] = k.S3URI
+	}
+	assert.Equal(t, map[string]string{"svc-py": "python", "svc-dbt": "dbt"}, byService)
+	assert.Equal(t, "s3://b/svc-py/rPy/contract.yaml", uris["svc-py"])
+	assert.Equal(t, "s3://b/svc-dbt/rOld/manifest.json", uris["svc-dbt"])
+}
+
+func TestAdvanceQueue_DbtRelease_StillCompiles(t *testing.T) {
+	deps, store := newDeps(time.Unix(200, 0).UTC())
+	deps.Bucket = "b"
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rDbt", ImageTag: "t", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	r, _ := store.GetRelease("rDbt")
+	assert.Equal(t, release.StatusCompiling, r.Status())
+	entries := outboxEntries(store)
+	require.Len(t, entries, 1)
+	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
 }
 
 func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {

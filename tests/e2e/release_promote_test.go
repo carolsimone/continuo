@@ -578,26 +578,32 @@ func baselineServices(t *testing.T, ctx context.Context, clients *testClients) m
 	// have mutated, so readServiceImageTag below sees the full baseline.
 	seedBaselineServiceProd(t, ctx, clients)
 	// Discover all services by listing objects under their baseline prefix.
-	out, err := clients.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+	// The bucket also accumulates candidate-sql/* and code-bundles/* artifacts
+	// across e2e runs, which sort lexicographically before service-*/... keys,
+	// so a single unpaginated call can silently miss the baseline manifests
+	// once the bucket crosses the 1000-key page size. Paginate fully.
+	services := map[string]serviceInfo{}
+	paginator := s3.NewListObjectsV2Paginator(clients.s3Client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(e2eS3Bucket),
 	})
-	require.NoError(t, err, "list S3 objects for baseline discovery")
-
-	services := map[string]serviceInfo{}
-	for _, obj := range out.Contents {
-		key := aws.ToString(obj.Key)
-		// Match <service>/e2e-baseline/manifest.json
-		suffix := "/" + e2eBaselineReleaseID + "/manifest.json"
-		if !strings.HasSuffix(key, suffix) {
-			continue
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		require.NoError(t, err, "list S3 objects for baseline discovery")
+		for _, obj := range page.Contents {
+			key := aws.ToString(obj.Key)
+			// Match <service>/e2e-baseline/manifest.json
+			suffix := "/" + e2eBaselineReleaseID + "/manifest.json"
+			if !strings.HasSuffix(key, suffix) {
+				continue
+			}
+			service := strings.TrimSuffix(key, suffix)
+			if strings.Contains(service, "/") {
+				continue // skip keys with extra path segments
+			}
+			nodes := parseManifestNodes(t, getS3Object(t, ctx, clients, key))
+			imageTag := readServiceImageTag(t, ctx, clients, service)
+			services[service] = serviceInfo{imageTag: imageTag, nodes: nodes}
 		}
-		service := strings.TrimSuffix(key, suffix)
-		if strings.Contains(service, "/") {
-			continue // skip keys with extra path segments
-		}
-		nodes := parseManifestNodes(t, getS3Object(t, ctx, clients, key))
-		imageTag := readServiceImageTag(t, ctx, clients, service)
-		services[service] = serviceInfo{imageTag: imageTag, nodes: nodes}
 	}
 	return services
 }
@@ -717,12 +723,13 @@ func seedServiceProdExcept(t *testing.T, ctx context.Context, clients *testClien
 		}
 		s3URI := canonicalManifestS3URI(svc, e2eBaselineReleaseID)
 		_, err := clients.releaseDB.ExecContext(ctx,
-			`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, updated_at)
-			 VALUES ($1, $2, $3, $4, now())
+			`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+			 VALUES ($1, $2, $3, $4, 'dbt', now())
 			 ON CONFLICT (service_name) DO UPDATE SET
 			   release_id = EXCLUDED.release_id,
 			   manifest_s3_key = EXCLUDED.manifest_s3_key,
 			   image_tag = EXCLUDED.image_tag,
+			   manifest_kind = EXCLUDED.manifest_kind,
 			   updated_at = EXCLUDED.updated_at`,
 			svc, e2eBaselineReleaseID, s3URI, si.imageTag)
 		require.NoError(t, err, "seed service_prod for %s", svc)

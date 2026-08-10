@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
@@ -396,12 +397,17 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 }
 
 // validationOpFor returns the runner op and the prod source schema for a
-// validation node. A node in the changed-closure has compiled SQL rewritten to
-// the candidate schema, so it is built via build_from_sql (prod_schema empty).
-// Every other node in the validation set is an unchanged upstream — there is no
-// candidate SQL for it — so it is cloned empty from its production schema.
+// validation node. A changed-closure dbt node has compiled SQL rewritten to
+// the candidate schema (build_from_sql); a changed-closure python node has a
+// JSON validation spec of declared reads + output columns
+// (build_from_columns). Every other node in the validation set is an
+// unchanged upstream — there is no candidate artifact for it — so it is
+// cloned empty from its production schema regardless of kind.
 func validationOpFor(n release.Node, changedClosureSet map[string]bool) (op, prodSchema string) {
 	if changedClosureSet[n.UniqueID] {
+		if n.NodeType == string(pkg_model.NodeTypePythonModel) {
+			return "build_from_columns", ""
+		}
 		return "build_from_sql", ""
 	}
 	return "clone_from_prod", n.SchemaName

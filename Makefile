@@ -1,6 +1,13 @@
 # Use docker compose plugin if available (CI), fall back to standalone binary (macOS/Colima)
 DOCKER_COMPOSE := $(shell docker compose version > /dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
+# Pinned validation-runner image (postgres engine, used by e2e). The full ref
+# lives in ONE variable so a version bump edits a single line here;
+# scripts/check-validation-image-pin.sh reads the literal off this assignment
+# and asserts it agrees with every other pinned location, so keep the complete
+# ghcr ref on this line (a bare version string would be invisible to it).
+VALIDATION_IMAGE_POSTGRES := ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0
+
 # Build base image (run once or when base changes)
 .PHONY: build-base
 build-base:
@@ -126,7 +133,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Building dbt-base image (required for e2e-setup)..."
 	@DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 	@echo "Pulling validation runner (postgres) image (required for e2e-setup)..."
-	@docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0
+	@docker pull $(VALIDATION_IMAGE_POSTGRES)
 	@$(MAKE) e2e-setup
 	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 40m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
@@ -155,20 +162,27 @@ test-deps-down:
 # own database continuo_<svc>. Creds (continuo_svc/continuo) come from docker-compose.yml.
 # Includes -tags integration (closes the coverage gap). On macOS add
 # TESTCONTAINERS_RYUK_DISABLED=true; on CI Linux runners RYUK works, so omit it.
+# release-controller pins GOFLAGS=-p=1: its adapters/postgres and
+# integration_test packages both TRUNCATE the same shared live-DB tables, so
+# running them as parallel package binaries (the default `go test ./...`
+# behaviour) races between one package's TRUNCATE and another's assertions.
 .PHONY: test-go
 test-go: test-deps-up
 	@rc=0; for s in $(or $(SERVICE),$(GO_SERVICES)); do \
+	  extra=; \
 	  case $$s in \
 	    state) db=continuo_state;; orchestrator) db=continuo_orchestrator;; \
 	    executor-controller) db=continuo_executor;; k8s-controller) db=continuo_k8s;; \
-	    release-controller) db=continuo_release;; remediation) db=continuo_remediation;; \
+	    release-controller) db=continuo_release; \
+	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
+	    remediation) db=continuo_remediation;; \
 	    remediation-agent) db=continuo_remediation_agent;; agent-runner) db=continuo_agent;; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \
-	  (cd $$s && POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=$$db \
+	  (cd $$s && env POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_DB=$$db \
 	     POSTGRES_USER=continuo_svc POSTGRES_PASSWORD=continuo DB_SSLMODE=disable \
-	     NEO4J_HOST=localhost \
+	     NEO4J_HOST=localhost $$extra \
 	     go test -tags integration -count=1 ./... -timeout 20m) || rc=1; \
 	done; exit $$rc
 

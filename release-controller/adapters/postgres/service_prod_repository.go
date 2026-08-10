@@ -31,13 +31,14 @@ type serviceProdRow struct {
 	ReleaseID     string    `db:"release_id"`
 	ManifestS3Key string    `db:"manifest_s3_key"`
 	ImageTag      string    `db:"image_tag"`
+	ManifestKind  string    `db:"manifest_kind"`
 	UpdatedAt     time.Time `db:"updated_at"`
 }
 
 // List returns all per-service production pointers ordered by service name.
 func (r *ServiceProdRepository) List(ctx context.Context) ([]*release.ServiceProd, error) {
 	rows, err := r.q.QueryxContext(ctx,
-		`SELECT service_name, release_id, manifest_s3_key, image_tag, updated_at
+		`SELECT service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at
 		   FROM service_prod
 		  ORDER BY service_name`)
 	if err != nil {
@@ -51,7 +52,7 @@ func (r *ServiceProdRepository) List(ctx context.Context) ([]*release.ServicePro
 		if err := rows.StructScan(&row); err != nil {
 			return nil, fmt.Errorf("scan service_prod row: %w", err)
 		}
-		out = append(out, release.NewServiceProd(row.ServiceName, row.ReleaseID, row.ManifestS3Key, row.ImageTag, row.UpdatedAt))
+		out = append(out, release.NewServiceProd(row.ServiceName, row.ReleaseID, row.ManifestS3Key, row.ImageTag, release.ManifestKind(row.ManifestKind), row.UpdatedAt))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate service_prod rows: %w", err)
@@ -64,7 +65,7 @@ func (r *ServiceProdRepository) List(ctx context.Context) ([]*release.ServicePro
 func (r *ServiceProdRepository) Get(ctx context.Context, serviceName string) (*release.ServiceProd, error) {
 	var row serviceProdRow
 	err := r.q.GetContext(ctx, &row,
-		`SELECT service_name, release_id, manifest_s3_key, image_tag, updated_at
+		`SELECT service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at
 		   FROM service_prod
 		  WHERE service_name = $1`, serviceName)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -73,21 +74,22 @@ func (r *ServiceProdRepository) Get(ctx context.Context, serviceName string) (*r
 	if err != nil {
 		return nil, fmt.Errorf("get service_prod %q: %w", serviceName, err)
 	}
-	return release.NewServiceProd(row.ServiceName, row.ReleaseID, row.ManifestS3Key, row.ImageTag, row.UpdatedAt), nil
+	return release.NewServiceProd(row.ServiceName, row.ReleaseID, row.ManifestS3Key, row.ImageTag, release.ManifestKind(row.ManifestKind), row.UpdatedAt), nil
 }
 
 // Upsert inserts or updates the production pointer for the service recorded in
 // sp. If a row already exists for sp.ServiceName(), it is fully replaced.
 func (r *ServiceProdRepository) Upsert(ctx context.Context, sp *release.ServiceProd) error {
 	_, err := r.q.ExecContext(ctx,
-		`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, updated_at)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO service_prod (service_name, release_id, manifest_s3_key, image_tag, manifest_kind, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (service_name) DO UPDATE SET
 		   release_id      = EXCLUDED.release_id,
 		   manifest_s3_key = EXCLUDED.manifest_s3_key,
 		   image_tag       = EXCLUDED.image_tag,
+		   manifest_kind   = EXCLUDED.manifest_kind,
 		   updated_at      = EXCLUDED.updated_at`,
-		sp.ServiceName(), sp.ReleaseID(), sp.ManifestS3Key(), sp.ImageTag(), sp.UpdatedAt())
+		sp.ServiceName(), sp.ReleaseID(), sp.ManifestS3Key(), sp.ImageTag(), string(sp.ManifestKind()), sp.UpdatedAt())
 	if err != nil {
 		return fmt.Errorf("upsert service_prod %q: %w", sp.ServiceName(), err)
 	}

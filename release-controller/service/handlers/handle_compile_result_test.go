@@ -70,6 +70,20 @@ func TestHandleCompileResult_OKEmitsReleaseRequested(t *testing.T) {
 	assert.NotEmpty(t, p["manifest_keys"])
 	assert.Equal(t, releaseID, p["release_id"])
 
+	var typed struct {
+		ReleaseID    string `json:"release_id"`
+		ManifestKeys []struct {
+			Service string `json:"service"`
+			S3URI   string `json:"s3_uri"`
+			Kind    string `json:"kind"`
+		} `json:"manifest_keys"`
+	}
+	require.NoError(t, json.Unmarshal(e.Payload, &typed))
+	require.NotEmpty(t, typed.ManifestKeys)
+	for _, k := range typed.ManifestKeys {
+		assert.Equal(t, "dbt", k.Kind, "every dbt entry must carry an explicit kind")
+	}
+
 	// compile.requested was the first outbox entry; release.requested is the last.
 	assert.True(t, anyOutboxWithStream(t, fakes, streams.CompileRequestedV1),
 		"compile.requested must have been emitted by AdvanceQueue")

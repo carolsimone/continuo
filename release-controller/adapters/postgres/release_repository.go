@@ -60,6 +60,7 @@ type releaseRow struct {
 	Repo              string         `db:"repo"`
 	CommitSHA         string         `db:"commit_sha"`
 	CodeBundleURI     string         `db:"code_bundle_uri"`
+	Kind              string         `db:"kind"`
 }
 
 // Get returns the Release with the given ID, or nil if it does not exist.
@@ -68,7 +69,7 @@ func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Releas
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri
+		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE release_id = $1`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -87,7 +88,7 @@ func (r *ReleaseRepository) Load(ctx context.Context, id string) (*release.Relea
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri
+		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE release_id = $1 FOR UPDATE`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -105,7 +106,7 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri
+		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE status = 'received'
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -124,7 +125,7 @@ func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri
+		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE status IN ('compiling','parsing','seed_building','validating')
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -137,7 +138,7 @@ func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release
 }
 
 // Save persists a Release using an upsert keyed on release_id. Immutable
-// fields (image_tags, changed_service, created_at, repo, commit_sha) are only written on INSERT;
+// fields (image_tags, changed_service, created_at, repo, commit_sha, kind) are only written on INSERT;
 // the ON CONFLICT clause updates the mutable fields. image_tags is also updated
 // on conflict because SetAssembledImageTags overwrites it at advance-time.
 // code_bundle_uri is likewise updated on conflict: it is unknown at receive
@@ -165,8 +166,8 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		`INSERT INTO releases (
 		   release_id, status, image_tags, changed_service,
 		   candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-		   per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri
-		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		   per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
+		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		 ON CONFLICT (release_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
@@ -180,7 +181,8 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		rel.ID(), string(rel.Status()),
 		imageTagsJSON, rel.ChangedService(), topoJSON, pq.StringArray(rel.ValidationNodeIDs()),
 		rejectReason, pq.StringArray(rel.FailingNodes()), perNodeJSON,
-		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap(), rel.Repo(), rel.CommitSHA(), rel.CodeBundleURI())
+		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap(), rel.Repo(), rel.CommitSHA(), rel.CodeBundleURI(),
+		string(rel.ManifestKind()))
 	if err != nil {
 		return fmt.Errorf("upsert release: %w", err)
 	}
@@ -229,6 +231,7 @@ func rowToRelease(row releaseRow) (*release.Release, error) {
 		Repo:              row.Repo,
 		CommitSHA:         row.CommitSHA,
 		CodeBundleURI:     row.CodeBundleURI,
+		ManifestKind:      release.ManifestKind(row.Kind),
 	}), nil
 }
 
@@ -259,7 +262,7 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 	args = append(args, limit+1)
 	query := fmt.Sprintf(`SELECT release_id, status, image_tags, changed_service,
 	        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
-	        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri
+	        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 	 FROM releases %s
 	 ORDER BY created_at DESC, release_id DESC
 	 LIMIT $%d`, where, len(args))

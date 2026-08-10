@@ -130,7 +130,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | `orchestrator` | Neo4j `Table` (+ `image_tag`, `topology_generation`), `Run` (+ `topology_generation`, `service_metadata`), `DEPENDS_ON`, `EXECUTES` (+ `image_tag`); Neo4j `:TopologyRoot {id:'singleton'}`; Postgres `topology_state`, `message_processing`, `orchestrator_outbox` |
 | `executor-controller` | `executor_deployments`, `executor_outbox`, `message_processing`, `cancelled_schedules`, `validation_aggregates` |
 | `k8s-controller` | `k8s_outbox`, `message_processing` |
-| `release-controller` | `releases` (+ `changed_service`, assembled `image_tags`), `current_prod` (live `topology_snapshot`), `service_prod` (per-service live `manifest_s3_key` + `image_tag` + `release_id`), `release_controller_outbox`, `message_processing` |
+| `release-controller` | `releases` (+ `kind`, `changed_service`, assembled `image_tags`), `current_prod` (live `topology_snapshot`), `service_prod` (per-service live `manifest_s3_key` + `manifest_kind` + `image_tag` + `release_id`), `release_controller_outbox`, `message_processing` |
 | `manifest-controller` | none |
 | `ui-service` | Redis `uisession:<id>` plain keys (server-side login sessions, `AUTH_MODE=oidc`; TTL-bound, not streams) |
 | `agent-runner` | Postgres `continuo_agent`: `threads` (conversation metadata per user), `messages` (full turn history), `pending_actions` (tool calls awaiting human confirmation) |

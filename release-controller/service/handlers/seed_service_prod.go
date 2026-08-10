@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 )
@@ -14,7 +15,11 @@ import (
 // taken verbatim from existingKeys (service_name -> s3 key); a service present
 // in the snapshot but absent from existingKeys is an error (we cannot point at
 // a manifest we do not know). image_tag is the first non-empty tag among the
-// service's nodes. Idempotent: re-running upserts the same rows.
+// service's nodes. manifest_kind is derived from the service's own nodes: any
+// node with NodeType python-model makes the service ManifestKindPython,
+// otherwise ManifestKindDbt; a service whose nodes mix python and non-python
+// types is an error (a service is either a dbt project or a python service,
+// never both). Idempotent: re-running upserts the same rows.
 // Returns the count of services seeded.
 func SeedServiceProd(
 	ctx context.Context,
@@ -23,9 +28,12 @@ func SeedServiceProd(
 	repo repository.ServiceProdRepository,
 	now time.Time,
 ) (int, error) {
-	// Group nodes by service name; track the first non-empty image tag per service.
+	// Group nodes by service name; track the first non-empty image tag and
+	// which node kinds (dbt vs python) were seen, per service.
 	type svcEntry struct {
-		imageTag string
+		imageTag  string
+		hasDbt    bool
+		hasPython bool
 	}
 	entries := map[string]*svcEntry{}
 	orderSeen := []string{} // deterministic iteration order
@@ -38,22 +46,35 @@ func SeedServiceProd(
 			entries[node.ServiceName] = &svcEntry{}
 			orderSeen = append(orderSeen, node.ServiceName)
 		}
-		if entries[node.ServiceName].imageTag == "" && node.ImageTag != "" {
-			entries[node.ServiceName].imageTag = node.ImageTag
+		e := entries[node.ServiceName]
+		if e.imageTag == "" && node.ImageTag != "" {
+			e.imageTag = node.ImageTag
+		}
+		if node.NodeType == string(pkg_model.NodeTypePythonModel) {
+			e.hasPython = true
+		} else {
+			e.hasDbt = true
 		}
 	}
 
-	// Validate every service has a manifest key BEFORE writing anything, so a
-	// missing key fails the whole seed atomically rather than leaving a partial
-	// set of pointers behind.
+	// Validate every service has a manifest key AND an unambiguous kind BEFORE
+	// writing anything, so either failure aborts the whole seed atomically
+	// rather than leaving a partial set of pointers behind.
 	for _, svc := range orderSeen {
 		if _, ok := existingKeys[svc]; !ok {
 			return 0, fmt.Errorf("no manifest S3 key provided for service %q", svc)
 		}
+		if entries[svc].hasDbt && entries[svc].hasPython {
+			return 0, fmt.Errorf("service %q has both dbt and python nodes; a service must be a single kind", svc)
+		}
 	}
 
 	for _, svc := range orderSeen {
-		sp := release.NewServiceProd(svc, cp.ReleaseID(), existingKeys[svc], entries[svc].imageTag, now)
+		kind := release.ManifestKindDbt
+		if entries[svc].hasPython {
+			kind = release.ManifestKindPython
+		}
+		sp := release.NewServiceProd(svc, cp.ReleaseID(), existingKeys[svc], entries[svc].imageTag, kind, now)
 		if err := repo.Upsert(ctx, sp); err != nil {
 			return 0, fmt.Errorf("upsert service_prod for %q: %w", svc, err)
 		}

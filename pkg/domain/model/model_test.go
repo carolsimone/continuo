@@ -83,3 +83,19 @@ func TestParseOperation(t *testing.T) {
 		}
 	}
 }
+
+func TestParseNodeType_PythonModel(t *testing.T) {
+	got, err := model.ParseNodeType("python-model")
+	if err != nil {
+		t.Fatalf("ParseNodeType(python-model): %v", err)
+	}
+	if got != model.NodeTypePythonModel {
+		t.Fatalf("got %q, want %q", got, model.NodeTypePythonModel)
+	}
+}
+
+func TestParseNodeType_UnknownStillRejected(t *testing.T) {
+	if _, err := model.ParseNodeType("r-model"); err == nil {
+		t.Fatal("expected error for unknown node_type")
+	}
+}

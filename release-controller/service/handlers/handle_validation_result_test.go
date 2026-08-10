@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -251,6 +252,63 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	assert.Equal(t, "rA", sp.ReleaseID())
 	assert.Equal(t, "s3://continuo/svc-a/rA/manifest.json", sp.ManifestS3Key())
 	assert.Equal(t, "sha-a", sp.ImageTag())
+}
+
+// seedToValidatingPython mirrors seedToValidating but registers the release as
+// Kind: "python" for a distinct service, so promotion tests can assert the
+// service_prod pointer written for a python-kind release points at
+// contract.yaml rather than manifest.json. A python release has no compile
+// leg: AdvanceQueue activates it straight into Parsing, so — unlike
+// seedToValidating — there is no HandleCompileResult call here.
+func seedToValidatingPython(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
+	t.Helper()
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service:   "svc-py",
+		ReleaseID: releaseID,
+		ImageTag:  "sha-py",
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
+		Kind:      "python",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	topo := release.Topology{
+		{UniqueID: "a", ServiceName: "svc-py", UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", ServiceName: "svc-py", UpstreamUniqueIDs: []string{"a"}},
+	}
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: releaseID,
+		Status:    "ok",
+		Topology:  topo,
+	}))
+	return deps, store
+}
+
+// TestHandleValidationResult_PythonKind_PromotesWithContractYAMLPointer verifies
+// that promoting a python-kind release upserts a service_prod pointer whose
+// ManifestKind is python and whose stored S3 key ends in contract.yaml, not
+// manifest.json — the promote-path counterpart to
+// TestCanonicalManifestKey_PerKindArtifactName.
+func TestHandleValidationResult_PythonKind_PromotesWithContractYAMLPointer(t *testing.T) {
+	deps, store := seedToValidatingPython(t, "rPy")
+	seedValidationNodes(t, deps, "rPy", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "ok"},
+	})
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rPy",
+		AggregateStatus: "ok",
+	})
+	require.NoError(t, err)
+
+	sp := store.GetServiceProd("svc-py")
+	require.NotNil(t, sp)
+	assert.Equal(t, release.ManifestKindPython, sp.ManifestKind())
+	assert.True(t, strings.HasSuffix(sp.ManifestS3Key(), "/contract.yaml"))
 }
 
 func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {

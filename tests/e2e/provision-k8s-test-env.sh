@@ -45,7 +45,7 @@ DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/ || { log_error "fail
 log_info "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/ || { log_error "failed to build s3-sidecar"; exit 1; }
 log_info "Pulling continuo-validation (postgres) image..."
-docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0 \
+docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0 \
   || { log_error "failed to pull continuo-validation-postgres"; exit 1; }
 
 log_info "Loading controller images into kind..."
@@ -61,7 +61,7 @@ kind load docker-image s3-sidecar:latest --name continuo || { log_error "failed 
 # The validation image is pulled, not built locally, so a plain `kind load
 # docker-image` fails on a containerd-backed image store — see
 # scripts/lib/common.sh:kind_load_pulled_image.
-kind_load_pulled_image ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0 continuo || exit 1
+kind_load_pulled_image ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0 continuo || exit 1
 
 # Build each dbt service image, tag it by its own content digest (never :latest),
 # and load that tag into kind. The executor composes the dbt job image as

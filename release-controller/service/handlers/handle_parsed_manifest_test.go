@@ -64,7 +64,7 @@ func seedToParsingBootstrap(t *testing.T, releaseID string, imageTags map[string
 		if s == changedSvc {
 			continue
 		}
-		store.SeedServiceProd(release.NewServiceProd(s, releaseID+"-prev", "s3://continuo/"+s+"/prev/manifest.json", tg, time.Unix(0, 0)))
+		store.SeedServiceProd(release.NewServiceProd(s, releaseID+"-prev", "s3://continuo/"+s+"/prev/manifest.json", tg, release.ManifestKindDbt, time.Unix(0, 0)))
 	}
 
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
@@ -492,7 +492,7 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 	// so AdvanceQueue assembles both image tags. Seed service_prod BEFORE AdvanceQueue.
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "sha-b", time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "sha-b", release.ManifestKindDbt, time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
@@ -699,7 +699,7 @@ func TestHandleParsedManifest_ImageTagJoinedIntoTopology(t *testing.T) {
 	// Seed service_prod BEFORE AdvanceQueue so the assembly picks it up.
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", time.Unix(0, 0)))
+	store.SeedServiceProd(release.NewServiceProd("svc-b", "prev", "s3://continuo/svc-b/prev/manifest.json", "tag-beta", release.ManifestKindDbt, time.Unix(0, 0)))
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
 		Service: "svc-a", ReleaseID: "rA", ImageTag: "tag-alpha", Repo: "acme/demo", CommitSHA: "deadbeef",
 	}))
@@ -786,22 +786,32 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	assert.Equal(t, "sha-a", sp.ImageTag())
 }
 
-// TestHandleParsedManifest_AssignsPerNodeValidationOp asserts:
-// A changed model gets build_from_sql; its unchanged upstream (pulled in by the
-// ancestors closure) gets clone_from_prod with prod_schema = its schema_name.
+// TestHandleParsedManifest_AssignsPerNodeValidationOp asserts the four
+// dbt/python x changed/unchanged quadrants:
+//   - a changed dbt-model gets build_from_sql (prod_schema empty);
+//   - a changed python-model gets build_from_columns (prod_schema empty) —
+//     it has no compiled SQL to rewrite, only a JSON validation spec of
+//     declared reads + output columns;
+//   - an unchanged upstream, dbt or python, is never built from a candidate
+//     artifact: it gets clone_from_prod with prod_schema = its schema_name.
 func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	deps, store := seedToParsing(t, "rel-op-1", map[string]string{"shop": "sha-shop"})
 
-	// prod has upstream "model.core.dim" (unchanged); candidate adds changed
-	// "model.shop.orders" depending on it.
+	// prod has upstreams "model.core.dim" and "python.core.stats" (both
+	// unchanged); candidate adds changed "model.shop.orders" and
+	// "python.shop.enrich", each depending on its respective upstream.
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
 		{UniqueID: "model.core.dim", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "analytics", TableName: "dim", ContentHash: "hash-dim-OLD"},
+		{UniqueID: "python.core.stats", ServiceName: "shop", NodeType: "python-model", SchemaName: "analytics", TableName: "stats", ContentHash: "hash-stats-OLD"},
 	}, time.Unix(50, 0).UTC()))
 
 	topo := release.Topology{
 		{UniqueID: "model.core.dim", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "analytics", TableName: "dim", ContentHash: "hash-dim-OLD"},
 		{UniqueID: "model.shop.orders", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "shop", TableName: "orders", ContentHash: "hash-orders-NEW",
 			UpstreamUniqueIDs: []string{"model.core.dim"}},
+		{UniqueID: "python.core.stats", ServiceName: "shop", NodeType: "python-model", SchemaName: "analytics", TableName: "stats", ContentHash: "hash-stats-OLD"},
+		{UniqueID: "python.shop.enrich", ServiceName: "shop", NodeType: "python-model", SchemaName: "shop", TableName: "enrich", ContentHash: "hash-enrich-NEW",
+			UpstreamUniqueIDs: []string{"python.core.stats"}},
 	}
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -812,11 +822,21 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	nodes := decodeValidationRequestedNodes(t, store)
 	byID := indexNodesByUniqueID(t, nodes)
 
+	// dbt changed.
 	assert.Equal(t, "build_from_sql", byID["model.shop.orders"]["validation_op"])
 	assert.Equal(t, "", byID["model.shop.orders"]["prod_schema"])
 
+	// dbt unchanged.
 	assert.Equal(t, "clone_from_prod", byID["model.core.dim"]["validation_op"])
 	assert.Equal(t, "analytics", byID["model.core.dim"]["prod_schema"])
+
+	// python changed.
+	assert.Equal(t, "build_from_columns", byID["python.shop.enrich"]["validation_op"])
+	assert.Equal(t, "", byID["python.shop.enrich"]["prod_schema"])
+
+	// python unchanged.
+	assert.Equal(t, "clone_from_prod", byID["python.core.stats"]["validation_op"])
+	assert.Equal(t, "analytics", byID["python.core.stats"]["prod_schema"])
 }
 
 // decodeValidationRequestedNodes finds the validation.requested:v1 outbox entry
