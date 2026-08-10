@@ -204,7 +204,7 @@ services:
       # must use the cached image. PullAlways would fail with ErrImagePull locally;
       # production omits this and defaults to Always.
       - VALIDATION_IMAGE_PULL_POLICY=IfNotPresent
-      - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0
+      - VALIDATION_IMAGE=ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0
       # Warehouse credentials for the validation pod come from this operator-owned
       # Secret (envFrom). scripts/setup.sh creates it in the kind cluster.
       - VALIDATION_WAREHOUSE_SECRET=continuo-warehouse-validation

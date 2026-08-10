@@ -68,7 +68,7 @@ DOCKER_BUILDKIT=1 docker build -t dbt-base:latest dbt/base/
 echo "Building s3-sidecar image..."
 DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
 echo "Pulling continuo-validation (postgres) image..."
-docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0
+docker pull ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0
 echo "Building service images (batched)..."
 # Build in small batches instead of all ~13 services at once. On a 2-CPU/7.75GB
 # CI runner, building everything in parallel thrashes memory and disk I/O so badly
@@ -142,7 +142,7 @@ kind load docker-image s3-sidecar:latest --name ${CLUSTER_NAME}
 # The validation image is pulled, not built locally, so a plain `kind load
 # docker-image` fails on a containerd-backed image store — see
 # scripts/lib/common.sh:kind_load_pulled_image.
-kind_load_pulled_image ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0 "${CLUSTER_NAME}"
+kind_load_pulled_image ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0 "${CLUSTER_NAME}"
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 
