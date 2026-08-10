@@ -97,7 +97,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	}
 
 	imageTag := next.ImageTags()[next.ChangedService()]
-	set := AssembleManifestSet(pointers, d.Bucket, next.ChangedService(), next.ID(), imageTag)
+	set := AssembleManifestSet(pointers, d.Bucket, next.ChangedService(), next.ID(), imageTag, next.ManifestKind())
 	next.SetAssembledImageTags(set.ImageTags)
 
 	if err := u.ReleaseRepo().Save(ctx, next); err != nil {

@@ -190,7 +190,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		return fmt.Errorf("list service prod: %w", err)
 	}
 	imageTag := r.ImageTags()[r.ChangedService()]
-	set := AssembleManifestSet(pointers, d.Bucket, r.ChangedService(), in.ReleaseID, imageTag)
+	set := AssembleManifestSet(pointers, d.Bucket, r.ChangedService(), in.ReleaseID, imageTag, r.ManifestKind())
 
 	keys := make([]manifestKeyDTO, len(set.ManifestKeys))
 	for i, k := range set.ManifestKeys {

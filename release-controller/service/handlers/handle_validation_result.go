@@ -142,7 +142,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	sp := release.NewServiceProd(
 		changed,
 		releaseID,
-		CanonicalManifestKey(d.Bucket, changed, releaseID),
+		CanonicalManifestKey(d.Bucket, changed, releaseID, r.ManifestKind()),
 		r.ImageTags()[changed],
 		r.ManifestKind(),
 		now,

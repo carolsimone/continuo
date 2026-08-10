@@ -19,7 +19,7 @@ func TestAssembleManifestSet_ReplacesChangedServiceAndMergesOthers(t *testing.T)
 
 	result := handlers.AssembleManifestSet(
 		existing,
-		"my-bucket", "service-2", "rNEW", "tNEW",
+		"my-bucket", "service-2", "rNEW", "tNEW", release.ManifestKindDbt,
 	)
 
 	// Exactly two entries: one per service, no duplicates.
@@ -27,8 +27,8 @@ func TestAssembleManifestSet_ReplacesChangedServiceAndMergesOthers(t *testing.T)
 
 	// The changed service gets the fresh canonical key; the other keeps its stored key.
 	require.ElementsMatch(t, []release.ManifestKey{
-		{Service: "service-1", S3URI: "k1"},
-		{Service: "service-2", S3URI: "s3://my-bucket/service-2/rNEW/manifest.json"},
+		{Service: "service-1", S3URI: "k1", Kind: release.ManifestKindDbt},
+		{Service: "service-2", S3URI: "s3://my-bucket/service-2/rNEW/manifest.json", Kind: release.ManifestKindDbt},
 	}, result.ManifestKeys)
 
 	// Image tags are updated correctly.
@@ -41,10 +41,23 @@ func TestAssembleManifestSet_ReplacesChangedServiceAndMergesOthers(t *testing.T)
 func TestAssembleManifestSet_NoExistingServices(t *testing.T) {
 	result := handlers.AssembleManifestSet(
 		nil,
-		"bucket", "svc-a", "r1", "img-1",
+		"bucket", "svc-a", "r1", "img-1", release.ManifestKindDbt,
 	)
 	assert.Equal(t, []release.ManifestKey{
-		{Service: "svc-a", S3URI: "s3://bucket/svc-a/r1/manifest.json"},
+		{Service: "svc-a", S3URI: "s3://bucket/svc-a/r1/manifest.json", Kind: release.ManifestKindDbt},
 	}, result.ManifestKeys)
 	assert.Equal(t, map[string]string{"svc-a": "img-1"}, result.ImageTags)
+}
+
+func TestAssembleManifestSet_ThreadsKinds(t *testing.T) {
+	existing := []*release.ServiceProd{
+		release.NewServiceProd("svc-dbt", "rOld", "s3://b/svc-dbt/rOld/manifest.json", "t1", release.ManifestKindDbt, time.Unix(0, 0)),
+		release.NewServiceProd("svc-py-old", "rOld2", "s3://b/svc-py-old/rOld2/contract.yaml", "t2", release.ManifestKindPython, time.Unix(0, 0)),
+	}
+	set := handlers.AssembleManifestSet(existing, "b", "svc-py", "rNew", "t3", release.ManifestKindPython)
+
+	require.Len(t, set.ManifestKeys, 3)
+	assert.Equal(t, release.ManifestKey{Service: "svc-py", S3URI: "s3://b/svc-py/rNew/contract.yaml", Kind: release.ManifestKindPython}, set.ManifestKeys[0])
+	assert.Contains(t, set.ManifestKeys, release.ManifestKey{Service: "svc-dbt", S3URI: "s3://b/svc-dbt/rOld/manifest.json", Kind: release.ManifestKindDbt})
+	assert.Contains(t, set.ManifestKeys, release.ManifestKey{Service: "svc-py-old", S3URI: "s3://b/svc-py-old/rOld2/contract.yaml", Kind: release.ManifestKindPython})
 }
