@@ -137,6 +137,17 @@ if [ -n "$KIND_PID" ]; then
     wait $KIND_PID
     echo "✓ Kind cluster ready"
 fi
+
+# Point kubectl at the cluster, whether this run created it or found it already
+# there. `kind create cluster` writes the context itself, so the create path is
+# already covered and re-exporting is a no-op; the reuse path has nothing else
+# that would write it. A host can hold a running cluster whose context is absent
+# from the kubeconfig — a CI runner whose home directory was recycled between
+# jobs is the usual way — and without this every later kubectl call falls back to
+# the localhost:8080 default and fails with "connection refused" long after the
+# real cause.
+echo "Exporting kubeconfig for kind cluster '${CLUSTER_NAME}'..."
+kind export kubeconfig --name ${CLUSTER_NAME}
 echo "Loading images into kind (sequential)..."
 # Load one image at a time. `kind load` imports a tarball into the node's
 # containerd, which is disk-write-bound; on a 2-CPU/7.75GB CI runner, loading
