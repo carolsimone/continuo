@@ -104,6 +104,17 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	topo := joinImageTags(in.Topology, r.ImageTags())
 	r.SetCodeBundleURI(in.CodeBundleURI)
 
+	// A relation must be produced by exactly one node. unique_id is the physical
+	// write target, so two nodes claiming it write the same warehouse table and
+	// the second silently replaces the first in the promoted topology,
+	// current_prod, and the code bundle. Checked here, above the bootstrap
+	// branch, because all three paths out of this function reach
+	// promoteToProduction: bootstrap, the nothing-to-validate short-circuit, and
+	// the validation leg.
+	if claims := release.DuplicateClaims(topo); len(claims) > 0 {
+		return rejectDuplicateTable(ctx, d, u, r, in.ReleaseID, claims, now)
+	}
+
 	// A bootstrap release skips validation entirely: it seeds current_prod and
 	// swaps topology directly. This is the one-time cutover (or a trusted
 	// re-baseline) where current_prod is empty/mismatched and normal validation
@@ -479,6 +490,76 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 	// Parse phase succeeded; the release is rejected at validation-policy level, not parse level.
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
 	d.Telemetry.ReleaseRejected(ctx, releaseID, "unbuildable_cross_service_upstream", nil)
+	return nil
+}
+
+// rejectDuplicateTable transitions the release to Rejected and emits
+// release.rejected:v1 naming every node that claims each duplicated relation.
+// Each per_node entry carries the claimant a rename should target — the changed
+// service's, when it has one — plus the competing service's name, so the
+// remediation classifier can build evidence without resolving the source
+// location itself. That resolution is not available downstream: a rejected
+// release is never promoted, so Ancestry (which serves the promoted topology)
+// holds nothing for these nodes.
+func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release,
+	releaseID string, claims []release.DuplicateClaim, now time.Time) error {
+
+	detail := release.FormatDuplicateClaims(claims)
+
+	failing := make([]string, 0, len(claims))
+	perNode := make([]map[string]any, 0, len(claims))
+	for _, c := range claims {
+		failing = append(failing, c.UniqueID)
+		target, other := c.Target(r.ChangedService())
+		perNode = append(perNode, map[string]any{
+			"node_id":       c.UniqueID,
+			"status":        "failed",
+			"service":       target.ServiceName,
+			"file_path":     target.OriginalFilePath,
+			"other_service": other.ServiceName,
+		})
+	}
+
+	if err := r.TransitionToRejected("duplicate_table", detail, failing, now); err != nil {
+		return fmt.Errorf("transition to rejected: %w", err)
+	}
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"release_id":    releaseID,
+		"reason":        "duplicate_table",
+		"error_class":   "DuplicatedTable",
+		"error_detail":  detail,
+		"failing_nodes": failing,
+		"per_node":      perNode,
+		"repo":          r.Repo(),
+		"commit_sha":    r.CommitSHA(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		ID:            uuid.New(),
+		AggregateType: "release-controller",
+		AggregateID:   AggregateIDForRelease(releaseID),
+		EventType:     "release_rejected",
+		Payload:       payload,
+		StreamName:    streams.ReleaseRejectedV1,
+		Status:        "pending",
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
+		CreatedAt:     now,
+	}); err != nil {
+		return fmt.Errorf("outbox insert: %w", err)
+	}
+	if err := u.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	// The parse itself succeeded; the release is rejected on a topology
+	// invariant, not on a malformed artifact.
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
+	d.Telemetry.ReleaseRejected(ctx, releaseID, "duplicate_table", failing)
 	return nil
 }
 

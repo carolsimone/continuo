@@ -931,3 +931,110 @@ func TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation(t *testing.T) {
 	}
 	assert.True(t, found, "no new/changed seeds → validation.requested must be emitted directly")
 }
+
+// A candidate topology where two services claim analytics.orders is rejected
+// before promotion, with both claimants named and no validation requested.
+func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
+		},
+	})
+	require.NoError(t, err)
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Contains(t, r.RejectDetail(), "finance (models/orders.sql)")
+	assert.Contains(t, r.RejectDetail(), "marketing (models/orders.sql)")
+	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes())
+
+	for _, e := range outboxEntries(store) {
+		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName,
+			"a rejected release must not request validation")
+	}
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	assert.Equal(t, "duplicate_table", payload["reason"])
+	assert.Equal(t, "DuplicatedTable", payload["error_class"])
+}
+
+// The rejection payload carries the claimant a fix should target and the
+// competing service, so remediation can build evidence without a second lookup.
+func TestHandleParsedManifest_DuplicateTablePayloadNamesTargetAndOther(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+		},
+	}))
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok, "per_node must be present so remediation can build evidence")
+	require.Len(t, perNode, 1)
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "analytics.orders", node["node_id"])
+	assert.Equal(t, "failed", node["status"])
+	assert.Equal(t, "marketing", node["service"], "the changed service is the rename target")
+	assert.Equal(t, "models/orders.sql", node["file_path"])
+	assert.Equal(t, "finance", node["other_service"])
+}
+
+// Bootstrap skips validation and promotes directly, so the gate must run above
+// that branch or a colliding bootstrap topology reaches current_prod.
+func TestHandleParsedManifest_DuplicateTableRejectsBootstrap(t *testing.T) {
+	deps, store := seedToParsingBootstrap(t, "rBoot", map[string]string{"finance": "sha-f"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rBoot",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rBoot")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Equal(t, "", store.GetCurrentProd().ReleaseID(), "nothing may be promoted")
+}
+
+// A clean topology is unaffected: the gate must not reject a release whose
+// relations each have a single producer.
+func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
+	deps, store := seedToParsing(t, "rOK", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rOK",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+			{UniqueID: "marketing.orders", SchemaName: "marketing", TableName: "orders",
+				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rOK")
+	require.NoError(t, rErr)
+	assert.NotEqual(t, release.StatusRejected, r.Status())
+}
