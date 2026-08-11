@@ -58,20 +58,18 @@ func TestDuplicateClaims_ThreeWay(t *testing.T) {
 	assert.Equal(t, "sales", claims[0].Claimants[2].ServiceName)
 }
 
-// Case-variant declarations reach this function already folded, because
-// ManifestNode.unique_id lowercases when it mints the key. The gate is
-// therefore plain equality and needs no folding of its own — this test pins
-// that contract from the consuming side.
-func TestDuplicateClaims_CaseVariantDeclarationsCollide(t *testing.T) {
+// unique_id values are lowercased where they are minted, in manifest-controller,
+// so a differently-cased pair cannot reach this function in practice. The
+// assertion pins the division of labour: normalization happens at the mint site
+// and this function compares with plain equality. Folding case here as well
+// would put the same rule in two layers, and this test fails if that happens.
+func TestDuplicateClaims_DoesNotFoldCaseItself(t *testing.T) {
 	topo := Topology{
-		node("analytics.table_jesus", "finance", "models/TABLE_JESUS.sql"),
-		node("analytics.table_jesus", "marketing", "models/table_jesus.sql"),
+		node("analytics.orders", "finance", "models/orders.sql"),
+		node("analytics.Orders", "marketing", "models/orders.sql"),
 	}
 
-	claims := DuplicateClaims(topo)
-
-	require.Len(t, claims, 1)
-	assert.Equal(t, "analytics.table_jesus", claims[0].UniqueID)
+	assert.Empty(t, DuplicateClaims(topo))
 }
 
 func TestDuplicateClaims_NoFalsePositiveOnDistinctRelations(t *testing.T) {
