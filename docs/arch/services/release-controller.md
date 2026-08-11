@@ -113,6 +113,8 @@ status=ok:
 status=failed → Reject(reason=parse_failed), emit release.rejected:v1, advance queue
 status=ok:
   join per-service image_tags into the candidate topology
+  DuplicateClaims(topology) non-empty →
+  Reject(reason=duplicate_table), emit release.rejected:v1, advance queue, return
   if release.bootstrap: promote directly, skipping validation
       (record candidate topology, update current_prod, upsert the changed
        service's service_prod pointer, transition to Promoted,
@@ -138,6 +140,8 @@ status=ok:
          and validation_op = validationOpFor(node, changedClosureSet))
   advance queue
 ```
+`DuplicateClaims` walks the candidate topology for any `unique_id` claimed by more than one node — a relation two nodes both write, the second silently overwriting the first the moment either lands in `current_prod` — and runs above every branch of this handler that can promote: the bootstrap short-circuit immediately below, the nothing-to-validate short-circuit further down, the seed-build leg's own promotion (`handle_seed_build_result.go`), and the post-validation promotion (`handle_validation_result.go`). One check here covers all four paths. The check is service-agnostic: two nodes in the same service collide exactly as two nodes in different services do, so `per_node[]` on the rejection carries both a `service`/`file_path` (the rename target) and an `other_service`/`other_file_path` (the competing claimant) — the service name alone does not disambiguate a same-service collision.
+
 `validationOpFor` picks the executor's per-node build strategy from the node's kind and whether it is in the changed closure: a changed-closure dbt node gets `build_from_sql` (candidate SQL already rewritten to the candidate schema); a changed-closure python node gets `build_from_columns` (a JSON spec of declared reads + output columns, since there is no SQL to build from); every other in-set node — an unchanged upstream, of either kind — gets `clone_from_prod` regardless, since it carries no candidate artifact to build from.
 
 A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.
