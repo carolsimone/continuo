@@ -163,6 +163,7 @@ export interface ReleaseDetail {
   transitions: ReleaseTransition[];
   validation_node_ids: string[] | null;
   reject_reason: string;
+  reject_detail?: string;
   failing_nodes: string[] | null;
   per_node_results: NodeValidationResult[] | null;
   image_tags: Record<string, string>;

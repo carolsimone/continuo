@@ -267,6 +267,48 @@ describe('ReleaseDetailPage — resilient polling on transient errors', () => {
   });
 });
 
+describe('ReleaseDetailPage — reject detail', () => {
+  it('names both claimants when a release is rejected for a duplicated relation', async () => {
+    renderPage({
+      release_id: 'rel-1',
+      status: 'rejected',
+      reject_reason: 'duplicate_table',
+      reject_detail:
+        'analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql); ' +
+        'a relation may be produced by exactly one node — rename one of them',
+      transitions: [],
+      validation_node_ids: null,
+      failing_nodes: ['analytics.orders'],
+      per_node_results: null,
+      image_tags: {},
+      manifests_uri: '',
+      bootstrap: false,
+    });
+
+    expect(await screen.findByText(/finance \(models\/orders\.sql\)/)).toBeInTheDocument();
+    expect(screen.getByText(/marketing \(models\/orders\.sql\)/)).toBeInTheDocument();
+  });
+
+  it('shows the reason alone when a rejection carries no detail', async () => {
+    renderPage({
+      release_id: 'rel-2',
+      status: 'rejected',
+      reject_reason: 'validation_failed',
+      reject_detail: '',
+      transitions: [],
+      validation_node_ids: null,
+      failing_nodes: null,
+      per_node_results: null,
+      image_tags: {},
+      manifests_uri: '',
+      bootstrap: false,
+    });
+
+    const strip = await screen.findByText(/validation/i);
+    expect(strip.textContent).not.toContain('—');
+  });
+});
+
 describe('ReleaseDetailPage — proposal polling gated on rejected', () => {
   it('does not poll proposals while validating even with a failed node, then starts fresh once the release is rejected', async () => {
     vi.useFakeTimers();
