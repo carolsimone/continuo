@@ -283,6 +283,7 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 		NodeID:        "analytics.orders",
 		Service:       "marketing",
 		FilePath:      "models/orders.sql",
+		NodeType:      "dbt-model",
 		OtherService:  "marketing",
 		OtherFilePath: "models/orders_legacy.sql",
 		Repo:          "owner/repo",
@@ -316,6 +317,9 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	}
 	if p.FilePath != "models/orders.sql" {
 		t.Fatalf("trigger file_path = %q, want models/orders.sql", p.FilePath)
+	}
+	if p.NodeType != "dbt-model" {
+		t.Fatalf("trigger node_type = %q, want dbt-model", p.NodeType)
 	}
 	if p.OtherService != "marketing" {
 		t.Fatalf("trigger other_service = %q, want marketing", p.OtherService)

@@ -42,6 +42,11 @@ type RemediationRequested struct {
 	// seed_build failures from the candidate topology so the agent can locate
 	// the source file without a Ancestry lookup.
 	Service string `json:"service,omitempty"`
+	// NodeType is the target claimant's kind (dbt-model, dbt-seed,
+	// dbt-snapshot, or python-model), set on duplicate-relation failures so the
+	// agent can skip a python target — whose source is not a single readable
+	// file — without a topology lookup of its own.
+	NodeType string `json:"node_type,omitempty"`
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces NodeID. Set on duplicate-relation failures so the agent can name
 	// the relation's other producer without reading its source. The path is

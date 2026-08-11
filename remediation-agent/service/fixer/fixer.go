@@ -32,6 +32,12 @@ type Input struct {
 	CommitSHA      string
 	FilePath       string
 	Service        string
+	// NodeType is the target claimant's kind, set on a duplicate-relation
+	// failure. The duplicate-table Fixer skips a python target — its relation
+	// is declared in the service's contract.yaml, whose repository path this
+	// system does not carry, so the file named by FilePath cannot contain the
+	// fix.
+	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces NodeID. Set on a duplicate-relation failure so the prompt can
 	// name the relation's other producer without reading its source.

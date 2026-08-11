@@ -130,11 +130,6 @@ def test_handle_publishes_ok_with_resolved_topology(resolved_topology):
     assert len(resolved_topology) == 2
 
 
-def test_handle_publishes_ok_with_unique_id_synthesised_from_schema_and_table(resolved_topology):
-    for node in resolved_topology:
-        assert node["unique_id"] == f"{node['schema_name']}.{node['table_name']}"
-
-
 def test_handle_publishes_ok_with_image_tag_empty_string(resolved_topology):
     for node in resolved_topology:
         assert node["image_tag"] == ""

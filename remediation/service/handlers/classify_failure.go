@@ -138,6 +138,7 @@ func enqueueTrigger(ctx context.Context, u uow.UnitOfWork, deps Deps, ev failure
 		CandidateArtifactURI: ev.CandidateArtifactURI,
 		FilePath:             ev.FilePath,
 		Service:              ev.Service,
+		NodeType:             ev.NodeType,
 		OtherService:         ev.OtherService,
 		OtherFilePath:        ev.OtherFilePath,
 		Repo:                 ev.Repo,

@@ -1320,6 +1320,14 @@ func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 				Image:           p.ImageTag,
 				ImagePullPolicy: corev1.PullIfNotPresent,
 				Env: []corev1.EnvVar{
+					// NODE_ID is built from SchemaName/TableName, not p.NodeID (the
+					// lowercase-normalized unique_id used elsewhere in this file), and
+					// must stay that way: continuo-python-runtime's select_node matches
+					// these trailing segments case-sensitively against the schema/table
+					// declared in the image's baked contract.yaml. Switching this to
+					// p.NodeID would silently fail to select the node for any contract
+					// that declares mixed- or upper-case names, breaking every
+					// production python Job for that node.
 					{Name: "NODE_ID", Value: p.SchemaName + "." + p.TableName},
 					{Name: "TABLE_NAME", Value: p.TableName},
 					{Name: "TARGET_SCHEMA", Value: p.SchemaName},

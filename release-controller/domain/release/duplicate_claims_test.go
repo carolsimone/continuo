@@ -11,6 +11,26 @@ func node(uniqueID, service, filePath string) Node {
 	return Node{UniqueID: uniqueID, ServiceName: service, OriginalFilePath: filePath}
 }
 
+func nodeOfType(uniqueID, service, filePath, nodeType string) Node {
+	return Node{UniqueID: uniqueID, ServiceName: service, OriginalFilePath: filePath, NodeType: nodeType}
+}
+
+// A python claimant's NodeType must survive into its Claimant so the
+// remediation fixer can tell it apart from a dbt claimant without a second
+// topology lookup.
+func TestDuplicateClaims_CarriesNodeType(t *testing.T) {
+	topo := Topology{
+		nodeOfType("analytics.orders", "finance", "models/orders.sql", "dbt-model"),
+		nodeOfType("analytics.orders", "marketing", "contract.yaml", "python-model"),
+	}
+
+	claims := DuplicateClaims(topo)
+
+	require.Len(t, claims, 1)
+	assert.Equal(t, "dbt-model", claims[0].Claimants[0].NodeType)
+	assert.Equal(t, "python-model", claims[0].Claimants[1].NodeType)
+}
+
 func TestDuplicateClaims_AcrossServices(t *testing.T) {
 	topo := Topology{
 		node("analytics.orders", "marketing", "models/orders.sql"),

@@ -505,6 +505,14 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // rejected release is never promoted, so Ancestry (which serves the promoted
 // topology) holds nothing for these nodes.
 //
+// node_type carries the target claimant's kind (dbt-model, dbt-seed,
+// dbt-snapshot, or python-model) so remediation can tell, without a topology
+// lookup of its own, whether the target's source is a single file this
+// system can read. A python node's relation is declared in the service's
+// contract.yaml, whose repository path this system does not carry — only
+// file_path for the contract's script entry — so the fixer must skip a
+// python target rather than editing a file that cannot produce the fix.
+//
 // repo/commit_sha describe only the service this release changed — each team
 // ships its dbt or python jobs from its own repository, so there is no single
 // checkout that contains every service's models. Target prefers the changed
@@ -532,6 +540,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 			"status":          "failed",
 			"service":         target.ServiceName,
 			"file_path":       target.OriginalFilePath,
+			"node_type":       target.NodeType,
 			"other_service":   other.ServiceName,
 			"other_file_path": other.OriginalFilePath,
 		})

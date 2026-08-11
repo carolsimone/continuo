@@ -6,10 +6,15 @@ import (
 	"strings"
 )
 
-// Claimant is one node's owner and source location within a duplicate claim.
+// Claimant is one node's owner, source location, and kind within a duplicate
+// claim. NodeType lets a downstream consumer (the remediation fixer) tell a
+// dbt claimant from a python one without a second topology lookup: the two
+// kinds locate their source differently, and only a dbt claimant's source is
+// a single file this system can read.
 type Claimant struct {
 	ServiceName      string
 	OriginalFilePath string
+	NodeType         string
 }
 
 // DuplicateClaim names one relation claimed by more than one node in a
@@ -38,6 +43,7 @@ func DuplicateClaims(candidate Topology) []DuplicateClaim {
 		byID[n.UniqueID] = append(byID[n.UniqueID], Claimant{
 			ServiceName:      n.ServiceName,
 			OriginalFilePath: n.OriginalFilePath,
+			NodeType:         n.NodeType,
 		})
 	}
 

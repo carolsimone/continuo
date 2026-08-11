@@ -978,8 +978,8 @@ func TestHandleParsedManifest_DuplicateTablePayloadNamesTargetAndOther(t *testin
 		ReleaseID: "rA",
 		Status:    "ok",
 		Topology: release.Topology{
-			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
-			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", NodeType: "dbt-model"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql", NodeType: "python-model"},
 		},
 	}))
 
@@ -994,6 +994,7 @@ func TestHandleParsedManifest_DuplicateTablePayloadNamesTargetAndOther(t *testin
 	assert.Equal(t, "failed", node["status"])
 	assert.Equal(t, "marketing", node["service"], "the changed service is the rename target")
 	assert.Equal(t, "models/orders.sql", node["file_path"])
+	assert.Equal(t, "python-model", node["node_type"], "the target claimant's kind, so remediation can skip an unfixable python target")
 	assert.Equal(t, "finance", node["other_service"])
 	assert.Equal(t, "models/orders.sql", node["other_file_path"])
 }

@@ -29,6 +29,9 @@ type requestedPayload struct {
 	// Service is the owning dbt service for the failing node. Set for seed_build
 	// failures where the source location is threaded from the candidate topology.
 	Service string `json:"service"`
+	// NodeType is the target claimant's kind, set on a duplicate-relation
+	// failure so the fixer can skip a python target without a topology lookup.
+	NodeType string `json:"node_type"`
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces NodeID, set on a duplicate-relation failure.
 	OtherService  string `json:"other_service"`
@@ -55,6 +58,7 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 		CandidateArtifactURI: p.CandidateArtifactURI,
 		FilePath:             p.FilePath,
 		Service:              p.Service,
+		NodeType:             p.NodeType,
 		OtherService:         p.OtherService,
 		OtherFilePath:        p.OtherFilePath,
 		Repo:                 p.Repo,

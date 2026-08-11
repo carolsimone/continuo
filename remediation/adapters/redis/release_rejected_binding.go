@@ -34,6 +34,11 @@ type rejectedPayload struct {
 		// querying Ancestry, which only holds promoted topology.
 		FilePath string `json:"file_path"`
 		Service  string `json:"service"`
+		// NodeType is the target claimant's kind (dbt-model, dbt-seed,
+		// dbt-snapshot, or python-model), set on duplicate-relation rejections so
+		// the fixer can tell a python target apart from a dbt one without a
+		// topology lookup of its own.
+		NodeType string `json:"node_type"`
 		// OtherService and OtherFilePath locate the competing node that also
 		// produces NodeID, set on duplicate-relation rejections so the agent can
 		// name the relation's other producer in the rename prompt. The path is
@@ -115,6 +120,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			CandidateArtifactURI: n.CandidateArtifactURI,
 			FilePath:             n.FilePath,
 			Service:              n.Service,
+			NodeType:             n.NodeType,
 			OtherService:         n.OtherService,
 			OtherFilePath:        n.OtherFilePath,
 			Repo:                 p.Repo,

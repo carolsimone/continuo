@@ -43,6 +43,11 @@ type Trigger struct {
 	// not depend on Ancestry (which only holds promoted topology). Empty for
 	// compile failures where NodeID acts as the service discriminator.
 	Service string
+	// NodeType is the target claimant's kind (dbt-model, dbt-seed,
+	// dbt-snapshot, or python-model), set on a duplicate-relation failure so
+	// the duplicate-table Fixer can skip a python target — whose source is not
+	// a single readable file — without a topology lookup of its own.
+	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces NodeID, set on a duplicate-relation failure.
 	OtherService  string
@@ -148,6 +153,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		CommitSHA:            t.CommitSHA,
 		FilePath:             t.FilePath,
 		Service:              t.Service,
+		NodeType:             t.NodeType,
 		OtherService:         t.OtherService,
 		OtherFilePath:        t.OtherFilePath,
 		DBTLogURI:            t.DBTLogURI,

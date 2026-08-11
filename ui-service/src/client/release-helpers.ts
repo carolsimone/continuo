@@ -41,6 +41,7 @@ const STAGE_LABELS: Record<string, string> = {
   compile: 'Compilation',
   seed_build: 'Seed build',
   validation: 'Validation',
+  duplicate_table: 'Duplicate table',
 };
 
 // stageLabel maps a raw stage literal to its section display label, falling back

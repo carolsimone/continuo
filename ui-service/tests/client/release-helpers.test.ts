@@ -58,6 +58,9 @@ describe('reasonLabel', () => {
     expect(reasonLabel('seed_build_failed')).toBe('Seed build');
     expect(reasonLabel('validation_failed')).toBe('Validation');
   });
+  it('maps duplicate_table to prose, even though it carries no _failed suffix to strip', () => {
+    expect(reasonLabel('duplicate_table')).toBe('Duplicate table');
+  });
   it('falls back to the raw value for an unknown reason', () => {
     expect(reasonLabel('meteor_strike')).toBe('meteor_strike');
   });

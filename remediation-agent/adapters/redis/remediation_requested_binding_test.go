@@ -20,6 +20,10 @@ var requestedPayloadFixture = map[string]any{
 	"dbt_log_uri":            "s3://bucket/logs/orders_daily.log",
 	"candidate_artifact_uri": "s3://bucket/sql/orders_daily.sql",
 	"file_path":              "models/orders_daily.sql",
+	"service":                "svc-orders",
+	"node_type":              "dbt-model",
+	"other_service":          "svc-finance",
+	"other_file_path":        "models/orders_legacy.sql",
 	"repo":                   "acme/dbt-project",
 	"commit_sha":             "deadbeef1234",
 }
@@ -44,6 +48,12 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 	require.Equal(t, "s3://bucket/logs/orders_daily.log", trigger.DBTLogURI)
 	require.Equal(t, "s3://bucket/sql/orders_daily.sql", trigger.CandidateArtifactURI)
 	require.Equal(t, "models/orders_daily.sql", trigger.FilePath)
+	require.Equal(t, "svc-orders", trigger.Service)
+	require.Equal(t, "dbt-model", trigger.NodeType)
+	require.Equal(t, "svc-finance", trigger.OtherService,
+		"other_service must decode — the only datum identifying the competing claimant when both share one service")
+	require.Equal(t, "models/orders_legacy.sql", trigger.OtherFilePath,
+		"other_file_path must decode — deleting its mapping would leave this assertion, and every other assertion here, green")
 	require.Equal(t, "acme/dbt-project", trigger.Repo)
 	require.Equal(t, "deadbeef1234", trigger.CommitSHA)
 	require.Equal(t, "1-0", trigger.MessageID)

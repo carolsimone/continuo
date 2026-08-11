@@ -108,9 +108,11 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 ```
 1. Decode trigger: extract source, release_id, node_id, error_signature,
    category, dbt_log_uri, candidate_artifact_uri, file_path, service,
-   other_service, other_file_path, repo, commit_sha. other_service/
-   other_file_path locate the competing node that also produces node_id; set
-   only on a duplicate_table trigger, empty otherwise.
+   node_type, other_service, other_file_path, repo, commit_sha. node_type is
+   the target claimant's kind (dbt-model, dbt-seed, dbt-snapshot,
+   python-model); other_service/other_file_path locate the competing node
+   that also produces node_id. Both are set only on a duplicate_table
+   trigger, empty otherwise.
 
 1a. Read-only dedup pre-check (no write): before any row is written, check
     whether this trigger was already handled, on either dedup axis scoped to the
@@ -258,17 +260,23 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 `duplicateTableFixer` (`service/fixer/duplicate_table.go`) resolves a naming collision — two models in the release produce the same warehouse relation — with exactly one LLM call, reusing the same single-file gather/build/interpret shape as the compile fixer (`singleFileInterpret`).
 
 ```
-1. Empty file_path or service on the trigger: proposal(status=skipped), done.
-2. Look up service in the service→repo mapping. Unmapped: proposal(status=skipped), done.
-3. Read the offending file at <repo_path>/<file_path> — the claimant the
+1. node_type is python-model: proposal(status=skipped), done, before any read
+   is attempted. A python node's relation is declared in the service's
+   contract.yaml, not in the file file_path names (the contract's script
+   entry, a program that produces the relation but does not name it), and
+   this system carries no repository path for contract.yaml at all — so
+   reading and renaming the script could not fix the collision.
+2. Empty file_path or service on the trigger: proposal(status=skipped), done.
+3. Look up service in the service→repo mapping. Unmapped: proposal(status=skipped), done.
+4. Read the offending file at <repo_path>/<file_path> — the claimant the
    release changed. The competing claimant's source is never read: its
    other_service and other_file_path (from the trigger) are enough for the
    model to choose a distinguishing name.
    - 404: proposal(status=skipped), done (definitive; not retried).
    - Any other error: return it (transient; message redelivered).
-4. No dbt log is fetched at any point: a duplicate-relation rejection happens
+5. No dbt log is fetched at any point: a duplicate-relation rejection happens
    at parse time, before any Job runs, so there is none to read.
-5. Make a single forced propose_fix LLM tool call naming the relation
+6. Make a single forced propose_fix LLM tool call naming the relation
    (node_id), the competing producer (other_service, other_file_path), and
    the offending file's sanitized content, instructing the model to rename
    only what the file produces (alias, configured schema, or model name)
@@ -276,19 +284,19 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
    target_file and proposed_content (no suspected_root_cause_node — a naming
    collision has no upstream node to blame).
    - LLM transient error → retry.
-6. Interpret the result via the same singleFileInterpret used by the compile
+7. Interpret the result via the same singleFileInterpret used by the compile
    fixer: target_file must resolve to the one shown file (exact or unambiguous
    suffix match; empty resolves to it since it is the sole file shown).
    proposed_content empty, identical to the original, or a low-confidence
    result → proposal(status=failed). Otherwise: proposed outcome.
-7. On a proposed outcome, diff the corrected content against the original and
+8. On a proposed outcome, diff the corrected content against the original and
    write proposed-fix/<release_id>/<node_id>/attempt-<n>.source.sql and
    .source.diff (same key shape as compile/seed). Insert
    proposal(status=proposed, source_resolved=true, file_path=target_file),
    emit remediation.proposed:v1.
 ```
 
-When no claimant belongs to the changed service — a bootstrap release, or two already-promoted services colliding while a third is released — `file_path`/`service` on the trigger name a claimant whose source lives in a repository this trigger's `repo`/`commit_sha` do not describe, the read returns `ErrSourceNotFound`, and the fixer skips rather than proposing a change to a file it cannot see; the release page's `reject_detail` already names every claimant so an operator can rename one by hand.
+When no claimant belongs to the changed service — a bootstrap release, or two already-promoted services colliding while a third is released — `file_path`/`service` on the trigger name a dbt claimant whose source lives in a repository this trigger's `repo`/`commit_sha` do not describe, the read returns `ErrSourceNotFound`, and the fixer skips rather than proposing a change to a file it cannot see; the release page's `reject_detail` already names every claimant so an operator can rename one by hand.
 
 ### Validation fixer — two-step flow
 
@@ -385,7 +393,7 @@ Every adapter forces the same `propose_fix` tool on every call — no streaming,
 - **Validation**: two non-streaming calls per proposal. Step 1 is given the candidate SQL, sanitized dbt log, ranked upstream ancestors, and — best-effort, up to 5 most-recently-changed eligible ancestors — the diff of each ancestor's recent upstream change, and returns `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node`. Step 2 is given the real model source and the Step-1 rationale, and returns a corrected `proposed_sql`. Step 2 is made only when the file path and service resolve; a failure, empty result, unchanged result, or low-confidence result falls back silently to the Step-1 candidate proposal.
 - **Compile**: one non-streaming call per proposal. The adapter is given every gathered file (the offending file plus any co-located `.yml`/`.yaml` siblings and `dbt_project.yml`) and the sanitized dbt compile error, and returns `target_file` (which shown file to change), `proposed_content` (that file's complete corrected content), `rationale`, `confidence`, and `suspected_root_cause_node`.
 - **Seed**: one non-streaming call per proposal. The adapter is given the failing CSV and the sanitized dbt seed error, and returns `proposed_content` (the complete corrected CSV), `rationale`, and `confidence`. The seed prompt has no `suspected_root_cause_node` field — a bad seed value has no upstream node to blame.
-- **Duplicate table**: one non-streaming call per proposal. The adapter is given the offending file (the claimant the release changed), the relation's `node_id`, and the competing producer's `other_service`/`other_file_path` — never the competing file's content — and returns `target_file`, `proposed_content` (the complete corrected file, renaming what it produces), `rationale`, and `confidence`. No dbt log is involved (there is none) and no `suspected_root_cause_node` field (a naming collision has no upstream node to blame).
+- **Duplicate table**: one non-streaming call per proposal, made only when the target claimant's `node_type` is a dbt kind — a python target is skipped before any call. The adapter is given the offending file (the claimant the release changed), the relation's `node_id`, and the competing producer's `other_service`/`other_file_path` — never the competing file's content — and returns `target_file`, `proposed_content` (the complete corrected file, renaming what it produces), `rationale`, and `confidence`. No dbt log is involved (there is none) and no `suspected_root_cause_node` field (a naming collision has no upstream node to blame).
 
 The `ProposeResult` struct carries all four possible fields (`proposed_sql`, `proposed_content`, `target_file`, plus `rationale`/`confidence`/`suspected_root_cause_node`/`model`) regardless of class; each fixer reads only the fields its prompt asked for. Both the Anthropic and the OpenAI-compatible adapter parse `target_file` and `proposed_content` from the tool-call arguments alongside `proposed_sql`.
 
@@ -475,7 +483,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `LLM_BASE_URL` | conditional | `""` | Base URL; required when `LLM_PROVIDER=openai-compatible` |
 | `LLM_CACHE_TTL` | no | `1h` | Per-entry TTL for cached LLM propose results (Go duration). Only needs to cover the same-trigger redelivery window; kept short to bound memory on the shared `noeviction` Redis. A non-positive value is clamped to the `1h` default. |
 | `GITHUB_TOKEN` | no | `""` | Read-only fine-grained PAT with `Contents: Read` and `Pull requests: Read` on the dbt repo. In Helm, sourced from `global.github.token` in the chart-managed secret `continuo-app-credentials`. When empty, requests to the Contents API are sent unauthenticated (subject to GitHub's lower unauthenticated rate limit) rather than failing outright. |
-| `SERVICE_REPO_MAP_PATH` | no | `""` | Path to `service_repos.yaml`, which maps each dbt service name to its project root within the source repo. In Helm, set to `/etc/continuo/service_repos.yaml` and backed by the `continuo-app-service-repos` ConfigMap (built from `deploy/continuo/files/service_repos.yaml`). In docker-compose (dev/e2e), bind-mounted from `remediation-agent/config/service_repos.yaml`. Empty (or a service name absent from the map) means every fixer's source read has no repo path to resolve: compile, seed, and duplicate-table proposals are skipped, and validation's Step 2 degrades to the Step-1 candidate proposal. |
+| `SERVICE_REPO_MAP_PATH` | no | `""` | Path to `service_repos.yaml`, which maps each service name (dbt or python) to its project root within that service's own repository — production is a data mesh of one repository per team; the single shared checkout this map implies is the dev/e2e convenience, not the deployed shape. In Helm, set to `/etc/continuo/service_repos.yaml` and backed by the `continuo-app-service-repos` ConfigMap (built from `deploy/continuo/files/service_repos.yaml`). In docker-compose (dev/e2e), bind-mounted from `remediation-agent/config/service_repos.yaml`. Empty (or a service name absent from the map) means every fixer's source read has no repo path to resolve: compile, seed, and duplicate-table proposals are skipped, and validation's Step 2 degrades to the Step-1 candidate proposal. |
 | `GITHUB_BASE_URL` | no | `https://api.github.com` | GitHub REST API root; override for e2e stub (`stub-github`) |
 | `CONTINUO_ORCHESTRATOR_ADDR` | no | `orchestrator:50052` | Orchestrator gRPC endpoint |
 | `REMEDIATION_AGENT_HTTP_PORT` | no | `8092` | `/healthz` port |

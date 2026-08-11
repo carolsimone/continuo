@@ -25,7 +25,7 @@ func TestDuplicateTable_ReadsOnlyTheChangedFileAndProposesARename(t *testing.T) 
 	in := Input{
 		Source: "duplicate_table", ReleaseID: "rel-1", NodeID: "analytics.orders",
 		Repo: "owner/repo", CommitSHA: "abc123", Service: "marketing", FilePath: "models/orders.sql",
-		OtherService: "finance", Attempt: 1,
+		NodeType: "dbt-model", OtherService: "finance", OtherFilePath: "services/finance/models/orders.sql", Attempt: 1,
 	}
 	r, err := duplicateTableFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
@@ -45,6 +45,43 @@ func TestDuplicateTable_ReadsOnlyTheChangedFileAndProposesARename(t *testing.T) 
 	}
 	if !strings.Contains(llm.requests[0].User, "finance") {
 		t.Fatalf("prompt missing the competing service: %q", llm.requests[0].User)
+	}
+	if !strings.Contains(llm.requests[0].User, "services/finance/models/orders.sql") {
+		t.Fatalf("prompt missing the competing claimant's file path: %q", llm.requests[0].User)
+	}
+}
+
+// TestDuplicateTable_SkipsAPythonTarget proves the fixer never reads or
+// prompts for a python claimant: its relation is declared in the service's
+// contract.yaml, whose repository path this system does not carry, so the
+// script named by FilePath cannot contain the fix. Before the NodeType check
+// existed, this Fixer read the script (the fake source map below would have
+// served it) and would have proposed a cosmetic, non-fixing edit.
+func TestDuplicateTable_SkipsAPythonTarget(t *testing.T) {
+	fs := &fakeSourceMap{files: map[string]string{"services/marketing/models/orders.py": "print('hello')"}}
+	llm := &fakeLLM{}
+	svc := Services{
+		Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
+		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+		ServiceRepoPaths: map[string]string{"marketing": "services/marketing", "finance": "services/finance"},
+	}
+	in := Input{
+		Source: "duplicate_table", ReleaseID: "rel-1", NodeID: "analytics.orders",
+		Repo: "owner/repo", CommitSHA: "abc123", Service: "marketing", FilePath: "models/orders.py",
+		NodeType: "python-model", OtherService: "finance", Attempt: 1,
+	}
+	r, err := duplicateTableFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if got := fs.readPaths(); len(got) != 0 {
+		t.Fatalf("readPaths = %v, want no read for a python target", got)
+	}
+	if len(llm.requests) != 0 {
+		t.Fatalf("expected no LLM call for a python target, got %d", len(llm.requests))
 	}
 }
 

@@ -158,7 +158,7 @@ func AssembleSeedFix(csvPath, csvContent, dbtLog, nodeID string) ProposeRequest 
 	}
 }
 
-const duplicateTableSystemPrompt = `You are a data-engineering assistant that resolves a naming collision in a dbt or python data model.
+const duplicateTableSystemPrompt = `You are a data-engineering assistant that resolves a naming collision in a dbt model.
 
 Two models in the release produce the same warehouse relation (<schema>.<table>). A relation may be produced by exactly one model, so one of them must produce a different one. You are shown only the model that is changing in this release; that is the one to rename. You are told which other service already produces the relation, but not its source.
 
