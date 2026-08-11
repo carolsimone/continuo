@@ -6,34 +6,42 @@ import (
 
 	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
-	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestDeploy_PythonModel_FailsClosedPermanently verifies the run-path guard:
-// python-model runtime dispatch (running the user's image with the normative
-// env) is not implemented yet, so Deploy must fail permanently rather than
-// fall through to the dbt command builder and run a wrong command on the
-// node. The guard fires before any client use, so a nil client is safe here.
-func TestDeploy_PythonModel_FailsClosedPermanently(t *testing.T) {
-	d := NewDeployer(nil, "ns")
+// TestDeploy_PythonModel_CreatesTheJob verifies the run path dispatches a
+// python-model node: Deploy reaches CreateQueryJob and builds the pod that runs
+// the node's own image with the harness's environment.
+func TestDeploy_PythonModel_CreatesTheJob(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	client := newValidationTestClient()
+	d := NewDeployer(client, "default")
+
 	err := d.Deploy(context.Background(), deploy.JobSpec{
-		JobName: "j1", NodeType: "python-model", TableName: "py_probe", ServiceName: "svc-py",
+		JobName:     "run-py-probe",
+		TaskID:      "task-1",
+		ServiceName: "svc-py",
+		SchemaName:  "analytics",
+		TableName:   "py_probe",
+		NodeType:    string(pkg_model.NodeTypePythonModel),
+		ImageTag:    "ghcr.io/acme/marketing-py:12-abc1234",
 	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, pkgevents.ErrPermanent)
-	assert.Contains(t, err.Error(), "python-model runtime dispatch not implemented")
+	require.NoError(t, err)
+
+	podSpec := fetchJob(t, client, "default", "run-py-probe").Spec.Template.Spec
+	assert.Equal(t, "ghcr.io/acme/marketing-py:12-abc1234", podSpec.Containers[0].Image)
+	assert.Equal(t, "analytics.py_probe", envByName(podSpec, "NODE_ID"))
 }
 
-// TestDeployValidation_PythonModel_IsNotGuarded proves that only the RUN path
-// (Deploy) is guarded against python-model: DeployValidation must still create
-// the Job for it, since python-model nodes go through validation
-// (build_from_columns) same as dbt nodes. It exercises DeployValidation itself
-// (through a fake-clientset K8sClient), not just ParseNodeType, so a future
-// change that leaks Deploy's "python-model runtime dispatch not implemented"
-// guard into DeployValidation would fail this test.
-func TestDeployValidation_PythonModel_IsNotGuarded(t *testing.T) {
+// TestDeployValidation_PythonModel_BuildsTheValidationPod proves the run and
+// validation paths build different pods for the same node type: validation
+// routes a python-model node through the build_from_columns runner with its
+// spec URI, not through the runtime image the run path dispatches. It exercises
+// DeployValidation itself (through a fake-clientset K8sClient) rather than just
+// ParseNodeType, so a change that let the run path's pod leak into validation
+// would fail here.
+func TestDeployValidation_PythonModel_BuildsTheValidationPod(t *testing.T) {
 	client := newValidationTestClient()
 	d := NewDeployer(client, "default")
 
@@ -52,7 +60,7 @@ func TestDeployValidation_PythonModel_IsNotGuarded(t *testing.T) {
 	}
 
 	err := d.DeployValidation(context.Background(), spec)
-	require.NoError(t, err, "python-model must proceed past node-type parsing on the validation path, not hit the run-path guard")
+	require.NoError(t, err, "python-model must build a validation Job on the validation path")
 
 	job := fetchJob(t, client, "default", "validate-py-rel123")
 	podSpec := job.Spec.Template.Spec

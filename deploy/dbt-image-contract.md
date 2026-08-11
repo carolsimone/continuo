@@ -7,6 +7,9 @@ those Jobs assume. The reference implementation is the
 [`continuo-dbt-demo`](https://github.com/carolsimone/continuo-dbt-demo)
 repository.
 
+For `python-model` nodes, whose images are resolved and configured differently,
+see [`python-image-contract.md`](python-image-contract.md).
+
 ## Image resolution
 
 executor-controller composes your image reference as
