@@ -107,6 +107,21 @@ This installs everything bundled — Postgres, Redis, Neo4j, MinIO, and Dex
 data: no backup, no high availability, one static login. For production
 installs bringing your own datastores, see [deploy/README.md](deploy/README.md).
 
+### Now put real dbt projects on it
+
+The install above gets you an *empty* Continuo. Everything Continuo actually
+does — inferring one dependency graph across independent dbt projects,
+validating a change against its full downstream lineage before promoting it,
+refusing a release that would break another team's model — only becomes visible
+once there are real projects on it.
+
+**[Try it locally, with real dbt projects](docs/try-it-locally.md)** walks through
+that end to end, on the same local cluster: build three example dbt projects into
+images, release them one at a time, watch Continuo discover a dependency that
+crosses project boundaries and that neither project declares, run the resulting
+graph, and then break it on purpose to watch validation reject the change while
+production keeps serving the last version that worked.
+
 ## Architecture pack
 
 This folder is the operational architecture map for the current Continuo microservice system.
