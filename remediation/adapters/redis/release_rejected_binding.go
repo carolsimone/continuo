@@ -45,10 +45,11 @@ type rejectedPayload struct {
 		// topology lookup of its own.
 		NodeType string `json:"node_type"`
 		// OtherService and OtherFilePath locate the competing node that also
-		// produces NodeID, set on duplicate-relation rejections so the agent can
-		// name the relation's other producer in the rename prompt. The path is
-		// carried because two nodes in the SAME service can collide, in which
-		// case the service name alone identifies nothing.
+		// produces the contested relation (RelationID), set on duplicate-relation
+		// rejections so the agent can name the relation's other producer in the
+		// rename prompt. The path is carried because two nodes in the SAME
+		// service can collide, in which case the service name alone identifies
+		// nothing.
 		OtherService  string `json:"other_service"`
 		OtherFilePath string `json:"other_file_path"`
 	} `json:"per_node"`

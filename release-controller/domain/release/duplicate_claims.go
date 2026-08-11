@@ -90,7 +90,18 @@ func (c DuplicateClaim) sortKey() string {
 func DuplicateClaims(candidate Topology) []DuplicateClaim {
 	out := relationCollisions(candidate)
 	out = append(out, identityCollisions(candidate)...)
-	sort.Slice(out, func(i, j int) bool { return out[i].sortKey() < out[j].sortKey() })
+	sort.Slice(out, func(i, j int) bool {
+		ki, kj := out[i].sortKey(), out[j].sortKey()
+		if ki != kj {
+			return ki < kj
+		}
+		// A relation claim and an identity claim can carry the same string
+		// (a resolved relation and a shared unique_id happen to coincide), so
+		// the key alone does not order them. Kind breaks the tie, keeping
+		// FormatDuplicateClaims's sentence order — and therefore
+		// failing_nodes/per_node order — fixed across runs on identical input.
+		return out[i].Kind < out[j].Kind
+	})
 	return out
 }
 

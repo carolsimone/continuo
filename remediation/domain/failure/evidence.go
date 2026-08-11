@@ -59,6 +59,6 @@ type FailureEvidence struct {
 	FilePath             string // optional; offending source path for compile (from dbt log) or seed_build (from candidate topology); empty → resolve via Ancestry(NodeID)
 	Service              string // optional; owning dbt service for source resolution; set for seed_build failures; empty for compile (NodeID is the service)
 	NodeType             string // optional; the target claimant's kind for a duplicate-relation failure (dbt-model, dbt-seed, dbt-snapshot, python-model); empty for every other source
-	OtherService         string // optional; for a duplicate-relation failure, the competing service that also produces NodeID
+	OtherService         string // optional; for a duplicate-relation failure, the competing service that also produces the contested relation (RelationID)
 	OtherFilePath        string // optional; source path of that competing node — the only discriminator when both claimants are in one service
 }

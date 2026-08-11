@@ -53,10 +53,10 @@ type RemediationRequested struct {
 	// file — without a topology lookup of its own.
 	NodeType string `json:"node_type,omitempty"`
 	// OtherService and OtherFilePath locate the competing node that also
-	// produces NodeID. Set on duplicate-relation failures so the agent can name
-	// the relation's other producer without reading its source. The path is
-	// carried because both claimants can belong to one service, where the
-	// service name alone identifies nothing.
+	// produces the contested relation (RelationID). Set on duplicate-relation
+	// failures so the agent can name the relation's other producer without
+	// reading its source. The path is carried because both claimants can
+	// belong to one service, where the service name alone identifies nothing.
 	OtherService  string `json:"other_service,omitempty"`
 	OtherFilePath string `json:"other_file_path,omitempty"`
 	Repo          string `json:"repo"`

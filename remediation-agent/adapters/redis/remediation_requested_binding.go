@@ -38,7 +38,8 @@ type requestedPayload struct {
 	// failure so the fixer can skip a python target without a topology lookup.
 	NodeType string `json:"node_type"`
 	// OtherService and OtherFilePath locate the competing node that also
-	// produces NodeID, set on a duplicate-relation failure.
+	// produces the contested relation (RelationID), set on a duplicate-relation
+	// failure.
 	OtherService  string `json:"other_service"`
 	OtherFilePath string `json:"other_file_path"`
 	Repo          string `json:"repo"`

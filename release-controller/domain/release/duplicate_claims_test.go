@@ -291,6 +291,38 @@ func TestFormatDuplicateClaims_IdentityCollisionNamesTheRemedy(t *testing.T) {
 		got)
 }
 
+// A relation claim and an identity claim can carry the same sort key when a
+// resolved relation and a shared unique_id happen to be the same string.
+// DuplicateClaims merges both collision types from map iteration (randomized
+// per process by the Go runtime), so a comparator that orders only by key
+// leaves the two tied elements in whatever order they happened to enter the
+// slice — the merged order, and therefore FormatDuplicateClaims's sentence
+// order and failing_nodes order, would vary between runs on identical input.
+// The Kind tiebreak makes every pair strictly ordered, which pins the result
+// regardless of map iteration order; repeating the call is the regression
+// guard for that.
+func TestDuplicateClaims_TiedKeyOrderIsDeterministic(t *testing.T) {
+	topo := Topology{
+		// Relation collision: two different unique_ids resolving to "dup".
+		nodeWithRelation("rel_a", "dup", "finance", "models/rel_a.sql"),
+		nodeWithRelation("rel_b", "dup", "marketing", "models/rel_b.sql"),
+		// Identity collision: unique_id "dup" shared across two different
+		// resolved relations — ties the relation claim above on sort key.
+		nodeWithRelation("dup", "dup_finance", "finance", "models/dup.sql"),
+		nodeWithRelation("dup", "dup_sales", "sales", "models/dup.sql"),
+	}
+
+	for i := 0; i < 200; i++ {
+		claims := DuplicateClaims(topo)
+
+		require.Len(t, claims, 2)
+		assert.Equal(t, CollisionRelation, claims[0].Kind, "relation claim sorts before identity claim on a tied key")
+		assert.Equal(t, "dup", claims[0].RelationID)
+		assert.Equal(t, CollisionIdentity, claims[1].Kind)
+		assert.Equal(t, "dup", claims[1].UniqueID)
+	}
+}
+
 // A release can trip a relation collision and an identity collision at the
 // same time, on different pairs of nodes. Both must be named in the detail,
 // and an operator (or anything parsing error_detail) must be able to tell

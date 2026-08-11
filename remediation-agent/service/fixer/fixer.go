@@ -45,8 +45,9 @@ type Input struct {
 	// fix.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
-	// produces NodeID. Set on a duplicate-relation failure so the prompt can
-	// name the relation's other producer without reading its source.
+	// produces the contested relation (RelationID). Set on a duplicate-relation
+	// failure so the prompt can name the relation's other producer without
+	// reading its source.
 	OtherService         string
 	OtherFilePath        string
 	DBTLogURI            string

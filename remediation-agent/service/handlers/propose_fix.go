@@ -54,7 +54,8 @@ type Trigger struct {
 	// a single readable file — without a topology lookup of its own.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
-	// produces NodeID, set on a duplicate-relation failure.
+	// produces the contested relation (RelationID), set on a duplicate-relation
+	// failure.
 	OtherService  string
 	OtherFilePath string
 	Repo          string
