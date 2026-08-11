@@ -1,14 +1,5 @@
 package events
 
-// ModePromoteSeed is the job mode for prod seed builds triggered on promotion.
-// These jobs run as real prod dbt seeds but carry no state-bound schedule/run,
-// so k8s-controller suppresses the production lifecycle events for them (no
-// task.status.updated / task.execution.recorded). Fire-and-forget semantics.
-// This constant is the single shared definition; orchestrator stamps it on the
-// query.model:v1 payload, executor passes it as a Job label, and k8s-controller
-// reads the label to route the terminal status away from the production path.
-const ModePromoteSeed = "promote_seed"
-
 // ModeCompile is the job mode for a release's compile leg (dbt compile +
 // manifest upload, plus the parse-export/rehearsal initContainers). executor
 // stamps it as a Job label; k8s-controller reads the label to route the

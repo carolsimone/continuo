@@ -179,10 +179,6 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 		return h.handleCompileTerminal(ctx, u, cmd, result, annotations)
 	}
 
-	if labels["mode"] == pkgevents.ModePromoteSeed {
-		return h.handlePromoteSeedTerminal(ctx, u, cmd, result)
-	}
-
 	// Empty metadata means the Job is gone (deleted/TTL-reaped): GetJobMeta maps
 	// NotFound to empty maps. A vanished Job has no mode label, so it falls through
 	// to the production task-status path below — correct for a production Job
@@ -442,31 +438,6 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 	return nil
 }
 
-// handlePromoteSeedTerminal handles a terminal Job carrying mode=promote_seed.
-// These jobs are fire-and-forget prod seed builds triggered on promotion; they
-// carry synthetic schedule/task IDs with no corresponding state run, so emitting
-// the production lifecycle events (task.status.updated / task.execution.recorded)
-// would cause state's TaskStatusUpdatedHandler to return ErrNotFound and retry
-// forever via PEL reclaim. Instead this handler simply logs the terminal outcome
-// and returns nil — the message is ACKed with no outbox rows written.
-// Unknown status is not terminal — re-poll via check.k8s:v1 like the other
-// candidate modes.
-func (h *CheckStatusHandler) handlePromoteSeedTerminal(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
-	if result.Status == model.JobStatusUnknown {
-		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
-	}
-	outcome := "failed"
-	if result.Status == model.JobStatusSucceeded {
-		outcome = "ok"
-	}
-	h.logger.Info("Promote-seed Job terminal — fire-and-forget, no lifecycle events emitted",
-		"job_name", cmd.JobName,
-		"task_id", cmd.TaskID,
-		"outcome", outcome,
-	)
-	return nil
-}
-
 // fetchAndUploadLogs fetches pod logs and uploads them to S3. The text log (with
 // any structured-result sentinel block stripped) is uploaded under logs/...; when
 // the pod emitted a structured block, that JSON is uploaded separately under
@@ -704,7 +675,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 		if err != nil {
 			return fmt.Errorf("fetch job meta for running announcement: %w", err)
 		}
-		if labels["mode"] != pkgevents.ModeValidation && labels["mode"] != pkgevents.ModeSeedBuild && labels["mode"] != pkgevents.ModeCompile && labels["mode"] != pkgevents.ModePromoteSeed {
+		if labels["mode"] != pkgevents.ModeValidation && labels["mode"] != pkgevents.ModeSeedBuild && labels["mode"] != pkgevents.ModeCompile {
 			if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "RUNNING", cmd.RetryCount); err != nil {
 				return fmt.Errorf("task_status_updated RUNNING: %w", err)
 			}

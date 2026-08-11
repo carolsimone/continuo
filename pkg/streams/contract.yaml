@@ -102,6 +102,15 @@ streams:
         group: orchestrator-single-node-run
         const: OrchestratorSingleNodeRun
 
+  - name: trigger.promoted_seeds:v1
+    const: TriggerPromotedSeedsV1
+    description: Run trigger for the seeds a promoted release changed; state creates the run, orchestrator projects its tasks.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-promoted-seeds
+        const: OrchestratorPromotedSeeds
+
   - name: run.finalized:v1
     const: RunFinalizedV1
     description: Run finalization (success, failure, or cancellation) emitted by state; consumed for projections.
@@ -295,11 +304,11 @@ streams:
         group: orchestrator-release-promoted
         const: OrchestratorReleasePromoted
       - service: orchestrator
-        group: orchestrator-release-promoted-seed-build
-        const: OrchestratorReleasePromotedSeedBuild
-      - service: orchestrator
         group: orchestrator-release-promoted-versions
         const: OrchestratorReleasePromotedVersions
+      - service: state
+        group: state-release-promoted-seeds
+        const: StateReleasePromotedSeeds
       - service: executor-controller
         group: executor-release-promoted
         const: ExecutorReleasePromoted

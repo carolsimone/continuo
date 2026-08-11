@@ -99,6 +99,22 @@ type SingleNodeRunRequested struct {
 func (SingleNodeRunRequested) runDomainEvent()         {}
 func (e SingleNodeRunRequested) ScheduleID() uuid.UUID { return e.ID }
 
+// PromotedSeedsRunRequested is recorded by NewPromotedSeedsRun.
+// Translated to trigger.promoted_seeds:v1.
+//
+// Nodes carries the seeds the release changed. They travel on the event rather
+// than being re-derived downstream so that the run's membership is decided once,
+// by whoever read the promoted topology.
+type PromotedSeedsRunRequested struct {
+	ID        uuid.UUID
+	Name      string
+	ReleaseID string
+	Nodes     []NodeID
+}
+
+func (PromotedSeedsRunRequested) runDomainEvent()         {}
+func (e PromotedSeedsRunRequested) ScheduleID() uuid.UUID { return e.ID }
+
 // RunDispatchTerminal is recorded by Run.MarkDispatchTerminal for observability.
 // The publisher emits RunFinalized (status=skipped for a benign no_tests
 // dispatch, otherwise failed) onto run.finalized:v1; this auxiliary event is

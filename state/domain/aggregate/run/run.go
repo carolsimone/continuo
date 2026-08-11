@@ -231,6 +231,57 @@ func NewSingleNodeRun(
 	return r, evt, nil
 }
 
+// NewPromotedSeedsRun creates a RUNNING Run for the seeds a promoted release
+// changed, one task per node.
+//
+// Unlike every other constructor here the run id is supplied rather than
+// generated. A promotion is announced by an event that can be redelivered, and
+// the caller derives the id deterministically from the release id, so a
+// redelivered promotion resolves to the same run instead of minting a second one
+// that would rebuild the same seeds.
+//
+// The run carries no operation: a seed is materialised by its own dbt verb,
+// chosen downstream from the node type, not by a verb selected here.
+func NewPromotedSeedsRun(
+	id uuid.UUID,
+	scheduleName string,
+	releaseID string,
+	nodes []NodeID,
+	now time.Time,
+) (*Run, DomainEvent, error) {
+	if scheduleName == "" {
+		return nil, nil, ErrScheduleNameRequired
+	}
+	if id == uuid.Nil {
+		return nil, nil, ErrRunIDRequired
+	}
+	if releaseID == "" {
+		return nil, nil, ErrReleaseIDRequired
+	}
+	if len(nodes) == 0 {
+		return nil, nil, ErrNoNodes
+	}
+	r := &Run{
+		scheduleID:      id,
+		scheduleName:    scheduleName,
+		status:          SchedulerStatusRunning,
+		initStatus:      InitStatusInProgress,
+		kind:            KindPromoteSeed,
+		initiatedBy:     "system",
+		createdAt:       now,
+		lastHeartbeatAt: &now,
+		serviceMetadata: map[string]ServiceMetadata{},
+	}
+	r.changes.created = true
+	evt := PromotedSeedsRunRequested{
+		ID:        id,
+		Name:      scheduleName,
+		ReleaseID: releaseID,
+		Nodes:     nodes,
+	}
+	return r, evt, nil
+}
+
 // ============================================================================
 // Getters (read-only — adapters and gRPC mappers use these)
 // ============================================================================

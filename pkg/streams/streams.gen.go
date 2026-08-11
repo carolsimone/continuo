@@ -24,6 +24,8 @@ const (
 	TriggerRebaseV1 = "trigger.rebase:v1"
 	// TriggerSingleNodeRunV1 — User-initiated single-node run trigger.
 	TriggerSingleNodeRunV1 = "trigger.single_node_run:v1"
+	// TriggerPromotedSeedsV1 — Run trigger for the seeds a promoted release changed; state creates the run, orchestrator projects its tasks.
+	TriggerPromotedSeedsV1 = "trigger.promoted_seeds:v1"
 	// RunFinalizedV1 — Run finalization (success, failure, or cancellation) emitted by state; consumed for projections.
 	RunFinalizedV1 = "run.finalized:v1"
 	// QueryModelV1 — Tasks dispatched by orchestrator for the executor pool.
@@ -98,6 +100,8 @@ const (
 	OrchestratorRebase = "orchestrator-rebase"
 	// OrchestratorSingleNodeRun — orchestrator consumer group on trigger.single_node_run:v1.
 	OrchestratorSingleNodeRun = "orchestrator-single-node-run"
+	// OrchestratorPromotedSeeds — orchestrator consumer group on trigger.promoted_seeds:v1.
+	OrchestratorPromotedSeeds = "orchestrator-promoted-seeds"
 	// OrchestratorRunFinalized — orchestrator consumer group on run.finalized:v1.
 	OrchestratorRunFinalized = "orchestrator-run-finalized"
 	// ExecutorQueryModel — executor-controller consumer group on query.model:v1.
@@ -140,10 +144,10 @@ const (
 	ReleaseControllerCompileCompleted = "release-controller-compile-completed"
 	// OrchestratorReleasePromoted — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
-	// OrchestratorReleasePromotedSeedBuild — orchestrator consumer group on release.promoted:v1.
-	OrchestratorReleasePromotedSeedBuild = "orchestrator-release-promoted-seed-build"
 	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
+	// StateReleasePromotedSeeds — state consumer group on release.promoted:v1.
+	StateReleasePromotedSeeds = "state-release-promoted-seeds"
 	// ExecutorReleasePromoted — executor-controller consumer group on release.promoted:v1.
 	ExecutorReleasePromoted = "executor-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
@@ -167,6 +171,7 @@ var All = []string{
 	TriggerRerunV1,
 	TriggerRebaseV1,
 	TriggerSingleNodeRunV1,
+	TriggerPromotedSeedsV1,
 	RunFinalizedV1,
 	QueryModelV1,
 	RetryTaskV1,

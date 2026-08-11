@@ -1,11 +1,12 @@
 // Package snapshot defines the unified Snapshot routine that produces a :Run
 // node in Neo4j with one :EXECUTES edge per task in the projection.
 //
-// Four concrete shapes are supported via Selector strategies:
+// Five concrete shapes are supported via Selector strategies:
 //   - LatestFullDAG    — cron / trigger
 //   - SingleNode       — single-node run
 //   - SourcePinnedDAG  — rerun from failed/cancelled
 //   - RebasePartition  — rebase from failed/cancelled
+//   - NodeSet          — an explicit list of nodes (the seeds a release changed)
 //
 // The selection logic is pure Go, unit-testable against an in-memory
 // TopologyReader; the write path is confined to one kind-agnostic Cypher
@@ -54,7 +55,7 @@ var ErrRerunOfTestUnsupported = errors.New("snapshot: rerun/rebase of a test run
 type Params struct {
 	RunID        string
 	ScheduleName string     // required by LatestFullDAG and RebasePartition; ignored by SourcePinnedDAG and SingleNode
-	Kind         string     // "cron" | "trigger" | "rerun" | "single_node_run" | "rebase"
+	Kind         string     // "cron" | "trigger" | "rerun" | "single_node_run" | "rebase" | "promote_seed"
 	SourceRunID  *uuid.UUID // nil for cron/trigger and latest-mode single-node-run
 	InitiatedBy  string     // user who initiated the run, or "system"; stamped on the :Run node
 	Operation    string     // "" | "run" | "test" | "build"; consumed by SingleNode to gate zero-test TEST runs

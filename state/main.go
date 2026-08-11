@@ -222,6 +222,12 @@ func main() {
 			group:   streams.StateTaskExecutionRecorded,
 			binding: redis.NewTaskExecutionRecordedBinding(uowFactory, svchandlers.NewTaskExecutionRecordedHandler(logger), logger),
 		},
+		{
+			name:    "release_promoted_seeds",
+			stream:  streams.ReleasePromotedV1,
+			group:   streams.StateReleasePromotedSeeds,
+			binding: redis.NewReleasePromotedBinding(uowFactory, svchandlers.NewPromotedSeedsHandler(logger), logger),
+		},
 	}
 	for _, c := range consumers {
 		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))

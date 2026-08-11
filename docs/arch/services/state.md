@@ -271,6 +271,7 @@ Every consumed stream follows the same three-layer path:
 | `run.entries.dispatch_failed:v1` | state service | `RunEntriesDispatchFailedHandler` — symmetric counterpart of `RunEntriesDispatchedHandler`. Row-locks `scheduler_tracker` and finalizes via `MarkDispatchTerminal`, emitting `run.finalized:v1`: the benign `reason=no_tests` marks status=`skipped`, every other reason marks status=`failed`. Idempotent on already-terminal rows. |
 | `task.status.updated:v1` | state service | `TaskStatusUpdatedHandler` — updates task status, drives finalization state machine |
 | `task.execution.recorded:v1` | state service | `TaskExecutionRecordedHandler` — persists task execution records |
+| `release.promoted:v1` | `state-release-promoted-seeds` | `PromotedSeedsHandler` — creates the run that materialises the seeds a release changed. Filters the promoted topology to nodes with `Changed == true` and `NodeType == "dbt-seed"`; a promotion that changed none is a no-op. The run id is derived deterministically from the release id, so a redelivered promotion resolves to the same run instead of rebuilding seeds already built. Emits `trigger.promoted_seeds:v1` for orchestrator to project the tasks. |
 
 Transient handler errors (e.g. `task_tracker` row not found because `RunEntriesDispatchedHandler` has not yet caught up) intentionally return plain errors. The consumer retries them inline first (~2.6s budget); only if that budget is exhausted does the message stay pending for the periodic reclaim tick.
 

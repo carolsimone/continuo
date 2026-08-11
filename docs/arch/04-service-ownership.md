@@ -59,8 +59,8 @@ Provisioning databases inside the job — rather than relying solely on the Post
 |---|---|
 | Durable state | `scheduler_tracker` (+ `service_metadata` JSONB column), `task_tracker` (+ `manifest_version` column), `task_execution`, `schedule_catalog` (+ `service_metadata` JSONB column), `state_outbox`, `message_processing` |
 | gRPC server methods owned | `GetScheduler`, `CancelScheduler`, `ActivateSchedule`, `ListAllSchedules`, `TriggerSchedule`, `CancelSchedule`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `GetTask`, `GetTaskByScheduleAndNode`, `ListTasks`, `GetSchedulerInitStatus`, `GetTaskExecution`, `ListTaskExecutions`, `ListNodes` (node catalog: per-node aggregate stats — run count, success rate, avg/p95 duration, flakiness, last run — over the most recent 50 runs, read from `task_tracker`/`scheduler_tracker`/`task_execution`; supports exact table-name + service filter, the `run`\|`test`\|`build` operation dimension, and paging — a node absent from the requested operation is absent from the catalog entirely, not returned with empty stats) |
-| Redis consumes | `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1`, `task.execution.recorded:v1` |
-| Redis produces | `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1`, `schedule.cancelled:v1` |
+| Redis consumes | `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1`, `task.execution.recorded:v1`, `release.promoted:v1` (group `state-release-promoted-seeds`: creates the run for a release's changed seeds) |
+| Redis produces | `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `trigger.promoted_seeds:v1`, `run.finalized:v1`, `schedule.cancelled:v1` |
 | Outbound gRPC calls | none |
 
 > All internal pipeline writes (scheduler/task/init-status updates, task-execution records, in-progress initialisation resets) flow through Redis consumers. The gRPC surface is UI-facing reads + user-initiated commands only.
@@ -71,7 +71,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 |---|---|
 | Durable state | Neo4j `Table` nodes (+ `image_tag`, `content_hash`, `code_version_promoted_at`, `topology_generation` props), `Run` nodes (+ `topology_generation`, `service_metadata` props), `DEPENDS_ON` edges, `EXECUTES` edges (+ `image_tag`, `content_hash` props); the code-version graph — `NodeVersion` / `CodeUnit` / `CodeUnitVersion` nodes and their `CURRENT`, `PREVIOUS`, `USES_CODE` edges; Neo4j `:TopologyRoot {id:'singleton'}` (generation + service_metadata); Postgres `topology_state`, `message_processing`, `orchestrator_outbox` |
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts`, `GetNode` |
-| Redis consumes | `node.updated:v1`, `release.promoted:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1` |
+| Redis consumes | `node.updated:v1`, `release.promoted:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `trigger.promoted_seeds:v1`, `run.finalized:v1` |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1` (SKIPPED on cascade-skip of a downstream node) |
 | S3 reads | `GetObject` — the code-bundle document at `code-bundles/<release_id>/bundle.json` named by each `release.promoted:v1`; read-only, and the bucket is not owned |
 | Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `CancelSchedule` (watchdog only) |

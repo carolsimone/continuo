@@ -28,9 +28,4 @@ type QueryModel struct {
 	// pkg_model.OperationRun (empty) is the default: dbt run/seed/snapshot by
 	// NodeType. pkg_model.OperationTest runs `dbt test --select <node>`.
 	Operation pkg_model.Operation
-	// Mode carries the optional dispatch mode from the query.model:v1 payload.
-	// Empty for normal production jobs; events.ModePromoteSeed for promote-seed
-	// jobs. The executor stamps it as a k8s Job label so k8s-controller can
-	// suppress the production lifecycle events for modes that have no real run.
-	Mode string
 }

@@ -85,11 +85,14 @@ const (
 	KindRerun         Kind = "rerun"
 	KindRebase        Kind = "rebase"
 	KindSingleNodeRun Kind = "single_node_run"
+	// KindPromoteSeed is the run that materialises the seeds a promoted release
+	// changed into the production schema.
+	KindPromoteSeed Kind = "promote_seed"
 )
 
 func (k Kind) IsValid() bool {
 	switch k {
-	case KindCron, KindTrigger, KindRerun, KindRebase, KindSingleNodeRun:
+	case KindCron, KindTrigger, KindRerun, KindRebase, KindSingleNodeRun, KindPromoteSeed:
 		return true
 	}
 	return false

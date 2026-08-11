@@ -33,6 +33,19 @@ var (
 	// is empty.
 	ErrScheduleNameRequired = errors.New("schedule_name is required")
 
+	// ErrRunIDRequired is returned by NewPromotedSeedsRun when the caller-supplied
+	// run id is the nil UUID. That constructor takes its id rather than generating
+	// one, so an unset id would otherwise collide across every promotion.
+	ErrRunIDRequired = errors.New("run id is required")
+
+	// ErrReleaseIDRequired is returned by NewPromotedSeedsRun when the release
+	// that triggered the run is not identified.
+	ErrReleaseIDRequired = errors.New("release_id is required")
+
+	// ErrNoNodes is returned by NewPromotedSeedsRun when the node set is empty.
+	// A run with no tasks would never reach a terminal state on its own.
+	ErrNoNodes = errors.New("run requires at least one node")
+
 	// ErrScheduleHasActiveRun is returned by the SchedulePolicy domain
 	// service when the named schedule already has a PENDING or RUNNING run.
 	ErrScheduleHasActiveRun = errors.New("schedule already has an active run")

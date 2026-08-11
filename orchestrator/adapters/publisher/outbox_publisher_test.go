@@ -96,20 +96,6 @@ func TestOutboxPublisher_NodeReadyForExecution_CarriesTestOperation(t *testing.T
 	assert.Equal(t, "test", vals["operation"])
 }
 
-func TestOutboxPublisher_NodeReadyForExecution_CarriesPromoteSeedMode(t *testing.T) {
-	// Regression: the mode field must reach the wire for promote-seed jobs, else
-	// the executor can't stamp the mode label and k8s-controller emits production
-	// task lifecycle events for a synthetic schedule with no state run.
-	evt := domain.NodeReadyForExecution{
-		ScheduleID: "sched-1", ScheduleName: "promote-seed", ServiceName: "svc",
-		SchemaName: "public", TableName: "seed_x", TaskID: "task-1", JobName: "job-1",
-		NodeType: "dbt-seed", ImageTag: "v1", Mode: pkgevents.ModePromoteSeed,
-	}
-	entry := makeEntry("node_ready_for_execution", mustMarshal(t, evt))
-	vals := payloadToValuesFor(t, entry)
-	assert.Equal(t, pkgevents.ModePromoteSeed, vals["mode"])
-}
-
 func TestOutboxPublisher_CascadeTaskSkipped(t *testing.T) {
 	evt := domain.CascadeTaskSkipped{
 		TaskID:     "task-x",
