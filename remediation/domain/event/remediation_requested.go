@@ -29,10 +29,15 @@ func AggregateIDForRelease(releaseID string) uuid.UUID {
 // failing node. It carries no error text — the agent reads the full log from
 // DBTLogURI and redacts before any external-LLM call.
 type RemediationRequested struct {
-	EventID              string `json:"event_id"`
-	Source               string `json:"source"`
-	ReleaseID            string `json:"release_id"`
-	NodeID               string `json:"node_id"`
+	EventID   string `json:"event_id"`
+	Source    string `json:"source"`
+	ReleaseID string `json:"release_id"`
+	NodeID    string `json:"node_id"`
+	// RelationID is the contested physical relation for a duplicate_table
+	// trigger, distinct from NodeID (the target claimant's own unique_id) —
+	// the two differ whenever the target carries an alias. Empty for every
+	// other source.
+	RelationID           string `json:"relation_id,omitempty"`
 	Category             string `json:"category"`
 	ErrorSignature       string `json:"error_signature"`
 	DBTLogURI            string `json:"dbt_log_uri"`
@@ -41,8 +46,20 @@ type RemediationRequested struct {
 	// Service is the owning dbt service name for the failing node. Set for
 	// seed_build failures from the candidate topology so the agent can locate
 	// the source file without a Ancestry lookup.
-	Service      string `json:"service,omitempty"`
-	Repo         string `json:"repo"`
-	CommitSHA    string `json:"commit_sha"`
-	ClassifiedAt string `json:"classified_at"`
+	Service string `json:"service,omitempty"`
+	// NodeType is the target claimant's kind (dbt-model, dbt-seed,
+	// dbt-snapshot, or python-model), set on duplicate-relation failures so the
+	// agent can skip a python target — whose source is not a single readable
+	// file — without a topology lookup of its own.
+	NodeType string `json:"node_type,omitempty"`
+	// OtherService and OtherFilePath locate the competing node that also
+	// produces the contested relation (RelationID). Set on duplicate-relation
+	// failures so the agent can name the relation's other producer without
+	// reading its source. The path is carried because both claimants can
+	// belong to one service, where the service name alone identifies nothing.
+	OtherService  string `json:"other_service,omitempty"`
+	OtherFilePath string `json:"other_file_path,omitempty"`
+	Repo          string `json:"repo"`
+	CommitSHA     string `json:"commit_sha"`
+	ClassifiedAt  string `json:"classified_at"`
 }

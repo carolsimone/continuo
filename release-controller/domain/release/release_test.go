@@ -47,7 +47,7 @@ func TestRelease_TransitionValidatingToRejected(t *testing.T) {
 	r := release.New("sha-abc", "svc", "tag", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	require.NoError(t, r.TransitionToParsing(time.Unix(1, 0)))
 	require.NoError(t, r.TransitionToValidating(release.Topology{}, []string{"n"}, time.Unix(2, 0)))
-	require.NoError(t, r.TransitionToRejected("validation_failed", []string{"n"}, time.Unix(3, 0)))
+	require.NoError(t, r.TransitionToRejected("validation_failed", "", []string{"n"}, time.Unix(3, 0)))
 	assert.Equal(t, release.StatusRejected, r.Status())
 	assert.Equal(t, "validation_failed", r.RejectReason())
 }
@@ -92,7 +92,7 @@ func TestRecordValidationResults_RetainedAcrossReject(t *testing.T) {
 	r.RecordValidationResults([]release.NodeValidationResult{
 		{NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 12},
 	})
-	require.NoError(t, r.TransitionToRejected("validation_failed", []string{"a"}, time.Unix(4, 0).UTC()))
+	require.NoError(t, r.TransitionToRejected("validation_failed", "", []string{"a"}, time.Unix(4, 0).UTC()))
 
 	assert.Equal(t, []release.NodeValidationResult{
 		{Stage: "validation", NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 12},
@@ -265,7 +265,7 @@ func TestTransitionToSeedBuilding_RejectsWrongSource(t *testing.T) {
 func TestTransitionToRejected_FromSeedBuilding(t *testing.T) {
 	r := newParsingRelease(t)
 	require.NoError(t, r.TransitionToSeedBuilding(release.Topology{}, nil, t0))
-	require.NoError(t, r.TransitionToRejected("seed_build_failed", nil, t1))
+	require.NoError(t, r.TransitionToRejected("seed_build_failed", "", nil, t1))
 	assert.Equal(t, release.StatusRejected, r.Status())
 }
 
@@ -290,8 +290,26 @@ func TestTransitionToCompiling_RejectsWrongSource(t *testing.T) {
 func TestTransitionToRejected_FromCompiling(t *testing.T) {
 	r := newReceivedRelease(t)
 	require.NoError(t, r.TransitionToCompiling(t0))
-	require.NoError(t, r.TransitionToRejected("compile_failed", nil, t1))
+	require.NoError(t, r.TransitionToRejected("compile_failed", "", nil, t1))
 	assert.Equal(t, release.StatusRejected, r.Status())
+}
+
+func TestTransitionToRejected_PersistsDetail(t *testing.T) {
+	r := release.New("rel-1", "finance", "tag", false, "owner/repo", "abc123", release.ManifestKindDbt, time.Unix(1, 0))
+	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0)))
+
+	require.NoError(t, r.TransitionToRejected(
+		"duplicate_table",
+		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
+		[]string{"analytics.orders"},
+		time.Unix(3, 0),
+	))
+
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Equal(t,
+		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
+		r.RejectDetail())
+	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes())
 }
 
 func TestRecordStageResults_ReplacesPerStage(t *testing.T) {

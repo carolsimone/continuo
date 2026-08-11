@@ -12,6 +12,10 @@ const (
 	SourceValidation Source = "validation"
 	SourceCompile    Source = "compile"
 	SourceSeed       Source = "seed_build"
+	// SourceDuplicateTable is a parse-time rejection: two nodes in the release's
+	// topology claim the same relation. It runs before any Job, so evidence for
+	// it carries no dbt log.
+	SourceDuplicateTable Source = "duplicate_table"
 )
 
 // Category is the deterministic classification of a failed node.
@@ -46,6 +50,7 @@ type FailureEvidence struct {
 	Source               Source
 	ReleaseID            string
 	NodeID               string
+	RelationID           string // optional; the contested physical relation for a duplicate-relation failure — distinct from NodeID (the target claimant's own identity), which can name a different string once the target carries an alias. Empty for every other source.
 	DBTLogURI            string
 	RunResultsURI        string
 	CandidateArtifactURI string
@@ -53,4 +58,7 @@ type FailureEvidence struct {
 	CommitSHA            string
 	FilePath             string // optional; offending source path for compile (from dbt log) or seed_build (from candidate topology); empty → resolve via Ancestry(NodeID)
 	Service              string // optional; owning dbt service for source resolution; set for seed_build failures; empty for compile (NodeID is the service)
+	NodeType             string // optional; the target claimant's kind for a duplicate-relation failure (dbt-model, dbt-seed, dbt-snapshot, python-model); empty for every other source
+	OtherService         string // optional; for a duplicate-relation failure, the competing service that also produces the contested relation (RelationID)
+	OtherFilePath        string // optional; source path of that competing node — the only discriminator when both claimants are in one service
 }

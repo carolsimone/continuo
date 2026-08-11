@@ -18,8 +18,8 @@ import (
 // release-controller. Only the fields the classifier needs are decoded.
 type rejectedPayload struct {
 	ReleaseID string `json:"release_id"`
-	Stage     string `json:"stage"`  // "compile" | "seed_build" | "validation"; absent in older payloads
-	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed"
+	Stage     string `json:"stage"`  // "compile" | "seed_build" | "validation"; absent in older payloads and in the stage-less duplicate_table rejection
+	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed" | "duplicate_table"
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
 	PerNode   []struct {
@@ -28,22 +28,39 @@ type rejectedPayload struct {
 		DBTLogURI            string `json:"dbt_log_uri"`
 		RunResultsURI        string `json:"run_results_uri"`
 		CandidateArtifactURI string `json:"candidate_artifact_uri"`
+		// RelationID is the contested physical relation for a
+		// duplicate-relation rejection, distinct from NodeID (the target
+		// claimant's own unique_id) — the two differ whenever the target
+		// carries an alias. Empty for every other reason.
+		RelationID string `json:"relation_id"`
 		// FilePath and Service carry the seed source location from the candidate
 		// topology (set by release-controller on seed_build rejections). When
 		// present, the remediation agent can locate the source file without
 		// querying Ancestry, which only holds promoted topology.
 		FilePath string `json:"file_path"`
 		Service  string `json:"service"`
+		// NodeType is the target claimant's kind (dbt-model, dbt-seed,
+		// dbt-snapshot, or python-model), set on duplicate-relation rejections so
+		// the fixer can tell a python target apart from a dbt one without a
+		// topology lookup of its own.
+		NodeType string `json:"node_type"`
+		// OtherService and OtherFilePath locate the competing node that also
+		// produces the contested relation (RelationID), set on duplicate-relation
+		// rejections so the agent can name the relation's other producer in the
+		// rename prompt. The path is carried because two nodes in the SAME
+		// service can collide, in which case the service name alone identifies
+		// nothing.
+		OtherService  string `json:"other_service"`
+		OtherFilePath string `json:"other_file_path"`
 	} `json:"per_node"`
 }
 
 // sourceFromPayload resolves the remediation Source from a release.rejected
 // payload. It prefers the explicit stage field and falls back to the reason
-// field for older payloads that carry no stage. The bool is false when the
-// rejection is not one of the three remediable pipeline legs — e.g. a
-// parse-phase rejection (parse_failed, unbuildable_cross_service_upstream) or
-// an unknown future stage; the caller then produces no evidence rather than
-// misrouting it onto a leg's classification path.
+// field, which covers older payloads with no stage and the stage-less
+// duplicate_table rejection. The bool is false when the rejection is not
+// remediable — parse_failed, unbuildable_cross_service_upstream, or an unknown
+// future stage; the caller then produces no evidence rather than misrouting it.
 func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 	switch stage {
 	case "compile":
@@ -60,6 +77,8 @@ func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 			return failure.SourceSeed, true
 		case "validation_failed":
 			return failure.SourceValidation, true
+		case "duplicate_table":
+			return failure.SourceDuplicateTable, true
 		}
 	}
 	return "", false
@@ -68,9 +87,10 @@ func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 // evidenceFromRejected translates a release.rejected:v1 payload into one
 // FailureEvidence per failed node. Nodes with status != "failed" are skipped.
 // The Source field is derived from the payload's stage field; when stage is
-// absent (older payloads) the reason field is used as a fallback.
-// FilePath is left empty here — it is populated by the ClassifyFailure handler
-// once the dbt log has been fetched (task 5.3).
+// absent, the reason field is used as a fallback. FilePath and Service carry
+// whatever the rejection payload set directly (populated by release-controller
+// for seed_build and duplicate_table); for compile failures, which have none,
+// the handler extracts FilePath from the dbt log after the log is fetched.
 func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	var p rejectedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -101,11 +121,15 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			Source:               src,
 			ReleaseID:            p.ReleaseID,
 			NodeID:               n.NodeID,
+			RelationID:           n.RelationID,
 			DBTLogURI:            n.DBTLogURI,
 			RunResultsURI:        n.RunResultsURI,
 			CandidateArtifactURI: n.CandidateArtifactURI,
 			FilePath:             n.FilePath,
 			Service:              n.Service,
+			NodeType:             n.NodeType,
+			OtherService:         n.OtherService,
+			OtherFilePath:        n.OtherFilePath,
 			Repo:                 p.Repo,
 			CommitSHA:            p.CommitSHA,
 		})

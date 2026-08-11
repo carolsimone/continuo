@@ -17,10 +17,15 @@ import (
 // requestedPayload mirrors the remediation.requested:v1 wire shape produced by
 // the remediation classifier. Only the fields the agent needs are decoded.
 type requestedPayload struct {
-	EventID              string `json:"event_id"`
-	Source               string `json:"source"`
-	ReleaseID            string `json:"release_id"`
-	NodeID               string `json:"node_id"`
+	EventID   string `json:"event_id"`
+	Source    string `json:"source"`
+	ReleaseID string `json:"release_id"`
+	NodeID    string `json:"node_id"`
+	// RelationID is the contested physical relation for a duplicate_table
+	// trigger, distinct from NodeID (the target claimant's own unique_id) —
+	// the two differ whenever the target carries an alias. Empty for every
+	// other source.
+	RelationID           string `json:"relation_id"`
 	Category             string `json:"category"`
 	ErrorSignature       string `json:"error_signature"`
 	DBTLogURI            string `json:"dbt_log_uri"`
@@ -28,9 +33,17 @@ type requestedPayload struct {
 	FilePath             string `json:"file_path"`
 	// Service is the owning dbt service for the failing node. Set for seed_build
 	// failures where the source location is threaded from the candidate topology.
-	Service   string `json:"service"`
-	Repo      string `json:"repo"`
-	CommitSHA string `json:"commit_sha"`
+	Service string `json:"service"`
+	// NodeType is the target claimant's kind, set on a duplicate-relation
+	// failure so the fixer can skip a python target without a topology lookup.
+	NodeType string `json:"node_type"`
+	// OtherService and OtherFilePath locate the competing node that also
+	// produces the contested relation (RelationID), set on a duplicate-relation
+	// failure.
+	OtherService  string `json:"other_service"`
+	OtherFilePath string `json:"other_file_path"`
+	Repo          string `json:"repo"`
+	CommitSHA     string `json:"commit_sha"`
 }
 
 // triggerFromRequested decodes a remediation.requested:v1 payload into a
@@ -45,12 +58,16 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 		Source:               p.Source,
 		ReleaseID:            p.ReleaseID,
 		NodeID:               p.NodeID,
+		RelationID:           p.RelationID,
 		Category:             p.Category,
 		ErrorSignature:       p.ErrorSignature,
 		DBTLogURI:            p.DBTLogURI,
 		CandidateArtifactURI: p.CandidateArtifactURI,
 		FilePath:             p.FilePath,
 		Service:              p.Service,
+		NodeType:             p.NodeType,
+		OtherService:         p.OtherService,
+		OtherFilePath:        p.OtherFilePath,
 		Repo:                 p.Repo,
 		CommitSHA:            p.CommitSHA,
 		MessageID:            msg.ID,

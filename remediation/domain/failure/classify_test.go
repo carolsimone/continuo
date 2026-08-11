@@ -4,10 +4,10 @@ import "testing"
 
 func TestClassifyBuckets(t *testing.T) {
 	cases := []struct {
-		name     string
-		logText  string
-		wantCat  Category
-		wantDec  Decision
+		name      string
+		logText   string
+		wantCat   Category
+		wantDec   Decision
 		reasonHas string
 	}{
 		// --- hard-drop infra (the only DROP cases) ---
@@ -56,6 +56,77 @@ func TestClassifyLogUnavailable(t *testing.T) {
 	}
 	if got.Reason != "unknown:log_unavailable" {
 		t.Errorf("reason = %q, want unknown:log_unavailable", got.Reason)
+	}
+}
+
+func TestClassifyDuplicateTable_IsLogicAndEmits(t *testing.T) {
+	c := ClassifyDuplicateTable(FailureEvidence{
+		Source:    SourceDuplicateTable,
+		ReleaseID: "rel-1",
+		NodeID:    "analytics.orders",
+	})
+
+	if c.Category != CategoryLogic {
+		t.Errorf("category = %q, want %q", c.Category, CategoryLogic)
+	}
+	if c.Decision != DecisionEmit {
+		t.Errorf("decision = %q, want %q", c.Decision, DecisionEmit)
+	}
+	if c.Reason != "logic:duplicate_table" {
+		t.Errorf("reason = %q, want %q", c.Reason, "logic:duplicate_table")
+	}
+	if c.Signature == "" {
+		t.Error("signature must not be empty")
+	}
+}
+
+func TestClassifyDuplicateTable_SignatureIsStablePerNode(t *testing.T) {
+	a := ClassifyDuplicateTable(FailureEvidence{ReleaseID: "rel-1", NodeID: "analytics.orders"})
+	b := ClassifyDuplicateTable(FailureEvidence{ReleaseID: "rel-9", NodeID: "analytics.orders"})
+	c := ClassifyDuplicateTable(FailureEvidence{ReleaseID: "rel-1", NodeID: "analytics.customers"})
+
+	if a.Signature != b.Signature {
+		t.Errorf("the same collision in two releases must be one signature: %q != %q", a.Signature, b.Signature)
+	}
+	if a.Signature == c.Signature {
+		t.Errorf("different relations must be different signatures, both %q", a.Signature)
+	}
+}
+
+// The target claimant Target() picks can flip between releases — it prefers
+// whichever service the release actually changed — even though the physical
+// collision is the same relation both times. The signature must key on
+// RelationID, not NodeID, or a flipped target forks one recurring collision
+// into two signatures.
+func TestClassifyDuplicateTable_SignatureIsStablePerRelationAcrossTargetFlip(t *testing.T) {
+	a := ClassifyDuplicateTable(FailureEvidence{
+		ReleaseID: "rel-1", NodeID: "analytics.orders_v1", RelationID: "analytics.orders",
+	})
+	b := ClassifyDuplicateTable(FailureEvidence{
+		ReleaseID: "rel-9", NodeID: "analytics.orders_v2", RelationID: "analytics.orders",
+	})
+	c := ClassifyDuplicateTable(FailureEvidence{
+		ReleaseID: "rel-1", NodeID: "analytics.orders_v1", RelationID: "analytics.customers",
+	})
+
+	if a.Signature != b.Signature {
+		t.Errorf("same relation, different target node id across releases must be one signature: %q != %q",
+			a.Signature, b.Signature)
+	}
+	if a.Signature == c.Signature {
+		t.Errorf("different relations must be different signatures, both %q", a.Signature)
+	}
+}
+
+// A trigger from before RelationID existed carries it empty; the signature
+// must still be produced (degrading to the old NodeID-keyed behavior) rather
+// than folding every such trigger into one signature via an empty key.
+func TestClassifyDuplicateTable_SignatureFallsBackToNodeIDWhenRelationIDEmpty(t *testing.T) {
+	a := ClassifyDuplicateTable(FailureEvidence{ReleaseID: "rel-1", NodeID: "analytics.orders"})
+	b := ClassifyDuplicateTable(FailureEvidence{ReleaseID: "rel-1", NodeID: "analytics.customers"})
+
+	if a.Signature == b.Signature {
+		t.Errorf("different node ids must still be different signatures when RelationID is unset, both %q", a.Signature)
 	}
 }
 

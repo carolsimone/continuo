@@ -931,3 +931,359 @@ func TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation(t *testing.T) {
 	}
 	assert.True(t, found, "no new/changed seeds → validation.requested must be emitted directly")
 }
+
+// A candidate topology where two services claim analytics.orders is rejected
+// before promotion, with both claimants named and no validation requested.
+func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
+		},
+	})
+	require.NoError(t, err)
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Contains(t, r.RejectDetail(), "finance (models/orders.sql)")
+	assert.Contains(t, r.RejectDetail(), "marketing (models/orders.sql)")
+	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes())
+
+	for _, e := range outboxEntries(store) {
+		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName,
+			"a rejected release must not request validation")
+	}
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	assert.Equal(t, "duplicate_table", payload["reason"])
+	assert.Equal(t, "DuplicatedTable", payload["error_class"])
+}
+
+// The rejection payload carries the claimant a fix should target and the
+// competing service, so remediation can build evidence without a second lookup.
+func TestHandleParsedManifest_DuplicateTablePayloadNamesTargetAndOther(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", NodeType: "dbt-model"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql", NodeType: "python-model"},
+		},
+	}))
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok, "per_node must be present so remediation can build evidence")
+	require.Len(t, perNode, 1)
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "analytics.orders", node["node_id"])
+	assert.Equal(t, "failed", node["status"])
+	assert.Equal(t, "marketing", node["service"], "the changed service is the rename target")
+	assert.Equal(t, "models/orders.sql", node["file_path"])
+	assert.Equal(t, "python-model", node["node_type"], "the target claimant's kind, so remediation can skip an unfixable python target")
+	assert.Equal(t, "finance", node["other_service"])
+	assert.Equal(t, "models/orders.sql", node["other_file_path"])
+}
+
+// DuplicateClaims supports two nodes in the SAME service colliding. In that
+// case service and other_service are both "marketing" — degenerate and not by
+// itself enough to tell the claimants apart — so other_file_path must carry
+// the one datum (the competing source file) that lets a downstream consumer
+// identify the competitor without parsing error_detail.
+func TestHandleParsedManifest_DuplicateTablePayloadSameServiceCarriesBothFilePaths(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
+		},
+	}))
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok, "per_node must be present so remediation can build evidence")
+	require.Len(t, perNode, 1)
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "marketing", node["service"])
+	assert.Equal(t, "marketing", node["other_service"], "both claimants are in the same service")
+	assert.Equal(t, "models/orders.sql", node["file_path"])
+	assert.Equal(t, "models/orders_v2.sql", node["other_file_path"])
+	assert.NotEqual(t, node["file_path"], node["other_file_path"],
+		"the two claimants must remain distinguishable by file path even when their service names collide")
+}
+
+// Bootstrap skips validation and promotes directly, so the gate must run above
+// that branch or a colliding bootstrap topology reaches current_prod.
+func TestHandleParsedManifest_DuplicateTableRejectsBootstrap(t *testing.T) {
+	deps, store := seedToParsingBootstrap(t, "rBoot", map[string]string{"finance": "sha-f"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rBoot",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rBoot")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Equal(t, "", store.GetCurrentProd().ReleaseID(), "nothing may be promoted")
+}
+
+// A model copied verbatim into a second service produces a duplicate
+// unique_id whose content_hash matches current_prod for BOTH claimants, so
+// DerivedChangedNodeIDs finds nothing changed and validationIDs is empty —
+// the route that promotes directly via the len(validationIDs)==0
+// short-circuit further down in handleParseOK. This pins the gate above that
+// specific route, independent of the bootstrap branch: unlike
+// TestHandleParsedManifest_DuplicateTableRejectsBootstrap, this release is
+// NOT a bootstrap, so it only reaches this route, never the bootstrap one.
+func TestHandleParsedManifest_DuplicateTablePinsNothingToValidateShortCircuit(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+		{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+	}, time.Unix(50, 0).UTC()))
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders_copy.sql", ContentHash: "h1"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(), "current_prod must not move")
+}
+
+// A three-way collision cannot be fixed by one rename proposal: renaming the
+// target still leaves the relation claimed by the other two. It still
+// rejects, naming and failing every claimant, but contributes no per_node
+// entry — remediation would otherwise build evidence and open a trigger for a
+// proposal that could never clear the gate on its own.
+func TestHandleParsedManifest_DuplicateTableThreeWayEmitsNoPerNodeEntry(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "sales", OriginalFilePath: "models/orders.sql"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Contains(t, r.RejectDetail(), "finance (models/orders.sql)")
+	assert.Contains(t, r.RejectDetail(), "marketing (models/orders.sql)")
+	assert.Contains(t, r.RejectDetail(), "sales (models/orders.sql)")
+	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes(),
+		"all three claimants share this unique_id here, so it appears once, deduplicated")
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok, "per_node must be present, even though empty")
+	assert.Empty(t, perNode, "a three-way collision must not propose a rename")
+}
+
+// A release mixing a two-way and a three-way collision proposes a rename only
+// for the fixable one; the three-way claim still rejects the release and is
+// fully named in the detail, it just contributes no per_node entry.
+func TestHandleParsedManifest_DuplicateTableMixedTwoAndThreeWayEmitsOnlyTheTwoWayPerNodeEntry(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			// Two-way collision: analytics.customers.
+			{UniqueID: "analytics.customers", ServiceName: "finance", OriginalFilePath: "models/customers.sql"},
+			{UniqueID: "analytics.customers", ServiceName: "marketing", OriginalFilePath: "models/customers.sql"},
+			// Three-way collision: analytics.orders.
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "sales", OriginalFilePath: "models/orders.sql"},
+		},
+	}))
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok)
+	require.Len(t, perNode, 1, "only the two-way claim proposes a rename")
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "analytics.customers", node["node_id"])
+}
+
+// Two nodes with the same unique_id but different resolved relations (an
+// alias override on one of them) is an identity collision, not a relation
+// one: unique_id is the identity key for every downstream lookup keyed on
+// it, so this must reject even though the two nodes write different
+// warehouse tables. It emits no per_node entry — no rename a fixer can
+// express changes a unique_id, so a proposal here could never clear the
+// gate — but it still names both claimants and both unique_ids in the
+// detail and failing_nodes so an operator can resolve it by hand.
+func TestHandleParsedManifest_DuplicateTableIdentityCollisionRejectsWithNoPerNodeEntry(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ResolvedRelationID: "analytics.orders_finance",
+				ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ResolvedRelationID: "analytics.orders_marketing",
+				ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Contains(t, r.RejectDetail(), "unique_id analytics.orders is declared by")
+	assert.Contains(t, r.RejectDetail(), "finance (models/orders.sql)")
+	assert.Contains(t, r.RejectDetail(), "marketing (models/orders_v2.sql)")
+	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes(),
+		"both claimants share this unique_id, so it appears once, deduplicated")
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok, "per_node must be present, even though empty")
+	assert.Empty(t, perNode, "an identity collision must not propose a rename")
+}
+
+// The relation_id field on a per_node entry carries the contested relation
+// itself, distinct from node_id (the target claimant's own unique_id) —
+// remediation needs the relation for its classification signature and the
+// remediation agent needs it for the rename prompt, and in the alias case
+// the two differ.
+func TestHandleParsedManifest_DuplicateTablePayloadCarriesRelationID(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders_v1", ResolvedRelationID: "analytics.orders",
+				ServiceName: "finance", OriginalFilePath: "models/orders_v1.sql"},
+			{UniqueID: "analytics.orders_v2", ResolvedRelationID: "analytics.orders",
+				ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
+		},
+	}))
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok)
+	require.Len(t, perNode, 1)
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "analytics.orders_v2", node["node_id"], "the target's own unique_id")
+	assert.Equal(t, "analytics.orders", node["relation_id"], "the contested relation, distinct from node_id")
+}
+
+// A release can trip a relation collision and an identity collision on
+// different pairs of nodes at once. Both are rejected and both are named in
+// error_detail; only the relation collision proposes a rename.
+func TestHandleParsedManifest_DuplicateTableRelationAndIdentityBothNamedOnlyRelationGetsPerNode(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			// Relation collision: different unique_ids, same resolved relation.
+			{UniqueID: "analytics.orders_v1", ResolvedRelationID: "analytics.orders",
+				ServiceName: "finance", OriginalFilePath: "models/orders_v1.sql"},
+			{UniqueID: "analytics.orders_v2", ResolvedRelationID: "analytics.orders",
+				ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
+			// Identity collision: same unique_id, different resolved relations.
+			{UniqueID: "analytics.customers", ResolvedRelationID: "analytics.customers_finance",
+				ServiceName: "finance", OriginalFilePath: "models/customers.sql"},
+			{UniqueID: "analytics.customers", ResolvedRelationID: "analytics.customers_sales",
+				ServiceName: "sales", OriginalFilePath: "models/customers.sql"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Contains(t, r.RejectDetail(), "analytics.orders is produced by",
+		"relation collision named as a relation")
+	assert.Contains(t, r.RejectDetail(), "unique_id analytics.customers is declared by",
+		"identity collision named as an identity")
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok)
+	require.Len(t, perNode, 1, "only the relation collision proposes a rename")
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "analytics.orders", node["relation_id"])
+}
+
+// A clean topology is unaffected: the gate must not reject a release whose
+// relations each have a single producer. Asserted against the specific
+// StatusValidating outcome (not merely "not Rejected") and against a real
+// validation.requested:v1 entry, so a gate that over-rejects anything —
+// including deleting the gate check itself, which would leave the status
+// unconstrained rather than pinned to Validating — cannot pass this test
+// unnoticed.
+func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
+	deps, store := seedToParsing(t, "rOK", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rOK",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+			{UniqueID: "marketing.orders", SchemaName: "marketing", TableName: "orders",
+				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rOK")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusValidating, r.Status())
+
+	entry := findEntry(t, store, streams.ValidationRequestedV1)
+	assert.NotNil(t, entry, "a clean topology must still request validation")
+}

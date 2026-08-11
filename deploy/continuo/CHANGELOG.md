@@ -12,6 +12,14 @@ shipped in those.
 
 ## [Unreleased]
 
+### Changed
+- `files/service_repos.yaml` header comments describe the map accurately: it
+  covers every service that ships data jobs, not dbt services only, and each
+  team's repository is named by the remediation trigger rather than assumed to
+  be one shared checkout. Comments only — the file's keys, the ConfigMap it
+  populates, and the values contract are unchanged, so an existing
+  `values.yaml` or override needs no edit.
+
 ## [0.2.0] - 2026-08-10
 
 ### Added

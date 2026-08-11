@@ -199,6 +199,7 @@ test-manifest:
 .PHONY: guards
 guards:
 	bash scripts/check-ci-alignment.sh
+	bash scripts/check-kubeconfig-export.sh
 	bash scripts/check-release-tag-trigger.sh
 	bash scripts/check-validation-image-pin.sh
 	bash scripts/check-validation-image-sideload.sh

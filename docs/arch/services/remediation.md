@@ -12,7 +12,7 @@ Postgres database `continuo_remediation`. Tables:
 
 | Table | Purpose |
 |---|---|
-| `classification_decision` | One row per classified node per stage. Records `source` (`validation`, `compile`, or `seed_build`), `release_id`, `node_id`, `category`, `error_signature`, `decision` (`emit` or `drop`), `reason` (matched rule, e.g. `infra:connection_refused`), `dbt_log_uri`, and `created_at`. Natural key `(source, release_id, node_id)` gives idempotency: a redelivered rejection neither re-records nor re-emits. |
+| `classification_decision` | One row per classified node per stage. Records `source` (`validation`, `compile`, `seed_build`, or `duplicate_table`), `release_id`, `node_id`, `category`, `error_signature`, `decision` (`emit` or `drop`), `reason` (matched rule, e.g. `infra:connection_refused`), `dbt_log_uri`, and `created_at`. Natural key `(source, release_id, node_id)` gives idempotency: a redelivered rejection neither re-records nor re-emits. |
 | `remediation_outbox` | Transactional outbox; one row per `remediation.requested:v1` trigger, drained by the outbox publisher. |
 | `message_processing` | FK target of `remediation_outbox.message_processing_id` (canonical outbox table shape). Not used for inbound consumer dedup; inbound idempotency is enforced by the `classification_decision` natural key `(source, release_id, node_id)`. |
 
@@ -71,6 +71,8 @@ The domain classifier (`remediation/domain/failure/classify.go`) applies a fixed
 
 A log that cannot be fetched from S3 (URI not found) is treated as an empty log and classified `unknown:log_unavailable` with `decision=emit`.
 
+A `duplicate_table` rejection never reaches this table: `ClassifyDuplicateTable` returns a fixed `logic`/`emit` classification directly from the evidence, with no log fetch at all — the rejection happens at parse time, before any Job runs, so there is no dbt log to scan.
+
 ## Error Signature Normalization
 
 `NormalizeSignature` (`remediation/domain/failure/signature.go`) produces a stable dedup key for each failure. It strips the volatile parts that vary release-to-release:
@@ -88,7 +90,7 @@ After stripping, it folds the category with the normalized error text and return
 
 ### Parse-export-leg exclusion
 
-Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_binding.go::evidenceFromRejected`) checks the payload's `reason`: `parse_rehearsal_failed` and `artifact_upload_failed` both short-circuit to an empty evidence list, so the consumer ACKs the message having produced nothing at all — no `classification_decision` row, no `remediation.requested:v1` trigger. Both reasons are `stage="compile"`, but neither is a model defect: a parse-rehearsal miss is a project *property* (partial parsing disabled, or an `env_var()` read at parse time that differs between compile and run pods) and an artifact-upload failure is continuo-internal: no change to the dbt project fixes either, so proposing a heal would misdirect the agent onto SQL that was never the problem. All other reasons (`compile_failed`, `seed_build_failed`, `validation_failed`, and the stage-less `parse_failed`/`unbuildable_cross_service_upstream`) proceed to `sourceFromPayload` as before.
+Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_binding.go::evidenceFromRejected`) checks the payload's `reason`: `parse_rehearsal_failed` and `artifact_upload_failed` both short-circuit to an empty evidence list, so the consumer ACKs the message having produced nothing at all — no `classification_decision` row, no `remediation.requested:v1` trigger. Both reasons are `stage="compile"`, but neither is a model defect: a parse-rehearsal miss is a project *property* (partial parsing disabled, or an `env_var()` read at parse time that differs between compile and run pods) and an artifact-upload failure is continuo-internal: no change to the dbt project fixes either, so proposing a heal would misdirect the agent onto SQL that was never the problem. `compile_failed`, `seed_build_failed`, and `validation_failed` resolve to their pipeline leg; the stage-less `duplicate_table` resolves to its own source. Every other stage-less reason — `parse_failed` and `unbuildable_cross_service_upstream` — reaches `sourceFromPayload` and is dropped there (`ok=false`), producing no evidence, no `classification_decision` row, and no trigger: neither is a model defect a heal proposal could fix.
 
 ### On `release.rejected:v1` — per failing node
 
@@ -100,6 +102,29 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
    build FailureEvidence {source (derived from stage), release_id, node_id,
    dbt_log_uri, run_results_uri, candidate_artifact_uri, repo, commit_sha}.
    When `stage` is absent, the `reason` field is used as the source fallback.
+   For source=duplicate_table, FilePath/Service (the rename target),
+   OtherService/OtherFilePath (the competing claimant), and RelationID (the
+   contested physical relation, distinct from node_id whenever the target
+   carries an alias) are threaded straight from the payload's per_node entry,
+   the same way seed_build's are (step 2c). release-controller emits a
+   per_node entry for a duplicate_table claim only for a two-claimant
+   RELATION collision — a rename proposal can only ever target one
+   competitor, and no rename can clear an identity collision (two nodes
+   sharing a unique_id) at all — so a three-or-more-way relation collision or
+   any identity collision has no per_node entry and this loop never visits
+   it: no FailureEvidence, no classification_decision row, and no
+   remediation.requested:v1 trigger for that claim, even though it still
+   appears in the release's error_detail and failing_nodes.
+1b. For source=duplicate_table: skip steps 2–2c entirely — the rejection
+    happens at parse time, before any Job runs, so there is no dbt log or
+    run_results to fetch — and classify directly via
+    ClassifyDuplicateTable(ev), which keys the signature on ev.RelationID
+    (falling back to ev.NodeID when empty, for a trigger predating the
+    field), straight to step 3's Category/Signature/Decision/Reason. Keying
+    on the relation rather than the target's own node id matters because the
+    target flips between releases (Target prefers whichever service the
+    release actually changed): keying on node id would fork one recurring
+    collision into two signatures the moment the changed service alternates.
 2. Fetch dbt log text from S3 at dbt_log_uri.
    - If not found: logText = "" (→ unknown:log_unavailable).
    - If transient S3 error: return error (message stays in PEL, retried).
@@ -146,15 +171,19 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 | Field | Description |
 |---|---|
 | `event_id` | Deterministic SHA1 UUID keyed on `release_id\|node_id`. Stable on redelivery. |
-| `source` | Origin pipeline. One of `validation`, `compile`, or `seed_build`. |
+| `source` | Origin pipeline. One of `validation`, `compile`, `seed_build`, or `duplicate_table`. |
 | `release_id` | The rejected release identifier. |
-| `node_id` | The unique_id of the failing dbt node. |
+| `node_id` | The unique_id of the failing dbt node — for duplicate_table, the target claimant's own unique_id. |
+| `relation_id` | Duplicate_table only: the contested physical relation, threaded from `per_node[].relation_id`. Distinct from `node_id` — the two differ whenever the target claimant carries an alias. Used for the classification signature and the remediation agent's rename prompt, both of which need the relation, not the target's own declared name. Empty for every other source. |
 | `category` | `logic`, `test`, or `unknown`. |
 | `error_signature` | Release-stable normalized dedup key (SHA-256 hex). |
 | `dbt_log_uri` | S3 URI of the full dbt execution log. |
 | `candidate_artifact_uri` | S3 URI of the node's candidate artifact — rewritten SQL for a dbt node, a validation spec for a python node (candidate-schema form; omitted for seeds and compile failures). |
-| `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log) and seed_build failures (threaded from the candidate topology's `OriginalFilePath`). Empty for validation failures. When present for seed_build, the agent bypasses the Ancestry (orchestrator) lookup. |
-| `service` | Owning dbt service name for the failing node. Non-empty for seed_build failures (threaded from the candidate topology's ServiceName). Empty for compile (NodeID is the service) and validation. |
+| `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log), seed_build failures (threaded from the candidate topology's `OriginalFilePath`), and duplicate_table failures (the rename target's file, threaded from `per_node[].file_path`). Empty for validation failures. When present for seed_build or duplicate_table, the agent bypasses the Ancestry (orchestrator) lookup. |
+| `service` | Owning dbt service name for the failing node. Non-empty for seed_build failures (threaded from the candidate topology's ServiceName) and duplicate_table failures (the rename target's service, threaded from `per_node[].service`). Empty for compile (NodeID is the service) and validation. |
+| `node_type` | Duplicate_table only: the target claimant's kind (`dbt-model`, `dbt-seed`, `dbt-snapshot`, or `python-model`), threaded from `per_node[].node_type`. Lets the fixer skip a python target — whose relation is declared in the service's contract.yaml, not in `file_path` — without a topology lookup of its own. Empty for every other source. |
+| `other_service` | Duplicate_table only: the competing claimant's service name — the node that also produces the contested relation (`relation_id`). Empty for every other source. |
+| `other_file_path` | Duplicate_table only: the competing claimant's file path. Carried alongside `other_service` because two nodes in the *same* service can collide, where the service name alone identifies nothing. Empty for every other source. |
 | `repo` | GitHub owner/name from the originating release. |
 | `commit_sha` | Full commit SHA from the originating release. |
 | `classified_at` | RFC 3339 timestamp of classification. |
@@ -189,7 +218,7 @@ All solution state — proposals, what-worked history, agent conversations — b
 | Concern | Path |
 |---|---|
 | Domain model (evidence, categories, decisions, source constants) | `remediation/domain/failure/evidence.go` |
-| Deterministic classifier (incl. stage dispatch + ExtractDbtFilePath) | `remediation/domain/failure/classify.go` |
+| Deterministic classifier (incl. stage dispatch, ExtractDbtFilePath, and ClassifyDuplicateTable) | `remediation/domain/failure/classify.go` |
 | Signature normalization | `remediation/domain/failure/signature.go` |
 | Trigger payload (incl. FilePath field) | `remediation/domain/event/remediation_requested.go` |
 | Application handler (stage discrimination, FilePath derivation) | `remediation/service/handlers/classify_failure.go` |

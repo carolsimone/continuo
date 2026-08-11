@@ -24,14 +24,32 @@ import (
 // error class actually needs it, so a class that can skip early does not depend
 // on the log being readable.
 type Input struct {
-	Source               string
-	ReleaseID            string
-	NodeID               string
-	ErrorSignature       string
-	Repo                 string
-	CommitSHA            string
-	FilePath             string
-	Service              string
+	Source    string
+	ReleaseID string
+	NodeID    string
+	// RelationID is the contested physical relation for a duplicate-relation
+	// failure, distinct from NodeID (the target claimant's own unique_id) —
+	// the two differ whenever the target already carries an alias. The
+	// duplicate-table Fixer's prompt names RelationID, not NodeID, as the
+	// relation the model must stop producing.
+	RelationID     string
+	ErrorSignature string
+	Repo           string
+	CommitSHA      string
+	FilePath       string
+	Service        string
+	// NodeType is the target claimant's kind, set on a duplicate-relation
+	// failure. The duplicate-table Fixer skips a python target — its relation
+	// is declared in the service's contract.yaml, whose repository path this
+	// system does not carry, so the file named by FilePath cannot contain the
+	// fix.
+	NodeType string
+	// OtherService and OtherFilePath locate the competing node that also
+	// produces the contested relation (RelationID). Set on a duplicate-relation
+	// failure so the prompt can name the relation's other producer without
+	// reading its source.
+	OtherService         string
+	OtherFilePath        string
 	DBTLogURI            string
 	CandidateArtifactURI string
 	Attempt              int
@@ -83,7 +101,7 @@ type Fixer interface {
 }
 
 // For resolves the Fixer for a trigger's error class. An unknown source is a
-// programming error (the classifier produces only the three known values).
+// programming error (the classifier produces only the four known values).
 func For(source string) (Fixer, error) {
 	switch source {
 	case sourceCompile:
@@ -92,6 +110,8 @@ func For(source string) (Fixer, error) {
 		return seedFixer{}, nil
 	case sourceValidation:
 		return validationFixer{}, nil
+	case sourceDuplicateTable:
+		return duplicateTableFixer{}, nil
 	default:
 		return nil, fmt.Errorf("fixer: unknown error class %q", source)
 	}
@@ -99,18 +119,25 @@ func For(source string) (Fixer, error) {
 
 // Error-class discriminators carried on remediation.requested:v1.
 const (
-	sourceCompile    = "compile"
-	sourceSeed       = "seed_build"
-	sourceValidation = "validation"
+	sourceCompile        = "compile"
+	sourceSeed           = "seed_build"
+	sourceValidation     = "validation"
+	sourceDuplicateTable = "duplicate_table"
 )
 
-// loadDBTLog fetches and sanitizes the dbt log a Fixer needs for its prompt. A
-// missing log (ErrNotFound) is not fatal — a fix can still be proposed from the
-// other evidence — so it yields an empty string; any other fetch error is
+// loadDBTLog fetches and sanitizes the dbt log a Fixer needs for its prompt. An
+// empty uri means this failure class has no log at all (e.g. a duplicate-table
+// rejection, which happens at parse time before any dbt Job runs), so it
+// returns an empty string without touching the evidence reader. A missing log
+// (ErrNotFound) is likewise not fatal — a fix can still be proposed from the
+// other evidence — so it also yields an empty string; any other fetch error is
 // transient and returned so the driver redelivers. Each Fixer calls this only
 // when its error class actually needs the log, keeping the read off the paths
 // (e.g. an empty validation candidate) that skip before proposing anything.
 func loadDBTLog(ctx context.Context, svc Services, uri string) (string, error) {
+	if uri == "" {
+		return "", nil
+	}
 	raw, err := svc.Evidence.Fetch(ctx, uri)
 	if err != nil && !errors.Is(err, ports.ErrNotFound) {
 		return "", fmt.Errorf("fetch dbt log: %w", err)

@@ -130,11 +130,6 @@ def test_handle_publishes_ok_with_resolved_topology(resolved_topology):
     assert len(resolved_topology) == 2
 
 
-def test_handle_publishes_ok_with_unique_id_synthesised_from_schema_and_table(resolved_topology):
-    for node in resolved_topology:
-        assert node["unique_id"] == f"{node['schema_name']}.{node['table_name']}"
-
-
 def test_handle_publishes_ok_with_image_tag_empty_string(resolved_topology):
     for node in resolved_topology:
         assert node["image_tag"] == ""
@@ -838,6 +833,7 @@ def test_the_dbt_topology_entry_wire_shape_is_frozen(handler_with_mocks):
         "unique_id": "test_schema.orders",
         "schema_name": "test_schema",
         "table_name": "orders",
+        "resolved_relation_id": "test_schema.orders",
         "service_name": "service-2",
         "node_type": "dbt-model",
         "test_count": 0,
@@ -924,3 +920,68 @@ def test_a_python_node_rides_the_code_bundle_with_its_runtime_marker(tmp_path):
     assert node["runtime"] == "python"
     assert node["compiled_code"] == ""
     assert '"output_columns"' in node["raw_code"]
+
+
+def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_path):
+    """upstream_unique_ids must match the upstream node's unique_id exactly,
+    even when the manifest declares mixed-case schema/table names.
+
+    When an upstream is declared as "Analytics.Orders" and a downstream node
+    references it, the downstream's upstream_unique_ids entry must be
+    "analytics.orders" (lowercased), matching what the upstream node's own
+    unique_id property returns. This ensures the orchestrator's Neo4j DEPENDS_ON
+    edge matching succeeds.
+    """
+    manifest_mixed_case = tmp_path / "manifest_mixed_case.json"
+    manifest_mixed_case.write_text(json.dumps({
+        "nodes": {
+            "model.service1.upstream_table": {
+                "unique_id": "model.service1.upstream_table",
+                "name": "upstream_table",
+                "schema": "Analytics",  # Mixed case
+                "fqn": ["service1", "upstream_table"],
+                "tags": ["daily"],
+                "resource_type": "model",
+                "config": {
+                    "meta": {"owner": "team-a", "criticality": "CORE"}
+                },
+                "compiled_code": "SELECT 1 AS id",
+                "checksum": {"name": "sha256", "checksum": "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00"}
+            },
+            "model.service1.downstream_table": {
+                "unique_id": "model.service1.downstream_table",
+                "name": "downstream_table",
+                "schema": "BusinessLayer",  # Mixed case
+                "fqn": ["service1", "downstream_table"],
+                "tags": ["daily"],
+                "resource_type": "model",
+                "config": {
+                    "meta": {"owner": "team-a", "criticality": "CORE"}
+                },
+                "compiled_code": "SELECT * FROM Analytics.upstream_table",
+                "checksum": {"name": "sha256", "checksum": "b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00a1"}
+            }
+        }
+    }))
+
+    source = create_autospec(ManifestSource)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(manifest_mixed_case), version="v1", image_tag="")
+    ]
+    publisher = MagicMock()
+    uploader = _make_uploader()
+
+    handler = _handler(source, publisher, uploader)
+    handler.handle(release_id="rel-1")
+
+    topology = {n["unique_id"]: n for n in publisher.publish_ok.call_args.kwargs["topology"]}
+    # Both nodes exist with lowercased unique_ids
+    assert "analytics.upstream_table" in topology
+    assert "businesslayer.downstream_table" in topology
+
+    # The downstream node's upstream_unique_ids must reference the upstream
+    # by its exact lowercased unique_id
+    upstream = topology["analytics.upstream_table"]
+    downstream = topology["businesslayer.downstream_table"]
+    assert upstream["unique_id"] == "analytics.upstream_table"
+    assert downstream["upstream_unique_ids"] == ["analytics.upstream_table"]

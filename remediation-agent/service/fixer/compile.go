@@ -18,7 +18,7 @@ import (
 type compileFixer struct{}
 
 func (compileFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
-	return singleShot{gather: compileGather, build: compileBuild, interpret: compileInterpret}.Propose(ctx, svc, in)
+	return singleShot{gather: compileGather, build: compileBuild, interpret: singleFileInterpret}.Propose(ctx, svc, in)
 }
 
 func compileGather(ctx context.Context, svc Services, in Input) (Gathered, bool, error) {
@@ -84,7 +84,12 @@ func compileBuild(svc Services, g Gathered, in Input, dbtLog string) prompt.Prop
 	return prompt.AssembleCompileFix(files, dbtLog, in.NodeID)
 }
 
-func compileInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {
+// singleFileInterpret is the shared interpreter for every single-file Fixer:
+// it resolves the model's target_file to exactly one of the shown files, rejects
+// a no-op or low-confidence answer, and otherwise reports the proposed rewrite.
+// It has nothing compile-specific in it, so compileFixer and duplicateTableFixer
+// share it verbatim.
+func singleFileInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {
 	target, ok := resolveTarget(res.TargetFile, g)
 	if !ok {
 		return Outcome{Status: proposal.StatusSkipped} // no shown file to safely apply the fix to

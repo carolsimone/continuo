@@ -62,7 +62,7 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 }
 
 func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
-	if err := r.TransitionToRejected("parse_failed", nil, now); err != nil {
+	if err := r.TransitionToRejected("parse_failed", in.ErrorDetail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
@@ -103,6 +103,26 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
 	topo := joinImageTags(in.Topology, r.ImageTags())
 	r.SetCodeBundleURI(in.CodeBundleURI)
+
+	// A relation must be produced by exactly one node, and a unique_id must
+	// identify exactly one node — two independent checks. Two nodes claiming
+	// the same relation write the same warehouse table, the second silently
+	// replacing the first in the promoted topology, current_prod, and the
+	// code bundle. Two nodes sharing a unique_id are indistinguishable to
+	// every downstream lookup keyed on it — the code bundle, the candidate
+	// object key, release-controller's own topology walks, the
+	// orchestrator's :Table MERGE — so one is silently erased regardless of
+	// whether their resolved relations also collide. Checked here, above the
+	// bootstrap branch, because the candidate topology recorded at this
+	// point feeds every later route to promoteToProduction: the bootstrap
+	// branch below, the nothing-to-validate short-circuit later in this
+	// function, the seed-build leg's own nothing-to-validate-after-built-seeds
+	// short-circuit (handle_seed_build_result.go), and the normal
+	// post-validation promotion (handle_validation_result.go). One check
+	// here covers all four.
+	if claims := release.DuplicateClaims(topo); len(claims) > 0 {
+		return rejectDuplicateTable(ctx, d, u, r, in.ReleaseID, claims, now)
+	}
 
 	// A bootstrap release skips validation entirely: it seeds current_prod and
 	// swaps topology directly. This is the one-time cutover (or a trusted
@@ -445,7 +465,7 @@ func unionSorted(a, b []string) []string {
 // therefore cannot be built into the candidate schema.
 func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
 	detail := formatCrossServiceEdges(edges)
-	if err := r.TransitionToRejected("unbuildable_cross_service_upstream", nil, now); err != nil {
+	if err := r.TransitionToRejected("unbuildable_cross_service_upstream", detail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
@@ -479,6 +499,146 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 	// Parse phase succeeded; the release is rejected at validation-policy level, not parse level.
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
 	d.Telemetry.ReleaseRejected(ctx, releaseID, "unbuildable_cross_service_upstream", nil)
+	return nil
+}
+
+// rejectDuplicateTable transitions the release to Rejected and emits
+// release.rejected:v1 naming every node in every collision — both relation
+// collisions (two nodes writing the same warehouse table) and identity
+// collisions (two nodes sharing a unique_id). Each per_node entry carries the
+// claimant a rename should target — the changed service's, when it has one —
+// plus the competing claimant's service and file path, so the remediation
+// classifier can build evidence without resolving the source location
+// itself. That resolution is not available downstream: a rejected release is
+// never promoted, so Ancestry (which serves the promoted topology) holds
+// nothing for these nodes. relation_id carries the contested relation itself
+// (DuplicateClaim.RelationID), separately from node_id (the target
+// claimant's own identity): remediation's classification signature and the
+// remediation agent's rename prompt need the relation, not the target's
+// declared name, or they name the wrong thing whenever the two differ (a
+// node with an alias override).
+//
+// node_type carries the target claimant's kind (dbt-model, dbt-seed,
+// dbt-snapshot, or python-model) so remediation can tell, without a topology
+// lookup of its own, whether the target's source is a single file this
+// system can read. A python node's relation is declared in the service's
+// contract.yaml, whose repository path this system does not carry — only
+// file_path for the contract's script entry — so the fixer must skip a
+// python target rather than editing a file that cannot produce the fix.
+//
+// A per_node entry is emitted only for a two-claimant RELATION collision.
+// An identity collision never gets one, regardless of claimant count: the
+// only rename a fixer can express is an alias edit, which changes a node's
+// resolved relation but never its unique_id, so no proposal it could make
+// would clear the collision — the same reasoning that already rules out a
+// three-or-more-way relation collision, where fixing one claimant still
+// leaves the relation claimed by the rest. A rename proposal always targets
+// one claimant against one competitor; with three or more relation
+// claimants, fixing the target still leaves the relation claimed by the N-2
+// competitors that were never named as "the other producer", so the release
+// would fail again immediately on a proposal that looked sufficient — and
+// clearing an N-way collision would require N-1 independent PRs, proposed
+// separately, to all merge together. Emitting no per_node entry means
+// remediation builds no evidence and opens no trigger for that claim; it
+// still appears in error_detail and failing_nodes, so an operator resolves
+// it by hand. If every claim in the release is either an identity collision
+// or a three-or-more-way relation collision, per_node is empty and nothing
+// downstream fires.
+//
+// failing_nodes lists every claimant's own unique_id across every claim
+// (deduplicated), not one entry per claim — a relation claim's claimants can
+// carry different unique_ids (see DuplicateClaims), so a single shared id no
+// longer identifies "the collision".
+//
+// repo/commit_sha describe only the service this release changed — each team
+// ships its dbt or python jobs from its own repository, so there is no single
+// checkout that contains every service's models. Target prefers the changed
+// service's claimant, so in the common case per_node.file_path names a file in
+// that same repo/commit_sha and the remediation agent can read it directly.
+// When no claimant belongs to the changed service (a bootstrap release, or two
+// other services colliding while this release changed a third), the target
+// claimant's source lives in a repository this event does not name, and the
+// agent's read of repo@commit_sha for that path fails. That is expected: the
+// agent proposes nothing rather than guessing at a file it cannot see, and
+// error_detail already names every claimant with its path so an operator can
+// resolve the collision by hand.
+func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release,
+	releaseID string, claims []release.DuplicateClaim, now time.Time) error {
+
+	detail := release.FormatDuplicateClaims(claims)
+
+	seen := make(map[string]bool, len(claims))
+	failing := make([]string, 0, len(claims))
+	perNode := make([]map[string]any, 0, len(claims))
+	for _, c := range claims {
+		for _, cl := range c.Claimants {
+			if !seen[cl.UniqueID] {
+				seen[cl.UniqueID] = true
+				failing = append(failing, cl.UniqueID)
+			}
+		}
+		if c.Kind == release.CollisionIdentity {
+			// No rename a fixer can express changes a unique_id, so no
+			// proposal could ever clear this — emit no per_node entry and
+			// therefore no heal trigger.
+			continue
+		}
+		if len(c.Claimants) != 2 {
+			continue
+		}
+		target, other := c.Target(r.ChangedService())
+		perNode = append(perNode, map[string]any{
+			"node_id":         target.UniqueID,
+			"status":          "failed",
+			"service":         target.ServiceName,
+			"file_path":       target.OriginalFilePath,
+			"node_type":       target.NodeType,
+			"relation_id":     c.RelationID,
+			"other_service":   other.ServiceName,
+			"other_file_path": other.OriginalFilePath,
+		})
+	}
+
+	if err := r.TransitionToRejected("duplicate_table", detail, failing, now); err != nil {
+		return fmt.Errorf("transition to rejected: %w", err)
+	}
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"release_id":    releaseID,
+		"reason":        "duplicate_table",
+		"error_class":   "DuplicatedTable",
+		"error_detail":  detail,
+		"failing_nodes": failing,
+		"per_node":      perNode,
+		"repo":          r.Repo(),
+		"commit_sha":    r.CommitSHA(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		ID:            uuid.New(),
+		AggregateType: "release-controller",
+		AggregateID:   AggregateIDForRelease(releaseID),
+		EventType:     "release_rejected",
+		Payload:       payload,
+		StreamName:    streams.ReleaseRejectedV1,
+		Status:        "pending",
+		MaxRetries:    pkgoutbox.DefaultMaxRetries,
+		CreatedAt:     now,
+	}); err != nil {
+		return fmt.Errorf("outbox insert: %w", err)
+	}
+	if err := u.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	// The parse itself succeeded; the release is rejected on a topology
+	// invariant, not on a malformed artifact.
+	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
+	d.Telemetry.ReleaseRejected(ctx, releaseID, "duplicate_table", failing)
 	return nil
 }
 

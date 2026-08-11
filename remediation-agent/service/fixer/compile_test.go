@@ -12,13 +12,17 @@ import (
 
 // fakeSourceMap is an in-memory SourceReader keyed by full repo-relative path,
 // used by the compileFixer tests to control both ReadFile and ListDir results.
+// reads records every path passed to ReadFile, in call order, so a test can
+// assert exactly which files a Fixer touched.
 type fakeSourceMap struct {
 	files   map[string]string
 	dir     map[string][]string
 	readErr error
+	reads   []string
 }
 
 func (f *fakeSourceMap) ReadFile(_ context.Context, _, _, path string) (string, error) {
+	f.reads = append(f.reads, path)
 	if f.readErr != nil {
 		return "", f.readErr
 	}
@@ -27,6 +31,11 @@ func (f *fakeSourceMap) ReadFile(_ context.Context, _, _, path string) (string, 
 		return "", ports.ErrSourceNotFound
 	}
 	return c, nil
+}
+
+// readPaths returns every path ReadFile was called with, in call order.
+func (f *fakeSourceMap) readPaths() []string {
+	return f.reads
 }
 
 func (f *fakeSourceMap) ListDir(_ context.Context, _, _, d string) ([]string, error) {
@@ -201,8 +210,8 @@ func TestCompile_RelativeTargetFile_SuffixMatch_Proposes(t *testing.T) {
 
 // TestCompile_EmptyTargetMultipleFilesShown_Skips proves that when the model
 // omits target_file and more than one file was shown, the intended file is
-// ambiguous, so compileInterpret skips rather than writing the returned content
-// against the offending .sql (which could be content meant for a co-located
+// ambiguous, so singleFileInterpret skips rather than writing the returned
+// content against the offending .sql (which could be content meant for a co-located
 // schema.yml).
 func TestCompile_EmptyTargetMultipleFilesShown_Skips(t *testing.T) {
 	fs := &fakeSourceMap{
@@ -292,7 +301,7 @@ func TestCompile_SanitizesSourceBeforeLLM(t *testing.T) {
 }
 
 // TestCompile_EmptyTargetFile_DefaultsToPrimary proves that when the model
-// returns an empty target_file, compileInterpret defaults it to the offending
+// returns an empty target_file, singleFileInterpret defaults it to the offending
 // (Primary) file rather than skipping.
 func TestCompile_EmptyTargetFile_DefaultsToPrimary(t *testing.T) {
 	fs := &fakeSourceMap{

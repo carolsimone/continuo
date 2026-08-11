@@ -123,6 +123,12 @@ jobs:
         # check-docker-state-isolation: fail fast if a workflow job would share
         # ~/.docker (builder pointer, registry credentials) with jobs running
         # concurrently on the other runner agent.
+        # check-kubeconfig-export: fail fast if setup.sh can reach a kubectl call
+        # without exporting the kind cluster's kubeconfig. Only `kind create
+        # cluster` writes that context, so an export left inside the create-only
+        # branch strands the reuse path — a runner holding a cluster whose
+        # context is gone then fails minutes later with a connection-refused
+        # against localhost:8080, far from the branch that caused it.
         # check-release-tag-trigger: fail fast if release.yml's tag glob also
         # claims another workflow's tag family, which would run the product
         # release pipeline on a tag that has no release images behind it.
@@ -136,6 +142,7 @@ jobs:
         run: |
           bash scripts/check-ci-alignment.sh
           bash scripts/check-docker-state-isolation.sh
+          bash scripts/check-kubeconfig-export.sh
           bash scripts/check-release-tag-trigger.sh
           bash scripts/check-validation-image-pin.sh
           bash scripts/check-validation-image-sideload.sh

@@ -174,6 +174,9 @@ def _parse_entry(
     return ManifestNode(
         table_name=table,
         schema_name=schema,
+        # A python contract has no alias concept: the relation it writes is
+        # always the declared table.
+        resolved_relation=table,
         service_name=service,
         owner=owner,
         schedule_name=schedule,

@@ -4,6 +4,7 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import ReleaseDetailPage from './ReleaseDetailPage';
 import { NodeValidationResult, ReleaseDetail, ProposalDTO } from './types';
+import { reasonLabel } from './release-helpers';
 
 vi.mock('./remediation-api', () => ({ fetchProposals: vi.fn() }));
 import { fetchProposals } from './remediation-api';
@@ -264,6 +265,54 @@ describe('ReleaseDetailPage — resilient polling on transient errors', () => {
     );
     expect(await screen.findByText('boom')).toBeInTheDocument();
     expect(document.querySelector('.info-strip--error')).toBeInTheDocument();
+  });
+});
+
+describe('ReleaseDetailPage — reject detail', () => {
+  it('names both claimants when a release is rejected for a duplicated relation', async () => {
+    renderPage({
+      release_id: 'rel-1',
+      status: 'rejected',
+      reject_reason: 'duplicate_table',
+      reject_detail:
+        'analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql); ' +
+        'a relation may be produced by exactly one node — rename one of them',
+      transitions: [],
+      validation_node_ids: null,
+      failing_nodes: ['analytics.orders'],
+      per_node_results: null,
+      image_tags: {},
+      manifests_uri: '',
+      bootstrap: false,
+    });
+
+    expect(await screen.findByText(/finance \(models\/orders\.sql\)/)).toBeInTheDocument();
+    expect(screen.getByText(/marketing \(models\/orders\.sql\)/)).toBeInTheDocument();
+  });
+
+  // Guards the empty-detail path against a dangling separator: an unconditional
+  // " — " (or a stray empty element) that a future change might introduce would
+  // still pass a loose "does not contain a dash" check, so this pins the
+  // strip's text to exactly the icon plus the reason label and nothing else.
+  it('shows the reason alone when a rejection carries no detail', async () => {
+    renderPage({
+      release_id: 'rel-2',
+      status: 'rejected',
+      reject_reason: 'validation_failed',
+      reject_detail: '',
+      transitions: [],
+      validation_node_ids: null,
+      failing_nodes: null,
+      per_node_results: null,
+      image_tags: {},
+      manifests_uri: '',
+      bootstrap: false,
+    });
+
+    await screen.findByText(/validation/i);
+    const strip = document.querySelector('.info-strip--error');
+    expect(strip).not.toBeNull();
+    expect(strip!.textContent).toBe(`⚠${reasonLabel('validation_failed')}`);
   });
 });
 

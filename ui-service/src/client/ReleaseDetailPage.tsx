@@ -212,7 +212,9 @@ export default function ReleaseDetailPage() {
 
       {rel.reject_reason && (
         <div className="info-strip info-strip--error">
-          <span className="info-strip__icon">⚠</span>{reasonLabel(rel.reject_reason)}
+          <span className="info-strip__icon">⚠</span>
+          {reasonLabel(rel.reject_reason)}
+          {rel.reject_detail ? ` — ${rel.reject_detail}` : ''}
         </div>
       )}
 

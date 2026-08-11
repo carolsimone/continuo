@@ -12,13 +12,13 @@ Postgres (its own database). Tables:
 
 | Table | Purpose |
 |---|---|
-| `releases` | One row per candidate release: status (`received`, `compiling`, `parsing`, `seed_building`, `validating`, `promoted`, `rejected`, `superseded`), the release's `kind` (`dbt` or `python`, set from the POST body and immutable thereafter — it decides whether the release runs the compile leg at all, see Processing Logic), the `changed_service` this delta belongs to, the per-service image tags assembled at activation, candidate topology, the `code_bundle_uri` (S3 URI of the release's code-bundle contract document, set from the `manifest.loaded.candidate:v1` parse result), validation node ids, per-node results (tagged by `stage` — `compile`, `seed_build`, or `validation` — so results from all three legs are accumulated and independently addressable on a single release), transition history, and the immutable provenance columns `repo` (GitHub owner/name) and `commit_sha` (full SHA) captured at receipt. |
+| `releases` | One row per candidate release: status (`received`, `compiling`, `parsing`, `seed_building`, `validating`, `promoted`, `rejected`, `superseded`), the release's `kind` (`dbt` or `python`, set from the POST body and immutable thereafter — it decides whether the release runs the compile leg at all, see Processing Logic), the `changed_service` this delta belongs to, the per-service image tags assembled at activation, candidate topology, the `code_bundle_uri` (S3 URI of the release's code-bundle contract document, set from the `manifest.loaded.candidate:v1` parse result), validation node ids, `reject_reason` (a machine-readable token) alongside `reject_detail` (the operator-facing explanation of that rejection — the same string carried as `error_detail` on `release.rejected:v1`; empty when the reject path supplied none, and always empty for rows written before this column existed), per-node results (tagged by `stage` — `compile`, `seed_build`, or `validation` — so results from all three legs are accumulated and independently addressable on a single release), transition history, and the immutable provenance columns `repo` (GitHub owner/name) and `commit_sha` (full SHA) captured at receipt. |
 | `current_prod` | Singleton row: the promoted `release_id` and its `topology_snapshot` (the live topology). |
 | `service_prod` | One row per service (dbt or python) — the live per-service production pointer: `{service_name, release_id, manifest_s3_key, manifest_kind, image_tag, updated_at}`. `manifest_kind` (`dbt` or `python`) records how that service's canonical artifact is authored and parsed, so `AssembleManifestSet` can carry the right `kind` forward onto the next release's `manifest_keys` entry for that service without re-deriving it. Records which manifest key and image tag are currently live for each service; the full production manifest set is reconstructed by collecting every service's pointer at activation time. |
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
 | `message_processing` | Inbound dedup ledger (`outbox_entry_id` / message id) for idempotent consumption. |
 
-The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. When a new candidate is promoted, its candidate topology (carrying `content_hash` + joined `image_tag`) replaces the snapshot, forming the change-detection base for the next release. The `candidate_artifact_uri` field is stored in `releases.candidate_topology` (as a JSONB field) during validation but is stripped on promotion — it is transient validation data and is not carried into `current_prod`. `code_bundle_uri` is a release-level column, not a per-node topology field; it is set once from the parse result and is carried forward unchanged onto `release.promoted:v1` rather than stripped.
+The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `resolved_relation_id`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. `resolved_relation_id` is the physical relation the node's build actually writes (its dbt alias, when it has one, else the same name as `unique_id`'s own table segment); it is what `DuplicateClaims` groups on, not `unique_id`, so it survives into the snapshot even though nothing else reads it there. When a new candidate is promoted, its candidate topology (carrying `content_hash` + joined `image_tag`) replaces the snapshot, forming the change-detection base for the next release. The `candidate_artifact_uri` field is stored in `releases.candidate_topology` (as a JSONB field) during validation but is stripped on promotion — it is transient validation data and is not carried into `current_prod`. `code_bundle_uri` is a release-level column, not a per-node topology field; it is set once from the parse result and is carried forward unchanged onto `release.promoted:v1` rather than stripped.
 
 ## Inbound Interfaces
 
@@ -27,7 +27,7 @@ The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `s
 | Route | Purpose |
 |---|---|
 | `POST /releases` | Accept a candidate release for a single service. Body: `{service, release_id, image_tag, repo, commit_sha, bootstrap?, kind?}`. `repo` (GitHub owner/name) and `commit_sha` (full SHA) are required; missing either returns 400. `kind` is optional (`"dbt"` or `"python"`); absent or empty defaults to `"dbt"`, and any other value returns 400. Idempotent on `release_id`. `bootstrap:true` promotes without validation (see Processing Logic). |
-| `GET /releases/{id}` | Full release detail: `{release_id, status, changed_service, transitions, validation_node_ids, reject_reason, failing_nodes, per_node_results, image_tags, bootstrap, repo, commit_sha}`. `per_node_results` is an array of `{stage, node_id, status, dbt_log_uri, run_results_uri, duration_ms, file_path?}` accumulated across all pipeline legs; the `stage` field (`compile`, `seed_build`, or `validation`) identifies which leg produced each entry. For the compile leg the single entry's `node_id` is the service name; `file_path` is non-empty when the failure maps to a specific source file. `duration_ms` is populated for the `compile` and `seed_build` legs; the `validation` stage's per-node results come from the incremental `kind=node` projections on `validation.result:v1`, which do not carry a duration, so `duration_ms` is absent (zero) for those entries. |
+| `GET /releases/{id}` | Full release detail: `{release_id, status, changed_service, transitions, validation_node_ids, reject_reason, reject_detail, failing_nodes, per_node_results, image_tags, bootstrap, repo, commit_sha}`. `reject_detail` is the operator-facing explanation of the rejection (empty string when the release is not rejected, or when the reject path supplied none). `per_node_results` is an array of `{stage, node_id, status, dbt_log_uri, run_results_uri, duration_ms, file_path?}` accumulated across all pipeline legs; the `stage` field (`compile`, `seed_build`, or `validation`) identifies which leg produced each entry. For the compile leg the single entry's `node_id` is the service name; `file_path` is non-empty when the failure maps to a specific source file. `duration_ms` is populated for the `compile` and `seed_build` legs; the `validation` stage's per-node results come from the incremental `kind=node` projections on `validation.result:v1`, which do not carry a duration, so `duration_ms` is absent (zero) for those entries. |
 | `GET /releases` | Paginated release history, newest-first. Query params: `status` (optional exact-match filter), `limit` (default 20; values that are unparseable, non-positive, or exceed 100 fall back to the default of 20), `cursor` (opaque keyset cursor). Response: `{"releases":[{release_id, status, created_at, resolved_at, node_count, bootstrap, reject_reason}], "next_cursor":"<opaque or empty>"}`. |
 | `GET /current-prod` | The current promoted release + topology snapshot. |
 | `GET /healthz` | Readiness, backed by the `pkg/liveness` registry. Fails (503) when any registered worker (the stream consumers, the outbox publisher) has exited with an error, any consumer read-loop heartbeat has gone stale, **or** any dependency probe (Redis, Postgres) fails; a dependency outage pulls the pod out of the Service endpoints without restarting it, since a restart does not fix a downstream outage. |
@@ -113,6 +113,35 @@ status=ok:
 status=failed → Reject(reason=parse_failed), emit release.rejected:v1, advance queue
 status=ok:
   join per-service image_tags into the candidate topology
+  DuplicateClaims(topology) non-empty →
+  Reject(reason=duplicate_table), emit release.rejected:v1, advance queue, return
+      (DuplicateClaims runs two independent checks and merges their results:
+       - relation collisions: nodes grouped by resolved_relation_id — the physical relation
+         each node's build actually writes — falling back to unique_id for a node whose
+         resolved_relation_id is empty. Two nodes with different unique_ids that alias to the
+         same relation collide here.
+       - identity collisions: nodes grouped by unique_id, reported only when the group is NOT
+         relation-homogeneous (a relation-homogeneous group is already reported above, for the
+         same members). Two nodes that share a unique_id but resolve to different relations
+         collide here — unique_id is the identity key for every downstream lookup keyed on it
+         (the code bundle, the candidate object key, this service's own topology walks, the
+         orchestrator's :Table MERGE), so sharing it silently erases one of the two nodes
+         regardless of whether their resolved relations also collide.
+       error_detail names every claim, worded per kind ("<relation> is produced by ..." for a
+       relation collision, "unique_id <id> is declared by ..." for an identity one) so an
+       operator can tell which remedy applies — an alias rename clears a relation collision but
+       can never clear an identity one, since it changes resolved_relation_id, not unique_id.
+       failing_nodes lists every claimant's own unique_id across every claim, deduplicated.
+       per_node carries a rename proposal's target/competitor pair ONLY for a two-claimant
+       RELATION collision — a rename can only ever fix one competitor (so a three-or-more-way
+       relation collision gets none either), and no rename a fixer can express changes a
+       unique_id (so an identity collision NEVER gets one, regardless of claimant count). Such
+       a claim is still rejected and fully named in error_detail/failing_nodes, but contributes
+       no per_node entry, and remediation opens no trigger for it; if every claim in the
+       release is either an identity collision or a three-or-more-way relation collision,
+       per_node is empty. relation_id on a per_node entry carries the contested relation
+       itself, separate from node_id (the target claimant's own unique_id) — the two differ
+       whenever the target already carries an alias.)
   if release.bootstrap: promote directly, skipping validation
       (record candidate topology, update current_prod, upsert the changed
        service's service_prod pointer, transition to Promoted,
@@ -138,6 +167,8 @@ status=ok:
          and validation_op = validationOpFor(node, changedClosureSet))
   advance queue
 ```
+`DuplicateClaims` walks the candidate topology for any `unique_id` claimed by more than one node — a relation two nodes both write, the second silently overwriting the first the moment either lands in `current_prod` — and runs above every branch of this handler that can promote: the bootstrap short-circuit immediately below, the nothing-to-validate short-circuit further down, the seed-build leg's own promotion (`handle_seed_build_result.go`), and the post-validation promotion (`handle_validation_result.go`). One check here covers all four paths. The check is service-agnostic: two nodes in the same service collide exactly as two nodes in different services do, so `per_node[]` on the rejection carries a `service`/`file_path` (the rename target), the target's `node_type`, and an `other_service`/`other_file_path` (the competing claimant) — the service name alone does not disambiguate a same-service collision, and `node_type` lets remediation tell a python target (whose relation is declared in the service's contract.yaml, not in `file_path`) apart from a dbt one without its own topology lookup.
+
 `validationOpFor` picks the executor's per-node build strategy from the node's kind and whether it is in the changed closure: a changed-closure dbt node gets `build_from_sql` (candidate SQL already rewritten to the candidate schema); a changed-closure python node gets `build_from_columns` (a JSON spec of declared reads + output columns, since there is no SQL to build from); every other in-set node — an unchanged upstream, of either kind — gets `clone_from_prod` regardless, since it carries no candidate artifact to build from.
 
 A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.

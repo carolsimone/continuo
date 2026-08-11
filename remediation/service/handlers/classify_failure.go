@@ -28,50 +28,17 @@ type Deps struct {
 	Logger    *slog.Logger
 }
 
-// ClassifyFailure triages one failed node: it fetches the dbt log, classifies
-// it deterministically, and in a single transaction records the decision
-// (always — emit and drop alike) and, for a healable and newly-recorded node,
-// enqueues a remediation.requested trigger. Idempotency is enforced by the
-// decision repository's natural key, so a redelivered rejection neither
-// double-records nor double-emits.
+// ClassifyFailure triages one failed node: it gathers whatever evidence the
+// source needs, classifies it deterministically, and in a single transaction
+// records the decision (always — emit and drop alike) and, for a healable and
+// newly-recorded node, enqueues a remediation.requested trigger. Idempotency is
+// enforced by the decision repository's natural key, so a redelivered
+// rejection neither double-records nor double-emits.
 func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence) error {
-	logText, err := deps.LogReader.Fetch(ctx, ev.DBTLogURI)
+	c, err := classify(ctx, deps, &ev)
 	if err != nil {
-		if err != ports.ErrLogNotFound {
-			return fmt.Errorf("fetch dbt log %q: %w", ev.DBTLogURI, err)
-		}
-		logText = "" // not found → classify unknown:log_unavailable (or structured, below)
+		return err
 	}
-
-	// Prefer the structured validation result when present; a fetch/parse failure
-	// degrades to the text log rather than failing the message.
-	var structured *failure.StructuredResult
-	if ev.RunResultsURI != "" {
-		body, ferr := deps.LogReader.Fetch(ctx, ev.RunResultsURI)
-		if ferr != nil && ferr != ports.ErrLogNotFound {
-			return fmt.Errorf("fetch run results %q: %w", ev.RunResultsURI, ferr)
-		}
-		if ferr == nil {
-			if sr, perr := failure.ParseStructuredResult([]byte(body)); perr != nil {
-				deps.Logger.Warn("run_results parse failed — falling back to text log",
-					"uri", ev.RunResultsURI, "error", perr)
-			} else {
-				structured = sr
-			}
-		}
-	}
-
-	// For compile-stage failures, extract the offending source file path from
-	// the log text so the remediation agent can read the file directly. Compile
-	// failures have a synthetic service-name NodeID (not a real dbt node), so
-	// the log is the only source of the file path.
-	// Seed_build failures carry FilePath and Service from the candidate topology
-	// via the rejection payload, so no extraction is needed here.
-	if ev.Source == failure.SourceCompile && ev.FilePath == "" {
-		ev.FilePath = failure.ExtractDbtFilePath(logText)
-	}
-
-	c := failure.ClassifyWithStructured(ev, structured, logText)
 
 	u := deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -110,18 +77,71 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 	return nil
 }
 
+// classify produces the classification for one piece of evidence, fetching only
+// what the source actually needs. A duplicate-relation rejection is classified
+// from the evidence alone: it happens at parse time, before any Job runs, so
+// there is no dbt log to read. ev is a pointer because the compile path fills
+// in FilePath from the log text.
+func classify(ctx context.Context, deps Deps, ev *failure.FailureEvidence) (failure.Classification, error) {
+	if ev.Source == failure.SourceDuplicateTable {
+		return failure.ClassifyDuplicateTable(*ev), nil
+	}
+
+	logText, err := deps.LogReader.Fetch(ctx, ev.DBTLogURI)
+	if err != nil {
+		if err != ports.ErrLogNotFound {
+			return failure.Classification{}, fmt.Errorf("fetch dbt log %q: %w", ev.DBTLogURI, err)
+		}
+		logText = "" // not found → classify unknown:log_unavailable (or structured, below)
+	}
+
+	// Prefer the structured validation result when present; a fetch/parse failure
+	// degrades to the text log rather than failing the message.
+	var structured *failure.StructuredResult
+	if ev.RunResultsURI != "" {
+		body, ferr := deps.LogReader.Fetch(ctx, ev.RunResultsURI)
+		if ferr != nil && ferr != ports.ErrLogNotFound {
+			return failure.Classification{}, fmt.Errorf("fetch run results %q: %w", ev.RunResultsURI, ferr)
+		}
+		if ferr == nil {
+			if sr, perr := failure.ParseStructuredResult([]byte(body)); perr != nil {
+				deps.Logger.Warn("run_results parse failed — falling back to text log",
+					"uri", ev.RunResultsURI, "error", perr)
+			} else {
+				structured = sr
+			}
+		}
+	}
+
+	// For compile-stage failures, extract the offending source file path from
+	// the log text so the remediation agent can read the file directly. Compile
+	// failures have a synthetic service-name NodeID (not a real dbt node), so
+	// the log is the only source of the file path. Seed_build failures carry
+	// FilePath and Service from the candidate topology via the rejection
+	// payload, so no extraction is needed.
+	if ev.Source == failure.SourceCompile && ev.FilePath == "" {
+		ev.FilePath = failure.ExtractDbtFilePath(logText)
+	}
+
+	return failure.ClassifyWithStructured(*ev, structured, logText), nil
+}
+
 func enqueueTrigger(ctx context.Context, u uow.UnitOfWork, deps Deps, ev failure.FailureEvidence, c failure.Classification) error {
 	payload := event.RemediationRequested{
 		EventID:              event.RemediationEventID(ev.ReleaseID, ev.NodeID).String(),
 		Source:               string(ev.Source),
 		ReleaseID:            ev.ReleaseID,
 		NodeID:               ev.NodeID,
+		RelationID:           ev.RelationID,
 		Category:             string(c.Category),
 		ErrorSignature:       c.Signature,
 		DBTLogURI:            ev.DBTLogURI,
 		CandidateArtifactURI: ev.CandidateArtifactURI,
 		FilePath:             ev.FilePath,
 		Service:              ev.Service,
+		NodeType:             ev.NodeType,
+		OtherService:         ev.OtherService,
+		OtherFilePath:        ev.OtherFilePath,
 		Repo:                 ev.Repo,
 		CommitSHA:            ev.CommitSHA,
 		ClassifiedAt:         deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),

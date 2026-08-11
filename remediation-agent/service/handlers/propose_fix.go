@@ -26,9 +26,14 @@ import (
 // Trigger is the decoded remediation.requested:v1 payload that drives one
 // ProposeFix invocation.
 type Trigger struct {
-	Source               string
-	ReleaseID            string
-	NodeID               string
+	Source    string
+	ReleaseID string
+	NodeID    string
+	// RelationID is the contested physical relation for a duplicate-relation
+	// trigger, distinct from NodeID (the target claimant's own unique_id) —
+	// the two differ whenever the target already carries an alias. Empty for
+	// every other source.
+	RelationID           string
 	ErrorSignature       string
 	Category             string
 	DBTLogURI            string
@@ -42,9 +47,19 @@ type Trigger struct {
 	// seed_build failures from the candidate topology so source resolution does
 	// not depend on Ancestry (which only holds promoted topology). Empty for
 	// compile failures where NodeID acts as the service discriminator.
-	Service   string
-	Repo      string
-	CommitSHA string
+	Service string
+	// NodeType is the target claimant's kind (dbt-model, dbt-seed,
+	// dbt-snapshot, or python-model), set on a duplicate-relation failure so
+	// the duplicate-table Fixer can skip a python target — whose source is not
+	// a single readable file — without a topology lookup of its own.
+	NodeType string
+	// OtherService and OtherFilePath locate the competing node that also
+	// produces the contested relation (RelationID), set on a duplicate-relation
+	// failure.
+	OtherService  string
+	OtherFilePath string
+	Repo          string
+	CommitSHA     string
 	// MessageID is the Redis Stream message ID of the inbound
 	// remediation.requested:v1 message. It is the primary dedup key.
 	MessageID string
@@ -139,11 +154,15 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		Source:               t.Source,
 		ReleaseID:            t.ReleaseID,
 		NodeID:               t.NodeID,
+		RelationID:           t.RelationID,
 		ErrorSignature:       t.ErrorSignature,
 		Repo:                 t.Repo,
 		CommitSHA:            t.CommitSHA,
 		FilePath:             t.FilePath,
 		Service:              t.Service,
+		NodeType:             t.NodeType,
+		OtherService:         t.OtherService,
+		OtherFilePath:        t.OtherFilePath,
 		DBTLogURI:            t.DBTLogURI,
 		CandidateArtifactURI: t.CandidateArtifactURI,
 		Attempt:              attempt,

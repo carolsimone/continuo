@@ -57,6 +57,17 @@ class UpstreamDep:
     schema_name: str
     service_name: str
 
+    @property
+    def unique_id(self) -> str:
+        """The upstream node's identity key: "<schema>.<table>", lowercased.
+
+        Must match ManifestNode.unique_id exactly — the two are compared against
+        each other when building DEPENDS_ON edges in the orchestrator's Neo4j
+        topology. Deriving this property the same way ensures the identities
+        always agree, preventing silent divergence from mixed-case declarations.
+        """
+        return f"{self.schema_name.lower()}.{self.table_name.lower()}"
+
 
 @dataclass
 class ManifestNode:
@@ -84,15 +95,46 @@ class ManifestNode:
     config_hash: str = ""  # fingerprint of resolved config, denylist-filtered
     code_unit_ids: list[str] = field(default_factory=list)  # direct shared-code (macro) deps
     runtime: Runtime = Runtime.DBT
+    resolved_relation: str = ""  # the name this node's build actually writes: a
+    # dbt node's alias when it overrides one, else "" (see resolved_relation_id,
+    # which falls back to table_name). A python node has no alias concept, so
+    # its parser sets this to its declared table_name directly.
 
     @property
     def unique_id(self) -> str:
-        """The node's identity across the whole system: "<schema>.<table>".
+        """The node's identity across the whole system: "<schema>.<table>",
+        lowercased.
 
         The same string keys the topology entry, the code-bundle node map, and
         the node's candidate-artifact S3 object, so it is derived in one place.
+        It is lowercased because the warehouse lookups that resolve a reference
+        to this node already fold case (NodeRegistry.to_lookup and
+        service/rewriter.py), so two declarations differing only in case name
+        one relation and must not produce two identities. The declared
+        schema_name and table_name are left untouched — they render into SQL
+        and DDL, where the declared spelling is what addresses the relation.
         """
-        return f"{self.schema_name}.{self.table_name}"
+        return f"{self.schema_name.lower()}.{self.table_name.lower()}"
+
+    @property
+    def resolved_relation_id(self) -> str:
+        """The physical warehouse relation this node's build actually writes:
+        "<schema>.<resolved name>", lowercased, mirroring how unique_id is
+        minted.
+
+        unique_id is keyed on the DECLARED name (table_name); this is keyed on
+        the RESOLVED one — a dbt node's alias when it has one, else the same
+        declared name. dbt writes to <schema>.<alias>, not <schema>.<name>, so
+        two nodes with different declared names but the same alias write the
+        same table and must be caught as a collision that unique_id alone
+        would miss; two nodes sharing a declared name but given different
+        aliases write different tables and must not be flagged. Falls back to
+        table_name here — not only in the dbt parser — so any node built
+        without going through that parser (a python node, or a node built
+        directly in a test) still resolves correctly.
+        """
+        resolved = self.resolved_relation or self.table_name
+        return f"{self.schema_name.lower()}.{resolved.lower()}"
 
 
 @dataclass
