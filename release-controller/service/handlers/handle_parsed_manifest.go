@@ -108,9 +108,12 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	// write target, so two nodes claiming it write the same warehouse table and
 	// the second silently replaces the first in the promoted topology,
 	// current_prod, and the code bundle. Checked here, above the bootstrap
-	// branch, because all three paths out of this function reach
-	// promoteToProduction: bootstrap, the nothing-to-validate short-circuit, and
-	// the validation leg.
+	// branch, because the candidate topology recorded at this point feeds every
+	// later route to promoteToProduction: the bootstrap branch below, the
+	// nothing-to-validate short-circuit later in this function, the seed-build
+	// leg's own nothing-to-validate-after-built-seeds short-circuit
+	// (handle_seed_build_result.go), and the normal post-validation promotion
+	// (handle_validation_result.go). One check here covers all four.
 	if claims := release.DuplicateClaims(topo); len(claims) > 0 {
 		return rejectDuplicateTable(ctx, d, u, r, in.ReleaseID, claims, now)
 	}
@@ -496,11 +499,19 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // rejectDuplicateTable transitions the release to Rejected and emits
 // release.rejected:v1 naming every node that claims each duplicated relation.
 // Each per_node entry carries the claimant a rename should target — the changed
-// service's, when it has one — plus the competing service's name, so the
-// remediation classifier can build evidence without resolving the source
-// location itself. That resolution is not available downstream: a rejected
-// release is never promoted, so Ancestry (which serves the promoted topology)
-// holds nothing for these nodes.
+// service's, when it has one — plus the competing claimant's service and file
+// path, so the remediation classifier can build evidence without resolving the
+// source location itself. That resolution is not available downstream: a
+// rejected release is never promoted, so Ancestry (which serves the promoted
+// topology) holds nothing for these nodes.
+//
+// per_node.file_path is resolved against the top-level repo/commit_sha, even
+// for a claimant from a service other than r.ChangedService(). That works only
+// because every dbt service in this system lives in one repository: a
+// same-commit checkout of repo@commit_sha contains every service's models, so
+// the competing claimant's file genuinely exists at that path and commit. The
+// existing validation fixer already relies on this when it reads another
+// service's file at repo@commit_sha.
 func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release,
 	releaseID string, claims []release.DuplicateClaim, now time.Time) error {
 
@@ -512,11 +523,12 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 		failing = append(failing, c.UniqueID)
 		target, other := c.Target(r.ChangedService())
 		perNode = append(perNode, map[string]any{
-			"node_id":       c.UniqueID,
-			"status":        "failed",
-			"service":       target.ServiceName,
-			"file_path":     target.OriginalFilePath,
-			"other_service": other.ServiceName,
+			"node_id":         c.UniqueID,
+			"status":          "failed",
+			"service":         target.ServiceName,
+			"file_path":       target.OriginalFilePath,
+			"other_service":   other.ServiceName,
+			"other_file_path": other.OriginalFilePath,
 		})
 	}
 

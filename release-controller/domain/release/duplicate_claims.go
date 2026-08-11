@@ -63,10 +63,14 @@ func DuplicateClaims(candidate Topology) []DuplicateClaim {
 //
 // The changed service's claimant wins when it has one: that is the source
 // being changed in this release, so renaming it never touches a service the
-// release did not modify. A bootstrap release loads every service at once and
-// has no single changed source, so the first claimant in sorted order is
-// picked to keep the choice deterministic; the rejection detail names every
-// claimant, so an operator can rename a different one instead.
+// release did not modify. This holds for a bootstrap release too — bootstrap
+// still carries a single changedService (the posting service, also used by
+// promoteToProduction for the service_prod upsert), so its claimant is
+// targeted the same way. Only when neither claimant belongs to the changed
+// service (both are already-promoted services colliding) does the choice fall
+// back to the first claimant in sorted order, to keep it deterministic; the
+// rejection detail names every claimant, so an operator can rename a
+// different one instead.
 func (c DuplicateClaim) Target(changedService string) (target, other Claimant) {
 	idx := 0
 	for i, cl := range c.Claimants {

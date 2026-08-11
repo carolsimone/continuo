@@ -995,6 +995,39 @@ func TestHandleParsedManifest_DuplicateTablePayloadNamesTargetAndOther(t *testin
 	assert.Equal(t, "marketing", node["service"], "the changed service is the rename target")
 	assert.Equal(t, "models/orders.sql", node["file_path"])
 	assert.Equal(t, "finance", node["other_service"])
+	assert.Equal(t, "models/orders.sql", node["other_file_path"])
+}
+
+// DuplicateClaims supports two nodes in the SAME service colliding. In that
+// case service and other_service are both "marketing" — degenerate and not by
+// itself enough to tell the claimants apart — so other_file_path must carry
+// the one datum (the competing source file) that lets a downstream consumer
+// identify the competitor without parsing error_detail.
+func TestHandleParsedManifest_DuplicateTablePayloadSameServiceCarriesBothFilePaths(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
+		},
+	}))
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok, "per_node must be present so remediation can build evidence")
+	require.Len(t, perNode, 1)
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "marketing", node["service"])
+	assert.Equal(t, "marketing", node["other_service"], "both claimants are in the same service")
+	assert.Equal(t, "models/orders.sql", node["file_path"])
+	assert.Equal(t, "models/orders_v2.sql", node["other_file_path"])
+	assert.NotEqual(t, node["file_path"], node["other_file_path"],
+		"the two claimants must remain distinguishable by file path even when their service names collide")
 }
 
 // Bootstrap skips validation and promotes directly, so the gate must run above
@@ -1018,8 +1051,43 @@ func TestHandleParsedManifest_DuplicateTableRejectsBootstrap(t *testing.T) {
 	assert.Equal(t, "", store.GetCurrentProd().ReleaseID(), "nothing may be promoted")
 }
 
+// A model copied verbatim into a second service produces a duplicate
+// unique_id whose content_hash matches current_prod for BOTH claimants, so
+// DerivedChangedNodeIDs finds nothing changed and validationIDs is empty —
+// the route that promotes directly via the len(validationIDs)==0
+// short-circuit further down in handleParseOK. This pins the gate above that
+// specific route, independent of the bootstrap branch: unlike
+// TestHandleParsedManifest_DuplicateTableRejectsBootstrap, this release is
+// NOT a bootstrap, so it only reaches this route, never the bootstrap one.
+func TestHandleParsedManifest_DuplicateTablePinsNothingToValidateShortCircuit(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+		{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+	}, time.Unix(50, 0).UTC()))
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders_copy.sql", ContentHash: "h1"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(), "current_prod must not move")
+}
+
 // A clean topology is unaffected: the gate must not reject a release whose
-// relations each have a single producer.
+// relations each have a single producer. Asserted against the specific
+// StatusValidating outcome (not merely "not Rejected") and against a real
+// validation.requested:v1 entry, so a gate that over-rejects anything —
+// including deleting the gate check itself, which would leave the status
+// unconstrained rather than pinned to Validating — cannot pass this test
+// unnoticed.
 func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
 	deps, store := seedToParsing(t, "rOK", map[string]string{"marketing": "sha-m"})
 
@@ -1036,5 +1104,8 @@ func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
 
 	r, rErr := store.GetRelease("rOK")
 	require.NoError(t, rErr)
-	assert.NotEqual(t, release.StatusRejected, r.Status())
+	assert.Equal(t, release.StatusValidating, r.Status())
+
+	entry := findEntry(t, store, streams.ValidationRequestedV1)
+	assert.NotNil(t, entry, "a clean topology must still request validation")
 }
