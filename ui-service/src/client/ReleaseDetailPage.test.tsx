@@ -4,6 +4,7 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import ReleaseDetailPage from './ReleaseDetailPage';
 import { NodeValidationResult, ReleaseDetail, ProposalDTO } from './types';
+import { reasonLabel } from './release-helpers';
 
 vi.mock('./remediation-api', () => ({ fetchProposals: vi.fn() }));
 import { fetchProposals } from './remediation-api';
@@ -289,6 +290,10 @@ describe('ReleaseDetailPage — reject detail', () => {
     expect(screen.getByText(/marketing \(models\/orders\.sql\)/)).toBeInTheDocument();
   });
 
+  // Guards the empty-detail path against a dangling separator: an unconditional
+  // " — " (or a stray empty element) that a future change might introduce would
+  // still pass a loose "does not contain a dash" check, so this pins the
+  // strip's text to exactly the icon plus the reason label and nothing else.
   it('shows the reason alone when a rejection carries no detail', async () => {
     renderPage({
       release_id: 'rel-2',
@@ -304,8 +309,10 @@ describe('ReleaseDetailPage — reject detail', () => {
       bootstrap: false,
     });
 
-    const strip = await screen.findByText(/validation/i);
-    expect(strip.textContent).not.toContain('—');
+    await screen.findByText(/validation/i);
+    const strip = document.querySelector('.info-strip--error');
+    expect(strip).not.toBeNull();
+    expect(strip!.textContent).toBe(`⚠${reasonLabel('validation_failed')}`);
   });
 });
 
