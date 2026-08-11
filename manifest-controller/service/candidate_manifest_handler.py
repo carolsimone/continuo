@@ -239,6 +239,7 @@ class CandidateManifestHandler:
                 "unique_id":           node.unique_id,
                 "schema_name":         node.schema_name,
                 "table_name":          node.table_name,
+                "resolved_relation_id": node.resolved_relation_id,
                 "service_name":        node.service_name,
                 "node_type":           node.node_type,
                 "test_count":          node.test_count,

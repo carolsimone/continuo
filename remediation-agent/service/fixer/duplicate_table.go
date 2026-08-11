@@ -34,6 +34,15 @@ import (
 // therefore change nothing about which relation the node claims, so the
 // rejection would recur on the next release; the operator resolves it by hand
 // from the release page instead, which names every claimant.
+//
+// A dbt-seed target is skipped the same way, for a different reason: a seed's
+// relation name comes from its CSV filename or the project's seed config,
+// never from the CSV's own contents, so reading and renaming the seed file
+// would not change which relation it claims either. Worse than a no-op,
+// singleFileInterpret would accept ANY edited CSV as a valid rename proposal —
+// for a seed, editing the file body means altering the data it loads, so a
+// naive "propose whatever came back" would silently corrupt the seed's
+// content instead of fixing the collision.
 type duplicateTableFixer struct{}
 
 func (duplicateTableFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
@@ -49,6 +58,14 @@ func duplicateTableGather(ctx context.Context, svc Services, in Input) (Gathered
 		svc.Logger.Info("duplicate-table fix: target claimant is a python node; skipping — "+
 			"its relation is declared in the service's contract.yaml, whose repository path this "+
 			"system does not carry, so the named file cannot contain the fix",
+			"node", in.NodeID)
+		return Gathered{}, true, nil
+	}
+	if in.NodeType == string(pkg_model.NodeTypeDbtSeed) {
+		svc.Logger.Info("duplicate-table fix: target claimant is a dbt seed; skipping — "+
+			"its relation name comes from the CSV filename or project config, never from the "+
+			"CSV's own contents, so the named file cannot contain the fix, and any edited CSV "+
+			"would look like a valid rename proposal while actually altering the seed's data",
 			"node", in.NodeID)
 		return Gathered{}, true, nil
 	}

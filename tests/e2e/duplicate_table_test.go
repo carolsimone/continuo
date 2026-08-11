@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,7 +122,16 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	detail := getReleaseJSON(t, clients, releaseID)
 	assert.Equal(t, "duplicate_table", detail["reject_reason"])
 	rejectDetail, _ := detail["reject_detail"].(string)
-	assert.Contains(t, rejectDetail, victimUniqueID,
+	// victimUniqueID comes from parseManifestNodes, which mirrors
+	// manifest-controller's identity derivation in DECLARED case (see its own
+	// doc comment) — it does not lowercase, because that helper is shared with
+	// tests that need the declared-case value. Candidate parsing, however,
+	// mints unique_id (and the relation identity the gate groups on) already
+	// lowercased, so the rejection detail never contains the declared-case
+	// string verbatim. Normalizing here, at the assertion, keeps that
+	// lowercasing decision local to this test instead of leaking into the
+	// shared helper.
+	assert.Contains(t, rejectDetail, strings.ToLower(victimUniqueID),
 		"the rejection must name the contested relation")
 	assert.Contains(t, rejectDetail, victimService,
 		"the rejection must name the incumbent service")

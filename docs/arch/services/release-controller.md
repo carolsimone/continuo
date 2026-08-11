@@ -18,7 +18,7 @@ Postgres (its own database). Tables:
 | `release_controller_outbox` | Transactional outbox; one row per produced event, drained by the outbox publisher. |
 | `message_processing` | Inbound dedup ledger (`outbox_entry_id` / message id) for idempotent consumption. |
 
-The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. When a new candidate is promoted, its candidate topology (carrying `content_hash` + joined `image_tag`) replaces the snapshot, forming the change-detection base for the next release. The `candidate_artifact_uri` field is stored in `releases.candidate_topology` (as a JSONB field) during validation but is stripped on promotion — it is transient validation data and is not carried into `current_prod`. `code_bundle_uri` is a release-level column, not a per-node topology field; it is set once from the parse result and is carried forward unchanged onto `release.promoted:v1` rather than stripped.
+The `topology_snapshot` is the live topology as a list of nodes (`unique_id`, `schema_name`, `table_name`, `resolved_relation_id`, `service_name`, `node_type`, `content_hash`, `image_tag`, `upstream_unique_ids`, `schedule`); the per-node `content_hash` comparison against it determines which nodes a new candidate must validate. `resolved_relation_id` is the physical relation the node's build actually writes (its dbt alias, when it has one, else the same name as `unique_id`'s own table segment); it is what `DuplicateClaims` groups on, not `unique_id`, so it survives into the snapshot even though nothing else reads it there. When a new candidate is promoted, its candidate topology (carrying `content_hash` + joined `image_tag`) replaces the snapshot, forming the change-detection base for the next release. The `candidate_artifact_uri` field is stored in `releases.candidate_topology` (as a JSONB field) during validation but is stripped on promotion — it is transient validation data and is not carried into `current_prod`. `code_bundle_uri` is a release-level column, not a per-node topology field; it is set once from the parse result and is carried forward unchanged onto `release.promoted:v1` rather than stripped.
 
 ## Inbound Interfaces
 
@@ -115,6 +115,16 @@ status=ok:
   join per-service image_tags into the candidate topology
   DuplicateClaims(topology) non-empty →
   Reject(reason=duplicate_table), emit release.rejected:v1, advance queue, return
+      (DuplicateClaims groups nodes by resolved_relation_id — the physical relation each
+       node's build actually writes — falling back to unique_id for a node whose
+       resolved_relation_id is empty; so two nodes with different unique_ids that alias to the
+       same relation collide, and two nodes that share a unique_id but resolve to different
+       relations do not. error_detail names the contested relation and every claimant with its
+       service and file path; failing_nodes lists every claimant's own unique_id, deduplicated.
+       per_node carries a rename proposal's target/competitor pair ONLY for a two-claimant
+       collision — a rename can only ever fix one competitor, so a three-or-more-way collision
+       is rejected and fully named but contributes no per_node entry, and remediation opens no
+       trigger for it; if every collision in the release is three-or-more-way, per_node is empty)
   if release.bootstrap: promote directly, skipping validation
       (record candidate topology, update current_prod, upsert the changed
        service's service_prod pointer, transition to Promoted,

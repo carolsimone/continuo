@@ -69,6 +69,10 @@ def test_happy_path_maps_every_manifest_node_field(tmp_path):
     (node,) = nodes
     assert node.table_name == "table_test"
     assert node.schema_name == "analytics"
+    # A python contract has no alias concept: the resolved relation is always
+    # the declared table.
+    assert node.resolved_relation == "table_test"
+    assert node.resolved_relation_id == "analytics.table_test"
     assert node.service_name == "marketing-py"
     assert node.owner == "marketing"
     assert node.schedule_name == "daily"

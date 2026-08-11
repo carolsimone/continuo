@@ -85,6 +85,39 @@ func TestDuplicateTable_SkipsAPythonTarget(t *testing.T) {
 	}
 }
 
+// TestDuplicateTable_SkipsASeedTarget proves the fixer never reads or prompts
+// for a dbt-seed claimant: a seed's relation name comes from its CSV filename
+// or project config, never from the CSV's own contents, so the file named by
+// FilePath cannot contain the fix — and accepting an edited CSV as a rename
+// proposal would mean accepting an edit to the seed's DATA, not its identity.
+func TestDuplicateTable_SkipsASeedTarget(t *testing.T) {
+	fs := &fakeSourceMap{files: map[string]string{"services/marketing/seeds/orders.csv": "id,name\n1,a"}}
+	llm := &fakeLLM{}
+	svc := Services{
+		Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
+		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+		ServiceRepoPaths: map[string]string{"marketing": "services/marketing", "finance": "services/finance"},
+	}
+	in := Input{
+		Source: "duplicate_table", ReleaseID: "rel-1", NodeID: "analytics.orders",
+		Repo: "owner/repo", CommitSHA: "abc123", Service: "marketing", FilePath: "seeds/orders.csv",
+		NodeType: "dbt-seed", OtherService: "finance", Attempt: 1,
+	}
+	r, err := duplicateTableFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if got := fs.readPaths(); len(got) != 0 {
+		t.Fatalf("readPaths = %v, want no read for a seed target", got)
+	}
+	if len(llm.requests) != 0 {
+		t.Fatalf("expected no LLM call for a seed target, got %d", len(llm.requests))
+	}
+}
+
 func TestDuplicateTable_SkipsWithoutASourceLocation(t *testing.T) {
 	svc := Services{Logger: testLogger()}
 	in := Input{Source: "duplicate_table", ReleaseID: "rel-1", NodeID: "analytics.orders", Attempt: 1}

@@ -6,41 +6,60 @@ import (
 	"strings"
 )
 
-// Claimant is one node's owner, source location, and kind within a duplicate
-// claim. NodeType lets a downstream consumer (the remediation fixer) tell a
-// dbt claimant from a python one without a second topology lookup: the two
-// kinds locate their source differently, and only a dbt claimant's source is
-// a single file this system can read.
+// Claimant is one node's identity, owner, source location, and kind within a
+// duplicate claim. UniqueID is the claimant's OWN declared identity — since a
+// DuplicateClaim now groups by the resolved relation, not by unique_id,
+// claimants of the same claim can carry different unique_ids (two different
+// declared names that resolve to the same alias). NodeType lets a downstream
+// consumer (the remediation fixer) tell a dbt claimant from a python one
+// without a second topology lookup: the two kinds locate their source
+// differently, and only a dbt claimant's source is a single file this system
+// can read.
 type Claimant struct {
+	UniqueID         string
 	ServiceName      string
 	OriginalFilePath string
 	NodeType         string
 }
 
-// DuplicateClaim names one relation claimed by more than one node in a
-// candidate topology, with every node that claims it.
+// DuplicateClaim names one physical relation claimed by more than one node in
+// a candidate topology, with every node that claims it.
 //
-// unique_id is the physical write target, not merely a graph key: two nodes
+// RelationID is the physical write target, not merely a graph key: two nodes
 // claiming it write the same warehouse table and overwrite each other, and the
 // second silently replaces the first in the promoted topology, current_prod,
 // and the code bundle. A relation must therefore be produced by exactly one
-// node.
+// node. It is not necessarily any single claimant's own UniqueID — see
+// Claimant.
 type DuplicateClaim struct {
-	UniqueID  string
-	Claimants []Claimant
+	RelationID string
+	Claimants  []Claimant
 }
 
-// DuplicateClaims returns every unique_id claimed by more than one node in the
-// candidate topology, each with its claimants sorted by (service, file path).
-// Claims are sorted by unique_id. An empty result means every relation has a
-// single producer.
+// DuplicateClaims returns every physical relation claimed by more than one
+// node in the candidate topology, each with its claimants sorted by (service,
+// file path). Claims are sorted by RelationID. An empty result means every
+// relation has a single producer.
+//
+// Grouping uses each node's ResolvedRelationID — the relation it actually
+// writes (its dbt alias, when it has one) — falling back to UniqueID when
+// ResolvedRelationID is empty (a payload from before that field existed).
+// Two nodes with different declared names but the same resolved relation
+// collide even though their unique_ids differ; two nodes sharing a declared
+// name but resolving to different relations (one has since been renamed) do
+// not, even though their unique_ids happen to still match.
 //
 // The check is service-agnostic: two nodes in the same service collide exactly
 // as two nodes in different services do.
 func DuplicateClaims(candidate Topology) []DuplicateClaim {
-	byID := make(map[string][]Claimant, len(candidate))
+	byRelation := make(map[string][]Claimant, len(candidate))
 	for _, n := range candidate {
-		byID[n.UniqueID] = append(byID[n.UniqueID], Claimant{
+		relationID := n.ResolvedRelationID
+		if relationID == "" {
+			relationID = n.UniqueID
+		}
+		byRelation[relationID] = append(byRelation[relationID], Claimant{
+			UniqueID:         n.UniqueID,
 			ServiceName:      n.ServiceName,
 			OriginalFilePath: n.OriginalFilePath,
 			NodeType:         n.NodeType,
@@ -48,7 +67,7 @@ func DuplicateClaims(candidate Topology) []DuplicateClaim {
 	}
 
 	var out []DuplicateClaim
-	for id, claimants := range byID {
+	for id, claimants := range byRelation {
 		if len(claimants) < 2 {
 			continue
 		}
@@ -58,9 +77,9 @@ func DuplicateClaims(candidate Topology) []DuplicateClaim {
 			}
 			return claimants[i].OriginalFilePath < claimants[j].OriginalFilePath
 		})
-		out = append(out, DuplicateClaim{UniqueID: id, Claimants: claimants})
+		out = append(out, DuplicateClaim{RelationID: id, Claimants: claimants})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].UniqueID < out[j].UniqueID })
+	sort.Slice(out, func(i, j int) bool { return out[i].RelationID < out[j].RelationID })
 	return out
 }
 
@@ -104,7 +123,7 @@ func FormatDuplicateClaims(claims []DuplicateClaim) string {
 		for _, cl := range c.Claimants {
 			producers = append(producers, fmt.Sprintf("%s (%s)", cl.ServiceName, cl.OriginalFilePath))
 		}
-		parts = append(parts, fmt.Sprintf("%s is produced by %s", c.UniqueID, joinWithAnd(producers)))
+		parts = append(parts, fmt.Sprintf("%s is produced by %s", c.RelationID, joinWithAnd(producers)))
 	}
 	return strings.Join(parts, "; ") +
 		"; a relation may be produced by exactly one node — rename one of them"

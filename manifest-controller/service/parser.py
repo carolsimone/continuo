@@ -140,6 +140,7 @@ def parse_manifest(
         manifest_node = ManifestNode(
             table_name=node["name"],
             schema_name=node["schema"],
+            resolved_relation=node.get("alias") or node["name"],
             service_name=node["fqn"][0].replace("_", "-"),
             owner=owner,
             schedule_name=schedule_name,

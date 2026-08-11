@@ -513,6 +513,23 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // file_path for the contract's script entry — so the fixer must skip a
 // python target rather than editing a file that cannot produce the fix.
 //
+// A per_node entry is emitted only for a two-claimant collision. A rename
+// proposal always targets one claimant against one competitor; with three or
+// more claimants, fixing the target still leaves the relation claimed by the
+// N-2 competitors that were never named as "the other producer", so the
+// release would fail again immediately on a proposal that looked sufficient —
+// and clearing an N-way collision would require N-1 independent PRs, proposed
+// separately, to all merge together. Emitting no per_node entry means
+// remediation builds no evidence and opens no trigger for that claim; it still
+// appears in error_detail and failing_nodes, so an operator resolves it by
+// hand. If every claim in the release is three-or-more-way, per_node is empty
+// and nothing downstream fires.
+//
+// failing_nodes lists every claimant's own unique_id across every claim
+// (deduplicated), not one entry per claim — a claim's claimants can carry
+// different unique_ids (see DuplicateClaims), so a single shared id no longer
+// identifies "the collision".
+//
 // repo/commit_sha describe only the service this release changed — each team
 // ships its dbt or python jobs from its own repository, so there is no single
 // checkout that contains every service's models. Target prefers the changed
@@ -530,13 +547,22 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 
 	detail := release.FormatDuplicateClaims(claims)
 
+	seen := make(map[string]bool, len(claims))
 	failing := make([]string, 0, len(claims))
 	perNode := make([]map[string]any, 0, len(claims))
 	for _, c := range claims {
-		failing = append(failing, c.UniqueID)
+		for _, cl := range c.Claimants {
+			if !seen[cl.UniqueID] {
+				seen[cl.UniqueID] = true
+				failing = append(failing, cl.UniqueID)
+			}
+		}
+		if len(c.Claimants) != 2 {
+			continue
+		}
 		target, other := c.Target(r.ChangedService())
 		perNode = append(perNode, map[string]any{
-			"node_id":         c.UniqueID,
+			"node_id":         target.UniqueID,
 			"status":          "failed",
 			"service":         target.ServiceName,
 			"file_path":       target.OriginalFilePath,

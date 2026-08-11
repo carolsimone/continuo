@@ -460,7 +460,7 @@ sequenceDiagram
 
   Note over RC: Phase 3 — change detection + gate
   alt DuplicateClaims(topology) non-empty
-    Note over RC: two nodes in the candidate topology claim the same unique_id (relation);<br/>checked above every path that can promote — bootstrap below, nothing-to-validate below,<br/>the seed-build leg's own promotion, and the post-validation promotion<br/>Reject(reason=duplicate_table, stage-less, error_class=DuplicatedTable)
+    Note over RC: two or more nodes in the candidate topology write the same physical relation —<br/>grouped by resolved_relation_id (a dbt node's alias, when it has one, else its declared name;<br/>falls back to unique_id when a node carries no resolved_relation_id), not by unique_id alone,<br/>so two differently-named nodes that alias to the same table still collide;<br/>checked above every path that can promote — bootstrap below, nothing-to-validate below,<br/>the seed-build leg's own promotion, and the post-validation promotion<br/>Reject(reason=duplicate_table, stage-less, error_class=DuplicatedTable)<br/>per_node carries a rename target/competitor pair only for a two-claimant collision;<br/>a three-or-more-way collision is named in error_detail/failing_nodes but gets no per_node entry
     RC->>R: publish release.rejected:v1
   else bootstrap:true OR nothing to validate (in-set empty)
     Note over RC: promote directly (skip validation)<br/>current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted

@@ -112,7 +112,13 @@ Pass 3 — Resolve deps, build each node's candidate artifact, upload to S3, and
       registry, and a qualified self-reference are all left unchanged
     → upload failure: publish status=failed (error_class=CandidateArtifactUploadFailed), ACK (fatal — no partial URI emitted)
     → success: candidate_artifact_uri = s3://<bucket>/candidate-sql/<release_id>/candidate_<unique_id>.<sql|json>
-  Shape each node as {unique_id, schema_name, table_name, service_name, node_type, test_count, content_hash, image_tag, original_file_path, upstream_unique_ids, schedule, candidate_artifact_uri}
+  Shape each node as {unique_id, schema_name, table_name, resolved_relation_id, service_name, node_type, test_count, content_hash, image_tag, original_file_path, upstream_unique_ids, schedule, candidate_artifact_uri}
+    (resolved_relation_id = "<schema>.<resolved name>", lowercased, mirroring unique_id's own
+     derivation; "resolved name" is a dbt node's alias when it overrides one, else its declared
+     name — for a python node, always its declared table, since a contract has no alias concept.
+     unique_id is keyed on the DECLARED name; this is keyed on the RESOLVED one, so release-controller's
+     duplicate-relation gate can see two differently-named nodes that alias to the same physical
+     table, which unique_id alone would miss)
 
 Build the release's code bundle {contract_version, release_id, nodes, shared_code} and upload it to
   code-bundles/<release_id>/bundle.json

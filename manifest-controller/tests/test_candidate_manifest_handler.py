@@ -833,6 +833,7 @@ def test_the_dbt_topology_entry_wire_shape_is_frozen(handler_with_mocks):
         "unique_id": "test_schema.orders",
         "schema_name": "test_schema",
         "table_name": "orders",
+        "resolved_relation_id": "test_schema.orders",
         "service_name": "service-2",
         "node_type": "dbt-model",
         "test_count": 0,

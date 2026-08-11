@@ -455,3 +455,37 @@ def test_parser_seed_yields_empty_dependency_sqls():
     seed = next(n for n in nodes if n.node_type == "dbt-seed")
     assert seed.dependency_sqls == []
     assert seed.candidate_sql == ""
+
+
+def test_parse_reads_alias_when_present(tmp_path):
+    # dbt writes to <schema>.<alias>, not <schema>.<name>, when a node
+    # overrides its alias; resolved_relation must carry that override so the
+    # duplicate-relation gate groups on the relation actually written.
+    node = _minimal_node(name="orders_v2", schema="analytics", fqn=["svc", "orders_v2"],
+                          owner="o", tags=["daily"])
+    node["alias"] = "orders"
+    manifest = {"nodes": {"model.svc.orders_v2": node}}
+    path = _write(tmp_path, manifest)
+
+    nodes, _ = parse_manifest(path, "v1")
+
+    assert len(nodes) == 1
+    assert nodes[0].table_name == "orders_v2"
+    assert nodes[0].resolved_relation == "orders"
+    assert nodes[0].resolved_relation_id == "analytics.orders"
+
+
+def test_parse_falls_back_to_name_when_alias_absent(tmp_path):
+    # None of the hand-written fixtures declare `alias` — this pins the
+    # fallback that keeps them (and any real manifest node with no alias
+    # override) resolving to their own declared name.
+    node = _minimal_node(name="orders", schema="analytics", fqn=["svc", "orders"],
+                          owner="o", tags=["daily"])
+    manifest = {"nodes": {"model.svc.orders": node}}
+    path = _write(tmp_path, manifest)
+
+    nodes, _ = parse_manifest(path, "v1")
+
+    assert len(nodes) == 1
+    assert nodes[0].resolved_relation == "orders"
+    assert nodes[0].resolved_relation_id == "analytics.orders"

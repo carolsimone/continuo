@@ -260,12 +260,18 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 `duplicateTableFixer` (`service/fixer/duplicate_table.go`) resolves a naming collision — two models in the release produce the same warehouse relation — with exactly one LLM call, reusing the same single-file gather/build/interpret shape as the compile fixer (`singleFileInterpret`).
 
 ```
-1. node_type is python-model: proposal(status=skipped), done, before any read
-   is attempted. A python node's relation is declared in the service's
-   contract.yaml, not in the file file_path names (the contract's script
-   entry, a program that produces the relation but does not name it), and
-   this system carries no repository path for contract.yaml at all — so
-   reading and renaming the script could not fix the collision.
+1. node_type is python-model or dbt-seed: proposal(status=skipped), done,
+   before any read is attempted.
+   - python-model: its relation is declared in the service's contract.yaml,
+     not in the file file_path names (the contract's script entry, a program
+     that produces the relation but does not name it), and this system
+     carries no repository path for contract.yaml at all — so reading and
+     renaming the script could not fix the collision.
+   - dbt-seed: its relation name comes from the CSV filename or the
+     project's seed config, never from the CSV's own contents, so the named
+     file cannot contain the fix either — and treating an edited CSV as a
+     valid rename proposal would mean accepting an edit to the seed's DATA,
+     not its identity.
 2. Empty file_path or service on the trigger: proposal(status=skipped), done.
 3. Look up service in the service→repo mapping. Unmapped: proposal(status=skipped), done.
 4. Read the offending file at <repo_path>/<file_path> — the claimant the
@@ -393,7 +399,7 @@ Every adapter forces the same `propose_fix` tool on every call — no streaming,
 - **Validation**: two non-streaming calls per proposal. Step 1 is given the candidate SQL, sanitized dbt log, ranked upstream ancestors, and — best-effort, up to 5 most-recently-changed eligible ancestors — the diff of each ancestor's recent upstream change, and returns `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node`. Step 2 is given the real model source and the Step-1 rationale, and returns a corrected `proposed_sql`. Step 2 is made only when the file path and service resolve; a failure, empty result, unchanged result, or low-confidence result falls back silently to the Step-1 candidate proposal.
 - **Compile**: one non-streaming call per proposal. The adapter is given every gathered file (the offending file plus any co-located `.yml`/`.yaml` siblings and `dbt_project.yml`) and the sanitized dbt compile error, and returns `target_file` (which shown file to change), `proposed_content` (that file's complete corrected content), `rationale`, `confidence`, and `suspected_root_cause_node`.
 - **Seed**: one non-streaming call per proposal. The adapter is given the failing CSV and the sanitized dbt seed error, and returns `proposed_content` (the complete corrected CSV), `rationale`, and `confidence`. The seed prompt has no `suspected_root_cause_node` field — a bad seed value has no upstream node to blame.
-- **Duplicate table**: one non-streaming call per proposal, made only when the target claimant's `node_type` is a dbt kind — a python target is skipped before any call. The adapter is given the offending file (the claimant the release changed), the relation's `node_id`, and the competing producer's `other_service`/`other_file_path` — never the competing file's content — and returns `target_file`, `proposed_content` (the complete corrected file, renaming what it produces), `rationale`, and `confidence`. No dbt log is involved (there is none) and no `suspected_root_cause_node` field (a naming collision has no upstream node to blame).
+- **Duplicate table**: one non-streaming call per proposal, made only when the target claimant's `node_type` is `dbt-model` or `dbt-snapshot` — a python or dbt-seed target is skipped before any call (a python node's relation lives in contract.yaml, not the named file; a seed's relation name comes from its CSV filename or project config, not the CSV's own content, and treating an edited CSV as a proposal would mean accepting a data edit). The adapter is given the offending file (the claimant the release changed), the relation's `node_id`, and the competing producer's `other_service`/`other_file_path` — never the competing file's content — and returns `target_file`, `proposed_content` (the complete corrected file, renaming what it produces), `rationale`, and `confidence`. No dbt log is involved (there is none) and no `suspected_root_cause_node` field (a naming collision has no upstream node to blame).
 
 The `ProposeResult` struct carries all four possible fields (`proposed_sql`, `proposed_content`, `target_file`, plus `rationale`/`confidence`/`suspected_root_cause_node`/`model`) regardless of class; each fixer reads only the fields its prompt asked for. Both the Anthropic and the OpenAI-compatible adapter parse `target_file` and `proposed_content` from the tool-call arguments alongside `proposed_sql`.
 

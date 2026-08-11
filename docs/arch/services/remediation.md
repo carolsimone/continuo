@@ -105,6 +105,13 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
    For source=duplicate_table, FilePath/Service (the rename target) and
    OtherService/OtherFilePath (the competing claimant) are threaded straight
    from the payload's per_node entry, the same way seed_build's are (step 2c).
+   release-controller emits a per_node entry for a duplicate_table claim only
+   when exactly two nodes claim the relation — a rename proposal can only ever
+   target one competitor — so a three-or-more-way collision has no per_node
+   entry and this loop never visits it: no FailureEvidence, no
+   classification_decision row, and no remediation.requested:v1 trigger for
+   that claim, even though it still appears in the release's error_detail and
+   failing_nodes.
 1b. For source=duplicate_table: skip steps 2–2c entirely — the rejection
     happens at parse time, before any Job runs, so there is no dbt log or
     run_results to fetch — and classify directly via

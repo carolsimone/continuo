@@ -101,3 +101,34 @@ def test_node_type_and_runtime_enums_serialize_as_plain_strings():
     )
     assert NodeType.DBT_MODEL == "dbt-model"
     assert Runtime.PYTHON == "python"
+
+
+def _node(**over):
+    fields = dict(
+        table_name="orders", schema_name="analytics", service_name="finance",
+        owner="data-platform", schedule_name="daily", criticality="SECONDARY",
+    )
+    fields.update(over)
+    return ManifestNode(**fields)
+
+
+def test_resolved_relation_id_falls_back_to_table_name_when_unset():
+    # No resolved_relation set (e.g. a hand-built node, or one this parser
+    # never touched) — falls back to table_name, exactly like a node with no
+    # dbt alias.
+    node = _node(table_name="orders")
+    assert node.resolved_relation == ""
+    assert node.resolved_relation_id == "analytics.orders"
+
+
+def test_resolved_relation_id_uses_resolved_relation_when_set():
+    # An aliased dbt node: table_name is the declared name (used for
+    # unique_id), resolved_relation is what it actually writes.
+    node = _node(table_name="orders_v2", resolved_relation="orders")
+    assert node.unique_id == "analytics.orders_v2"
+    assert node.resolved_relation_id == "analytics.orders"
+
+
+def test_resolved_relation_id_is_lowercased():
+    node = _node(schema_name="Analytics", table_name="Orders", resolved_relation="Orders")
+    assert node.resolved_relation_id == "analytics.orders"

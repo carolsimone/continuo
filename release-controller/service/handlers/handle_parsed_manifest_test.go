@@ -1082,6 +1082,72 @@ func TestHandleParsedManifest_DuplicateTablePinsNothingToValidateShortCircuit(t 
 	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(), "current_prod must not move")
 }
 
+// A three-way collision cannot be fixed by one rename proposal: renaming the
+// target still leaves the relation claimed by the other two. It still
+// rejects, naming and failing every claimant, but contributes no per_node
+// entry — remediation would otherwise build evidence and open a trigger for a
+// proposal that could never clear the gate on its own.
+func TestHandleParsedManifest_DuplicateTableThreeWayEmitsNoPerNodeEntry(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "sales", OriginalFilePath: "models/orders.sql"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Contains(t, r.RejectDetail(), "finance (models/orders.sql)")
+	assert.Contains(t, r.RejectDetail(), "marketing (models/orders.sql)")
+	assert.Contains(t, r.RejectDetail(), "sales (models/orders.sql)")
+	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes(),
+		"all three claimants share this unique_id here, so it appears once, deduplicated")
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok, "per_node must be present, even though empty")
+	assert.Empty(t, perNode, "a three-way collision must not propose a rename")
+}
+
+// A release mixing a two-way and a three-way collision proposes a rename only
+// for the fixable one; the three-way claim still rejects the release and is
+// fully named in the detail, it just contributes no per_node entry.
+func TestHandleParsedManifest_DuplicateTableMixedTwoAndThreeWayEmitsOnlyTheTwoWayPerNodeEntry(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			// Two-way collision: analytics.customers.
+			{UniqueID: "analytics.customers", ServiceName: "finance", OriginalFilePath: "models/customers.sql"},
+			{UniqueID: "analytics.customers", ServiceName: "marketing", OriginalFilePath: "models/customers.sql"},
+			// Three-way collision: analytics.orders.
+			{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ServiceName: "sales", OriginalFilePath: "models/orders.sql"},
+		},
+	}))
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok)
+	require.Len(t, perNode, 1, "only the two-way claim proposes a rename")
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "analytics.customers", node["node_id"])
+}
+
 // A clean topology is unaffected: the gate must not reject a release whose
 // relations each have a single producer. Asserted against the specific
 // StatusValidating outcome (not merely "not Rejected") and against a real

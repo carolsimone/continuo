@@ -15,6 +15,13 @@ func nodeOfType(uniqueID, service, filePath, nodeType string) Node {
 	return Node{UniqueID: uniqueID, ServiceName: service, OriginalFilePath: filePath, NodeType: nodeType}
 }
 
+// nodeWithRelation sets ResolvedRelationID independently of UniqueID, so a
+// test can construct a claimant whose declared identity and physical relation
+// differ (an alias override) or coincide only by declared name (no alias).
+func nodeWithRelation(uniqueID, relationID, service, filePath string) Node {
+	return Node{UniqueID: uniqueID, ResolvedRelationID: relationID, ServiceName: service, OriginalFilePath: filePath}
+}
+
 // A python claimant's NodeType must survive into its Claimant so the
 // remediation fixer can tell it apart from a dbt claimant without a second
 // topology lookup.
@@ -41,10 +48,10 @@ func TestDuplicateClaims_AcrossServices(t *testing.T) {
 	claims := DuplicateClaims(topo)
 
 	require.Len(t, claims, 1)
-	assert.Equal(t, "analytics.orders", claims[0].UniqueID)
+	assert.Equal(t, "analytics.orders", claims[0].RelationID)
 	assert.Equal(t, []Claimant{
-		{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
-		{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
+		{UniqueID: "analytics.orders", ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+		{UniqueID: "analytics.orders", ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
 	}, claims[0].Claimants, "claimants are sorted by service then path")
 }
 
@@ -114,13 +121,65 @@ func TestDuplicateClaims_MultipleCollisionsSortedByUniqueID(t *testing.T) {
 	claims := DuplicateClaims(topo)
 
 	require.Len(t, claims, 2)
-	assert.Equal(t, "analytics.customers", claims[0].UniqueID)
-	assert.Equal(t, "analytics.orders", claims[1].UniqueID)
+	assert.Equal(t, "analytics.customers", claims[0].RelationID)
+	assert.Equal(t, "analytics.orders", claims[1].RelationID)
+}
+
+// Two nodes with DIFFERENT declared names (different unique_id) but the SAME
+// resolved relation (both alias to "orders") write the same warehouse table.
+// Grouping on unique_id alone would miss this entirely — the exact false
+// negative the resolved-relation field exists to close. Each claimant keeps
+// its own unique_id: they are genuinely different nodes.
+func TestDuplicateClaims_SameAliasDifferentNames_CollisionFound(t *testing.T) {
+	topo := Topology{
+		nodeWithRelation("analytics.orders_v1", "analytics.orders", "finance", "models/orders_v1.sql"),
+		nodeWithRelation("analytics.orders_v2", "analytics.orders", "marketing", "models/orders_v2.sql"),
+	}
+
+	claims := DuplicateClaims(topo)
+
+	require.Len(t, claims, 1)
+	assert.Equal(t, "analytics.orders", claims[0].RelationID)
+	require.Len(t, claims[0].Claimants, 2)
+	gotUniqueIDs := []string{claims[0].Claimants[0].UniqueID, claims[0].Claimants[1].UniqueID}
+	assert.ElementsMatch(t, []string{"analytics.orders_v1", "analytics.orders_v2"}, gotUniqueIDs,
+		"claimants of one relation collision can carry different unique_ids")
+}
+
+// Two nodes sharing a declared name (same unique_id) but resolving to
+// DIFFERENT relations must not collide. This is what lets a rename fix
+// actually clear the gate: renaming a node's alias changes its
+// resolved_relation_id while its unique_id (keyed on the declared name) can
+// stay the same — grouping on unique_id alone would reject the fixed release
+// identically to the original.
+func TestDuplicateClaims_SameNameDifferentAlias_NoCollision(t *testing.T) {
+	topo := Topology{
+		nodeWithRelation("analytics.orders", "analytics.orders_finance", "finance", "models/orders.sql"),
+		nodeWithRelation("analytics.orders", "analytics.orders_marketing", "marketing", "models/orders.sql"),
+	}
+
+	assert.Empty(t, DuplicateClaims(topo),
+		"different resolved relations must not collide even though unique_id happens to match")
+}
+
+// A node whose ResolvedRelationID is empty (a payload from before that field
+// existed, or a node the parser never set it on) falls back to its own
+// UniqueID for grouping, exactly like the pre-existing behavior.
+func TestDuplicateClaims_FallsBackToUniqueIDWhenResolvedRelationEmpty(t *testing.T) {
+	topo := Topology{
+		node("analytics.orders", "finance", "models/orders.sql"),
+		nodeWithRelation("analytics.orders", "", "marketing", "models/orders.sql"),
+	}
+
+	claims := DuplicateClaims(topo)
+
+	require.Len(t, claims, 1)
+	assert.Equal(t, "analytics.orders", claims[0].RelationID)
 }
 
 func TestDuplicateClaim_TargetPrefersChangedService(t *testing.T) {
 	c := DuplicateClaim{
-		UniqueID: "analytics.orders",
+		RelationID: "analytics.orders",
 		Claimants: []Claimant{
 			{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
 			{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
@@ -135,7 +194,7 @@ func TestDuplicateClaim_TargetPrefersChangedService(t *testing.T) {
 
 func TestDuplicateClaim_TargetFallsBackToFirstClaimant(t *testing.T) {
 	c := DuplicateClaim{
-		UniqueID: "analytics.orders",
+		RelationID: "analytics.orders",
 		Claimants: []Claimant{
 			{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
 			{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
@@ -151,7 +210,7 @@ func TestDuplicateClaim_TargetFallsBackToFirstClaimant(t *testing.T) {
 
 func TestFormatDuplicateClaims_NamesEveryClaimant(t *testing.T) {
 	claims := []DuplicateClaim{{
-		UniqueID: "analytics.orders",
+		RelationID: "analytics.orders",
 		Claimants: []Claimant{
 			{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
 			{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
@@ -168,11 +227,11 @@ func TestFormatDuplicateClaims_NamesEveryClaimant(t *testing.T) {
 
 func TestFormatDuplicateClaims_ThreeClaimantsAndTwoCollisions(t *testing.T) {
 	claims := []DuplicateClaim{
-		{UniqueID: "analytics.customers", Claimants: []Claimant{
+		{RelationID: "analytics.customers", Claimants: []Claimant{
 			{ServiceName: "finance", OriginalFilePath: "models/customers.sql"},
 			{ServiceName: "sales", OriginalFilePath: "models/customers.sql"},
 		}},
-		{UniqueID: "analytics.orders", Claimants: []Claimant{
+		{RelationID: "analytics.orders", Claimants: []Claimant{
 			{ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
 			{ServiceName: "marketing", OriginalFilePath: "models/orders.sql"},
 			{ServiceName: "sales", OriginalFilePath: "models/orders.sql"},
