@@ -87,12 +87,19 @@ class ManifestNode:
 
     @property
     def unique_id(self) -> str:
-        """The node's identity across the whole system: "<schema>.<table>".
+        """The node's identity across the whole system: "<schema>.<table>",
+        lowercased.
 
         The same string keys the topology entry, the code-bundle node map, and
         the node's candidate-artifact S3 object, so it is derived in one place.
+        It is lowercased because the warehouse lookups that resolve a reference
+        to this node already fold case (NodeRegistry.to_lookup and
+        service/rewriter.py), so two declarations differing only in case name
+        one relation and must not produce two identities. The declared
+        schema_name and table_name are left untouched — they render into SQL
+        and DDL, where the declared spelling is what addresses the relation.
         """
-        return f"{self.schema_name}.{self.table_name}"
+        return f"{self.schema_name.lower()}.{self.table_name.lower()}"
 
 
 @dataclass
