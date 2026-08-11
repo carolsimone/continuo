@@ -22,6 +22,21 @@ on:
       # after the v keeps this trigger to release tags.
       # Guarded by scripts/check-release-tag-trigger.sh.
       - 'v[0-9]*'
+  # Re-runs ONLY smoke-published-chart, against a chart version already in the
+  # registry. Every other job in this file derives its identity from the pushed
+  # tag, so all of them are gated on the push event below: on a manual run
+  # github.ref_name is a branch, which would otherwise make retag-images alias
+  # every image to `:main` and publish-chart push a chart literally versioned
+  # `main`. A dispatch run therefore publishes nothing and retags nothing — it
+  # only installs what is already public.
+  workflow_dispatch:
+    inputs:
+      smoke_version:
+        description: >-
+          Published chart version to install and verify, as bare semver with no
+          leading v (e.g. 0.2.0). Must already exist in the registry.
+        required: true
+        type: string
 
 concurrency:
   group: release-${{ github.ref }}
@@ -35,6 +50,8 @@ permissions:
 
 jobs:
   retag-images:
+    # Tag-derived, so push-only: see the workflow_dispatch comment above.
+    if: github.event_name == 'push'
     runs-on: self-hosted
     timeout-minutes: 15
     permissions:
@@ -100,12 +117,16 @@ jobs:
         run: bash scripts/release/retag-images.sh "$COMMIT" "$RELEASE_TAG" "$OWNER"
 
   install-test:
+    # Tag-derived, so push-only: see the workflow_dispatch comment above.
+    if: github.event_name == 'push'
     needs: retag-images
     uses: ./.github/workflows/install-test.yml
     with:
       image_tag: ${{ github.ref_name }}
 
   publish-chart:
+    # Tag-derived, so push-only: see the workflow_dispatch comment above.
+    if: github.event_name == 'push'
     needs:
       - retag-images
       - install-test
@@ -144,10 +165,87 @@ jobs:
           grep -qx "version: ${VERSION}" /tmp/chart-verify/chart-meta.yaml
           grep -qx "appVersion: ${GITHUB_REF_NAME}" /tmp/chart-verify/chart-meta.yaml
 
+  # install-test above proves the templates work when handed a known-good image
+  # tag: it installs the deploy/continuo directory — whose Chart.yaml carries
+  # the 0.0.0-dev appVersion placeholder — with an explicit
+  # --set global.imageTag. The packaged artifact differs in the one way that
+  # matters to a user: it carries the stamped appVersion, and continuo.image
+  # falls back to Chart.AppVersion whenever global.imageTag is unset, which is
+  # precisely what a plain `helm install ... --version X.Y.Z` does. Nothing else
+  # in CI ever executes that fallback, and nothing else installs the tarball
+  # rather than the source tree, so a file dropped by .helmignore or an image
+  # the stamped appVersion names but that does not exist would reach users
+  # through a fully green pipeline. This job closes that: install what was just
+  # published, override no images, and require the release to serve.
+  smoke-published-chart:
+    needs:
+      - retag-images
+      - publish-chart
+    # !cancelled() is required: on a manual run both jobs above are skipped,
+    # and the implicit success() is chain-wide, so without the override this
+    # job would skip too and the dispatch would do nothing at all. On a tag
+    # push both must genuinely have succeeded, hence the explicit result
+    # checks rather than a bare !cancelled().
+    if: >-
+      !cancelled() &&
+      (github.event_name == 'workflow_dispatch' ||
+        (needs.retag-images.result == 'success' &&
+         needs.publish-chart.result == 'success'))
+    # The `kind` label is REQUIRED, not decorative — only one agent on the box
+    # carries it, so requiring it makes GitHub's scheduler serialize this
+    # against the other kind-creating jobs rather than letting two runs build
+    # clusters on the same box at once.
+    runs-on: [self-hosted, kind]
+    timeout-minutes: 30
+    env:
+      # Derived from the tag on a release, supplied by the operator on a manual
+      # run. smoke_version is a required input, so it is never the empty string
+      # that GitHub's && / || ternary would treat as false and fall through on.
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.smoke_version || needs.retag-images.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Isolate Docker client state
+        # Without this, a concurrent job's docker/login-action post step logs
+        # out and this job's image pulls lose their ghcr credentials mid-flight.
+        uses: ./.github/actions/isolate-docker-state
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.14.0
+        with:
+          cluster_name: smoke-published
+
+      - name: Install the published chart with no image override
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          # Anonymous pull through a registry config this job owns. A plain
+          # `helm registry logout` would clear credentials that the runner's
+          # other jobs share; an empty auths map instead proves the chart and
+          # its images are reachable the way a stranger reaches them.
+          printf '{"auths":{}}' > "${GITHUB_WORKSPACE}/.helm-anon-registry.json"
+          export HELM_REGISTRY_CONFIG="${GITHUB_WORKSPACE}/.helm-anon-registry.json"
+          export CHART="oci://ghcr.io/${OWNER}/charts/continuo"
+          export CHART_VERSION="${VERSION}"
+          bash scripts/install-test/run.sh bundled chart-default
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: bash scripts/install-test/diagnose.sh
+
+      - name: Delete kind cluster
+        # The agent is long-lived, so an abandoned cluster would sit on the box
+        # holding memory and a fixed name until something else tripped over it.
+        if: always()
+        run: kind delete cluster --name smoke-published
+
   # Publishes the GitHub Release for the tag. Runs last, so a Release only exists
-  # once the images are retagged, the install test passed, and the chart is pushed
-  # and verified — the Release is therefore a truthful marker that the artifacts
-  # a reader will go looking for are actually there.
+  # once the images are retagged, the install test passed, the chart is pushed
+  # and verified, and the published chart itself installs — the Release is
+  # therefore a truthful marker that the artifacts a reader will go looking for
+  # are actually there and actually work.
   #
   # Body comes from the matching section of deploy/continuo/CHANGELOG.md. That file
   # is already mandatory for any chart-surface change (scripts/install-test/changelog-check.sh),
@@ -156,10 +254,14 @@ jobs:
   # than failing the release — the artifacts are already published by this point and
   # a missing changelog entry is not worth blocking on.
   github-release:
+    # Tag-derived, so push-only: see the workflow_dispatch comment above. A
+    # manual smoke run has no tag to cut a Release for.
+    if: github.event_name == 'push'
     needs:
       - retag-images
       - install-test
       - publish-chart
+      - smoke-published-chart
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

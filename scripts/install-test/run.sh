@@ -1,28 +1,48 @@
 #!/usr/bin/env bash
-# Install the deploy/continuo chart into the CURRENT kubectl context (a
-# throwaway kind cluster in CI) and verify the release comes up healthy.
+# Install the continuo chart into the CURRENT kubectl context (a throwaway
+# kind cluster in CI) and verify the release comes up healthy.
 #
-# Usage: run.sh <bundled|byo-inline|byo-secret> <image-tag>
+# Usage: run.sh <bundled|byo-inline|byo-secret> <image-tag|chart-default>
 #   bundled     quickstart defaults: bundled Postgres/Redis/Neo4j/MinIO/Dex
 #   byo-inline  external datastores, credentials inline in values
 #   byo-secret  external datastores, credentials from a pre-created Secret
 #
 # The image tag names published ghcr images (linux/amd64): PR runs pass
-# "latest", release runs pass the vX.Y.Z tag being published.
+# "latest", release runs pass the vX.Y.Z tag being published. The literal
+# "chart-default" passes no global.imageTag at all, so the chart resolves
+# every image from its own Chart.AppVersion instead — the path a user gets
+# when they install the published chart without overriding anything.
+#
+# Environment:
+#   CHART          chart to install; defaults to the in-repo directory. Set to
+#                  an oci:// reference to install a published package instead.
+#   CHART_VERSION  chart version to install; required for an oci:// CHART,
+#                  meaningless for the directory (which carries a placeholder).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source scripts/lib/common.sh
 
-MODE="${1:?usage: run.sh <bundled|byo-inline|byo-secret> <image-tag>}"
-IMAGE_TAG="${2:?usage: run.sh <bundled|byo-inline|byo-secret> <image-tag>}"
+MODE="${1:?usage: run.sh <bundled|byo-inline|byo-secret> <image-tag|chart-default>}"
+IMAGE_TAG="${2:?usage: run.sh <bundled|byo-inline|byo-secret> <image-tag|chart-default>}"
 NS=continuo
 RELEASE=continuo
-CHART=deploy/continuo
+CHART="${CHART:-deploy/continuo}"
 FIXTURES=scripts/install-test
 
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 
-helm_args=(--set "global.imageTag=${IMAGE_TAG}" -f "${FIXTURES}/values-ci-resources.yaml")
+# values-ci-resources.yaml only shrinks requests/limits so the release fits a
+# CI node; it does not touch image selection, so the AppVersion path below is
+# still exercised exactly as a user would get it.
+helm_args=(-f "${FIXTURES}/values-ci-resources.yaml")
+if [ "$IMAGE_TAG" = "chart-default" ]; then
+  log_info "no global.imageTag override: images resolve from the chart's AppVersion"
+else
+  helm_args+=(--set "global.imageTag=${IMAGE_TAG}")
+fi
+if [ -n "${CHART_VERSION:-}" ]; then
+  helm_args+=(--version "${CHART_VERSION}")
+fi
 case "$MODE" in
   bundled) ;;
   byo-inline|byo-secret)
