@@ -269,6 +269,41 @@ func TestReleaseRepository_RoundTripsRejectDetail(t *testing.T) {
 		got.RejectDetail())
 }
 
+// TestReleaseRepository_List_IncludesRejectDetail guards against List's SELECT
+// silently dropping reject_detail. List returns the same fully-hydrated
+// Release aggregate as Get/Load/NextQueuedRelease/ActiveRelease, so a caller
+// reading RejectDetail() off a List result must see the same value Get would
+// return for that row — not a permanently empty string because List's column
+// list forgot one column the other four queries carry.
+func TestReleaseRepository_List_IncludesRejectDetail(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db, nil)
+	ctx := context.Background()
+
+	r := release.New("rel-list-detail", "finance", "tag", false, "owner/repo", "abc123",
+		release.ManifestKindDbt, time.Unix(200, 0).UTC())
+	require.NoError(t, r.TransitionToParsing(time.Unix(201, 0).UTC()))
+	require.NoError(t, r.TransitionToRejected("duplicate_table",
+		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
+		[]string{"analytics.orders"}, time.Unix(202, 0).UTC()))
+	require.NoError(t, repo.Save(ctx, r))
+
+	rejected := "rejected"
+	items, _, err := repo.List(ctx, repository.ListFilter{Status: &rejected, Limit: 10})
+	require.NoError(t, err)
+
+	var got *release.Release
+	for _, item := range items {
+		if item.ID() == "rel-list-detail" {
+			got = item
+		}
+	}
+	require.NotNil(t, got, "rel-list-detail must be present in the List result")
+	assert.Equal(t,
+		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
+		got.RejectDetail())
+}
+
 func TestReleaseRepository_DeleteResolvedBeforeKeepsCurrentProd(t *testing.T) {
 	db := openTestDB(t)
 	repo := postgres.NewReleaseRepository(db, nil)

@@ -264,7 +264,7 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 	}
 	args = append(args, limit+1)
 	query := fmt.Sprintf(`SELECT release_id, status, image_tags, changed_service,
-	        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
+	        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 	        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 	 FROM releases %s
 	 ORDER BY created_at DESC, release_id DESC
