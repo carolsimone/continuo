@@ -62,7 +62,7 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 }
 
 func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
-	if err := r.TransitionToRejected("parse_failed", nil, now); err != nil {
+	if err := r.TransitionToRejected("parse_failed", in.ErrorDetail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
@@ -445,7 +445,7 @@ func unionSorted(a, b []string) []string {
 // therefore cannot be built into the candidate schema.
 func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
 	detail := formatCrossServiceEdges(edges)
-	if err := r.TransitionToRejected("unbuildable_cross_service_upstream", nil, now); err != nil {
+	if err := r.TransitionToRejected("unbuildable_cross_service_upstream", detail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {

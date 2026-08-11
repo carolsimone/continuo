@@ -96,7 +96,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		}
 
 		r.RecordStageResults("compile", results)
-		if err := r.TransitionToRejected(reason, failing, now); err != nil {
+		if err := r.TransitionToRejected(reason, errorDetail, failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
 		if err := u.ReleaseRepo().Save(ctx, r); err != nil {

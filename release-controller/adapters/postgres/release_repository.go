@@ -52,6 +52,7 @@ type releaseRow struct {
 	CandidateTopology []byte         `db:"candidate_topology"`
 	ValidationNodeIDs pq.StringArray `db:"validation_node_ids"`
 	RejectReason      sql.NullString `db:"reject_reason"`
+	RejectDetail      string         `db:"reject_detail"`
 	FailingNodes      pq.StringArray `db:"failing_nodes"`
 	PerNodeResults    []byte         `db:"per_node_results"`
 	CreatedAt         sql.NullTime   `db:"created_at"`
@@ -68,7 +69,7 @@ func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Releas
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
-		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
+		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE release_id = $1`, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -87,7 +88,7 @@ func (r *ReleaseRepository) Load(ctx context.Context, id string) (*release.Relea
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
-		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
+		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE release_id = $1 FOR UPDATE`, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -105,7 +106,7 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
-		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
+		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE status = 'received'
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
@@ -124,7 +125,7 @@ func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release
 	var row releaseRow
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
-		        candidate_topology, validation_node_ids, reject_reason, failing_nodes,
+		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE status IN ('compiling','parsing','seed_building','validating')
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
@@ -165,22 +166,23 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 	_, err = r.q.ExecContext(ctx,
 		`INSERT INTO releases (
 		   release_id, status, image_tags, changed_service,
-		   candidate_topology, validation_node_ids, reject_reason, failing_nodes,
+		   candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		   per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
-		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		 ON CONFLICT (release_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
 		   candidate_topology = EXCLUDED.candidate_topology,
 		   validation_node_ids = EXCLUDED.validation_node_ids,
 		   reject_reason = EXCLUDED.reject_reason,
+		   reject_detail = EXCLUDED.reject_detail,
 		   failing_nodes = EXCLUDED.failing_nodes,
 		   per_node_results = EXCLUDED.per_node_results,
 		   transitions = EXCLUDED.transitions,
 		   code_bundle_uri = EXCLUDED.code_bundle_uri`,
 		rel.ID(), string(rel.Status()),
 		imageTagsJSON, rel.ChangedService(), topoJSON, pq.StringArray(rel.ValidationNodeIDs()),
-		rejectReason, pq.StringArray(rel.FailingNodes()), perNodeJSON,
+		rejectReason, rel.RejectDetail(), pq.StringArray(rel.FailingNodes()), perNodeJSON,
 		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap(), rel.Repo(), rel.CommitSHA(), rel.CodeBundleURI(),
 		string(rel.ManifestKind()))
 	if err != nil {
@@ -223,6 +225,7 @@ func rowToRelease(row releaseRow) (*release.Release, error) {
 		CandidateTopology: topo,
 		ValidationNodeIDs: []string(row.ValidationNodeIDs),
 		RejectReason:      row.RejectReason.String,
+		RejectDetail:      row.RejectDetail,
 		FailingNodes:      []string(row.FailingNodes),
 		PerNodeResults:    perNode,
 		CreatedAt:         row.CreatedAt.Time,

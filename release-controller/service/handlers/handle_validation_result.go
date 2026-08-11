@@ -239,7 +239,7 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 // projection write was permanently dropped may be absent from the read model, in
 // which case only present, non-ok nodes appear in failing.
 func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing []string, now time.Time) error {
-	if err := r.TransitionToRejected("validation_failed", failing, now); err != nil {
+	if err := r.TransitionToRejected("validation_failed", "", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {

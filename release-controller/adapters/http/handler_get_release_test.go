@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/stretchr/testify/assert"
@@ -60,7 +61,23 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 	assert.Equal(t, "acme/demo", decoded["repo"])
 	assert.Equal(t, "deadbeefcafe1234", decoded["commit_sha"])
 	// Guard the full response shape so an accidental field drop in the extracted
-	// helper is caught: 10 pre-existing keys plus repo + commit_sha.
-	assert.Len(t, decoded, 12)
+	// helper is caught: 11 pre-existing keys plus repo + commit_sha.
+	assert.Len(t, decoded, 13)
 	assert.Equal(t, "rPROV", decoded["release_id"])
+}
+
+func TestGetReleaseResponse_IncludesRejectDetail(t *testing.T) {
+	r := release.New("rel-1", "finance", "tag", false, "owner/repo", "abc123",
+		release.ManifestKindDbt, time.Unix(1, 0).UTC())
+	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
+	require.NoError(t, r.TransitionToRejected("duplicate_table",
+		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
+		[]string{"analytics.orders"}, time.Unix(3, 0).UTC()))
+
+	body := getReleaseResponse(r)
+
+	assert.Equal(t, "duplicate_table", body["reject_reason"])
+	assert.Equal(t,
+		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
+		body["reject_detail"])
 }

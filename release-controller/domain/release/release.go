@@ -90,6 +90,7 @@ type Release struct {
 	validationNodeIDs   []string
 	perNodeResults      []NodeValidationResult
 	rejectReason        string
+	rejectDetail        string
 	failingNodes        []string
 	createdAt           time.Time
 	parsingStartedAt    *time.Time
@@ -141,6 +142,11 @@ func (r *Release) SetCodeBundleURI(uri string)            { r.codeBundleURI = ur
 func (r *Release) CandidateTopology() Topology            { return r.candidateTopology }
 func (r *Release) ValidationNodeIDs() []string            { return r.validationNodeIDs }
 func (r *Release) RejectReason() string                   { return r.rejectReason }
+
+// RejectDetail is the operator-facing explanation of why the release was
+// rejected — the same string carried in release.rejected:v1's error_detail.
+// Empty when the reject path supplied none.
+func (r *Release) RejectDetail() string { return r.rejectDetail }
 func (r *Release) FailingNodes() []string                 { return r.failingNodes }
 func (r *Release) PerNodeResults() []NodeValidationResult { return r.perNodeResults }
 func (r *Release) CreatedAt() time.Time                   { return r.createdAt }
@@ -296,13 +302,17 @@ func (r *Release) TransitionToPromoted(now time.Time) error {
 	return nil
 }
 
-func (r *Release) TransitionToRejected(reason string, failingNodes []string, now time.Time) error {
+// TransitionToRejected ends the release in Rejected. detail is the
+// operator-facing explanation shown on the release page and carried as
+// error_detail on release.rejected:v1; pass "" when the path has none.
+func (r *Release) TransitionToRejected(reason, detail string, failingNodes []string, now time.Time) error {
 	if r.status != StatusReceived && r.status != StatusCompiling &&
 		r.status != StatusParsing && r.status != StatusSeedBuilding && r.status != StatusValidating {
 		return fmt.Errorf("cannot transition to rejected from %s", r.status)
 	}
 	r.status = StatusRejected
 	r.rejectReason = reason
+	r.rejectDetail = detail
 	r.failingNodes = failingNodes
 	r.resolvedAt = &now
 	r.transitions = append(r.transitions, Transition{To: StatusRejected, At: now})
@@ -320,6 +330,7 @@ type RehydrateInput struct {
 	ValidationNodeIDs []string
 	PerNodeResults    []NodeValidationResult
 	RejectReason      string
+	RejectDetail      string
 	FailingNodes      []string
 	CreatedAt         time.Time
 	Transitions       []Transition
@@ -342,6 +353,7 @@ func Rehydrate(in RehydrateInput) *Release {
 		validationNodeIDs: in.ValidationNodeIDs,
 		perNodeResults:    in.PerNodeResults,
 		rejectReason:      in.RejectReason,
+		rejectDetail:      in.RejectDetail,
 		failingNodes:      in.FailingNodes,
 		createdAt:         in.CreatedAt,
 		transitions:       in.Transitions,

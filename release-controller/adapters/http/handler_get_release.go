@@ -16,6 +16,7 @@ func getReleaseResponse(rel *release.Release) map[string]any {
 		"transitions":         rel.Transitions(),
 		"validation_node_ids": rel.ValidationNodeIDs(),
 		"reject_reason":       rel.RejectReason(),
+		"reject_detail":       rel.RejectDetail(),
 		"failing_nodes":       rel.FailingNodes(),
 		"per_node_results":    rel.PerNodeResults(),
 		"image_tags":          rel.ImageTags(),

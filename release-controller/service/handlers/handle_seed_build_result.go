@@ -62,7 +62,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 	}
 
 	r.RecordStageResults("seed_build", results)
-	if err := r.TransitionToRejected("seed_build_failed", failing, now); err != nil {
+	if err := r.TransitionToRejected("seed_build_failed", in.ErrorDetail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {

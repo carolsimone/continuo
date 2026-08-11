@@ -220,7 +220,7 @@ func TestReleaseRepository_ListFiltersByStatus(t *testing.T) {
 	b := release.New("rb", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(101, 0).UTC())
 	require.NoError(t, b.TransitionToParsing(time.Unix(102, 0).UTC()))
 	require.NoError(t, b.TransitionToValidating(nil, nil, time.Unix(103, 0).UTC()))
-	require.NoError(t, b.TransitionToRejected("validation_failed", []string{"x"}, time.Unix(104, 0).UTC()))
+	require.NoError(t, b.TransitionToRejected("validation_failed", "", []string{"x"}, time.Unix(104, 0).UTC()))
 	require.NoError(t, repo.Save(ctx, b))
 
 	rejected := "rejected"
@@ -238,13 +238,35 @@ func TestReleaseRepository_PerNodeResultsRoundTrip(t *testing.T) {
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(102, 0).UTC()))
 	r.RecordValidationResults([]release.NodeValidationResult{{NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 9}})
-	require.NoError(t, r.TransitionToRejected("validation_failed", []string{"a"}, time.Unix(103, 0).UTC()))
+	require.NoError(t, r.TransitionToRejected("validation_failed", "", []string{"a"}, time.Unix(103, 0).UTC()))
 	require.NoError(t, repo.Save(ctx, r))
 
 	got, err := repo.Get(ctx, "rp")
 	require.NoError(t, err)
 	require.Len(t, got.PerNodeResults(), 1)
 	assert.Equal(t, "k/a.log", got.PerNodeResults()[0].DBTLogURI)
+}
+
+func TestReleaseRepository_RoundTripsRejectDetail(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db, nil)
+	ctx := context.Background()
+
+	r := release.New("rel-detail", "finance", "tag", false, "owner/repo", "abc123",
+		release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
+	require.NoError(t, r.TransitionToRejected("duplicate_table",
+		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
+		[]string{"analytics.orders"}, time.Unix(102, 0).UTC()))
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rel-detail")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "duplicate_table", got.RejectReason())
+	assert.Equal(t,
+		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
+		got.RejectDetail())
 }
 
 func TestReleaseRepository_DeleteResolvedBeforeKeepsCurrentProd(t *testing.T) {
@@ -255,7 +277,7 @@ func TestReleaseRepository_DeleteResolvedBeforeKeepsCurrentProd(t *testing.T) {
 		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
-		require.NoError(t, r.TransitionToRejected("validation_failed", nil, time.Unix(ts+3, 0).UTC()))
+		require.NoError(t, r.TransitionToRejected("validation_failed", "", nil, time.Unix(ts+3, 0).UTC()))
 		require.NoError(t, repo.Save(ctx, r))
 	}
 	mkPromoted := func(id string, ts int64) {
@@ -525,7 +547,7 @@ func TestReleaseRepository_DeleteResolvedBefore_DeletesCandidateSQLPrefixes(t *t
 		r := release.New(id, "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(ts, 0).UTC())
 		require.NoError(t, r.TransitionToParsing(time.Unix(ts+1, 0).UTC()))
 		require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(ts+2, 0).UTC()))
-		require.NoError(t, r.TransitionToRejected("validation_failed", nil, time.Unix(ts+3, 0).UTC()))
+		require.NoError(t, r.TransitionToRejected("validation_failed", "", nil, time.Unix(ts+3, 0).UTC()))
 		repo := postgres.NewReleaseRepository(db, nil)
 		require.NoError(t, repo.Save(ctx, r))
 	}
