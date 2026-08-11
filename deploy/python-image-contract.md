@@ -59,6 +59,22 @@ Nothing else is injected. In particular your image never receives S3
 credentials, and the pod has no init containers and no mounted volumes: your
 contract files and scripts travel inside the image itself.
 
+## Run as a non-root user
+
+The Job's container drops every Linux capability and forbids privilege
+escalation, but it sets no uid — the user is left to your image, exactly as it
+is for dbt images. The runtime base declares no non-root user, so **declare one
+yourself**:
+
+```dockerfile
+USER 65532:65532
+```
+
+The harness only reads the contracts and scripts baked into the image and
+writes solely to the warehouse, so an unprivileged uid needs no ownership
+changes. The e2e fixture in this repository
+(`tests/e2e/fixtures/py-probe/Dockerfile`) does this and is the worked example.
+
 ## Which operations reach your image
 
 Only `run` and `build`, and both dispatch identically. A python node's contract
