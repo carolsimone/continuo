@@ -23,7 +23,7 @@ func TestDuplicateTable_ReadsOnlyTheChangedFileAndProposesARename(t *testing.T) 
 		ServiceRepoPaths: map[string]string{"marketing": "services/marketing", "finance": "services/finance"},
 	}
 	in := Input{
-		Source: "duplicate_table", ReleaseID: "rel-1", NodeID: "analytics.orders",
+		Source: "duplicate_table", ReleaseID: "rel-1", NodeID: "analytics.orders_v2", RelationID: "analytics.orders",
 		Repo: "owner/repo", CommitSHA: "abc123", Service: "marketing", FilePath: "models/orders.sql",
 		NodeType: "dbt-model", OtherService: "finance", OtherFilePath: "services/finance/models/orders.sql", Attempt: 1,
 	}
@@ -40,8 +40,15 @@ func TestDuplicateTable_ReadsOnlyTheChangedFileAndProposesARename(t *testing.T) 
 	if len(llm.requests) != 1 {
 		t.Fatalf("expected 1 LLM call, got %d", len(llm.requests))
 	}
+	// The prompt must name the contested RELATION, not the target's own node
+	// id — the two differ here because the target carries no alias override
+	// yet while the relation ("analytics.orders") is the name both claimants
+	// currently race for.
 	if !strings.Contains(llm.requests[0].User, "analytics.orders") {
 		t.Fatalf("prompt missing the contested relation: %q", llm.requests[0].User)
+	}
+	if strings.Contains(llm.requests[0].User, "analytics.orders_v2") {
+		t.Fatalf("prompt must name the contested relation, not the target's own node id: %q", llm.requests[0].User)
 	}
 	if !strings.Contains(llm.requests[0].User, "finance") {
 		t.Fatalf("prompt missing the competing service: %q", llm.requests[0].User)

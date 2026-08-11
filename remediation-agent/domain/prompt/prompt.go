@@ -175,9 +175,14 @@ Rules:
 // content — so the model can choose a distinguishing name without reading the
 // other source. The path matters because both producers can belong to one
 // service, where the service name alone identifies nothing.
-func AssembleDuplicateTableFix(file NamedFile, uniqueID, otherService, otherFilePath string) ProposeRequest {
+//
+// relationID is the contested physical relation, not the target model's own
+// unique_id — the two differ whenever the target already carries an alias.
+// Naming the target's unique_id here would tell the model to stop producing
+// a relation it may not even write.
+func AssembleDuplicateTableFix(file NamedFile, relationID, otherService, otherFilePath string) ProposeRequest {
 	var u strings.Builder
-	fmt.Fprintf(&u, "Relation: %s\n", uniqueID)
+	fmt.Fprintf(&u, "Relation: %s\n", relationID)
 	fmt.Fprintf(&u, "Also produced by: %s (%s)\n\n", otherService, otherFilePath)
 	fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", file.Path, file.Content)
 	u.WriteString("Return the complete corrected content of this file, renaming what it produces so it no longer collides.")

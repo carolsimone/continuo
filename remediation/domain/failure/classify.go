@@ -107,13 +107,22 @@ func ClassifyWithStructured(ev FailureEvidence, structured *StructuredResult, lo
 // ClassifyDuplicateTable classifies a duplicate-relation rejection from the
 // evidence alone. It reads no log: the rejection happens at parse time, before
 // any Job runs, so there is none, and the log-driven rules would label a
-// naming conflict unknown:log_unavailable. The signature keys on the relation,
-// not the release, so the same collision recurring across releases folds to
-// one signature.
+// naming conflict unknown:log_unavailable. The signature keys on the
+// contested relation, not the release and not the target claimant's own
+// node id: the target flips between releases (Target prefers whichever
+// service the release actually changed), so keying on node id would fork one
+// physical collision into two signatures the moment the changed service
+// alternates. RelationID falls back to NodeID when empty (a trigger from
+// before the field existed), which keeps this degenerate-but-safe for the
+// duration of a rollout.
 func ClassifyDuplicateTable(ev FailureEvidence) Classification {
+	relationID := ev.RelationID
+	if relationID == "" {
+		relationID = ev.NodeID
+	}
 	return Classification{
 		Category:  CategoryLogic,
-		Signature: NormalizeSignature(CategoryLogic, "duplicate_table "+ev.NodeID),
+		Signature: NormalizeSignature(CategoryLogic, "duplicate_table "+relationID),
 		Decision:  DecisionEmit,
 		Reason:    "logic:duplicate_table",
 	}

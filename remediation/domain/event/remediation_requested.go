@@ -29,10 +29,15 @@ func AggregateIDForRelease(releaseID string) uuid.UUID {
 // failing node. It carries no error text — the agent reads the full log from
 // DBTLogURI and redacts before any external-LLM call.
 type RemediationRequested struct {
-	EventID              string `json:"event_id"`
-	Source               string `json:"source"`
-	ReleaseID            string `json:"release_id"`
-	NodeID               string `json:"node_id"`
+	EventID   string `json:"event_id"`
+	Source    string `json:"source"`
+	ReleaseID string `json:"release_id"`
+	NodeID    string `json:"node_id"`
+	// RelationID is the contested physical relation for a duplicate_table
+	// trigger, distinct from NodeID (the target claimant's own unique_id) —
+	// the two differ whenever the target carries an alias. Empty for every
+	// other source.
+	RelationID           string `json:"relation_id,omitempty"`
 	Category             string `json:"category"`
 	ErrorSignature       string `json:"error_signature"`
 	DBTLogURI            string `json:"dbt_log_uri"`

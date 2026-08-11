@@ -280,7 +280,8 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	ev := failure.FailureEvidence{
 		Source:        failure.SourceDuplicateTable,
 		ReleaseID:     "rel-1",
-		NodeID:        "analytics.orders",
+		NodeID:        "analytics.orders_v2",
+		RelationID:    "analytics.orders",
 		Service:       "marketing",
 		FilePath:      "models/orders.sql",
 		NodeType:      "dbt-model",
@@ -311,6 +312,12 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
 	if p.Source != "duplicate_table" {
 		t.Fatalf("trigger source = %q, want duplicate_table", p.Source)
+	}
+	if p.NodeID != "analytics.orders_v2" {
+		t.Fatalf("trigger node_id = %q, want analytics.orders_v2", p.NodeID)
+	}
+	if p.RelationID != "analytics.orders" {
+		t.Fatalf("trigger relation_id = %q, want analytics.orders", p.RelationID)
 	}
 	if p.Service != "marketing" {
 		t.Fatalf("trigger service = %q, want marketing", p.Service)

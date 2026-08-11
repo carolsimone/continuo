@@ -15,6 +15,7 @@ var requestedPayloadFixture = map[string]any{
 	"source":                 "validation",
 	"release_id":             "rel-456",
 	"node_id":                "orders.model.orders_daily",
+	"relation_id":            "analytics.orders_daily",
 	"category":               "sql_syntax_error",
 	"error_signature":        "column \"foo\" does not exist",
 	"dbt_log_uri":            "s3://bucket/logs/orders_daily.log",
@@ -43,6 +44,7 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 	require.Equal(t, "validation", trigger.Source)
 	require.Equal(t, "rel-456", trigger.ReleaseID)
 	require.Equal(t, "orders.model.orders_daily", trigger.NodeID)
+	require.Equal(t, "analytics.orders_daily", trigger.RelationID)
 	require.Equal(t, "sql_syntax_error", trigger.Category)
 	require.Equal(t, "column \"foo\" does not exist", trigger.ErrorSignature)
 	require.Equal(t, "s3://bucket/logs/orders_daily.log", trigger.DBTLogURI)

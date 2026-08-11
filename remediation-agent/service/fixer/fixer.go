@@ -24,9 +24,15 @@ import (
 // error class actually needs it, so a class that can skip early does not depend
 // on the log being readable.
 type Input struct {
-	Source         string
-	ReleaseID      string
-	NodeID         string
+	Source    string
+	ReleaseID string
+	NodeID    string
+	// RelationID is the contested physical relation for a duplicate-relation
+	// failure, distinct from NodeID (the target claimant's own unique_id) —
+	// the two differ whenever the target already carries an alias. The
+	// duplicate-table Fixer's prompt names RelationID, not NodeID, as the
+	// relation the model must stop producing.
+	RelationID     string
 	ErrorSignature string
 	Repo           string
 	CommitSHA      string

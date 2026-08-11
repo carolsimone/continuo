@@ -101,7 +101,7 @@ func duplicateTableGather(ctx context.Context, svc Services, in Input) (Gathered
 func duplicateTableBuild(svc Services, g Gathered, in Input, _ string) prompt.ProposeRequest {
 	return prompt.AssembleDuplicateTableFix(
 		prompt.NamedFile{Path: g.Primary, Content: svc.Sanitizer.Sanitize(g.Files[g.Primary])},
-		in.NodeID,
+		in.RelationID,
 		in.OtherService,
 		in.OtherFilePath,
 	)

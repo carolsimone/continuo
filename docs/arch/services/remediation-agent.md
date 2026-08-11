@@ -106,13 +106,16 @@ This is the only GitHub write-adjacent surface remediation-agent reads from besi
 The driver in `service/handlers/propose_fix.go` runs for every trigger regardless of error class. It owns everything that is not class-specific; the class-specific work is delegated to a `Fixer`.
 
 ```
-1. Decode trigger: extract source, release_id, node_id, error_signature,
-   category, dbt_log_uri, candidate_artifact_uri, file_path, service,
-   node_type, other_service, other_file_path, repo, commit_sha. node_type is
-   the target claimant's kind (dbt-model, dbt-seed, dbt-snapshot,
+1. Decode trigger: extract source, release_id, node_id, relation_id,
+   error_signature, category, dbt_log_uri, candidate_artifact_uri, file_path,
+   service, node_type, other_service, other_file_path, repo, commit_sha.
+   node_type is the target claimant's kind (dbt-model, dbt-seed, dbt-snapshot,
    python-model); other_service/other_file_path locate the competing node
-   that also produces node_id. Both are set only on a duplicate_table
-   trigger, empty otherwise.
+   that also produces the contested relation. relation_id is the contested
+   physical relation itself, distinct from node_id (the target claimant's own
+   unique_id) — the two differ whenever the target already carries an alias.
+   node_type, other_service, other_file_path, and relation_id are all set
+   only on a duplicate_table trigger, empty otherwise.
 
 1a. Read-only dedup pre-check (no write): before any row is written, check
     whether this trigger was already handled, on either dedup axis scoped to the
@@ -282,13 +285,16 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
    - Any other error: return it (transient; message redelivered).
 5. No dbt log is fetched at any point: a duplicate-relation rejection happens
    at parse time, before any Job runs, so there is none to read.
-6. Make a single forced propose_fix LLM tool call naming the relation
-   (node_id), the competing producer (other_service, other_file_path), and
-   the offending file's sanitized content, instructing the model to rename
-   only what the file produces (alias, configured schema, or model name)
-   without altering its logic, columns, or ordering. The model returns
-   target_file and proposed_content (no suspected_root_cause_node — a naming
-   collision has no upstream node to blame).
+6. Make a single forced propose_fix LLM tool call naming the contested
+   relation (relation_id, not node_id — the two differ once the target
+   carries an alias, and naming node_id would tell the model to stop
+   producing a relation it may not even write), the competing producer
+   (other_service, other_file_path), and the offending file's sanitized
+   content, instructing the model to rename only what the file produces
+   (alias, configured schema, or model name) without altering its logic,
+   columns, or ordering. The model returns target_file and proposed_content
+   (no suspected_root_cause_node — a naming collision has no upstream node to
+   blame).
    - LLM transient error → retry.
 7. Interpret the result via the same singleFileInterpret used by the compile
    fixer: target_file must resolve to the one shown file (exact or unambiguous
@@ -399,7 +405,7 @@ Every adapter forces the same `propose_fix` tool on every call — no streaming,
 - **Validation**: two non-streaming calls per proposal. Step 1 is given the candidate SQL, sanitized dbt log, ranked upstream ancestors, and — best-effort, up to 5 most-recently-changed eligible ancestors — the diff of each ancestor's recent upstream change, and returns `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node`. Step 2 is given the real model source and the Step-1 rationale, and returns a corrected `proposed_sql`. Step 2 is made only when the file path and service resolve; a failure, empty result, unchanged result, or low-confidence result falls back silently to the Step-1 candidate proposal.
 - **Compile**: one non-streaming call per proposal. The adapter is given every gathered file (the offending file plus any co-located `.yml`/`.yaml` siblings and `dbt_project.yml`) and the sanitized dbt compile error, and returns `target_file` (which shown file to change), `proposed_content` (that file's complete corrected content), `rationale`, `confidence`, and `suspected_root_cause_node`.
 - **Seed**: one non-streaming call per proposal. The adapter is given the failing CSV and the sanitized dbt seed error, and returns `proposed_content` (the complete corrected CSV), `rationale`, and `confidence`. The seed prompt has no `suspected_root_cause_node` field — a bad seed value has no upstream node to blame.
-- **Duplicate table**: one non-streaming call per proposal, made only when the target claimant's `node_type` is `dbt-model` or `dbt-snapshot` — a python or dbt-seed target is skipped before any call (a python node's relation lives in contract.yaml, not the named file; a seed's relation name comes from its CSV filename or project config, not the CSV's own content, and treating an edited CSV as a proposal would mean accepting a data edit). The adapter is given the offending file (the claimant the release changed), the relation's `node_id`, and the competing producer's `other_service`/`other_file_path` — never the competing file's content — and returns `target_file`, `proposed_content` (the complete corrected file, renaming what it produces), `rationale`, and `confidence`. No dbt log is involved (there is none) and no `suspected_root_cause_node` field (a naming collision has no upstream node to blame).
+- **Duplicate table**: one non-streaming call per proposal, made only when the target claimant's `node_type` is `dbt-model` or `dbt-snapshot` — a python or dbt-seed target is skipped before any call (a python node's relation lives in contract.yaml, not the named file; a seed's relation name comes from its CSV filename or project config, not the CSV's own content, and treating an edited CSV as a proposal would mean accepting a data edit). The adapter is given the offending file (the claimant the release changed), the contested relation (`relation_id`, not `node_id` — the two differ once the target carries an alias), and the competing producer's `other_service`/`other_file_path` — never the competing file's content — and returns `target_file`, `proposed_content` (the complete corrected file, renaming what it produces), `rationale`, and `confidence`. No dbt log is involved (there is none) and no `suspected_root_cause_node` field (a naming collision has no upstream node to blame).
 
 The `ProposeResult` struct carries all four possible fields (`proposed_sql`, `proposed_content`, `target_file`, plus `rationale`/`confidence`/`suspected_root_cause_node`/`model`) regardless of class; each fixer reads only the fields its prompt asked for. Both the Anthropic and the OpenAI-compatible adapter parse `target_file` and `proposed_content` from the tool-call arguments alongside `proposed_sql`.
 

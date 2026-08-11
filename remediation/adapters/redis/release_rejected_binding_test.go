@@ -225,7 +225,8 @@ func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 	  "repo": "owner/repo",
 	  "commit_sha": "abc123",
 	  "per_node": [{
-	    "node_id": "analytics.orders",
+	    "node_id": "analytics.orders_v2",
+	    "relation_id": "analytics.orders",
 	    "status": "failed",
 	    "service": "marketing",
 	    "file_path": "models/orders.sql",
@@ -244,8 +245,11 @@ func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 	if e.Source != failure.SourceDuplicateTable {
 		t.Errorf("Source = %q, want %q", e.Source, failure.SourceDuplicateTable)
 	}
-	if e.NodeID != "analytics.orders" {
-		t.Errorf("NodeID = %q, want analytics.orders", e.NodeID)
+	if e.NodeID != "analytics.orders_v2" {
+		t.Errorf("NodeID = %q, want analytics.orders_v2", e.NodeID)
+	}
+	if e.RelationID != "analytics.orders" {
+		t.Errorf("RelationID = %q, want analytics.orders", e.RelationID)
 	}
 	if e.Service != "marketing" {
 		t.Errorf("Service = %q, want marketing", e.Service)

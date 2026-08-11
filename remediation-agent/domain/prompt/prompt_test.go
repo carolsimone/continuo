@@ -144,3 +144,23 @@ func TestAssemble_OmitsDiffSectionWhenNoDiffs(t *testing.T) {
 		t.Errorf("no diff block should appear when UpstreamDiffs is empty:\n%s", req.User)
 	}
 }
+
+// AssembleDuplicateTableFix must name the contested RELATION on its "Relation:"
+// line, not the target model's own unique_id — the two differ whenever the
+// target already carries an alias, and telling the model to stop producing
+// its own unique_id (rather than the relation it actually writes) points it
+// at the wrong name.
+func TestAssembleDuplicateTableFix_NamesTheRelationNotTheTargetNodeID(t *testing.T) {
+	req := AssembleDuplicateTableFix(
+		NamedFile{Path: "models/orders_v1.sql", Content: "select 1 as id"},
+		"analytics.orders",
+		"marketing",
+		"models/orders_v2.sql",
+	)
+	if !strings.Contains(req.User, "Relation: analytics.orders") {
+		t.Errorf("user content must name the contested relation on the Relation: line:\n%s", req.User)
+	}
+	if !strings.Contains(req.User, "marketing") || !strings.Contains(req.User, "models/orders_v2.sql") {
+		t.Errorf("user content must name the competing producer's service and file path:\n%s", req.User)
+	}
+}

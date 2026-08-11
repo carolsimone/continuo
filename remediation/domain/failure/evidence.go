@@ -50,6 +50,7 @@ type FailureEvidence struct {
 	Source               Source
 	ReleaseID            string
 	NodeID               string
+	RelationID           string // optional; the contested physical relation for a duplicate-relation failure — distinct from NodeID (the target claimant's own identity), which can name a different string once the target carries an alias. Empty for every other source.
 	DBTLogURI            string
 	RunResultsURI        string
 	CandidateArtifactURI string

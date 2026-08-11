@@ -132,6 +132,7 @@ func enqueueTrigger(ctx context.Context, u uow.UnitOfWork, deps Deps, ev failure
 		Source:               string(ev.Source),
 		ReleaseID:            ev.ReleaseID,
 		NodeID:               ev.NodeID,
+		RelationID:           ev.RelationID,
 		Category:             string(c.Category),
 		ErrorSignature:       c.Signature,
 		DBTLogURI:            ev.DBTLogURI,

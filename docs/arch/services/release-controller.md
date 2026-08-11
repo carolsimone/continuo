@@ -115,16 +115,33 @@ status=ok:
   join per-service image_tags into the candidate topology
   DuplicateClaims(topology) non-empty →
   Reject(reason=duplicate_table), emit release.rejected:v1, advance queue, return
-      (DuplicateClaims groups nodes by resolved_relation_id — the physical relation each
-       node's build actually writes — falling back to unique_id for a node whose
-       resolved_relation_id is empty; so two nodes with different unique_ids that alias to the
-       same relation collide, and two nodes that share a unique_id but resolve to different
-       relations do not. error_detail names the contested relation and every claimant with its
-       service and file path; failing_nodes lists every claimant's own unique_id, deduplicated.
+      (DuplicateClaims runs two independent checks and merges their results:
+       - relation collisions: nodes grouped by resolved_relation_id — the physical relation
+         each node's build actually writes — falling back to unique_id for a node whose
+         resolved_relation_id is empty. Two nodes with different unique_ids that alias to the
+         same relation collide here.
+       - identity collisions: nodes grouped by unique_id, reported only when the group is NOT
+         relation-homogeneous (a relation-homogeneous group is already reported above, for the
+         same members). Two nodes that share a unique_id but resolve to different relations
+         collide here — unique_id is the identity key for every downstream lookup keyed on it
+         (the code bundle, the candidate object key, this service's own topology walks, the
+         orchestrator's :Table MERGE), so sharing it silently erases one of the two nodes
+         regardless of whether their resolved relations also collide.
+       error_detail names every claim, worded per kind ("<relation> is produced by ..." for a
+       relation collision, "unique_id <id> is declared by ..." for an identity one) so an
+       operator can tell which remedy applies — an alias rename clears a relation collision but
+       can never clear an identity one, since it changes resolved_relation_id, not unique_id.
+       failing_nodes lists every claimant's own unique_id across every claim, deduplicated.
        per_node carries a rename proposal's target/competitor pair ONLY for a two-claimant
-       collision — a rename can only ever fix one competitor, so a three-or-more-way collision
-       is rejected and fully named but contributes no per_node entry, and remediation opens no
-       trigger for it; if every collision in the release is three-or-more-way, per_node is empty)
+       RELATION collision — a rename can only ever fix one competitor (so a three-or-more-way
+       relation collision gets none either), and no rename a fixer can express changes a
+       unique_id (so an identity collision NEVER gets one, regardless of claimant count). Such
+       a claim is still rejected and fully named in error_detail/failing_nodes, but contributes
+       no per_node entry, and remediation opens no trigger for it; if every claim in the
+       release is either an identity collision or a three-or-more-way relation collision,
+       per_node is empty. relation_id on a per_node entry carries the contested relation
+       itself, separate from node_id (the target claimant's own unique_id) — the two differ
+       whenever the target already carries an alias.)
   if release.bootstrap: promote directly, skipping validation
       (record candidate topology, update current_prod, upsert the changed
        service's service_prod pointer, transition to Promoted,

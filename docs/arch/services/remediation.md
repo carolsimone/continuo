@@ -102,21 +102,29 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
    build FailureEvidence {source (derived from stage), release_id, node_id,
    dbt_log_uri, run_results_uri, candidate_artifact_uri, repo, commit_sha}.
    When `stage` is absent, the `reason` field is used as the source fallback.
-   For source=duplicate_table, FilePath/Service (the rename target) and
-   OtherService/OtherFilePath (the competing claimant) are threaded straight
-   from the payload's per_node entry, the same way seed_build's are (step 2c).
-   release-controller emits a per_node entry for a duplicate_table claim only
-   when exactly two nodes claim the relation — a rename proposal can only ever
-   target one competitor — so a three-or-more-way collision has no per_node
-   entry and this loop never visits it: no FailureEvidence, no
-   classification_decision row, and no remediation.requested:v1 trigger for
-   that claim, even though it still appears in the release's error_detail and
-   failing_nodes.
+   For source=duplicate_table, FilePath/Service (the rename target),
+   OtherService/OtherFilePath (the competing claimant), and RelationID (the
+   contested physical relation, distinct from node_id whenever the target
+   carries an alias) are threaded straight from the payload's per_node entry,
+   the same way seed_build's are (step 2c). release-controller emits a
+   per_node entry for a duplicate_table claim only for a two-claimant
+   RELATION collision — a rename proposal can only ever target one
+   competitor, and no rename can clear an identity collision (two nodes
+   sharing a unique_id) at all — so a three-or-more-way relation collision or
+   any identity collision has no per_node entry and this loop never visits
+   it: no FailureEvidence, no classification_decision row, and no
+   remediation.requested:v1 trigger for that claim, even though it still
+   appears in the release's error_detail and failing_nodes.
 1b. For source=duplicate_table: skip steps 2–2c entirely — the rejection
     happens at parse time, before any Job runs, so there is no dbt log or
     run_results to fetch — and classify directly via
-    ClassifyDuplicateTable(ev), which reads only ev.NodeID, straight to step 3's
-    Category/Signature/Decision/Reason.
+    ClassifyDuplicateTable(ev), which keys the signature on ev.RelationID
+    (falling back to ev.NodeID when empty, for a trigger predating the
+    field), straight to step 3's Category/Signature/Decision/Reason. Keying
+    on the relation rather than the target's own node id matters because the
+    target flips between releases (Target prefers whichever service the
+    release actually changed): keying on node id would fork one recurring
+    collision into two signatures the moment the changed service alternates.
 2. Fetch dbt log text from S3 at dbt_log_uri.
    - If not found: logText = "" (→ unknown:log_unavailable).
    - If transient S3 error: return error (message stays in PEL, retried).
@@ -165,7 +173,8 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 | `event_id` | Deterministic SHA1 UUID keyed on `release_id\|node_id`. Stable on redelivery. |
 | `source` | Origin pipeline. One of `validation`, `compile`, `seed_build`, or `duplicate_table`. |
 | `release_id` | The rejected release identifier. |
-| `node_id` | The unique_id of the failing dbt node. |
+| `node_id` | The unique_id of the failing dbt node — for duplicate_table, the target claimant's own unique_id. |
+| `relation_id` | Duplicate_table only: the contested physical relation, threaded from `per_node[].relation_id`. Distinct from `node_id` — the two differ whenever the target claimant carries an alias. Used for the classification signature and the remediation agent's rename prompt, both of which need the relation, not the target's own declared name. Empty for every other source. |
 | `category` | `logic`, `test`, or `unknown`. |
 | `error_signature` | Release-stable normalized dedup key (SHA-256 hex). |
 | `dbt_log_uri` | S3 URI of the full dbt execution log. |
@@ -173,7 +182,7 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 | `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log), seed_build failures (threaded from the candidate topology's `OriginalFilePath`), and duplicate_table failures (the rename target's file, threaded from `per_node[].file_path`). Empty for validation failures. When present for seed_build or duplicate_table, the agent bypasses the Ancestry (orchestrator) lookup. |
 | `service` | Owning dbt service name for the failing node. Non-empty for seed_build failures (threaded from the candidate topology's ServiceName) and duplicate_table failures (the rename target's service, threaded from `per_node[].service`). Empty for compile (NodeID is the service) and validation. |
 | `node_type` | Duplicate_table only: the target claimant's kind (`dbt-model`, `dbt-seed`, `dbt-snapshot`, or `python-model`), threaded from `per_node[].node_type`. Lets the fixer skip a python target — whose relation is declared in the service's contract.yaml, not in `file_path` — without a topology lookup of its own. Empty for every other source. |
-| `other_service` | Duplicate_table only: the competing claimant's service name — the node that also produces `node_id`. Empty for every other source. |
+| `other_service` | Duplicate_table only: the competing claimant's service name — the node that also produces the contested relation (`relation_id`). Empty for every other source. |
 | `other_file_path` | Duplicate_table only: the competing claimant's file path. Carried alongside `other_service` because two nodes in the *same* service can collide, where the service name alone identifies nothing. Empty for every other source. |
 | `repo` | GitHub owner/name from the originating release. |
 | `commit_sha` | Full commit SHA from the originating release. |

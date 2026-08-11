@@ -17,10 +17,15 @@ import (
 // requestedPayload mirrors the remediation.requested:v1 wire shape produced by
 // the remediation classifier. Only the fields the agent needs are decoded.
 type requestedPayload struct {
-	EventID              string `json:"event_id"`
-	Source               string `json:"source"`
-	ReleaseID            string `json:"release_id"`
-	NodeID               string `json:"node_id"`
+	EventID   string `json:"event_id"`
+	Source    string `json:"source"`
+	ReleaseID string `json:"release_id"`
+	NodeID    string `json:"node_id"`
+	// RelationID is the contested physical relation for a duplicate_table
+	// trigger, distinct from NodeID (the target claimant's own unique_id) —
+	// the two differ whenever the target carries an alias. Empty for every
+	// other source.
+	RelationID           string `json:"relation_id"`
 	Category             string `json:"category"`
 	ErrorSignature       string `json:"error_signature"`
 	DBTLogURI            string `json:"dbt_log_uri"`
@@ -52,6 +57,7 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 		Source:               p.Source,
 		ReleaseID:            p.ReleaseID,
 		NodeID:               p.NodeID,
+		RelationID:           p.RelationID,
 		Category:             p.Category,
 		ErrorSignature:       p.ErrorSignature,
 		DBTLogURI:            p.DBTLogURI,

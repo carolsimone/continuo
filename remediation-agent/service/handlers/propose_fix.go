@@ -26,9 +26,14 @@ import (
 // Trigger is the decoded remediation.requested:v1 payload that drives one
 // ProposeFix invocation.
 type Trigger struct {
-	Source               string
-	ReleaseID            string
-	NodeID               string
+	Source    string
+	ReleaseID string
+	NodeID    string
+	// RelationID is the contested physical relation for a duplicate-relation
+	// trigger, distinct from NodeID (the target claimant's own unique_id) —
+	// the two differ whenever the target already carries an alias. Empty for
+	// every other source.
+	RelationID           string
 	ErrorSignature       string
 	Category             string
 	DBTLogURI            string
@@ -148,6 +153,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		Source:               t.Source,
 		ReleaseID:            t.ReleaseID,
 		NodeID:               t.NodeID,
+		RelationID:           t.RelationID,
 		ErrorSignature:       t.ErrorSignature,
 		Repo:                 t.Repo,
 		CommitSHA:            t.CommitSHA,

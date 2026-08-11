@@ -1148,6 +1148,117 @@ func TestHandleParsedManifest_DuplicateTableMixedTwoAndThreeWayEmitsOnlyTheTwoWa
 	assert.Equal(t, "analytics.customers", node["node_id"])
 }
 
+// Two nodes with the same unique_id but different resolved relations (an
+// alias override on one of them) is an identity collision, not a relation
+// one: unique_id is the identity key for every downstream lookup keyed on
+// it, so this must reject even though the two nodes write different
+// warehouse tables. It emits no per_node entry — no rename a fixer can
+// express changes a unique_id, so a proposal here could never clear the
+// gate — but it still names both claimants and both unique_ids in the
+// detail and failing_nodes so an operator can resolve it by hand.
+func TestHandleParsedManifest_DuplicateTableIdentityCollisionRejectsWithNoPerNodeEntry(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", ResolvedRelationID: "analytics.orders_finance",
+				ServiceName: "finance", OriginalFilePath: "models/orders.sql"},
+			{UniqueID: "analytics.orders", ResolvedRelationID: "analytics.orders_marketing",
+				ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Contains(t, r.RejectDetail(), "unique_id analytics.orders is declared by")
+	assert.Contains(t, r.RejectDetail(), "finance (models/orders.sql)")
+	assert.Contains(t, r.RejectDetail(), "marketing (models/orders_v2.sql)")
+	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes(),
+		"both claimants share this unique_id, so it appears once, deduplicated")
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok, "per_node must be present, even though empty")
+	assert.Empty(t, perNode, "an identity collision must not propose a rename")
+}
+
+// The relation_id field on a per_node entry carries the contested relation
+// itself, distinct from node_id (the target claimant's own unique_id) —
+// remediation needs the relation for its classification signature and the
+// remediation agent needs it for the rename prompt, and in the alias case
+// the two differ.
+func TestHandleParsedManifest_DuplicateTablePayloadCarriesRelationID(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders_v1", ResolvedRelationID: "analytics.orders",
+				ServiceName: "finance", OriginalFilePath: "models/orders_v1.sql"},
+			{UniqueID: "analytics.orders_v2", ResolvedRelationID: "analytics.orders",
+				ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
+		},
+	}))
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok)
+	require.Len(t, perNode, 1)
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "analytics.orders_v2", node["node_id"], "the target's own unique_id")
+	assert.Equal(t, "analytics.orders", node["relation_id"], "the contested relation, distinct from node_id")
+}
+
+// A release can trip a relation collision and an identity collision on
+// different pairs of nodes at once. Both are rejected and both are named in
+// error_detail; only the relation collision proposes a rename.
+func TestHandleParsedManifest_DuplicateTableRelationAndIdentityBothNamedOnlyRelationGetsPerNode(t *testing.T) {
+	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology: release.Topology{
+			// Relation collision: different unique_ids, same resolved relation.
+			{UniqueID: "analytics.orders_v1", ResolvedRelationID: "analytics.orders",
+				ServiceName: "finance", OriginalFilePath: "models/orders_v1.sql"},
+			{UniqueID: "analytics.orders_v2", ResolvedRelationID: "analytics.orders",
+				ServiceName: "marketing", OriginalFilePath: "models/orders_v2.sql"},
+			// Identity collision: same unique_id, different resolved relations.
+			{UniqueID: "analytics.customers", ResolvedRelationID: "analytics.customers_finance",
+				ServiceName: "finance", OriginalFilePath: "models/customers.sql"},
+			{UniqueID: "analytics.customers", ResolvedRelationID: "analytics.customers_sales",
+				ServiceName: "sales", OriginalFilePath: "models/customers.sql"},
+		},
+	}))
+
+	r, rErr := store.GetRelease("rA")
+	require.NoError(t, rErr)
+	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Contains(t, r.RejectDetail(), "analytics.orders is produced by",
+		"relation collision named as a relation")
+	assert.Contains(t, r.RejectDetail(), "unique_id analytics.customers is declared by",
+		"identity collision named as an identity")
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	perNode, ok := payload["per_node"].([]any)
+	require.True(t, ok)
+	require.Len(t, perNode, 1, "only the relation collision proposes a rename")
+	node := perNode[0].(map[string]any)
+	assert.Equal(t, "analytics.orders", node["relation_id"])
+}
+
 // A clean topology is unaffected: the gate must not reject a release whose
 // relations each have a single producer. Asserted against the specific
 // StatusValidating outcome (not merely "not Rejected") and against a real

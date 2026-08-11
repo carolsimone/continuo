@@ -28,6 +28,11 @@ type rejectedPayload struct {
 		DBTLogURI            string `json:"dbt_log_uri"`
 		RunResultsURI        string `json:"run_results_uri"`
 		CandidateArtifactURI string `json:"candidate_artifact_uri"`
+		// RelationID is the contested physical relation for a
+		// duplicate-relation rejection, distinct from NodeID (the target
+		// claimant's own unique_id) — the two differ whenever the target
+		// carries an alias. Empty for every other reason.
+		RelationID string `json:"relation_id"`
 		// FilePath and Service carry the seed source location from the candidate
 		// topology (set by release-controller on seed_build rejections). When
 		// present, the remediation agent can locate the source file without
@@ -115,6 +120,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			Source:               src,
 			ReleaseID:            p.ReleaseID,
 			NodeID:               n.NodeID,
+			RelationID:           n.RelationID,
 			DBTLogURI:            n.DBTLogURI,
 			RunResultsURI:        n.RunResultsURI,
 			CandidateArtifactURI: n.CandidateArtifactURI,
