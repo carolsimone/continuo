@@ -505,13 +505,18 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // rejected release is never promoted, so Ancestry (which serves the promoted
 // topology) holds nothing for these nodes.
 //
-// per_node.file_path is resolved against the top-level repo/commit_sha, even
-// for a claimant from a service other than r.ChangedService(). That works only
-// because every dbt service in this system lives in one repository: a
-// same-commit checkout of repo@commit_sha contains every service's models, so
-// the competing claimant's file genuinely exists at that path and commit. The
-// existing validation fixer already relies on this when it reads another
-// service's file at repo@commit_sha.
+// repo/commit_sha describe only the service this release changed — each team
+// ships its dbt or python jobs from its own repository, so there is no single
+// checkout that contains every service's models. Target prefers the changed
+// service's claimant, so in the common case per_node.file_path names a file in
+// that same repo/commit_sha and the remediation agent can read it directly.
+// When no claimant belongs to the changed service (a bootstrap release, or two
+// other services colliding while this release changed a third), the target
+// claimant's source lives in a repository this event does not name, and the
+// agent's read of repo@commit_sha for that path fails. That is expected: the
+// agent proposes nothing rather than guessing at a file it cannot see, and
+// error_detail already names every claimant with its path so an operator can
+// resolve the collision by hand.
 func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release,
 	releaseID string, claims []release.DuplicateClaim, now time.Time) error {
 
