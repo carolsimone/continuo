@@ -22,6 +22,21 @@ on:
       # after the v keeps this trigger to release tags.
       # Guarded by scripts/check-release-tag-trigger.sh.
       - 'v[0-9]*'
+  # Re-runs ONLY smoke-published-chart, against a chart version already in the
+  # registry. Every other job in this file derives its identity from the pushed
+  # tag, so all of them are gated on the push event below: on a manual run
+  # github.ref_name is a branch, which would otherwise make retag-images alias
+  # every image to `:main` and publish-chart push a chart literally versioned
+  # `main`. A dispatch run therefore publishes nothing and retags nothing — it
+  # only installs what is already public.
+  workflow_dispatch:
+    inputs:
+      smoke_version:
+        description: >-
+          Published chart version to install and verify, as bare semver with no
+          leading v (e.g. 0.2.0). Must already exist in the registry.
+        required: true
+        type: string
 
 concurrency:
   group: release-${{ github.ref }}
@@ -35,6 +50,8 @@ permissions:
 
 jobs:
   retag-images:
+    # Tag-derived, so push-only: see the workflow_dispatch comment above.
+    if: github.event_name == 'push'
     runs-on: self-hosted
     timeout-minutes: 15
     permissions:
@@ -100,12 +117,16 @@ jobs:
         run: bash scripts/release/retag-images.sh "$COMMIT" "$RELEASE_TAG" "$OWNER"
 
   install-test:
+    # Tag-derived, so push-only: see the workflow_dispatch comment above.
+    if: github.event_name == 'push'
     needs: retag-images
     uses: ./.github/workflows/install-test.yml
     with:
       image_tag: ${{ github.ref_name }}
 
   publish-chart:
+    # Tag-derived, so push-only: see the workflow_dispatch comment above.
+    if: github.event_name == 'push'
     needs:
       - retag-images
       - install-test
@@ -160,6 +181,16 @@ jobs:
     needs:
       - retag-images
       - publish-chart
+    # !cancelled() is required: on a manual run both jobs above are skipped,
+    # and the implicit success() is chain-wide, so without the override this
+    # job would skip too and the dispatch would do nothing at all. On a tag
+    # push both must genuinely have succeeded, hence the explicit result
+    # checks rather than a bare !cancelled().
+    if: >-
+      !cancelled() &&
+      (github.event_name == 'workflow_dispatch' ||
+        (needs.retag-images.result == 'success' &&
+         needs.publish-chart.result == 'success'))
     # The `kind` label is REQUIRED, not decorative — only one agent on the box
     # carries it, so requiring it makes GitHub's scheduler serialize this
     # against the other kind-creating jobs rather than letting two runs build
@@ -167,7 +198,10 @@ jobs:
     runs-on: [self-hosted, kind]
     timeout-minutes: 30
     env:
-      VERSION: ${{ needs.retag-images.outputs.version }}
+      # Derived from the tag on a release, supplied by the operator on a manual
+      # run. smoke_version is a required input, so it is never the empty string
+      # that GitHub's && / || ternary would treat as false and fall through on.
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.smoke_version || needs.retag-images.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -220,6 +254,9 @@ jobs:
   # than failing the release — the artifacts are already published by this point and
   # a missing changelog entry is not worth blocking on.
   github-release:
+    # Tag-derived, so push-only: see the workflow_dispatch comment above. A
+    # manual smoke run has no tag to cut a Release for.
+    if: github.event_name == 'push'
     needs:
       - retag-images
       - install-test
