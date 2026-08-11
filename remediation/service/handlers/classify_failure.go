@@ -116,9 +116,9 @@ func classify(ctx context.Context, deps Deps, ev *failure.FailureEvidence) (fail
 	// For compile-stage failures, extract the offending source file path from
 	// the log text so the remediation agent can read the file directly. Compile
 	// failures have a synthetic service-name NodeID (not a real dbt node), so
-	// the log is the only source of the file path. Seed_build and
-	// duplicate_table failures carry FilePath and Service from the candidate
-	// topology via the rejection payload, so no extraction is needed.
+	// the log is the only source of the file path. Seed_build failures carry
+	// FilePath and Service from the candidate topology via the rejection
+	// payload, so no extraction is needed.
 	if ev.Source == failure.SourceCompile && ev.FilePath == "" {
 		ev.FilePath = failure.ExtractDbtFilePath(logText)
 	}
@@ -139,6 +139,7 @@ func enqueueTrigger(ctx context.Context, u uow.UnitOfWork, deps Deps, ev failure
 		FilePath:             ev.FilePath,
 		Service:              ev.Service,
 		OtherService:         ev.OtherService,
+		OtherFilePath:        ev.OtherFilePath,
 		Repo:                 ev.Repo,
 		CommitSHA:            ev.CommitSHA,
 		ClassifiedAt:         deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),

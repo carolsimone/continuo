@@ -274,15 +274,19 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 		Clock:     fakeClock{},
 		Logger:    slog.Default(),
 	}
+	// Both claimants are in the SAME service with different file paths — the
+	// case OtherFilePath exists for, since OtherService alone cannot
+	// discriminate the competing node here.
 	ev := failure.FailureEvidence{
-		Source:       failure.SourceDuplicateTable,
-		ReleaseID:    "rel-1",
-		NodeID:       "analytics.orders",
-		Service:      "marketing",
-		FilePath:     "models/orders.sql",
-		OtherService: "finance",
-		Repo:         "owner/repo",
-		CommitSHA:    "abc123",
+		Source:        failure.SourceDuplicateTable,
+		ReleaseID:     "rel-1",
+		NodeID:        "analytics.orders",
+		Service:       "marketing",
+		FilePath:      "models/orders.sql",
+		OtherService:  "marketing",
+		OtherFilePath: "models/orders_legacy.sql",
+		Repo:          "owner/repo",
+		CommitSHA:     "abc123",
 	}
 	err := ClassifyFailure(context.Background(), deps, ev)
 	if err != nil {
@@ -313,7 +317,10 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	if p.FilePath != "models/orders.sql" {
 		t.Fatalf("trigger file_path = %q, want models/orders.sql", p.FilePath)
 	}
-	if p.OtherService != "finance" {
-		t.Fatalf("trigger other_service = %q, want finance", p.OtherService)
+	if p.OtherService != "marketing" {
+		t.Fatalf("trigger other_service = %q, want marketing", p.OtherService)
+	}
+	if p.OtherFilePath != "models/orders_legacy.sql" {
+		t.Fatalf("trigger other_file_path = %q, want models/orders_legacy.sql", p.OtherFilePath)
 	}
 }
