@@ -246,7 +246,7 @@ class CandidateManifestHandler:
                 "image_tag":           node.image_tag,
                 "original_file_path":  node.original_file_path,
                 "upstream_unique_ids": [
-                    f"{dep.schema_name}.{dep.table_name}" for dep in node.upstream_deps
+                    dep.unique_id for dep in node.upstream_deps
                 ],
                 "schedule":            node.schedule_name,
                 **artifact_keys,
