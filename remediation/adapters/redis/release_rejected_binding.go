@@ -18,8 +18,8 @@ import (
 // release-controller. Only the fields the classifier needs are decoded.
 type rejectedPayload struct {
 	ReleaseID string `json:"release_id"`
-	Stage     string `json:"stage"`  // "compile" | "seed_build" | "validation"; absent in older payloads
-	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed"
+	Stage     string `json:"stage"`  // "compile" | "seed_build" | "validation"; absent in older payloads and in the stage-less duplicate_table rejection
+	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed" | "duplicate_table"
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
 	PerNode   []struct {
@@ -34,16 +34,22 @@ type rejectedPayload struct {
 		// querying Ancestry, which only holds promoted topology.
 		FilePath string `json:"file_path"`
 		Service  string `json:"service"`
+		// OtherService and OtherFilePath locate the competing node that also
+		// produces NodeID, set on duplicate-relation rejections so the agent can
+		// name the relation's other producer in the rename prompt. The path is
+		// carried because two nodes in the SAME service can collide, in which
+		// case the service name alone identifies nothing.
+		OtherService  string `json:"other_service"`
+		OtherFilePath string `json:"other_file_path"`
 	} `json:"per_node"`
 }
 
 // sourceFromPayload resolves the remediation Source from a release.rejected
 // payload. It prefers the explicit stage field and falls back to the reason
-// field for older payloads that carry no stage. The bool is false when the
-// rejection is not one of the three remediable pipeline legs — e.g. a
-// parse-phase rejection (parse_failed, unbuildable_cross_service_upstream) or
-// an unknown future stage; the caller then produces no evidence rather than
-// misrouting it onto a leg's classification path.
+// field, which covers older payloads with no stage and the stage-less
+// duplicate_table rejection. The bool is false when the rejection is not
+// remediable — parse_failed, unbuildable_cross_service_upstream, or an unknown
+// future stage; the caller then produces no evidence rather than misrouting it.
 func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 	switch stage {
 	case "compile":
@@ -60,6 +66,8 @@ func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 			return failure.SourceSeed, true
 		case "validation_failed":
 			return failure.SourceValidation, true
+		case "duplicate_table":
+			return failure.SourceDuplicateTable, true
 		}
 	}
 	return "", false
@@ -68,9 +76,10 @@ func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 // evidenceFromRejected translates a release.rejected:v1 payload into one
 // FailureEvidence per failed node. Nodes with status != "failed" are skipped.
 // The Source field is derived from the payload's stage field; when stage is
-// absent (older payloads) the reason field is used as a fallback.
-// FilePath is left empty here — it is populated by the ClassifyFailure handler
-// once the dbt log has been fetched (task 5.3).
+// absent, the reason field is used as a fallback. FilePath and Service carry
+// whatever the rejection payload set directly (populated by release-controller
+// for seed_build and duplicate_table); for compile failures, which have none,
+// the handler extracts FilePath from the dbt log after the log is fetched.
 func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	var p rejectedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -106,6 +115,8 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			CandidateArtifactURI: n.CandidateArtifactURI,
 			FilePath:             n.FilePath,
 			Service:              n.Service,
+			OtherService:         n.OtherService,
+			OtherFilePath:        n.OtherFilePath,
 			Repo:                 p.Repo,
 			CommitSHA:            p.CommitSHA,
 		})

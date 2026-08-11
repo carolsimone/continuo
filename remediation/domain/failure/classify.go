@@ -104,6 +104,21 @@ func ClassifyWithStructured(ev FailureEvidence, structured *StructuredResult, lo
 	return Classification{CategoryUnknown, NormalizeSignature(CategoryUnknown, msg), DecisionEmit, "unknown:unmatched"}
 }
 
+// ClassifyDuplicateTable classifies a duplicate-relation rejection from the
+// evidence alone. It reads no log: the rejection happens at parse time, before
+// any Job runs, so there is none, and the log-driven rules would label a
+// naming conflict unknown:log_unavailable. The signature keys on the relation,
+// not the release, so the same collision recurring across releases folds to
+// one signature.
+func ClassifyDuplicateTable(ev FailureEvidence) Classification {
+	return Classification{
+		Category:  CategoryLogic,
+		Signature: NormalizeSignature(CategoryLogic, "duplicate_table "+ev.NodeID),
+		Decision:  DecisionEmit,
+		Reason:    "logic:duplicate_table",
+	}
+}
+
 func firstMatch(lower string, rules []rule) (rule, bool) {
 	for _, r := range rules {
 		if strings.Contains(lower, r.needle) {

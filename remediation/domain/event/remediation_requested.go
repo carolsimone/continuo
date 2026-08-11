@@ -41,8 +41,15 @@ type RemediationRequested struct {
 	// Service is the owning dbt service name for the failing node. Set for
 	// seed_build failures from the candidate topology so the agent can locate
 	// the source file without a Ancestry lookup.
-	Service      string `json:"service,omitempty"`
-	Repo         string `json:"repo"`
-	CommitSHA    string `json:"commit_sha"`
-	ClassifiedAt string `json:"classified_at"`
+	Service string `json:"service,omitempty"`
+	// OtherService and OtherFilePath locate the competing node that also
+	// produces NodeID. Set on duplicate-relation failures so the agent can name
+	// the relation's other producer without reading its source. The path is
+	// carried because both claimants can belong to one service, where the
+	// service name alone identifies nothing.
+	OtherService  string `json:"other_service,omitempty"`
+	OtherFilePath string `json:"other_file_path,omitempty"`
+	Repo          string `json:"repo"`
+	CommitSHA     string `json:"commit_sha"`
+	ClassifiedAt  string `json:"classified_at"`
 }

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -22,9 +23,18 @@ import (
 type fakeLogReader struct {
 	text string
 	err  error
+	// calls, when set, is incremented on every Fetch — so a test can assert the
+	// reader was never called (e.g. a duplicate_table classification, which has
+	// no log to read).
+	calls *int
 }
 
-func (f fakeLogReader) Fetch(_ context.Context, _ string) (string, error) { return f.text, f.err }
+func (f fakeLogReader) Fetch(_ context.Context, _ string) (string, error) {
+	if f.calls != nil {
+		*f.calls++
+	}
+	return f.text, f.err
+}
 
 // mapLogReader returns a different body per URI, so a test can give the dbt log
 // and the run-results artifact distinct contents.
@@ -249,5 +259,61 @@ func TestClassifyFailure_CompileSourceThreadsFilePath(t *testing.T) {
 	}
 	if p.NodeID != "svc.daily_transactions" {
 		t.Fatalf("trigger payload node_id = %q", p.NodeID)
+	}
+}
+
+func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
+	// The reader is wired to fail any Fetch and to count calls: a duplicate_table
+	// rejection happens at parse time, before any Job runs, so classify() must
+	// short-circuit before ever reaching the log reader.
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	calls := 0
+	deps := Deps{
+		NewUoW:    func() uow.UnitOfWork { return u },
+		LogReader: fakeLogReader{err: errors.New("log reader must not be called for duplicate_table"), calls: &calls},
+		Clock:     fakeClock{},
+		Logger:    slog.Default(),
+	}
+	ev := failure.FailureEvidence{
+		Source:       failure.SourceDuplicateTable,
+		ReleaseID:    "rel-1",
+		NodeID:       "analytics.orders",
+		Service:      "marketing",
+		FilePath:     "models/orders.sql",
+		OtherService: "finance",
+		Repo:         "owner/repo",
+		CommitSHA:    "abc123",
+	}
+	err := ClassifyFailure(context.Background(), deps, ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("duplicate_table classification must not read the dbt log, reader was called %d time(s)", calls)
+	}
+
+	if len(u.dec.saved) != 1 || u.dec.saved[0].Category != failure.CategoryLogic {
+		t.Fatalf("expected logic category, got %+v", u.dec.saved)
+	}
+	if u.dec.saved[0].Decision != failure.DecisionEmit {
+		t.Fatalf("expected emit decision, got %+v", u.dec.saved[0])
+	}
+
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
+	}
+	var p event.RemediationRequested
+	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	if p.Source != "duplicate_table" {
+		t.Fatalf("trigger source = %q, want duplicate_table", p.Source)
+	}
+	if p.Service != "marketing" {
+		t.Fatalf("trigger service = %q, want marketing", p.Service)
+	}
+	if p.FilePath != "models/orders.sql" {
+		t.Fatalf("trigger file_path = %q, want models/orders.sql", p.FilePath)
+	}
+	if p.OtherService != "finance" {
+		t.Fatalf("trigger other_service = %q, want finance", p.OtherService)
 	}
 }

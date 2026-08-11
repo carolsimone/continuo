@@ -12,6 +12,10 @@ const (
 	SourceValidation Source = "validation"
 	SourceCompile    Source = "compile"
 	SourceSeed       Source = "seed_build"
+	// SourceDuplicateTable is a parse-time rejection: two nodes in the release's
+	// topology claim the same relation. It runs before any Job, so evidence for
+	// it carries no dbt log.
+	SourceDuplicateTable Source = "duplicate_table"
 )
 
 // Category is the deterministic classification of a failed node.
@@ -53,4 +57,6 @@ type FailureEvidence struct {
 	CommitSHA            string
 	FilePath             string // optional; offending source path for compile (from dbt log) or seed_build (from candidate topology); empty → resolve via Ancestry(NodeID)
 	Service              string // optional; owning dbt service for source resolution; set for seed_build failures; empty for compile (NodeID is the service)
+	OtherService         string // optional; for a duplicate-relation failure, the competing service that also produces NodeID
+	OtherFilePath        string // optional; source path of that competing node — the only discriminator when both claimants are in one service
 }

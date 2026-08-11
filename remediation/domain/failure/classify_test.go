@@ -4,10 +4,10 @@ import "testing"
 
 func TestClassifyBuckets(t *testing.T) {
 	cases := []struct {
-		name     string
-		logText  string
-		wantCat  Category
-		wantDec  Decision
+		name      string
+		logText   string
+		wantCat   Category
+		wantDec   Decision
 		reasonHas string
 	}{
 		// --- hard-drop infra (the only DROP cases) ---
@@ -56,6 +56,40 @@ func TestClassifyLogUnavailable(t *testing.T) {
 	}
 	if got.Reason != "unknown:log_unavailable" {
 		t.Errorf("reason = %q, want unknown:log_unavailable", got.Reason)
+	}
+}
+
+func TestClassifyDuplicateTable_IsLogicAndEmits(t *testing.T) {
+	c := ClassifyDuplicateTable(FailureEvidence{
+		Source:    SourceDuplicateTable,
+		ReleaseID: "rel-1",
+		NodeID:    "analytics.orders",
+	})
+
+	if c.Category != CategoryLogic {
+		t.Errorf("category = %q, want %q", c.Category, CategoryLogic)
+	}
+	if c.Decision != DecisionEmit {
+		t.Errorf("decision = %q, want %q", c.Decision, DecisionEmit)
+	}
+	if c.Reason != "logic:duplicate_table" {
+		t.Errorf("reason = %q, want %q", c.Reason, "logic:duplicate_table")
+	}
+	if c.Signature == "" {
+		t.Error("signature must not be empty")
+	}
+}
+
+func TestClassifyDuplicateTable_SignatureIsStablePerNode(t *testing.T) {
+	a := ClassifyDuplicateTable(FailureEvidence{ReleaseID: "rel-1", NodeID: "analytics.orders"})
+	b := ClassifyDuplicateTable(FailureEvidence{ReleaseID: "rel-9", NodeID: "analytics.orders"})
+	c := ClassifyDuplicateTable(FailureEvidence{ReleaseID: "rel-1", NodeID: "analytics.customers"})
+
+	if a.Signature != b.Signature {
+		t.Errorf("the same collision in two releases must be one signature: %q != %q", a.Signature, b.Signature)
+	}
+	if a.Signature == c.Signature {
+		t.Errorf("different relations must be different signatures, both %q", a.Signature)
 	}
 }
 

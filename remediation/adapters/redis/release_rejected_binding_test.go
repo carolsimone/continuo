@@ -212,3 +212,70 @@ func TestEvidenceFromRejected_SeedFilePathAndService(t *testing.T) {
 		t.Errorf("Service = %q, want svc-data", e.Service)
 	}
 }
+
+// TestEvidenceFromRejected_DuplicateTable verifies that a duplicate_table
+// rejection — a parse-time gate rejection with no stage field and no dbt log —
+// is routed to SourceDuplicateTable and carries the claimant service/file_path
+// plus the competing other_service through to FailureEvidence.
+func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
+	raw := []byte(`{
+	  "release_id": "rel-1",
+	  "reason": "duplicate_table",
+	  "error_class": "DuplicatedTable",
+	  "repo": "owner/repo",
+	  "commit_sha": "abc123",
+	  "per_node": [{
+	    "node_id": "analytics.orders",
+	    "status": "failed",
+	    "service": "marketing",
+	    "file_path": "models/orders.sql",
+	    "other_service": "finance"
+	  }]
+	}`)
+
+	evs, err := evidenceFromRejected(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("want 1 evidence, got %d", len(evs))
+	}
+	e := evs[0]
+	if e.Source != failure.SourceDuplicateTable {
+		t.Errorf("Source = %q, want %q", e.Source, failure.SourceDuplicateTable)
+	}
+	if e.NodeID != "analytics.orders" {
+		t.Errorf("NodeID = %q, want analytics.orders", e.NodeID)
+	}
+	if e.Service != "marketing" {
+		t.Errorf("Service = %q, want marketing", e.Service)
+	}
+	if e.FilePath != "models/orders.sql" {
+		t.Errorf("FilePath = %q, want models/orders.sql", e.FilePath)
+	}
+	if e.OtherService != "finance" {
+		t.Errorf("OtherService = %q, want finance", e.OtherService)
+	}
+	if e.DBTLogURI != "" {
+		t.Errorf("DBTLogURI = %q, want empty — a parse-time rejection has no dbt log", e.DBTLogURI)
+	}
+}
+
+// TestEvidenceFromRejected_ParsePhaseReasonsStillDropped verifies that
+// parse_failed and unbuildable_cross_service_upstream — parse-phase reasons
+// that are not fixable by a model rename — still yield no evidence now that
+// the stage-less branch of sourceFromPayload also matches duplicate_table.
+func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
+	for _, reason := range []string{"parse_failed", "unbuildable_cross_service_upstream"} {
+		raw := []byte(`{"release_id":"rel-1","reason":"` + reason +
+			`","per_node":[{"node_id":"n1","status":"failed"}]}`)
+
+		evs, err := evidenceFromRejected(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 0 {
+			t.Errorf("%s: want 0 evidence, got %d — not a model defect a heal proposal could fix", reason, len(evs))
+		}
+	}
+}
