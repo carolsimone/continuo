@@ -158,6 +158,44 @@ func AssembleSeedFix(csvPath, csvContent, dbtLog, nodeID string) ProposeRequest 
 	}
 }
 
+const duplicateTableSystemPrompt = `You are a data-engineering assistant that resolves a naming collision in a dbt or python data model.
+
+Two models in the release produce the same warehouse relation (<schema>.<table>). A relation may be produced by exactly one model, so one of them must produce a different one. You are shown only the model that is changing in this release; that is the one to rename. You are told which other service already produces the relation, but not its source.
+
+Rules:
+- Change ONLY what is needed to make this model produce a different relation: its alias, its configured schema, or its model name as the project's conventions require. Do not alter the model's logic, its columns, or its ordering.
+- Pick a name that describes what THIS model produces and could not collide again — prefer qualifying it with the owning service or the grain, not a numeric suffix.
+- Return the COMPLETE corrected file content in proposed_content.
+- If the file gives you no safe way to change the relation it produces, return it UNCHANGED with low confidence and explain why in rationale.
+- Always respond by calling the propose_fix tool.`
+
+// AssembleDuplicateTableFix builds a rename request for the one model that must
+// stop producing a contested relation. Only the changing model's source is
+// shown; the competing producer is named by service and path — never by its
+// content — so the model can choose a distinguishing name without reading the
+// other source. The path matters because both producers can belong to one
+// service, where the service name alone identifies nothing.
+func AssembleDuplicateTableFix(file NamedFile, uniqueID, otherService, otherFilePath string) ProposeRequest {
+	var u strings.Builder
+	fmt.Fprintf(&u, "Relation: %s\n", uniqueID)
+	fmt.Fprintf(&u, "Also produced by: %s (%s)\n\n", otherService, otherFilePath)
+	fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", file.Path, file.Content)
+	u.WriteString("Return the complete corrected content of this file, renaming what it produces so it no longer collides.")
+
+	return ProposeRequest{
+		System:          duplicateTableSystemPrompt,
+		User:            u.String(),
+		ToolName:        "propose_fix",
+		ToolDescription: "Return the corrected file content that makes this model produce a different relation.",
+		ToolParams: []ToolParam{
+			{Name: "target_file", Type: "string", Description: "The path of the file to change; must be the file shown.", Required: true},
+			{Name: "proposed_content", Type: "string", Description: "The complete corrected content of target_file.", Required: true},
+			{Name: "rationale", Type: "string", Description: "A short explanation of the change. No warehouse data values.", Required: true},
+			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
+		},
+	}
+}
+
 const systemPrompt = `You are a data-engineering assistant that proposes a fix for a failed dbt model.
 You are given the failed model's SQL, the dbt error, and metadata about which upstream
 models changed recently. Propose a corrected version of the failed model's SQL that makes

@@ -42,9 +42,13 @@ type Trigger struct {
 	// seed_build failures from the candidate topology so source resolution does
 	// not depend on Ancestry (which only holds promoted topology). Empty for
 	// compile failures where NodeID acts as the service discriminator.
-	Service   string
-	Repo      string
-	CommitSHA string
+	Service string
+	// OtherService and OtherFilePath locate the competing node that also
+	// produces NodeID, set on a duplicate-relation failure.
+	OtherService  string
+	OtherFilePath string
+	Repo          string
+	CommitSHA     string
 	// MessageID is the Redis Stream message ID of the inbound
 	// remediation.requested:v1 message. It is the primary dedup key.
 	MessageID string
@@ -144,6 +148,8 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		CommitSHA:            t.CommitSHA,
 		FilePath:             t.FilePath,
 		Service:              t.Service,
+		OtherService:         t.OtherService,
+		OtherFilePath:        t.OtherFilePath,
 		DBTLogURI:            t.DBTLogURI,
 		CandidateArtifactURI: t.CandidateArtifactURI,
 		Attempt:              attempt,

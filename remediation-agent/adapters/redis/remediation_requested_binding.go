@@ -28,9 +28,13 @@ type requestedPayload struct {
 	FilePath             string `json:"file_path"`
 	// Service is the owning dbt service for the failing node. Set for seed_build
 	// failures where the source location is threaded from the candidate topology.
-	Service   string `json:"service"`
-	Repo      string `json:"repo"`
-	CommitSHA string `json:"commit_sha"`
+	Service string `json:"service"`
+	// OtherService and OtherFilePath locate the competing node that also
+	// produces NodeID, set on a duplicate-relation failure.
+	OtherService  string `json:"other_service"`
+	OtherFilePath string `json:"other_file_path"`
+	Repo          string `json:"repo"`
+	CommitSHA     string `json:"commit_sha"`
 }
 
 // triggerFromRequested decodes a remediation.requested:v1 payload into a
@@ -51,6 +55,8 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 		CandidateArtifactURI: p.CandidateArtifactURI,
 		FilePath:             p.FilePath,
 		Service:              p.Service,
+		OtherService:         p.OtherService,
+		OtherFilePath:        p.OtherFilePath,
 		Repo:                 p.Repo,
 		CommitSHA:            p.CommitSHA,
 		MessageID:            msg.ID,
