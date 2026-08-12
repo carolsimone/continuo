@@ -212,3 +212,48 @@ func TestVersionsHandler_GraphFailureLeavesNoDedupRow(t *testing.T) {
 	assert.False(t, uow.CommittedTx, "rolling back drops the dedup row so the retry reprocesses")
 	assert.True(t, uow.RolledBackTx)
 }
+
+// A URI that resolves to another release's document must not be written: doing
+// so would stamp this release's provenance onto code it never promoted.
+func TestVersionsHandler_BundleForAnotherReleaseIsPermanent(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	b := versionsBundle()
+	b.ReleaseID = "rel-99"
+	reader := &fakeBundleReader{bundle: b}
+	repo := &fakeCodeVersionRepository{}
+
+	err := newVersionsHandler(uow, reader, repo).Handle(context.Background(), "1-0", nil, versionsInput())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pkgevents.ErrPermanent))
+	assert.Zero(t, repo.called)
+}
+
+// The bundle and the promoted topology come from one parse, so a per-node hash
+// disagreement means the document is not this release's.
+func TestVersionsHandler_BundleHashDisagreeingWithTopologyIsPermanent(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	b := versionsBundle()
+	n := b.Nodes["analytics.revenue"]
+	n.ContentHash = "sha256:something-else"
+	b.Nodes["analytics.revenue"] = n
+	reader := &fakeBundleReader{bundle: b}
+	repo := &fakeCodeVersionRepository{}
+
+	err := newVersionsHandler(uow, reader, repo).Handle(context.Background(), "1-0", nil, versionsInput())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pkgevents.ErrPermanent))
+	assert.Contains(t, err.Error(), "analytics.revenue")
+	assert.Zero(t, repo.called)
+}
+
+// An oversized object cannot be read on redelivery either, so it is permanent.
+func TestVersionsHandler_OversizedBundleIsPermanent(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeBundleReader{err: fmt.Errorf("%w: too big", ports.ErrBundleTooLarge)}
+	repo := &fakeCodeVersionRepository{}
+
+	err := newVersionsHandler(uow, reader, repo).Handle(context.Background(), "1-0", nil, versionsInput())
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, pkgevents.ErrPermanent))
+	assert.Zero(t, repo.called)
+}

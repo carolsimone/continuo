@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/orchestrator/domain/codebundle"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/service/ports"
@@ -95,7 +96,7 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 
 	bundle, err := h.bundles.Fetch(ctx, in.CodeBundleURI)
 	if err != nil {
-		if errors.Is(err, ports.ErrBundleMalformed) {
+		if errors.Is(err, ports.ErrBundleMalformed) || errors.Is(err, ports.ErrBundleTooLarge) {
 			// Re-reading the same bytes cannot fix them: acknowledge, drop, and
 			// make the failure loud.
 			h.logger.Error("code bundle is unreadable — dropping the message",
@@ -104,6 +105,15 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		}
 		// Absent or unreachable: the object may still land, so retry.
 		return fmt.Errorf("fetch code bundle %s: %w", in.CodeBundleURI, err)
+	}
+
+	if err := bundleMatchesEvent(bundle, in); err != nil {
+		// The URI resolved to a document that is not this release's. Writing it
+		// would stamp this release's provenance onto another release's code and
+		// could point :CURRENT at a hash that disagrees with :Table.content_hash.
+		h.logger.Error("code bundle does not match the promoted release — dropping the message",
+			"release_id", in.ReleaseID, "uri", in.CodeBundleURI, "error", err)
+		return fmt.Errorf("%w: code bundle %s: %v", pkgevents.ErrPermanent, in.CodeBundleURI, err)
 	}
 
 	res, err := h.versions.WriteVersions(ctx, planVersionWrite(in, bundle, h.logger))
@@ -138,6 +148,31 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		"current_pointers_moved", res.CurrentPointersMoved,
 	)
 	return h.complete(ctx, msgProcessingID)
+}
+
+// bundleMatchesEvent checks that the fetched document really describes the
+// release the event promoted. The bundle and the promoted topology come from the
+// same parse, so they must agree; a disagreement means the URI resolved to
+// another release's object and the code must not be recorded under this
+// release's provenance.
+func bundleMatchesEvent(b codebundle.Bundle, in domainModel.PromoteReleaseInput) error {
+	if b.ReleaseID != in.ReleaseID {
+		return fmt.Errorf("bundle belongs to release %q, event promoted %q", b.ReleaseID, in.ReleaseID)
+	}
+	for _, n := range in.Topology {
+		bn, ok := b.Nodes[n.UniqueID]
+		if !ok || n.ContentHash == "" {
+			// A node absent from the bundle is reported by the write path as
+			// unmatched; an event node with no hash predates the field. Neither is
+			// evidence that the document is the wrong one.
+			continue
+		}
+		if bn.ContentHash != n.ContentHash {
+			return fmt.Errorf("node %s: bundle content_hash %q disagrees with the promoted topology's %q",
+				n.UniqueID, bn.ContentHash, n.ContentHash)
+		}
+	}
+	return nil
 }
 
 // complete marks the dedup row processed and commits.

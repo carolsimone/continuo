@@ -378,3 +378,101 @@ func TestCodeVersionRepository_WritesAcrossBatches(t *testing.T) {
 	assert.Equal(t, int64(250), versionScalar(t, client,
 		`MATCH (:Table)-[:CURRENT]->(v:NodeVersion) RETURN count(v) AS v`, nil))
 }
+
+// A same-hash promotion writes no version, but it must still advance the node's
+// watermark. Otherwise a transiently-delayed intermediate release, reclaimed
+// later, still looks newer than the stale watermark and drags :CURRENT back onto
+// code that a newer release already superseded.
+func TestCodeVersionRepository_SameHashPromotionAdvancesTheStaleGuard(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:a")
+
+	repo := newVersionRepo(client)
+	base := time.Now().UTC()
+
+	// R1 records hash A.
+	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:a")}, nil))
+	require.NoError(t, err)
+
+	// R3 carries the same hash A and so writes no version — but must move the
+	// watermark forward to its own promotion time.
+	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-3", base.Add(2*time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:a")}, nil))
+	require.NoError(t, err)
+
+	// R2 was stuck in between and is reclaimed now. It is older than R3, so it
+	// may record its version but must not take the pointer.
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(1*time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:b")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.NodeVersionsCreated, "the intermediate version is still recorded")
+	assert.Equal(t, 0, res.CurrentPointersMoved, "but it must not become current")
+
+	assert.Equal(t, "sha256:a", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
+}
+
+// A late delivery of an older release must not claim to supersede the newer code
+// that is already current: that would reverse the chain's supersession order.
+func TestCodeVersionRepository_OlderReleaseDoesNotChainOverNewerCode(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:new")
+
+	repo := newVersionRepo(client)
+	base := time.Now().UTC()
+
+	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:new")}, nil))
+	require.NoError(t, err)
+
+	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-1", base.Add(-time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:old")}, nil))
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(0), versionScalar(t, client,
+		`MATCH (:NodeVersion {unique_id:'analytics.revenue', content_hash:'sha256:old'})
+		       -[:PREVIOUS]->(:NodeVersion {content_hash:'sha256:new'})
+		 RETURN count(*) AS v`, nil),
+		"the older version must not point at the newer one as its predecessor")
+	assert.Equal(t, "sha256:new", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
+}
+
+// The pointer guard lives in the write statement, not in a pre-write read, so a
+// second writer that decided from the same earlier state cannot install a stale
+// pointer over a newer one.
+func TestCodeVersionRepository_PointerGuardIsEnforcedInTheWrite(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v2")
+
+	repo := newVersionRepo(client)
+	base := time.Now().UTC()
+
+	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2")}, nil))
+	require.NoError(t, err)
+
+	// Replay an older release repeatedly: each attempt re-reads the graph and
+	// each must lose to the newer watermark.
+	for i := 0; i < 3; i++ {
+		res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
+			[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+		require.NoError(t, err)
+		assert.Equal(t, 0, res.CurrentPointersMoved, "attempt %d must not move the pointer", i)
+	}
+	assert.Equal(t, int64(1), versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->() RETURN count(*) AS v`, nil),
+		"exactly one :CURRENT edge survives")
+	assert.Equal(t, "sha256:v2", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
+}

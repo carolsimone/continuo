@@ -32,10 +32,14 @@ const versionsBatchSize = 100
 //     under ON CREATE. A node that reverts to earlier code MERGEs onto the
 //     version that already exists; rewriting that version's :PREVIOUS would
 //     close the chain into a cycle and hang every chain walk.
-//   - The pointer guard compares pointer-move times, held on the :CURRENT
-//     relationship, not the target version's own promoted_at — after a revert
-//     the target's timestamp is old, so comparing against it would let a stale
-//     redelivery drag the pointer backwards.
+//   - Ordering is decided by a per-node watermark — code_version_promoted_at on
+//     the :Table, and on the :CodeUnit for a shared-code unit — never from a
+//     pre-write read in Go. Every matched node advances its watermark, including
+//     one whose code is unchanged, and every pointer and chain write is guarded
+//     on it inside the same statement. Writing the watermark takes the anchor
+//     node's write lock, so two replicas promoting different releases serialise:
+//     an older promotion can neither overwrite a newer pointer nor link its
+//     version as superseding newer code, while still recording its own history.
 type CodeVersionRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
@@ -51,19 +55,18 @@ func NewCodeVersionRepository(client Neo4jClient, logger *slog.Logger) *CodeVers
 }
 
 // nodeState is the graph's current knowledge about one node, read at the start
-// of its batch's transaction.
+// of its batch's transaction. It decides what to write; whether this release is
+// new enough to move the pointer is decided in the database, not here.
 type nodeState struct {
-	currentHash  string
-	currentSince time.Time
-	knownHashes  map[string]struct{}
-	maxSeq       int64
+	currentHash string
+	knownHashes map[string]struct{}
+	maxSeq      int64
 }
 
 // unitState is the same for one shared-code unit. Unit versions carry no
 // sequence number: the :PREVIOUS chain is their only ordering.
 type unitState struct {
 	currentChecksum string
-	currentSince    time.Time
 	knownChecksums  map[string]struct{}
 }
 
@@ -176,12 +179,20 @@ func (r *CodeVersionRepository) writeBatch(
 		uses       []map[string]any
 		unitIDSet  = map[string]struct{}{}
 	)
+	var watermarks []map[string]any
 	for _, n := range nodes {
 		st, matched := states[n.UniqueID]
 		if !matched {
 			out.UnmatchedNodeIDs = append(out.UnmatchedNodeIDs, n.UniqueID)
 			continue
 		}
+		// Every matched node advances the per-node watermark, even one whose code
+		// is unchanged. Without that, a release that finds the hash already
+		// recorded would leave the watermark behind, and a stale delivery of an
+		// intermediate release could later satisfy the guard and drag :CURRENT
+		// backwards onto superseded code.
+		watermarks = append(watermarks, map[string]any{"unique_id": n.UniqueID})
+
 		if st.currentHash == n.ContentHash {
 			continue // the graph already records this code
 		}
@@ -202,8 +213,10 @@ func (r *CodeVersionRepository) writeBatch(
 			"healed":             n.Healed,
 		})
 
-		// :PREVIOUS is written only for a version this call creates, which is
-		// what keeps the chain acyclic across a revert.
+		// :PREVIOUS is written only for a version this call creates, which is what
+		// keeps the chain acyclic across a revert. The write itself is guarded on
+		// the watermark: a late delivery of an OLDER release still records its
+		// version, but must not claim to supersede the newer code that is current.
 		if !exists && st.currentHash != "" {
 			links = append(links, map[string]any{
 				"unique_id":     n.UniqueID,
@@ -211,12 +224,14 @@ func (r *CodeVersionRepository) writeBatch(
 				"previous_hash": st.currentHash,
 			})
 		}
-		if st.currentSince.IsZero() || promotedAt.After(st.currentSince) {
-			currents = append(currents, map[string]any{
-				"unique_id":    n.UniqueID,
-				"content_hash": n.ContentHash,
-			})
-		}
+		// Whether this release is new enough to own the pointer is decided in the
+		// database under the watermark's write lock, not from this pre-write read:
+		// two replicas processing different promotions would otherwise both pass a
+		// Go-side check and the loser could overwrite the winner.
+		currents = append(currents, map[string]any{
+			"unique_id":    n.UniqueID,
+			"content_hash": n.ContentHash,
+		})
 		for _, ref := range n.UnitRefs {
 			unitIDSet[ref.UnitID] = struct{}{}
 			uses = append(uses, map[string]any{
@@ -225,6 +240,29 @@ func (r *CodeVersionRepository) writeBatch(
 				"unit_id":      ref.UnitID,
 				"checksum":     ref.Checksum,
 			})
+		}
+	}
+
+	// Advance the per-node watermark first. Writing to the :Table takes a node
+	// write lock that serialises concurrent promotions of the same node, and the
+	// CASE keeps the newest promotion's timestamp: every later guard in this
+	// transaction then reads a value no concurrent writer can change underneath
+	// it. A node whose watermark is already at or past this release is left
+	// alone, so its guards fail and this release writes no pointer for it.
+	if len(watermarks) > 0 {
+		if _, err := r.runCounted(ctx, tx, `
+			UNWIND $watermarks AS w
+			MATCH (t:Table {unique_id: w.unique_id})
+			SET t.code_version_promoted_at = CASE
+			      WHEN t.code_version_promoted_at IS NULL
+			        OR t.code_version_promoted_at < $promoted_at
+			      THEN $promoted_at
+			      ELSE t.code_version_promoted_at END
+		`, map[string]any{
+			"watermarks":  watermarks,
+			"promoted_at": promotedAt,
+		}, "advance :Table code-version watermark"); err != nil {
+			return out, err
 		}
 	}
 
@@ -268,12 +306,20 @@ func (r *CodeVersionRepository) writeBatch(
 	}
 
 	if len(links) > 0 {
+		// Guarded on the watermark: a late delivery of an older release records
+		// its version but must not link it as superseding the newer code that is
+		// already current, which would reverse the chain's ordering.
 		if _, err := r.runCounted(ctx, tx, `
 			UNWIND $links AS l
+			MATCH (t:Table {unique_id: l.unique_id})
+			WHERE t.code_version_promoted_at = $promoted_at
 			MATCH (v:NodeVersion {unique_id: l.unique_id, content_hash: l.content_hash})
 			MATCH (p:NodeVersion {unique_id: l.unique_id, content_hash: l.previous_hash})
 			MERGE (v)-[:PREVIOUS]->(p)
-		`, map[string]any{"links": links}, "chain :NodeVersion history"); err != nil {
+		`, map[string]any{
+			"links":       links,
+			"promoted_at": promotedAt,
+		}, "chain :NodeVersion history"); err != nil {
 			return out, err
 		}
 	}
@@ -290,9 +336,13 @@ func (r *CodeVersionRepository) writeBatch(
 	}
 
 	if len(currents) > 0 {
-		if _, err := r.runCounted(ctx, tx, `
+		// The comparison and the replacement happen in one query, behind the same
+		// watermark write lock taken above, so an older promotion can never delete
+		// a newer pointer and put a stale one in its place.
+		res, err := tx.Run(ctx, `
 			UNWIND $currents AS c
 			MATCH (t:Table {unique_id: c.unique_id})
+			WHERE t.code_version_promoted_at = $promoted_at
 			MATCH (v:NodeVersion {unique_id: c.unique_id, content_hash: c.content_hash})
 			OPTIONAL MATCH (t)-[old:CURRENT]->(:NodeVersion)
 			DELETE old
@@ -301,10 +351,17 @@ func (r *CodeVersionRepository) writeBatch(
 			"currents":    currents,
 			"promoted_at": promotedAt,
 			"release_id":  in.ReleaseID,
-		}, "move :CURRENT pointers"); err != nil {
-			return out, err
+		})
+		if err != nil {
+			return out, fmt.Errorf("move :CURRENT pointers: %w", err)
 		}
-		out.CurrentPointersMoved = len(currents)
+		summary, err := res.Consume(ctx)
+		if err != nil {
+			return out, fmt.Errorf("move :CURRENT pointers: %w", err)
+		}
+		// Count what the database actually did: a node whose watermark had already
+		// moved past this release is skipped by the guard.
+		out.CurrentPointersMoved = summary.Counters().RelationshipsCreated()
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -359,8 +416,7 @@ func (r *CodeVersionRepository) writeUnits(
 				"previous_checksum": st.currentChecksum,
 			})
 		}
-		if st.currentChecksum != u.Checksum &&
-			(st.currentSince.IsZero() || promotedAt.After(st.currentSince)) {
+		if st.currentChecksum != u.Checksum {
 			unitCurrents = append(unitCurrents, map[string]any{
 				"unit_id":  u.UnitID,
 				"checksum": u.Checksum,
@@ -374,11 +430,21 @@ func (r *CodeVersionRepository) writeUnits(
 	// The unit identity and its version are merged in two statements rather than
 	// one, so the second statement's created-node count is exactly the number of
 	// unit versions written — a combined statement would fold each unit's first
-	// :CodeUnit into the same count.
+	// :CodeUnit into the same count. The MERGE doubles as the watermark advance:
+	// writing to the :CodeUnit takes its node write lock, which serialises
+	// concurrent promotions of the same unit exactly as :Table does for a node.
 	if _, err := r.runCounted(ctx, tx, `
 		UNWIND $units AS u
 		MERGE (cu:CodeUnit {unit_id: u.unit_id})
-	`, map[string]any{"units": unitParams}, "write :CodeUnit nodes"); err != nil {
+		SET cu.code_version_promoted_at = CASE
+		      WHEN cu.code_version_promoted_at IS NULL
+		        OR cu.code_version_promoted_at < $promoted_at
+		      THEN $promoted_at
+		      ELSE cu.code_version_promoted_at END
+	`, map[string]any{
+		"units":       unitParams,
+		"promoted_at": promotedAt,
+	}, "write :CodeUnit nodes"); err != nil {
 		return 0, err
 	}
 
@@ -402,12 +468,19 @@ func (r *CodeVersionRepository) writeUnits(
 	}
 
 	if len(unitLinks) > 0 {
+		// Same ordering guard as the node chain: a late older release records its
+		// unit version without claiming to supersede newer source.
 		if _, err := r.runCounted(ctx, tx, `
 			UNWIND $unit_links AS l
+			MATCH (cu:CodeUnit {unit_id: l.unit_id})
+			WHERE cu.code_version_promoted_at = $promoted_at
 			MATCH (v:CodeUnitVersion {unit_id: l.unit_id, checksum: l.checksum})
 			MATCH (p:CodeUnitVersion {unit_id: l.unit_id, checksum: l.previous_checksum})
 			MERGE (v)-[:PREVIOUS]->(p)
-		`, map[string]any{"unit_links": unitLinks}, "chain :CodeUnitVersion history"); err != nil {
+		`, map[string]any{
+			"unit_links":  unitLinks,
+			"promoted_at": promotedAt,
+		}, "chain :CodeUnitVersion history"); err != nil {
 			return 0, err
 		}
 	}
@@ -416,6 +489,7 @@ func (r *CodeVersionRepository) writeUnits(
 		if _, err := r.runCounted(ctx, tx, `
 			UNWIND $unit_currents AS c
 			MATCH (cu:CodeUnit {unit_id: c.unit_id})
+			WHERE cu.code_version_promoted_at = $promoted_at
 			MATCH (v:CodeUnitVersion {unit_id: c.unit_id, checksum: c.checksum})
 			OPTIONAL MATCH (cu)-[old:CURRENT]->(:CodeUnitVersion)
 			DELETE old
@@ -452,7 +526,6 @@ func (r *CodeVersionRepository) readNodeStates(
 		OPTIONAL MATCH (av:NodeVersion {unique_id: uid})
 		RETURN uid                                     AS unique_id,
 		       head(collect(DISTINCT cv.content_hash)) AS current_hash,
-		       head(collect(DISTINCT cur.promoted_at)) AS current_since,
 		       collect(DISTINCT av.content_hash)       AS known_hashes,
 		       coalesce(max(av.version_seq), 0)        AS max_seq
 	`, map[string]any{"unique_ids": uniqueIDs})
@@ -465,7 +538,6 @@ func (r *CodeVersionRepository) readNodeStates(
 		rec := res.Record()
 		uid, _ := recordString(rec, "unique_id")
 		hash, _ := recordString(rec, "current_hash")
-		since := recordTime(rec, "current_since")
 		known := make(map[string]struct{})
 		if v, ok := rec.Get("known_hashes"); ok {
 			if list, ok := v.([]any); ok {
@@ -480,7 +552,7 @@ func (r *CodeVersionRepository) readNodeStates(
 		if v, ok := rec.Get("max_seq"); ok {
 			maxSeq, _ = v.(int64)
 		}
-		states[uid] = nodeState{currentHash: hash, currentSince: since, knownHashes: known, maxSeq: maxSeq}
+		states[uid] = nodeState{currentHash: hash, knownHashes: known, maxSeq: maxSeq}
 	}
 	if err := res.Err(); err != nil {
 		return nil, fmt.Errorf("iterate node version state: %w", err)
@@ -501,7 +573,6 @@ func (r *CodeVersionRepository) readUnitStates(
 		OPTIONAL MATCH (av:CodeUnitVersion {unit_id: uid})
 		RETURN uid                                     AS unit_id,
 		       head(collect(DISTINCT ccv.checksum))    AS current_checksum,
-		       head(collect(DISTINCT cur.promoted_at)) AS current_since,
 		       collect(DISTINCT av.checksum)           AS known_checksums
 	`, map[string]any{"unit_ids": unitIDs})
 	if err != nil {
@@ -513,7 +584,6 @@ func (r *CodeVersionRepository) readUnitStates(
 		rec := res.Record()
 		id, _ := recordString(rec, "unit_id")
 		checksum, _ := recordString(rec, "current_checksum")
-		since := recordTime(rec, "current_since")
 		known := make(map[string]struct{})
 		if v, ok := rec.Get("known_checksums"); ok {
 			if list, ok := v.([]any); ok {
@@ -524,7 +594,7 @@ func (r *CodeVersionRepository) readUnitStates(
 				}
 			}
 		}
-		states[id] = unitState{currentChecksum: checksum, currentSince: since, knownChecksums: known}
+		states[id] = unitState{currentChecksum: checksum, knownChecksums: known}
 	}
 	if err := res.Err(); err != nil {
 		return nil, fmt.Errorf("iterate shared-code version state: %w", err)
@@ -563,18 +633,3 @@ func recordString(rec *neo4j.Record, key string) (string, bool) {
 	return s, ok
 }
 
-// recordTime reads a timestamp column. A missing or unexpected value yields the
-// zero time, which the pointer guard reads as "no previous pointer" — the safe
-// direction, since a version write that should have moved the pointer is healed
-// by the next release while a skipped move would persist.
-func recordTime(rec *neo4j.Record, key string) time.Time {
-	v, ok := rec.Get(key)
-	if !ok || v == nil {
-		return time.Time{}
-	}
-	t, ok := v.(time.Time)
-	if !ok {
-		return time.Time{}
-	}
-	return t
-}
