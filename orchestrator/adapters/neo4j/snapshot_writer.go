@@ -32,8 +32,11 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 //
 //	inherited_from_task_id?, content_hash
 //
-// content_hash is copied from the matched :Table at edge creation, pinning which
-// code version this run executed even after a later release changes the node.
+// content_hash comes from the projection, pinning which code version this run
+// executed even after a later release changes the node. It is deliberately NOT
+// read from the matched :Table here: a rerun, a rebase-inherited row, and a
+// snapshot_of_run task all reuse the SOURCE run's image and manifest, so reading
+// the live table would record code that the run never executed.
 //
 // test_count is set only when the projection entry's TestCountKnown is true
 // (assigning a nil parameter to a Cypher SET removes/leaves the property
@@ -74,6 +77,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 			"initial_status":         t.InitialStatus,
 			"image_tag":              t.ImageTag,
 			"manifest_version":       t.ManifestVersion,
+			"content_hash":           t.ContentHash,
 			"test_count":             testCount,
 			"inherited_from_task_id": inheritedFrom,
 		}
@@ -121,7 +125,7 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              e.image_tag        = t.image_tag,
 		              e.manifest_version = t.manifest_version,
 		              e.test_count       = t.test_count,
-		              e.content_hash     = tbl.content_hash
+		              e.content_hash     = t.content_hash
 		FOREACH (_ IN CASE WHEN t.inherited_from_task_id IS NULL THEN [] ELSE [1] END |
 		    SET e.inherited_from_task_id = t.inherited_from_task_id
 		)

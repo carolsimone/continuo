@@ -335,9 +335,9 @@ func readRunInitiatedBy(t *testing.T, driver neo4j.DriverWithContext, runID stri
 }
 
 // TestSnapshotWriter_StampsContentHashOnExecutes pins the property that ties a
-// run to the exact code it executed: the edge copies the content_hash off the
-// :Table it matched, so a later release changing the node cannot rewrite what
-// this run is recorded as having run.
+// run to the exact code it executed: the edge records the projection's
+// content_hash, so a later release changing the node cannot rewrite what this
+// run is recorded as having run.
 func TestSnapshotWriter_StampsContentHashOnExecutes(t *testing.T) {
 	driver := newDriver(t)
 	scheduleName := "test-mat-" + uuid.New().String()[:8]
@@ -358,6 +358,7 @@ func TestSnapshotWriter_StampsContentHashOnExecutes(t *testing.T) {
 		InitialStatus:   "PENDING",
 		ImageTag:        "img:1",
 		ManifestVersion: "v1",
+		ContentHash:     "sha256:exec",
 	}}
 	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "scheduled"}
 
@@ -402,4 +403,63 @@ func seedTableContentHash(t *testing.T, driver neo4j.DriverWithContext, schedule
 		return nil, err
 	})
 	require.NoError(t, err)
+}
+
+// A derived run — rerun, rebase-inherited row, or snapshot_of_run — reuses the
+// SOURCE run's image and manifest so it repeats exactly what ran. Its recorded
+// code fingerprint must be pinned the same way: reading the live :Table would
+// claim the run executed code a later release introduced, which is precisely
+// what this field exists to rule out.
+func TestSnapshotWriter_DerivedRunPinsTheSourceHashNotTheTable(t *testing.T) {
+	driver := newDriver(t)
+	scheduleName := "test-mat-" + uuid.New().String()[:8]
+
+	seedTable(t, driver, scheduleName, "svc", "s", "drifted", "img:new", "v-new")
+	// The topology has moved on since the source run executed.
+	seedTableContentHash(t, driver, scheduleName, "svc", "s", "drifted", "sha256:new")
+
+	runID := uuid.New().String()
+	t.Cleanup(func() { cleanupRunAndTables(t, driver, runID, "test-mat-") })
+
+	srcRun := uuid.New()
+	projection := []snapshot.TaskProjection{{
+		TaskID:          uuid.New(),
+		ServiceName:     "svc",
+		SchemaName:      "s",
+		TableName:       "drifted",
+		ScheduleName:    scheduleName,
+		NodeType:        "dbt-model",
+		InitialStatus:   "PENDING",
+		ImageTag:        "img:old",    // pinned from the source run
+		ManifestVersion: "v-old",      // pinned from the source run
+		ContentHash:     "sha256:old", // must be pinned the same way
+	}}
+	params := snapshot.Params{RunID: runID, ScheduleName: scheduleName, Kind: "rerun", SourceRunID: &srcRun}
+
+	session := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(context.Background())
+	_, err := session.ExecuteWrite(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		return nil, neo4jinfra.NewSnapshotWriterForTest(tx).WriteRunAndExecutesEdges(context.Background(), params, projection)
+	})
+	require.NoError(t, err)
+
+	read := driver.NewSession(context.Background(), neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer read.Close(context.Background())
+	got, err := read.ExecuteRead(context.Background(), func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		r, err := tx.Run(context.Background(), `
+			MATCH (:Run {run_id: $run_id})-[e:EXECUTES]->(t:Table {schedule_name: $sched})
+			RETURN e.content_hash AS ch`,
+			map[string]interface{}{"run_id": runID, "sched": scheduleName})
+		if err != nil {
+			return nil, err
+		}
+		if !r.Next(context.Background()) {
+			return nil, r.Err()
+		}
+		v, _ := r.Record().Get("ch")
+		return v, r.Err()
+	})
+	require.NoError(t, err)
+	require.Equal(t, "sha256:old", got,
+		"the edge must record the code the source run executed, not the table's current code")
 }

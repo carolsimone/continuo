@@ -74,6 +74,10 @@ type TaskProjection struct {
 	InitialStatus       string // "PENDING" | "SUCCEEDED"
 	ImageTag            string
 	ManifestVersion     string
+	// ContentHash is the code fingerprint stamped on this task's :EXECUTES edge:
+	// the latest topology's hash for a fresh run, or the source run's pinned hash
+	// for a rerun, rebase-inherited, or snapshot-of-run task.
+	ContentHash         string
 	TestCount           int
 	TestCountKnown      bool       // true iff the pinned source (:Table or source :EXECUTES edge) had a test_count property
 	InheritedFromTaskID *uuid.UUID // non-nil iff InitialStatus == "SUCCEEDED" via inherit; root pointer

@@ -476,3 +476,68 @@ func TestCodeVersionRepository_PointerGuardIsEnforcedInTheWrite(t *testing.T) {
 	assert.Equal(t, "sha256:v2", versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
 }
+
+// When the topology has already applied a newer promotion, a node from this
+// older release is gone for good. Its history must still be recorded — just with
+// nothing to attach it to — rather than retried until the message is dropped.
+func TestCodeVersionRepository_GraphAheadRecordsUnattachedHistory(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+
+	base := time.Now().UTC()
+
+	// The graph reflects a NEWER release than the one being ingested.
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	r, err := s.Run(ctx,
+		`MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-9', m.updated_at = $at`,
+		map[string]any{"at": base.Add(time.Hour)})
+	require.NoError(t, err)
+	_, err = r.Consume(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.Close(ctx))
+
+	res, err := newVersionRepo(client).WriteVersions(ctx, versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.retired", "sha256:gone")}, nil))
+	require.NoError(t, err)
+	assert.True(t, res.GraphAhead)
+	assert.Equal(t, []string{"analytics.retired"}, res.UnmatchedNodeIDs)
+	assert.Equal(t, 1, res.NodeVersionsCreated, "the history is recorded, not lost")
+
+	assert.Equal(t, "sha256:gone", versionScalar(t, client,
+		`MATCH (v:NodeVersion {unique_id:'analytics.retired'}) RETURN v.content_hash AS v`, nil))
+	assert.Equal(t, true, versionScalar(t, client,
+		`MATCH (v:NodeVersion {unique_id:'analytics.retired'}) RETURN v.backfilled AS v`, nil))
+	assert.Equal(t, int64(1), versionScalar(t, client,
+		`MATCH (v:NodeVersion {unique_id:'analytics.retired'}) RETURN v.version_seq AS v`, nil))
+	assert.Nil(t, versionScalar(t, client,
+		`MATCH (:Table)-[:CURRENT]->(v:NodeVersion {unique_id:'analytics.retired'}) RETURN v.content_hash AS v`, nil),
+		"nothing points at it: there is no :Table to attach")
+}
+
+// A merely-late delivery — the graph has not yet applied this release — must
+// still be reported as unmatched so the handler retries and trails the swap.
+func TestCodeVersionRepository_SwapNotLandedIsNotReportedAsGraphAhead(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+
+	base := time.Now().UTC()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	r, err := s.Run(ctx,
+		`MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-0', m.updated_at = $at`,
+		map[string]any{"at": base.Add(-time.Hour)})
+	require.NoError(t, err)
+	_, err = r.Consume(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.Close(ctx))
+
+	res, err := newVersionRepo(client).WriteVersions(ctx, versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.pending", "sha256:x")}, nil))
+	require.NoError(t, err)
+	assert.False(t, res.GraphAhead, "an older topology means the swap has not landed yet")
+	assert.Equal(t, []string{"analytics.pending"}, res.UnmatchedNodeIDs)
+	assert.Equal(t, 0, res.NodeVersionsCreated, "nothing is written; the handler retries instead")
+}

@@ -257,3 +257,21 @@ func TestVersionsHandler_OversizedBundleIsPermanent(t *testing.T) {
 	assert.True(t, errors.Is(err, pkgevents.ErrPermanent))
 	assert.Zero(t, repo.called)
 }
+
+// A long-delayed event whose nodes were retired in the meantime must not retry
+// to the delivery ceiling and lose their history: the repository records it
+// unattached and the handler acknowledges.
+func TestVersionsHandler_GraphAheadIsAcknowledgedNotRetried(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeBundleReader{bundle: versionsBundle()}
+	repo := &fakeCodeVersionRepository{res: codeversion.WriteResult{
+		NodeVersionsCreated: 1,
+		UnmatchedNodeIDs:    []string{"analytics.retired"},
+		GraphReleaseID:      "rel-9",
+		GraphAhead:          true,
+	}}
+
+	require.NoError(t, newVersionsHandler(uow, reader, repo).Handle(
+		context.Background(), "1-0", nil, versionsInput()))
+	assert.True(t, uow.CommittedTx, "the message is acknowledged rather than retried")
+}

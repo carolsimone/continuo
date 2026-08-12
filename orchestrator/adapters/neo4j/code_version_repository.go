@@ -80,11 +80,16 @@ func (r *CodeVersionRepository) WriteVersions(
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer func() { _ = session.Close(ctx) }()
 
-	graphRelease, err := r.readGraphRelease(ctx, session)
+	graphRelease, graphAt, err := r.readGraphRelease(ctx, session)
 	if err != nil {
 		return out, err
 	}
 	out.GraphReleaseID = graphRelease
+	// A topology stamped later than this promotion means the swap has moved past
+	// it. Nodes this release carried may already have been retired and deleted,
+	// so waiting for them is futile — their history is recorded unattached below.
+	out.GraphAhead = graphRelease != "" && graphRelease != in.ReleaseID &&
+		graphAt.After(in.PromotedAt.UTC())
 
 	unitsByID := make(map[string]codeversion.CodeUnitVersion, len(in.Units))
 	for _, u := range in.Units {
@@ -97,7 +102,7 @@ func (r *CodeVersionRepository) WriteVersions(
 			end = len(in.Nodes)
 		}
 
-		batch, err := r.writeBatch(ctx, session, in, in.Nodes[start:end], unitsByID)
+		batch, err := r.writeBatch(ctx, session, in, in.Nodes[start:end], unitsByID, out.GraphAhead)
 		if err != nil {
 			return out, err
 		}
@@ -120,24 +125,29 @@ func (r *CodeVersionRepository) WriteVersions(
 
 // readGraphRelease returns the release_id the topology currently reflects, or ""
 // on a graph that has never been promoted to.
-func (r *CodeVersionRepository) readGraphRelease(ctx context.Context, session neo4j.SessionWithContext) (string, error) {
+func (r *CodeVersionRepository) readGraphRelease(ctx context.Context, session neo4j.SessionWithContext) (string, time.Time, error) {
 	res, err := session.Run(ctx, `
 		OPTIONAL MATCH (m:Meta {key: 'current_release'})
-		RETURN m.release_id AS release_id
+		RETURN m.release_id AS release_id, m.updated_at AS updated_at
 	`, nil)
 	if err != nil {
-		return "", fmt.Errorf("read current release meta: %w", err)
+		return "", time.Time{}, fmt.Errorf("read current release meta: %w", err)
 	}
 	var id string
+	var at time.Time
 	if res.Next(ctx) {
-		if v, ok := res.Record().Get("release_id"); ok && v != nil {
+		rec := res.Record()
+		if v, ok := rec.Get("release_id"); ok && v != nil {
 			id, _ = v.(string)
+		}
+		if v, ok := rec.Get("updated_at"); ok && v != nil {
+			at, _ = v.(time.Time)
 		}
 	}
 	if err := res.Err(); err != nil {
-		return "", fmt.Errorf("iterate current release meta: %w", err)
+		return "", time.Time{}, fmt.Errorf("iterate current release meta: %w", err)
 	}
-	return id, nil
+	return id, at, nil
 }
 
 // writeBatch applies one batch of nodes in a single explicit transaction: read
@@ -150,6 +160,7 @@ func (r *CodeVersionRepository) writeBatch(
 	in codeversion.WriteInput,
 	nodes []codeversion.NodeVersion,
 	unitsByID map[string]codeversion.CodeUnitVersion,
+	graphAhead bool,
 ) (codeversion.WriteResult, error) {
 	var out codeversion.WriteResult
 
@@ -180,10 +191,18 @@ func (r *CodeVersionRepository) writeBatch(
 		unitIDSet  = map[string]struct{}{}
 	)
 	var watermarks []map[string]any
+	var orphans []map[string]any
 	for _, n := range nodes {
 		st, matched := states[n.UniqueID]
 		if !matched {
 			out.UnmatchedNodeIDs = append(out.UnmatchedNodeIDs, n.UniqueID)
+			if graphAhead {
+				// The topology has already moved past this release, so this node's
+				// :Table is gone for good and no amount of retrying will produce it.
+				// Record the version unattached rather than losing the history: it
+				// stays reachable by unique_id, and re-attaches if the node returns.
+				orphans = append(orphans, versionParams(n, 0))
+			}
 			continue
 		}
 		// Every matched node advances the per-node watermark, even one whose code
@@ -198,20 +217,7 @@ func (r *CodeVersionRepository) writeBatch(
 		}
 
 		_, exists := st.knownHashes[n.ContentHash]
-		nodeParams = append(nodeParams, map[string]any{
-			"unique_id":          n.UniqueID,
-			"content_hash":       n.ContentHash,
-			"source_hash":        n.SourceHash,
-			"shared_code_hash":   n.SharedCodeHash,
-			"config_hash":        n.ConfigHash,
-			"runtime":            n.Runtime,
-			"raw_code":           n.RawCode,
-			"compiled_code":      n.CompiledCode,
-			"compiled_truncated": n.CompiledTruncated,
-			"config_json":        n.ConfigJSON,
-			"version_seq":        st.maxSeq + 1,
-			"healed":             n.Healed,
-		})
+		nodeParams = append(nodeParams, versionParams(n, st.maxSeq+1))
 
 		// :PREVIOUS is written only for a version this call creates, which is what
 		// keeps the chain acyclic across a revert. The write itself is guarded on
@@ -303,6 +309,43 @@ func (r *CodeVersionRepository) writeBatch(
 			return out, err
 		}
 		out.NodeVersionsCreated = created
+	}
+
+	if len(orphans) > 0 {
+		// No :Table to hang these off, and none is coming. version_seq is derived
+		// in-query from whatever versions the node already has, and backfilled
+		// marks them as reconstructed rather than observed on a live topology.
+		created, err := r.runCounted(ctx, tx, `
+			UNWIND $orphans AS n
+			OPTIONAL MATCH (prev:NodeVersion {unique_id: n.unique_id})
+			WITH n, coalesce(max(prev.version_seq), 0) AS max_seq
+			MERGE (v:NodeVersion {unique_id: n.unique_id, content_hash: n.content_hash})
+			ON CREATE SET v.source_hash        = n.source_hash,
+			              v.shared_code_hash   = n.shared_code_hash,
+			              v.config_hash        = n.config_hash,
+			              v.runtime            = n.runtime,
+			              v.raw_code           = n.raw_code,
+			              v.compiled_code      = n.compiled_code,
+			              v.compiled_truncated = n.compiled_truncated,
+			              v.config_json        = n.config_json,
+			              v.repo               = $repo,
+			              v.commit_sha         = $commit_sha,
+			              v.release_id         = $release_id,
+			              v.promoted_at        = $promoted_at,
+			              v.version_seq        = max_seq + 1,
+			              v.healed             = n.healed,
+			              v.backfilled         = true
+		`, map[string]any{
+			"orphans":     orphans,
+			"repo":        in.Repo,
+			"commit_sha":  in.CommitSHA,
+			"release_id":  in.ReleaseID,
+			"promoted_at": promotedAt,
+		}, "write unattached :NodeVersion history")
+		if err != nil {
+			return out, err
+		}
+		out.NodeVersionsCreated += created
 	}
 
 	if len(links) > 0 {
@@ -506,6 +549,26 @@ func (r *CodeVersionRepository) writeUnits(
 	return versionsCreated, nil
 }
 
+// versionParams renders one version's write parameters. Both the attached and
+// the unattached write paths use it so their stored properties cannot drift
+// apart; seq is ignored by the unattached path, which derives it in-query.
+func versionParams(n codeversion.NodeVersion, seq int64) map[string]any {
+	return map[string]any{
+		"unique_id":          n.UniqueID,
+		"content_hash":       n.ContentHash,
+		"source_hash":        n.SourceHash,
+		"shared_code_hash":   n.SharedCodeHash,
+		"config_hash":        n.ConfigHash,
+		"runtime":            n.Runtime,
+		"raw_code":           n.RawCode,
+		"compiled_code":      n.CompiledCode,
+		"compiled_truncated": n.CompiledTruncated,
+		"config_json":        n.ConfigJSON,
+		"version_seq":        seq,
+		"healed":             n.Healed,
+	}
+}
+
 // readNodeStates returns, per requested unique_id that has a :Table, the hash of
 // its current version, when that pointer was set, every hash already recorded
 // for it, and the highest sequence number in use. Ids absent from the result had
@@ -632,4 +695,3 @@ func recordString(rec *neo4j.Record, key string) (string, bool) {
 	s, ok := v.(string)
 	return s, ok
 }
-

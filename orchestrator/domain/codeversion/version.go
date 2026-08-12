@@ -66,4 +66,10 @@ type WriteResult struct {
 	// GraphReleaseID is the release the topology currently reflects — empty on a
 	// graph that has never been promoted to.
 	GraphReleaseID string
+	// GraphAhead reports that the topology has already applied a promotion NEWER
+	// than the one being ingested. It separates "the swap has not landed yet",
+	// where retrying converges, from "the swap has moved on", where a node this
+	// release carried may have been retired and will never reappear — so retrying
+	// only burns the delivery budget and loses that node's history.
+	GraphAhead bool
 }

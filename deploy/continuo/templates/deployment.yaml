@@ -151,14 +151,38 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "continuo.configMapName" $ }}
-          {{- if or $svc.secretEnv $svc.env }}
+          {{- $needsS3 := has $svc.name (include "continuo.s3.credentialServices" $ | fromJsonArray) }}
+          {{- if or $svc.secretEnv $svc.env $needsS3 }}
           env:
+            {{- /*
+              Services that read or write object storage get their S3 credentials
+              from here rather than from their `secretEnv` entry. `services` is a
+              list, and Helm replaces lists wholesale, so an operator upgrading
+              with their own copy of values.yaml keeps an older entry — which
+              would silently drop these refs and leave the service authenticating
+              with nothing. Injecting them from the template makes the credentials
+              independent of that replaceable list.
+            */}}
+            {{- if $needsS3 }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "s3AccessKeyId") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "s3AccessKeyId") | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "continuo.secretName" (dict "root" $ "ref" "s3SecretAccessKey") | quote }}
+                  key: {{ include "continuo.secretKey" (dict "root" $ "ref" "s3SecretAccessKey") | quote }}
+            {{- end }}
             {{- range $secret := ($svc.secretEnv | default (list)) }}
+            {{- if not (and $needsS3 (or (eq $secret.name "AWS_ACCESS_KEY_ID") (eq $secret.name "AWS_SECRET_ACCESS_KEY"))) }}
             - name: {{ $secret.name }}
               valueFrom:
                 secretKeyRef:
                   name: {{ include "continuo.secretName" (dict "root" $ "ref" $secret.ref) | quote }}
                   key: {{ include "continuo.secretKey" (dict "root" $ "ref" $secret.ref) | quote }}
+            {{- end }}
             {{- end }}
           {{- if $svc.env }}
             {{- range $key, $val := $svc.env }}

@@ -126,18 +126,30 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		if len(sample) > unmatchedSampleSize {
 			sample = sample[:unmatchedSampleSize]
 		}
-		if res.GraphReleaseID != in.ReleaseID {
+		switch {
+		case res.GraphAhead:
+			// The topology has already applied a newer promotion, so these nodes
+			// were retired and deleted in between. Retrying would only burn the
+			// delivery budget and end with the message dropped, losing their
+			// history; the repository has recorded it unattached instead.
+			h.logger.Warn("topology has moved past this release — recorded its history unattached",
+				"release_id", in.ReleaseID,
+				"graph_release_id", res.GraphReleaseID,
+				"unattached_count", len(res.UnmatchedNodeIDs),
+				"sample", sample)
+		case res.GraphReleaseID != in.ReleaseID:
 			// The topology-swap group reads the same message and has not applied
 			// this release yet, so these nodes have no :Table to attach a version
 			// to. Retrying is how this group trails the swap.
 			return fmt.Errorf("topology swap for release %s has not landed (graph is at %q); "+
 				"%d bundle nodes have no :Table (e.g. %v)",
 				in.ReleaseID, res.GraphReleaseID, len(res.UnmatchedNodeIDs), sample)
+		default:
+			h.logger.Warn("code bundle names nodes absent from the promoted topology",
+				"release_id", in.ReleaseID,
+				"unmatched_count", len(res.UnmatchedNodeIDs),
+				"sample", sample)
 		}
-		h.logger.Warn("code bundle names nodes absent from the promoted topology",
-			"release_id", in.ReleaseID,
-			"unmatched_count", len(res.UnmatchedNodeIDs),
-			"sample", sample)
 	}
 
 	h.logger.Info("Code version ingestion finished",
