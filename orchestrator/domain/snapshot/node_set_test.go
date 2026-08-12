@@ -7,6 +7,8 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNodeSet_ResolvesEveryNodeInOrder(t *testing.T) {
@@ -78,4 +80,43 @@ func TestNodeSet_IncompleteIdentity_IsRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a node with no table name")
 	}
+}
+
+// Pinned metadata must win over the topology row. A promotion can be overtaken
+// by a later one before its seeds are projected; without this the run would
+// build the release's seeds with the newer release's image.
+func TestNodeSet_PinnedMetadataOverridesTheTopologyRow(t *testing.T) {
+	fqn := snapshot.FQN{Service: "core", Schema: "analytics", Table: "seed_users"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			// The topology has already moved on to a newer release's image.
+			fqn: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "newer-release", ManifestVersion: "rel-2"},
+		},
+	}
+
+	got, err := snapshot.NodeSet{
+		Nodes:  []snapshot.FQN{fqn},
+		Pinned: map[snapshot.FQN]snapshot.PinnedNodeMetadata{fqn: {NodeType: "dbt-seed", ImageTag: "rel-1-image"}},
+	}.SelectTasks(context.Background(), r, snapshot.Params{})
+	require.NoError(t, err)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, "rel-1-image", got[0].ImageTag,
+		"the triggering release's image must be used, not the topology's current one")
+	// Fields the pin does not cover still come from the topology.
+	assert.Equal(t, "seed", got[0].ScheduleName)
+}
+
+func TestNodeSet_WithoutPin_FallsBackToTheTopologyRow(t *testing.T) {
+	fqn := snapshot.FQN{Service: "core", Schema: "analytics", Table: "seed_users"}
+	r := &fakeTopologyReader{
+		SingleLatest: map[snapshot.FQN]snapshot.LatestTableRow{
+			fqn: {ScheduleName: "seed", NodeType: "dbt-seed", ImageTag: "from-topology"},
+		},
+	}
+
+	got, err := snapshot.NodeSet{Nodes: []snapshot.FQN{fqn}}.SelectTasks(context.Background(), r, snapshot.Params{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "from-topology", got[0].ImageTag)
 }

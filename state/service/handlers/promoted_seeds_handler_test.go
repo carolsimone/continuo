@@ -61,10 +61,10 @@ func promotedSeedsLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-func seedNode(table string) events.ReleasePromotedNode {
-	return events.ReleasePromotedNode{
+func seedNode(table string) events.SeedNode {
+	return events.SeedNode{
 		ServiceName: "core", SchemaName: "analytics", TableName: table,
-		NodeType: events.NodeTypeDBTSeed, Changed: true,
+		NodeType: "dbt-seed", ImageTag: "v1",
 	}
 }
 
@@ -75,9 +75,9 @@ func TestPromotedSeedsHandler_CreatesOneRunForEveryChangedSeed(t *testing.T) {
 
 	err := handlers.NewPromotedSeedsHandler(promotedSeedsLogger()).Handle(
 		context.Background(), u,
-		events.ReleasePromoted{
+		events.ReleaseSeedsPending{
 			ReleaseID: "rel-1",
-			Topology: []events.ReleasePromotedNode{
+			Nodes: []events.SeedNode{
 				seedNode("seed_users"),
 				seedNode("seed_fx_transactions"),
 			},
@@ -99,60 +99,27 @@ func TestPromotedSeedsHandler_CreatesOneRunForEveryChangedSeed(t *testing.T) {
 	assert.Equal(t, created.ScheduleID(), evt.ID)
 }
 
-// Only changed seeds are built. An unchanged seed's data is already materialised
-// and its content hash has not moved, so rebuilding it would cost a Job for no
-// effect; a model is not this path's work at all.
-func TestPromotedSeedsHandler_SkipsUnchangedSeedsAndModels(t *testing.T) {
+// The metadata the release pinned must survive onto the trigger: orchestrator
+// uses it instead of the topology's current values, so a promotion overtaken by
+// a later one still builds its seeds with its own image.
+func TestPromotedSeedsHandler_CarriesPinnedMetadataOntoTheTrigger(t *testing.T) {
 	repo, outbox := &fakePromotedSeedsRunRepo{}, &fakePromotedSeedsOutbox{}
 	u := promotedSeedsUoW(repo, outbox)
 	require.NoError(t, u.Begin(context.Background()))
 
-	unchangedSeed := seedNode("seed_old")
-	unchangedSeed.Changed = false
-	changedModel := events.ReleasePromotedNode{
-		ServiceName: "core", SchemaName: "analytics", TableName: "daily_transactions",
-		NodeType: "dbt-model", Changed: true,
-	}
+	node := seedNode("seed_users")
+	node.ImageTag = "sha-abc123"
 
-	err := handlers.NewPromotedSeedsHandler(promotedSeedsLogger()).Handle(
+	require.NoError(t, handlers.NewPromotedSeedsHandler(promotedSeedsLogger()).Handle(
 		context.Background(), u,
-		events.ReleasePromoted{
-			ReleaseID: "rel-2",
-			Topology:  []events.ReleasePromotedNode{unchangedSeed, changedModel, seedNode("seed_new")},
-		},
+		events.ReleaseSeedsPending{ReleaseID: "rel-2", Nodes: []events.SeedNode{node}},
 		uuid.New(),
-	)
-	require.NoError(t, err)
+	))
 
-	require.Len(t, repo.saved, 1)
 	evt := outbox.appended[0].(run.PromotedSeedsRunRequested)
 	require.Len(t, evt.Nodes, 1)
-	assert.Equal(t, "seed_new", evt.Nodes[0].TableName)
-}
-
-// A promotion that changed no seeds must not create a run at all. An empty run
-// would appear in the UI on every model-only release and could never reach a
-// terminal state, having no tasks to finish.
-func TestPromotedSeedsHandler_NoChangedSeeds_CreatesNothing(t *testing.T) {
-	repo, outbox := &fakePromotedSeedsRunRepo{}, &fakePromotedSeedsOutbox{}
-	u := promotedSeedsUoW(repo, outbox)
-	require.NoError(t, u.Begin(context.Background()))
-
-	err := handlers.NewPromotedSeedsHandler(promotedSeedsLogger()).Handle(
-		context.Background(), u,
-		events.ReleasePromoted{
-			ReleaseID: "rel-3",
-			Topology: []events.ReleasePromotedNode{{
-				ServiceName: "core", SchemaName: "analytics", TableName: "daily_transactions",
-				NodeType: "dbt-model", Changed: true,
-			}},
-		},
-		uuid.New(),
-	)
-	require.NoError(t, err)
-
-	assert.Empty(t, repo.saved, "no run for a promotion with no changed seeds")
-	assert.Empty(t, outbox.appended, "and therefore no trigger event")
+	assert.Equal(t, "sha-abc123", evt.Nodes[0].ImageTag)
+	assert.Equal(t, "dbt-seed", evt.Nodes[0].NodeType)
 }
 
 // The run id is derived from the release id, so a redelivered release.promoted:v1

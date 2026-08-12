@@ -179,6 +179,16 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 		return h.handleCompileTerminal(ctx, u, cmd, result, annotations)
 	}
 
+	// Legacy promote-seed Jobs queued by a previous version have synthetic task
+	// IDs with no run in state, so their lifecycle stays suppressed. Current
+	// promoted-seed work carries no mode label and falls through to the
+	// production path below. See events.ModePromoteSeed.
+	if labels["mode"] == pkgevents.ModePromoteSeed {
+		h.logger.Info("Legacy promote-seed Job terminal — no lifecycle events emitted",
+			"job_name", cmd.JobName, "status", result.Status)
+		return nil
+	}
+
 	// Empty metadata means the Job is gone (deleted/TTL-reaped): GetJobMeta maps
 	// NotFound to empty maps. A vanished Job has no mode label, so it falls through
 	// to the production task-status path below — correct for a production Job
@@ -675,7 +685,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 		if err != nil {
 			return fmt.Errorf("fetch job meta for running announcement: %w", err)
 		}
-		if labels["mode"] != pkgevents.ModeValidation && labels["mode"] != pkgevents.ModeSeedBuild && labels["mode"] != pkgevents.ModeCompile {
+		if labels["mode"] != pkgevents.ModeValidation && labels["mode"] != pkgevents.ModeSeedBuild && labels["mode"] != pkgevents.ModeCompile && labels["mode"] != pkgevents.ModePromoteSeed {
 			if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "RUNNING", cmd.RetryCount); err != nil {
 				return fmt.Errorf("task_status_updated RUNNING: %w", err)
 			}

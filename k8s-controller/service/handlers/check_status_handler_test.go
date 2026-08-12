@@ -2181,3 +2181,67 @@ func TestUploadedArtifactKeysHaveNoEmptySegments(t *testing.T) {
 		})
 	}
 }
+
+// TestHandle_LegacyPromoteSeedMode_EmitsNoLifecycleRows covers work queued by a
+// previous version during a rolling upgrade: a Job still labelled
+// mode=promote_seed carries a synthetic task ID with no run in state, so
+// announcing its lifecycle would address a run state cannot load and wedge that
+// consumer on endless redelivery. Current promoted-seed work is an ordinary run
+// and carries no mode label, so it falls through to the production path.
+func TestHandle_LegacyPromoteSeedMode_EmitsNoLifecycleRows(t *testing.T) {
+	for _, status := range []model.JobStatus{model.JobStatusSucceeded, model.JobStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			outbox := &fakeOutboxRepo{}
+			handler := newHandler(
+				&fakeK8sClient{
+					status: &model.K8sPodResult{Status: status},
+					labels: map[string]string{"mode": pkgevents.ModePromoteSeed},
+				},
+				noopCancelledRepo(), 3,
+			)
+
+			cmd := command.CheckJobStatus{
+				TaskID:     uuid.New(),
+				ScheduleID: uuid.New(),
+				JobName:    "legacy-promote-seed-core-analytics-fx",
+				MaxRetries: 3,
+			}
+
+			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+			if len(outbox.entries) != 0 {
+				t.Errorf("expected no outbox rows for a legacy promote-seed Job, got %v", eventTypesOf(outbox.entries))
+			}
+		})
+	}
+}
+
+// A Job with no mode label is current promoted-seed (or ordinary) work and MUST
+// go through the production lifecycle — that is the whole point of the change.
+func TestHandle_NoModeLabel_UsesTheProductionLifecycle(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			labels: map[string]string{},
+			podLog: "dbt seed output",
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(),
+		ServiceName: "core", SchemaName: "analytics", TableName: "seed_users",
+		JobName: "core-analytics-seed-users-abc", MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if findEntryByEventType(outbox.entries, "task_status_updated") == nil {
+		t.Error("a mode-less Job must announce its task status")
+	}
+	if findEntryByEventType(outbox.entries, "task_execution_recorded") == nil {
+		t.Error("a mode-less Job must record its execution")
+	}
+}

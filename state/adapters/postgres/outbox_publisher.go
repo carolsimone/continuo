@@ -154,6 +154,8 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 				"service_name": n.ServiceName,
 				"schema_name":  n.SchemaName,
 				"table_name":   n.TableName,
+				"node_type":    n.NodeType,
+				"image_tag":    n.ImageTag,
 			})
 		}
 		payload, err := json.Marshal(map[string]any{

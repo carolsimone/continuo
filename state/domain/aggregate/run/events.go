@@ -99,17 +99,28 @@ type SingleNodeRunRequested struct {
 func (SingleNodeRunRequested) runDomainEvent()         {}
 func (e SingleNodeRunRequested) ScheduleID() uuid.UUID { return e.ID }
 
+// SeedNode is one seed of a promoted-seeds run, carrying the metadata the
+// triggering release pinned to it.
+//
+// NodeType and ImageTag are carried rather than re-read downstream: a promotion
+// can be overtaken by a later one, and re-reading the topology would then build
+// this release's seeds with a different release's image.
+type SeedNode struct {
+	NodeID
+	NodeType string
+	ImageTag string
+}
+
 // PromotedSeedsRunRequested is recorded by NewPromotedSeedsRun.
 // Translated to trigger.promoted_seeds:v1.
 //
-// Nodes carries the seeds the release changed. They travel on the event rather
-// than being re-derived downstream so that the run's membership is decided once,
-// by whoever read the promoted topology.
+// Nodes carries the seeds the release changed, with their pinned metadata, so
+// the run's membership and the images it builds with are decided once.
 type PromotedSeedsRunRequested struct {
 	ID        uuid.UUID
 	Name      string
 	ReleaseID string
-	Nodes     []NodeID
+	Nodes     []SeedNode
 }
 
 func (PromotedSeedsRunRequested) runDomainEvent()         {}

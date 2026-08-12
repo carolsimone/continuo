@@ -246,7 +246,7 @@ func NewPromotedSeedsRun(
 	id uuid.UUID,
 	scheduleName string,
 	releaseID string,
-	nodes []NodeID,
+	nodes []SeedNode,
 	now time.Time,
 ) (*Run, DomainEvent, error) {
 	if scheduleName == "" {

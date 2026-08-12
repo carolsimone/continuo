@@ -77,8 +77,11 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 	}
 
 	nodes := make([]snapshot.FQN, 0, len(cmd.Nodes))
+	pinned := make(map[snapshot.FQN]snapshot.PinnedNodeMetadata, len(cmd.Nodes))
 	for _, n := range cmd.Nodes {
-		nodes = append(nodes, snapshot.FQN{Service: n.ServiceName, Schema: n.SchemaName, Table: n.TableName})
+		fqn := snapshot.FQN{Service: n.ServiceName, Schema: n.SchemaName, Table: n.TableName}
+		nodes = append(nodes, fqn)
+		pinned[fqn] = snapshot.PinnedNodeMetadata{NodeType: n.NodeType, ImageTag: n.ImageTag}
 	}
 
 	projection, snapErr := h.snapshotSvc.Snapshot(ctx, snapshot.Params{
@@ -86,7 +89,7 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 		ScheduleName: cmd.ScheduleName,
 		Kind:         "promote_seed",
 		InitiatedBy:  cmd.InitiatedBy,
-		Selector:     snapshot.NodeSet{Nodes: nodes},
+		Selector:     snapshot.NodeSet{Nodes: nodes, Pinned: pinned},
 	})
 	if snapErr != nil {
 		if reason, ok := dispatchFailedReason(snapErr); ok {

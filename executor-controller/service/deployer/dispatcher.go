@@ -196,20 +196,30 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 
 	now := d.now()
 
+	// Legacy promote-seed work queued by a previous version carries no run in
+	// state, so announcing its lifecycle would address a task state cannot load
+	// and wedge that consumer. Current promoted-seed work is an ordinary run and
+	// never sets this. See events.ModePromoteSeed.
+	isLegacyPromoteSeed := dep.Command().ToJobSpec().Mode == pkgevents.ModePromoteSeed
+
 	// A row whose job_params could not be deserialized is unrunnable; fail it
 	// permanently with a routable announcement built from its recovered identity.
 	if !dep.IsDeployable() {
 		dep.RegisterFailure(now, true, "deployment job_params not deployable", d.backoff)
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
-			return err
+		if !isLegacyPromoteSeed {
+			if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+				return err
+			}
 		}
 		return repo.Save(ctx, dep)
 	}
 
 	deployErr := d.deployer.Deploy(ctx, dep.Command().ToJobSpec())
 	if deployErr == nil {
-		if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
-			return err
+		if !isLegacyPromoteSeed {
+			if err := d.writeDeployedAnnouncements(ctx, outboxRepo, dep); err != nil {
+				return err
+			}
 		}
 		if err := dep.MarkDeployed(now); err != nil {
 			return err
@@ -220,8 +230,10 @@ func (d *Dispatcher) dispatchOne(ctx context.Context, repo repository.Deployment
 	permanent := errors.Is(deployErr, pkgevents.ErrPermanent)
 	if dep.RegisterFailure(now, permanent, deployErr.Error(), d.backoff) {
 		d.logger.Error("Deploy terminal failure", "deployment_id", dep.ID(), "cause", deployErr)
-		if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
-			return err
+		if !isLegacyPromoteSeed {
+			if err := d.writeFailedAnnouncements(ctx, outboxRepo, dep); err != nil {
+				return err
+			}
 		}
 	} else {
 		d.logger.Warn("Deploy transient failure — rescheduling",

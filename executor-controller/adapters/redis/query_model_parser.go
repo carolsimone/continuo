@@ -60,6 +60,7 @@ func ParseQueryModel(msg goredis.XMessage) (events.QueryModel, error) {
 		NodeType:      nodeType,
 		ImageTag:      stringField(msg.Values, "image_tag"),
 		Operation:     operation,
+		Mode:          stringField(msg.Values, "mode"),
 	}, nil
 }
 

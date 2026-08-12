@@ -50,6 +50,10 @@ type JobParams struct {
 	// pkg_model.OperationRun (empty) is the default: dbt run/seed/snapshot by
 	// NodeType. pkg_model.OperationTest runs `dbt test --select <node>`.
 	Operation pkg_model.Operation
+	// Mode is the legacy promote-seed dispatch mode carried by queued work only;
+	// when non-empty it is stamped as a "mode" label so k8s-controller routes the
+	// Job away from the production lifecycle. Empty for everything current.
+	Mode string
 }
 
 // K8sClient provides methods to interact with Kubernetes
@@ -179,6 +183,11 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	// changing the app selector that CountActive uses for the concurrency cap.
 	if params.NodeType == pkg_model.NodeTypePythonModel {
 		jobLabels["runtime"] = "python"
+	}
+	// Only legacy promote-seed work still supplies a mode here; current jobs get
+	// no mode label and route through the production lifecycle.
+	if params.Mode != "" {
+		jobLabels["mode"] = params.Mode
 	}
 	ttl := jobTTLSecondsAfterFinished
 	job := &batchv1.Job{

@@ -28,4 +28,8 @@ type QueryModel struct {
 	// pkg_model.OperationRun (empty) is the default: dbt run/seed/snapshot by
 	// NodeType. pkg_model.OperationTest runs `dbt test --select <node>`.
 	Operation pkg_model.Operation
+	// Mode carries the legacy promote-seed dispatch mode from a query.model:v1
+	// message produced by an older orchestrator. Empty for everything current.
+	// See events.ModePromoteSeed.
+	Mode string
 }

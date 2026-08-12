@@ -24,6 +24,8 @@ const (
 	TriggerRebaseV1 = "trigger.rebase:v1"
 	// TriggerSingleNodeRunV1 — User-initiated single-node run trigger.
 	TriggerSingleNodeRunV1 = "trigger.single_node_run:v1"
+	// ReleaseSeedsPendingV1 — Seeds a promoted release changed, emitted by orchestrator in the same transaction as the topology swap so the nodes exist before any run is projected onto them.
+	ReleaseSeedsPendingV1 = "release.seeds.pending:v1"
 	// TriggerPromotedSeedsV1 — Run trigger for the seeds a promoted release changed; state creates the run, orchestrator projects its tasks.
 	TriggerPromotedSeedsV1 = "trigger.promoted_seeds:v1"
 	// RunFinalizedV1 — Run finalization (success, failure, or cancellation) emitted by state; consumed for projections.
@@ -100,6 +102,8 @@ const (
 	OrchestratorRebase = "orchestrator-rebase"
 	// OrchestratorSingleNodeRun — orchestrator consumer group on trigger.single_node_run:v1.
 	OrchestratorSingleNodeRun = "orchestrator-single-node-run"
+	// StateReleaseSeedsPending — state consumer group on release.seeds.pending:v1.
+	StateReleaseSeedsPending = "state-release-seeds-pending"
 	// OrchestratorPromotedSeeds — orchestrator consumer group on trigger.promoted_seeds:v1.
 	OrchestratorPromotedSeeds = "orchestrator-promoted-seeds"
 	// OrchestratorRunFinalized — orchestrator consumer group on run.finalized:v1.
@@ -146,8 +150,6 @@ const (
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
-	// StateReleasePromotedSeeds — state consumer group on release.promoted:v1.
-	StateReleasePromotedSeeds = "state-release-promoted-seeds"
 	// ExecutorReleasePromoted — executor-controller consumer group on release.promoted:v1.
 	ExecutorReleasePromoted = "executor-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
@@ -171,6 +173,7 @@ var All = []string{
 	TriggerRerunV1,
 	TriggerRebaseV1,
 	TriggerSingleNodeRunV1,
+	ReleaseSeedsPendingV1,
 	TriggerPromotedSeedsV1,
 	RunFinalizedV1,
 	QueryModelV1,

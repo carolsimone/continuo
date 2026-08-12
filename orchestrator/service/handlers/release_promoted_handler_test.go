@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/pkg/events"
+	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -424,4 +425,63 @@ func TestReleasePromoted_TopologyRootUpdatedAfterPromotion(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(uow.outboxRepo.CreatedEntries[0].Payload, &payload))
 	assert.Equal(t, int64(42), payload.TopologyGeneration)
+}
+
+// The request to build a release's changed seeds is written in the same
+// transaction as the topology swap. That ordering is what guarantees the :Table
+// nodes exist before a run is projected onto them — the snapshot writer MATCHes
+// them, so a run projected before the swap would attach no :EXECUTES edges at
+// all. Each node carries the image tag of THIS release so a promotion overtaken
+// by a later one still builds with its own image.
+func TestReleasePromoted_EmitsSeedsPendingInTheSwapTransaction(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	h := newReleasePromotedHandler(uow, &fakeTopologyRepository{}, &fakeTopologyStateRepository{generation: 1}, &fakeReleasePromotionRepository{})
+
+	in := twoNodeInput()
+	in.Topology[0].NodeType = "dbt-seed"
+	in.Topology[0].Changed = true
+	in.Topology[1].NodeType = "dbt-model" // a changed model is not this path's work
+	in.Topology[1].Changed = true
+
+	require.NoError(t, h.Handle(ctx, "msg-seeds-1", nil, in))
+
+	var seedsEntry *pkgoutbox.Entry
+	for _, e := range uow.outboxRepo.CreatedEntries {
+		if e.StreamName == streams.ReleaseSeedsPendingV1 {
+			seedsEntry = e
+		}
+	}
+	require.NotNil(t, seedsEntry, "release.seeds.pending:v1 must be written alongside the swap")
+
+	var payload struct {
+		ReleaseID string `json:"release_id"`
+		Nodes     []struct {
+			TableName string `json:"table_name"`
+			NodeType  string `json:"node_type"`
+			ImageTag  string `json:"image_tag"`
+		} `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal(seedsEntry.Payload, &payload))
+	assert.Equal(t, "rA", payload.ReleaseID)
+	require.Len(t, payload.Nodes, 1, "only the changed seed, not the changed model")
+	assert.Equal(t, "table_a", payload.Nodes[0].TableName)
+	assert.Equal(t, "tag-a", payload.Nodes[0].ImageTag, "the release's own image must be pinned onto the request")
+	assert.True(t, uow.CommittedTx)
+}
+
+// A release that changed no seeds must produce no request at all: state would
+// otherwise mint a task-less run that could never reach a terminal state.
+func TestReleasePromoted_NoChangedSeeds_EmitsNoSeedsPending(t *testing.T) {
+	ctx := context.Background()
+	uow := newFakeUnitOfWork()
+	h := newReleasePromotedHandler(uow, &fakeTopologyRepository{}, &fakeTopologyStateRepository{generation: 1}, &fakeReleasePromotionRepository{})
+
+	in := twoNodeInput() // no node marked Changed, none a seed
+	require.NoError(t, h.Handle(ctx, "msg-seeds-2", nil, in))
+
+	for _, e := range uow.outboxRepo.CreatedEntries {
+		assert.NotEqual(t, streams.ReleaseSeedsPendingV1, e.StreamName,
+			"no seeds request for a release that changed no seeds")
+	}
 }

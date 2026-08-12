@@ -17,7 +17,7 @@ func promotedSeedsMsg(overrides map[string]interface{}) goredis.XMessage {
 		"schedule_name": "promote-seed-6f1a2b3c",
 		"release_id":    "rel-1",
 		"kind":          "promote_seed",
-		"nodes":         `[{"service_name":"core","schema_name":"analytics","table_name":"seed_users"},{"service_name":"core","schema_name":"analytics","table_name":"seed_fx_transactions"}]`,
+		"nodes":         `[{"service_name":"core","schema_name":"analytics","table_name":"seed_users","node_type":"dbt-seed","image_tag":"v1"},{"service_name":"core","schema_name":"analytics","table_name":"seed_fx_transactions","node_type":"dbt-seed","image_tag":"v1"}]`,
 		"initiated_by":  "system",
 	}
 	for k, v := range overrides {
@@ -45,6 +45,10 @@ func TestParsePromotedSeedsRun_DecodesNodesFromTheJSONField(t *testing.T) {
 	assert.Equal(t, "analytics", in.Nodes[0].SchemaName)
 	assert.Equal(t, "seed_users", in.Nodes[0].TableName)
 	assert.Equal(t, "seed_fx_transactions", in.Nodes[1].TableName)
+	// The release-pinned metadata must survive the wire: without it the run would
+	// fall back to whatever image the topology currently holds.
+	assert.Equal(t, "dbt-seed", in.Nodes[0].NodeType)
+	assert.Equal(t, "v1", in.Nodes[0].ImageTag)
 }
 
 // Every rejection is permanent: the consumer must ACK and drop a message that
@@ -61,7 +65,13 @@ func TestParsePromotedSeedsRun_RejectsMalformedMessagesPermanently(t *testing.T)
 		{"nodes not JSON", map[string]interface{}{"nodes": "core.analytics.seed_users"}},
 		{"nodes empty", map[string]interface{}{"nodes": "[]"}},
 		{"node missing table_name", map[string]interface{}{
-			"nodes": `[{"service_name":"core","schema_name":"analytics"}]`,
+			"nodes": `[{"service_name":"core","schema_name":"analytics","node_type":"dbt-seed","image_tag":"v1"}]`,
+		}},
+		{"node missing pinned image_tag", map[string]interface{}{
+			"nodes": `[{"service_name":"core","schema_name":"analytics","table_name":"seed_users","node_type":"dbt-seed"}]`,
+		}},
+		{"node missing pinned node_type", map[string]interface{}{
+			"nodes": `[{"service_name":"core","schema_name":"analytics","table_name":"seed_users","image_tag":"v1"}]`,
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

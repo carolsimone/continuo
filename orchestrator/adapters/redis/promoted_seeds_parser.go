@@ -47,6 +47,10 @@ func ParsePromotedSeedsRun(msg goredis.XMessage) (model.PromotedSeedsRunInput, e
 		return model.PromotedSeedsRunInput{}, fmt.Errorf("%w: message %s carries an empty nodes list", events.ErrPermanent, msg.ID)
 	}
 	for i, n := range nodes {
+		if n.NodeType == "" || n.ImageTag == "" {
+			return model.PromotedSeedsRunInput{}, fmt.Errorf(
+				"%w: message %s node %d is missing the release-pinned node_type or image_tag", events.ErrPermanent, msg.ID, i)
+		}
 		if n.ServiceName == "" || n.SchemaName == "" || n.TableName == "" {
 			return model.PromotedSeedsRunInput{}, fmt.Errorf(
 				"%w: message %s node %d is missing service_name, schema_name, or table_name", events.ErrPermanent, msg.ID, i)

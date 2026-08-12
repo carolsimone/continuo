@@ -20,14 +20,17 @@ import (
 // rebuild seeds that are already built.
 var promotedSeedsNamespace = uuid.MustParse("3e7b1a2f-8c4d-4e9a-b5f0-1d2c3a4e5f60")
 
-// PromotedSeedsHandler processes release.promoted:v1 and creates the run that
-// materialises the release's changed seeds into the production schema.
+// PromotedSeedsHandler processes release.seeds.pending:v1 and creates the run
+// that materialises a release's changed seeds into the production schema.
 //
 // It creates the run and announces it; orchestrator projects the tasks onto it
 // from the announcement. That split is the same one every other run uses — cron,
 // single-node, rerun and rebase all have state mint the run first — and it is
 // what puts this work inside the standard lifecycle, where a failed seed build
 // is retried, recorded, and visible.
+//
+// The inbound event is written inside orchestrator's topology-swap transaction,
+// so the nodes it names are already in the topology before this run exists.
 type PromotedSeedsHandler struct {
 	logger *slog.Logger
 }
@@ -43,29 +46,21 @@ func NewPromotedSeedsHandler(logger *slog.Logger) *PromotedSeedsHandler {
 // Returning nil tells the binding to commit; returning an error triggers
 // rollback.
 //
-// A promotion that changed no seeds is a no-op: no run, no event. Creating an
-// empty run would surface a task-less run on every release that touched only
-// models, and it could never reach a terminal state on its own.
+// The event is only emitted for a release that changed at least one seed, so
+// there is no empty-run case to guard here — orchestrator withholds the event
+// rather than having state create a task-less run that could never finalise.
 func (h *PromotedSeedsHandler) Handle(
 	ctx context.Context,
 	u uow.UnitOfWork,
-	evt events.ReleasePromoted,
+	evt events.ReleaseSeedsPending,
 	msgProcID uuid.UUID,
 ) error {
-	seeds := evt.ChangedSeeds()
-	if len(seeds) == 0 {
-		h.logger.Info("release.promoted: no changed seeds — no run created",
-			"release_id", evt.ReleaseID,
-		)
-		return nil
-	}
-
-	nodes := make([]run.NodeID, 0, len(seeds))
-	for _, s := range seeds {
-		nodes = append(nodes, run.NodeID{
-			ServiceName: s.ServiceName,
-			SchemaName:  s.SchemaName,
-			TableName:   s.TableName,
+	nodes := make([]run.SeedNode, 0, len(evt.Nodes))
+	for _, n := range evt.Nodes {
+		nodes = append(nodes, run.SeedNode{
+			NodeID:   run.NodeID{ServiceName: n.ServiceName, SchemaName: n.SchemaName, TableName: n.TableName},
+			NodeType: n.NodeType,
+			ImageTag: n.ImageTag,
 		})
 	}
 

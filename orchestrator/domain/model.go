@@ -73,6 +73,7 @@ const (
 	EventTypeRunEntriesDispatched     = "run_entries_dispatched"
 	EventTypeRunEntriesDispatchFailed = "run_entries_dispatch_failed"
 	EventTypeReleasePromoted          = "release_promoted"
+	EventTypeReleaseSeedsPending      = "release_seeds_pending"
 )
 
 // CascadeTaskSkipped is the event payload written to task.status.updated:v1 outbox entries

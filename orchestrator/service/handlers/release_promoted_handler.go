@@ -235,6 +235,17 @@ func (h *ReleasePromotedHandler) Handle(
 		return fmt.Errorf("failed to write to outbox: %w", err)
 	}
 
+	// The seeds this release changed have to be built into the production schema.
+	// That request is written here, inside the transaction that swaps the
+	// topology, so the :Table nodes a run will be projected onto are guaranteed to
+	// exist by the time anything acts on it — the snapshot writer MATCHes them and
+	// would otherwise attach no :EXECUTES edges at all. Each node carries the
+	// image tag and node type from THIS release, so a promotion that is overtaken
+	// by a later one still builds its seeds with its own image.
+	if err := h.writeSeedsPending(ctx, msgProcessingID, in); err != nil {
+		return err
+	}
+
 	if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
 		return fmt.Errorf("failed to update message state: %w", err)
 	}
@@ -281,3 +292,53 @@ func toDomainNodes(wire []domainEvent.ReleasePromotedNode, repo, commitSHA strin
 	}
 	return out
 }
+
+// writeSeedsPending writes the release.seeds.pending:v1 outbox row listing the
+// seeds this release changed, or nothing when it changed none.
+//
+// An unchanged seed is skipped: its data is already materialised and its content
+// hash has not moved, so rebuilding it would cost a Job for no effect.
+func (h *ReleasePromotedHandler) writeSeedsPending(
+	ctx context.Context,
+	msgProcessingID uuid.UUID,
+	in domainModel.PromoteReleaseInput,
+) error {
+	seeds := make([]map[string]string, 0, len(in.Topology))
+	for _, n := range in.Topology {
+		if !n.Changed || n.NodeType != nodeTypeDBTSeed {
+			continue
+		}
+		seeds = append(seeds, map[string]string{
+			"service_name": n.ServiceName,
+			"schema_name":  n.SchemaName,
+			"table_name":   n.TableName,
+			"node_type":    n.NodeType,
+			"image_tag":    n.ImageTag,
+		})
+	}
+	if len(seeds) == 0 {
+		return nil
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"release_id": in.ReleaseID,
+		"nodes":      seeds,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal release.seeds.pending payload: %w", err)
+	}
+	return h.uow.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+		ID:                  uuid.New(),
+		MessageProcessingID: &msgProcessingID,
+		AggregateType:       "orchestrator",
+		AggregateID:         uuid.NewSHA1(releaseSchedulesNamespace, []byte("seeds-pending:"+in.ReleaseID)),
+		EventType:           domain.EventTypeReleaseSeedsPending,
+		Payload:             payload,
+		StreamName:          streams.ReleaseSeedsPendingV1,
+		Status:              "pending",
+		MaxRetries:          pkgoutbox.DefaultMaxRetries,
+	})
+}
+
+// nodeTypeDBTSeed is the node_type a dbt seed carries in a promoted topology.
+const nodeTypeDBTSeed = "dbt-seed"

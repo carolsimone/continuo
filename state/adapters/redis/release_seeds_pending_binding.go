@@ -10,28 +10,27 @@ import (
 	"github.com/carolsimone/continuo/state/service/uow"
 )
 
-// releasePromotedStreamName is the wire-stable name of the Redis stream whose
+// releaseSeedsPendingStreamName is the wire-stable name of the Redis stream whose
 // messages this binding handles. It is also the value stored in the
 // message_processing.stream_name column for dedup rows.
 //
-// release.promoted:v1 is read by several consumer groups, but state has exactly
-// one of them, so its dedup rows are scoped by the stream name rather than by
-// the group name.
-const releasePromotedStreamName = streams.ReleasePromotedV1
+// state is the only consumer of this stream, so its dedup rows are scoped by
+// the stream name rather than by a group name.
+const releaseSeedsPendingStreamName = streams.ReleaseSeedsPendingV1
 
-// NewReleasePromotedBinding returns a pkg/redis.MessageHandler that parses each
+// NewReleaseSeedsPendingBinding returns a pkg/redis.MessageHandler that parses each
 // release.promoted:v1 message, runs dedup, and invokes PromotedSeedsHandler
 // inside a single Unit-of-Work transaction. See bindStreamHandler for the shared
 // pipeline and ACK-policy semantics.
-func NewReleasePromotedBinding(
+func NewReleaseSeedsPendingBinding(
 	uowFactory func() uow.UnitOfWork,
 	handler *handlers.PromotedSeedsHandler,
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
-	return bindStreamHandler(uowFactory, logger, streamBinding[events.ReleasePromoted]{
-		label:      "release.promoted",
-		streamName: releasePromotedStreamName,
-		parse:      ParseReleasePromoted,
+	return bindStreamHandler(uowFactory, logger, streamBinding[events.ReleaseSeedsPending]{
+		label:      "release.seeds.pending",
+		streamName: releaseSeedsPendingStreamName,
+		parse:      ParseReleaseSeedsPending,
 		payload:    defaultPayload,
 		handle:     handler.Handle,
 	})
