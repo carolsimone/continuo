@@ -68,8 +68,9 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	}
 
 	// additive polls: assertValidationRequestedNodes(8m) + waitForReleasePromoted(10m)
-	// + waitForTopologySwap(2m) + 2x(verifySchedulerSucceeded 2m + waitForParseCache 3m) = 30m.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// + waitForTopologySwap(2m) + waitForNodeVersion(2m)
+	// + 2x(verifySchedulerSucceeded 2m + waitForParseCache 3m) = 32m.
+	ctx, cancel := context.WithTimeout(context.Background(), 32*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -131,6 +132,26 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	// 7. The orchestrator must have swapped the Neo4j topology to this release.
 	//    The swap is asynchronous relative to promotion, so poll.
 	waitForTopologySwap(t, ctx, clients, releaseID, probeUniqueID, 2*time.Minute)
+
+	// 7b. The version-ingestion consumer must have recorded the promoted code
+	//     behind the node, fingerprinted identically to what the swap stamped
+	//     on :Table — that equality is the gap-detection invariant.
+	versionHash := waitForNodeVersion(t, ctx, clients, probeUniqueID, 2*time.Minute)
+	tableHash := neo4jScalarString(ctx, clients,
+		`MATCH (t:Table {unique_id: $uid}) RETURN t.content_hash AS v`,
+		map[string]any{"uid": probeUniqueID})
+	require.Equal(t, tableHash, versionHash,
+		"the current :NodeVersion must carry the content_hash the topology swap stored")
+	require.NotEmpty(t, neo4jScalarString(ctx, clients,
+		`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion) RETURN v.raw_code AS v`,
+		map[string]any{"uid": probeUniqueID}),
+		"the recorded version must carry the node's source")
+	require.Equal(t, "false", neo4jScalarString(ctx, clients,
+		`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion)
+		 RETURN toString(v.healed) AS v`,
+		map[string]any{"uid": probeUniqueID}),
+		"rel_probe is this release's changed node, so its version is authored here, not carried")
+	t.Logf("✅ code version recorded for %s (content_hash=%s)", probeUniqueID, versionHash)
 
 	// 8. The promoted release must surface in the history list and carry per-node
 	//    validation results (with a dbt log URI) retrievable through the UI BFF.
@@ -998,4 +1019,23 @@ func neo4jScalarString(ctx context.Context, clients *testClients, cypher string,
 	v, _ := res.Record().Get("v")
 	s, _ := v.(string)
 	return s
+}
+
+// waitForNodeVersion polls Neo4j until the version-ingestion consumer has
+// recorded the promoted code for uniqueID, then returns the current version's
+// content_hash. That consumer group trails the topology swap by design — it
+// fetches the release's code bundle from S3 first — so this must poll rather
+// than read once.
+func waitForNodeVersion(t *testing.T, ctx context.Context, clients *testClients, uniqueID string, timeout time.Duration) string {
+	t.Helper()
+	var hash string
+	pollUntil(t, ctx, timeout, 1*time.Second, func() (bool, error) {
+		hash = neo4jScalarString(ctx, clients,
+			`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion)
+			 RETURN v.content_hash AS v`,
+			map[string]any{"uid": uniqueID})
+		return hash != "", nil
+	}, fmt.Sprintf("timeout waiting for a :CURRENT :NodeVersion on %s "+
+		"(last content_hash=%q)", uniqueID, hash))
+	return hash
 }
