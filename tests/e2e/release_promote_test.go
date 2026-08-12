@@ -146,12 +146,28 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 		`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion) RETURN v.raw_code AS v`,
 		map[string]any{"uid": probeUniqueID}),
 		"the recorded version must carry the node's source")
-	require.Equal(t, "false", neo4jScalarString(ctx, clients,
-		`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion)
-		 RETURN toString(v.healed) AS v`,
-		map[string]any{"uid": probeUniqueID}),
-		"rel_probe is this release's changed node, so its version is authored here, not carried")
-	t.Logf("✅ code version recorded for %s (content_hash=%s)", probeUniqueID, versionHash)
+
+	// Which release authored the current version is not fixed across suite
+	// orderings: this test makes rel_probe "changed" by seeding current_prod
+	// without it, but rel_probe's source is identical every run, so its
+	// content_hash never moves. If an earlier release in the same suite already
+	// recorded that exact code, the anti-bloat rule correctly writes nothing here
+	// and :CURRENT still points at the earlier version. So assert the healed
+	// provenance only for the case it is defined in — a version this release
+	// actually authored. (planVersionWrite's unit tests pin the full rule.)
+	versionRelease := neo4jScalarString(ctx, clients,
+		`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion) RETURN v.release_id AS v`,
+		map[string]any{"uid": probeUniqueID})
+	require.NotEmpty(t, versionRelease, "the recorded version must carry its authoring release")
+	if versionRelease == releaseID {
+		require.Equal(t, "false", neo4jScalarString(ctx, clients,
+			`MATCH (:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion)
+			 RETURN toString(v.healed) AS v`,
+			map[string]any{"uid": probeUniqueID}),
+			"this release authored the version, so it is not a healed carry-over")
+	}
+	t.Logf("✅ code version recorded for %s (content_hash=%s, authored by %s)",
+		probeUniqueID, versionHash, versionRelease)
 
 	// 8. The promoted release must surface in the history list and carry per-node
 	//    validation results (with a dbt log URI) retrievable through the UI BFF.
