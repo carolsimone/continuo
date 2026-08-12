@@ -1875,8 +1875,8 @@ func (x *RunExecution) GetCompletedAt() string {
 type GetNodeVersionsRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	UniqueId string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
-	// limit bounds the number of versions returned, newest first; the server
-	// applies a default when unset and clamps values above its maximum.
+	// limit bounds the number of versions returned, newest first. <= 0
+	// defaults to 20; values above 200 are clamped to it.
 	Limit         int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2193,8 +2193,8 @@ type GetCodeUnitVersionsRequest struct {
 	// their chains concatenated in resolution order. Mutually exclusive with
 	// unit_id.
 	UniqueId string `protobuf:"bytes,2,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
-	// limit bounds the number of versions returned per unit, newest first; the
-	// server applies a default when unset and clamps values above its maximum.
+	// limit bounds the number of versions returned per unit, newest first.
+	// <= 0 defaults to 20; values above 200 are clamped to it.
 	Limit         int32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

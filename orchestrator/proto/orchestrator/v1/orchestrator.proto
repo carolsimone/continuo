@@ -265,8 +265,8 @@ message RunExecution {
 
 message GetNodeVersionsRequest {
   string unique_id = 1;
-  // limit bounds the number of versions returned, newest first; the server
-  // applies a default when unset and clamps values above its maximum.
+  // limit bounds the number of versions returned, newest first. <= 0
+  // defaults to 20; values above 200 are clamped to it.
   int32 limit = 2;
 }
 message GetNodeVersionsResponse {
@@ -305,8 +305,8 @@ message GetCodeUnitVersionsRequest {
   // their chains concatenated in resolution order. Mutually exclusive with
   // unit_id.
   string unique_id = 2;
-  // limit bounds the number of versions returned per unit, newest first; the
-  // server applies a default when unset and clamps values above its maximum.
+  // limit bounds the number of versions returned per unit, newest first.
+  // <= 0 defaults to 20; values above 200 are clamped to it.
   int32 limit = 3;
 }
 message GetCodeUnitVersionsResponse {

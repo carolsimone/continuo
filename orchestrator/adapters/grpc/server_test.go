@@ -5,10 +5,12 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	grpcadapter "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,7 +30,7 @@ import (
 // return codes.Unimplemented from the embedded UnimplementedOrchestratorQueryServer.
 func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	handler := grpcadapter.NewQueryHandler(stubScheduleAndRunLists{}, stubDriftAwareRuns{}, logger)
+	handler := grpcadapter.NewQueryHandler(stubScheduleAndRunLists{}, stubDriftAwareRuns{}, stubCodeVersionHistoryReader{}, logger)
 	server, err := grpcadapter.NewServer(0, handler, logger) // 0 = ephemeral port
 	require.NoError(t, err)
 	go func() { _ = server.Start() }()
@@ -69,6 +71,26 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 		}},
 		{"ListScheduleTopologies", func() error {
 			_, err := client.ListScheduleTopologies(ctx, &orchestratorv1.ListScheduleTopologiesRequest{})
+			return err
+		}},
+		{"GetNodeVersions", func() error {
+			_, err := client.GetNodeVersions(ctx, &orchestratorv1.GetNodeVersionsRequest{UniqueId: "x"})
+			return err
+		}},
+		{"GetNodeVersionDiff", func() error {
+			_, err := client.GetNodeVersionDiff(ctx, &orchestratorv1.GetNodeVersionDiffRequest{UniqueId: "x", FromSeq: 1, ToSeq: 2})
+			return err
+		}},
+		{"GetUpstreamChanges", func() error {
+			_, err := client.GetUpstreamChanges(ctx, &orchestratorv1.GetUpstreamChangesRequest{UniqueId: "x"})
+			return err
+		}},
+		{"GetCodeUnitVersions", func() error {
+			_, err := client.GetCodeUnitVersions(ctx, &orchestratorv1.GetCodeUnitVersionsRequest{UnitId: "x"})
+			return err
+		}},
+		{"GetNodeRunHistory", func() error {
+			_, err := client.GetNodeRunHistory(ctx, &orchestratorv1.GetNodeRunHistoryRequest{UniqueId: "x"})
 			return err
 		}},
 	}
@@ -114,4 +136,23 @@ func (stubDriftAwareRuns) GetRunGraph(context.Context, string) (*queries.RunGrap
 }
 func (stubDriftAwareRuns) ListActiveRunDrifts(context.Context) (*queries.ActiveRunDriftView, error) {
 	return &queries.ActiveRunDriftView{}, nil
+}
+
+// stubCodeVersionHistoryReader satisfies grpcadapter.CodeVersionHistoryReader.
+type stubCodeVersionHistoryReader struct{}
+
+func (stubCodeVersionHistoryReader) GetNodeVersions(context.Context, string, int32) ([]codeversion.VersionView, error) {
+	return nil, nil
+}
+func (stubCodeVersionHistoryReader) GetNodeVersionDiff(context.Context, string, int64, int64) (*codeversion.VersionDiff, error) {
+	return &codeversion.VersionDiff{}, nil
+}
+func (stubCodeVersionHistoryReader) GetUpstreamChanges(context.Context, string, int32, time.Time) ([]codeversion.UpstreamChange, error) {
+	return nil, nil
+}
+func (stubCodeVersionHistoryReader) GetCodeUnitVersions(context.Context, string, string, int32) ([]codeversion.UnitVersionView, error) {
+	return nil, nil
+}
+func (stubCodeVersionHistoryReader) GetNodeRunHistory(context.Context, string, int32) ([]codeversion.RunExecution, error) {
+	return nil, nil
 }

@@ -196,6 +196,29 @@ func TestCodeVersionQueryService_GetUpstreamChanges_ReaderError(t *testing.T) {
 	assert.Contains(t, err.Error(), "neo4j down")
 }
 
+// Ancestors legitimately returns an empty slice both for an unknown node and
+// for a known node with no upstreams (or none surviving the since filter).
+// The service must tell these apart by falling back to NodeVersions, which
+// does distinguish them, rather than reporting an empty upstream list for an
+// unknown node.
+func TestCodeVersionQueryService_GetUpstreamChanges_EmptyAncestors_UnknownNodeReturnsError(t *testing.T) {
+	r := &fakeCodeVersionReader{nodeVersionsErr: domain.ErrNodeNotFound}
+	svc := newCodeVersionSvc(r)
+
+	_, err := svc.GetUpstreamChanges(context.Background(), "ghost-node", 3, time.Time{})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
+}
+
+func TestCodeVersionQueryService_GetUpstreamChanges_EmptyAncestors_KnownNodeReturnsEmptyNoError(t *testing.T) {
+	r := &fakeCodeVersionReader{} // ancestors empty (zero value); NodeVersions succeeds
+	svc := newCodeVersionSvc(r)
+
+	changes, err := svc.GetUpstreamChanges(context.Background(), "known-node", 3, time.Time{})
+	require.NoError(t, err)
+	assert.Empty(t, changes)
+}
+
 // ---- GetNodeVersionDiff ----
 
 func TestCodeVersionQueryService_GetNodeVersionDiff_OverCapSetsTruncatedAndValidUTF8(t *testing.T) {
@@ -335,6 +358,27 @@ func TestCodeVersionQueryService_GetNodeVersions_LimitPassesThrough(t *testing.T
 	assert.Equal(t, int32(7), r.gotNodeVersionsLimit)
 }
 
+// proto3 int32 defaults to 0 on an unset field, and the reader passes limit
+// straight into a Cypher LIMIT — so an unset limit must be defaulted here,
+// not left to reach storage as zero rows.
+func TestCodeVersionQueryService_GetNodeVersions_ZeroLimitDefaultsTo20(t *testing.T) {
+	r := &fakeCodeVersionReader{}
+	svc := newCodeVersionSvc(r)
+
+	_, err := svc.GetNodeVersions(context.Background(), "node-1", 0)
+	require.NoError(t, err)
+	assert.Equal(t, int32(20), r.gotNodeVersionsLimit)
+}
+
+func TestCodeVersionQueryService_GetNodeVersions_OversizedLimitClampsTo200(t *testing.T) {
+	r := &fakeCodeVersionReader{}
+	svc := newCodeVersionSvc(r)
+
+	_, err := svc.GetNodeVersions(context.Background(), "node-1", 1000)
+	require.NoError(t, err)
+	assert.Equal(t, int32(200), r.gotNodeVersionsLimit)
+}
+
 // ---- GetNodeRunHistory ----
 
 func TestCodeVersionQueryService_GetNodeRunHistory_NonPositiveLimitDefaultsTo20(t *testing.T) {
@@ -414,4 +458,32 @@ func TestCodeVersionQueryService_GetCodeUnitVersions_UnknownNodeError(t *testing
 	_, err := svc.GetCodeUnitVersions(context.Background(), "", "ghost-node", 10)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
+}
+
+func TestCodeVersionQueryService_GetCodeUnitVersions_ZeroLimitDefaultsTo20(t *testing.T) {
+	r := &fakeCodeVersionReader{}
+	svc := newCodeVersionSvc(r)
+
+	_, err := svc.GetCodeUnitVersions(context.Background(), "macro-a", "", 0)
+	require.NoError(t, err)
+	assert.Equal(t, int32(20), r.gotUnitVersionsLimit["macro-a"])
+}
+
+func TestCodeVersionQueryService_GetCodeUnitVersions_OversizedLimitClampsTo200(t *testing.T) {
+	r := &fakeCodeVersionReader{}
+	svc := newCodeVersionSvc(r)
+
+	_, err := svc.GetCodeUnitVersions(context.Background(), "macro-a", "", 1000)
+	require.NoError(t, err)
+	assert.Equal(t, int32(200), r.gotUnitVersionsLimit["macro-a"])
+}
+
+func TestCodeVersionQueryService_GetCodeUnitVersions_ByUniqueID_ZeroLimitDefaultsTo20(t *testing.T) {
+	r := &fakeCodeVersionReader{unitsForNode: []string{"macro-a", "macro-b"}}
+	svc := newCodeVersionSvc(r)
+
+	_, err := svc.GetCodeUnitVersions(context.Background(), "", "node-1", 0)
+	require.NoError(t, err)
+	assert.Equal(t, int32(20), r.gotUnitVersionsLimit["macro-a"])
+	assert.Equal(t, int32(20), r.gotUnitVersionsLimit["macro-b"])
 }

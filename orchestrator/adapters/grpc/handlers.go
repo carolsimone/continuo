@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/carolsimone/continuo/pkg/num"
 	"google.golang.org/grpc/codes"
@@ -36,16 +38,30 @@ type DriftAwareRunReader interface {
 	ListActiveRunDrifts(ctx context.Context) (*queries.ActiveRunDriftView, error)
 }
 
+// CodeVersionHistoryReader returns the code-version history views served by
+// the code-version RPCs: node version chains, rendered diffs, upstream
+// changes, shared-code unit chains, and run history. Cap policy (upstream
+// ancestor count, diff byte size) and limit defaulting/clamping live here,
+// not in the handler. Satisfied by service/queries.CodeVersionQueryService.
+type CodeVersionHistoryReader interface {
+	GetNodeVersions(ctx context.Context, uniqueID string, limit int32) ([]codeversion.VersionView, error)
+	GetNodeVersionDiff(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (*codeversion.VersionDiff, error)
+	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since time.Time) ([]codeversion.UpstreamChange, error)
+	GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) ([]codeversion.UnitVersionView, error)
+	GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32) ([]codeversion.RunExecution, error)
+}
+
 // QueryHandler implements the OrchestratorQuery gRPC service.
 type QueryHandler struct {
 	orchestratorv1.UnimplementedOrchestratorQueryServer
 	scheduleAndRunLists ScheduleAndRunListReader
 	driftAwareRuns      DriftAwareRunReader
+	codeVersions        CodeVersionHistoryReader
 	logger              *slog.Logger
 }
 
-func NewQueryHandler(scheduleAndRunLists ScheduleAndRunListReader, driftAwareRuns DriftAwareRunReader, logger *slog.Logger) *QueryHandler {
-	return &QueryHandler{scheduleAndRunLists: scheduleAndRunLists, driftAwareRuns: driftAwareRuns, logger: logger}
+func NewQueryHandler(scheduleAndRunLists ScheduleAndRunListReader, driftAwareRuns DriftAwareRunReader, codeVersions CodeVersionHistoryReader, logger *slog.Logger) *QueryHandler {
+	return &QueryHandler{scheduleAndRunLists: scheduleAndRunLists, driftAwareRuns: driftAwareRuns, codeVersions: codeVersions, logger: logger}
 }
 
 func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1.GetScheduleGraphRequest) (*orchestratorv1.GetScheduleGraphResponse, error) {
@@ -246,6 +262,209 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeR
 		TestCount:      num.ClampInt32(meta.TestCount),
 		TestCountKnown: meta.TestCountKnown,
 	}, nil
+}
+
+// maxUpstreamDepth caps GetUpstreamChanges' depth request; the proto
+// documents this as the maximum and rejects anything above it.
+const maxUpstreamDepth = 10
+
+func (h *QueryHandler) GetNodeVersions(ctx context.Context, req *orchestratorv1.GetNodeVersionsRequest) (*orchestratorv1.GetNodeVersionsResponse, error) {
+	if req.UniqueId == "" {
+		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
+	}
+	versions, err := h.codeVersions.GetNodeVersions(ctx, req.UniqueId, req.Limit)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
+		}
+		h.logger.Error("GetNodeVersions failed", "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetNodeVersions: %v", err)
+	}
+	resp := &orchestratorv1.GetNodeVersionsResponse{
+		Versions: make([]*orchestratorv1.VersionView, 0, len(versions)),
+	}
+	for _, v := range versions {
+		resp.Versions = append(resp.Versions, codeVersionViewToProto(v))
+	}
+	return resp, nil
+}
+
+func (h *QueryHandler) GetNodeVersionDiff(ctx context.Context, req *orchestratorv1.GetNodeVersionDiffRequest) (*orchestratorv1.GetNodeVersionDiffResponse, error) {
+	if req.UniqueId == "" {
+		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
+	}
+	if req.FromSeq == req.ToSeq {
+		return nil, status.Error(codes.InvalidArgument, "from_seq and to_seq must differ")
+	}
+	diff, err := h.codeVersions.GetNodeVersionDiff(ctx, req.UniqueId, req.FromSeq, req.ToSeq)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return nil, status.Errorf(codes.NotFound, "node %q version %d or %d not found", req.UniqueId, req.FromSeq, req.ToSeq)
+		}
+		h.logger.Error("GetNodeVersionDiff failed", "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetNodeVersionDiff: %v", err)
+	}
+	return &orchestratorv1.GetNodeVersionDiffResponse{Diff: codeVersionDiffToProto(*diff)}, nil
+}
+
+func (h *QueryHandler) GetUpstreamChanges(ctx context.Context, req *orchestratorv1.GetUpstreamChangesRequest) (*orchestratorv1.GetUpstreamChangesResponse, error) {
+	if req.UniqueId == "" {
+		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
+	}
+	if req.Depth > maxUpstreamDepth {
+		return nil, status.Errorf(codes.InvalidArgument, "depth must be <= %d", maxUpstreamDepth)
+	}
+	var since time.Time
+	if req.Since != "" {
+		parsed, err := time.Parse(time.RFC3339, req.Since)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "since must be RFC3339: %v", err)
+		}
+		since = parsed
+	}
+	changes, err := h.codeVersions.GetUpstreamChanges(ctx, req.UniqueId, req.Depth, since)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
+		}
+		h.logger.Error("GetUpstreamChanges failed", "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetUpstreamChanges: %v", err)
+	}
+	resp := &orchestratorv1.GetUpstreamChangesResponse{
+		Changes: make([]*orchestratorv1.UpstreamChange, 0, len(changes)),
+	}
+	for _, c := range changes {
+		resp.Changes = append(resp.Changes, codeUpstreamChangeToProto(c))
+	}
+	return resp, nil
+}
+
+func (h *QueryHandler) GetCodeUnitVersions(ctx context.Context, req *orchestratorv1.GetCodeUnitVersionsRequest) (*orchestratorv1.GetCodeUnitVersionsResponse, error) {
+	if (req.UnitId == "") == (req.UniqueId == "") {
+		return nil, status.Error(codes.InvalidArgument, "exactly one of unit_id or unique_id is required")
+	}
+	versions, err := h.codeVersions.GetCodeUnitVersions(ctx, req.UnitId, req.UniqueId, req.Limit)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			id := req.UnitId
+			if id == "" {
+				id = req.UniqueId
+			}
+			return nil, status.Errorf(codes.NotFound, "%q not found", id)
+		}
+		h.logger.Error("GetCodeUnitVersions failed", "unit_id", req.UnitId, "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetCodeUnitVersions: %v", err)
+	}
+	resp := &orchestratorv1.GetCodeUnitVersionsResponse{
+		Versions: make([]*orchestratorv1.UnitVersionView, 0, len(versions)),
+	}
+	for _, v := range versions {
+		resp.Versions = append(resp.Versions, codeUnitVersionViewToProto(v))
+	}
+	return resp, nil
+}
+
+func (h *QueryHandler) GetNodeRunHistory(ctx context.Context, req *orchestratorv1.GetNodeRunHistoryRequest) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
+	if req.UniqueId == "" {
+		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
+	}
+	runs, err := h.codeVersions.GetNodeRunHistory(ctx, req.UniqueId, req.Limit)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
+		}
+		h.logger.Error("GetNodeRunHistory failed", "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetNodeRunHistory: %v", err)
+	}
+	resp := &orchestratorv1.GetNodeRunHistoryResponse{
+		Runs: make([]*orchestratorv1.RunExecution, 0, len(runs)),
+	}
+	for _, r := range runs {
+		resp.Runs = append(resp.Runs, codeRunExecutionToProto(r))
+	}
+	return resp, nil
+}
+
+// formatOptionalRFC3339 renders t as RFC3339, or "" for the zero time — the
+// wire contract's convention for "not recorded" across every code-version
+// timestamp field.
+func formatOptionalRFC3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
+
+func codeVersionViewToProto(v codeversion.VersionView) *orchestratorv1.VersionView {
+	return &orchestratorv1.VersionView{
+		UniqueId:          v.UniqueID,
+		VersionSeq:        v.VersionSeq,
+		ContentHash:       v.ContentHash,
+		SourceHash:        v.SourceHash,
+		SharedCodeHash:    v.SharedCodeHash,
+		ConfigHash:        v.ConfigHash,
+		Runtime:           v.Runtime,
+		RawCode:           v.RawCode,
+		CompiledCode:      v.CompiledCode,
+		CompiledTruncated: v.CompiledTruncated,
+		ConfigJson:        v.ConfigJSON,
+		Repo:              v.Repo,
+		CommitSha:         v.CommitSHA,
+		ReleaseId:         v.ReleaseID,
+		PromotedAt:        formatOptionalRFC3339(v.PromotedAt),
+		Healed:            v.Healed,
+		Backfilled:        v.Backfilled,
+		IsCurrent:         v.IsCurrent,
+	}
+}
+
+func codeVersionDiffToProto(d codeversion.VersionDiff) *orchestratorv1.VersionDiff {
+	return &orchestratorv1.VersionDiff{
+		UniqueId:          d.UniqueID,
+		From:              codeVersionViewToProto(d.From),
+		To:                codeVersionViewToProto(d.To),
+		RawCodeDiff:       d.RawCodeDiff,
+		ConfigDiff:        d.ConfigDiff,
+		SourceChanged:     d.SourceChanged,
+		SharedCodeChanged: d.SharedCodeChanged,
+		ConfigChanged:     d.ConfigChanged,
+		Truncated:         d.Truncated,
+	}
+}
+
+func codeUpstreamChangeToProto(c codeversion.UpstreamChange) *orchestratorv1.UpstreamChange {
+	return &orchestratorv1.UpstreamChange{
+		UniqueId: c.UniqueID,
+		Depth:    c.Depth,
+		Diff:     codeVersionDiffToProto(c.Diff),
+	}
+}
+
+func codeUnitVersionViewToProto(v codeversion.UnitVersionView) *orchestratorv1.UnitVersionView {
+	return &orchestratorv1.UnitVersionView{
+		UnitId:     v.UnitID,
+		Checksum:   v.Checksum,
+		Source:     v.Source,
+		Repo:       v.Repo,
+		CommitSha:  v.CommitSHA,
+		ReleaseId:  v.ReleaseID,
+		PromotedAt: formatOptionalRFC3339(v.PromotedAt),
+		IsCurrent:  v.IsCurrent,
+	}
+}
+
+func codeRunExecutionToProto(r codeversion.RunExecution) *orchestratorv1.RunExecution {
+	return &orchestratorv1.RunExecution{
+		RunId:        r.RunID,
+		TaskId:       r.TaskID,
+		Status:       r.Status,
+		ScheduleName: r.ScheduleName,
+		Operation:    r.Operation,
+		ImageTag:     r.ImageTag,
+		ContentHash:  r.ContentHash,
+		CreatedAt:    formatOptionalRFC3339(r.CreatedAt),
+		CompletedAt:  formatOptionalRFC3339(r.CompletedAt),
+	}
 }
 
 func domainToProtoAncestor(a *domain.NodeAncestor) *orchestratorv1.AncestorNode {

@@ -28,11 +28,13 @@ const (
 // defaultUpstreamDepth is used when GetUpstreamChanges receives depth <= 0.
 const defaultUpstreamDepth = 3
 
-// defaultRunHistoryLimit and maxRunHistoryLimit bound GetNodeRunHistory's
-// limit: <= 0 falls back to the default, anything above the max is clamped.
+// defaultQueryLimit and maxQueryLimit bound every list-limit parameter on
+// this service: proto3 leaves an unset int32 at its zero value, so <= 0 falls
+// back to the default rather than reaching the reader as a 0-row request;
+// anything above the max is clamped.
 const (
-	defaultRunHistoryLimit = 20
-	maxRunHistoryLimit     = 200
+	defaultQueryLimit = 20
+	maxQueryLimit     = 200
 )
 
 // CodeVersionReader is the read surface over the code-version graph.
@@ -67,9 +69,11 @@ func NewCodeVersionQueryService(reader CodeVersionReader) *CodeVersionQueryServi
 	return &CodeVersionQueryService{reader: reader}
 }
 
-// GetNodeVersions returns a node's version history, newest first, up to limit.
+// GetNodeVersions returns a node's version history, newest first, up to
+// limit. limit <= 0 defaults to defaultQueryLimit; anything above
+// maxQueryLimit is clamped to it.
 func (s *CodeVersionQueryService) GetNodeVersions(ctx context.Context, uniqueID string, limit int32) ([]codeversion.VersionView, error) {
-	versions, err := s.reader.NodeVersions(ctx, uniqueID, limit)
+	versions, err := s.reader.NodeVersions(ctx, uniqueID, clampQueryLimit(limit))
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryService.GetNodeVersions: %w", err)
 	}
@@ -96,6 +100,17 @@ func (s *CodeVersionQueryService) GetUpstreamChanges(ctx context.Context, unique
 	ancestors, err := s.reader.Ancestors(ctx, uniqueID, depth, since)
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryService.GetUpstreamChanges: %w", err)
+	}
+	if len(ancestors) == 0 {
+		// Ancestors returns an empty slice both for an unknown node and for a
+		// known node with no upstreams (or none surviving the since filter) —
+		// it cannot tell those apart. NodeVersions can: it distinguishes an
+		// unknown unique_id from a known one, so use it purely as an
+		// existence check without paying for a second full ancestry query.
+		if _, err := s.reader.NodeVersions(ctx, uniqueID, 1); err != nil {
+			return nil, fmt.Errorf("CodeVersionQueryService.GetUpstreamChanges: %w", err)
+		}
+		return []codeversion.UpstreamChange{}, nil
 	}
 
 	changes := make([]codeversion.UpstreamChange, 0, len(ancestors))
@@ -129,8 +144,11 @@ func (s *CodeVersionQueryService) GetUpstreamChanges(ctx context.Context, unique
 // GetCodeUnitVersions returns a shared-code unit's version chain, newest
 // first, up to limit. Pass unitID to query one unit directly; leave it empty
 // and pass uniqueID to resolve the node's current units first, returning each
-// of their chains concatenated in the order UnitsForNode returns them.
+// of their chains concatenated in the order UnitsForNode returns them. limit
+// <= 0 defaults to defaultQueryLimit; anything above maxQueryLimit is clamped
+// to it.
 func (s *CodeVersionQueryService) GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) ([]codeversion.UnitVersionView, error) {
+	limit = clampQueryLimit(limit)
 	if unitID != "" {
 		versions, err := s.reader.UnitVersions(ctx, unitID, limit)
 		if err != nil {
@@ -155,23 +173,24 @@ func (s *CodeVersionQueryService) GetCodeUnitVersions(ctx context.Context, unitI
 }
 
 // GetNodeRunHistory returns runs that executed the node, newest first.
-// limit <= 0 defaults to defaultRunHistoryLimit; anything above
-// maxRunHistoryLimit is clamped to it.
+// limit <= 0 defaults to defaultQueryLimit; anything above maxQueryLimit is
+// clamped to it.
 func (s *CodeVersionQueryService) GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32) ([]codeversion.RunExecution, error) {
-	limit = clampRunHistoryLimit(limit)
-	runs, err := s.reader.RunExecutions(ctx, uniqueID, limit)
+	runs, err := s.reader.RunExecutions(ctx, uniqueID, clampQueryLimit(limit))
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryService.GetNodeRunHistory: %w", err)
 	}
 	return runs, nil
 }
 
-func clampRunHistoryLimit(limit int32) int32 {
+// clampQueryLimit applies the default/max bound shared by every list-limit
+// parameter on this service.
+func clampQueryLimit(limit int32) int32 {
 	if limit <= 0 {
-		return defaultRunHistoryLimit
+		return defaultQueryLimit
 	}
-	if limit > maxRunHistoryLimit {
-		return maxRunHistoryLimit
+	if limit > maxQueryLimit {
+		return maxQueryLimit
 	}
 	return limit
 }
