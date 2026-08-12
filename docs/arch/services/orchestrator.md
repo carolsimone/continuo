@@ -17,10 +17,15 @@ It is responsible for:
 
 | Entity | Description |
 |---|---|
-| `Table` node | One per model/seed; carries topology metadata (`schema_name`, `table_name`, `service_name`, `node_type`, `test_count`, `schedule_name`, `image_tag`, `original_file_path`), `last_updated_at`, an `active` flag for current-topology reconciliation, and per-node provenance properties (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) that record the most recent release in which the node's `content_hash` changed. `test_count` is the number of dbt tests declared for the node, carried on `release.promoted:v1` and defaulted to `0` when absent (`COALESCE(t.test_count, 0)` on read). |
+| `Table` node | One per model/seed; carries topology metadata (`schema_name`, `table_name`, `service_name`, `node_type`, `test_count`, `schedule_name`, `image_tag`, `original_file_path`), the node's current `content_hash`, `last_updated_at`, an `active` flag for current-topology reconciliation, and per-node provenance properties (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) that record the most recent release in which the node's `content_hash` changed. `content_hash` is refreshed on every promotion, changed or not, and is what the code-version path compares a release's code bundle against. `test_count` is the number of dbt tests declared for the node, carried on `release.promoted:v1` and defaulted to `0` when absent (`COALESCE(t.test_count, 0)` on read). |
 | `Run` node | One per schedule run; carries `terminal_status`, `created_at`, `completed_at`, `kind`, `source_run_id`, `operation`, `topology_generation`, `total_nodes`, `terminal_count`, `version` |
 | `DEPENDS_ON` relationship | Directed edge from downstream to upstream `Table` |
-| `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status`, pre-assigned `task_id` UUID, per-task `image_tag` + `manifest_version`, and (for rebase-projected inherited rows only) an optional `inherited_from_task_id` property pointing to the root executed `task_id` in the source lineage |
+| `EXECUTES` relationship | Directed edge from `Run` to `Table`; carries per-run `status`, pre-assigned `task_id` UUID, per-task `image_tag` + `manifest_version`, the `content_hash` copied from the matched `:Table` at edge creation (pinning which code version the run executed, so a later release changing the node cannot rewrite the record), and (for rebase-projected inherited rows only) an optional `inherited_from_task_id` property pointing to the root executed `task_id` in the source lineage |
+| `NodeVersion` node | One immutable code state of a node, identified by (`unique_id`, `content_hash`); chained by `PREVIOUS` and pointed at from its `:Table` by `CURRENT`. See "Code-version history — graph model" below. |
+| `CodeUnit` / `CodeUnitVersion` node | The same pattern for a shared-code unit (a dbt macro today, a Python module later), keyed by a service-namespaced `unit_id` and its source `checksum` |
+| `CURRENT` relationship | Points a `Table` at its current `NodeVersion`, or a `CodeUnit` at its current `CodeUnitVersion`; carries the `promoted_at` and `release_id` at which the pointer was set |
+| `PREVIOUS` relationship | Chains a version to the one it superseded; written only when the version is created, which keeps the chain acyclic across a revert |
+| `USES_CODE` relationship | Points a `NodeVersion` at every `CodeUnitVersion` in scope when that code ran — the transitive closure, so "the model did not change but its hash flipped" resolves to the exact unit that did |
 
 Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run snapshot initialization. This allows `run.entries.dispatched:v1` to carry canonical task IDs without a round-trip to `state`.
 
@@ -53,6 +58,10 @@ Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run sna
 | `table_fqn` | index, `:Table(service_name, schema_name, table_name)` | The snapshot writer's `:EXECUTES` match and every fully-qualified descendant/single-table reader. |
 | `table_schedule` | index, `:Table(schedule_name)` | `LoadLatestSourceDAG` and schedule-graph scans of `MATCH (:Table {schedule_name})`. |
 | `run_schedule` | index, `:Run(schedule_name)` | `ListRuns` (`MATCH (:Run {schedule_name})`). |
+| `node_version_unique` | constraint, `:NodeVersion(unique_id, content_hash)` unique | Makes a code version's identity its (node, code) pair, so a redelivered release MERGEs onto the version it already wrote instead of minting a duplicate. |
+| `node_version_uid` | index, `:NodeVersion(unique_id)` | History lookups that start from a node's `unique_id` rather than from its `:Table` — the path that still works after a retired node's `:Table` is deleted. |
+| `code_unit_unique` | constraint, `:CodeUnit(unit_id)` unique | The `MERGE (:CodeUnit {unit_id})` upsert during version ingestion. |
+| `code_unit_version_unique` | constraint, `:CodeUnitVersion(unit_id, checksum)` unique | The same identity guarantee for a shared-code unit's source state. |
 
 After the DDL is applied and the indexes are online, `InitSchema` runs a set of idempotent data migrations. The current one folds any legacy uppercase `:Run.terminal_status` (`SUCCEEDED`/`FAILED`, stamped by an earlier aggregate writer) down to the canonical lowercase form so the UI never reads a mixed casing: `MATCH (r:Run) WHERE r.terminal_status IN ['SUCCEEDED','FAILED'] SET r.terminal_status = toLower(r.terminal_status)`. Re-running it is a no-op once every row is lowercase.
 
@@ -169,6 +178,9 @@ All ports the service layer depends on for adapter-replaceable storage live in `
 | `TopologyStateRepository` | Postgres |
 | `TopologyRepository` | Neo4j |
 | `ReleasePromotionRepository` | Neo4j |
+| `CodeVersionRepository` | Neo4j |
+
+Technical collaborators that are not domain concepts live in `orchestrator/service/ports/` instead: `CodeBundleReader` (S3 adapter, `adapters/s3`) reads a release's code-bundle document and returns it decoded, surfacing `ErrBundleNotFound` for an absent object and `ErrBundleMalformed` for one that cannot be interpreted, so the handler — not the adapter — decides which failures are retryable.
 
 One narrow exception is allowed to import adapter packages directly: `service/handlers/release_promoted_handler_integration_test.go` wires the real Postgres and Neo4j adapters against a live database. Production handlers and unit-test fakes hold only `repository.*` types. The `UnitOfWork` interface is declared in `service/uow/uow.go`; its concrete implementation (`PostgresUnitOfWork`) lives in `adapters/postgres/unit_of_work.go`.
 
@@ -193,11 +205,12 @@ Goroutines started in `main.go` run for the process lifetime:
 |---|---|---|
 | `scheduler.started:v1` | `orchestrator_scheduler_started` | `HandleSchedulerStarted` — runs `Snapshot(LatestFullDAG)`, creates EXECUTES edges with pre-assigned task UUIDs, produces `run.entries.dispatched:v1` + `query.model:v1` for the dispatch frontier (`ReadyToDispatch` rows: seeds first, else roots) |
 | `node.updated:v1` | `orchestrator_node_updated` | `HandleNodeCompleted` — updates EXECUTES status, unlocks downstream nodes (SUCCEEDED → `query.model:v1` for newly-ready nodes; FAILED → cascade-skip downstream + emit `task.status.updated:v1` for skipped tasks) |
-| `release.promoted:v1` | `orchestrator-release-promoted` | `ReleasePromotedHandler` — swaps the `:Table` topology via `ReleasePromotionRepository.PromoteRelease`, stamps per-node provenance (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) on changed nodes only, increments `topology_generation`, writes `:TopologyRoot` service_metadata, then emits `schedules.loaded:v1` |
+| `release.promoted:v1` | `orchestrator-release-promoted` | `ReleasePromotedHandler` — swaps the `:Table` topology via `ReleasePromotionRepository.PromoteRelease`, refreshes each node's `content_hash`, stamps per-node provenance (`last_commit_sha`, `last_repo`, `last_changed_at`, `last_release_id`) on changed nodes only, increments `topology_generation`, writes `:TopologyRoot` service_metadata, then emits `schedules.loaded:v1` |
 | `trigger.rerun:v1` | `orchestrator_rerun` | `DerivedRunHandler` (rerun config) — runs `Snapshot(SourcePinnedDAG{})` against the **new** `:Run` minted by state's `TriggerRerun`, projecting the source's pinned DAG with non-SUCCEEDED tasks + their descendants as rebased PENDING and the rest as inherited at source's stored status; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only |
 | `trigger.rebase:v1` | `orchestrator-rebase` | `DerivedRunHandler` (rebase config) — runs `Snapshot(RebasePartition)` against the new `:Run`; projects rebase_set ∪ inherit_set against the latest topology; produces `run.entries.dispatched:v1` (full projection) + `query.model:v1` for the rebase **dispatch frontier** only. Shares one handler implementation with the rerun trigger, differing only in selector/kind/stream |
 | `trigger.single_node_run:v1` | `orchestrator_single_node_run` | `HandleSingleNodeRunHandler` — runs `Snapshot(SingleNode)` and dispatches the one task; see details below |
 | `release.promoted:v1` | `orchestrator-release-promoted-seed-build` | `SeedBuildOnPromoteHandler` — for each node with `Changed == true` and `NodeType == "dbt-seed"`, emits one `query.model:v1` outbox row so the executor builds the prod seed; no Neo4j interaction |
+| `release.promoted:v1` | `orchestrator-release-promoted-versions` | `ReleasePromotedVersionsHandler` — reads the release's code-bundle document from S3 and records the `:NodeVersion` / `:CodeUnitVersion` history behind the topology via `CodeVersionRepository.WriteVersions`; no outbox emission |
 
 Each consumer is wired as a `parser → handler` binding under `adapters/redis/`: the parser extracts and validates the message's scalar fields defensively and returns an `events.ErrPermanent`-wrapped error on any malformed field (missing/non-string value, bad UUID, or cross-field rule violation), which the stream consumer ACKs and drops so a single poison message cannot crash-loop the process.
 
@@ -246,6 +259,14 @@ the lifecycle completion channel, so there is no fixed sleep.
 | `run.entries.dispatched:v1` | Produced by every `Snapshot`-driven handler (`HandleSchedulerStarted`, `DerivedRunHandler` for rerun/rebase, `HandleSingleNodeRun`) after the projection is materialised. Carries all task entries with pre-assigned UUIDs, plus per-task `Status` (defaults `"pending"`, `"succeeded"` for inherited rows) and `InheritedFromTaskID` (empty for non-inherited; root-resolved source `task_id` for inherited). Each `DispatchedTask` stamps `MaxRetries = pkg/events.DefaultTaskMaxRetries (= 2)` so state's `task_tracker.max_retries` matches the k8s retry budget. |
 | `run.entries.dispatch_failed:v1` | Produced by `HandleSingleNodeRunHandler` on `snapshot.ErrTargetNotFound` (`reason=target_not_found`) or `snapshot.ErrNoTests` (`reason=no_tests` — single-node `Operation="test"` against a node with no known-positive `test_count`: a known zero or an unset count); by `HandleSchedulerStartedHandler` on `snapshot.ErrNoTests` as well (`reason=no_tests` — a whole-DAG `Operation="test"` run whose schedule has no nodes with a known-positive `test_count`: `LatestFullDAG` filters out every known-zero and unset-count node before dispatch, and an all-gated result surfaces `ErrNoTests`, not an empty-projection error); by `HandleSingleNodeRunHandler`, `DerivedRunHandler` (rerun and rebase), and `HandleSchedulerStartedHandler` on `snapshot.ErrEmptyProjection` (`reason=empty_projection` — a whole-DAG `Operation="run"` schedule with zero active `:Table` nodes, or the equivalent empty-projection case for rerun/rebase; the `test`-mode all-gated case never reaches this branch, since the selector returns `ErrNoTests` first) — all sites emit it through the shared `EmitDispatchFailed` helper; by `DerivedRunHandler` (rerun and rebase) on `snapshot.ErrRerunOfTestUnsupported` (`reason=rerun_of_test_unsupported` — `SourcePinnedDAG`/`RebasePartition` reject a source `:Run.operation == "test"`, since a rerun/rebase projection carries no per-task operation and cannot safely reissue `dbt test`); and by `HandleSchedulerStartedHandler` and `HandleNodeCompletedHandler` when a dispatch-frontier or unblocked node carries an unparseable `node_type` (`reason=invalid_node_type` — a permanent defect, so the run fails fast rather than stalling until the watchdog cancels it). Symmetric counterpart of `run.entries.dispatched:v1`: same `scheduler_tracker` target, opposite outcome. State row-locks the row and finalises via `MarkDispatchTerminal`, emitting `run.finalized:v1`: the benign `no_tests` reason marks status=`skipped`; every other reason marks status=`failed`. |
 
+### S3
+
+| Operation | Detail |
+|---|---|
+| `GetObject` | Reads the code-bundle document named by `release.promoted:v1`'s `code_bundle_uri` (`code-bundles/<release_id>/bundle.json`), once per promoted release on the version-ingestion consumer group. Orchestrator does not own the bucket and never writes to it. |
+
+Requires `S3_ENDPOINT_URL`, `S3_BUCKET`, and `AWS_DEFAULT_REGION` at start-up (all supplied by the shared ConfigMap under Helm), plus `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` when the install uses static credentials rather than an IAM role. Startup fails closed on a missing required value, rather than booting an orchestrator that silently records no code history.
+
 ### No gRPC calls to `state`
 
 Orchestrator no longer calls `state` gRPC for any internal writes. All state mutations flow through the Redis event pipeline.
@@ -271,13 +292,45 @@ Before writing the dispatched entry, the handler validates the `node_type` of ev
 Receives the full promoted topology for a release (each node carries its `image_tag` joined by `release-controller`, the top-level `repo`, `commit_sha`, and `promoted_at` provenance fields, and a per-node `changed` flag indicating whether that node's `content_hash` differed from the prior prod). The handler runs in one Postgres UoW transaction:
 
 1. Dedup on `message_processing`, keyed `(message_id, release.promoted:v1)`; a secondary uniqueness key on the upstream outbox entry ID catches a re-XADD under a fresh Redis message ID.
-2. `ReleasePromotionRepository.PromoteRelease` performs the atomic Neo4j topology swap in a single Neo4j transaction (retire-then-orphan-cleanup; see "Topology swap pattern" below). During the upsert, nodes with `changed=true` have `last_commit_sha`, `last_repo`, `last_changed_at`, and `last_release_id` stamped from the release's provenance; unchanged nodes retain their prior values. It short-circuits (`changed=false`) when the `:Meta {key:'current_release'}` singleton already records this `release_id`.
+2. `ReleasePromotionRepository.PromoteRelease` performs the atomic Neo4j topology swap in a single Neo4j transaction (retire-then-orphan-cleanup; see "Topology swap pattern" below). Every upserted node has its `content_hash` refreshed from the event, changed or not — the code-version path compares that property against each release's code bundle, so a stale value would read as a permanent gap. Nodes with `changed=true` additionally have `last_commit_sha`, `last_repo`, `last_changed_at`, and `last_release_id` stamped from the release's provenance; unchanged nodes retain their prior values. It short-circuits (`changed=false`) when the `:Meta {key:'current_release'}` singleton already records this `release_id`.
 3. If `changed=true`, increment `topology_state.topology_generation`; otherwise read the current value. Either way, write the per-service `service_metadata` and the generation onto `:TopologyRoot` (idempotent MERGE).
 4. Always write a `schedules.loaded:v1` outbox entry with the schedule names, `service_metadata`, and `topology_generation`. The `event_id` is a deterministic UUID v5 of `(namespace, release_id)`, so re-emissions from idempotent redeliveries are deduplicated by state's `ScheduleCatalogHandler`.
 
-`release.promoted:v1` has two orchestrator consumer groups. `ReleasePromotedHandler` (group `orchestrator-release-promoted`) performs the topology swap and emits `schedules.loaded:v1`. `SeedBuildOnPromoteHandler` (group `orchestrator-release-promoted-seed-build`) independently emits one `query.model:v1` per changed dbt-seed node so the executor builds the seed into the production schema. The two handlers are decoupled — a failure in the seed-build path does not block the topology swap.
+`release.promoted:v1` has three orchestrator consumer groups. `ReleasePromotedHandler` (group `orchestrator-release-promoted`) performs the topology swap and emits `schedules.loaded:v1`. `SeedBuildOnPromoteHandler` (group `orchestrator-release-promoted-seed-build`) independently emits one `query.model:v1` per changed dbt-seed node so the executor builds the seed into the production schema. `ReleasePromotedVersionsHandler` (group `orchestrator-release-promoted-versions`) records code-version history from the release's code bundle (see "Code-version history" below). The three handlers are decoupled — a failure in the seed-build or version path does not block the topology swap, and the swap transaction never waits on object storage.
 
 Schedule graph reads and new run snapshots only consider `active=true` `Table` nodes, while historical `Run` graphs remain intact through their `EXECUTES` edges.
+
+### On `release.promoted:v1` (versions) — ReleasePromotedVersionsHandler
+
+Records what code each node runs and how it changed over time, behind the `:Table` topology. Nothing on the run path reads this history, so the group is free to trail the topology swap and retry.
+
+1. Dedup on `message_processing`, scoped by the consumer-group name `orchestrator-release-promoted-versions` so its rows stay independent of the other two groups on the same stream.
+2. An empty `code_bundle_uri` — a release promoted before manifest-controller wrote bundles — is logged and acknowledged: no retry can produce a bundle that was never written.
+3. `CodeBundleReader.Fetch` reads and decodes the bundle from S3. An absent or unreachable object is a plain error, so the message stays in the pending-entries list and is retried (then quarantined at the consumer's delivery ceiling). A bundle that decodes badly — malformed JSON, an unknown `contract_version`, a node with an empty `content_hash` — is wrapped in `events.ErrPermanent`, so the consumer acknowledges and drops it with a loud log.
+4. Each bundle node is turned into a write request: code sanitized through `pkg/sanitize`, `compiled_code` above 256 KiB truncated on a rune boundary and flagged `compiled_truncated` with a warning, the resolved config encoded as canonical `config_json`, and the node's direct shared-code ids expanded into their transitive closure so the recorded edges name every unit whose source folds into the node's `shared_code_hash`.
+5. `CodeVersionRepository.WriteVersions` decides what to write **against the graph**: a version is recorded where the bundle's `content_hash` differs from the hash on the node's `:CURRENT` version. The event's `changed` flags never trigger a write; they set the `healed` qualifier only (`healed = bootstrap OR NOT changed`), marking a version whose commit and release stamps are approximate because the release that carried it into the graph is not the one that authored it. Comparing against the graph is what lets any later release converge a graph that missed a write.
+6. Bundle nodes with no `:Table` are reported back. While the graph's `:Meta {key:'current_release'}` still names a different release, the handler returns a plain error and retries — the topology swap it trails has not landed yet. Once the graph is at this release, the same condition is logged as a warning and ingestion completes: those nodes are genuinely absent from the promoted topology.
+
+Failures leave no dedup row (the Postgres transaction rolls back), so a retry reprocesses the message; the graph writes are idempotent, so the replay is a no-op for everything already recorded.
+
+#### Code-version history — graph model
+
+```
+(:Table {content_hash})──[:CURRENT {promoted_at, release_id}]──▶(:NodeVersion)──[:PREVIOUS]──▶(:NodeVersion)…
+(:NodeVersion)──[:USES_CODE]──▶(:CodeUnitVersion)
+(:CodeUnit {unit_id})──[:CURRENT {promoted_at, release_id}]──▶(:CodeUnitVersion)──[:PREVIOUS]──▶…
+```
+
+`:NodeVersion` carries `unique_id`, the four hashes (`content_hash`, `source_hash`, `shared_code_hash`, `config_hash`), `runtime`, `raw_code`, `compiled_code`, `compiled_truncated`, `config_json`, the provenance stamp (`repo`, `commit_sha`, `release_id`, `promoted_at`), a per-node monotonic `version_seq`, and the `healed` / `backfilled` provenance qualifiers. `:CodeUnitVersion` carries `unit_id`, `checksum`, `source`, and the same provenance stamp; its `unit_id` is service-namespaced (`<service>:<unit id>`) exactly as the bundle emits it, so two services' copies of a same-named dbt macro never collide.
+
+Two invariants hold the model together:
+
+- **A version is immutable once written.** Every property, `:PREVIOUS` included, is set under `ON CREATE`. A node that reverts to earlier code re-points `:CURRENT` at the version that already exists rather than rewriting that version's chain — rewriting it would close the chain into a cycle and hang every chain walk. The intermediate version stays reachable by `unique_id`, which the `node_version_uid` index backs.
+- **The pointer guard compares pointer-move times.** `:CURRENT` carries the `promoted_at` at which it was set, and the pointer moves only when the incoming release is newer than that. Comparing against the target version's own `promoted_at` would be wrong after a revert, where the target's timestamp is old, and would let a stale redelivery drag the pointer backwards. A stale redelivery may still add a historical version; it can never change which one is current.
+
+A retired node's `:Table` is deleted by the topology swap's orphan cleanup, taking the `:CURRENT` edge with it. The version nodes survive as free-standing nodes, and if the node returns to the topology the pointer reattaches to the version that already exists — no duplicate, and `version_seq` unchanged.
+
+Writes are batched (100 nodes per explicit transaction), and each batch reads the graph's state for its nodes, writes the shared-code versions the changed nodes reference, then the node versions, their chain and `:USES_CODE` edges, and finally the pointer moves.
 
 ### On `trigger.rerun:v1` — HandleRerun
 
@@ -367,6 +420,7 @@ There is exactly one task and no pre-existing run graph; the handler does not to
 | Redis consumer (`trigger.rebase:v1`) | Reads and dispatches to HandleRebase handler |
 | Redis consumer (`trigger.single_node_run:v1`) | Reads and dispatches to HandleSingleNodeRunHandler |
 | Redis consumer (`release.promoted:v1` seed-build) | Reads `release.promoted:v1` on consumer group `orchestrator-release-promoted-seed-build`; dispatches to `SeedBuildOnPromoteHandler` |
+| Redis consumer (`release.promoted:v1` versions) | Reads `release.promoted:v1` on consumer group `orchestrator-release-promoted-versions`; dispatches to `ReleasePromotedVersionsHandler` |
 | Redis consumer (`run.finalized:v1`) | Projects state's terminal outcome (succeeded, failed, cancelled, or skipped) onto Neo4j `:Run.completed_at` / `terminal_status`. Covers runs that produce no `node.updated:v1` traffic (full-inherited rebases, cancelled runs). |
 | Outbox processor (`pkg/outbox.Processor`) | Polls `orchestrator_outbox` for pending entries; publishes each row to its `stream_name` via `orchestrator/adapters/publisher.OutboxPublisher` |
 | RunSweeper | Periodically deletes expired `Run` nodes (and their `EXECUTES` edges) older than `retention_days` |
