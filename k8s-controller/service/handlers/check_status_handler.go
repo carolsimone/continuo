@@ -179,8 +179,14 @@ func (h *CheckStatusHandler) Handle(ctx context.Context, u uow.UnitOfWork, cmd c
 		return h.handleCompileTerminal(ctx, u, cmd, result, annotations)
 	}
 
+	// Legacy promote-seed Jobs queued by a previous version have synthetic task
+	// IDs with no run in state, so their lifecycle stays suppressed. Current
+	// promoted-seed work carries no mode label and falls through to the
+	// production path below. See events.ModePromoteSeed.
 	if labels["mode"] == pkgevents.ModePromoteSeed {
-		return h.handlePromoteSeedTerminal(ctx, u, cmd, result)
+		h.logger.Info("Legacy promote-seed Job terminal — no lifecycle events emitted",
+			"job_name", cmd.JobName, "status", result.Status)
+		return nil
 	}
 
 	// Empty metadata means the Job is gone (deleted/TTL-reaped): GetJobMeta maps
@@ -437,31 +443,6 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 		"job_name", cmd.JobName,
 		"release_id", releaseID,
 		"node_id", nodeID,
-		"outcome", outcome,
-	)
-	return nil
-}
-
-// handlePromoteSeedTerminal handles a terminal Job carrying mode=promote_seed.
-// These jobs are fire-and-forget prod seed builds triggered on promotion; they
-// carry synthetic schedule/task IDs with no corresponding state run, so emitting
-// the production lifecycle events (task.status.updated / task.execution.recorded)
-// would cause state's TaskStatusUpdatedHandler to return ErrNotFound and retry
-// forever via PEL reclaim. Instead this handler simply logs the terminal outcome
-// and returns nil — the message is ACKed with no outbox rows written.
-// Unknown status is not terminal — re-poll via check.k8s:v1 like the other
-// candidate modes.
-func (h *CheckStatusHandler) handlePromoteSeedTerminal(ctx context.Context, u uow.UnitOfWork, cmd command.CheckJobStatus, result *model.K8sPodResult) error {
-	if result.Status == model.JobStatusUnknown {
-		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
-	}
-	outcome := "failed"
-	if result.Status == model.JobStatusSucceeded {
-		outcome = "ok"
-	}
-	h.logger.Info("Promote-seed Job terminal — fire-and-forget, no lifecycle events emitted",
-		"job_name", cmd.JobName,
-		"task_id", cmd.TaskID,
 		"outcome", outcome,
 	)
 	return nil

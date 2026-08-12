@@ -50,12 +50,9 @@ type JobParams struct {
 	// pkg_model.OperationRun (empty) is the default: dbt run/seed/snapshot by
 	// NodeType. pkg_model.OperationTest runs `dbt test --select <node>`.
 	Operation pkg_model.Operation
-	// Mode is the optional dispatch mode. Empty for normal production jobs;
-	// set to events.ModePromoteSeed for promote-seed jobs. When non-empty the
-	// value is stamped as a "mode" label on the Job and its pod template so
-	// k8s-controller can suppress the production lifecycle events for jobs
-	// that have no real state run. Normal production jobs (empty Mode) get no
-	// mode label — the wire format is unchanged.
+	// Mode is the legacy promote-seed dispatch mode carried by queued work only;
+	// when non-empty it is stamped as a "mode" label so k8s-controller routes the
+	// Job away from the production lifecycle. Empty for everything current.
 	Mode string
 }
 
@@ -187,9 +184,8 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	if params.NodeType == pkg_model.NodeTypePythonModel {
 		jobLabels["runtime"] = "python"
 	}
-	// Stamp the mode label only when the caller provides one. Normal production
-	// jobs (empty Mode) get NO mode label — their wire format is unchanged and
-	// k8s-controller continues to route them through the production lifecycle.
+	// Only legacy promote-seed work still supplies a mode here; current jobs get
+	// no mode label and route through the production lifecycle.
 	if params.Mode != "" {
 		jobLabels["mode"] = params.Mode
 	}

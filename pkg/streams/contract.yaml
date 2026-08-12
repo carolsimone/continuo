@@ -102,6 +102,24 @@ streams:
         group: orchestrator-single-node-run
         const: OrchestratorSingleNodeRun
 
+  - name: release.seeds.pending:v1
+    const: ReleaseSeedsPendingV1
+    description: Seeds a promoted release changed, emitted by orchestrator in the same transaction as the topology swap so the nodes exist before any run is projected onto them.
+    producers: [orchestrator]
+    consumers:
+      - service: state
+        group: state-release-seeds-pending
+        const: StateReleaseSeedsPending
+
+  - name: trigger.promoted_seeds:v1
+    const: TriggerPromotedSeedsV1
+    description: Run trigger for the seeds a promoted release changed; state creates the run, orchestrator projects its tasks.
+    producers: [state]
+    consumers:
+      - service: orchestrator
+        group: orchestrator-promoted-seeds
+        const: OrchestratorPromotedSeeds
+
   - name: run.finalized:v1
     const: RunFinalizedV1
     description: Run finalization (success, failure, or cancellation) emitted by state; consumed for projections.
@@ -294,9 +312,6 @@ streams:
       - service: orchestrator
         group: orchestrator-release-promoted
         const: OrchestratorReleasePromoted
-      - service: orchestrator
-        group: orchestrator-release-promoted-seed-build
-        const: OrchestratorReleasePromotedSeedBuild
       - service: orchestrator
         group: orchestrator-release-promoted-versions
         const: OrchestratorReleasePromotedVersions

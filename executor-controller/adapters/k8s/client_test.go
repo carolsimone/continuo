@@ -128,44 +128,11 @@ func newQueryTestClient() *K8sClient {
 	return c
 }
 
-// TestCreateQueryJob_PromoteSeedMode_StampsModeLabel verifies that CreateQueryJob
-// stamps a "mode" label on both the Job and its pod template when params.Mode is
-// non-empty (e.g. events.ModePromoteSeed). This lets k8s-controller route the
-// terminal status away from the production lifecycle.
-func TestCreateQueryJob_PromoteSeedMode_StampsModeLabel(t *testing.T) {
-	t.Setenv("DOCKERHUB_USERNAME", "")
-	c := newQueryTestClient()
-	ctx := context.Background()
-
-	params := JobParams{
-		JobName:      "promote-seed-svc-analytics-fx-abc123",
-		TaskID:       "task-1",
-		ScheduleID:   "sched-1",
-		ScheduleName: "promote-seed",
-		ServiceName:  "svc",
-		SchemaName:   "analytics",
-		TableName:    "fx",
-		Namespace:    "default",
-		NodeType:     pkg_model.NodeTypeDbtSeed,
-		ImageTag:     "v1",
-		Mode:         events.ModePromoteSeed,
-	}
-
-	require.NoError(t, c.CreateQueryJob(ctx, params))
-
-	job, err := c.clientset.BatchV1().Jobs("default").Get(ctx, params.JobName, metav1.GetOptions{})
-	require.NoError(t, err)
-
-	assert.Equal(t, events.ModePromoteSeed, job.Labels["mode"],
-		"Job must carry mode label for promote_seed jobs")
-	assert.Equal(t, events.ModePromoteSeed, job.Spec.Template.Labels["mode"],
-		"Pod template must also carry the mode label")
-}
-
-// TestCreateQueryJob_NormalProduction_HasNoModeLabel verifies that a normal
-// production job (empty Mode) gets NO "mode" label. This protects the production
-// path: the wire format must be unchanged and k8s-controller must not accidentally
-// suppress the production lifecycle for normal jobs.
+// TestCreateQueryJob_NormalProduction_HasNoModeLabel verifies that a production
+// dbt job carries NO "mode" label. k8s-controller routes a terminal Job by that
+// label, and only the release legs (validation, seed-build, compile) set one; a
+// query job must fall through to the production lifecycle that owns retries,
+// task executions, and status.
 func TestCreateQueryJob_NormalProduction_HasNoModeLabel(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "")
 	c := newQueryTestClient()
@@ -182,7 +149,6 @@ func TestCreateQueryJob_NormalProduction_HasNoModeLabel(t *testing.T) {
 		Namespace:    "default",
 		NodeType:     pkg_model.NodeTypeDbtModel,
 		ImageTag:     "v1",
-		Mode:         "", // normal production job — no mode
 	}
 
 	require.NoError(t, c.CreateQueryJob(ctx, params))

@@ -147,6 +147,30 @@ func translateRunEvent(evt run.DomainEvent, msgProcID uuid.UUID) (*pkgoutbox.Ent
 		}
 		return buildEntry(e.ID, "scheduler", "single_node_run", streams.TriggerSingleNodeRunV1, payload, 3, msgProcPtr), false, nil
 
+	case run.PromotedSeedsRunRequested:
+		nodes := make([]map[string]string, 0, len(e.Nodes))
+		for _, n := range e.Nodes {
+			nodes = append(nodes, map[string]string{
+				"service_name": n.ServiceName,
+				"schema_name":  n.SchemaName,
+				"table_name":   n.TableName,
+				"node_type":    n.NodeType,
+				"image_tag":    n.ImageTag,
+			})
+		}
+		payload, err := json.Marshal(map[string]any{
+			"schedule_id":   e.ID.String(),
+			"schedule_name": e.Name,
+			"release_id":    e.ReleaseID,
+			"kind":          "promote_seed",
+			"nodes":         nodes,
+			"initiated_by":  "system",
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		return buildEntry(e.ID, "scheduler", "promote_seed", streams.TriggerPromotedSeedsV1, payload, 3, msgProcPtr), false, nil
+
 	case run.RunDispatchTerminal:
 		// Informational event — no downstream stream yet; omit from outbox.
 		return nil, true, nil

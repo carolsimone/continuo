@@ -130,13 +130,6 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 			"image_tag":        evt.ImageTag,
 			"manifest_version": evt.ManifestVersion,
 		}
-		// Mode is carried only for non-production dispatches (promote_seed): the
-		// executor stamps it as a Job label so k8s-controller suppresses the
-		// production task lifecycle. Omitted for normal production jobs so their
-		// wire shape is unchanged.
-		if evt.Mode != "" {
-			values["mode"] = evt.Mode
-		}
 		// Operation is carried only for non-default dispatches (e.g. "test"): the
 		// executor uses it to pick the dbt verb instead of the NodeType default.
 		// Omitted for normal run dispatches so their wire shape is unchanged.
@@ -164,7 +157,7 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		return values, nil
 
 	case domain.EventTypeRunEntriesDispatched, domain.EventTypeRunEntriesDispatchFailed,
-		domain.EventTypeReleasePromoted:
+		domain.EventTypeReleasePromoted, domain.EventTypeReleaseSeedsPending:
 		// These event types carry a self-contained JSON payload that downstream
 		// consumers decode directly from the "payload" field.
 		return map[string]interface{}{

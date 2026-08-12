@@ -28,10 +28,8 @@ type DeployTask struct {
 	// (pkg_model.OperationRun) is the default: dbt run/seed/snapshot by
 	// NodeType. "test" runs `dbt test --select <node>`.
 	Operation string `json:"operation"`
-	// Mode is the optional dispatch mode (omitempty on the query.model wire).
-	// Empty for normal production jobs; events.ModePromoteSeed for promote-seed
-	// jobs. Persisted in job_params and forwarded to the k8s JobSpec so the
-	// k8s adapter can stamp the mode label on the Job.
+	// Mode carries the legacy promote-seed dispatch mode for deployments queued
+	// by an older version. Empty for everything current. See events.ModePromoteSeed.
 	Mode string `json:"mode,omitempty"`
 }
 

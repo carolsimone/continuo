@@ -22,10 +22,9 @@ type JobSpec struct {
 	// is the default: dbt run/seed/snapshot by NodeType. "test" runs
 	// `dbt test --select <node>`.
 	Operation string
-	// Mode is the optional dispatch mode. Empty for normal production jobs;
-	// set to events.ModePromoteSeed for promote-seed jobs. The k8s adapter
-	// stamps this as a Job label so k8s-controller can suppress the production
-	// lifecycle events for modes that carry no real state run.
+	// Mode carries the legacy promote-seed dispatch mode for queued work; the
+	// k8s adapter stamps it as a Job label so k8s-controller keeps suppressing
+	// that work's lifecycle events. Empty for everything current.
 	Mode string
 }
 

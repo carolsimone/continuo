@@ -14,7 +14,6 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
-	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
@@ -1837,96 +1836,6 @@ func TestHandle_CompileModeLabel_RunningStatus_WritesCheckK8sRepoll(t *testing.T
 // TestHandle_PromoteSeedMode_TerminalJob_NoOutboxRows verifies that a terminal Job
 // carrying mode=promote_seed produces NO outbox rows (neither production
 // task.status.updated / task.execution.recorded, nor any candidate-mode event).
-// Promote-seed jobs are fire-and-forget: the synthetic schedule/task IDs have no
-// corresponding state run so emitting production lifecycle events would cause
-// state to return ErrNotFound and retry forever via PEL reclaim.
-func TestHandle_PromoteSeedMode_TerminalJob_NoOutboxRows(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		status model.JobStatus
-	}{
-		{"succeeded", model.JobStatusSucceeded},
-		{"failed", model.JobStatusFailed},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			outbox := &fakeOutboxRepo{}
-			handler := newHandler(
-				&fakeK8sClient{
-					status: &model.K8sPodResult{Status: tc.status},
-					labels: map[string]string{"mode": pkgevents.ModePromoteSeed},
-				},
-				noopCancelledRepo(), 3,
-			)
-
-			cmd := command.CheckJobStatus{
-				TaskID:     uuid.New(),
-				ScheduleID: uuid.New(),
-				JobName:    "promote-seed-core-analytics-fx-abc123",
-				MaxRetries: 3,
-			}
-
-			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
-				t.Fatalf("Handle (%s): %v", tc.name, err)
-			}
-
-			// Fire-and-forget: no outbox rows must be written.
-			if len(outbox.entries) != 0 {
-				t.Errorf("status %s: expected 0 outbox rows for promote_seed terminal job, got %d: %v",
-					tc.name, len(outbox.entries), eventTypesOf(outbox.entries))
-			}
-
-			// Explicitly guard against production lifecycle rows leaking in.
-			for _, e := range outbox.entries {
-				switch e.EventType {
-				case "task_status_updated", "task_execution_recorded", "node_status_updated", "task_retry", "task_failed":
-					t.Errorf("status %s: unexpected production lifecycle row %q for promote_seed Job",
-						tc.name, e.EventType)
-				}
-			}
-		})
-	}
-}
-
-// TestHandle_PromoteSeedMode_RunningJob_SuppressesRunningAnnouncement verifies that
-// a mode=promote_seed Job observed running for the first time (RunningAnnounced=false)
-// writes only the check_delayed re-poll and never a task_status_updated RUNNING row.
-// Promote-seed jobs carry synthetic task IDs and no real state run; emitting RUNNING
-// would cause the same PEL-retry loop as the terminal events.
-func TestHandle_PromoteSeedMode_RunningJob_SuppressesRunningAnnouncement(t *testing.T) {
-	outbox := &fakeOutboxRepo{}
-	handler := newHandler(
-		&fakeK8sClient{
-			status: &model.K8sPodResult{Status: model.JobStatusRunning},
-			labels: map[string]string{"mode": pkgevents.ModePromoteSeed},
-		},
-		noopCancelledRepo(), 3,
-	)
-
-	cmd := command.CheckJobStatus{
-		TaskID:           uuid.New(),
-		ScheduleID:       uuid.New(),
-		JobName:          "promote-seed-core-analytics-fx-abc123",
-		MaxRetries:       3,
-		RunningAnnounced: false,
-	}
-
-	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
-		t.Fatalf("Handle: %v", err)
-	}
-
-	entries := outbox.entries
-	if len(entries) != 1 || entries[0].EventType != "check_delayed" {
-		t.Fatalf("expected 1 check_delayed entry, got %v", eventTypesOf(entries))
-	}
-	if findEntryByEventType(entries, "task_status_updated") != nil {
-		t.Error("promote_seed Job must not emit task_status_updated RUNNING")
-	}
-}
-
-// Compile-time interface checks.
-var _ ports.LogUploader = (*fakeLogUploader)(nil)
-var _ handlers.K8sStatusChecker = (*fakeK8sClient)(nil)
-
 // pythonResultBlockLog returns a pod log shaped like a python-model container's
 // output: diagnostics first, terminated by exactly one sentinel-framed result
 // block as the last line.
@@ -2270,5 +2179,69 @@ func TestUploadedArtifactKeysHaveNoEmptySegments(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestHandle_LegacyPromoteSeedMode_EmitsNoLifecycleRows covers work queued by a
+// previous version during a rolling upgrade: a Job still labelled
+// mode=promote_seed carries a synthetic task ID with no run in state, so
+// announcing its lifecycle would address a run state cannot load and wedge that
+// consumer on endless redelivery. Current promoted-seed work is an ordinary run
+// and carries no mode label, so it falls through to the production path.
+func TestHandle_LegacyPromoteSeedMode_EmitsNoLifecycleRows(t *testing.T) {
+	for _, status := range []model.JobStatus{model.JobStatusSucceeded, model.JobStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			outbox := &fakeOutboxRepo{}
+			handler := newHandler(
+				&fakeK8sClient{
+					status: &model.K8sPodResult{Status: status},
+					labels: map[string]string{"mode": pkgevents.ModePromoteSeed},
+				},
+				noopCancelledRepo(), 3,
+			)
+
+			cmd := command.CheckJobStatus{
+				TaskID:     uuid.New(),
+				ScheduleID: uuid.New(),
+				JobName:    "legacy-promote-seed-core-analytics-fx",
+				MaxRetries: 3,
+			}
+
+			if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+			if len(outbox.entries) != 0 {
+				t.Errorf("expected no outbox rows for a legacy promote-seed Job, got %v", eventTypesOf(outbox.entries))
+			}
+		})
+	}
+}
+
+// A Job with no mode label is current promoted-seed (or ordinary) work and MUST
+// go through the production lifecycle — that is the whole point of the change.
+func TestHandle_NoModeLabel_UsesTheProductionLifecycle(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	handler := newHandler(
+		&fakeK8sClient{
+			status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+			labels: map[string]string{},
+			podLog: "dbt seed output",
+		},
+		noopCancelledRepo(), 3,
+	)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(),
+		ServiceName: "core", SchemaName: "analytics", TableName: "seed_users",
+		JobName: "core-analytics-seed-users-abc", MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if findEntryByEventType(outbox.entries, "task_status_updated") == nil {
+		t.Error("a mode-less Job must announce its task status")
+	}
+	if findEntryByEventType(outbox.entries, "task_execution_recorded") == nil {
+		t.Error("a mode-less Job must record its execution")
 	}
 }
