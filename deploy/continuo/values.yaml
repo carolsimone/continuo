@@ -363,6 +363,10 @@ services:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: NEO4J_PASSWORD, ref: neo4j}
       - {name: REDIS_PASSWORD, ref: redis}
+      # Reads each release's code-bundle document to record node code-version
+      # history. Endpoint, bucket and region arrive via the shared ConfigMap.
+      - {name: AWS_ACCESS_KEY_ID, ref: s3AccessKeyId}
+      - {name: AWS_SECRET_ACCESS_KEY, ref: s3SecretAccessKey}
     env:
       POSTGRES_DB: continuo_orchestrator
       GRPC_PORT: "50052"

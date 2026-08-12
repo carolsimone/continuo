@@ -13,6 +13,14 @@ shipped in those.
 ## [Unreleased]
 
 ### Changed
+- The `orchestrator` service now receives the S3 credentials
+  (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) already wired for
+  `remediation`, and requires object storage to be reachable at start-up: it
+  reads each release's code-bundle document to record node code-version history
+  in the graph. Endpoint, bucket and region already reach every pod through the
+  shared ConfigMap, so an unmodified existing `values.yaml` keeps working — the
+  credentials come from the same `s3AccessKeyId` / `s3SecretAccessKey` secret
+  refs the services that already read and write S3 depend on.
 - `files/service_repos.yaml` header comments describe the map accurately: it
   covers every service that ships data jobs, not dbt services only, and each
   team's repository is named by the remediation trigger rather than assumed to

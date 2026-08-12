@@ -319,6 +319,7 @@ services:
       - state
       - flyway-orchestrator
       - neo4j
+      - localstack
     environment:
       # Neo4j
       - NEO4J_URI=bolt://neo4j:7687
@@ -347,6 +348,13 @@ services:
       - POSTGRES_DB=continuo_orchestrator
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
+      # Object storage — the version-ingestion consumer reads each release's
+      # code-bundle document
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_BUCKET=continuo
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
       # Application
       - GRPC_PORT=50052
       - HTTP_PORT=8087
