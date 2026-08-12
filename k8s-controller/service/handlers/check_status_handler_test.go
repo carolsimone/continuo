@@ -2200,3 +2200,75 @@ func TestHandleSucceeded_LogIOTimeoutStillPersistsOutcome(t *testing.T) {
 		t.Fatal("the node status row must still be written")
 	}
 }
+
+// TestUploadedArtifactKeysHaveNoEmptySegments pins the object keys that logs and
+// run-results are stored under.
+//
+// A compile Job runs no node, so its command carries no schema and no table.
+// Addressing it like a node Job produced "logs/task-executions/<service>///<id>.log":
+// MinIO rejects empty path segments outright (XMinioInvalidObjectName) while AWS
+// S3 accepts them, so the compile log vanished on exactly the installs that use
+// the bundled MinIO — and the log lost that way is the one belonging to a failed
+// compile, which is what a rejected release most needs to explain itself.
+func TestUploadedArtifactKeysHaveNoEmptySegments(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		labels  map[string]string
+		cmd     command.CheckJobStatus
+		wantDir string
+	}{
+		{
+			name:   "compile Job is addressed by its service and leg",
+			labels: map[string]string{"mode": "compile"},
+			// No SchemaName or TableName: a compile Job builds a manifest, not a node.
+			cmd:     command.CheckJobStatus{ServiceName: "core", JobName: "compile-core"},
+			wantDir: "logs/task-executions/core/compile/",
+		},
+		{
+			name:   "node Job stays addressed by the node it ran",
+			labels: map[string]string{},
+			cmd: command.CheckJobStatus{
+				ServiceName: "core", SchemaName: "analytics", TableName: "daily_transactions",
+				JobName: "core-analytics-daily-transactions",
+			},
+			wantDir: "logs/task-executions/core/analytics/daily_transactions/",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, uploader := newHandlerWithUploader(
+				&fakeK8sClient{
+					status: &model.K8sPodResult{Status: model.JobStatusSucceeded},
+					labels: tc.labels,
+					annotations: map[string]string{
+						pkgmodel.AnnotationReleaseID: "rel-1",
+						pkgmodel.AnnotationNodeID:    "node-1",
+					},
+					podLog: "some dbt output",
+				},
+				noopCancelledRepo(), 3,
+			)
+
+			cmd := tc.cmd
+			cmd.TaskID = uuid.New()
+			cmd.ScheduleID = uuid.New()
+			cmd.MaxRetries = 3
+
+			if err := handler.Handle(context.Background(), newFakeUoW(&fakeOutboxRepo{}), cmd, uuid.Nil); err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+
+			if len(uploader.uploaded) == 0 {
+				t.Fatal("expected the pod log to be uploaded")
+			}
+			for key := range uploader.uploaded {
+				// The bug this guards: any empty segment makes the key invalid on MinIO.
+				if strings.Contains(key, "//") {
+					t.Errorf("key %q contains an empty path segment", key)
+				}
+				if !strings.HasPrefix(key, tc.wantDir) {
+					t.Errorf("key %q is not filed under %q", key, tc.wantDir)
+				}
+			}
+		})
+	}
+}

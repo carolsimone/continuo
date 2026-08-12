@@ -222,7 +222,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 	// upload soft-fails to an empty key, so S3 being unavailable cannot turn a
 	// success into a failure. The log tail is discarded — a successful
 	// execution carries no error message.
-	executionID, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	// Row 1: task_status_updated. Stamp the attempt that ran (cmd.RetryCount)
 	// so the SUCCEEDED carries the same retry_count as that attempt's RUNNING;
@@ -271,7 +271,7 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd)
+	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -332,7 +332,7 @@ func (h *CheckStatusHandler) handleSeedBuildTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd)
+	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -396,7 +396,7 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd)
+	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, compileArtifactPath(cmd))
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -484,9 +484,28 @@ func (h *CheckStatusHandler) handlePromoteSeedTerminal(ctx context.Context, u uo
 // while still recorded as RUNNING. Capping the I/O keeps the outcome writable
 // even when the log never arrives. Cancellation still propagates from the parent,
 // so a shutting-down consumer is not held open by an upload.
+// nodeArtifactPath files a Job's log and run-results under the node the Job ran.
+func nodeArtifactPath(cmd command.CheckJobStatus) string {
+	return fmt.Sprintf("%s/%s/%s", cmd.ServiceName, cmd.SchemaName, cmd.TableName)
+}
+
+// compileArtifactPath files a release's compile leg under the service and the leg
+// that produced it. The compile Job runs no node, so it carries no schema and no
+// table; addressing it as a node yields "<service>///<id>.log". MinIO rejects
+// those empty path segments outright (XMinioInvalidObjectName) while AWS S3
+// accepts them, so on any install using the bundled MinIO the compile log was
+// silently dropped — including the log of a *failed* compile, which is the one a
+// rejected release most needs.
+func compileArtifactPath(cmd command.CheckJobStatus) string {
+	return cmd.ServiceName + "/compile"
+}
+
+// artifactPath identifies which Job produced a log or run-results object; see
+// nodeArtifactPath and compileArtifactPath for the two shapes it takes.
 func (h *CheckStatusHandler) fetchAndUploadLogs(
 	ctx context.Context,
 	cmd command.CheckJobStatus,
+	artifactPath string,
 ) (executionID uuid.UUID, logS3Key, runResultsURI, tail string) {
 	executionID = uuid.New()
 
@@ -515,8 +534,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	if cleanLog == "" {
 		h.logger.Warn("Pod log is empty, skipping S3 upload", "job_name", cmd.JobName)
 	} else {
-		key := fmt.Sprintf("logs/task-executions/%s/%s/%s/%s.log",
-			cmd.ServiceName, cmd.SchemaName, cmd.TableName, executionID.String())
+		key := fmt.Sprintf("logs/task-executions/%s/%s.log", artifactPath, executionID.String())
 		if err := h.logUploader.UploadLog(ioCtx, key, cleanLog); err != nil {
 			h.logger.Warn("Failed to upload pod log to S3 — continuing without full log",
 				"job_name", cmd.JobName,
@@ -530,8 +548,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	}
 
 	if structured != "" {
-		rrKey := fmt.Sprintf("run-results/task-executions/%s/%s/%s/%s.json",
-			cmd.ServiceName, cmd.SchemaName, cmd.TableName, executionID.String())
+		rrKey := fmt.Sprintf("run-results/task-executions/%s/%s.json", artifactPath, executionID.String())
 		if err := h.logUploader.UploadLog(ioCtx, rrKey, structured); err != nil {
 			h.logger.Warn("Failed to upload run-results to S3 — continuing without structured result",
 				"job_name", cmd.JobName,
@@ -556,7 +573,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount
 
-	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	errorMsg := h.truncateErrorMessage(logTail)
 	if errorMsg == "" {
@@ -608,7 +625,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
 
-	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd)
+	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	errorMsg := h.truncateErrorMessage(logTail)
 	if errorMsg == "" {
