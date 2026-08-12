@@ -25,12 +25,25 @@ import (
 //     LoadLatestSourceDAG and the schedule-graph query.
 //   - run_schedule: backs the `MATCH (:Run {schedule_name: …})` lookup in
 //     ListRuns.
+//   - node_version_unique: makes (unique_id, content_hash) a code version's
+//     identity, so a redelivered release MERGEs onto the version it already
+//     wrote instead of minting a duplicate.
+//   - node_version_uid: backs chain and history lookups that start from a
+//     node's unique_id rather than from its :Table — the path that still works
+//     after a retired node's :Table is deleted.
+//   - code_unit_unique / code_unit_version_unique: the same identity guarantees
+//     for shared-code units (dbt macros today, Python modules later), whose ids
+//     are service-namespaced so two services' copies never collide.
 var schemaStatements = []string{
 	"CREATE CONSTRAINT run_id_unique IF NOT EXISTS FOR (r:Run) REQUIRE r.run_id IS UNIQUE",
 	"CREATE CONSTRAINT table_uid_unique IF NOT EXISTS FOR (t:Table) REQUIRE t.unique_id IS UNIQUE",
 	"CREATE INDEX table_fqn IF NOT EXISTS FOR (t:Table) ON (t.service_name, t.schema_name, t.table_name)",
 	"CREATE INDEX table_schedule IF NOT EXISTS FOR (t:Table) ON (t.schedule_name)",
 	"CREATE INDEX run_schedule IF NOT EXISTS FOR (r:Run) ON (r.schedule_name)",
+	"CREATE CONSTRAINT node_version_unique IF NOT EXISTS FOR (v:NodeVersion) REQUIRE (v.unique_id, v.content_hash) IS UNIQUE",
+	"CREATE INDEX node_version_uid IF NOT EXISTS FOR (v:NodeVersion) ON (v.unique_id)",
+	"CREATE CONSTRAINT code_unit_unique IF NOT EXISTS FOR (c:CodeUnit) REQUIRE c.unit_id IS UNIQUE",
+	"CREATE CONSTRAINT code_unit_version_unique IF NOT EXISTS FOR (v:CodeUnitVersion) REQUIRE (v.unit_id, v.checksum) IS UNIQUE",
 }
 
 // dataMigrations are idempotent DML statements applied once startup DDL is in

@@ -1,0 +1,380 @@
+package neo4jinfra_test
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"strconv"
+	"testing"
+	"time"
+
+	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
+	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// wipeVersionFixtures clears the version graph and the topology it hangs off, so
+// each test starts from a known-empty slate.
+func wipeVersionFixtures(t *testing.T, client neo4jinfra.Neo4jClient) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	for _, q := range []string{
+		`MATCH (n:NodeVersion) DETACH DELETE n`,
+		`MATCH (n:CodeUnitVersion) DETACH DELETE n`,
+		`MATCH (n:CodeUnit) DETACH DELETE n`,
+		`MATCH (n:Table) DETACH DELETE n`,
+		`MATCH (m:Meta {key:'current_release'}) DELETE m`,
+	} {
+		res, err := s.Run(ctx, q, nil)
+		require.NoError(t, err)
+		_, err = res.Consume(ctx)
+		require.NoError(t, err)
+	}
+}
+
+// seedVersionTable creates the :Table a version write attaches to, carrying the
+// content_hash a topology swap would have stamped on it.
+func seedVersionTable(t *testing.T, client neo4jinfra.Neo4jClient, uniqueID, contentHash string) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx,
+		`MERGE (t:Table {unique_id: $uid}) SET t.content_hash = $ch, t.active = true`,
+		map[string]any{"uid": uniqueID, "ch": contentHash})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+}
+
+func newVersionRepo(client neo4jinfra.Neo4jClient) *neo4jinfra.CodeVersionRepository {
+	return neo4jinfra.NewCodeVersionRepository(client,
+		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+}
+
+func nodeInput(uniqueID, hash string, refs ...codeversion.UnitRef) codeversion.NodeVersion {
+	return codeversion.NodeVersion{
+		UniqueID: uniqueID, ContentHash: hash, SourceHash: "s", SharedCodeHash: "m",
+		ConfigHash: "c", Runtime: "dbt", RawCode: "select 1", CompiledCode: "select 1",
+		ConfigJSON: `{"materialized":"table"}`, UnitRefs: refs,
+	}
+}
+
+func versionWriteInput(releaseID string, at time.Time, nodes []codeversion.NodeVersion,
+	units []codeversion.CodeUnitVersion) codeversion.WriteInput {
+	return codeversion.WriteInput{
+		ReleaseID: releaseID, Repo: "org/svc", CommitSHA: "sha-" + releaseID,
+		PromotedAt: at, Nodes: nodes, Units: units,
+	}
+}
+
+// versionScalar runs a single-value read query and returns the value under `v`,
+// or nil when the query matched nothing.
+func versionScalar(t *testing.T, client neo4jinfra.Neo4jClient, cypher string, params map[string]any) any {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, cypher, params)
+	require.NoError(t, err)
+	if !res.Next(ctx) {
+		require.NoError(t, res.Err())
+		return nil
+	}
+	v, _ := res.Record().Get("v")
+	require.NoError(t, res.Err())
+	return v
+}
+
+func TestCodeVersionRepository_FirstWriteCreatesCurrentVersion(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+
+	repo := newVersionRepo(client)
+	now := time.Now().UTC()
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", now,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.NodeVersionsCreated)
+	assert.Equal(t, 1, res.CurrentPointersMoved)
+	assert.Empty(t, res.UnmatchedNodeIDs)
+
+	assert.Equal(t, "sha256:v1", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
+	assert.Equal(t, int64(1), versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.version_seq AS v`, nil))
+	assert.Equal(t, "rel-1", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.release_id AS v`, nil))
+	assert.Equal(t, "sha-rel-1", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.commit_sha AS v`, nil))
+	assert.Equal(t, `{"materialized":"table"}`, versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.config_json AS v`, nil))
+	assert.Equal(t, false, versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.backfilled AS v`, nil))
+}
+
+// Versions grow with edits, not with releases.
+func TestCodeVersionRepository_UnchangedHashWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+
+	repo := newVersionRepo(client)
+	base := time.Now().UTC()
+	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.NodeVersionsCreated)
+	assert.Equal(t, 0, res.CurrentPointersMoved)
+	assert.Equal(t, int64(1), versionScalar(t, client,
+		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN count(v) AS v`, nil))
+}
+
+func TestCodeVersionRepository_ChangedHashChainsPrevious(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+
+	repo := newVersionRepo(client)
+	base := time.Now().UTC()
+	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2")}, nil))
+	require.NoError(t, err)
+
+	assert.Equal(t, "sha256:v2", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
+	assert.Equal(t, "sha256:v1", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->()-[:PREVIOUS]->(p)
+		 RETURN p.content_hash AS v`, nil))
+	assert.Equal(t, int64(2), versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.version_seq AS v`, nil))
+}
+
+// A revert must not close the chain into a cycle: the version already exists, so
+// only the pointer moves.
+func TestCodeVersionRepository_RevertMovesCurrentWithoutCreatingACycle(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+
+	repo := newVersionRepo(client)
+	base := time.Now().UTC()
+	for i, h := range []string{"sha256:v1", "sha256:v2", "sha256:v1"} {
+		_, err := repo.WriteVersions(ctx, versionWriteInput("rel-"+strconv.Itoa(i+1),
+			base.Add(time.Duration(i)*time.Minute),
+			[]codeversion.NodeVersion{nodeInput("analytics.revenue", h)}, nil))
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, int64(2), versionScalar(t, client,
+		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN count(v) AS v`, nil),
+		"the reverted-to version is reused, not duplicated")
+	assert.Equal(t, "sha256:v1", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
+	assert.Equal(t, int64(0), versionScalar(t, client,
+		`MATCH (a:NodeVersion {unique_id:'analytics.revenue'})-[:PREVIOUS]->(b)-[:PREVIOUS]->(a)
+		 RETURN count(a) AS v`, nil), "no :PREVIOUS cycle")
+	assert.Equal(t, int64(1), versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN count(v) AS v`, nil),
+		"exactly one :CURRENT edge")
+}
+
+// A stale redelivery may add history but must never yank the pointer backwards.
+func TestCodeVersionRepository_StalePromotedAtDoesNotMoveCurrent(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:new")
+
+	repo := newVersionRepo(client)
+	now := time.Now().UTC()
+	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", now,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:new")}, nil))
+	require.NoError(t, err)
+
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", now.Add(-time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:old")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.NodeVersionsCreated, "the historical version is still recorded")
+	assert.Equal(t, 0, res.CurrentPointersMoved)
+	assert.Equal(t, "sha256:new", versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
+}
+
+func TestCodeVersionRepository_WritesSharedCodeVersionsAndUsesCodeEdges(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+
+	repo := newVersionRepo(client)
+	now := time.Now().UTC()
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", now,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1",
+			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1"},
+			codeversion.UnitRef{UnitID: "svc:m2", Checksum: "u2"})},
+		[]codeversion.CodeUnitVersion{
+			{UnitID: "svc:m1", Checksum: "u1", Source: "macro one"},
+			{UnitID: "svc:m2", Checksum: "u2", Source: "macro two"},
+		}))
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.UnitVersionsCreated)
+
+	assert.Equal(t, int64(2), versionScalar(t, client,
+		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->()-[:USES_CODE]->(u)
+		 RETURN count(u) AS v`, nil))
+	assert.Equal(t, "u1", versionScalar(t, client,
+		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.checksum AS v`, nil))
+	assert.Equal(t, "macro one", versionScalar(t, client,
+		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.source AS v`, nil))
+}
+
+func TestCodeVersionRepository_SharedCodeUnitChainsOnChecksumChange(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+
+	repo := newVersionRepo(client)
+	base := time.Now().UTC()
+	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1",
+			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u1"})},
+		[]codeversion.CodeUnitVersion{{UnitID: "svc:m1", Checksum: "u1", Source: "one"}}))
+	require.NoError(t, err)
+	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2",
+			codeversion.UnitRef{UnitID: "svc:m1", Checksum: "u2"})},
+		[]codeversion.CodeUnitVersion{{UnitID: "svc:m1", Checksum: "u2", Source: "two"}}))
+	require.NoError(t, err)
+
+	assert.Equal(t, "u2", versionScalar(t, client,
+		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.checksum AS v`, nil))
+	assert.Equal(t, "u1", versionScalar(t, client,
+		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->()-[:PREVIOUS]->(p) RETURN p.checksum AS v`, nil))
+	assert.Equal(t, int64(1), versionScalar(t, client,
+		`MATCH (c:CodeUnit {unit_id:'svc:m1'}) RETURN count(c) AS v`, nil),
+		"one :CodeUnit per unit id")
+}
+
+// The topology-swap group and the version group read the same message; when the
+// version group wins the race the node has no :Table yet. That must be reported,
+// not silently lost.
+func TestCodeVersionRepository_ReportsNodesWithNoTable(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+
+	repo := newVersionRepo(client)
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
+		[]codeversion.NodeVersion{
+			nodeInput("analytics.revenue", "sha256:v1"),
+			nodeInput("analytics.missing", "sha256:v9"),
+		}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"analytics.missing"}, res.UnmatchedNodeIDs)
+	assert.Equal(t, 1, res.NodeVersionsCreated)
+}
+
+// A retired node's :Table is deleted by the topology swap's orphan cleanup. Its
+// versions survive as free-standing nodes, and when the node returns the pointer
+// reattaches to the version that already exists.
+func TestCodeVersionRepository_RetiredNodeReattachesWithoutDuplicating(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+
+	repo := newVersionRepo(client)
+	base := time.Now().UTC()
+	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+
+	// The node leaves the topology: the swap deletes its :Table along with the
+	// pointer edge, leaving the version node behind.
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	res0, err := s.Run(ctx, `MATCH (t:Table {unique_id:'analytics.revenue'}) DETACH DELETE t`, nil)
+	require.NoError(t, err)
+	_, err = res0.Consume(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.Close(ctx))
+
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v1")
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.NodeVersionsCreated, "the existing version is reused")
+	assert.Equal(t, 1, res.CurrentPointersMoved)
+	assert.Equal(t, int64(1), versionScalar(t, client,
+		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN count(v) AS v`, nil))
+	assert.Equal(t, int64(1), versionScalar(t, client,
+		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN v.version_seq AS v`, nil),
+		"the version keeps the sequence number it was created with")
+}
+
+func TestCodeVersionRepository_ReturnsGraphReleaseID(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	r, err := s.Run(ctx, `MERGE (m:Meta {key:'current_release'}) SET m.release_id = 'rel-7'`, nil)
+	require.NoError(t, err)
+	_, err = r.Consume(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.Close(ctx))
+
+	res, err := newVersionRepo(client).WriteVersions(ctx,
+		versionWriteInput("rel-7", time.Now().UTC(), nil, nil))
+	require.NoError(t, err)
+	assert.Equal(t, "rel-7", res.GraphReleaseID)
+}
+
+// More than one batch must behave exactly like one.
+func TestCodeVersionRepository_WritesAcrossBatches(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+
+	var nodes []codeversion.NodeVersion
+	for i := 0; i < 250; i++ {
+		uid := "analytics.n" + strconv.Itoa(i)
+		seedVersionTable(t, client, uid, "sha256:h")
+		nodes = append(nodes, nodeInput(uid, "sha256:h"))
+	}
+	res, err := newVersionRepo(client).WriteVersions(ctx,
+		versionWriteInput("rel-1", time.Now().UTC(), nodes, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 250, res.NodeVersionsCreated)
+	assert.Equal(t, int64(250), versionScalar(t, client,
+		`MATCH (:Table)-[:CURRENT]->(v:NodeVersion) RETURN count(v) AS v`, nil))
+}

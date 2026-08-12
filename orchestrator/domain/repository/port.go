@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/google/uuid"
 )
@@ -45,4 +46,15 @@ type ReleasePromotionRepository interface {
 		nodes []topology.ReleasePromotedTopologyNode,
 		now time.Time,
 	) (changed bool, err error)
+}
+
+// CodeVersionRepository writes the code-version history behind the :Table
+// topology. Implementations decide what to write by comparing each incoming
+// node's content_hash against the version the graph currently marks as current
+// — never against a flag carried by the event — so any later release converges a
+// graph that missed a write.
+type CodeVersionRepository interface {
+	// WriteVersions ingests one release's versions. It is idempotent: replaying
+	// the same input the second time writes nothing.
+	WriteVersions(ctx context.Context, in codeversion.WriteInput) (codeversion.WriteResult, error)
 }

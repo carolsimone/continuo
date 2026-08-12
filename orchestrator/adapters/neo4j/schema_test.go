@@ -54,6 +54,10 @@ func TestInitSchema_Idempotent(t *testing.T) {
 		"table_fqn",
 		"table_schedule",
 		"run_schedule",
+		"node_version_unique",
+		"node_version_uid",
+		"code_unit_unique",
+		"code_unit_version_unique",
 	} {
 		require.Truef(t, names[want], "expected schema object %q to exist after InitSchema", want)
 	}
