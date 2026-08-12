@@ -15,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/pkg/streams"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/google/uuid"
@@ -168,6 +169,27 @@ func TestE2E_ReleasePromote_ValidatesAndSwapsTopology(t *testing.T) {
 	}
 	t.Logf("✅ code version recorded for %s (content_hash=%s, authored by %s)",
 		probeUniqueID, versionHash, versionRelease)
+
+	// 7c. The read-side RPC must surface the same history the write path just
+	//     recorded: GetNodeVersions(probeUniqueID) includes a version whose
+	//     content_hash matches what the topology swap stamped on :Table.
+	versionsResp, err := clients.orchestratorClient.GetNodeVersions(ctx, &orchestratorv1.GetNodeVersionsRequest{
+		UniqueId: probeUniqueID,
+	})
+	require.NoError(t, err, "GetNodeVersions(%s) failed", probeUniqueID)
+	require.NotEmpty(t, versionsResp.GetVersions(),
+		"GetNodeVersions(%s) must return at least one recorded version", probeUniqueID)
+	foundMatchingVersion := false
+	for _, v := range versionsResp.GetVersions() {
+		if v.GetContentHash() == tableHash {
+			foundMatchingVersion = true
+			break
+		}
+	}
+	require.True(t, foundMatchingVersion,
+		"GetNodeVersions(%s) must include a version whose content_hash (%s) matches :Table.content_hash",
+		probeUniqueID, tableHash)
+	t.Logf("✅ GetNodeVersions surfaces the promoted version (content_hash=%s)", tableHash)
 
 	// 8. The promoted release must surface in the history list and carry per-node
 	//    validation results (with a dbt log URI) retrievable through the UI BFF.
