@@ -1,0 +1,152 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+
+	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/domain/repository"
+	"github.com/carolsimone/continuo/orchestrator/service/ports"
+	"github.com/carolsimone/continuo/orchestrator/service/uow"
+	pkgevents "github.com/carolsimone/continuo/pkg/events"
+	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/google/uuid"
+)
+
+// unmatchedSampleSize bounds how many node ids a warning names, so an
+// estate-wide mismatch logs a usable sample instead of thousands of ids.
+const unmatchedSampleSize = 5
+
+// ReleasePromotedVersionsHandler consumes release.promoted:v1 on its own
+// consumer group and records the release's code versions in the graph.
+//
+// It is deliberately separate from the topology-swap handler: promotion must
+// never gain a dependency on object storage being available, and nothing on the
+// run path reads versions, so this group can trail the swap and retry freely.
+// Which nodes actually get a version is decided against the graph, not against
+// the event's `changed` flags — that is what lets any later release converge a
+// graph that missed a write.
+type ReleasePromotedVersionsHandler struct {
+	uow      uow.UnitOfWork
+	bundles  ports.CodeBundleReader
+	versions repository.CodeVersionRepository
+	logger   *slog.Logger
+}
+
+// NewReleasePromotedVersionsHandler creates a ReleasePromotedVersionsHandler.
+func NewReleasePromotedVersionsHandler(
+	u uow.UnitOfWork,
+	bundles ports.CodeBundleReader,
+	versions repository.CodeVersionRepository,
+	logger *slog.Logger,
+) *ReleasePromotedVersionsHandler {
+	return &ReleasePromotedVersionsHandler{uow: u, bundles: bundles, versions: versions, logger: logger}
+}
+
+// Handle processes one release.promoted:v1 message on the versions group.
+func (h *ReleasePromotedVersionsHandler) Handle(
+	ctx context.Context,
+	messageID string,
+	outboxEntryID *uuid.UUID,
+	in domainModel.PromoteReleaseInput,
+) error {
+	h.logger.Info("Processing release.promoted:v1 (versions path)",
+		"message_id", messageID,
+		"release_id", in.ReleaseID,
+		"node_count", len(in.Topology),
+	)
+
+	payload, err := json.Marshal(in)
+	if err != nil {
+		return fmt.Errorf("marshal input: %w", err)
+	}
+
+	if err := h.uow.Begin(ctx); err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer h.uow.Rollback() //nolint:errcheck
+
+	// Dedup scope rule (shared): three consumer groups read release.promoted:v1,
+	// so each scopes its dedup by its own CONSUMER-GROUP name and their
+	// message_processing rows stay independent under the (outbox_entry_id,
+	// stream_name) unique index.
+	msgProcessingID, shouldSkip, err := messageprocessing.DedupWithOutboxEntryID(
+		ctx, h.uow.MessageProcessingRepo(), h.logger,
+		messageID, streams.OrchestratorReleasePromotedVersions, payload, outboxEntryID,
+	)
+	if err != nil {
+		return fmt.Errorf("dedup: %w", err)
+	}
+	if shouldSkip {
+		return nil
+	}
+
+	if in.CodeBundleURI == "" {
+		// A release promoted before manifest-controller began writing bundles.
+		// No retry can produce one, so record the message as handled.
+		h.logger.Warn("release.promoted carries no code_bundle_uri — no versions to ingest",
+			"release_id", in.ReleaseID)
+		return h.complete(ctx, msgProcessingID)
+	}
+
+	bundle, err := h.bundles.Fetch(ctx, in.CodeBundleURI)
+	if err != nil {
+		if errors.Is(err, ports.ErrBundleMalformed) {
+			// Re-reading the same bytes cannot fix them: acknowledge, drop, and
+			// make the failure loud.
+			h.logger.Error("code bundle is unreadable — dropping the message",
+				"release_id", in.ReleaseID, "uri", in.CodeBundleURI, "error", err)
+			return fmt.Errorf("%w: code bundle %s: %v", pkgevents.ErrPermanent, in.CodeBundleURI, err)
+		}
+		// Absent or unreachable: the object may still land, so retry.
+		return fmt.Errorf("fetch code bundle %s: %w", in.CodeBundleURI, err)
+	}
+
+	res, err := h.versions.WriteVersions(ctx, planVersionWrite(in, bundle, h.logger))
+	if err != nil {
+		return fmt.Errorf("write code versions for release %s: %w", in.ReleaseID, err)
+	}
+
+	if len(res.UnmatchedNodeIDs) > 0 {
+		sample := res.UnmatchedNodeIDs
+		if len(sample) > unmatchedSampleSize {
+			sample = sample[:unmatchedSampleSize]
+		}
+		if res.GraphReleaseID != in.ReleaseID {
+			// The topology-swap group reads the same message and has not applied
+			// this release yet, so these nodes have no :Table to attach a version
+			// to. Retrying is how this group trails the swap.
+			return fmt.Errorf("topology swap for release %s has not landed (graph is at %q); "+
+				"%d bundle nodes have no :Table (e.g. %v)",
+				in.ReleaseID, res.GraphReleaseID, len(res.UnmatchedNodeIDs), sample)
+		}
+		h.logger.Warn("code bundle names nodes absent from the promoted topology",
+			"release_id", in.ReleaseID,
+			"unmatched_count", len(res.UnmatchedNodeIDs),
+			"sample", sample)
+	}
+
+	h.logger.Info("Code version ingestion finished",
+		"release_id", in.ReleaseID,
+		"bundle_nodes", len(bundle.Nodes),
+		"node_versions_created", res.NodeVersionsCreated,
+		"unit_versions_created", res.UnitVersionsCreated,
+		"current_pointers_moved", res.CurrentPointersMoved,
+	)
+	return h.complete(ctx, msgProcessingID)
+}
+
+// complete marks the dedup row processed and commits.
+func (h *ReleasePromotedVersionsHandler) complete(ctx context.Context, msgProcessingID uuid.UUID) error {
+	if err := h.uow.MessageProcessingRepo().UpdateState(ctx, msgProcessingID, "completed"); err != nil {
+		return fmt.Errorf("mark completed: %w", err)
+	}
+	if err := h.uow.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}

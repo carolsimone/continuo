@@ -25,6 +25,11 @@ type Config struct {
 	Postgres pkgconfig.PostgresConfig
 	Neo4j    Neo4jConfig
 
+	// S3 — the version-ingestion consumer reads each release's code-bundle
+	// document from object storage. Required: an orchestrator that boots without
+	// it would silently stop recording code history.
+	S3 pkgconfig.S3Config
+
 	// gRPC
 	GRPCPort int
 	HTTPPort int
@@ -74,6 +79,7 @@ func Load(v *pkgconfig.Validator) Config {
 			User:     v.Require("NEO4J_USER"),
 			Password: v.Require("NEO4J_PASSWORD"),
 		},
+		S3: pkgconfig.LoadS3(v),
 
 		GRPCPort: envInt("GRPC_PORT", 50052),
 		HTTPPort: envInt("HTTP_PORT", 8087),
