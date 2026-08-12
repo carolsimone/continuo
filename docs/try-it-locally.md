@@ -599,9 +599,18 @@ does not update what the node has, so rebuild *and* reload.
 
 **A seed Job fails on your very first release** with `duplicate key value
 violates unique constraint "pg_namespace_nspname_index"`. Two seed Jobs raced to
-create the `analytics` schema, and one lost. It only happens on the first release
-into a schema that does not exist yet, and it is not currently retried. Re-run
-the failed Job and it will succeed, since the schema now exists:
+create the `analytics` schema, and one lost. It only happens on the first
+release into a schema that does not exist yet — once the schema exists it cannot
+recur.
+
+This affects chart **0.2.0**, the version installed above. On 0.2.0 the promoted
+seed build runs outside the run lifecycle, so the failure is neither retried nor
+reported: the Job is simply `Failed` and its table is missing. Later versions
+build a release's seeds as an ordinary run, where the losing Job is retried
+automatically, finds the schema present, and succeeds — so there is nothing to
+do and nothing to see.
+
+On 0.2.0, re-run the failed Job by hand and it will succeed:
 
 ```bash
 kubectl -n continuo get job <failed-job> -o json \
