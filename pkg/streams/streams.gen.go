@@ -142,6 +142,8 @@ const (
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// OrchestratorReleasePromotedSeedBuild — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromotedSeedBuild = "orchestrator-release-promoted-seed-build"
+	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v1.
+	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
 	// ExecutorReleasePromoted — executor-controller consumer group on release.promoted:v1.
 	ExecutorReleasePromoted = "executor-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
