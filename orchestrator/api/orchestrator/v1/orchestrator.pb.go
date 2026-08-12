@@ -1295,6 +1295,1104 @@ func (x *AncestorNode) GetFilePath() string {
 	return ""
 }
 
+// VersionView is one recorded code state of a node: identity and hash parts,
+// the provenance stamp, and the code itself.
+type VersionView struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId       string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	VersionSeq     int64                  `protobuf:"varint,2,opt,name=version_seq,json=versionSeq,proto3" json:"version_seq,omitempty"`
+	ContentHash    string                 `protobuf:"bytes,3,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
+	SourceHash     string                 `protobuf:"bytes,4,opt,name=source_hash,json=sourceHash,proto3" json:"source_hash,omitempty"`
+	SharedCodeHash string                 `protobuf:"bytes,5,opt,name=shared_code_hash,json=sharedCodeHash,proto3" json:"shared_code_hash,omitempty"`
+	ConfigHash     string                 `protobuf:"bytes,6,opt,name=config_hash,json=configHash,proto3" json:"config_hash,omitempty"`
+	Runtime        string                 `protobuf:"bytes,7,opt,name=runtime,proto3" json:"runtime,omitempty"`
+	RawCode        string                 `protobuf:"bytes,8,opt,name=raw_code,json=rawCode,proto3" json:"raw_code,omitempty"`
+	// compiled_code may be truncated to a server-side byte cap; compiled_truncated
+	// is set when it was cut.
+	CompiledCode      string `protobuf:"bytes,9,opt,name=compiled_code,json=compiledCode,proto3" json:"compiled_code,omitempty"`
+	CompiledTruncated bool   `protobuf:"varint,10,opt,name=compiled_truncated,json=compiledTruncated,proto3" json:"compiled_truncated,omitempty"`
+	ConfigJson        string `protobuf:"bytes,11,opt,name=config_json,json=configJson,proto3" json:"config_json,omitempty"`
+	Repo              string `protobuf:"bytes,12,opt,name=repo,proto3" json:"repo,omitempty"`
+	CommitSha         string `protobuf:"bytes,13,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	ReleaseId         string `protobuf:"bytes,14,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	PromotedAt        string `protobuf:"bytes,15,opt,name=promoted_at,json=promotedAt,proto3" json:"promoted_at,omitempty"` // RFC3339
+	Healed            bool   `protobuf:"varint,16,opt,name=healed,proto3" json:"healed,omitempty"`
+	Backfilled        bool   `protobuf:"varint,17,opt,name=backfilled,proto3" json:"backfilled,omitempty"`
+	// is_current marks the version the node runs now. Exactly one version in a
+	// chain walk carries it; a node whose :Table was retired has none.
+	IsCurrent     bool `protobuf:"varint,18,opt,name=is_current,json=isCurrent,proto3" json:"is_current,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VersionView) Reset() {
+	*x = VersionView{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VersionView) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VersionView) ProtoMessage() {}
+
+func (x *VersionView) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VersionView.ProtoReflect.Descriptor instead.
+func (*VersionView) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *VersionView) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *VersionView) GetVersionSeq() int64 {
+	if x != nil {
+		return x.VersionSeq
+	}
+	return 0
+}
+
+func (x *VersionView) GetContentHash() string {
+	if x != nil {
+		return x.ContentHash
+	}
+	return ""
+}
+
+func (x *VersionView) GetSourceHash() string {
+	if x != nil {
+		return x.SourceHash
+	}
+	return ""
+}
+
+func (x *VersionView) GetSharedCodeHash() string {
+	if x != nil {
+		return x.SharedCodeHash
+	}
+	return ""
+}
+
+func (x *VersionView) GetConfigHash() string {
+	if x != nil {
+		return x.ConfigHash
+	}
+	return ""
+}
+
+func (x *VersionView) GetRuntime() string {
+	if x != nil {
+		return x.Runtime
+	}
+	return ""
+}
+
+func (x *VersionView) GetRawCode() string {
+	if x != nil {
+		return x.RawCode
+	}
+	return ""
+}
+
+func (x *VersionView) GetCompiledCode() string {
+	if x != nil {
+		return x.CompiledCode
+	}
+	return ""
+}
+
+func (x *VersionView) GetCompiledTruncated() bool {
+	if x != nil {
+		return x.CompiledTruncated
+	}
+	return false
+}
+
+func (x *VersionView) GetConfigJson() string {
+	if x != nil {
+		return x.ConfigJson
+	}
+	return ""
+}
+
+func (x *VersionView) GetRepo() string {
+	if x != nil {
+		return x.Repo
+	}
+	return ""
+}
+
+func (x *VersionView) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
+func (x *VersionView) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *VersionView) GetPromotedAt() string {
+	if x != nil {
+		return x.PromotedAt
+	}
+	return ""
+}
+
+func (x *VersionView) GetHealed() bool {
+	if x != nil {
+		return x.Healed
+	}
+	return false
+}
+
+func (x *VersionView) GetBackfilled() bool {
+	if x != nil {
+		return x.Backfilled
+	}
+	return false
+}
+
+func (x *VersionView) GetIsCurrent() bool {
+	if x != nil {
+		return x.IsCurrent
+	}
+	return false
+}
+
+// VersionDiff is a server-rendered comparison of two versions of one node.
+// The diffs are rendered server-side so every caller sees the same thing.
+type VersionDiff struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	From     *VersionView           `protobuf:"bytes,2,opt,name=from,proto3" json:"from,omitempty"`
+	To       *VersionView           `protobuf:"bytes,3,opt,name=to,proto3" json:"to,omitempty"`
+	// raw_code_diff is a unified diff of raw_code; "" when the source is
+	// unchanged.
+	RawCodeDiff string `protobuf:"bytes,4,opt,name=raw_code_diff,json=rawCodeDiff,proto3" json:"raw_code_diff,omitempty"`
+	// config_diff is a unified diff over the canonical (sorted-key, indented)
+	// config JSON; "" when unchanged.
+	ConfigDiff        string `protobuf:"bytes,5,opt,name=config_diff,json=configDiff,proto3" json:"config_diff,omitempty"`
+	SourceChanged     bool   `protobuf:"varint,6,opt,name=source_changed,json=sourceChanged,proto3" json:"source_changed,omitempty"`
+	SharedCodeChanged bool   `protobuf:"varint,7,opt,name=shared_code_changed,json=sharedCodeChanged,proto3" json:"shared_code_changed,omitempty"`
+	ConfigChanged     bool   `protobuf:"varint,8,opt,name=config_changed,json=configChanged,proto3" json:"config_changed,omitempty"`
+	// truncated is set when either diff above was cut to the per-diff 8 KiB
+	// byte cap.
+	Truncated     bool `protobuf:"varint,9,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VersionDiff) Reset() {
+	*x = VersionDiff{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VersionDiff) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VersionDiff) ProtoMessage() {}
+
+func (x *VersionDiff) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VersionDiff.ProtoReflect.Descriptor instead.
+func (*VersionDiff) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *VersionDiff) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *VersionDiff) GetFrom() *VersionView {
+	if x != nil {
+		return x.From
+	}
+	return nil
+}
+
+func (x *VersionDiff) GetTo() *VersionView {
+	if x != nil {
+		return x.To
+	}
+	return nil
+}
+
+func (x *VersionDiff) GetRawCodeDiff() string {
+	if x != nil {
+		return x.RawCodeDiff
+	}
+	return ""
+}
+
+func (x *VersionDiff) GetConfigDiff() string {
+	if x != nil {
+		return x.ConfigDiff
+	}
+	return ""
+}
+
+func (x *VersionDiff) GetSourceChanged() bool {
+	if x != nil {
+		return x.SourceChanged
+	}
+	return false
+}
+
+func (x *VersionDiff) GetSharedCodeChanged() bool {
+	if x != nil {
+		return x.SharedCodeChanged
+	}
+	return false
+}
+
+func (x *VersionDiff) GetConfigChanged() bool {
+	if x != nil {
+		return x.ConfigChanged
+	}
+	return false
+}
+
+func (x *VersionDiff) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+// UpstreamChange is one ancestor of a node together with its most recent
+// code change.
+type UpstreamChange struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId      string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	Depth         int32                  `protobuf:"varint,2,opt,name=depth,proto3" json:"depth,omitempty"`
+	Diff          *VersionDiff           `protobuf:"bytes,3,opt,name=diff,proto3" json:"diff,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpstreamChange) Reset() {
+	*x = UpstreamChange{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpstreamChange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpstreamChange) ProtoMessage() {}
+
+func (x *UpstreamChange) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpstreamChange.ProtoReflect.Descriptor instead.
+func (*UpstreamChange) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *UpstreamChange) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *UpstreamChange) GetDepth() int32 {
+	if x != nil {
+		return x.Depth
+	}
+	return 0
+}
+
+func (x *UpstreamChange) GetDiff() *VersionDiff {
+	if x != nil {
+		return x.Diff
+	}
+	return nil
+}
+
+// UnitVersionView is one recorded state of a shared-code unit.
+type UnitVersionView struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UnitId        string                 `protobuf:"bytes,1,opt,name=unit_id,json=unitId,proto3" json:"unit_id,omitempty"`
+	Checksum      string                 `protobuf:"bytes,2,opt,name=checksum,proto3" json:"checksum,omitempty"`
+	Source        string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	Repo          string                 `protobuf:"bytes,4,opt,name=repo,proto3" json:"repo,omitempty"`
+	CommitSha     string                 `protobuf:"bytes,5,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	ReleaseId     string                 `protobuf:"bytes,6,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	PromotedAt    string                 `protobuf:"bytes,7,opt,name=promoted_at,json=promotedAt,proto3" json:"promoted_at,omitempty"` // RFC3339
+	IsCurrent     bool                   `protobuf:"varint,8,opt,name=is_current,json=isCurrent,proto3" json:"is_current,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnitVersionView) Reset() {
+	*x = UnitVersionView{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnitVersionView) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnitVersionView) ProtoMessage() {}
+
+func (x *UnitVersionView) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnitVersionView.ProtoReflect.Descriptor instead.
+func (*UnitVersionView) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *UnitVersionView) GetUnitId() string {
+	if x != nil {
+		return x.UnitId
+	}
+	return ""
+}
+
+func (x *UnitVersionView) GetChecksum() string {
+	if x != nil {
+		return x.Checksum
+	}
+	return ""
+}
+
+func (x *UnitVersionView) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *UnitVersionView) GetRepo() string {
+	if x != nil {
+		return x.Repo
+	}
+	return ""
+}
+
+func (x *UnitVersionView) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
+func (x *UnitVersionView) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *UnitVersionView) GetPromotedAt() string {
+	if x != nil {
+		return x.PromotedAt
+	}
+	return ""
+}
+
+func (x *UnitVersionView) GetIsCurrent() bool {
+	if x != nil {
+		return x.IsCurrent
+	}
+	return false
+}
+
+// RunExecution is one run that executed a node, with the code it actually
+// ran.
+type RunExecution struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	RunId        string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	TaskId       string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Status       string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	ScheduleName string                 `protobuf:"bytes,4,opt,name=schedule_name,json=scheduleName,proto3" json:"schedule_name,omitempty"`
+	Operation    string                 `protobuf:"bytes,5,opt,name=operation,proto3" json:"operation,omitempty"`
+	ImageTag     string                 `protobuf:"bytes,6,opt,name=image_tag,json=imageTag,proto3" json:"image_tag,omitempty"`
+	// content_hash is the code the run executed, stamped on the :EXECUTES edge
+	// at snapshot time. Empty for runs that predate the stamp.
+	ContentHash   string `protobuf:"bytes,7,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
+	CreatedAt     string `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`       // RFC3339
+	CompletedAt   string `protobuf:"bytes,9,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"` // RFC3339, "" while the run has not finished
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunExecution) Reset() {
+	*x = RunExecution{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunExecution) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunExecution) ProtoMessage() {}
+
+func (x *RunExecution) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunExecution.ProtoReflect.Descriptor instead.
+func (*RunExecution) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *RunExecution) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *RunExecution) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *RunExecution) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *RunExecution) GetScheduleName() string {
+	if x != nil {
+		return x.ScheduleName
+	}
+	return ""
+}
+
+func (x *RunExecution) GetOperation() string {
+	if x != nil {
+		return x.Operation
+	}
+	return ""
+}
+
+func (x *RunExecution) GetImageTag() string {
+	if x != nil {
+		return x.ImageTag
+	}
+	return ""
+}
+
+func (x *RunExecution) GetContentHash() string {
+	if x != nil {
+		return x.ContentHash
+	}
+	return ""
+}
+
+func (x *RunExecution) GetCreatedAt() string {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *RunExecution) GetCompletedAt() string {
+	if x != nil {
+		return x.CompletedAt
+	}
+	return ""
+}
+
+type GetNodeVersionsRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	// limit bounds the number of versions returned, newest first; the server
+	// applies a default when unset and clamps values above its maximum.
+	Limit         int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeVersionsRequest) Reset() {
+	*x = GetNodeVersionsRequest{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeVersionsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeVersionsRequest) ProtoMessage() {}
+
+func (x *GetNodeVersionsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeVersionsRequest.ProtoReflect.Descriptor instead.
+func (*GetNodeVersionsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *GetNodeVersionsRequest) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *GetNodeVersionsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type GetNodeVersionsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Versions      []*VersionView         `protobuf:"bytes,1,rep,name=versions,proto3" json:"versions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeVersionsResponse) Reset() {
+	*x = GetNodeVersionsResponse{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeVersionsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeVersionsResponse) ProtoMessage() {}
+
+func (x *GetNodeVersionsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeVersionsResponse.ProtoReflect.Descriptor instead.
+func (*GetNodeVersionsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *GetNodeVersionsResponse) GetVersions() []*VersionView {
+	if x != nil {
+		return x.Versions
+	}
+	return nil
+}
+
+type GetNodeVersionDiffRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId      string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	FromSeq       int64                  `protobuf:"varint,2,opt,name=from_seq,json=fromSeq,proto3" json:"from_seq,omitempty"`
+	ToSeq         int64                  `protobuf:"varint,3,opt,name=to_seq,json=toSeq,proto3" json:"to_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeVersionDiffRequest) Reset() {
+	*x = GetNodeVersionDiffRequest{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeVersionDiffRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeVersionDiffRequest) ProtoMessage() {}
+
+func (x *GetNodeVersionDiffRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeVersionDiffRequest.ProtoReflect.Descriptor instead.
+func (*GetNodeVersionDiffRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *GetNodeVersionDiffRequest) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *GetNodeVersionDiffRequest) GetFromSeq() int64 {
+	if x != nil {
+		return x.FromSeq
+	}
+	return 0
+}
+
+func (x *GetNodeVersionDiffRequest) GetToSeq() int64 {
+	if x != nil {
+		return x.ToSeq
+	}
+	return 0
+}
+
+type GetNodeVersionDiffResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Diff          *VersionDiff           `protobuf:"bytes,1,opt,name=diff,proto3" json:"diff,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeVersionDiffResponse) Reset() {
+	*x = GetNodeVersionDiffResponse{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeVersionDiffResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeVersionDiffResponse) ProtoMessage() {}
+
+func (x *GetNodeVersionDiffResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeVersionDiffResponse.ProtoReflect.Descriptor instead.
+func (*GetNodeVersionDiffResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *GetNodeVersionDiffResponse) GetDiff() *VersionDiff {
+	if x != nil {
+		return x.Diff
+	}
+	return nil
+}
+
+type GetUpstreamChangesRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	// depth bounds how many hops upstream to walk; <= 0 defaults to 3 hops
+	// server-side. Server-validated: depth above 10 is rejected as invalid.
+	Depth int32 `protobuf:"varint,2,opt,name=depth,proto3" json:"depth,omitempty"`
+	// since is an RFC3339 timestamp; ancestors whose newest version predates it
+	// are excluded. "" (empty) applies no time filter.
+	Since         string `protobuf:"bytes,3,opt,name=since,proto3" json:"since,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUpstreamChangesRequest) Reset() {
+	*x = GetUpstreamChangesRequest{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUpstreamChangesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUpstreamChangesRequest) ProtoMessage() {}
+
+func (x *GetUpstreamChangesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUpstreamChangesRequest.ProtoReflect.Descriptor instead.
+func (*GetUpstreamChangesRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *GetUpstreamChangesRequest) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *GetUpstreamChangesRequest) GetDepth() int32 {
+	if x != nil {
+		return x.Depth
+	}
+	return 0
+}
+
+func (x *GetUpstreamChangesRequest) GetSince() string {
+	if x != nil {
+		return x.Since
+	}
+	return ""
+}
+
+type GetUpstreamChangesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Changes       []*UpstreamChange      `protobuf:"bytes,1,rep,name=changes,proto3" json:"changes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUpstreamChangesResponse) Reset() {
+	*x = GetUpstreamChangesResponse{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUpstreamChangesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUpstreamChangesResponse) ProtoMessage() {}
+
+func (x *GetUpstreamChangesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUpstreamChangesResponse.ProtoReflect.Descriptor instead.
+func (*GetUpstreamChangesResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *GetUpstreamChangesResponse) GetChanges() []*UpstreamChange {
+	if x != nil {
+		return x.Changes
+	}
+	return nil
+}
+
+// GetCodeUnitVersionsRequest addresses a shared-code unit's version chain by
+// exactly one of unit_id or unique_id — never both, never neither.
+type GetCodeUnitVersionsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// unit_id queries one unit's chain directly. Mutually exclusive with
+	// unique_id.
+	UnitId string `protobuf:"bytes,1,opt,name=unit_id,json=unitId,proto3" json:"unit_id,omitempty"`
+	// unique_id resolves the node's current units first and returns each of
+	// their chains concatenated in resolution order. Mutually exclusive with
+	// unit_id.
+	UniqueId string `protobuf:"bytes,2,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	// limit bounds the number of versions returned per unit, newest first; the
+	// server applies a default when unset and clamps values above its maximum.
+	Limit         int32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetCodeUnitVersionsRequest) Reset() {
+	*x = GetCodeUnitVersionsRequest{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetCodeUnitVersionsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetCodeUnitVersionsRequest) ProtoMessage() {}
+
+func (x *GetCodeUnitVersionsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetCodeUnitVersionsRequest.ProtoReflect.Descriptor instead.
+func (*GetCodeUnitVersionsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *GetCodeUnitVersionsRequest) GetUnitId() string {
+	if x != nil {
+		return x.UnitId
+	}
+	return ""
+}
+
+func (x *GetCodeUnitVersionsRequest) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *GetCodeUnitVersionsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type GetCodeUnitVersionsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Versions      []*UnitVersionView     `protobuf:"bytes,1,rep,name=versions,proto3" json:"versions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetCodeUnitVersionsResponse) Reset() {
+	*x = GetCodeUnitVersionsResponse{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetCodeUnitVersionsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetCodeUnitVersionsResponse) ProtoMessage() {}
+
+func (x *GetCodeUnitVersionsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetCodeUnitVersionsResponse.ProtoReflect.Descriptor instead.
+func (*GetCodeUnitVersionsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *GetCodeUnitVersionsResponse) GetVersions() []*UnitVersionView {
+	if x != nil {
+		return x.Versions
+	}
+	return nil
+}
+
+type GetNodeRunHistoryRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	// limit bounds the number of runs returned, newest first. <= 0 defaults to
+	// 20; values above 200 are clamped to it.
+	Limit         int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeRunHistoryRequest) Reset() {
+	*x = GetNodeRunHistoryRequest{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeRunHistoryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeRunHistoryRequest) ProtoMessage() {}
+
+func (x *GetNodeRunHistoryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeRunHistoryRequest.ProtoReflect.Descriptor instead.
+func (*GetNodeRunHistoryRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *GetNodeRunHistoryRequest) GetUniqueId() string {
+	if x != nil {
+		return x.UniqueId
+	}
+	return ""
+}
+
+func (x *GetNodeRunHistoryRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type GetNodeRunHistoryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Runs          []*RunExecution        `protobuf:"bytes,1,rep,name=runs,proto3" json:"runs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetNodeRunHistoryResponse) Reset() {
+	*x = GetNodeRunHistoryResponse{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetNodeRunHistoryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetNodeRunHistoryResponse) ProtoMessage() {}
+
+func (x *GetNodeRunHistoryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetNodeRunHistoryResponse.ProtoReflect.Descriptor instead.
+func (*GetNodeRunHistoryResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *GetNodeRunHistoryResponse) GetRuns() []*RunExecution {
+	if x != nil {
+		return x.Runs
+	}
+	return nil
+}
+
 var File_proto_orchestrator_v1_orchestrator_proto protoreflect.FileDescriptor
 
 const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
@@ -1397,12 +2495,109 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\x0flast_changed_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\rlastChangedAt\x12&\n" +
 	"\x0flast_release_id\x18\n" +
 	" \x01(\tR\rlastReleaseId\x12\x1b\n" +
-	"\tfile_path\x18\v \x01(\tR\bfilePath*w\n" +
+	"\tfile_path\x18\v \x01(\tR\bfilePath\"\xce\x04\n" +
+	"\vVersionView\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x1f\n" +
+	"\vversion_seq\x18\x02 \x01(\x03R\n" +
+	"versionSeq\x12!\n" +
+	"\fcontent_hash\x18\x03 \x01(\tR\vcontentHash\x12\x1f\n" +
+	"\vsource_hash\x18\x04 \x01(\tR\n" +
+	"sourceHash\x12(\n" +
+	"\x10shared_code_hash\x18\x05 \x01(\tR\x0esharedCodeHash\x12\x1f\n" +
+	"\vconfig_hash\x18\x06 \x01(\tR\n" +
+	"configHash\x12\x18\n" +
+	"\aruntime\x18\a \x01(\tR\aruntime\x12\x19\n" +
+	"\braw_code\x18\b \x01(\tR\arawCode\x12#\n" +
+	"\rcompiled_code\x18\t \x01(\tR\fcompiledCode\x12-\n" +
+	"\x12compiled_truncated\x18\n" +
+	" \x01(\bR\x11compiledTruncated\x12\x1f\n" +
+	"\vconfig_json\x18\v \x01(\tR\n" +
+	"configJson\x12\x12\n" +
+	"\x04repo\x18\f \x01(\tR\x04repo\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\r \x01(\tR\tcommitSha\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\x0e \x01(\tR\treleaseId\x12\x1f\n" +
+	"\vpromoted_at\x18\x0f \x01(\tR\n" +
+	"promotedAt\x12\x16\n" +
+	"\x06healed\x18\x10 \x01(\bR\x06healed\x12\x1e\n" +
+	"\n" +
+	"backfilled\x18\x11 \x01(\bR\n" +
+	"backfilled\x12\x1d\n" +
+	"\n" +
+	"is_current\x18\x12 \x01(\bR\tisCurrent\"\xeb\x02\n" +
+	"\vVersionDiff\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x120\n" +
+	"\x04from\x18\x02 \x01(\v2\x1c.orchestrator.v1.VersionViewR\x04from\x12,\n" +
+	"\x02to\x18\x03 \x01(\v2\x1c.orchestrator.v1.VersionViewR\x02to\x12\"\n" +
+	"\rraw_code_diff\x18\x04 \x01(\tR\vrawCodeDiff\x12\x1f\n" +
+	"\vconfig_diff\x18\x05 \x01(\tR\n" +
+	"configDiff\x12%\n" +
+	"\x0esource_changed\x18\x06 \x01(\bR\rsourceChanged\x12.\n" +
+	"\x13shared_code_changed\x18\a \x01(\bR\x11sharedCodeChanged\x12%\n" +
+	"\x0econfig_changed\x18\b \x01(\bR\rconfigChanged\x12\x1c\n" +
+	"\ttruncated\x18\t \x01(\bR\ttruncated\"u\n" +
+	"\x0eUpstreamChange\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x14\n" +
+	"\x05depth\x18\x02 \x01(\x05R\x05depth\x120\n" +
+	"\x04diff\x18\x03 \x01(\v2\x1c.orchestrator.v1.VersionDiffR\x04diff\"\xf0\x01\n" +
+	"\x0fUnitVersionView\x12\x17\n" +
+	"\aunit_id\x18\x01 \x01(\tR\x06unitId\x12\x1a\n" +
+	"\bchecksum\x18\x02 \x01(\tR\bchecksum\x12\x16\n" +
+	"\x06source\x18\x03 \x01(\tR\x06source\x12\x12\n" +
+	"\x04repo\x18\x04 \x01(\tR\x04repo\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\x05 \x01(\tR\tcommitSha\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\x06 \x01(\tR\treleaseId\x12\x1f\n" +
+	"\vpromoted_at\x18\a \x01(\tR\n" +
+	"promotedAt\x12\x1d\n" +
+	"\n" +
+	"is_current\x18\b \x01(\bR\tisCurrent\"\x9b\x02\n" +
+	"\fRunExecution\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12#\n" +
+	"\rschedule_name\x18\x04 \x01(\tR\fscheduleName\x12\x1c\n" +
+	"\toperation\x18\x05 \x01(\tR\toperation\x12\x1b\n" +
+	"\timage_tag\x18\x06 \x01(\tR\bimageTag\x12!\n" +
+	"\fcontent_hash\x18\a \x01(\tR\vcontentHash\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\b \x01(\tR\tcreatedAt\x12!\n" +
+	"\fcompleted_at\x18\t \x01(\tR\vcompletedAt\"K\n" +
+	"\x16GetNodeVersionsRequest\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"S\n" +
+	"\x17GetNodeVersionsResponse\x128\n" +
+	"\bversions\x18\x01 \x03(\v2\x1c.orchestrator.v1.VersionViewR\bversions\"j\n" +
+	"\x19GetNodeVersionDiffRequest\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x19\n" +
+	"\bfrom_seq\x18\x02 \x01(\x03R\afromSeq\x12\x15\n" +
+	"\x06to_seq\x18\x03 \x01(\x03R\x05toSeq\"N\n" +
+	"\x1aGetNodeVersionDiffResponse\x120\n" +
+	"\x04diff\x18\x01 \x01(\v2\x1c.orchestrator.v1.VersionDiffR\x04diff\"d\n" +
+	"\x19GetUpstreamChangesRequest\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x14\n" +
+	"\x05depth\x18\x02 \x01(\x05R\x05depth\x12\x14\n" +
+	"\x05since\x18\x03 \x01(\tR\x05since\"W\n" +
+	"\x1aGetUpstreamChangesResponse\x129\n" +
+	"\achanges\x18\x01 \x03(\v2\x1f.orchestrator.v1.UpstreamChangeR\achanges\"h\n" +
+	"\x1aGetCodeUnitVersionsRequest\x12\x17\n" +
+	"\aunit_id\x18\x01 \x01(\tR\x06unitId\x12\x1b\n" +
+	"\tunique_id\x18\x02 \x01(\tR\buniqueId\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\"[\n" +
+	"\x1bGetCodeUnitVersionsResponse\x12<\n" +
+	"\bversions\x18\x01 \x03(\v2 .orchestrator.v1.UnitVersionViewR\bversions\"M\n" +
+	"\x18GetNodeRunHistoryRequest\x12\x1b\n" +
+	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"N\n" +
+	"\x19GetNodeRunHistoryResponse\x121\n" +
+	"\x04runs\x18\x01 \x03(\v2\x1d.orchestrator.v1.RunExecutionR\x04runs*w\n" +
 	"\vCriticality\x12\x1b\n" +
 	"\x17CRITICALITY_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16CRITICALITY_REGULATORY\x10\x01\x12\x14\n" +
 	"\x10CRITICALITY_CORE\x10\x02\x12\x19\n" +
-	"\x15CRITICALITY_SECONDARY\x10\x032\xc8\x05\n" +
+	"\x15CRITICALITY_SECONDARY\x10\x032\xea\t\n" +
 	"\x11OrchestratorQuery\x12g\n" +
 	"\x10GetScheduleGraph\x12(.orchestrator.v1.GetScheduleGraphRequest\x1a).orchestrator.v1.GetScheduleGraphResponse\x12O\n" +
 	"\bListRuns\x12 .orchestrator.v1.ListRunsRequest\x1a!.orchestrator.v1.ListRunsResponse\x12X\n" +
@@ -1410,7 +2605,12 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\x13ListActiveRunDrifts\x12+.orchestrator.v1.ListActiveRunDriftsRequest\x1a,.orchestrator.v1.ListActiveRunDriftsResponse\x12y\n" +
 	"\x16ListScheduleTopologies\x12..orchestrator.v1.ListScheduleTopologiesRequest\x1a/.orchestrator.v1.ListScheduleTopologiesResponse\x12d\n" +
 	"\x0fGetNodeAncestry\x12'.orchestrator.v1.GetNodeAncestryRequest\x1a(.orchestrator.v1.GetNodeAncestryResponse\x12L\n" +
-	"\aGetNode\x12\x1f.orchestrator.v1.GetNodeRequest\x1a .orchestrator.v1.GetNodeResponseBQZOgithub.com/carolsimone/continuo/orchestrator/api/orchestrator/v1;orchestratorv1b\x06proto3"
+	"\aGetNode\x12\x1f.orchestrator.v1.GetNodeRequest\x1a .orchestrator.v1.GetNodeResponse\x12d\n" +
+	"\x0fGetNodeVersions\x12'.orchestrator.v1.GetNodeVersionsRequest\x1a(.orchestrator.v1.GetNodeVersionsResponse\x12m\n" +
+	"\x12GetNodeVersionDiff\x12*.orchestrator.v1.GetNodeVersionDiffRequest\x1a+.orchestrator.v1.GetNodeVersionDiffResponse\x12m\n" +
+	"\x12GetUpstreamChanges\x12*.orchestrator.v1.GetUpstreamChangesRequest\x1a+.orchestrator.v1.GetUpstreamChangesResponse\x12p\n" +
+	"\x13GetCodeUnitVersions\x12+.orchestrator.v1.GetCodeUnitVersionsRequest\x1a,.orchestrator.v1.GetCodeUnitVersionsResponse\x12j\n" +
+	"\x11GetNodeRunHistory\x12).orchestrator.v1.GetNodeRunHistoryRequest\x1a*.orchestrator.v1.GetNodeRunHistoryResponseBQZOgithub.com/carolsimone/continuo/orchestrator/api/orchestrator/v1;orchestratorv1b\x06proto3"
 
 var (
 	file_proto_orchestrator_v1_orchestrator_proto_rawDescOnce sync.Once
@@ -1425,7 +2625,7 @@ func file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_orchestrator_v1_orchestrator_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_proto_orchestrator_v1_orchestrator_proto_goTypes = []any{
 	(Criticality)(0),                       // 0: orchestrator.v1.Criticality
 	(*TableNode)(nil),                      // 1: orchestrator.v1.TableNode
@@ -1448,12 +2648,27 @@ var file_proto_orchestrator_v1_orchestrator_proto_goTypes = []any{
 	(*GetNodeAncestryRequest)(nil),         // 18: orchestrator.v1.GetNodeAncestryRequest
 	(*GetNodeAncestryResponse)(nil),        // 19: orchestrator.v1.GetNodeAncestryResponse
 	(*AncestorNode)(nil),                   // 20: orchestrator.v1.AncestorNode
-	(*timestamppb.Timestamp)(nil),          // 21: google.protobuf.Timestamp
+	(*VersionView)(nil),                    // 21: orchestrator.v1.VersionView
+	(*VersionDiff)(nil),                    // 22: orchestrator.v1.VersionDiff
+	(*UpstreamChange)(nil),                 // 23: orchestrator.v1.UpstreamChange
+	(*UnitVersionView)(nil),                // 24: orchestrator.v1.UnitVersionView
+	(*RunExecution)(nil),                   // 25: orchestrator.v1.RunExecution
+	(*GetNodeVersionsRequest)(nil),         // 26: orchestrator.v1.GetNodeVersionsRequest
+	(*GetNodeVersionsResponse)(nil),        // 27: orchestrator.v1.GetNodeVersionsResponse
+	(*GetNodeVersionDiffRequest)(nil),      // 28: orchestrator.v1.GetNodeVersionDiffRequest
+	(*GetNodeVersionDiffResponse)(nil),     // 29: orchestrator.v1.GetNodeVersionDiffResponse
+	(*GetUpstreamChangesRequest)(nil),      // 30: orchestrator.v1.GetUpstreamChangesRequest
+	(*GetUpstreamChangesResponse)(nil),     // 31: orchestrator.v1.GetUpstreamChangesResponse
+	(*GetCodeUnitVersionsRequest)(nil),     // 32: orchestrator.v1.GetCodeUnitVersionsRequest
+	(*GetCodeUnitVersionsResponse)(nil),    // 33: orchestrator.v1.GetCodeUnitVersionsResponse
+	(*GetNodeRunHistoryRequest)(nil),       // 34: orchestrator.v1.GetNodeRunHistoryRequest
+	(*GetNodeRunHistoryResponse)(nil),      // 35: orchestrator.v1.GetNodeRunHistoryResponse
+	(*timestamppb.Timestamp)(nil),          // 36: google.protobuf.Timestamp
 }
 var file_proto_orchestrator_v1_orchestrator_proto_depIdxs = []int32{
 	0,  // 0: orchestrator.v1.TableNode.criticality:type_name -> orchestrator.v1.Criticality
-	21, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
-	21, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
+	36, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
+	36, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: orchestrator.v1.GetScheduleGraphResponse.nodes:type_name -> orchestrator.v1.TableNode
 	4,  // 4: orchestrator.v1.GetScheduleGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
 	9,  // 5: orchestrator.v1.ListRunsResponse.runs:type_name -> orchestrator.v1.RunSummary
@@ -1461,28 +2676,46 @@ var file_proto_orchestrator_v1_orchestrator_proto_depIdxs = []int32{
 	4,  // 7: orchestrator.v1.GetRunGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
 	14, // 8: orchestrator.v1.ListActiveRunDriftsResponse.active_runs:type_name -> orchestrator.v1.ActiveRunDrift
 	17, // 9: orchestrator.v1.ListScheduleTopologiesResponse.schedules:type_name -> orchestrator.v1.ScheduleTopologySummary
-	21, // 10: orchestrator.v1.ScheduleTopologySummary.last_updated_at:type_name -> google.protobuf.Timestamp
+	36, // 10: orchestrator.v1.ScheduleTopologySummary.last_updated_at:type_name -> google.protobuf.Timestamp
 	20, // 11: orchestrator.v1.GetNodeAncestryResponse.ancestors:type_name -> orchestrator.v1.AncestorNode
-	21, // 12: orchestrator.v1.AncestorNode.last_changed_at:type_name -> google.protobuf.Timestamp
-	5,  // 13: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
-	7,  // 14: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
-	10, // 15: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
-	12, // 16: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:input_type -> orchestrator.v1.ListActiveRunDriftsRequest
-	15, // 17: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:input_type -> orchestrator.v1.ListScheduleTopologiesRequest
-	18, // 18: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:input_type -> orchestrator.v1.GetNodeAncestryRequest
-	2,  // 19: orchestrator.v1.OrchestratorQuery.GetNode:input_type -> orchestrator.v1.GetNodeRequest
-	6,  // 20: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
-	8,  // 21: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
-	11, // 22: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
-	13, // 23: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:output_type -> orchestrator.v1.ListActiveRunDriftsResponse
-	16, // 24: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:output_type -> orchestrator.v1.ListScheduleTopologiesResponse
-	19, // 25: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:output_type -> orchestrator.v1.GetNodeAncestryResponse
-	3,  // 26: orchestrator.v1.OrchestratorQuery.GetNode:output_type -> orchestrator.v1.GetNodeResponse
-	20, // [20:27] is the sub-list for method output_type
-	13, // [13:20] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	36, // 12: orchestrator.v1.AncestorNode.last_changed_at:type_name -> google.protobuf.Timestamp
+	21, // 13: orchestrator.v1.VersionDiff.from:type_name -> orchestrator.v1.VersionView
+	21, // 14: orchestrator.v1.VersionDiff.to:type_name -> orchestrator.v1.VersionView
+	22, // 15: orchestrator.v1.UpstreamChange.diff:type_name -> orchestrator.v1.VersionDiff
+	21, // 16: orchestrator.v1.GetNodeVersionsResponse.versions:type_name -> orchestrator.v1.VersionView
+	22, // 17: orchestrator.v1.GetNodeVersionDiffResponse.diff:type_name -> orchestrator.v1.VersionDiff
+	23, // 18: orchestrator.v1.GetUpstreamChangesResponse.changes:type_name -> orchestrator.v1.UpstreamChange
+	24, // 19: orchestrator.v1.GetCodeUnitVersionsResponse.versions:type_name -> orchestrator.v1.UnitVersionView
+	25, // 20: orchestrator.v1.GetNodeRunHistoryResponse.runs:type_name -> orchestrator.v1.RunExecution
+	5,  // 21: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
+	7,  // 22: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
+	10, // 23: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
+	12, // 24: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:input_type -> orchestrator.v1.ListActiveRunDriftsRequest
+	15, // 25: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:input_type -> orchestrator.v1.ListScheduleTopologiesRequest
+	18, // 26: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:input_type -> orchestrator.v1.GetNodeAncestryRequest
+	2,  // 27: orchestrator.v1.OrchestratorQuery.GetNode:input_type -> orchestrator.v1.GetNodeRequest
+	26, // 28: orchestrator.v1.OrchestratorQuery.GetNodeVersions:input_type -> orchestrator.v1.GetNodeVersionsRequest
+	28, // 29: orchestrator.v1.OrchestratorQuery.GetNodeVersionDiff:input_type -> orchestrator.v1.GetNodeVersionDiffRequest
+	30, // 30: orchestrator.v1.OrchestratorQuery.GetUpstreamChanges:input_type -> orchestrator.v1.GetUpstreamChangesRequest
+	32, // 31: orchestrator.v1.OrchestratorQuery.GetCodeUnitVersions:input_type -> orchestrator.v1.GetCodeUnitVersionsRequest
+	34, // 32: orchestrator.v1.OrchestratorQuery.GetNodeRunHistory:input_type -> orchestrator.v1.GetNodeRunHistoryRequest
+	6,  // 33: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
+	8,  // 34: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
+	11, // 35: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
+	13, // 36: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:output_type -> orchestrator.v1.ListActiveRunDriftsResponse
+	16, // 37: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:output_type -> orchestrator.v1.ListScheduleTopologiesResponse
+	19, // 38: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:output_type -> orchestrator.v1.GetNodeAncestryResponse
+	3,  // 39: orchestrator.v1.OrchestratorQuery.GetNode:output_type -> orchestrator.v1.GetNodeResponse
+	27, // 40: orchestrator.v1.OrchestratorQuery.GetNodeVersions:output_type -> orchestrator.v1.GetNodeVersionsResponse
+	29, // 41: orchestrator.v1.OrchestratorQuery.GetNodeVersionDiff:output_type -> orchestrator.v1.GetNodeVersionDiffResponse
+	31, // 42: orchestrator.v1.OrchestratorQuery.GetUpstreamChanges:output_type -> orchestrator.v1.GetUpstreamChangesResponse
+	33, // 43: orchestrator.v1.OrchestratorQuery.GetCodeUnitVersions:output_type -> orchestrator.v1.GetCodeUnitVersionsResponse
+	35, // 44: orchestrator.v1.OrchestratorQuery.GetNodeRunHistory:output_type -> orchestrator.v1.GetNodeRunHistoryResponse
+	33, // [33:45] is the sub-list for method output_type
+	21, // [21:33] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_proto_orchestrator_v1_orchestrator_proto_init() }
@@ -1496,7 +2729,7 @@ func file_proto_orchestrator_v1_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_orchestrator_v1_orchestrator_proto_rawDesc), len(file_proto_orchestrator_v1_orchestrator_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   20,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
