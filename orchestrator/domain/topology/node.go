@@ -17,6 +17,9 @@ type ReleasePromotedTopologyNode struct {
 	TableName         string
 	ServiceName       string
 	NodeType          string
+	// ContentHash is stored on :Table so a single query can detect a node whose
+	// recorded code version no longer matches the code the topology says it runs.
+	ContentHash       string
 	TestCount         int
 	ImageTag          string
 	Schedule          string

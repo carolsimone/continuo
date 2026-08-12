@@ -13,6 +13,22 @@ shipped in those.
 ## [Unreleased]
 
 ### Changed
+- The `orchestrator` service now requires object storage to be reachable at
+  start-up: it reads each release's code-bundle document to record node
+  code-version history in the graph. Endpoint, bucket and region already reach
+  every pod through the shared ConfigMap.
+- S3 credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) are now injected
+  by the deployment template for every storage-reading service, instead of being
+  listed in each service's `secretEnv`. `services` is a list and Helm replaces
+  lists wholesale, so an operator upgrading with their own older copy of
+  `values.yaml` would otherwise carry an entry lacking the new refs and start
+  orchestrator with no credentials. An unmodified existing values file now keeps
+  working, and an entry that still lists the refs is de-duplicated rather than
+  emitted twice. Installs authenticating by IAM role or workload identity leave
+  the secret empty and are unaffected.
+- `orchestrator` is now allowed through the bundled-MinIO NetworkPolicy. Without
+  it, a default install with `networkPolicy.enabled=true` blocked every
+  code-bundle read.
 - `files/service_repos.yaml` header comments describe the map accurately: it
   covers every service that ships data jobs, not dbt services only, and each
   team's repository is named by the remediation trigger rather than assumed to

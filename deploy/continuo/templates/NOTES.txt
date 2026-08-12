@@ -14,6 +14,18 @@ UPGRADE NOTES
   If this upgrade already failed, re-run with --dry-run to see the exact
   rendering/validation error before retrying for real.
 
+  orchestrator now reads object storage to record node code-version history, so
+  it needs S3 to be reachable and authenticated. The chart supplies the
+  credentials for you — they no longer come from the `services` list, so an older
+  copy of values.yaml still works — but two things are yours to check:
+    * If you run a NetworkPolicy of your own (not this chart's), allow
+      orchestrator egress to your object store.
+    * If you set s3.* for an external bucket, orchestrator now needs read access
+      to the code-bundles/ prefix.
+  Until it can read that prefix, promotions still succeed and runs are
+  unaffected: only code-version history is skipped, and it catches up on the
+  next release once access is granted.
+
   The validation image ({{ include "continuo.validation.image" $ }}) is an
   externally released image, pinned by validation.imageTag independently of
   this chart's appVersion. If you mirror continuo images into a private

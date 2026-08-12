@@ -12,7 +12,11 @@ type ReleasePromotedNode struct {
 	TableName         string   `json:"table_name"`
 	ServiceName       string   `json:"service_name"`
 	NodeType          string   `json:"node_type"`
-	TestCount         int      `json:"test_count"`
+	// ContentHash is the node's fingerprint over its own source, the shared code
+	// it reaches, and its resolved config. It is stored on :Table and is what a
+	// release's code bundle is compared against when recording code history.
+	ContentHash string `json:"content_hash"`
+	TestCount   int    `json:"test_count"`
 	ImageTag          string   `json:"image_tag"`
 	Schedule          string   `json:"schedule"`
 	UpstreamUniqueIDs []string `json:"upstream_unique_ids"`
@@ -30,4 +34,12 @@ type ReleasePromoted struct {
 	Repo       string                `json:"repo"`
 	CommitSHA  string                `json:"commit_sha"`
 	PromotedAt time.Time             `json:"promoted_at"`
+	// CodeBundleURI points at the release's code-bundle contract document in
+	// object storage (code-bundles/<release_id>/bundle.json). Empty for releases
+	// promoted before manifest-controller began writing bundles.
+	CodeBundleURI string `json:"code_bundle_uri"`
+	// Bootstrap marks a re-baseline release promoted without validation. Its
+	// commit did not author most of the code it carries, so versions recorded
+	// from it are stamped as healed rather than exact.
+	Bootstrap bool `json:"bootstrap"`
 }

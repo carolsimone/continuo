@@ -11,22 +11,22 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// NewReleasePromotedBinding wires ParseReleasePromoted into the
-// ReleasePromotedHandler. A parse failure is permanent (events.ErrPermanent):
-// the binding logs and returns the error so the consumer ACKs and drops the
-// poison message.
+// NewReleasePromotedVersionsBinding wires ParseReleasePromoted into the
+// ReleasePromotedVersionsHandler. A parse failure is permanent
+// (events.ErrPermanent): the binding logs and returns the error so the consumer
+// ACKs and drops the poison message.
 //
 // outbox_entry_id is extracted from the message fields and threaded to the
-// handler so the dedup layer can catch re-XADDs of the same upstream outbox
-// row that arrive under a fresh Redis message ID.
-func NewReleasePromotedBinding(
-	handler *handlers.ReleasePromotedHandler,
+// handler so the dedup layer can catch re-XADDs of the same upstream outbox row
+// that arrive under a fresh Redis message ID.
+func NewReleasePromotedVersionsBinding(
+	handler *handlers.ReleasePromotedVersionsHandler,
 	logger *slog.Logger,
 ) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
 		evt, err := ParseReleasePromoted(msg)
 		if err != nil {
-			logger.Error("release.promoted: parse failure — discarding",
+			logger.Error("release.promoted (versions): parse failure — discarding",
 				"message_id", msg.ID, "error", err)
 			return err
 		}

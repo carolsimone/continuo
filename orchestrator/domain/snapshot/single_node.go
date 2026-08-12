@@ -69,6 +69,7 @@ func toSingleNodeProjection(fqn FQN, row LatestTableRow) TaskProjection {
 		InitialStatus:   "PENDING",
 		ImageTag:        row.ImageTag,
 		ManifestVersion: row.ManifestVersion,
+		ContentHash:     row.ContentHash,
 		TestCount:       row.TestCount,
 		TestCountKnown:  row.TestCountKnown,
 		MaxRetries:      pkgEvents.DefaultTaskMaxRetries,

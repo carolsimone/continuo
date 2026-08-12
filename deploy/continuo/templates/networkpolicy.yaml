@@ -131,7 +131,7 @@ spec:
                 operator: In
                 values: [executor-controller, k8s-controller, release-controller,
                          remediation, remediation-agent, ui-service,
-                         manifest-controller, minio-bucket-init]
+                         manifest-controller, orchestrator, minio-bucket-init]
         - podSelector:
             matchLabels:
               app: dbt-job

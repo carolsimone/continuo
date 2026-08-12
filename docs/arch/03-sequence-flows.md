@@ -528,6 +528,8 @@ sequenceDiagram
   R->>OR: consume release.promoted:v1
   Note over OR: PromoteRelease (Neo4j, 1 tx) — retire-then-orphan-cleanup:<br/>idempotent if :Meta current_release already = release_id<br/>retire :Table not in release (keep :Run-[:EXECUTES] history)<br/>MERGE release nodes (node_type, image_tag, schedule_name), active=true<br/>rebuild :DEPENDS_ON, DETACH DELETE orphaned retired nodes<br/>MERGE :Meta current_release = release_id
   OR->>OR: IncrementGeneration (topology_state, separate tx)<br/>SetServiceMetadata on :TopologyRoot
+  R->>OR: consume release.promoted:v1 (orchestrator-release-promoted-versions group)
+  Note over OR: GET code_bundle_uri → code-bundles/{release_id}/bundle.json<br/>(absent → retry via PEL; undecodable → ErrPermanent, ACK-drop)<br/>per bundle node, compare content_hash vs the node's :CURRENT :NodeVersion<br/>(graph-authoritative — the event's changed flags only set healed provenance)<br/>differs → MERGE :NodeVersion (+ :USES_CODE to the exact :CodeUnitVersions),<br/>chain :PREVIOUS on create only, move :CURRENT under a promoted_at guard<br/>node with no :Table yet → retry until the topology swap above lands
   OR->>R: publish schedules.loaded:v1 {schedule_names, service_metadata, topology_generation}
   R->>ST: consume schedules.loaded:v1
   Note over ST: ScheduleCatalogHandler — Reconcile schedule_catalog (empty-list guard)

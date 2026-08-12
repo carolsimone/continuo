@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/adapters/postgres"
 	orchpublisher "github.com/carolsimone/continuo/orchestrator/adapters/publisher"
 	"github.com/carolsimone/continuo/orchestrator/adapters/redis"
+	s3infra "github.com/carolsimone/continuo/orchestrator/adapters/s3"
 	"github.com/carolsimone/continuo/orchestrator/config"
 	"github.com/carolsimone/continuo/orchestrator/internal/lifecycle"
 	"github.com/carolsimone/continuo/orchestrator/internal/reconciler"
@@ -352,6 +353,19 @@ func main() {
 	// block the promote path.
 	seedBuildOnPromoteHandler := handlers.NewSeedBuildOnPromoteHandler(postgres.NewPostgresUnitOfWork(pgDB, logger), logger)
 
+	// release.promoted:v1 (versions) — third independent consumer group. It reads
+	// the release's code-bundle document from object storage and records the
+	// :NodeVersion / :CodeUnitVersion history behind the topology. Isolated from
+	// the swap so promotion never waits on object storage, and free to retry
+	// until the swap it trails has landed.
+	codeBundleReader := s3infra.NewCodeBundleReader(
+		cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region,
+		cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey,
+	)
+	codeVersionRepo := neo4jinfra.NewCodeVersionRepository(neo4jClient, logger)
+	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
+		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, codeVersionRepo, logger)
+
 	// Every orchestrator consumer is the same shape: a domain handler wrapped
 	// by a redis binding, driven by a StreamConsumer on its (stream, group).
 	// They are declared in one table and started uniformly via runConsumer;
@@ -370,6 +384,7 @@ func main() {
 		{"run_finalized", streams.RunFinalizedV1, streams.OrchestratorRunFinalized, redis.NewRunFinalizedBinding(runFinalizedHandler, logger)},
 		{"release_promoted", streams.ReleasePromotedV1, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger)},
 		{"release_promoted_seed_build", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedSeedBuild, redis.NewSeedBuildOnPromoteBinding(seedBuildOnPromoteHandler, logger)},
+		{"release_promoted_versions", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger)},
 	}
 	for _, c := range consumers {
 		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))

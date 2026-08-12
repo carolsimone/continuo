@@ -251,6 +251,19 @@ app.kubernetes.io/name: {{ .service }}
 
 {{- define "continuo.s3.env" -}}{{ .Values.s3.env }}{{- end -}}
 
+{{/*
+Services whose process reads or writes object storage and therefore needs the S3
+credentials. The deployment template injects AWS_ACCESS_KEY_ID /
+AWS_SECRET_ACCESS_KEY for these from here, not from each service's `secretEnv`
+entry: `services` is a list, Helm replaces lists wholesale, and an operator
+upgrading with their own copy of values.yaml would otherwise carry an older entry
+that silently lacks the refs. Endpoint, bucket and region reach every pod through
+the shared ConfigMap and need no per-service wiring.
+*/}}
+{{- define "continuo.s3.credentialServices" -}}
+["orchestrator","manifest-controller","k8s-controller","executor-controller","release-controller","remediation","remediation-agent","ui-service","agent-runner"]
+{{- end -}}
+
 {{- define "continuo.auth.issuerUrl" -}}
 {{- if .Values.dex.enabled -}}
 {{- printf "http://%s:5556/dex" (include "continuo.dex.fullname" .) -}}

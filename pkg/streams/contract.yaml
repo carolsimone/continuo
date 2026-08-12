@@ -297,6 +297,9 @@ streams:
       - service: orchestrator
         group: orchestrator-release-promoted-seed-build
         const: OrchestratorReleasePromotedSeedBuild
+      - service: orchestrator
+        group: orchestrator-release-promoted-versions
+        const: OrchestratorReleasePromotedVersions
       - service: executor-controller
         group: executor-release-promoted
         const: ExecutorReleasePromoted

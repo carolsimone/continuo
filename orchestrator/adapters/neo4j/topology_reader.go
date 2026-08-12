@@ -40,7 +40,8 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           COALESCE(t.node_type, 'dbt-model')      AS node_type,
 		           t.test_count                             AS test_count,
 		           COALESCE(t.image_tag, '')                AS image_tag,
-		           COALESCE(t.manifest_version, '')         AS manifest_version
+		           COALESCE(t.manifest_version, '')         AS manifest_version,
+		           COALESCE(t.content_hash, '')             AS content_hash
 
 		    UNION
 
@@ -55,10 +56,11 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 		           s.node_type     AS node_type,
 		           s.test_count                     AS test_count,
 		           COALESCE(s.image_tag, '')        AS image_tag,
-		           COALESCE(s.manifest_version, '') AS manifest_version
+		           COALESCE(s.manifest_version, '') AS manifest_version,
+		           COALESCE(s.content_hash, '')     AS content_hash
 		}
 		RETURN DISTINCT schema_name, table_name, service_name, schedule_name,
-		                node_type, test_count, image_tag, manifest_version
+		                node_type, test_count, image_tag, manifest_version, content_hash
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{"schedule_name": scheduleName})
 	if err != nil {
@@ -82,6 +84,7 @@ func (r *topologyReader) LoadLatestSourceDAG(ctx context.Context, scheduleName s
 			TestCountKnown:  tcKnown,
 			ImageTag:        stringField(rec, "image_tag"),
 			ManifestVersion: stringField(rec, "manifest_version"),
+			ContentHash:     stringField(rec, "content_hash"),
 		}
 	}
 	if err := result.Err(); err != nil {
@@ -102,6 +105,7 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 		       COALESCE(se.status, 'PENDING')      AS status,
 		       COALESCE(se.image_tag, '')          AS image_tag,
 		       COALESCE(se.manifest_version, '')   AS manifest_version,
+		       COALESCE(se.content_hash, '')       AS content_hash,
 		       se.inherited_from_task_id           AS inherited_from
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{"source_run_id": sourceRunID})
@@ -126,6 +130,7 @@ func (r *topologyReader) LoadSourceTasks(ctx context.Context, sourceRunID string
 			Status:          stringField(rec, "status"),
 			ImageTag:        stringField(rec, "image_tag"),
 			ManifestVersion: stringField(rec, "manifest_version"),
+			ContentHash:     stringField(rec, "content_hash"),
 		}
 		if v, _ := rec.Get("inherited_from"); v != nil {
 			if s, ok := v.(string); ok && s != "" {
@@ -315,7 +320,8 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
 		       tbl.test_count                       AS test_count,
 		       COALESCE(tbl.image_tag, '')          AS image_tag,
-		       COALESCE(tbl.manifest_version, '')   AS manifest_version
+		       COALESCE(tbl.manifest_version, '')   AS manifest_version,
+		       COALESCE(tbl.content_hash, '')       AS content_hash
 		LIMIT 1
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
@@ -340,6 +346,7 @@ func (r *topologyReader) LoadSingleLatestTable(ctx context.Context, fqn snapshot
 		TestCountKnown:  tcKnown,
 		ImageTag:        stringField(rec, "image_tag"),
 		ManifestVersion: stringField(rec, "manifest_version"),
+		ContentHash:     stringField(rec, "content_hash"),
 	}, true, nil
 }
 
@@ -353,7 +360,8 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		       COALESCE(tbl.node_type, 'dbt-model') AS node_type,
 		       srcEdge.test_count                     AS test_count,
 		       COALESCE(srcEdge.image_tag, '')        AS image_tag,
-		       COALESCE(srcEdge.manifest_version, '') AS manifest_version
+		       COALESCE(srcEdge.manifest_version, '') AS manifest_version,
+		       COALESCE(srcEdge.content_hash, '')     AS content_hash
 		LIMIT 1
 	`
 	result, err := r.tx.Run(ctx, q, map[string]interface{}{
@@ -379,6 +387,7 @@ func (r *topologyReader) LoadSingleTableFromSourceRun(ctx context.Context, sourc
 		TestCountKnown:  tcKnown,
 		ImageTag:        stringField(rec, "image_tag"),
 		ManifestVersion: stringField(rec, "manifest_version"),
+		ContentHash:     stringField(rec, "content_hash"),
 	}, true, nil
 }
 

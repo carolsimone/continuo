@@ -32,6 +32,26 @@ func TestParseReleasePromoted_HappyPath(t *testing.T) {
 	assert.Equal(t, "sha256:aaa", evt.ImageTags["svc-a"])
 }
 
+// TestParseReleasePromoted_CarriesContentHashBundleURIAndBootstrap pins the
+// three fields the version-ingestion path needs: the per-node fingerprint that
+// is stored on :Table and compared against a code bundle, the bundle's location,
+// and the re-baseline marker that decides whether a version's commit stamp is
+// exact or approximate.
+func TestParseReleasePromoted_CarriesContentHashBundleURIAndBootstrap(t *testing.T) {
+	payload := `{
+		"release_id": "rel-1",
+		"code_bundle_uri": "s3://b/code-bundles/rel-1/bundle.json",
+		"bootstrap": true,
+		"topology": [{"unique_id": "analytics.revenue", "content_hash": "sha256:abc"}]
+	}`
+	evt, err := ParseReleasePromoted(goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": payload}})
+	require.NoError(t, err)
+	assert.Equal(t, "s3://b/code-bundles/rel-1/bundle.json", evt.CodeBundleURI)
+	assert.True(t, evt.Bootstrap)
+	require.Len(t, evt.Topology, 1)
+	assert.Equal(t, "sha256:abc", evt.Topology[0].ContentHash)
+}
+
 func TestParseReleasePromoted_MissingPayloadField(t *testing.T) {
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{}}
 	_, err := ParseReleasePromoted(msg)
