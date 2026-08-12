@@ -371,9 +371,19 @@ func (r *CodeVersionRepository) writeUnits(
 		return 0, nil
 	}
 
-	created, err := r.runCounted(ctx, tx, `
+	// The unit identity and its version are merged in two statements rather than
+	// one, so the second statement's created-node count is exactly the number of
+	// unit versions written — a combined statement would fold each unit's first
+	// :CodeUnit into the same count.
+	if _, err := r.runCounted(ctx, tx, `
 		UNWIND $units AS u
 		MERGE (cu:CodeUnit {unit_id: u.unit_id})
+	`, map[string]any{"units": unitParams}, "write :CodeUnit nodes"); err != nil {
+		return 0, err
+	}
+
+	versionsCreated, err := r.runCounted(ctx, tx, `
+		UNWIND $units AS u
 		MERGE (v:CodeUnitVersion {unit_id: u.unit_id, checksum: u.checksum})
 		ON CREATE SET v.source      = u.source,
 		              v.repo        = $repo,
@@ -389,17 +399,6 @@ func (r *CodeVersionRepository) writeUnits(
 	}, "write :CodeUnitVersion nodes")
 	if err != nil {
 		return 0, err
-	}
-	// The statement creates a :CodeUnit alongside each new version, so the raw
-	// node count double-counts a unit's first version. Report versions only.
-	versionsCreated := 0
-	for _, p := range unitParams {
-		if _, exists := states[p["unit_id"].(string)].knownChecksums[p["checksum"].(string)]; !exists {
-			versionsCreated++
-		}
-	}
-	if versionsCreated > created {
-		versionsCreated = created
 	}
 
 	if len(unitLinks) > 0 {
