@@ -566,3 +566,70 @@ func TestReleasePromotionRepository_SetsOriginalFilePathUnconditionally(t *testi
 	fp, _ := res.Record().Get("fp")
 	assert.Equal(t, "models/a.sql", fp)
 }
+
+// TestReleasePromotionRepository_StoresContentHashOnTable pins the property the
+// version-ingestion path reads: :Table.content_hash must equal the hash the
+// promoted event carried, on every node, changed or not.
+func TestReleasePromotionRepository_StoresContentHashOnTable(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeReleaseFixtures(t, client)
+	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
+
+	repo := newReleaseRepo(client)
+	nodes := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc",
+			ContentHash: "sha256:aaa", Changed: true, UpstreamUniqueIDs: []string{}},
+		{UniqueID: "b", SchemaName: "public", TableName: "customers", ServiceName: "svc",
+			ContentHash: "sha256:bbb", Changed: false, UpstreamUniqueIDs: []string{}},
+	}
+	_, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
+	require.NoError(t, err)
+
+	s := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `MATCH (t:Table) RETURN t.unique_id AS uid, t.content_hash AS ch ORDER BY uid`, nil)
+	require.NoError(t, err)
+	got := map[string]string{}
+	for res.Next(ctx) {
+		uid, _ := res.Record().Get("uid")
+		ch, _ := res.Record().Get("ch")
+		got[uid.(string)] = ch.(string)
+	}
+	require.NoError(t, res.Err())
+	assert.Equal(t, map[string]string{"a": "sha256:aaa", "b": "sha256:bbb"}, got)
+}
+
+// TestReleasePromotionRepository_ContentHashRefreshesOnUnchangedNode proves the
+// hash is refreshed in place across releases (SET, not ON CREATE). Version
+// ingestion compares against it every release, so a stale value would report a
+// permanent false gap.
+func TestReleasePromotionRepository_ContentHashRefreshesOnUnchangedNode(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeReleaseFixtures(t, client)
+	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
+
+	repo := newReleaseRepo(client)
+	base := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc",
+			ContentHash: "sha256:v1", UpstreamUniqueIDs: []string{}},
+	}
+	_, err := repo.PromoteRelease(ctx, "rel-1", base, time.Now().UTC())
+	require.NoError(t, err)
+
+	next := []topology.ReleasePromotedTopologyNode{
+		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc",
+			ContentHash: "sha256:v2", UpstreamUniqueIDs: []string{}},
+	}
+	_, err = repo.PromoteRelease(ctx, "rel-2", next, time.Now().UTC())
+	require.NoError(t, err)
+
+	s := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `MATCH (t:Table {unique_id: 'a'}) RETURN t.content_hash AS ch`, nil)
+	require.NoError(t, err)
+	require.True(t, res.Next(ctx))
+	ch, _ := res.Record().Get("ch")
+	assert.Equal(t, "sha256:v2", ch)
+}

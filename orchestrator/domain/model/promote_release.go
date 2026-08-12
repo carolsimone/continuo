@@ -15,4 +15,9 @@ type PromoteReleaseInput struct {
 	Repo       string
 	CommitSHA  string
 	PromotedAt time.Time
+	// CodeBundleURI locates the release's code-bundle document in object
+	// storage; Bootstrap marks a re-baseline release. Both are consumed by the
+	// version-ingestion path and ignored by the topology swap.
+	CodeBundleURI string
+	Bootstrap     bool
 }

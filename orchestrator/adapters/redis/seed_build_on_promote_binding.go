@@ -31,12 +31,14 @@ func NewSeedBuildOnPromoteBinding(
 			return err
 		}
 		in := model.PromoteReleaseInput{
-			ReleaseID:  evt.ReleaseID,
-			Topology:   evt.Topology,
-			ImageTags:  evt.ImageTags,
-			Repo:       evt.Repo,
-			CommitSHA:  evt.CommitSHA,
-			PromotedAt: evt.PromotedAt,
+			ReleaseID:     evt.ReleaseID,
+			Topology:      evt.Topology,
+			ImageTags:     evt.ImageTags,
+			Repo:          evt.Repo,
+			CommitSHA:     evt.CommitSHA,
+			PromotedAt:    evt.PromotedAt,
+			CodeBundleURI: evt.CodeBundleURI,
+			Bootstrap:     evt.Bootstrap,
 		}
 		outboxEntryID := messageprocessing.ExtractOutboxEntryID(msg.Values)
 		return handler.Handle(ctx, msg.ID, outboxEntryID, in)
