@@ -29,6 +29,26 @@ func (f *fakeOrchestrator) GetScheduleGraph(_ context.Context, _ string) (*orche
 	return f.resp, f.err
 }
 
+func (f *fakeOrchestrator) GetNodeVersions(context.Context, string, int32) (*orchestratorv1.GetNodeVersionsResponse, error) {
+	panic("GetNodeVersions should not be called in graph tests")
+}
+
+func (f *fakeOrchestrator) GetNodeVersionDiff(context.Context, string, int64, int64) (*orchestratorv1.GetNodeVersionDiffResponse, error) {
+	panic("GetNodeVersionDiff should not be called in graph tests")
+}
+
+func (f *fakeOrchestrator) GetUpstreamChanges(context.Context, string, int32, string) (*orchestratorv1.GetUpstreamChangesResponse, error) {
+	panic("GetUpstreamChanges should not be called in graph tests")
+}
+
+func (f *fakeOrchestrator) GetCodeUnitVersions(context.Context, string, string, int32) (*orchestratorv1.GetCodeUnitVersionsResponse, error) {
+	panic("GetCodeUnitVersions should not be called in graph tests")
+}
+
+func (f *fakeOrchestrator) GetNodeRunHistory(context.Context, string, int32) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
+	panic("GetNodeRunHistory should not be called in graph tests")
+}
+
 func (f *fakeOrchestrator) Close() error { return nil }
 
 // runGraph invokes the graph command end-to-end with the provided fake client.

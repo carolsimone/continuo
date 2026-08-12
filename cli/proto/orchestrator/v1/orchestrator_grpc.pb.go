@@ -25,6 +25,11 @@ const (
 	OrchestratorQuery_ListActiveRunDrifts_FullMethodName    = "/orchestrator.v1.OrchestratorQuery/ListActiveRunDrifts"
 	OrchestratorQuery_ListScheduleTopologies_FullMethodName = "/orchestrator.v1.OrchestratorQuery/ListScheduleTopologies"
 	OrchestratorQuery_GetNodeAncestry_FullMethodName        = "/orchestrator.v1.OrchestratorQuery/GetNodeAncestry"
+	OrchestratorQuery_GetNodeVersions_FullMethodName        = "/orchestrator.v1.OrchestratorQuery/GetNodeVersions"
+	OrchestratorQuery_GetNodeVersionDiff_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetNodeVersionDiff"
+	OrchestratorQuery_GetUpstreamChanges_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetUpstreamChanges"
+	OrchestratorQuery_GetCodeUnitVersions_FullMethodName    = "/orchestrator.v1.OrchestratorQuery/GetCodeUnitVersions"
+	OrchestratorQuery_GetNodeRunHistory_FullMethodName      = "/orchestrator.v1.OrchestratorQuery/GetNodeRunHistory"
 )
 
 // OrchestratorQueryClient is the client API for OrchestratorQuery service.
@@ -37,6 +42,35 @@ type OrchestratorQueryClient interface {
 	ListActiveRunDrifts(ctx context.Context, in *ListActiveRunDriftsRequest, opts ...grpc.CallOption) (*ListActiveRunDriftsResponse, error)
 	ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error)
 	GetNodeAncestry(ctx context.Context, in *GetNodeAncestryRequest, opts ...grpc.CallOption) (*GetNodeAncestryResponse, error)
+	// GetNodeVersions returns a node's recorded code-version history, newest
+	// first (ordered by promoted_at). An unknown unique_id is NOT_FOUND; a
+	// known node with no recorded history returns an empty versions list —
+	// that is a valid, non-error answer.
+	GetNodeVersions(ctx context.Context, in *GetNodeVersionsRequest, opts ...grpc.CallOption) (*GetNodeVersionsResponse, error)
+	// GetNodeVersionDiff renders the diff between two named versions of one
+	// node. from_seq/to_seq are stable per-node handles used to address a
+	// version — they are NOT a chronological ordering, and neither is required
+	// to be the newer of the pair. An unknown unique_id, or a seq that node has
+	// no recorded version for, is NOT_FOUND.
+	GetNodeVersionDiff(ctx context.Context, in *GetNodeVersionDiffRequest, opts ...grpc.CallOption) (*GetNodeVersionDiffResponse, error)
+	// GetUpstreamChanges returns the node's transitive ancestors' most recent
+	// code change, most-recently-changed first. Results are capped at the 5
+	// most-recently-changed ancestors, and each diff is independently capped
+	// at 8 KiB with truncated set on the diffs that were cut — consumers size
+	// prompts against both caps. An unknown unique_id is NOT_FOUND; a node
+	// with no changed ancestors returns an empty changes list.
+	GetUpstreamChanges(ctx context.Context, in *GetUpstreamChangesRequest, opts ...grpc.CallOption) (*GetUpstreamChangesResponse, error)
+	// GetCodeUnitVersions returns a shared-code unit's version chain, newest
+	// first. Exactly one of unit_id/unique_id must be set: unit_id queries one
+	// unit directly, unique_id resolves the node's current units first and
+	// returns each of their chains concatenated. An unknown unit_id/unique_id
+	// is NOT_FOUND; a known unit with no recorded history returns an empty
+	// versions list.
+	GetCodeUnitVersions(ctx context.Context, in *GetCodeUnitVersionsRequest, opts ...grpc.CallOption) (*GetCodeUnitVersionsResponse, error)
+	// GetNodeRunHistory returns runs that executed the node, newest first. An
+	// unknown unique_id is NOT_FOUND; a known node with no runs yet returns an
+	// empty runs list.
+	GetNodeRunHistory(ctx context.Context, in *GetNodeRunHistoryRequest, opts ...grpc.CallOption) (*GetNodeRunHistoryResponse, error)
 }
 
 type orchestratorQueryClient struct {
@@ -107,6 +141,56 @@ func (c *orchestratorQueryClient) GetNodeAncestry(ctx context.Context, in *GetNo
 	return out, nil
 }
 
+func (c *orchestratorQueryClient) GetNodeVersions(ctx context.Context, in *GetNodeVersionsRequest, opts ...grpc.CallOption) (*GetNodeVersionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetNodeVersionsResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_GetNodeVersions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorQueryClient) GetNodeVersionDiff(ctx context.Context, in *GetNodeVersionDiffRequest, opts ...grpc.CallOption) (*GetNodeVersionDiffResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetNodeVersionDiffResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_GetNodeVersionDiff_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorQueryClient) GetUpstreamChanges(ctx context.Context, in *GetUpstreamChangesRequest, opts ...grpc.CallOption) (*GetUpstreamChangesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetUpstreamChangesResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_GetUpstreamChanges_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorQueryClient) GetCodeUnitVersions(ctx context.Context, in *GetCodeUnitVersionsRequest, opts ...grpc.CallOption) (*GetCodeUnitVersionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCodeUnitVersionsResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_GetCodeUnitVersions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orchestratorQueryClient) GetNodeRunHistory(ctx context.Context, in *GetNodeRunHistoryRequest, opts ...grpc.CallOption) (*GetNodeRunHistoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetNodeRunHistoryResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_GetNodeRunHistory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrchestratorQueryServer is the server API for OrchestratorQuery service.
 // All implementations must embed UnimplementedOrchestratorQueryServer
 // for forward compatibility.
@@ -117,6 +201,35 @@ type OrchestratorQueryServer interface {
 	ListActiveRunDrifts(context.Context, *ListActiveRunDriftsRequest) (*ListActiveRunDriftsResponse, error)
 	ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error)
 	GetNodeAncestry(context.Context, *GetNodeAncestryRequest) (*GetNodeAncestryResponse, error)
+	// GetNodeVersions returns a node's recorded code-version history, newest
+	// first (ordered by promoted_at). An unknown unique_id is NOT_FOUND; a
+	// known node with no recorded history returns an empty versions list —
+	// that is a valid, non-error answer.
+	GetNodeVersions(context.Context, *GetNodeVersionsRequest) (*GetNodeVersionsResponse, error)
+	// GetNodeVersionDiff renders the diff between two named versions of one
+	// node. from_seq/to_seq are stable per-node handles used to address a
+	// version — they are NOT a chronological ordering, and neither is required
+	// to be the newer of the pair. An unknown unique_id, or a seq that node has
+	// no recorded version for, is NOT_FOUND.
+	GetNodeVersionDiff(context.Context, *GetNodeVersionDiffRequest) (*GetNodeVersionDiffResponse, error)
+	// GetUpstreamChanges returns the node's transitive ancestors' most recent
+	// code change, most-recently-changed first. Results are capped at the 5
+	// most-recently-changed ancestors, and each diff is independently capped
+	// at 8 KiB with truncated set on the diffs that were cut — consumers size
+	// prompts against both caps. An unknown unique_id is NOT_FOUND; a node
+	// with no changed ancestors returns an empty changes list.
+	GetUpstreamChanges(context.Context, *GetUpstreamChangesRequest) (*GetUpstreamChangesResponse, error)
+	// GetCodeUnitVersions returns a shared-code unit's version chain, newest
+	// first. Exactly one of unit_id/unique_id must be set: unit_id queries one
+	// unit directly, unique_id resolves the node's current units first and
+	// returns each of their chains concatenated. An unknown unit_id/unique_id
+	// is NOT_FOUND; a known unit with no recorded history returns an empty
+	// versions list.
+	GetCodeUnitVersions(context.Context, *GetCodeUnitVersionsRequest) (*GetCodeUnitVersionsResponse, error)
+	// GetNodeRunHistory returns runs that executed the node, newest first. An
+	// unknown unique_id is NOT_FOUND; a known node with no runs yet returns an
+	// empty runs list.
+	GetNodeRunHistory(context.Context, *GetNodeRunHistoryRequest) (*GetNodeRunHistoryResponse, error)
 	mustEmbedUnimplementedOrchestratorQueryServer()
 }
 
@@ -144,6 +257,21 @@ func (UnimplementedOrchestratorQueryServer) ListScheduleTopologies(context.Conte
 }
 func (UnimplementedOrchestratorQueryServer) GetNodeAncestry(context.Context, *GetNodeAncestryRequest) (*GetNodeAncestryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNodeAncestry not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) GetNodeVersions(context.Context, *GetNodeVersionsRequest) (*GetNodeVersionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetNodeVersions not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) GetNodeVersionDiff(context.Context, *GetNodeVersionDiffRequest) (*GetNodeVersionDiffResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetNodeVersionDiff not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) GetUpstreamChanges(context.Context, *GetUpstreamChangesRequest) (*GetUpstreamChangesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetUpstreamChanges not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) GetCodeUnitVersions(context.Context, *GetCodeUnitVersionsRequest) (*GetCodeUnitVersionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCodeUnitVersions not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) GetNodeRunHistory(context.Context, *GetNodeRunHistoryRequest) (*GetNodeRunHistoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetNodeRunHistory not implemented")
 }
 func (UnimplementedOrchestratorQueryServer) mustEmbedUnimplementedOrchestratorQueryServer() {}
 func (UnimplementedOrchestratorQueryServer) testEmbeddedByValue()                           {}
@@ -274,6 +402,96 @@ func _OrchestratorQuery_GetNodeAncestry_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorQuery_GetNodeVersions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetNodeVersionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).GetNodeVersions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_GetNodeVersions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).GetNodeVersions(ctx, req.(*GetNodeVersionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorQuery_GetNodeVersionDiff_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetNodeVersionDiffRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).GetNodeVersionDiff(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_GetNodeVersionDiff_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).GetNodeVersionDiff(ctx, req.(*GetNodeVersionDiffRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorQuery_GetUpstreamChanges_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUpstreamChangesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).GetUpstreamChanges(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_GetUpstreamChanges_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).GetUpstreamChanges(ctx, req.(*GetUpstreamChangesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorQuery_GetCodeUnitVersions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCodeUnitVersionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).GetCodeUnitVersions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_GetCodeUnitVersions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).GetCodeUnitVersions(ctx, req.(*GetCodeUnitVersionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrchestratorQuery_GetNodeRunHistory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetNodeRunHistoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).GetNodeRunHistory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_GetNodeRunHistory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).GetNodeRunHistory(ctx, req.(*GetNodeRunHistoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrchestratorQuery_ServiceDesc is the grpc.ServiceDesc for OrchestratorQuery service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -304,6 +522,26 @@ var OrchestratorQuery_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetNodeAncestry",
 			Handler:    _OrchestratorQuery_GetNodeAncestry_Handler,
+		},
+		{
+			MethodName: "GetNodeVersions",
+			Handler:    _OrchestratorQuery_GetNodeVersions_Handler,
+		},
+		{
+			MethodName: "GetNodeVersionDiff",
+			Handler:    _OrchestratorQuery_GetNodeVersionDiff_Handler,
+		},
+		{
+			MethodName: "GetUpstreamChanges",
+			Handler:    _OrchestratorQuery_GetUpstreamChanges_Handler,
+		},
+		{
+			MethodName: "GetCodeUnitVersions",
+			Handler:    _OrchestratorQuery_GetCodeUnitVersions_Handler,
+		},
+		{
+			MethodName: "GetNodeRunHistory",
+			Handler:    _OrchestratorQuery_GetNodeRunHistory_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

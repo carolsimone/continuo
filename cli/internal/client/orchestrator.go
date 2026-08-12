@@ -13,6 +13,11 @@ import (
 // OrchestratorClient is the narrow interface the CLI depends on for orchestrator reads.
 type OrchestratorClient interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*orchestratorv1.GetScheduleGraphResponse, error)
+	GetNodeVersions(ctx context.Context, uniqueID string, limit int32) (*orchestratorv1.GetNodeVersionsResponse, error)
+	GetNodeVersionDiff(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (*orchestratorv1.GetNodeVersionDiffResponse, error)
+	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since string) (*orchestratorv1.GetUpstreamChangesResponse, error)
+	GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) (*orchestratorv1.GetCodeUnitVersionsResponse, error)
+	GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32) (*orchestratorv1.GetNodeRunHistoryResponse, error)
 	Close() error
 }
 
@@ -33,6 +38,26 @@ func NewOrchestratorClient(ctx context.Context, endpoint string) (OrchestratorCl
 
 func (c *orchestratorGRPCClient) GetScheduleGraph(ctx context.Context, scheduleName string) (*orchestratorv1.GetScheduleGraphResponse, error) {
 	return c.client.GetScheduleGraph(ctx, &orchestratorv1.GetScheduleGraphRequest{ScheduleName: scheduleName})
+}
+
+func (c *orchestratorGRPCClient) GetNodeVersions(ctx context.Context, uniqueID string, limit int32) (*orchestratorv1.GetNodeVersionsResponse, error) {
+	return c.client.GetNodeVersions(ctx, &orchestratorv1.GetNodeVersionsRequest{UniqueId: uniqueID, Limit: limit})
+}
+
+func (c *orchestratorGRPCClient) GetNodeVersionDiff(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (*orchestratorv1.GetNodeVersionDiffResponse, error) {
+	return c.client.GetNodeVersionDiff(ctx, &orchestratorv1.GetNodeVersionDiffRequest{UniqueId: uniqueID, FromSeq: fromSeq, ToSeq: toSeq})
+}
+
+func (c *orchestratorGRPCClient) GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since string) (*orchestratorv1.GetUpstreamChangesResponse, error) {
+	return c.client.GetUpstreamChanges(ctx, &orchestratorv1.GetUpstreamChangesRequest{UniqueId: uniqueID, Depth: depth, Since: since})
+}
+
+func (c *orchestratorGRPCClient) GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) (*orchestratorv1.GetCodeUnitVersionsResponse, error) {
+	return c.client.GetCodeUnitVersions(ctx, &orchestratorv1.GetCodeUnitVersionsRequest{UnitId: unitID, UniqueId: uniqueID, Limit: limit})
+}
+
+func (c *orchestratorGRPCClient) GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
+	return c.client.GetNodeRunHistory(ctx, &orchestratorv1.GetNodeRunHistoryRequest{UniqueId: uniqueID, Limit: limit})
 }
 
 func (c *orchestratorGRPCClient) Close() error {
