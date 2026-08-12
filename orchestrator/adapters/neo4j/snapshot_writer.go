@@ -30,7 +30,10 @@ func newSnapshotWriter(tx neo4j.ManagedTransaction) *snapshotWriter {
 //
 // :EXECUTES edge:  task_id, status, image_tag, manifest_version, test_count?,
 //
-//	inherited_from_task_id?
+//	inherited_from_task_id?, content_hash
+//
+// content_hash is copied from the matched :Table at edge creation, pinning which
+// code version this run executed even after a later release changes the node.
 //
 // test_count is set only when the projection entry's TestCountKnown is true
 // (assigning a nil parameter to a Cypher SET removes/leaves the property
@@ -117,7 +120,8 @@ func (w *snapshotWriter) WriteRunAndExecutesEdges(ctx context.Context, p snapsho
 		              e.task_id          = t.task_id,
 		              e.image_tag        = t.image_tag,
 		              e.manifest_version = t.manifest_version,
-		              e.test_count       = t.test_count
+		              e.test_count       = t.test_count,
+		              e.content_hash     = tbl.content_hash
 		FOREACH (_ IN CASE WHEN t.inherited_from_task_id IS NULL THEN [] ELSE [1] END |
 		    SET e.inherited_from_task_id = t.inherited_from_task_id
 		)
