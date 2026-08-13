@@ -429,7 +429,7 @@ func precedentToProto(p casebase.Precedent) *orchestratorv1.Precedent {
 	for _, pr := range p.Proposals {
 		pb.Proposals = append(pb.Proposals, &orchestratorv1.PrecedentProposal{
 			ProposalId: pr.ProposalID, PrUrl: pr.PrURL,
-			PrNumber: int32(pr.PrNumber), PrState: pr.PrState,
+			PrNumber: num.ClampInt32(pr.PrNumber), PrState: pr.PrState,
 		})
 	}
 	return pb
