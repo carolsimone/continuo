@@ -39,6 +39,15 @@ import (
 //     node-selector path) — code_unit_version_unique only covers the
 //     composite (unit_id, checksum), so without this index Neo4j plans a full
 //     :CodeUnitVersion label scan for every one of those reads.
+//   - rejection_unique: a rejection's identity is (release_id, node_id),
+//     matching the classifier's dedup, so redeliveries MERGE onto the row
+//     they already wrote.
+//   - rejection_node_id: backs `[:RESOLVED_BY]` linking from both the
+//     versions consumer and the late-arrival back-link.
+//   - error_signature_unique: the global precedent hub's MERGE key.
+//   - error_signature_category_reason: backs the category+reason precedent
+//     lookup.
+//   - proposal_unique: a proposal's identity.
 var schemaStatements = []string{
 	"CREATE CONSTRAINT run_id_unique IF NOT EXISTS FOR (r:Run) REQUIRE r.run_id IS UNIQUE",
 	"CREATE CONSTRAINT table_uid_unique IF NOT EXISTS FOR (t:Table) REQUIRE t.unique_id IS UNIQUE",
@@ -50,6 +59,11 @@ var schemaStatements = []string{
 	"CREATE CONSTRAINT code_unit_unique IF NOT EXISTS FOR (c:CodeUnit) REQUIRE c.unit_id IS UNIQUE",
 	"CREATE CONSTRAINT code_unit_version_unique IF NOT EXISTS FOR (v:CodeUnitVersion) REQUIRE (v.unit_id, v.checksum) IS UNIQUE",
 	"CREATE INDEX code_unit_version_unit_id IF NOT EXISTS FOR (v:CodeUnitVersion) ON (v.unit_id)",
+	"CREATE CONSTRAINT rejection_unique IF NOT EXISTS FOR (r:Rejection) REQUIRE (r.release_id, r.node_id) IS UNIQUE",
+	"CREATE INDEX rejection_node_id IF NOT EXISTS FOR (r:Rejection) ON (r.node_id)",
+	"CREATE CONSTRAINT error_signature_unique IF NOT EXISTS FOR (s:ErrorSignature) REQUIRE s.signature IS UNIQUE",
+	"CREATE INDEX error_signature_category_reason IF NOT EXISTS FOR (s:ErrorSignature) ON (s.category, s.reason)",
+	"CREATE CONSTRAINT proposal_unique IF NOT EXISTS FOR (p:Proposal) REQUIRE p.proposal_id IS UNIQUE",
 }
 
 // dataMigrations are idempotent DML statements applied once startup DDL is in
@@ -60,8 +74,13 @@ var schemaStatements = []string{
 //     aggregate used to stamp ("SUCCEEDED"/"FAILED") down to the canonical
 //     lowercase form every writer now produces, so the UI never sees a mixed
 //     casing. Re-running it is a no-op once all rows are lowercase.
+//   - delete_previous_chain: removes the retired :PREVIOUS version chain (node
+//     and unit versions alike). Ordering is promoted_at; the chain could
+//     neither order nor enumerate correctly, and PR 3 removed its writer.
+//     Re-running finds no edges and is a no-op.
 var dataMigrations = []string{
 	"MATCH (r:Run) WHERE r.terminal_status IN ['SUCCEEDED', 'FAILED'] SET r.terminal_status = toLower(r.terminal_status)",
+	"MATCH ()-[p:PREVIOUS]->() DELETE p",
 }
 
 // awaitIndexTimeoutSeconds bounds how long InitSchema waits for the freshly
