@@ -70,11 +70,11 @@ const (
 	ReleasePromotedV1 = "release.promoted:v1"
 	// ReleaseRejectedV1 — Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
 	ReleaseRejectedV1 = "release.rejected:v1"
-	// RemediationRequestedV1 — Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent.
+	// RemediationRequestedV1 — Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent and by orchestrator's case-base rejections group.
 	RemediationRequestedV1 = "remediation.requested:v1"
 	// RemediationProposedV1 — Per-node fix proposal emitted by the remediation agent for a healable failure; consumed by the PR creator and approval surfaces.
 	RemediationProposedV1 = "remediation.proposed:v1"
-	// RemediationPrOpenedV1 — Audit event emitted when an operator opens a GitHub PR from a fix proposal; pointer-only, no consumer in this slice.
+	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal; consumed by orchestrator's case-base proposals group.
 	RemediationPrOpenedV1 = "remediation.pr_opened:v1"
 	// RemediationPrClosedV1 — Audit event emitted when a remediation PR reaches a terminal outcome on GitHub (merged, or closed without merge); pointer-only, no consumer in this slice.
 	RemediationPrClosedV1 = "remediation.pr_closed:v1"
@@ -158,6 +158,10 @@ const (
 	ExecutorReleaseRejected = "executor-release-rejected"
 	// RemediationAgentRemediationRequested — remediation-agent consumer group on remediation.requested:v1.
 	RemediationAgentRemediationRequested = "remediation-agent-remediation-requested"
+	// OrchestratorRemediationRequestedRejections — orchestrator consumer group on remediation.requested:v1.
+	OrchestratorRemediationRequestedRejections = "orchestrator-remediation-requested-rejections"
+	// OrchestratorRemediationPrOpenedProposals — orchestrator consumer group on remediation.pr_opened:v1.
+	OrchestratorRemediationPrOpenedProposals = "orchestrator-remediation-pr-opened-proposals"
 )
 
 // All is every stream name from contract.yaml, in contract order — for callers
