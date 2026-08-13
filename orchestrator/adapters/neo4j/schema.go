@@ -76,7 +76,7 @@ var schemaStatements = []string{
 //     casing. Re-running it is a no-op once all rows are lowercase.
 //   - delete_previous_chain: removes the retired :PREVIOUS version chain (node
 //     and unit versions alike). Ordering is promoted_at; the chain could
-//     neither order nor enumerate correctly, and PR 3 removed its writer.
+//     neither order nor enumerate correctly, and nothing writes it any more.
 //     Re-running finds no edges and is a no-op.
 var dataMigrations = []string{
 	"MATCH (r:Run) WHERE r.terminal_status IN ['SUCCEEDED', 'FAILED'] SET r.terminal_status = toLower(r.terminal_status)",
