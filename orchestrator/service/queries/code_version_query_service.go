@@ -17,9 +17,10 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 )
 
-// upstreamAncestorCap and diffByteCap are contract, not tuning. remediation's
-// prompt builder inherits them from the GitHub path this replaces, so changing
-// either silently changes prompt size for every heal.
+// upstreamAncestorCap and diffByteCap are contract, not tuning. They mirror
+// the caps remediation-agent's prompt builder enforces on its GitHub-read
+// upstream diffs, so a consumer switching between the two paths sees the same
+// prompt size; changing either silently changes prompt size for every heal.
 const (
 	upstreamAncestorCap = 5
 	diffByteCap         = 8 * 1024
