@@ -25,9 +25,12 @@ func AggregateIDForRelease(releaseID string) uuid.UUID {
 	return uuid.NewSHA1(remediationEventNamespace, []byte("release:"+releaseID))
 }
 
-// RemediationRequested is the pointer-only trigger emitted for each healable
-// failing node. It carries no error text — the agent reads the full log from
-// DBTLogURI and redacts before any external-LLM call.
+// RemediationRequested is the trigger emitted for each healable failing node.
+// It is pointer-first: the full log stays behind DBTLogURI and the failing
+// code behind CodeBundleURI. The one piece of error text it carries inline is
+// ErrorExcerpt — the classifier's key error line, capped at 4 KiB — kept for
+// the orchestrator's failure-precedent case base; the agent still reads and
+// redacts the full log before any external-LLM call.
 type RemediationRequested struct {
 	EventID   string `json:"event_id"`
 	Source    string `json:"source"`
@@ -37,9 +40,17 @@ type RemediationRequested struct {
 	// trigger, distinct from NodeID (the target claimant's own unique_id) —
 	// the two differ whenever the target carries an alias. Empty for every
 	// other source.
-	RelationID           string `json:"relation_id,omitempty"`
-	Category             string `json:"category"`
-	ErrorSignature       string `json:"error_signature"`
+	RelationID     string `json:"relation_id,omitempty"`
+	Category       string `json:"category"`
+	ErrorSignature string `json:"error_signature"`
+	// Reason is the matched classifier rule, e.g. "logic:missing_object".
+	Reason string `json:"reason"`
+	// ErrorExcerpt is the classifier's key error line (capped at 4 KiB).
+	ErrorExcerpt string `json:"error_excerpt,omitempty"`
+	// CodeBundleURI locates the rejected release's code-bundle document.
+	// Empty when parse never completed (compile-stage failures) — no bundle
+	// exists for those.
+	CodeBundleURI        string `json:"code_bundle_uri,omitempty"`
 	DBTLogURI            string `json:"dbt_log_uri"`
 	CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
 	FilePath             string `json:"file_path,omitempty"`

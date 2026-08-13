@@ -3,6 +3,9 @@ package redis
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 )
 
@@ -282,4 +285,18 @@ func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
 			t.Errorf("%s: want 0 evidence, got %d — not a model defect a heal proposal could fix", reason, len(evs))
 		}
 	}
+}
+
+// TestEvidenceFromRejected_CarriesCodeBundleURI verifies that a top-level
+// code_bundle_uri on the release.rejected:v1 payload is threaded onto each
+// failed node's FailureEvidence, so the remediation trigger can point the
+// orchestrator's case base at the rejected release's code bundle.
+func TestEvidenceFromRejected_CarriesCodeBundleURI(t *testing.T) {
+	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
+		"repo":"acme/dbt","commit_sha":"abc","code_bundle_uri":"s3://b/code-bundles/rel-1/bundle.json",
+		"per_node":[{"node_id":"analytics.orders","status":"failed","dbt_log_uri":"s3://b/l.log"}]}`)
+	evs, err := evidenceFromRejected(raw)
+	require.NoError(t, err)
+	require.Len(t, evs, 1)
+	assert.Equal(t, "s3://b/code-bundles/rel-1/bundle.json", evs[0].CodeBundleURI)
 }

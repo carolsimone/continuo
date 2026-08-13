@@ -22,7 +22,11 @@ type rejectedPayload struct {
 	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed" | "duplicate_table"
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
-	PerNode   []struct {
+	// CodeBundleURI locates the rejected release's code-bundle document,
+	// stamped by release-controller. Absent (and thus empty) for a payload
+	// from before the field existed or for a rejection with no bundle.
+	CodeBundleURI string `json:"code_bundle_uri"`
+	PerNode       []struct {
 		NodeID               string `json:"node_id"`
 		Status               string `json:"status"`
 		DBTLogURI            string `json:"dbt_log_uri"`
@@ -132,6 +136,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			OtherFilePath:        n.OtherFilePath,
 			Repo:                 p.Repo,
 			CommitSHA:            p.CommitSHA,
+			CodeBundleURI:        p.CodeBundleURI,
 		})
 	}
 	return out, nil
