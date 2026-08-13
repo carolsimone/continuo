@@ -44,11 +44,11 @@ type DriftAwareRunReader interface {
 // ancestor count, diff byte size) and limit defaulting/clamping live here,
 // not in the handler. Satisfied by service/queries.CodeVersionQueryService.
 type CodeVersionHistoryReader interface {
-	GetNodeVersions(ctx context.Context, uniqueID string, limit int32) ([]codeversion.VersionView, error)
+	GetNodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error)
 	GetNodeVersionDiff(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (*codeversion.VersionDiff, error)
 	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since time.Time) ([]codeversion.UpstreamChange, error)
 	GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) ([]codeversion.UnitVersionView, error)
-	GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32) ([]codeversion.RunExecution, error)
+	GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error)
 }
 
 // QueryHandler implements the OrchestratorQuery gRPC service.
@@ -272,7 +272,7 @@ func (h *QueryHandler) GetNodeVersions(ctx context.Context, req *orchestratorv1.
 	if req.UniqueId == "" {
 		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
 	}
-	versions, err := h.codeVersions.GetNodeVersions(ctx, req.UniqueId, req.Limit)
+	versions, err := h.codeVersions.GetNodeVersions(ctx, req.UniqueId, req.Limit, req.IncludeCode)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
@@ -345,7 +345,7 @@ func (h *QueryHandler) GetCodeUnitVersions(ctx context.Context, req *orchestrato
 	}
 	versions, err := h.codeVersions.GetCodeUnitVersions(ctx, req.UnitId, req.UniqueId, req.Limit)
 	if err != nil {
-		if errors.Is(err, domain.ErrNodeNotFound) {
+		if errors.Is(err, domain.ErrNodeNotFound) || errors.Is(err, domain.ErrUnitNotFound) {
 			id := req.UnitId
 			if id == "" {
 				id = req.UniqueId
@@ -368,7 +368,7 @@ func (h *QueryHandler) GetNodeRunHistory(ctx context.Context, req *orchestratorv
 	if req.UniqueId == "" {
 		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
 	}
-	runs, err := h.codeVersions.GetNodeRunHistory(ctx, req.UniqueId, req.Limit)
+	runs, err := h.codeVersions.GetNodeRunHistory(ctx, req.UniqueId, req.Limit, req.Operation)
 	if err != nil {
 		if errors.Is(err, domain.ErrNodeNotFound) {
 			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)

@@ -9,6 +9,11 @@ import (
 // not an active :Table node.
 var ErrNodeNotFound = errors.New("node not found")
 
+// ErrUnitNotFound is returned by shared-code-unit reads when the requested
+// unit_id has no recorded :CodeUnit and no recorded :CodeUnitVersion —
+// i.e. the unit was never referenced by any promoted node version.
+var ErrUnitNotFound = errors.New("code unit not found")
+
 // NodeAncestor is one node in a GetNodeAncestry result: either the queried node
 // (Depth 0) or one of its transitive upstreams. Provenance fields are zero/nil
 // when unknown (the node has not changed since provenance tracking began).

@@ -45,9 +45,13 @@ type OrchestratorQueryClient interface {
 	GetNodeAncestry(ctx context.Context, in *GetNodeAncestryRequest, opts ...grpc.CallOption) (*GetNodeAncestryResponse, error)
 	GetNode(ctx context.Context, in *GetNodeRequest, opts ...grpc.CallOption) (*GetNodeResponse, error)
 	// GetNodeVersions returns a node's recorded code-version history, newest
-	// first (ordered by promoted_at). An unknown unique_id is NOT_FOUND; a
-	// known node with no recorded history returns an empty versions list —
-	// that is a valid, non-error answer.
+	// first — ordered by when each version's code was first promoted; is_current
+	// marks the version that actually runs now. A version node is immutable, so
+	// a revert that re-points the running code at an earlier version does not
+	// change that version's position in this ordering, only which row carries
+	// is_current. An unknown unique_id is NOT_FOUND; a known node with no
+	// recorded history returns an empty versions list — that is a valid,
+	// non-error answer.
 	GetNodeVersions(ctx context.Context, in *GetNodeVersionsRequest, opts ...grpc.CallOption) (*GetNodeVersionsResponse, error)
 	// GetNodeVersionDiff renders the diff between two named versions of one
 	// node. from_seq/to_seq are stable per-node handles used to address a
@@ -56,11 +60,16 @@ type OrchestratorQueryClient interface {
 	// no recorded version for, is NOT_FOUND.
 	GetNodeVersionDiff(ctx context.Context, in *GetNodeVersionDiffRequest, opts ...grpc.CallOption) (*GetNodeVersionDiffResponse, error)
 	// GetUpstreamChanges returns the node's transitive ancestors' most recent
-	// code change, most-recently-changed first. Results are capped at the 5
-	// most-recently-changed ancestors, and each diff is independently capped
-	// at 8 KiB with truncated set on the diffs that were cut — consumers size
-	// prompts against both caps. An unknown unique_id is NOT_FOUND; a node
-	// with no changed ancestors returns an empty changes list.
+	// code change, most-recently-changed first. "Most recent" is each
+	// ancestor's effective last-change time — when a revert re-points its
+	// running code at an already-recorded version, that counts as a change at
+	// the moment of the revert, and the reported diff is the actual
+	// before/after of that revert rather than the two versions' original
+	// creation order. Results are capped at the 5 most-recently-changed
+	// ancestors, and each diff is independently capped at 8 KiB with truncated
+	// set on the diffs that were cut — consumers size prompts against both
+	// caps. An unknown unique_id is NOT_FOUND; a node with no changed ancestors
+	// returns an empty changes list.
 	GetUpstreamChanges(ctx context.Context, in *GetUpstreamChangesRequest, opts ...grpc.CallOption) (*GetUpstreamChangesResponse, error)
 	// GetCodeUnitVersions returns a shared-code unit's version chain, newest
 	// first. Exactly one of unit_id/unique_id must be set: unit_id queries one
@@ -69,9 +78,9 @@ type OrchestratorQueryClient interface {
 	// is NOT_FOUND; a known unit with no recorded history returns an empty
 	// versions list.
 	GetCodeUnitVersions(ctx context.Context, in *GetCodeUnitVersionsRequest, opts ...grpc.CallOption) (*GetCodeUnitVersionsResponse, error)
-	// GetNodeRunHistory returns runs that executed the node, newest first. An
-	// unknown unique_id is NOT_FOUND; a known node with no runs yet returns an
-	// empty runs list.
+	// GetNodeRunHistory returns runs that executed the node, newest first,
+	// optionally filtered server-side to one operation. An unknown unique_id is
+	// NOT_FOUND; a known node with no matching runs returns an empty runs list.
 	GetNodeRunHistory(ctx context.Context, in *GetNodeRunHistoryRequest, opts ...grpc.CallOption) (*GetNodeRunHistoryResponse, error)
 }
 
@@ -215,9 +224,13 @@ type OrchestratorQueryServer interface {
 	GetNodeAncestry(context.Context, *GetNodeAncestryRequest) (*GetNodeAncestryResponse, error)
 	GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error)
 	// GetNodeVersions returns a node's recorded code-version history, newest
-	// first (ordered by promoted_at). An unknown unique_id is NOT_FOUND; a
-	// known node with no recorded history returns an empty versions list —
-	// that is a valid, non-error answer.
+	// first — ordered by when each version's code was first promoted; is_current
+	// marks the version that actually runs now. A version node is immutable, so
+	// a revert that re-points the running code at an earlier version does not
+	// change that version's position in this ordering, only which row carries
+	// is_current. An unknown unique_id is NOT_FOUND; a known node with no
+	// recorded history returns an empty versions list — that is a valid,
+	// non-error answer.
 	GetNodeVersions(context.Context, *GetNodeVersionsRequest) (*GetNodeVersionsResponse, error)
 	// GetNodeVersionDiff renders the diff between two named versions of one
 	// node. from_seq/to_seq are stable per-node handles used to address a
@@ -226,11 +239,16 @@ type OrchestratorQueryServer interface {
 	// no recorded version for, is NOT_FOUND.
 	GetNodeVersionDiff(context.Context, *GetNodeVersionDiffRequest) (*GetNodeVersionDiffResponse, error)
 	// GetUpstreamChanges returns the node's transitive ancestors' most recent
-	// code change, most-recently-changed first. Results are capped at the 5
-	// most-recently-changed ancestors, and each diff is independently capped
-	// at 8 KiB with truncated set on the diffs that were cut — consumers size
-	// prompts against both caps. An unknown unique_id is NOT_FOUND; a node
-	// with no changed ancestors returns an empty changes list.
+	// code change, most-recently-changed first. "Most recent" is each
+	// ancestor's effective last-change time — when a revert re-points its
+	// running code at an already-recorded version, that counts as a change at
+	// the moment of the revert, and the reported diff is the actual
+	// before/after of that revert rather than the two versions' original
+	// creation order. Results are capped at the 5 most-recently-changed
+	// ancestors, and each diff is independently capped at 8 KiB with truncated
+	// set on the diffs that were cut — consumers size prompts against both
+	// caps. An unknown unique_id is NOT_FOUND; a node with no changed ancestors
+	// returns an empty changes list.
 	GetUpstreamChanges(context.Context, *GetUpstreamChangesRequest) (*GetUpstreamChangesResponse, error)
 	// GetCodeUnitVersions returns a shared-code unit's version chain, newest
 	// first. Exactly one of unit_id/unique_id must be set: unit_id queries one
@@ -239,9 +257,9 @@ type OrchestratorQueryServer interface {
 	// is NOT_FOUND; a known unit with no recorded history returns an empty
 	// versions list.
 	GetCodeUnitVersions(context.Context, *GetCodeUnitVersionsRequest) (*GetCodeUnitVersionsResponse, error)
-	// GetNodeRunHistory returns runs that executed the node, newest first. An
-	// unknown unique_id is NOT_FOUND; a known node with no runs yet returns an
-	// empty runs list.
+	// GetNodeRunHistory returns runs that executed the node, newest first,
+	// optionally filtered server-side to one operation. An unknown unique_id is
+	// NOT_FOUND; a known node with no matching runs returns an empty runs list.
 	GetNodeRunHistory(context.Context, *GetNodeRunHistoryRequest) (*GetNodeRunHistoryResponse, error)
 	mustEmbedUnimplementedOrchestratorQueryServer()
 }

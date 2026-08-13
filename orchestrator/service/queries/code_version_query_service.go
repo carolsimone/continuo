@@ -40,22 +40,45 @@ const (
 // CodeVersionReader is the read surface over the code-version graph.
 type CodeVersionReader interface {
 	// NodeVersions walks the chain from :CURRENT, newest first, up to limit.
-	// An unknown node returns ErrNodeNotFound; a known node with no recorded
-	// history returns an empty slice.
-	NodeVersions(ctx context.Context, uniqueID string, limit int32) ([]codeversion.VersionView, error)
+	// includeCode controls whether raw_code/compiled_code are fetched at all:
+	// false must keep those fields off the wire between Neo4j and this
+	// process, not merely blank them after the fact, since a version's
+	// compiled_code alone can run to 256 KiB. An unknown node returns
+	// ErrNodeNotFound; a known node with no recorded history returns an empty
+	// slice.
+	NodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error)
 	// VersionsBySeq returns the two named versions of one node. An unknown
 	// node, or a seq that node has no recorded version for, returns
 	// ErrNodeNotFound.
 	VersionsBySeq(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (from, to codeversion.VersionView, err error)
-	// Ancestors returns the node's transitive upstreams up to depth, each with
-	// its two most recent versions, most-recently-changed first.
-	Ancestors(ctx context.Context, uniqueID string, depth int32, since time.Time) ([]codeversion.AncestorVersions, error)
-	// UnitVersions walks a shared-code unit's chain, newest first.
+	// Ancestors returns up to cap of the node's transitive upstreams within
+	// depth hops, most-recently-changed first, each with its two most
+	// relevant versions: the version :CURRENT points to (if any) and the
+	// newest-by-promoted_at version other than that one — so a revert that
+	// re-points :CURRENT at an older immutable version still yields the right
+	// pair. Ranking, the since filter, and the cap are all applied against
+	// this effective recency — max(newest version's promoted_at, the :CURRENT
+	// edge's own promoted_at) — before any version body is fetched, so a wide
+	// DAG never pays to load code for ancestors it is about to discard.
+	Ancestors(ctx context.Context, uniqueID string, depth int32, since time.Time, cap int32) ([]codeversion.AncestorVersions, error)
+	// UnitVersions walks a shared-code unit's chain, newest first. An unknown
+	// unit_id returns ErrUnitNotFound; a known unit with no recorded history
+	// returns an empty slice.
 	UnitVersions(ctx context.Context, unitID string, limit int32) ([]codeversion.UnitVersionView, error)
+	// UnitVersionsBatch is UnitVersions for many units in one round trip, each
+	// capped independently at limit. Every requested id that resolves to at
+	// least one version appears in the result map; an id with none is simply
+	// absent (this batched form makes no known/unknown distinction — it exists
+	// to serve the node-selector path, whose unit ids are already known to be
+	// real).
+	UnitVersionsBatch(ctx context.Context, unitIDs []string, limit int32) (map[string][]codeversion.UnitVersionView, error)
 	// UnitsForNode returns the units the node's current version uses.
 	UnitsForNode(ctx context.Context, uniqueID string) ([]string, error)
-	// RunExecutions returns runs that executed the node, newest first.
-	RunExecutions(ctx context.Context, uniqueID string, limit int32) ([]codeversion.RunExecution, error)
+	// RunExecutions returns runs that executed the node, newest first,
+	// optionally filtered to one operation ("" applies no filter). An unknown
+	// node returns ErrNodeNotFound; a known node with no matching runs returns
+	// an empty slice.
+	RunExecutions(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error)
 }
 
 // CodeVersionQueryService composes the code-version reader into the capped,
@@ -69,11 +92,14 @@ func NewCodeVersionQueryService(reader CodeVersionReader) *CodeVersionQueryServi
 	return &CodeVersionQueryService{reader: reader}
 }
 
-// GetNodeVersions returns a node's version history, newest first, up to
-// limit. limit <= 0 defaults to defaultQueryLimit; anything above
-// maxQueryLimit is clamped to it.
-func (s *CodeVersionQueryService) GetNodeVersions(ctx context.Context, uniqueID string, limit int32) ([]codeversion.VersionView, error) {
-	versions, err := s.reader.NodeVersions(ctx, uniqueID, clampQueryLimit(limit))
+// GetNodeVersions returns a node's version history, newest first (ordered by
+// when each version's code was first promoted — a revert re-points at an
+// existing version without changing its position in that ordering; is_current
+// on each row marks what actually runs now), up to limit. limit <= 0 defaults
+// to defaultQueryLimit; anything above maxQueryLimit is clamped to it.
+// includeCode false keeps raw_code/compiled_code off the wire entirely.
+func (s *CodeVersionQueryService) GetNodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error) {
+	versions, err := s.reader.NodeVersions(ctx, uniqueID, clampQueryLimit(limit), includeCode)
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryService.GetNodeVersions: %w", err)
 	}
@@ -97,7 +123,7 @@ func (s *CodeVersionQueryService) GetUpstreamChanges(ctx context.Context, unique
 	if depth <= 0 {
 		depth = defaultUpstreamDepth
 	}
-	ancestors, err := s.reader.Ancestors(ctx, uniqueID, depth, since)
+	ancestors, err := s.reader.Ancestors(ctx, uniqueID, depth, since, upstreamAncestorCap)
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryService.GetUpstreamChanges: %w", err)
 	}
@@ -107,7 +133,8 @@ func (s *CodeVersionQueryService) GetUpstreamChanges(ctx context.Context, unique
 		// it cannot tell those apart. NodeVersions can: it distinguishes an
 		// unknown unique_id from a known one, so use it purely as an
 		// existence check without paying for a second full ancestry query.
-		if _, err := s.reader.NodeVersions(ctx, uniqueID, 1); err != nil {
+		// No code body is needed for an existence probe.
+		if _, err := s.reader.NodeVersions(ctx, uniqueID, 1, false); err != nil {
 			return nil, fmt.Errorf("CodeVersionQueryService.GetUpstreamChanges: %w", err)
 		}
 		return []codeversion.UpstreamChange{}, nil
@@ -124,6 +151,12 @@ func (s *CodeVersionQueryService) GetUpstreamChanges(ctx context.Context, unique
 			// No prior version to compare against: the whole code is the change.
 			diff = renderDiff(a.UniqueID, codeversion.VersionView{}, a.Versions[0])
 		default:
+			// Versions[0] is the version :CURRENT points to and Versions[1] is
+			// the newest-by-promoted_at version other than that one — the
+			// reader guarantees that pairing, not merely "the two newest by
+			// promoted_at", so a revert that re-points :CURRENT at an older
+			// immutable version still reports that reversion's actual
+			// From→To rather than the two versions' original creation order.
 			diff = renderDiff(a.UniqueID, a.Versions[1], a.Versions[0])
 		}
 		changes = append(changes, codeversion.UpstreamChange{
@@ -133,8 +166,10 @@ func (s *CodeVersionQueryService) GetUpstreamChanges(ctx context.Context, unique
 		})
 	}
 
-	// The reader already orders ancestors most-recently-changed first; cap
-	// after that ordering so the kept 5 are the most recently changed.
+	// The reader already ranked, since-filtered, and capped ancestors at the
+	// id level before fetching any version body, so changes already holds at
+	// most upstreamAncestorCap entries in most-recently-changed order; this
+	// only guards against a reader returning more than it promised.
 	if len(changes) > upstreamAncestorCap {
 		changes = changes[:upstreamAncestorCap]
 	}
@@ -142,11 +177,15 @@ func (s *CodeVersionQueryService) GetUpstreamChanges(ctx context.Context, unique
 }
 
 // GetCodeUnitVersions returns a shared-code unit's version chain, newest
-// first, up to limit. Pass unitID to query one unit directly; leave it empty
-// and pass uniqueID to resolve the node's current units first, returning each
-// of their chains concatenated in the order UnitsForNode returns them. limit
-// <= 0 defaults to defaultQueryLimit; anything above maxQueryLimit is clamped
-// to it.
+// first, up to limit. Pass unitID to query one unit directly: an unknown
+// unit_id returns ErrUnitNotFound. Leave it empty and pass uniqueID to
+// resolve the node's current units first, returning each of their chains
+// concatenated in the order UnitsForNode returns them, fetched in one batched
+// round trip; an unknown uniqueID returns ErrNodeNotFound — UnitsForNode
+// alone cannot distinguish that from a known node with no current version, so
+// an empty resolution falls back to NodeVersions purely as an existence
+// check, the same pattern GetUpstreamChanges uses. limit <= 0 defaults to
+// defaultQueryLimit; anything above maxQueryLimit is clamped to it.
 func (s *CodeVersionQueryService) GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) ([]codeversion.UnitVersionView, error) {
 	limit = clampQueryLimit(limit)
 	if unitID != "" {
@@ -161,22 +200,31 @@ func (s *CodeVersionQueryService) GetCodeUnitVersions(ctx context.Context, unitI
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryService.GetCodeUnitVersions: %w", err)
 	}
+	if len(unitIDs) == 0 {
+		// No code body is needed for an existence probe.
+		if _, err := s.reader.NodeVersions(ctx, uniqueID, 1, false); err != nil {
+			return nil, fmt.Errorf("CodeVersionQueryService.GetCodeUnitVersions: %w", err)
+		}
+		return []codeversion.UnitVersionView{}, nil
+	}
+
+	byUnit, err := s.reader.UnitVersionsBatch(ctx, unitIDs, limit)
+	if err != nil {
+		return nil, fmt.Errorf("CodeVersionQueryService.GetCodeUnitVersions: %w", err)
+	}
 	all := make([]codeversion.UnitVersionView, 0, len(unitIDs))
 	for _, id := range unitIDs {
-		versions, err := s.reader.UnitVersions(ctx, id, limit)
-		if err != nil {
-			return nil, fmt.Errorf("CodeVersionQueryService.GetCodeUnitVersions unit %s: %w", id, err)
-		}
-		all = append(all, versions...)
+		all = append(all, byUnit[id]...)
 	}
 	return all, nil
 }
 
-// GetNodeRunHistory returns runs that executed the node, newest first.
-// limit <= 0 defaults to defaultQueryLimit; anything above maxQueryLimit is
+// GetNodeRunHistory returns runs that executed the node, newest first,
+// optionally filtered to one operation ("" returns every operation). limit
+// <= 0 defaults to defaultQueryLimit; anything above maxQueryLimit is
 // clamped to it.
-func (s *CodeVersionQueryService) GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32) ([]codeversion.RunExecution, error) {
-	runs, err := s.reader.RunExecutions(ctx, uniqueID, clampQueryLimit(limit))
+func (s *CodeVersionQueryService) GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error) {
+	runs, err := s.reader.RunExecutions(ctx, uniqueID, clampQueryLimit(limit), operation)
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryService.GetNodeRunHistory: %w", err)
 	}

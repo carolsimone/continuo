@@ -62,20 +62,31 @@ func NewCodeVersionQueryRepository(client Neo4jClient, logger *slog.Logger) *Cod
 // nodeVersionColumns projects one :NodeVersion row. It assumes the query
 // binds `v` to the version and `cur` to the node's :CURRENT version (or null
 // when there is none), and is shared by every query that reads this shape so
-// the column list cannot drift between them.
-const nodeVersionColumns = `v.version_seq AS version_seq, v.content_hash AS content_hash,
+// the column list cannot drift between them. includeCode false keeps
+// raw_code/compiled_code off the wire entirely — a version's compiled_code
+// alone can run to 256 KiB, so this must control what Neo4j returns, not just
+// what the caller keeps, or a "light" request still pays the transport cost.
+func nodeVersionColumns(includeCode bool) string {
+	code := `v.raw_code AS raw_code, v.compiled_code AS compiled_code,`
+	if !includeCode {
+		code = `'' AS raw_code, '' AS compiled_code,`
+	}
+	return `v.version_seq AS version_seq, v.content_hash AS content_hash,
        v.source_hash AS source_hash, v.shared_code_hash AS shared_code_hash,
        v.config_hash AS config_hash, v.runtime AS runtime,
-       v.raw_code AS raw_code, v.compiled_code AS compiled_code,
+       ` + code + `
        coalesce(v.compiled_truncated, false) AS compiled_truncated,
        coalesce(v.config_json, '{}') AS config_json,
        v.repo AS repo, v.commit_sha AS commit_sha, v.release_id AS release_id,
        v.promoted_at AS promoted_at, coalesce(v.healed, false) AS healed,
        coalesce(v.backfilled, false) AS backfilled,
        (cur IS NOT NULL AND cur.content_hash = v.content_hash) AS is_current`
+}
 
 // NodeVersions walks the chain from :CURRENT, newest first, up to limit.
-func (r *CodeVersionQueryRepository) NodeVersions(ctx context.Context, uniqueID string, limit int32) ([]codeversion.VersionView, error) {
+// includeCode false omits raw_code/compiled_code from the Cypher projection
+// itself, so a "light" request never pulls those bodies out of Neo4j.
+func (r *CodeVersionQueryRepository) NodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
 
@@ -83,7 +94,7 @@ func (r *CodeVersionQueryRepository) NodeVersions(ctx context.Context, uniqueID 
 		OPTIONAL MATCH (t:Table {unique_id: $uid})-[:CURRENT]->(cur:NodeVersion)
 		WITH cur
 		MATCH (v:NodeVersion {unique_id: $uid})
-		RETURN ` + nodeVersionColumns + `
+		RETURN ` + nodeVersionColumns(includeCode) + `
 		ORDER BY v.promoted_at DESC
 		LIMIT $limit
 	`
@@ -105,7 +116,7 @@ func (r *CodeVersionQueryRepository) NodeVersions(ctx context.Context, uniqueID 
 	// No :NodeVersion carries this unique_id. That is a known node with an
 	// empty history when its :Table still exists, and an unknown node
 	// otherwise.
-	known, err := r.tableExists(ctx, session, uniqueID)
+	known, err := r.nodeKnown(ctx, session, uniqueID)
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryRepository.NodeVersions: %w", err)
 	}
@@ -115,12 +126,22 @@ func (r *CodeVersionQueryRepository) NodeVersions(ctx context.Context, uniqueID 
 	return versions, nil
 }
 
-// tableExists reports whether a :Table node exists for uniqueID, regardless
-// of its active flag: a node mid-retirement is still a known node, just one
-// whose chain walk above already returned rows if it had any.
-func (r *CodeVersionQueryRepository) tableExists(ctx context.Context, session neo4j.SessionWithContext, uniqueID string) (bool, error) {
-	result, err := session.Run(ctx, `MATCH (t:Table {unique_id: $uid}) RETURN count(t) > 0 AS known`,
-		map[string]any{"uid": uniqueID})
+// nodeKnown reports whether uniqueID is a recorded node: either it still has
+// an active :Table, or it has at least one :NodeVersion (a retired node whose
+// :Table was deleted but whose history survives). This is the same
+// known/unknown boundary every code-version RPC applies — NodeVersions
+// reaches it only after finding zero :NodeVersion rows itself, so the
+// :NodeVersion half of this check is redundant there but keeps RunExecutions,
+// which has no version rows of its own to fall back on, applying the
+// identical definition.
+func (r *CodeVersionQueryRepository) nodeKnown(ctx context.Context, session neo4j.SessionWithContext, uniqueID string) (bool, error) {
+	result, err := session.Run(ctx, `
+		OPTIONAL MATCH (t:Table {unique_id: $uid})
+		WITH count(t) > 0 AS has_table
+		OPTIONAL MATCH (v:NodeVersion {unique_id: $uid})
+		WITH has_table, count(v) > 0 AS has_version
+		RETURN has_table OR has_version AS known
+	`, map[string]any{"uid": uniqueID})
 	if err != nil {
 		return false, err
 	}
@@ -145,7 +166,7 @@ func (r *CodeVersionQueryRepository) VersionsBySeq(ctx context.Context, uniqueID
 		WITH cur
 		MATCH (v:NodeVersion {unique_id: $uid})
 		WHERE v.version_seq IN [$from_seq, $to_seq]
-		RETURN ` + nodeVersionColumns
+		RETURN ` + nodeVersionColumns(true)
 	result, err := session.Run(ctx, query, map[string]any{"uid": uniqueID, "from_seq": fromSeq, "to_seq": toSeq})
 	if err != nil {
 		return codeversion.VersionView{}, codeversion.VersionView{}, fmt.Errorf("CodeVersionQueryRepository.VersionsBySeq: %w", err)
@@ -172,29 +193,71 @@ func (r *CodeVersionQueryRepository) VersionsBySeq(ctx context.Context, uniqueID
 	return from, to, nil
 }
 
-// Ancestors returns the node's transitive upstreams up to depth, each with
-// its two most recent versions, most-recently-changed first. Only the active
-// topology is walked, deduplicated to the shortest depth at which an
-// ancestor is reachable; a non-zero since excludes ancestors whose newest
-// version predates it. depth < 1 walks nothing.
-func (r *CodeVersionQueryRepository) Ancestors(ctx context.Context, uniqueID string, depth int32, since time.Time) ([]codeversion.AncestorVersions, error) {
+// Ancestors returns up to cap of the node's transitive upstreams within
+// depth hops, most-recently-changed first, each with its two most relevant
+// versions. Only the active topology is walked, deduplicated to the shortest
+// depth at which an ancestor is reachable. depth < 1 walks nothing.
+//
+// "Most-relevant" and "most-recently-changed" are both computed from an
+// ancestor's EFFECTIVE last-change time — max(its newest version's
+// promoted_at, its :CURRENT edge's own promoted_at) — not from a version
+// node's own promoted_at alone. A version node is immutable (see this file's
+// package doc), so a revert that re-points :CURRENT at an existing older
+// version leaves that version's promoted_at at its original creation time;
+// only the :CURRENT edge records when the revert itself happened. Using the
+// version's own timestamp here would rank a revert by its stale creation
+// date and let the since filter miss it entirely. This ranking, the since
+// filter, and the cap are all applied in idsQuery — before any version body
+// is fetched — so a wide DAG never pays to load code for ancestors it is
+// about to discard.
+//
+// The two versions returned per ancestor are, in order: the version :CURRENT
+// points to (the "To" of its latest change, if any), then the newest other
+// version by promoted_at (the "To"'s "From"). A revert therefore reports the
+// actual B→A transition instead of the two versions' original creation
+// order.
+func (r *CodeVersionQueryRepository) Ancestors(ctx context.Context, uniqueID string, depth int32, since time.Time, cap int32) ([]codeversion.AncestorVersions, error) {
 	if depth < 1 {
 		return []codeversion.AncestorVersions{}, nil
 	}
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
 
+	var sinceParam any
+	if !since.IsZero() {
+		sinceParam = since
+	}
+
 	// Cypher cannot parameterize the *1..N path-length bound, so interpolate
 	// the caller-supplied depth (already an int32, not attacker string input).
+	//
+	// effective_at is computed once per ancestor from cheap scalar properties
+	// only (no version body is read here); ranking uses
+	// "(effective_at IS NULL) ASC, effective_at DESC" so an ancestor with no
+	// recorded change ever sorts last regardless of the engine's default
+	// null-ordering convention.
 	idsQuery := fmt.Sprintf(`
 		MATCH (n:Table {unique_id: $uid})
 		OPTIONAL MATCH path = (n)-[:DEPENDS_ON*1..%d]->(anc:Table)
 		WHERE ALL(m IN nodes(path) WHERE COALESCE(m.active, true))
 		WITH anc, min(length(path)) AS depth
 		WHERE anc IS NOT NULL
+		OPTIONAL MATCH (anc)-[curEdge:CURRENT]->(:NodeVersion)
+		OPTIONAL MATCH (av:NodeVersion {unique_id: anc.unique_id})
+		WITH anc, depth, curEdge.promoted_at AS cur_edge_at, max(av.promoted_at) AS newest_version_at
+		WITH anc, depth,
+		     CASE
+		       WHEN cur_edge_at IS NULL THEN newest_version_at
+		       WHEN newest_version_at IS NULL THEN cur_edge_at
+		       WHEN cur_edge_at > newest_version_at THEN cur_edge_at
+		       ELSE newest_version_at
+		     END AS effective_at
+		WHERE $since IS NULL OR (effective_at IS NOT NULL AND effective_at >= $since)
 		RETURN anc.unique_id AS unique_id, depth AS depth
+		ORDER BY (effective_at IS NULL) ASC, effective_at DESC
+		LIMIT $cap
 	`, depth)
-	idsResult, err := session.Run(ctx, idsQuery, map[string]any{"uid": uniqueID})
+	idsResult, err := session.Run(ctx, idsQuery, map[string]any{"uid": uniqueID, "since": sinceParam, "cap": int64(cap)})
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryRepository.Ancestors: %w", err)
 	}
@@ -220,20 +283,26 @@ func (r *CodeVersionQueryRepository) Ancestors(ctx context.Context, uniqueID str
 		ids[i] = m.uniqueID
 	}
 
-	// One batched query fetches every ancestor's two newest versions. Rows
-	// are grouped by unique_id in Go rather than relying on the engine to
-	// preserve inter-group order; the intra-group order (newest first) comes
-	// from sorting before the collect that builds each ancestor's top-2.
+	// One batched query fetches each retained ancestor's current version
+	// (cur) plus the newest version other than cur. Rows are grouped by
+	// unique_id in Go rather than relying on the engine to preserve
+	// inter-group order; the intra-group order (cur first, then
+	// newest-other) comes from the CASE below. metas already carries the
+	// correct inter-ancestor order out of idsQuery, so out is built by
+	// iterating metas, not by re-deriving order here.
 	versionsQuery := `
 		UNWIND $ids AS uid
 		OPTIONAL MATCH (t:Table {unique_id: uid})-[:CURRENT]->(cur:NodeVersion)
 		WITH uid, cur
 		OPTIONAL MATCH (v:NodeVersion {unique_id: uid})
+		WHERE cur IS NULL OR v.content_hash <> cur.content_hash
 		WITH uid, cur, v
 		ORDER BY v.promoted_at DESC
-		WITH uid, cur, collect(v)[0..2] AS top
+		WITH uid, cur, collect(v)[0..2] AS priorTop
+		WITH uid, cur, (CASE WHEN cur IS NULL THEN priorTop ELSE [cur] + priorTop END)[0..2] AS top
 		UNWIND (CASE WHEN size(top) = 0 THEN [null] ELSE top END) AS v
-		RETURN uid AS unique_id, v IS NOT NULL AS has_version, ` + nodeVersionColumns
+		RETURN uid AS unique_id, v IS NOT NULL AS has_version, ` + nodeVersionColumns(true) + `
+	`
 	versResult, err := session.Run(ctx, versionsQuery, map[string]any{"ids": ids})
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryRepository.Ancestors: %w", err)
@@ -251,69 +320,125 @@ func (r *CodeVersionQueryRepository) Ancestors(ctx context.Context, uniqueID str
 		return nil, fmt.Errorf("CodeVersionQueryRepository.Ancestors: %w", err)
 	}
 
+	// metas is already most-recently-changed first — ranked, since-filtered,
+	// and capped in idsQuery before any version body was fetched — so out
+	// preserves that order by construction rather than by re-sorting on a
+	// version's own promoted_at, which (per this method's doc) is not the
+	// right metric for a reverted ancestor.
 	out := make([]codeversion.AncestorVersions, 0, len(metas))
 	for _, m := range metas {
-		versions := versByID[m.uniqueID]
-		if !since.IsZero() {
-			if len(versions) == 0 || versions[0].PromotedAt.Before(since) {
-				continue
-			}
-		}
 		out = append(out, codeversion.AncestorVersions{
 			UniqueID: m.uniqueID,
 			Depth:    m.depth,
-			Versions: versions,
+			Versions: versByID[m.uniqueID],
 		})
 	}
-
-	// Most-recently-changed first; an ancestor with no recorded version sorts
-	// last, mirroring the unknown-provenance-last convention used for node
-	// ancestry elsewhere in this repository.
-	sort.SliceStable(out, func(i, j int) bool {
-		hi, hj := len(out[i].Versions) > 0, len(out[j].Versions) > 0
-		if !hi && !hj {
-			return false
-		}
-		if !hi {
-			return false
-		}
-		if !hj {
-			return true
-		}
-		return out[i].Versions[0].PromotedAt.After(out[j].Versions[0].PromotedAt)
-	})
 	return out, nil
 }
 
-// UnitVersions walks a shared-code unit's chain, newest first.
+// UnitVersions walks a shared-code unit's chain, newest first. An unknown
+// unit_id — no :CodeUnit and no :CodeUnitVersion row — returns
+// ErrUnitNotFound; a known unit with no recorded history returns an empty
+// slice.
 func (r *CodeVersionQueryRepository) UnitVersions(ctx context.Context, unitID string, limit int32) ([]codeversion.UnitVersionView, error) {
+	byUnit, err := r.UnitVersionsBatch(ctx, []string{unitID}, limit)
+	if err != nil {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.UnitVersions: %w", err)
+	}
+	versions := byUnit[unitID]
+	if len(versions) > 0 {
+		return versions, nil
+	}
+
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+	known, err := r.unitKnown(ctx, session, unitID)
+	if err != nil {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.UnitVersions: %w", err)
+	}
+	if !known {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.UnitVersions: unit %s: %w", unitID, domain.ErrUnitNotFound)
+	}
+	return []codeversion.UnitVersionView{}, nil
+}
+
+// unitKnown reports whether unitID is a recorded shared-code unit: either it
+// has a :CodeUnit node, or at least one :CodeUnitVersion (the write path
+// always merges both together, but this checks both for the same defensive
+// reason nodeKnown does).
+func (r *CodeVersionQueryRepository) unitKnown(ctx context.Context, session neo4j.SessionWithContext, unitID string) (bool, error) {
+	result, err := session.Run(ctx, `
+		OPTIONAL MATCH (cu:CodeUnit {unit_id: $unit_id})
+		WITH count(cu) > 0 AS has_unit
+		OPTIONAL MATCH (v:CodeUnitVersion {unit_id: $unit_id})
+		WITH has_unit, count(v) > 0 AS has_version
+		RETURN has_unit OR has_version AS known
+	`, map[string]any{"unit_id": unitID})
+	if err != nil {
+		return false, err
+	}
+	if !result.Next(ctx) {
+		if err := result.Err(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	return recordBool(result.Record(), "known"), result.Err()
+}
+
+// UnitVersionsBatch is UnitVersions for many units in one round trip, each
+// capped independently at limit. It makes no known/unknown distinction —
+// every requested id that resolves to at least one version appears in the
+// result map, and one that resolves to none is simply absent — which is
+// exactly what the node-selector path in GetCodeUnitVersions needs, since
+// those ids are already known (they came from the node's own USES_CODE
+// edges). unitIDs is sorted before being sent to Cypher purely so the query
+// plan and its cost are deterministic across calls; it does not affect
+// output order, since UnitVersions above and GetCodeUnitVersions both index
+// the returned map by unit id rather than relying on row order.
+func (r *CodeVersionQueryRepository) UnitVersionsBatch(ctx context.Context, unitIDs []string, limit int32) (map[string][]codeversion.UnitVersionView, error) {
+	result := make(map[string][]codeversion.UnitVersionView, len(unitIDs))
+	if len(unitIDs) == 0 {
+		return result, nil
+	}
+	ids := make([]string, len(unitIDs))
+	copy(ids, unitIDs)
+	sort.Strings(ids)
+
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
 
 	query := `
-		OPTIONAL MATCH (cu:CodeUnit {unit_id: $unit_id})-[:CURRENT]->(cur:CodeUnitVersion)
-		WITH cur
-		MATCH (v:CodeUnitVersion {unit_id: $unit_id})
-		RETURN v.checksum AS checksum, v.source AS source, v.repo AS repo,
+		UNWIND $unit_ids AS unit_id
+		OPTIONAL MATCH (cu:CodeUnit {unit_id: unit_id})-[:CURRENT]->(cur:CodeUnitVersion)
+		WITH unit_id, cur
+		OPTIONAL MATCH (v:CodeUnitVersion {unit_id: unit_id})
+		WITH unit_id, cur, v
+		ORDER BY v.promoted_at DESC
+		WITH unit_id, cur, collect(v)[0..$limit] AS top
+		UNWIND (CASE WHEN size(top) = 0 THEN [null] ELSE top END) AS v
+		RETURN unit_id AS unit_id, v IS NOT NULL AS has_version,
+		       v.checksum AS checksum, v.source AS source, v.repo AS repo,
 		       v.commit_sha AS commit_sha, v.release_id AS release_id,
 		       v.promoted_at AS promoted_at,
-		       (cur IS NOT NULL AND cur.checksum = v.checksum) AS is_current
-		ORDER BY v.promoted_at DESC
-		LIMIT $limit
+		       (cur IS NOT NULL AND v IS NOT NULL AND cur.checksum = v.checksum) AS is_current
 	`
-	result, err := session.Run(ctx, query, map[string]any{"unit_id": unitID, "limit": int64(limit)})
+	res, err := session.Run(ctx, query, map[string]any{"unit_ids": ids, "limit": int64(limit)})
 	if err != nil {
-		return nil, fmt.Errorf("CodeVersionQueryRepository.UnitVersions: %w", err)
+		return nil, fmt.Errorf("CodeVersionQueryRepository.UnitVersionsBatch: %w", err)
 	}
-	versions := make([]codeversion.UnitVersionView, 0)
-	for result.Next(ctx) {
-		rec := result.Record()
+	for res.Next(ctx) {
+		rec := res.Record()
+		unitID, _ := recordString(rec, "unit_id")
+		if !recordBool(rec, "has_version") {
+			continue
+		}
 		checksum, _ := recordString(rec, "checksum")
 		source, _ := recordString(rec, "source")
 		repo, _ := recordString(rec, "repo")
 		commitSHA, _ := recordString(rec, "commit_sha")
 		releaseID, _ := recordString(rec, "release_id")
-		versions = append(versions, codeversion.UnitVersionView{
+		result[unitID] = append(result[unitID], codeversion.UnitVersionView{
 			UnitID:     unitID,
 			Checksum:   checksum,
 			Source:     source,
@@ -324,10 +449,10 @@ func (r *CodeVersionQueryRepository) UnitVersions(ctx context.Context, unitID st
 			IsCurrent:  recordBool(rec, "is_current"),
 		})
 	}
-	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("CodeVersionQueryRepository.UnitVersions: %w", err)
+	if err := res.Err(); err != nil {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.UnitVersionsBatch: %w", err)
 	}
-	return versions, nil
+	return result, nil
 }
 
 // UnitsForNode returns the units the node's current version uses. A node
@@ -355,15 +480,20 @@ func (r *CodeVersionQueryRepository) UnitsForNode(ctx context.Context, uniqueID 
 	return units, nil
 }
 
-// RunExecutions returns runs that executed the node, newest first. Status and
+// RunExecutions returns runs that executed the node, newest first, optionally
+// filtered server-side to one operation ("" applies no filter). Status and
 // content_hash come from the :EXECUTES edge (the code that specific run
-// executed); the rest comes from the :Run node.
-func (r *CodeVersionQueryRepository) RunExecutions(ctx context.Context, uniqueID string, limit int32) ([]codeversion.RunExecution, error) {
+// executed); the rest comes from the :Run node. An unknown unique_id returns
+// ErrNodeNotFound; a known node with no matching runs returns an empty slice
+// — the empty-result case applies the same nodeKnown check NodeVersions uses,
+// so both RPCs draw the known/unknown line identically.
+func (r *CodeVersionQueryRepository) RunExecutions(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
 
 	query := `
 		MATCH (run:Run)-[e:EXECUTES]->(t:Table {unique_id: $uid})
+		WHERE $operation = '' OR coalesce(run.operation, '') = $operation
 		RETURN run.run_id AS run_id,
 		       e.task_id AS task_id,
 		       coalesce(e.status, 'PENDING') AS status,
@@ -376,7 +506,7 @@ func (r *CodeVersionQueryRepository) RunExecutions(ctx context.Context, uniqueID
 		ORDER BY run.created_at DESC
 		LIMIT $limit
 	`
-	result, err := session.Run(ctx, query, map[string]any{"uid": uniqueID, "limit": int64(limit)})
+	result, err := session.Run(ctx, query, map[string]any{"uid": uniqueID, "limit": int64(limit), "operation": operation})
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryRepository.RunExecutions: %w", err)
 	}
@@ -387,7 +517,7 @@ func (r *CodeVersionQueryRepository) RunExecutions(ctx context.Context, uniqueID
 		taskID, _ := recordString(rec, "task_id")
 		status, _ := recordString(rec, "status")
 		scheduleName, _ := recordString(rec, "schedule_name")
-		operation, _ := recordString(rec, "operation")
+		runOperation, _ := recordString(rec, "operation")
 		imageTag, _ := recordString(rec, "image_tag")
 		contentHash, _ := recordString(rec, "content_hash")
 		runs = append(runs, codeversion.RunExecution{
@@ -395,7 +525,7 @@ func (r *CodeVersionQueryRepository) RunExecutions(ctx context.Context, uniqueID
 			TaskID:       taskID,
 			Status:       status,
 			ScheduleName: scheduleName,
-			Operation:    operation,
+			Operation:    runOperation,
 			ImageTag:     imageTag,
 			ContentHash:  contentHash,
 			CreatedAt:    recordTime(rec, "created_at"),
@@ -404,6 +534,17 @@ func (r *CodeVersionQueryRepository) RunExecutions(ctx context.Context, uniqueID
 	}
 	if err := result.Err(); err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryRepository.RunExecutions: %w", err)
+	}
+	if len(runs) > 0 {
+		return runs, nil
+	}
+
+	known, err := r.nodeKnown(ctx, session, uniqueID)
+	if err != nil {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.RunExecutions: %w", err)
+	}
+	if !known {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.RunExecutions: node %s: %w", uniqueID, domain.ErrNodeNotFound)
 	}
 	return runs, nil
 }

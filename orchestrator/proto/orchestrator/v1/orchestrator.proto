@@ -14,9 +14,13 @@ service OrchestratorQuery {
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
 
   // GetNodeVersions returns a node's recorded code-version history, newest
-  // first (ordered by promoted_at). An unknown unique_id is NOT_FOUND; a
-  // known node with no recorded history returns an empty versions list —
-  // that is a valid, non-error answer.
+  // first — ordered by when each version's code was first promoted; is_current
+  // marks the version that actually runs now. A version node is immutable, so
+  // a revert that re-points the running code at an earlier version does not
+  // change that version's position in this ordering, only which row carries
+  // is_current. An unknown unique_id is NOT_FOUND; a known node with no
+  // recorded history returns an empty versions list — that is a valid,
+  // non-error answer.
   rpc GetNodeVersions(GetNodeVersionsRequest) returns (GetNodeVersionsResponse);
   // GetNodeVersionDiff renders the diff between two named versions of one
   // node. from_seq/to_seq are stable per-node handles used to address a
@@ -25,11 +29,16 @@ service OrchestratorQuery {
   // no recorded version for, is NOT_FOUND.
   rpc GetNodeVersionDiff(GetNodeVersionDiffRequest) returns (GetNodeVersionDiffResponse);
   // GetUpstreamChanges returns the node's transitive ancestors' most recent
-  // code change, most-recently-changed first. Results are capped at the 5
-  // most-recently-changed ancestors, and each diff is independently capped
-  // at 8 KiB with truncated set on the diffs that were cut — consumers size
-  // prompts against both caps. An unknown unique_id is NOT_FOUND; a node
-  // with no changed ancestors returns an empty changes list.
+  // code change, most-recently-changed first. "Most recent" is each
+  // ancestor's effective last-change time — when a revert re-points its
+  // running code at an already-recorded version, that counts as a change at
+  // the moment of the revert, and the reported diff is the actual
+  // before/after of that revert rather than the two versions' original
+  // creation order. Results are capped at the 5 most-recently-changed
+  // ancestors, and each diff is independently capped at 8 KiB with truncated
+  // set on the diffs that were cut — consumers size prompts against both
+  // caps. An unknown unique_id is NOT_FOUND; a node with no changed ancestors
+  // returns an empty changes list.
   rpc GetUpstreamChanges(GetUpstreamChangesRequest) returns (GetUpstreamChangesResponse);
   // GetCodeUnitVersions returns a shared-code unit's version chain, newest
   // first. Exactly one of unit_id/unique_id must be set: unit_id queries one
@@ -38,9 +47,9 @@ service OrchestratorQuery {
   // is NOT_FOUND; a known unit with no recorded history returns an empty
   // versions list.
   rpc GetCodeUnitVersions(GetCodeUnitVersionsRequest) returns (GetCodeUnitVersionsResponse);
-  // GetNodeRunHistory returns runs that executed the node, newest first. An
-  // unknown unique_id is NOT_FOUND; a known node with no runs yet returns an
-  // empty runs list.
+  // GetNodeRunHistory returns runs that executed the node, newest first,
+  // optionally filtered server-side to one operation. An unknown unique_id is
+  // NOT_FOUND; a known node with no matching runs returns an empty runs list.
   rpc GetNodeRunHistory(GetNodeRunHistoryRequest) returns (GetNodeRunHistoryResponse);
 }
 
@@ -268,6 +277,14 @@ message GetNodeVersionsRequest {
   // limit bounds the number of versions returned, newest first. <= 0
   // defaults to 20; values above 200 are clamped to it.
   int32 limit = 2;
+  // include_code controls whether raw_code/compiled_code are populated.
+  // false (default): both come back "" on every returned version; every
+  // other field (hashes, config_json, provenance) is unaffected. true: full
+  // bodies are returned. A single version's compiled_code can run to 256
+  // KiB, so leave this false unless the code itself is needed — the default
+  // 20-version response can otherwise approach the transport's receive
+  // limit.
+  bool include_code = 3;
 }
 message GetNodeVersionsResponse {
   repeated VersionView versions = 1;
@@ -318,6 +335,10 @@ message GetNodeRunHistoryRequest {
   // limit bounds the number of runs returned, newest first. <= 0 defaults to
   // 20; values above 200 are clamped to it.
   int32 limit = 2;
+  // operation filters to runs of exactly this operation ("run"/"test"/
+  // "build"). "" (empty, default) applies no filter and returns every
+  // operation.
+  string operation = 3;
 }
 message GetNodeRunHistoryResponse {
   repeated RunExecution runs = 1;

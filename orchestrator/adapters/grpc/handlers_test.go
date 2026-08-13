@@ -83,11 +83,13 @@ func newHandlerWithCodeVersions(cv *fakeCodeVersionHistoryReader) *grpcadapter.Q
 }
 
 // fakeCodeVersionHistoryReader satisfies grpcadapter.CodeVersionHistoryReader.
-// It records the args the handler passed down so depth/since threading can be
-// asserted without duplicating the service's own clamping/defaulting tests.
+// It records the args the handler passed down so depth/since/include_code/
+// operation threading can be asserted without duplicating the service's own
+// clamping/defaulting tests.
 type fakeCodeVersionHistoryReader struct {
 	nodeVersions    []codeversion.VersionView
 	nodeVersionsErr error
+	gotIncludeCode  bool
 
 	diff    *codeversion.VersionDiff
 	diffErr error
@@ -102,11 +104,13 @@ type fakeCodeVersionHistoryReader struct {
 	gotUnitID       string
 	gotNodeUniqueID string
 
-	runHistory    []codeversion.RunExecution
-	runHistoryErr error
+	runHistory      []codeversion.RunExecution
+	runHistoryErr   error
+	gotRunOperation string
 }
 
-func (f *fakeCodeVersionHistoryReader) GetNodeVersions(context.Context, string, int32) ([]codeversion.VersionView, error) {
+func (f *fakeCodeVersionHistoryReader) GetNodeVersions(_ context.Context, _ string, _ int32, includeCode bool) ([]codeversion.VersionView, error) {
+	f.gotIncludeCode = includeCode
 	if f.nodeVersionsErr != nil {
 		return nil, f.nodeVersionsErr
 	}
@@ -138,7 +142,8 @@ func (f *fakeCodeVersionHistoryReader) GetCodeUnitVersions(_ context.Context, un
 	return f.unitVersions, nil
 }
 
-func (f *fakeCodeVersionHistoryReader) GetNodeRunHistory(context.Context, string, int32) ([]codeversion.RunExecution, error) {
+func (f *fakeCodeVersionHistoryReader) GetNodeRunHistory(_ context.Context, _ string, _ int32, operation string) ([]codeversion.RunExecution, error) {
+	f.gotRunOperation = operation
 	if f.runHistoryErr != nil {
 		return nil, f.runHistoryErr
 	}
@@ -208,6 +213,19 @@ func TestQueryHandler_GetNodeVersions_EmptyUniqueID_InvalidArgument(t *testing.T
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
 	_, err := h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{UniqueId: ""})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestQueryHandler_GetNodeVersions_IncludeCodePassesThrough(t *testing.T) {
+	cv := &fakeCodeVersionHistoryReader{}
+	h := newHandlerWithCodeVersions(cv)
+
+	_, err := h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{UniqueId: "n1", IncludeCode: true})
+	require.NoError(t, err)
+	assert.True(t, cv.gotIncludeCode)
+
+	_, err = h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{UniqueId: "n1", IncludeCode: false})
+	require.NoError(t, err)
+	assert.False(t, cv.gotIncludeCode)
 }
 
 // ---- GetNodeVersionDiff ----
@@ -369,6 +387,15 @@ func TestQueryHandler_GetCodeUnitVersions_UnknownUnit_NotFound(t *testing.T) {
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
+// A direct unit_id selector's not-found case is domain.ErrUnitNotFound, not
+// domain.ErrNodeNotFound — the handler must map both to NotFound.
+func TestQueryHandler_GetCodeUnitVersions_UnknownUnitID_ErrUnitNotFound_NotFound(t *testing.T) {
+	cv := &fakeCodeVersionHistoryReader{unitVersionsErr: domain.ErrUnitNotFound}
+	h := newHandlerWithCodeVersions(cv)
+	_, err := h.GetCodeUnitVersions(context.Background(), &orchestratorv1.GetCodeUnitVersionsRequest{UnitId: "ghost"})
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
 func TestQueryHandler_GetCodeUnitVersions_EmptyHistory_OK(t *testing.T) {
 	cv := &fakeCodeVersionHistoryReader{unitVersions: []codeversion.UnitVersionView{}}
 	h := newHandlerWithCodeVersions(cv)
@@ -450,6 +477,14 @@ func TestQueryHandler_GetNodeRunHistory_EmptyUniqueID_InvalidArgument(t *testing
 	h := newHandlerWithCodeVersions(&fakeCodeVersionHistoryReader{})
 	_, err := h.GetNodeRunHistory(context.Background(), &orchestratorv1.GetNodeRunHistoryRequest{UniqueId: ""})
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestQueryHandler_GetNodeRunHistory_OperationPassesThrough(t *testing.T) {
+	cv := &fakeCodeVersionHistoryReader{}
+	h := newHandlerWithCodeVersions(cv)
+	_, err := h.GetNodeRunHistory(context.Background(), &orchestratorv1.GetNodeRunHistoryRequest{UniqueId: "n1", Operation: "test"})
+	require.NoError(t, err)
+	assert.Equal(t, "test", cv.gotRunOperation)
 }
 
 func TestQueryHandler_GetRunGraph_PopulatesGenerations(t *testing.T) {

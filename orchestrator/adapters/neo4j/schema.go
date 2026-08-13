@@ -34,6 +34,11 @@ import (
 //   - code_unit_unique / code_unit_version_unique: the same identity guarantees
 //     for shared-code units (dbt macros today, Python modules later), whose ids
 //     are service-namespaced so two services' copies never collide.
+//   - code_unit_version_unit_id: backs the `unit_id`-only lookups the unit
+//     history RPCs issue (UnitVersions, and once per unit on the
+//     node-selector path) — code_unit_version_unique only covers the
+//     composite (unit_id, checksum), so without this index Neo4j plans a full
+//     :CodeUnitVersion label scan for every one of those reads.
 var schemaStatements = []string{
 	"CREATE CONSTRAINT run_id_unique IF NOT EXISTS FOR (r:Run) REQUIRE r.run_id IS UNIQUE",
 	"CREATE CONSTRAINT table_uid_unique IF NOT EXISTS FOR (t:Table) REQUIRE t.unique_id IS UNIQUE",
@@ -44,6 +49,7 @@ var schemaStatements = []string{
 	"CREATE INDEX node_version_uid IF NOT EXISTS FOR (v:NodeVersion) ON (v.unique_id)",
 	"CREATE CONSTRAINT code_unit_unique IF NOT EXISTS FOR (c:CodeUnit) REQUIRE c.unit_id IS UNIQUE",
 	"CREATE CONSTRAINT code_unit_version_unique IF NOT EXISTS FOR (v:CodeUnitVersion) REQUIRE (v.unit_id, v.checksum) IS UNIQUE",
+	"CREATE INDEX code_unit_version_unit_id IF NOT EXISTS FOR (v:CodeUnitVersion) ON (v.unit_id)",
 }
 
 // dataMigrations are idempotent DML statements applied once startup DDL is in

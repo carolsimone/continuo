@@ -1877,7 +1877,15 @@ type GetNodeVersionsRequest struct {
 	UniqueId string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
 	// limit bounds the number of versions returned, newest first. <= 0
 	// defaults to 20; values above 200 are clamped to it.
-	Limit         int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	Limit int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	// include_code controls whether raw_code/compiled_code are populated.
+	// false (default): both come back "" on every returned version; every
+	// other field (hashes, config_json, provenance) is unaffected. true: full
+	// bodies are returned. A single version's compiled_code can run to 256
+	// KiB, so leave this false unless the code itself is needed — the default
+	// 20-version response can otherwise approach the transport's receive
+	// limit.
+	IncludeCode   bool `protobuf:"varint,3,opt,name=include_code,json=includeCode,proto3" json:"include_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1924,6 +1932,13 @@ func (x *GetNodeVersionsRequest) GetLimit() int32 {
 		return x.Limit
 	}
 	return 0
+}
+
+func (x *GetNodeVersionsRequest) GetIncludeCode() bool {
+	if x != nil {
+		return x.IncludeCode
+	}
+	return false
 }
 
 type GetNodeVersionsResponse struct {
@@ -2300,7 +2315,11 @@ type GetNodeRunHistoryRequest struct {
 	UniqueId string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
 	// limit bounds the number of runs returned, newest first. <= 0 defaults to
 	// 20; values above 200 are clamped to it.
-	Limit         int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	Limit int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	// operation filters to runs of exactly this operation ("run"/"test"/
+	// "build"). "" (empty, default) applies no filter and returns every
+	// operation.
+	Operation     string `protobuf:"bytes,3,opt,name=operation,proto3" json:"operation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2347,6 +2366,13 @@ func (x *GetNodeRunHistoryRequest) GetLimit() int32 {
 		return x.Limit
 	}
 	return 0
+}
+
+func (x *GetNodeRunHistoryRequest) GetOperation() string {
+	if x != nil {
+		return x.Operation
+	}
+	return ""
 }
 
 type GetNodeRunHistoryResponse struct {
@@ -2564,10 +2590,11 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\fcontent_hash\x18\a \x01(\tR\vcontentHash\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\b \x01(\tR\tcreatedAt\x12!\n" +
-	"\fcompleted_at\x18\t \x01(\tR\vcompletedAt\"K\n" +
+	"\fcompleted_at\x18\t \x01(\tR\vcompletedAt\"n\n" +
 	"\x16GetNodeVersionsRequest\x12\x1b\n" +
 	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\"S\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12!\n" +
+	"\finclude_code\x18\x03 \x01(\bR\vincludeCode\"S\n" +
 	"\x17GetNodeVersionsResponse\x128\n" +
 	"\bversions\x18\x01 \x03(\v2\x1c.orchestrator.v1.VersionViewR\bversions\"j\n" +
 	"\x19GetNodeVersionDiffRequest\x12\x1b\n" +
@@ -2587,10 +2614,11 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\tunique_id\x18\x02 \x01(\tR\buniqueId\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\"[\n" +
 	"\x1bGetCodeUnitVersionsResponse\x12<\n" +
-	"\bversions\x18\x01 \x03(\v2 .orchestrator.v1.UnitVersionViewR\bversions\"M\n" +
+	"\bversions\x18\x01 \x03(\v2 .orchestrator.v1.UnitVersionViewR\bversions\"k\n" +
 	"\x18GetNodeRunHistoryRequest\x12\x1b\n" +
 	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\"N\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x1c\n" +
+	"\toperation\x18\x03 \x01(\tR\toperation\"N\n" +
 	"\x19GetNodeRunHistoryResponse\x121\n" +
 	"\x04runs\x18\x01 \x03(\v2\x1d.orchestrator.v1.RunExecutionR\x04runs*w\n" +
 	"\vCriticality\x12\x1b\n" +

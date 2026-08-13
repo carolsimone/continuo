@@ -141,7 +141,7 @@ func (stubDriftAwareRuns) ListActiveRunDrifts(context.Context) (*queries.ActiveR
 // stubCodeVersionHistoryReader satisfies grpcadapter.CodeVersionHistoryReader.
 type stubCodeVersionHistoryReader struct{}
 
-func (stubCodeVersionHistoryReader) GetNodeVersions(context.Context, string, int32) ([]codeversion.VersionView, error) {
+func (stubCodeVersionHistoryReader) GetNodeVersions(context.Context, string, int32, bool) ([]codeversion.VersionView, error) {
 	return nil, nil
 }
 func (stubCodeVersionHistoryReader) GetNodeVersionDiff(context.Context, string, int64, int64) (*codeversion.VersionDiff, error) {
@@ -153,6 +153,6 @@ func (stubCodeVersionHistoryReader) GetUpstreamChanges(context.Context, string, 
 func (stubCodeVersionHistoryReader) GetCodeUnitVersions(context.Context, string, string, int32) ([]codeversion.UnitVersionView, error) {
 	return nil, nil
 }
-func (stubCodeVersionHistoryReader) GetNodeRunHistory(context.Context, string, int32) ([]codeversion.RunExecution, error) {
+func (stubCodeVersionHistoryReader) GetNodeRunHistory(context.Context, string, int32, string) ([]codeversion.RunExecution, error) {
 	return nil, nil
 }
