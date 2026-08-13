@@ -49,6 +49,10 @@ func (f *fakeOrchestrator) GetNodeRunHistory(context.Context, string, int32, str
 	panic("GetNodeRunHistory should not be called in graph tests")
 }
 
+func (f *fakeOrchestrator) GetPrecedents(context.Context, string, string, string, int32, bool) (*orchestratorv1.GetPrecedentsResponse, error) {
+	panic("GetPrecedents should not be called in graph tests")
+}
+
 func (f *fakeOrchestrator) Close() error { return nil }
 
 // runGraph invokes the graph command end-to-end with the provided fake client.
