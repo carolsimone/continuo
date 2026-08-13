@@ -53,7 +53,14 @@ func NewVersionsCommand(factory OrchestratorClientFactory, cfg *config.Config, s
 		Long: `List a model node's recorded code-version history, newest first.
 
 Use when the user wants to see what code a dbt model has run over time: every
-recorded version's hashes, the release that promoted it, and the code itself.
+recorded version's hashes, the release that promoted it, and (with
+--include-code) the code itself.
+
+Newest first means ordered by when each version's code was FIRST promoted,
+not by when it last ran: a version node is immutable, so a revert to earlier
+code re-points at the version that already exists rather than moving it in
+this list. is_current marks the version that actually runs now — after a
+revert, that can be a version further down this list, not the first row.
 
 Arguments:
   <service>  The owning service name.
@@ -65,9 +72,14 @@ accepted for consistency with the other node subcommands but does not appear
 in the unique_id, matching how the orchestrator tracks version history.
 
 Flags:
-  --limit  Maximum number of versions returned, newest first. Default 20; the
-           server also applies this default when sent 0, and clamps any value
-           above 200 down to 200.
+  --limit         Maximum number of versions returned, newest first. Default
+                   20; the server also applies this default when sent 0, and
+                   clamps any value above 200 down to 200.
+  --include-code  Include raw_code/compiled_code in the response. Default
+                   false: both fields come back empty and every other field
+                   (hashes, config_json, provenance) is unaffected. A single
+                   version's compiled_code can run to 256 KiB, so leave this
+                   off unless the code itself is needed.
 
 Output (stdout, JSON):
   {"versions":[{"unique_id":string,"version_seq":number,"content_hash":string,
@@ -76,6 +88,7 @@ Output (stdout, JSON):
    "compiled_truncated":bool,"config_json":string,"repo":string,
    "commit_sha":string,"release_id":string,"promoted_at":string,
    "healed":bool,"backfilled":bool,"is_current":bool}]}
+  raw_code and compiled_code are empty unless --include-code is set.
   compiled_code, compiled_truncated, repo, commit_sha, release_id,
   promoted_at, healed, backfilled, and is_current are omitted when the
   version carries no value for them (e.g. a version with no release
@@ -86,7 +99,7 @@ Errors:
   not_found  (exit 3)  the node's unique_id is not recorded
   unavailable(exit 5)  the orchestrator service is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo node versions finance analytics orders --limit 5",
+		Example: "  continuo node versions finance analytics orders --limit 5 --include-code",
 		Annotations: map[string]string{
 			"output_schema": `{"versions":"array"}`,
 			"exit_codes":    `[0,2,3,5,6]`,
@@ -101,6 +114,7 @@ Errors:
 			schema, table := args[1], args[2]
 			uniqueID := schema + "." + table
 			limit, _ := cmd.Flags().GetInt32("limit")
+			includeCode, _ := cmd.Flags().GetBool("include-code")
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Timeout)
 			defer cancel()
@@ -111,7 +125,7 @@ Errors:
 			}
 			defer func() { _ = c.Close() }()
 
-			resp, err := c.GetNodeVersions(ctx, uniqueID, limit)
+			resp, err := c.GetNodeVersions(ctx, uniqueID, limit, includeCode)
 			if err != nil {
 				return emit(stdout, stderr, cfg.Human, output.FromGRPC(err))
 			}
@@ -123,6 +137,7 @@ Errors:
 		},
 	}
 	cmd.Flags().Int32("limit", defaultVersionsLimit, "Maximum number of versions returned, newest first (default 20, server max 200)")
+	cmd.Flags().Bool("include-code", false, "Include raw_code/compiled_code in the response (default false)")
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
 	return cmd

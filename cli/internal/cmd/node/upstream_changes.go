@@ -35,6 +35,13 @@ Use when the user wants to know what changed upstream of a failing or
 suspicious dbt model: which ancestors changed, how recently, and what their
 diff looks like.
 
+"Most recently changed" is each ancestor's EFFECTIVE last change, not a
+version's own creation time: a version node is immutable, so a revert that
+re-points an ancestor's running code at an already-recorded version still
+counts as a change at the moment of the revert, and the reported diff is that
+revert's actual before/after rather than the two versions' original creation
+order.
+
 Arguments:
   <service>  The owning service name.
   <schema>   The schema name.
@@ -53,8 +60,9 @@ Flags:
   --depth  How many hops upstream to walk. <= 0 (the default) applies the
            server's default of 3 hops. The server rejects any value above 10
            as invalid — this is a hard cap, not a client-side clamp.
-  --since  RFC3339 timestamp; ancestors whose newest version predates it are
-           excluded. Empty (the default) applies no time filter.
+  --since  RFC3339 timestamp; ancestors whose effective last change (see
+           above — a revert counts) predates it are excluded. Empty (the
+           default) applies no time filter.
 
 Output (stdout, JSON):
   {"changes":[{"unique_id":string,"depth":number,

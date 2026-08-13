@@ -12,10 +12,11 @@ import (
 // join. Each RPC records the arguments it was called with so tests can assert
 // on them without a real gRPC server.
 type fakeNodeOrchestrator struct {
-	versionsResp        *orchestratorv1.GetNodeVersionsResponse
-	versionsErr         error
-	gotVersionsUniqueID string
-	gotVersionsLimit    int32
+	versionsResp           *orchestratorv1.GetNodeVersionsResponse
+	versionsErr            error
+	gotVersionsUniqueID    string
+	gotVersionsLimit       int32
+	gotVersionsIncludeCode bool
 
 	diffResp        *orchestratorv1.GetNodeVersionDiffResponse
 	diffErr         error
@@ -35,10 +36,11 @@ type fakeNodeOrchestrator struct {
 	gotUnitsUniqueID string
 	gotUnitsLimit    int32
 
-	runHistoryResp        *orchestratorv1.GetNodeRunHistoryResponse
-	runHistoryErr         error
-	gotRunHistoryUniqueID string
-	gotRunHistoryLimit    int32
+	runHistoryResp         *orchestratorv1.GetNodeRunHistoryResponse
+	runHistoryErr          error
+	gotRunHistoryUniqueID  string
+	gotRunHistoryLimit     int32
+	gotRunHistoryOperation string
 
 	closeErr error
 }
@@ -47,8 +49,8 @@ func (f *fakeNodeOrchestrator) GetScheduleGraph(context.Context, string) (*orche
 	panic("GetScheduleGraph should not be called in node tests")
 }
 
-func (f *fakeNodeOrchestrator) GetNodeVersions(_ context.Context, uniqueID string, limit int32) (*orchestratorv1.GetNodeVersionsResponse, error) {
-	f.gotVersionsUniqueID, f.gotVersionsLimit = uniqueID, limit
+func (f *fakeNodeOrchestrator) GetNodeVersions(_ context.Context, uniqueID string, limit int32, includeCode bool) (*orchestratorv1.GetNodeVersionsResponse, error) {
+	f.gotVersionsUniqueID, f.gotVersionsLimit, f.gotVersionsIncludeCode = uniqueID, limit, includeCode
 	return f.versionsResp, f.versionsErr
 }
 
@@ -67,8 +69,8 @@ func (f *fakeNodeOrchestrator) GetCodeUnitVersions(_ context.Context, unitID, un
 	return f.unitsResp, f.unitsErr
 }
 
-func (f *fakeNodeOrchestrator) GetNodeRunHistory(_ context.Context, uniqueID string, limit int32) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
-	f.gotRunHistoryUniqueID, f.gotRunHistoryLimit = uniqueID, limit
+func (f *fakeNodeOrchestrator) GetNodeRunHistory(_ context.Context, uniqueID string, limit int32, operation string) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
+	f.gotRunHistoryUniqueID, f.gotRunHistoryLimit, f.gotRunHistoryOperation = uniqueID, limit, operation
 	return f.runHistoryResp, f.runHistoryErr
 }
 

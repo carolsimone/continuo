@@ -85,6 +85,20 @@ func TestVersions_LimitFlagIsForwarded(t *testing.T) {
 	assert.Equal(t, int32(50), fake.gotVersionsLimit)
 }
 
+func TestVersions_IncludeCodeDefaultsFalse(t *testing.T) {
+	fake := &fakeNodeOrchestrator{versionsResp: &orchestratorv1.GetNodeVersionsResponse{}}
+	_, _, exit := runVersions(t, fake, []string{"finance", "analytics", "orders"}, false)
+	assert.Equal(t, 0, exit)
+	assert.False(t, fake.gotVersionsIncludeCode)
+}
+
+func TestVersions_IncludeCodeFlagIsForwarded(t *testing.T) {
+	fake := &fakeNodeOrchestrator{versionsResp: &orchestratorv1.GetNodeVersionsResponse{}}
+	_, _, exit := runVersions(t, fake, []string{"finance", "analytics", "orders", "--include-code"}, false)
+	assert.Equal(t, 0, exit)
+	assert.True(t, fake.gotVersionsIncludeCode)
+}
+
 func TestVersions_EmptyResultIsEmptyArrayNotNull(t *testing.T) {
 	fake := &fakeNodeOrchestrator{versionsResp: &orchestratorv1.GetNodeVersionsResponse{Versions: nil}}
 	stdout, _, exit := runVersions(t, fake, []string{"finance", "analytics", "orders"}, false)

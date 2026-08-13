@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +176,22 @@ func TestHistory_OperationFlagIsForwarded(t *testing.T) {
 	assert.Equal(t, "test", payload.Runs[0]["operation"])
 }
 
+// The orchestrator enrichment call must be filtered to the same --operation
+// as the state query, so a burst of executions of a different operation
+// cannot starve the requested operation's hashes out of the orchestrator's
+// limit.
+func TestHistory_EnrichmentRequestCarriesOperation(t *testing.T) {
+	stateFake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{
+		{RunId: "run_1", TaskStatus: "succeeded", Operation: "test"},
+	}}}
+	orchFake := &fakeNodeOrchestrator{runHistoryResp: &orchestratorv1.GetNodeRunHistoryResponse{}}
+
+	_, _, exit := runHistoryWithOrchestrator(t, stateFake, orchFake, []string{"finance", "analytics", "orders", "--operation", "test"}, false)
+
+	assert.Equal(t, 0, exit)
+	assert.Equal(t, "test", orchFake.gotRunHistoryOperation)
+}
+
 func TestHistory_InvalidOperationFlagExits2(t *testing.T) {
 	fake := &fakeNodeState{}
 	stdout, _, exit := runHistory(t, fake, []string{"finance", "analytics", "orders", "--operation", "bogus"}, false)
@@ -300,4 +317,39 @@ func TestHistory_HumanModeUsesStderr(t *testing.T) {
 	assert.Empty(t, stdout)
 	assert.Contains(t, stderr, "run_1")
 	assert.Contains(t, stderr, "succeeded")
+}
+
+// Human mode must render the same orchestrator-joined hash the JSON payload
+// carries, not discard the enrichment RPC's result after fetching it.
+func TestHistory_HumanModeRendersExecutedHashColumn(t *testing.T) {
+	stateFake := &fakeNodeState{runsResp: &statev1.ListNodeRunsResponse{Runs: []*statev1.NodeRun{
+		{RunId: "run_1", TaskStatus: "succeeded"},
+		{RunId: "run_2", TaskStatus: "succeeded"}, // predates the stamp: no matching orchestrator row
+	}}}
+	orchFake := &fakeNodeOrchestrator{runHistoryResp: &orchestratorv1.GetNodeRunHistoryResponse{Runs: []*orchestratorv1.RunExecution{
+		{RunId: "run_1", ContentHash: "sha256:abcdef123456789"},
+	}}}
+
+	var outBuf, errBuf bytes.Buffer
+	cfg := &config.Config{Timeout: 2 * time.Second, Human: true}
+	cmd := NewHistoryCommand(
+		func(context.Context, string) (client.StateClient, error) { return stateFake, nil },
+		func(context.Context, string) (client.OrchestratorClient, error) { return orchFake, nil },
+		cfg, &outBuf, &errBuf,
+	)
+	cmd.SetArgs([]string{"finance", "analytics", "orders"})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	require.NoError(t, cmd.Execute())
+
+	stderr := errBuf.String()
+	assert.Contains(t, stderr, "EXECUTED_HASH", "header names the joined-hash column")
+	assert.Contains(t, stderr, "sha256:abcde", "the executed hash itself is rendered, truncated to 12 characters")
+	assert.NotContains(t, stderr, "sha256:abcdef123456789", "the full hash must be truncated, not printed verbatim")
+	assert.Contains(t, stderr, "run_1")
+	assert.Contains(t, stderr, "run_2")
+
+	lines := strings.Split(strings.TrimRight(stderr, "\n"), "\n")
+	require.Len(t, lines, 3, "header + two run rows")
+	assert.True(t, strings.HasSuffix(lines[2], "  -"), "run_2 predates the stamp: hash column renders as '-', got %q", lines[2])
 }

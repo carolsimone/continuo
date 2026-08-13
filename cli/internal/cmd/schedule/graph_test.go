@@ -29,7 +29,7 @@ func (f *fakeOrchestrator) GetScheduleGraph(_ context.Context, _ string) (*orche
 	return f.resp, f.err
 }
 
-func (f *fakeOrchestrator) GetNodeVersions(context.Context, string, int32) (*orchestratorv1.GetNodeVersionsResponse, error) {
+func (f *fakeOrchestrator) GetNodeVersions(context.Context, string, int32, bool) (*orchestratorv1.GetNodeVersionsResponse, error) {
 	panic("GetNodeVersions should not be called in graph tests")
 }
 
@@ -45,7 +45,7 @@ func (f *fakeOrchestrator) GetCodeUnitVersions(context.Context, string, string, 
 	panic("GetCodeUnitVersions should not be called in graph tests")
 }
 
-func (f *fakeOrchestrator) GetNodeRunHistory(context.Context, string, int32) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
+func (f *fakeOrchestrator) GetNodeRunHistory(context.Context, string, int32, string) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
 	panic("GetNodeRunHistory should not be called in graph tests")
 }
 
