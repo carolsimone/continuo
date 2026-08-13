@@ -72,4 +72,7 @@ type WriteResult struct {
 	// release carried may have been retired and will never reappear — so retrying
 	// only burns the delivery budget and loses that node's history.
 	GraphAhead bool
+	// RejectionsResolved counts open :Rejection nodes this write linked to a
+	// newly-current version via [:RESOLVED_BY].
+	RejectionsResolved int
 }

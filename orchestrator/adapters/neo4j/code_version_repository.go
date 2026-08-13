@@ -114,6 +114,7 @@ func (r *CodeVersionRepository) WriteVersions(
 		out.NodeVersionsCreated += batch.NodeVersionsCreated
 		out.UnitVersionsCreated += batch.UnitVersionsCreated
 		out.CurrentPointersMoved += batch.CurrentPointersMoved
+		out.RejectionsResolved += batch.RejectionsResolved
 		out.UnmatchedNodeIDs = append(out.UnmatchedNodeIDs, batch.UnmatchedNodeIDs...)
 	}
 
@@ -123,6 +124,7 @@ func (r *CodeVersionRepository) WriteVersions(
 		"node_versions_created", out.NodeVersionsCreated,
 		"unit_versions_created", out.UnitVersionsCreated,
 		"current_pointers_moved", out.CurrentPointersMoved,
+		"rejections_resolved", out.RejectionsResolved,
 		"unmatched_nodes", len(out.UnmatchedNodeIDs),
 	)
 	return out, nil
@@ -378,6 +380,31 @@ func (r *CodeVersionRepository) writeBatch(
 		// Count what the database actually did: a node whose watermark had already
 		// moved past this release is skipped by the guard.
 		out.CurrentPointersMoved = summary.Counters().RelationshipsCreated()
+
+		// The fix for a recorded failure is the first version promoted after
+		// it: link every still-open rejection of these nodes to the version
+		// that just became current. Guarded on the same watermark as the
+		// pointer, so a stale redelivery cannot claim to resolve anything.
+		linkRes, err := tx.Run(ctx, `
+			UNWIND $currents AS c
+			MATCH (t:Table {unique_id: c.unique_id})
+			WHERE t.code_version_promoted_at = $promoted_at
+			MATCH (v:NodeVersion {unique_id: c.unique_id, content_hash: c.content_hash})
+			MATCH (rej:Rejection {node_id: c.unique_id})
+			WHERE rej.at < $promoted_at AND NOT (rej)-[:RESOLVED_BY]->()
+			MERGE (rej)-[:RESOLVED_BY]->(v)
+		`, map[string]any{
+			"currents":    currents,
+			"promoted_at": promotedAt,
+		})
+		if err != nil {
+			return out, fmt.Errorf("link resolved rejections: %w", err)
+		}
+		linkSummary, err := linkRes.Consume(ctx)
+		if err != nil {
+			return out, fmt.Errorf("link resolved rejections: %w", err)
+		}
+		out.RejectionsResolved = linkSummary.Counters().RelationshipsCreated()
 	}
 
 	if err := tx.Commit(ctx); err != nil {
