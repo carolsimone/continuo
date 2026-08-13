@@ -60,7 +60,7 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 
 func newPrecedentsCommand(factory orchestratorClientFactory, cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "precedents",
+		Use:   "precedents [signature]",
 		Short: "Look up how a classified failure was rejected and fixed before",
 		Long: `Look up how a classified failure was rejected and fixed before.
 
@@ -69,8 +69,14 @@ a validation rejection: has this same failure signature — or the same
 (category, reason) pair — been seen and resolved on a prior release, and if
 so, what changed to fix it.
 
-Selectors (--signature wins when both forms are given):
-  --signature  The exact classifier signature to match.
+Arguments:
+  signature  Optional positional form of --signature. At most one positional
+             argument is accepted.
+
+Selectors (precedence: --signature, then the positional signature, then
+--category/--reason):
+  --signature  The exact classifier signature to match. Wins over a
+               positional signature when both are given.
   --category   Together with --reason, matches every rejection sharing that
                (category, reason) pair. Both must be set to use this form.
   --reason     See --category.
@@ -98,35 +104,39 @@ Output (stdout, JSON):
    "pr_state":string}]}]}
   failing_code and resolving_version.raw_code are only populated when
   --include-code is set. resolving_version is omitted when resolved is false.
+  proposals[].pr_state records the proposal's state when the PR was opened
+  (e.g. "open") — it is NOT updated when the PR is later merged or closed, so
+  it must not be read as the PR's current state.
 
 An unknown signature — or an unseen (category, reason) pair — is NOT an
 error: it returns an empty precedents list with exit 0, because "no
 precedent" is a valid answer to the question this command asks.
 
 Errors:
-  usage      (exit 2)  neither --signature nor a complete --category and
-                        --reason pair was given
+  usage      (exit 2)  more than one positional argument was given, or
+                        neither a signature (--signature or positional) nor a
+                        complete --category and --reason pair was given
   unavailable(exit 5)  the orchestrator service is unreachable
   internal   (exit 6)  unexpected server error`,
-		Example: "  continuo precedents --signature 3f9c…\n  continuo precedents --category logic --reason logic:missing_object --limit 3",
+		Example: "  continuo precedents 3f9c…\n  continuo precedents --signature 3f9c…\n  continuo precedents --category logic --reason logic:missing_object --limit 3",
 		Annotations: map[string]string{
 			"output_schema": `{"precedents":"array"}`,
 			"exit_codes":    `[0,2,5,6]`,
 		},
 		Args: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 0 {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("precedents takes no positional arguments"))
+			if len(args) > 1 {
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("precedents accepts at most one positional argument (signature)"))
 			}
-			sig, _ := cmd.Flags().GetString("signature")
+			sig := resolveSignature(cmd, args)
 			cat, _ := cmd.Flags().GetString("category")
 			rsn, _ := cmd.Flags().GetString("reason")
 			if sig == "" && (cat == "" || rsn == "") {
-				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("precedents requires --signature, or both --category and --reason"))
+				return emit(stdout, stderr, humanOutput(cmd), output.NewUsageError("precedents requires --signature, a positional signature, or both --category and --reason"))
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sig, _ := cmd.Flags().GetString("signature")
+			sig := resolveSignature(cmd, args)
 			cat, _ := cmd.Flags().GetString("category")
 			rsn, _ := cmd.Flags().GetString("reason")
 			limit, _ := cmd.Flags().GetInt32("limit")
@@ -152,7 +162,7 @@ Errors:
 			return output.EmitSuccess(stdout, map[string]any{"precedents": toPrecedentPayloads(resp.GetPrecedents())})
 		},
 	}
-	cmd.Flags().String("signature", "", "Exact classifier signature to match; wins over --category/--reason when both are given")
+	cmd.Flags().String("signature", "", "Exact classifier signature to match; wins over a positional signature and over --category/--reason when both are given")
 	cmd.Flags().String("category", "", "Together with --reason, matches rejections sharing this (category, reason) pair")
 	cmd.Flags().String("reason", "", "Together with --category, matches rejections sharing this (category, reason) pair")
 	cmd.Flags().Int32("limit", 0, "Caps the number of precedents returned; 0 applies the server default of 5, clamped server-side to a max of 20")
@@ -160,6 +170,20 @@ Errors:
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
 	return cmd
+}
+
+// resolveSignature returns the signature selector to use: the --signature
+// flag when set, otherwise the sole positional argument, otherwise "" (the
+// caller falls back to the --category/--reason selector).
+func resolveSignature(cmd *cobra.Command, args []string) string {
+	sig, _ := cmd.Flags().GetString("signature")
+	if sig != "" {
+		return sig
+	}
+	if len(args) == 1 {
+		return args[0]
+	}
+	return ""
 }
 
 func defaultOrchestratorFactory(ctx context.Context, endpoint string) (client.OrchestratorClient, error) {

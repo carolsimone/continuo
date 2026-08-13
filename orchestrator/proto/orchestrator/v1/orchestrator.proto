@@ -369,6 +369,8 @@ message PrecedentProposal {
   string proposal_id = 1;
   string pr_url = 2;
   int32 pr_number = 3;
+  // pr_state records the proposal's state when the PR was opened; it is not
+  // updated when the PR is later merged or closed.
   string pr_state = 4;
 }
 

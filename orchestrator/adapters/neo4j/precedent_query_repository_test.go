@@ -104,6 +104,30 @@ func linkPrecedentResolvedBy(
 	require.NoError(t, err)
 }
 
+// seedPrecedentCurrentPointer MERGEs a :Table and points its [:CURRENT] edge
+// at the version addressed by (unique_id, content_hash) — the same shape the
+// detail query's res_is_current comparison reads.
+func seedPrecedentCurrentPointer(
+	t *testing.T, client neo4jinfra.Neo4jClient,
+	tableUniqueID, versionUniqueID, versionContentHash string,
+) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `
+		MERGE (t:Table {unique_id: $table_uid})
+		WITH t
+		MATCH (v:NodeVersion {unique_id: $version_uid, content_hash: $hash})
+		MERGE (t)-[:CURRENT]->(v)
+	`, map[string]any{
+		"table_uid": tableUniqueID, "version_uid": versionUniqueID, "hash": versionContentHash,
+	})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+}
+
 // seedPrecedentProposal creates one :Proposal fixture linked [:PROPOSED] from
 // the given rejection.
 func seedPrecedentProposal(
@@ -231,6 +255,16 @@ func TestPrecedentReader_MatchesByCategoryReason(t *testing.T) {
 	got := []string{precedents[0].Rejection.NodeID, precedents[1].Rejection.NodeID}
 	assert.ElementsMatch(t, []string{nodeA1, nodeA2}, got)
 	assert.NotContains(t, got, nodeB, "a different category/reason must not match")
+
+	// Each row must carry its OWN signature from the graph, not the empty
+	// selector the caller passed in: sigA1 and sigA2 differ even though both
+	// share the (category, reason) pair that matched them.
+	bySignature := map[string]string{}
+	for _, p := range precedents {
+		bySignature[p.Rejection.NodeID] = p.Rejection.Signature
+	}
+	assert.Equal(t, sigA1, bySignature[nodeA1])
+	assert.Equal(t, sigA2, bySignature[nodeA2])
 }
 
 // TestPrecedentReader_LimitAppliedBeforeBodies verifies limit caps the row
@@ -264,6 +298,13 @@ func TestPrecedentReader_LimitAppliedBeforeBodies(t *testing.T) {
 	seedPrecedentVersion(t, client, node4, marker, "v4-hash", "fix4", t0.Add(time.Hour))
 	linkPrecedentResolvedBy(t, client, rel4, node4, node4, "v4-hash")
 
+	// node3's fix (v3-hash) is later superseded by a newer deployed version;
+	// node4's fix (v4-hash) is still what :CURRENT points at. This exercises
+	// both IsCurrent outcomes in one test.
+	seedPrecedentVersion(t, client, node3, marker, "v3-superseding-hash", "fix3-newer", t0.Add(2*time.Hour))
+	seedPrecedentCurrentPointer(t, client, node3, node3, "v3-superseding-hash")
+	seedPrecedentCurrentPointer(t, client, node4, node4, "v4-hash")
+
 	repo := newPrecedentReader(client)
 	precedents, err := repo.Precedents(ctx, sig, "", "", 2, true)
 	require.NoError(t, err)
@@ -271,6 +312,46 @@ func TestPrecedentReader_LimitAppliedBeforeBodies(t *testing.T) {
 
 	assert.Equal(t, node4, precedents[0].Rejection.NodeID, "resolved + newest ranks first")
 	assert.Equal(t, node3, precedents[1].Rejection.NodeID, "resolved + older ranks second, ahead of every open row")
+
+	require.NotNil(t, precedents[0].ResolvingVersion)
+	assert.True(t, precedents[0].ResolvingVersion.IsCurrent,
+		"node4's resolving version v4-hash is still what :CURRENT points at")
+	require.NotNil(t, precedents[1].ResolvingVersion)
+	assert.False(t, precedents[1].ResolvingVersion.IsCurrent,
+		"node3's resolving version v3-hash was superseded by v3-superseding-hash")
+}
+
+// TestPrecedentReader_DuplicateResolvedByEdgeIsOneRow verifies the identity
+// query dedups a rejection whose two writers each linked a [:RESOLVED_BY]
+// edge in a race (both writers' "no existing edge" guards passed before
+// either committed, so the rejection ends up with two edges to two different
+// versions). Without dedup, the rejection consumes two slots in the
+// resolved-first/newest LIMIT window and can appear twice in the response,
+// evicting a genuine precedent.
+func TestPrecedentReader_DuplicateResolvedByEdgeIsOneRow(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
+	rel, node := marker+"-rel", marker+"-node"
+
+	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+	seedPrecedentVersion(t, client, node, marker, "hash-race-a", "select race a", t0.Add(time.Hour))
+	seedPrecedentVersion(t, client, node, marker, "hash-race-b", "select race b", t0.Add(2*time.Hour))
+	linkPrecedentResolvedBy(t, client, rel, node, node, "hash-race-a")
+	linkPrecedentResolvedBy(t, client, rel, node, node, "hash-race-b")
+
+	repo := newPrecedentReader(client)
+	precedents, err := repo.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1, "two RESOLVED_BY edges on one rejection must still yield exactly one row")
+	assert.Equal(t, node, precedents[0].Rejection.NodeID)
 }
 
 // TestPrecedentReader_IncludeCodeFalseOmitsFailingCode verifies includeCode

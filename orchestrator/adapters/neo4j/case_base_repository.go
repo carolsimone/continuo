@@ -99,7 +99,7 @@ func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Prop
 		MERGE (pr:Proposal {proposal_id: $proposal_id})
 		ON CREATE SET pr.pr_url = $pr_url,
 		              pr.pr_number = $pr_number,
-		              pr.pr_state = 'open',
+		              pr.pr_state = $pr_state,
 		              pr.opened_by = $opened_by,
 		              pr.opened_at = $opened_at
 		MERGE (rej)-[:PROPOSED]->(pr)
@@ -109,6 +109,7 @@ func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Prop
 		"proposal_id": p.ProposalID,
 		"pr_url":      p.PrURL,
 		"pr_number":   p.PrNumber,
+		"pr_state":    p.PrState,
 		"opened_by":   p.OpenedBy,
 		"opened_at":   p.OpenedAt.UTC(),
 	})

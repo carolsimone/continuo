@@ -365,8 +365,10 @@ func main() {
 		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, codeVersionRepo, logger)
 
 	// remediation.requested:v1 (rejections) + remediation.pr_opened:v1
-	// (proposals) — the failure-precedent case base. Both reuse the versions
-	// path's bundle reader; orchestrator remains the sole Neo4j writer.
+	// (proposals) — the failure-precedent case base. The rejections handler
+	// reuses the versions path's bundle reader to fetch the failing code; the
+	// proposals handler needs no bundle. Orchestrator remains the sole Neo4j
+	// writer.
 	caseBaseRepo := neo4jinfra.NewCaseBaseRepository(neo4jClient, logger)
 	rejectionsHandler := handlers.NewRemediationRequestedRejectionsHandler(
 		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, caseBaseRepo, logger)

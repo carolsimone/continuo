@@ -53,10 +53,10 @@ func (r *PrecedentQueryRepository) Precedents(
 		   OR ($signature = '' AND sig.category = $category AND sig.reason = $reason)
 		MATCH (rej:Rejection)-[:HAS_SIGNATURE]->(sig)
 		OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res:NodeVersion)
-		WITH rej, res IS NOT NULL AS resolved
+		WITH rej, sig.signature AS signature, count(res) > 0 AS resolved
 		ORDER BY resolved DESC, rej.at DESC
 		LIMIT $limit
-		RETURN rej.release_id AS release_id, rej.node_id AS node_id
+		RETURN rej.release_id AS release_id, rej.node_id AS node_id, signature
 	`, map[string]any{
 		"signature": signature, "category": category, "reason": reason,
 		"limit": int64(limit),
@@ -71,8 +71,9 @@ func (r *PrecedentQueryRepository) Precedents(
 		rec := idsResult.Record()
 		rel, _ := recordString(rec, "release_id")
 		nod, _ := recordString(rec, "node_id")
+		sig, _ := recordString(rec, "signature")
 		order = append(order, key{rel, nod})
-		keys = append(keys, map[string]any{"release_id": rel, "node_id": nod})
+		keys = append(keys, map[string]any{"release_id": rel, "node_id": nod, "signature": sig})
 	}
 	if err := idsResult.Err(); err != nil {
 		return nil, fmt.Errorf("iterate precedent identities: %w", err)
@@ -91,12 +92,16 @@ func (r *PrecedentQueryRepository) Precedents(
 		OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res:NodeVersion)
 		OPTIONAL MATCH (prior:NodeVersion {unique_id: res.unique_id})
 		  WHERE prior.promoted_at < res.promoted_at
-		WITH rej, res, prior ORDER BY prior.promoted_at DESC
-		WITH rej, res, head(collect(prior)) AS prior
+		OPTIONAL MATCH (t:Table {unique_id: res.unique_id})-[:CURRENT]->(cur:NodeVersion)
+		WITH rej, k.signature AS signature, res, prior,
+		     (cur IS NOT NULL AND res IS NOT NULL AND cur.content_hash = res.content_hash) AS res_is_current
+		  ORDER BY prior.promoted_at DESC
+		WITH rej, signature, res, res_is_current, head(collect(prior)) AS prior
 		OPTIONAL MATCH (rej)-[:PROPOSED]->(p:Proposal)
-		WITH rej, res, prior,
+		WITH rej, signature, res, prior, res_is_current,
 		     collect(p {.proposal_id, .pr_url, .pr_number, .pr_state}) AS proposals
 		RETURN rej.release_id AS release_id, rej.node_id AS node_id,
+		       signature,
 		       coalesce(rej.stage, '') AS stage,
 		       coalesce(rej.category, '') AS category,
 		       coalesce(rej.reason, '') AS reason,
@@ -105,7 +110,7 @@ func (r *PrecedentQueryRepository) Precedents(
 		       rej.at AS at,
 		       `+failingCode+`
 		       coalesce(rej.content_hash, '') AS content_hash,
-		       res { .* } AS res, prior { .* } AS prior, proposals
+		       res { .* } AS res, prior { .* } AS prior, res_is_current, proposals
 	`, map[string]any{"keys": keys})
 	if err != nil {
 		return nil, fmt.Errorf("precedent detail query: %w", err)
@@ -120,7 +125,7 @@ func (r *PrecedentQueryRepository) Precedents(
 		v.Rejection.Stage, _ = recordString(rec, "stage")
 		v.Rejection.Category, _ = recordString(rec, "category")
 		v.Rejection.Reason, _ = recordString(rec, "reason")
-		v.Rejection.Signature = signature // identity query matched it; "" on category+reason lookups is acceptable
+		v.Rejection.Signature, _ = recordString(rec, "signature") // the row's own signature, not the caller's selector
 		v.Rejection.ErrorExcerpt, _ = recordString(rec, "error_excerpt")
 		v.Rejection.DBTLogURI, _ = recordString(rec, "dbt_log_uri")
 		v.Rejection.RawCode, _ = recordString(rec, "raw_code")
@@ -131,6 +136,9 @@ func (r *PrecedentQueryRepository) Precedents(
 			}
 		}
 		v.ResolvingVersion = versionViewFromProps(rec, "res")
+		if v.ResolvingVersion != nil {
+			v.ResolvingVersion.IsCurrent = recordBool(rec, "res_is_current")
+		}
 		v.PriorVersion = versionViewFromProps(rec, "prior")
 		if raw, ok := rec.Get("proposals"); ok {
 			if list, ok := raw.([]any); ok {

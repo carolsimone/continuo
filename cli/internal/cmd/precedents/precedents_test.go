@@ -190,6 +190,44 @@ func TestPrecedents_CategoryReasonSelector(t *testing.T) {
 	assert.Equal(t, "logic:missing_object", fake.gotReason)
 }
 
+func TestPrecedents_PositionalSignatureIsUsed(t *testing.T) {
+	fake := &fakePrecedentsOrchestrator{resp: &orchestratorv1.GetPrecedentsResponse{}}
+	_, _, exit := runPrecedents(t, fake, []string{"s1"}, false)
+	assert.Equal(t, 0, exit)
+	require.True(t, fake.called)
+	assert.Equal(t, "s1", fake.gotSignature)
+	assert.Equal(t, "", fake.gotCategory)
+	assert.Equal(t, "", fake.gotReason)
+}
+
+func TestPrecedents_PositionalPlusSignatureFlagPrefersFlag(t *testing.T) {
+	fake := &fakePrecedentsOrchestrator{resp: &orchestratorv1.GetPrecedentsResponse{}}
+	_, _, exit := runPrecedents(t, fake, []string{"positional-sig", "--signature", "flag-sig"}, false)
+	assert.Equal(t, 0, exit)
+	require.True(t, fake.called)
+	assert.Equal(t, "flag-sig", fake.gotSignature)
+}
+
+func TestPrecedents_TwoPositionalsExit2(t *testing.T) {
+	fake := &fakePrecedentsOrchestrator{}
+	stdout, _, exit := runPrecedents(t, fake, []string{"s1", "s2"}, false)
+	assert.Equal(t, 2, exit)
+	assert.False(t, fake.called, "no RPC call should happen when there are two positional arguments")
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
+}
+
+func TestPrecedents_NoPositionalNoSelectorExit2(t *testing.T) {
+	fake := &fakePrecedentsOrchestrator{}
+	stdout, _, exit := runPrecedents(t, fake, []string{}, false)
+	assert.Equal(t, 2, exit)
+	assert.False(t, fake.called, "no RPC call should happen when neither a positional signature nor a selector is given")
+	var env map[string]output.CLIError
+	require.NoError(t, json.Unmarshal([]byte(stdout), &env))
+	assert.Equal(t, output.CodeUsage, env["error"].Code)
+}
+
 func TestPrecedents_UnavailableExit5(t *testing.T) {
 	fake := &fakePrecedentsOrchestrator{err: status.Error(codes.Unavailable, "server down")}
 	_, _, exit := runPrecedents(t, fake, []string{"--signature", "s1"}, false)

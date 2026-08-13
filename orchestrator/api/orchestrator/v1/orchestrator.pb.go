@@ -2497,11 +2497,13 @@ func (x *GetPrecedentsRequest) GetIncludeCode() bool {
 
 // PrecedentProposal is one fix PR opened for a precedent's rejection.
 type PrecedentProposal struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ProposalId    string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
-	PrUrl         string                 `protobuf:"bytes,2,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
-	PrNumber      int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
-	PrState       string                 `protobuf:"bytes,4,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ProposalId string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
+	PrUrl      string                 `protobuf:"bytes,2,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
+	PrNumber   int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
+	// pr_state records the proposal's state when the PR was opened; it is not
+	// updated when the PR is later merged or closed.
+	PrState       string `protobuf:"bytes,4,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
