@@ -63,7 +63,7 @@ The Kubernetes `readinessProbe` points at `/healthz` and the `livenessProbe` at
 | Stream | Consumed by | Emitted when |
 |---|---|---|
 | `remediation.proposed:v1` | (approval surface) | The dispatched `Fixer` produces a `status=proposed` outcome for the node (validation, compile, seed_build, or duplicate_table). |
-| `remediation.pr_opened:v1` | (no consumer; audit seam) | `RecordPullRequest` is called; payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `opened_by`, `opened_at`. |
+| `remediation.pr_opened:v1` | `orchestrator` (group `orchestrator-remediation-pr-opened-proposals`) | `RecordPullRequest` is called; payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `opened_by`, `opened_at`. Orchestrator's case-base proposals consumer records the opened PR as a `:Proposal` node linked from the corresponding `:Rejection`. |
 | `remediation.pr_closed:v1` | (no consumer; audit seam) | The PR-outcome reconciler observes a terminal GitHub PR state and `RecordOutcome` performs the CAS `open → merged | rejected`; payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `outcome` (`merged` or `rejected`), `closed_at` (RFC 3339). `event_id` is a deterministic SHA1 UUID keyed on `release_id|node_id|attempt`, distinct from the `pr_opened` id derived from the same triple. |
 
 All events are written to `remediation_agent_outbox` inside the same transaction as the `proposal` row insert and published with a deterministic `event_id` for consumer-side dedup.
