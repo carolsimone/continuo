@@ -3,7 +3,7 @@ This is a monorepo with multiple microservices.
 
 ## Go services (8)
 * `state` — owns run lifecycle state (pending → running → finalized) and schedule records; the authoritative write-path for task and run transitions.
-* `orchestrator` — owns Neo4j topology and run projections, Postgres outbox/dedup. Consumes `node.updated:v1`, `scheduler.started:v1`, `release.promoted:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `run.finalized:v1`, `remediation.requested:v1`, `remediation.pr_opened:v1`. Produces `query.model:v1`, `schedules.loaded:v1`. Serves gRPC `OrchestratorQuery` for UI reads.
+* `orchestrator` — owns Neo4j topology and run projections, Postgres outbox/dedup. Consumes `node.updated:v1`, `scheduler.started:v1`, `release.promoted:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `trigger.promoted_seeds:v1`, `run.finalized:v1`, `schedule.cancelled:v1`, `remediation.requested:v1`, `remediation.pr_opened:v1`. Produces `query.model:v1`, `schedules.loaded:v1`. Serves gRPC `OrchestratorQuery` for UI reads.
 * `executor-controller` — schedules dbt task execution; emits K8s Job specs and publishes execution events downstream.
 * `k8s-controller` — watches Kubernetes Jobs and surfaces their terminal status back into the run lifecycle.
 * `release-controller` — manages blue/green candidate-release lifecycle; tracks the `current_prod` pointer and drives promotion/rejection.
