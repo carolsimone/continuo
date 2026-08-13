@@ -63,6 +63,22 @@ func runScalar(t *testing.T, client neo4jinfra.Neo4jClient, cypher string, param
 	return v
 }
 
+// seedNodeVersion creates one :NodeVersion fixture row. contentHash must be
+// distinct per uniqueID across a test (node_version_unique is keyed on the
+// pair), which is why every caller passes its own literal.
+func seedNodeVersion(t *testing.T, client neo4jinfra.Neo4jClient, uniqueID, marker, contentHash string, promotedAt time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx,
+		`CREATE (:NodeVersion {unique_id: $uid, content_hash: $hash, promoted_at: $at, test_marker: $m})`,
+		map[string]any{"uid": uniqueID, "hash": contentHash, "at": promotedAt, "m": marker})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+}
+
 // TestCaseBaseRepository_RecordRejectionWritesRejectionAndSignature verifies
 // that RecordRejection writes one :Rejection with all its properties, MERGEs
 // one globally-shared :ErrorSignature hub node keyed on signature, and links
@@ -219,7 +235,8 @@ func TestCaseBaseRepository_FailedEdgeOnlyWhenTableExists(t *testing.T) {
 // the late-arrival back-link: when the fix has already been promoted by the
 // time RecordRejection runs, it links [:RESOLVED_BY] to the OLDEST
 // :NodeVersion promoted after the rejection's At — not the newest — and a
-// later call must not move an already-established link.
+// later call must not move an already-established link, even when a
+// still-later version arrives that would itself rank first by promoted_at.
 func TestCaseBaseRepository_BackLinksResolvedByWhenNewerVersionExists(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
@@ -234,63 +251,62 @@ func TestCaseBaseRepository_BackLinksResolvedByWhenNewerVersionExists(t *testing
 	releaseID := marker + "-rel"
 	t0 := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 
-	seed := client.NewSession(ctx, neo4j.AccessModeWrite)
-	seedRes, err := seed.Run(ctx, `
-		CREATE (:NodeVersion {unique_id: $uid, content_hash: $h1, promoted_at: $t1, test_marker: $m})
-		CREATE (:NodeVersion {unique_id: $uid, content_hash: $h2, promoted_at: $t2, test_marker: $m})
-	`, map[string]any{
-		"uid": nodeID, "m": marker,
-		"h1": "hash-seq1", "t1": t0.Add(-time.Hour),
-		"h2": "hash-seq2", "t2": t0.Add(time.Hour),
-	})
-	require.NoError(t, err)
-	_, err = seedRes.Consume(ctx)
-	require.NoError(t, err)
-	seed.Close(ctx)
-
-	require.NoError(t, repo.RecordRejection(ctx, casebase.Rejection{
+	rejection := casebase.Rejection{
 		ReleaseID: releaseID, NodeID: nodeID, Stage: "validation",
 		Category: "cat", Reason: "reason", Signature: marker + "-sig",
 		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
-	}))
+	}
 
-	resolvedHash := runScalar(t, client, `
+	// Seed seq1 (excluded — older than At) together with seq2 AND seq3 (both
+	// newer than At) *before* the first RecordRejection call, so two
+	// candidates qualify simultaneously at MERGE time. With only one
+	// qualifying candidate present, any LIMIT 1 picks it regardless of sort
+	// direction; with two present, only `ORDER BY promoted_at ASC` — not
+	// DESC — can pick the older one.
+	seedNodeVersion(t, client, nodeID, marker, "hash-seq1", t0.Add(-time.Hour))
+	seedNodeVersion(t, client, nodeID, marker, "hash-seq2", t0.Add(time.Hour))
+	seedNodeVersion(t, client, nodeID, marker, "hash-seq3", t0.Add(2*time.Hour))
+
+	require.NoError(t, repo.RecordRejection(ctx, rejection))
+
+	resolvedByQuery := `
 		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
 		RETURN v.content_hash AS c
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID}, "c")
-	assert.Equal(t, "hash-seq2", resolvedHash, "must back-link to the OLDEST version newer than At, not any newer one")
+	`
+	resolvedByParams := map[string]any{"release_id": releaseID, "node_id": nodeID}
+	edgeCountQuery := `MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->() RETURN count(r) AS c`
 
-	edgeCount := runScalar(t, client,
-		`MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->() RETURN count(r) AS c`,
-		map[string]any{"release_id": releaseID, "node_id": nodeID}, "c")
+	resolvedHash := runScalar(t, client, resolvedByQuery, resolvedByParams, "c")
+	assert.Equal(t, "hash-seq2", resolvedHash,
+		"with seq2 and seq3 both qualifying at once, must back-link to the OLDEST of the two")
+	edgeCount := runScalar(t, client, edgeCountQuery, resolvedByParams, "c")
 	assert.EqualValues(t, 1, edgeCount, "exactly one [:RESOLVED_BY] edge")
 
-	// A third, even newer version arrives. The existing link must not move to it.
-	seed2 := client.NewSession(ctx, neo4j.AccessModeWrite)
-	seed2Res, err := seed2.Run(ctx, `
-		CREATE (:NodeVersion {unique_id: $uid, content_hash: $h3, promoted_at: $t3, test_marker: $m})
-	`, map[string]any{"uid": nodeID, "m": marker, "h3": "hash-seq3", "t3": t0.Add(2 * time.Hour)})
-	require.NoError(t, err)
-	_, err = seed2Res.Consume(ctx)
-	require.NoError(t, err)
-	seed2.Close(ctx)
+	// A redelivery of the identical rejection, with no new version, must
+	// leave the established link untouched.
+	require.NoError(t, repo.RecordRejection(ctx, rejection))
 
-	require.NoError(t, repo.RecordRejection(ctx, casebase.Rejection{
-		ReleaseID: releaseID, NodeID: nodeID, Stage: "validation",
-		Category: "cat", Reason: "reason", Signature: marker + "-sig",
-		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
-	}))
+	resolvedHashAfter := runScalar(t, client, resolvedByQuery, resolvedByParams, "c")
+	assert.Equal(t, "hash-seq2", resolvedHashAfter, "a redelivery must not move the link once resolved")
+	edgeCountAfter := runScalar(t, client, edgeCountQuery, resolvedByParams, "c")
+	assert.EqualValues(t, 1, edgeCountAfter, "still exactly one [:RESOLVED_BY] edge after redelivery")
 
-	resolvedHashAfter := runScalar(t, client, `
-		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
-		RETURN v.content_hash AS c
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID}, "c")
-	assert.Equal(t, "hash-seq2", resolvedHashAfter, "second call must not move the link once resolved")
+	// A version older than the linked seq2 — the kind an orphan/backfill
+	// write in code_version_repository.go can mint with an arbitrary
+	// promoted_at — arrives after the link is already established. It would
+	// rank first under `ORDER BY promoted_at ASC` if the query re-evaluated
+	// candidates from scratch; the `existing IS NULL` guard must keep the
+	// already-set link from moving to it, and must not add a second edge.
+	seedNodeVersion(t, client, nodeID, marker, "hash-seq4", t0.Add(30*time.Minute))
 
-	edgeCountAfter := runScalar(t, client,
-		`MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->() RETURN count(r) AS c`,
-		map[string]any{"release_id": releaseID, "node_id": nodeID}, "c")
-	assert.EqualValues(t, 1, edgeCountAfter, "still exactly one [:RESOLVED_BY] edge — no re-link")
+	require.NoError(t, repo.RecordRejection(ctx, rejection))
+
+	resolvedHashFinal := runScalar(t, client, resolvedByQuery, resolvedByParams, "c")
+	assert.Equal(t, "hash-seq2", resolvedHashFinal,
+		"the existing link must not move to a later-arriving version, even one that would rank first under ASC")
+	edgeCountFinal := runScalar(t, client, edgeCountQuery, resolvedByParams, "c")
+	assert.EqualValues(t, 1, edgeCountFinal,
+		"still exactly one [:RESOLVED_BY] edge — the existing IS NULL guard must block a second link")
 }
 
 // TestCaseBaseRepository_RecordProposalCreatesStubRejection verifies the
@@ -392,10 +408,33 @@ func TestCaseBaseRepository_RecordProposalCreatesStubRejection(t *testing.T) {
 	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID}, "c")
 	assert.EqualValues(t, 1, proposedEdges, "[:PROPOSED] edge must survive the stub being completed")
 
-	// A replayed RecordProposal must converge onto the same :Proposal node.
+	// A replayed RecordProposal must converge onto the same :Proposal node and
+	// must not disturb the :Rejection it points at. The stub fields are only
+	// ever written with ON CREATE SET, so a redelivered pr_opened event — a
+	// routine Redis consumer-group occurrence — must not flip a completed
+	// rejection back to a stub or overwrite its classified-at with the
+	// proposal's opened_at.
 	require.NoError(t, repo.RecordProposal(ctx, proposal))
 	proposalCount := runScalar(t, client,
 		`MATCH (p:Proposal {proposal_id: $proposal_id}) RETURN count(p) AS c`,
 		map[string]any{"proposal_id": proposalID}, "c")
 	assert.EqualValues(t, 1, proposalCount, "RecordProposal replay converges to one :Proposal")
+
+	afterReplayRes, err := session.Run(ctx, `
+		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
+		RETURN rej.stub AS stub, rej.at AS at
+	`, map[string]any{"release_id": releaseID, "node_id": nodeID})
+	require.NoError(t, err)
+	afterReplayRecords, err := afterReplayRes.Collect(ctx)
+	require.NoError(t, err)
+	require.Len(t, afterReplayRecords, 1)
+
+	stubAfterReplay, _ := afterReplayRecords[0].Get("stub")
+	assert.Equal(t, false, stubAfterReplay,
+		"a RecordProposal replay must not flip a completed rejection back to a stub")
+	atAfterReplay, _ := afterReplayRecords[0].Get("at")
+	atAfterReplayTime, ok := atAfterReplay.(time.Time)
+	require.True(t, ok, "at must round-trip as a time.Time, got %T", atAfterReplay)
+	assert.True(t, rej.At.Equal(atAfterReplayTime),
+		"a RecordProposal replay must not overwrite the rejection's classified-at with the proposal's opened_at")
 }
