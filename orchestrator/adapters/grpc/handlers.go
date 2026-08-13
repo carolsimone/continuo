@@ -8,6 +8,7 @@ import (
 
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/carolsimone/continuo/pkg/num"
@@ -51,17 +52,24 @@ type CodeVersionHistoryReader interface {
 	GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32, operation string) ([]codeversion.RunExecution, error)
 }
 
+// PrecedentHistoryReader serves the failure-precedent RPC. Satisfied by
+// service/queries.PrecedentQueryService.
+type PrecedentHistoryReader interface {
+	GetPrecedents(ctx context.Context, signature, category, reason string, limit int32, includeCode bool) ([]casebase.Precedent, error)
+}
+
 // QueryHandler implements the OrchestratorQuery gRPC service.
 type QueryHandler struct {
 	orchestratorv1.UnimplementedOrchestratorQueryServer
 	scheduleAndRunLists ScheduleAndRunListReader
 	driftAwareRuns      DriftAwareRunReader
 	codeVersions        CodeVersionHistoryReader
+	precedents          PrecedentHistoryReader
 	logger              *slog.Logger
 }
 
-func NewQueryHandler(scheduleAndRunLists ScheduleAndRunListReader, driftAwareRuns DriftAwareRunReader, codeVersions CodeVersionHistoryReader, logger *slog.Logger) *QueryHandler {
-	return &QueryHandler{scheduleAndRunLists: scheduleAndRunLists, driftAwareRuns: driftAwareRuns, codeVersions: codeVersions, logger: logger}
+func NewQueryHandler(scheduleAndRunLists ScheduleAndRunListReader, driftAwareRuns DriftAwareRunReader, codeVersions CodeVersionHistoryReader, precedents PrecedentHistoryReader, logger *slog.Logger) *QueryHandler {
+	return &QueryHandler{scheduleAndRunLists: scheduleAndRunLists, driftAwareRuns: driftAwareRuns, codeVersions: codeVersions, precedents: precedents, logger: logger}
 }
 
 func (h *QueryHandler) GetScheduleGraph(ctx context.Context, req *orchestratorv1.GetScheduleGraphRequest) (*orchestratorv1.GetScheduleGraphResponse, error) {
@@ -383,6 +391,48 @@ func (h *QueryHandler) GetNodeRunHistory(ctx context.Context, req *orchestratorv
 		resp.Runs = append(resp.Runs, codeRunExecutionToProto(r))
 	}
 	return resp, nil
+}
+
+func (h *QueryHandler) GetPrecedents(ctx context.Context, req *orchestratorv1.GetPrecedentsRequest) (*orchestratorv1.GetPrecedentsResponse, error) {
+	if req.Signature == "" && (req.Category == "" || req.Reason == "") {
+		return nil, status.Error(codes.InvalidArgument, "either signature, or both category and reason, are required")
+	}
+	precedents, err := h.precedents.GetPrecedents(ctx, req.Signature, req.Category, req.Reason, req.Limit, req.IncludeCode)
+	if err != nil {
+		h.logger.Error("GetPrecedents failed", "signature", req.Signature, "category", req.Category, "reason", req.Reason, "error", err)
+		return nil, status.Errorf(codes.Internal, "GetPrecedents: %v", err)
+	}
+	out := make([]*orchestratorv1.Precedent, 0, len(precedents))
+	for _, p := range precedents {
+		out = append(out, precedentToProto(p))
+	}
+	return &orchestratorv1.GetPrecedentsResponse{Precedents: out}, nil
+}
+
+func precedentToProto(p casebase.Precedent) *orchestratorv1.Precedent {
+	pb := &orchestratorv1.Precedent{
+		ReleaseId:               p.Rejection.ReleaseID,
+		NodeId:                  p.Rejection.NodeID,
+		Stage:                   p.Rejection.Stage,
+		Category:                p.Rejection.Category,
+		Reason:                  p.Rejection.Reason,
+		ErrorExcerpt:            p.Rejection.ErrorExcerpt,
+		RejectedAt:              p.Rejection.At.UTC().Format(time.RFC3339),
+		FailingCode:             p.Rejection.RawCode,
+		Resolved:                p.Resolved,
+		ResolutionDiff:          p.ResolutionDiff,
+		ResolutionDiffTruncated: p.ResolutionDiffTruncated,
+	}
+	if p.ResolvingVersion != nil {
+		pb.ResolvingVersion = codeVersionViewToProto(*p.ResolvingVersion)
+	}
+	for _, pr := range p.Proposals {
+		pb.Proposals = append(pb.Proposals, &orchestratorv1.PrecedentProposal{
+			ProposalId: pr.ProposalID, PrUrl: pr.PrURL,
+			PrNumber: int32(pr.PrNumber), PrState: pr.PrState,
+		})
+	}
+	return pb
 }
 
 // formatOptionalRFC3339 renders t as RFC3339, or "" for the zero time — the

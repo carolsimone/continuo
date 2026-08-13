@@ -410,7 +410,9 @@ func main() {
 	scheduleGraphReader := neo4jinfra.NewCachingScheduleGraphReader(queryRepo, topologyStateRepo, logger)
 	codeVersionQueryRepo := neo4jinfra.NewCodeVersionQueryRepository(neo4jClient, logger)
 	codeVersionQueries := queries.NewCodeVersionQueryService(codeVersionQueryRepo)
-	queryHandler := grpcinfra.NewQueryHandler(scheduleGraphReader, runQueries, codeVersionQueries, logger)
+	precedentQueryRepo := neo4jinfra.NewPrecedentQueryRepository(neo4jClient, logger)
+	precedentQueries := queries.NewPrecedentQueryService(precedentQueryRepo)
+	queryHandler := grpcinfra.NewQueryHandler(scheduleGraphReader, runQueries, codeVersionQueries, precedentQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)
 	if err != nil {

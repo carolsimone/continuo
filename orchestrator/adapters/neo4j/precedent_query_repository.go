@@ -13,6 +13,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
+	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -21,6 +22,8 @@ type PrecedentQueryRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
 }
+
+var _ queries.PrecedentReader = (*PrecedentQueryRepository)(nil)
 
 // NewPrecedentQueryRepository constructs a PrecedentQueryRepository backed by
 // the given Neo4j client.

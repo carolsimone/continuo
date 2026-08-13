@@ -25,7 +25,7 @@ func (s stubNodeReader) GetNode(_ context.Context, _, _, _ string) (*domain.Node
 }
 
 func TestGetNode_MapsMeta(t *testing.T) {
-	h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-model", TestCount: 0, TestCountKnown: true}}, nil, nil, testLogger())
+	h := NewQueryHandler(stubNodeReader{meta: &domain.NodeMeta{NodeType: "dbt-model", TestCount: 0, TestCountKnown: true}}, nil, nil, nil, testLogger())
 	resp, err := h.GetNode(context.Background(), &orchestratorv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "fct"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -36,7 +36,7 @@ func TestGetNode_MapsMeta(t *testing.T) {
 }
 
 func TestGetNode_NotFound(t *testing.T) {
-	h := NewQueryHandler(stubNodeReader{err: domain.ErrNodeNotFound}, nil, nil, testLogger())
+	h := NewQueryHandler(stubNodeReader{err: domain.ErrNodeNotFound}, nil, nil, nil, testLogger())
 	_, err := h.GetNode(context.Background(), &orchestratorv1.GetNodeRequest{ServiceName: "svc", SchemaName: "an", TableName: "missing"})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("want NotFound, got %v", err)
@@ -44,7 +44,7 @@ func TestGetNode_NotFound(t *testing.T) {
 }
 
 func TestGetNode_MissingArgs(t *testing.T) {
-	h := NewQueryHandler(stubNodeReader{}, nil, nil, testLogger())
+	h := NewQueryHandler(stubNodeReader{}, nil, nil, nil, testLogger())
 	_, err := h.GetNode(context.Background(), &orchestratorv1.GetNodeRequest{ServiceName: "", SchemaName: "an", TableName: "fct"})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("want InvalidArgument, got %v", err)
