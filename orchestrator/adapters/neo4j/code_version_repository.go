@@ -28,18 +28,25 @@ const versionsBatchSize = 100
 //
 // Two invariants hold the model together:
 //
-//   - A version node is immutable. Every property, :PREVIOUS included, is set
-//     under ON CREATE. A node that reverts to earlier code MERGEs onto the
-//     version that already exists; rewriting that version's :PREVIOUS would
-//     close the chain into a cycle and hang every chain walk.
+//   - A version node is immutable. Every property is set under ON CREATE. A
+//     node that reverts to earlier code MERGEs onto the version that already
+//     exists rather than writing a new one, so the graph holds exactly one
+//     version per distinct (unique_id, content_hash) ever observed. A node's
+//     versions are enumerated directly through the (:NodeVersion {unique_id})
+//     index — no fan-out edge between them is needed — and ordered by
+//     promoted_at, the wall-clock time the release that introduced each one
+//     was promoted.
 //   - Ordering is decided by a per-node watermark — code_version_promoted_at on
 //     the :Table, and on the :CodeUnit for a shared-code unit — never from a
 //     pre-write read in Go. Every matched node advances its watermark, including
-//     one whose code is unchanged, and every pointer and chain write is guarded
-//     on it inside the same statement. Writing the watermark takes the anchor
-//     node's write lock, so two replicas promoting different releases serialise:
-//     an older promotion can neither overwrite a newer pointer nor link its
-//     version as superseding newer code, while still recording its own history.
+//     one whose code is unchanged, and every pointer write is guarded on it
+//     inside the same statement. Writing the watermark takes the anchor node's
+//     write lock, so two replicas promoting different releases serialise: an
+//     older promotion can neither overwrite a newer pointer nor mark its version
+//     current over newer code, while still recording its own history.
+//     version_seq is a stable per-node handle for addressing one of a node's
+//     versions, assigned max+1 at ingestion — it is NOT an ordering, since a
+//     late-arriving older release still receives the highest value.
 type CodeVersionRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
@@ -59,15 +66,13 @@ func NewCodeVersionRepository(client Neo4jClient, logger *slog.Logger) *CodeVers
 // new enough to move the pointer is decided in the database, not here.
 type nodeState struct {
 	currentHash string
-	knownHashes map[string]struct{}
 	maxSeq      int64
 }
 
 // unitState is the same for one shared-code unit. Unit versions carry no
-// sequence number: the :PREVIOUS chain is their only ordering.
+// sequence number; ordering comes from promoted_at on the version node itself.
 type unitState struct {
 	currentChecksum string
-	knownChecksums  map[string]struct{}
 }
 
 // WriteVersions ingests one release's code versions.
@@ -152,8 +157,8 @@ func (r *CodeVersionRepository) readGraphRelease(ctx context.Context, session ne
 
 // writeBatch applies one batch of nodes in a single explicit transaction: read
 // the graph's state for the batch, decide what changed, then write the shared
-// code the changed nodes reference, the node versions themselves, their chain
-// and shared-code edges, and finally the pointer moves.
+// code the changed nodes reference, the node versions themselves, their
+// shared-code edges, and finally the pointer moves.
 func (r *CodeVersionRepository) writeBatch(
 	ctx context.Context,
 	session neo4j.SessionWithContext,
@@ -185,7 +190,6 @@ func (r *CodeVersionRepository) writeBatch(
 	// rather than written: the topology swap it trails has not created it yet.
 	var (
 		nodeParams []map[string]any
-		links      []map[string]any
 		currents   []map[string]any
 		uses       []map[string]any
 		unitIDSet  = map[string]struct{}{}
@@ -216,20 +220,8 @@ func (r *CodeVersionRepository) writeBatch(
 			continue // the graph already records this code
 		}
 
-		_, exists := st.knownHashes[n.ContentHash]
 		nodeParams = append(nodeParams, versionParams(n, st.maxSeq+1))
 
-		// :PREVIOUS is written only for a version this call creates, which is what
-		// keeps the chain acyclic across a revert. The write itself is guarded on
-		// the watermark: a late delivery of an OLDER release still records its
-		// version, but must not claim to supersede the newer code that is current.
-		if !exists && st.currentHash != "" {
-			links = append(links, map[string]any{
-				"unique_id":     n.UniqueID,
-				"content_hash":  n.ContentHash,
-				"previous_hash": st.currentHash,
-			})
-		}
 		// Whether this release is new enough to own the pointer is decided in the
 		// database under the watermark's write lock, not from this pre-write read:
 		// two replicas processing different promotions would otherwise both pass a
@@ -348,25 +340,6 @@ func (r *CodeVersionRepository) writeBatch(
 		out.NodeVersionsCreated += created
 	}
 
-	if len(links) > 0 {
-		// Guarded on the watermark: a late delivery of an older release records
-		// its version but must not link it as superseding the newer code that is
-		// already current, which would reverse the chain's ordering.
-		if _, err := r.runCounted(ctx, tx, `
-			UNWIND $links AS l
-			MATCH (t:Table {unique_id: l.unique_id})
-			WHERE t.code_version_promoted_at = $promoted_at
-			MATCH (v:NodeVersion {unique_id: l.unique_id, content_hash: l.content_hash})
-			MATCH (p:NodeVersion {unique_id: l.unique_id, content_hash: l.previous_hash})
-			MERGE (v)-[:PREVIOUS]->(p)
-		`, map[string]any{
-			"links":       links,
-			"promoted_at": promotedAt,
-		}, "chain :NodeVersion history"); err != nil {
-			return out, err
-		}
-	}
-
 	if len(uses) > 0 {
 		if _, err := r.runCounted(ctx, tx, `
 			UNWIND $uses AS u
@@ -414,8 +387,8 @@ func (r *CodeVersionRepository) writeBatch(
 }
 
 // writeUnits records the shared-code versions the batch's written nodes
-// reference, chains them, and moves their pointers. It runs before the node
-// writes so every :USES_CODE edge finds its target.
+// reference and moves their pointers. It runs before the node writes so every
+// :USES_CODE edge finds its target.
 func (r *CodeVersionRepository) writeUnits(
 	ctx context.Context,
 	tx neo4j.ExplicitTransaction,
@@ -438,7 +411,6 @@ func (r *CodeVersionRepository) writeUnits(
 
 	var (
 		unitParams   []map[string]any
-		unitLinks    []map[string]any
 		unitCurrents []map[string]any
 	)
 	for _, id := range unitIDs {
@@ -452,13 +424,6 @@ func (r *CodeVersionRepository) writeUnits(
 			"checksum": u.Checksum,
 			"source":   u.Source,
 		})
-		if _, exists := st.knownChecksums[u.Checksum]; !exists && st.currentChecksum != "" {
-			unitLinks = append(unitLinks, map[string]any{
-				"unit_id":           u.UnitID,
-				"checksum":          u.Checksum,
-				"previous_checksum": st.currentChecksum,
-			})
-		}
 		if st.currentChecksum != u.Checksum {
 			unitCurrents = append(unitCurrents, map[string]any{
 				"unit_id":  u.UnitID,
@@ -510,24 +475,6 @@ func (r *CodeVersionRepository) writeUnits(
 		return 0, err
 	}
 
-	if len(unitLinks) > 0 {
-		// Same ordering guard as the node chain: a late older release records its
-		// unit version without claiming to supersede newer source.
-		if _, err := r.runCounted(ctx, tx, `
-			UNWIND $unit_links AS l
-			MATCH (cu:CodeUnit {unit_id: l.unit_id})
-			WHERE cu.code_version_promoted_at = $promoted_at
-			MATCH (v:CodeUnitVersion {unit_id: l.unit_id, checksum: l.checksum})
-			MATCH (p:CodeUnitVersion {unit_id: l.unit_id, checksum: l.previous_checksum})
-			MERGE (v)-[:PREVIOUS]->(p)
-		`, map[string]any{
-			"unit_links":  unitLinks,
-			"promoted_at": promotedAt,
-		}, "chain :CodeUnitVersion history"); err != nil {
-			return 0, err
-		}
-	}
-
 	if len(unitCurrents) > 0 {
 		if _, err := r.runCounted(ctx, tx, `
 			UNWIND $unit_currents AS c
@@ -570,9 +517,8 @@ func versionParams(n codeversion.NodeVersion, seq int64) map[string]any {
 }
 
 // readNodeStates returns, per requested unique_id that has a :Table, the hash of
-// its current version, when that pointer was set, every hash already recorded
-// for it, and the highest sequence number in use. Ids absent from the result had
-// no :Table.
+// its current version and the highest sequence number in use. Ids absent from
+// the result had no :Table.
 func (r *CodeVersionRepository) readNodeStates(
 	ctx context.Context,
 	tx neo4j.ExplicitTransaction,
@@ -580,8 +526,8 @@ func (r *CodeVersionRepository) readNodeStates(
 ) (map[string]nodeState, error) {
 	// Only unique_id is a grouping key, so every other column stays inside an
 	// aggregate: head(collect(...)) collapses the at-most-one pointer row while
-	// collect/max fold the many version rows. collect drops nulls, so a node
-	// with no versions yields an empty list and a zero maximum.
+	// max folds the many version rows. A node with no versions yields a zero
+	// maximum.
 	res, err := tx.Run(ctx, `
 		UNWIND $unique_ids AS uid
 		MATCH (t:Table {unique_id: uid})
@@ -589,7 +535,6 @@ func (r *CodeVersionRepository) readNodeStates(
 		OPTIONAL MATCH (av:NodeVersion {unique_id: uid})
 		RETURN uid                                     AS unique_id,
 		       head(collect(DISTINCT cv.content_hash)) AS current_hash,
-		       collect(DISTINCT av.content_hash)       AS known_hashes,
 		       coalesce(max(av.version_seq), 0)        AS max_seq
 	`, map[string]any{"unique_ids": uniqueIDs})
 	if err != nil {
@@ -601,21 +546,11 @@ func (r *CodeVersionRepository) readNodeStates(
 		rec := res.Record()
 		uid, _ := recordString(rec, "unique_id")
 		hash, _ := recordString(rec, "current_hash")
-		known := make(map[string]struct{})
-		if v, ok := rec.Get("known_hashes"); ok {
-			if list, ok := v.([]any); ok {
-				for _, h := range list {
-					if s, ok := h.(string); ok {
-						known[s] = struct{}{}
-					}
-				}
-			}
-		}
 		var maxSeq int64
 		if v, ok := rec.Get("max_seq"); ok {
 			maxSeq, _ = v.(int64)
 		}
-		states[uid] = nodeState{currentHash: hash, knownHashes: known, maxSeq: maxSeq}
+		states[uid] = nodeState{currentHash: hash, maxSeq: maxSeq}
 	}
 	if err := res.Err(); err != nil {
 		return nil, fmt.Errorf("iterate node version state: %w", err)
@@ -633,10 +568,8 @@ func (r *CodeVersionRepository) readUnitStates(
 	res, err := tx.Run(ctx, `
 		UNWIND $unit_ids AS uid
 		OPTIONAL MATCH (cu:CodeUnit {unit_id: uid})-[cur:CURRENT]->(ccv:CodeUnitVersion)
-		OPTIONAL MATCH (av:CodeUnitVersion {unit_id: uid})
 		RETURN uid                                     AS unit_id,
-		       head(collect(DISTINCT ccv.checksum))    AS current_checksum,
-		       collect(DISTINCT av.checksum)           AS known_checksums
+		       head(collect(DISTINCT ccv.checksum))    AS current_checksum
 	`, map[string]any{"unit_ids": unitIDs})
 	if err != nil {
 		return nil, fmt.Errorf("read shared-code version state: %w", err)
@@ -647,17 +580,7 @@ func (r *CodeVersionRepository) readUnitStates(
 		rec := res.Record()
 		id, _ := recordString(rec, "unit_id")
 		checksum, _ := recordString(rec, "current_checksum")
-		known := make(map[string]struct{})
-		if v, ok := rec.Get("known_checksums"); ok {
-			if list, ok := v.([]any); ok {
-				for _, c := range list {
-					if s, ok := c.(string); ok {
-						known[s] = struct{}{}
-					}
-				}
-			}
-		}
-		states[id] = unitState{currentChecksum: checksum, knownChecksums: known}
+		states[id] = unitState{currentChecksum: checksum}
 	}
 	if err := res.Err(); err != nil {
 		return nil, fmt.Errorf("iterate shared-code version state: %w", err)

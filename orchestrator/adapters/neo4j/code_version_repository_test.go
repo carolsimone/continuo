@@ -143,7 +143,7 @@ func TestCodeVersionRepository_UnchangedHashWritesNothing(t *testing.T) {
 		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN count(v) AS v`, nil))
 }
 
-func TestCodeVersionRepository_ChangedHashChainsPrevious(t *testing.T) {
+func TestCodeVersionRepository_ChangedHashWritesNoPreviousEdge(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
@@ -161,16 +161,16 @@ func TestCodeVersionRepository_ChangedHashChainsPrevious(t *testing.T) {
 
 	assert.Equal(t, "sha256:v2", versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
-	assert.Equal(t, "sha256:v1", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->()-[:PREVIOUS]->(p)
-		 RETURN p.content_hash AS v`, nil))
 	assert.Equal(t, int64(2), versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.version_seq AS v`, nil))
+	assert.Equal(t, int64(0), versionScalar(t, client,
+		`MATCH (:NodeVersion {unique_id:'analytics.revenue'})-[p:PREVIOUS]->()
+		 RETURN count(p) AS v`, nil), "the retired :PREVIOUS chain must not be written")
 }
 
-// A revert must not close the chain into a cycle: the version already exists, so
-// only the pointer moves.
-func TestCodeVersionRepository_RevertMovesCurrentWithoutCreatingACycle(t *testing.T) {
+// A revert must reuse the version that already exists rather than duplicate it,
+// and must not write a :PREVIOUS edge for it.
+func TestCodeVersionRepository_RevertMovesCurrentWithoutWritingAPreviousEdge(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
@@ -192,8 +192,8 @@ func TestCodeVersionRepository_RevertMovesCurrentWithoutCreatingACycle(t *testin
 	assert.Equal(t, "sha256:v1", versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
 	assert.Equal(t, int64(0), versionScalar(t, client,
-		`MATCH (a:NodeVersion {unique_id:'analytics.revenue'})-[:PREVIOUS]->(b)-[:PREVIOUS]->(a)
-		 RETURN count(a) AS v`, nil), "no :PREVIOUS cycle")
+		`MATCH (:NodeVersion {unique_id:'analytics.revenue'})-[p:PREVIOUS]->()
+		 RETURN count(p) AS v`, nil), "the retired :PREVIOUS chain must not be written")
 	assert.Equal(t, int64(1), versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN count(v) AS v`, nil),
 		"exactly one :CURRENT edge")
@@ -251,7 +251,7 @@ func TestCodeVersionRepository_WritesSharedCodeVersionsAndUsesCodeEdges(t *testi
 		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.source AS v`, nil))
 }
 
-func TestCodeVersionRepository_SharedCodeUnitChainsOnChecksumChange(t *testing.T) {
+func TestCodeVersionRepository_SharedCodeUnitChangeWritesNoPreviousEdge(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
@@ -273,8 +273,9 @@ func TestCodeVersionRepository_SharedCodeUnitChainsOnChecksumChange(t *testing.T
 
 	assert.Equal(t, "u2", versionScalar(t, client,
 		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.checksum AS v`, nil))
-	assert.Equal(t, "u1", versionScalar(t, client,
-		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->()-[:PREVIOUS]->(p) RETURN p.checksum AS v`, nil))
+	assert.Equal(t, int64(0), versionScalar(t, client,
+		`MATCH (:CodeUnitVersion {unit_id:'svc:m1'})-[p:PREVIOUS]->()
+		 RETURN count(p) AS v`, nil), "the retired :PREVIOUS chain must not be written")
 	assert.Equal(t, int64(1), versionScalar(t, client,
 		`MATCH (c:CodeUnit {unit_id:'svc:m1'}) RETURN count(c) AS v`, nil),
 		"one :CodeUnit per unit id")
@@ -416,9 +417,9 @@ func TestCodeVersionRepository_SameHashPromotionAdvancesTheStaleGuard(t *testing
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
 }
 
-// A late delivery of an older release must not claim to supersede the newer code
-// that is already current: that would reverse the chain's supersession order.
-func TestCodeVersionRepository_OlderReleaseDoesNotChainOverNewerCode(t *testing.T) {
+// A late delivery of an older release must still record its version without
+// disturbing :CURRENT, and must not write a :PREVIOUS edge for it.
+func TestCodeVersionRepository_OlderReleaseWritesNoPreviousEdge(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
@@ -437,10 +438,9 @@ func TestCodeVersionRepository_OlderReleaseDoesNotChainOverNewerCode(t *testing.
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), versionScalar(t, client,
-		`MATCH (:NodeVersion {unique_id:'analytics.revenue', content_hash:'sha256:old'})
-		       -[:PREVIOUS]->(:NodeVersion {content_hash:'sha256:new'})
-		 RETURN count(*) AS v`, nil),
-		"the older version must not point at the newer one as its predecessor")
+		`MATCH (:NodeVersion {unique_id:'analytics.revenue'})-[p:PREVIOUS]->()
+		 RETURN count(p) AS v`, nil),
+		"the retired :PREVIOUS chain must not be written")
 	assert.Equal(t, "sha256:new", versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
 }
