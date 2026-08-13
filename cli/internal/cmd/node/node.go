@@ -15,6 +15,11 @@ import (
 // client.NewStateClient; tests pass a closure returning a fake.
 type StateClientFactory func(ctx context.Context, endpoint string) (client.StateClient, error)
 
+// OrchestratorClientFactory dials and returns an OrchestratorClient. In
+// production this is client.NewOrchestratorClient; tests pass a closure
+// returning a fake.
+type OrchestratorClientFactory func(ctx context.Context, endpoint string) (client.OrchestratorClient, error)
+
 // NewCommand builds `continuo node` and attaches subcommands. cfg is a pointer
 // that root.go fills in via PersistentPreRunE before any subcommand's RunE fires.
 func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
@@ -22,15 +27,23 @@ func NewCommand(cfg *config.Config, stdout, stderr io.Writer) *cobra.Command {
 		Use:   "node",
 		Short: "Operate on individual dbt model nodes",
 	}
-	cmd.AddCommand(NewHistoryCommand(defaultFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewHistoryCommand(defaultFactory, defaultOrchestratorFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewTriggerCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewTestCommand(defaultFactory, cfg, stdout, stderr))
 	cmd.AddCommand(NewBuildCommand(defaultFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewVersionsCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewDiffCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewUpstreamChangesCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
+	cmd.AddCommand(NewCodeUnitsCommand(defaultOrchestratorFactory, cfg, stdout, stderr))
 	return cmd
 }
 
 func defaultFactory(ctx context.Context, endpoint string) (client.StateClient, error) {
 	return client.NewStateClient(ctx, endpoint)
+}
+
+func defaultOrchestratorFactory(ctx context.Context, endpoint string) (client.OrchestratorClient, error) {
+	return client.NewOrchestratorClient(ctx, endpoint)
 }
 
 // emit writes the CLIError envelope (stdout JSON, or stderr in human mode) and

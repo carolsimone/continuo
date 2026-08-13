@@ -89,7 +89,7 @@ Internal pipeline writes to `state` are event-driven (via Redis). The only remai
 | Caller | Methods used |
 |---|---|
 | `ui-service` | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetNode` |
-| `continuo CLI` | `GetScheduleGraph` |
+| `continuo CLI` | `GetScheduleGraph`, `GetNodeVersions`, `GetNodeVersionDiff`, `GetUpstreamChanges`, `GetCodeUnitVersions`, `GetNodeRunHistory` |
 
 ### Calls to `agent-runner`
 

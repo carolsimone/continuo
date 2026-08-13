@@ -39,7 +39,7 @@ func (f *fakeAncestryReader) GetNode(context.Context, string, string, string) (*
 }
 
 func newAncestryHandler(r *fakeAncestryReader) *QueryHandler {
-	return NewQueryHandler(r, nil, slog.Default())
+	return NewQueryHandler(r, nil, nil, slog.Default())
 }
 
 func TestGetNodeAncestry_EmptyUID_InvalidArgument(t *testing.T) {
