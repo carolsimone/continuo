@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	"github.com/carolsimone/continuo/orchestrator/domain/topology"
 	"github.com/google/uuid"
@@ -57,4 +58,18 @@ type CodeVersionRepository interface {
 	// WriteVersions ingests one release's versions. It is idempotent: replaying
 	// the same input the second time writes nothing.
 	WriteVersions(ctx context.Context, in codeversion.WriteInput) (codeversion.WriteResult, error)
+}
+
+// CaseBaseRepository writes the failure-precedent case base. Both writes are
+// idempotent MERGEs on natural identity, so redeliveries and out-of-order
+// arrival converge: a proposal landing before its rejection creates a stub the
+// rejection later fills.
+type CaseBaseRepository interface {
+	// RecordRejection upserts the rejection and its signature hub node, anchors
+	// it to the node's :Table when one exists (never creating a :Table — the
+	// topology handler owns that lifecycle), and back-links [:RESOLVED_BY] when
+	// a version newer than the rejection is already recorded.
+	RecordRejection(ctx context.Context, r casebase.Rejection) error
+	// RecordProposal upserts the proposal and its [:PROPOSED] edge.
+	RecordProposal(ctx context.Context, p casebase.Proposal) error
 }
