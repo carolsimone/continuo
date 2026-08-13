@@ -113,6 +113,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		"per_node":         perNode,
 		"repo":             r.Repo(),
 		"commit_sha":       r.CommitSHA(),
+		"code_bundle_uri":  r.CodeBundleURI(),
 		"candidate_schema": CandidateSchemaFor(in.ReleaseID),
 	})
 	if err != nil {

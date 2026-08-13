@@ -123,15 +123,16 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		}
 
 		payload, err := json.Marshal(map[string]any{
-			"release_id":    in.ReleaseID,
-			"stage":         "compile",
-			"reason":        reason,
-			"error_class":   errorClass,
-			"error_detail":  errorDetail,
-			"failing_nodes": failing,
-			"per_node":      perNode,
-			"repo":          r.Repo(),
-			"commit_sha":    r.CommitSHA(),
+			"release_id":      in.ReleaseID,
+			"stage":           "compile",
+			"reason":          reason,
+			"error_class":     errorClass,
+			"error_detail":    errorDetail,
+			"failing_nodes":   failing,
+			"per_node":        perNode,
+			"repo":            r.Repo(),
+			"commit_sha":      r.CommitSHA(),
+			"code_bundle_uri": r.CodeBundleURI(),
 		})
 		if err != nil {
 			return fmt.Errorf("marshal payload: %w", err)

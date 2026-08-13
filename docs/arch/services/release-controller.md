@@ -59,7 +59,7 @@ the `livenessProbe` at `/livez` (`deploy/continuo/values.yaml`:
 | `seed.build.requested:v1` | executor-controller | A parsed release has new/changed dbt-seed nodes that need building into the candidate schema before validation. |
 | `validation.requested:v1` | executor-controller | A candidate has changed nodes to validate. |
 | `release.promoted:v1` | orchestrator | A release is promoted to production. Payload: `{release_id, topology, image_tags, repo, commit_sha, promoted_at, candidate_schema, code_bundle_uri, bootstrap}`. Each entry in `topology` carries the standard node fields plus a `changed` boolean that is `true` when the node's `content_hash` differs from the prior `current_prod` (or when `current_prod` was empty). The top-level `repo`, `commit_sha`, and `promoted_at` are the source-change provenance for this release; orchestrator stamps them onto each changed `:Table` node. `code_bundle_uri` is the release's code-bundle S3 URI carried through unchanged from the parse result; `bootstrap` reflects whether this release skipped validation. Orchestrator's version-ingestion consumer group reads the bundle at that URI and uses `bootstrap`, together with each node's `changed` flag, to mark whether a recorded code version's commit stamp is exact or approximate. |
-| `release.rejected:v1` | `remediation` (group `remediation-release-rejected`) | A release fails at any pipeline stage. The payload is uniform across all three legs: `{release_id, stage, reason, repo, commit_sha, failing_nodes, per_node[{node_id, status, dbt_log_uri, run_results_uri}]}`. `stage` is `compile`, `seed_build`, or `validation`; `reason` is `compile_failed`, `seed_build_failed`, or `validation_failed`. For the compile leg, the single `per_node` entry's `node_id` is the service name (a synthetic compile unit, not a dbt node); for validation, entries additionally carry `candidate_artifact_uri`. The remediation classifier discriminates by `stage`, fetches the dbt log from S3 for each failing entry, and emits a `remediation.requested:v1` trigger for each healable failure. |
+| `release.rejected:v1` | `remediation` (group `remediation-release-rejected`) | A release fails at any pipeline stage. The payload is uniform across all three legs: `{release_id, stage, reason, repo, commit_sha, code_bundle_uri, failing_nodes, per_node[{node_id, status, dbt_log_uri, run_results_uri}]}`. `stage` is `compile`, `seed_build`, or `validation`; `reason` is `compile_failed`, `seed_build_failed`, or `validation_failed`. For the compile leg, the single `per_node` entry's `node_id` is the service name (a synthetic compile unit, not a dbt node); for validation, entries additionally carry `candidate_artifact_uri`. The stage-less `duplicate_table` rejection also stamps `code_bundle_uri`. The field is the release's code-bundle S3 URI, carried from the release aggregate exactly as on `release.promoted:v1`: empty for a compile-stage rejection, which precedes the parse that produces the bundle, and set for duplicate_table, seed_build, and validation, all of which follow a completed parse. The remediation classifier discriminates by `stage`, fetches the dbt log from S3 for each failing entry, and emits a `remediation.requested:v1` trigger for each healable failure. |
 
 All events are written to the outbox inside the same transaction as the state change and published with an injected `outbox_entry_id` for consumer-side dedup.
 
@@ -92,7 +92,8 @@ status=failed:
      otherwise (failed_container empty or "compile") → "compile_failed"
   Reject(reason, failing_nodes=[node_id of failed entries])
   emit release.rejected:v1 {release_id, stage="compile", reason, failing_nodes,
-       per_node[{node_id, status, dbt_log_uri, run_results_uri}], repo, commit_sha}
+       per_node[{node_id, status, dbt_log_uri, run_results_uri}], repo, commit_sha,
+       code_bundle_uri=""} (empty: no parse has happened yet)
        (stage stays "compile" for all three reasons; the failed_container
         attribution is what discriminates parse_rehearsal_failed and
         artifact_upload_failed — continuo-internal, never a model defect — from
@@ -180,7 +181,8 @@ status=failed:
   RecordStageResults("seed_build", per_node results)
   Reject(reason=seed_build_failed, failing_nodes=[node_id of failed entries])
   emit release.rejected:v1 {release_id, stage="seed_build", reason, failing_nodes,
-       per_node[{node_id, status, dbt_log_uri, run_results_uri}], repo, commit_sha, candidate_schema}
+       per_node[{node_id, status, dbt_log_uri, run_results_uri}], repo, commit_sha,
+       code_bundle_uri, candidate_schema}
   advance queue
 status=ok:
   RecordStageResults("seed_build", per_node results)
@@ -217,7 +219,8 @@ all stored (and present) nodes ok and aggregate_status ok → handleValidationOK
    transition to Promoted, emit release.promoted:v1
 any stored node not ok (failed or skipped) / aggregate_status not ok → Reject(reason=validation_failed),
    emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,
-        per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_artifact_uri}], repo, commit_sha}
+        per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_artifact_uri}], repo, commit_sha,
+        code_bundle_uri}
         (per_node sourced from the stored read model, enriched with each node's candidate_artifact_uri)
 advance queue
 ```

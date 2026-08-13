@@ -938,8 +938,9 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA",
-		Status:    "ok",
+		ReleaseID:     "rA",
+		Status:        "ok",
+		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
 		Topology: release.Topology{
 			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
 				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
@@ -967,6 +968,8 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, "duplicate_table", payload["reason"])
 	assert.Equal(t, "DuplicatedTable", payload["error_class"])
+	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", payload["code_bundle_uri"],
+		"top-level code_bundle_uri must come from the release aggregate, set at parse time")
 }
 
 // The rejection payload carries the claimant a fix should target and the

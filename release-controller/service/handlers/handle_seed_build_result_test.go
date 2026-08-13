@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/pkg/streams"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -77,9 +77,10 @@ func putSeedBuildingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps,
 	}))
 
 	require.NoError(t, handlers.HandleParsedManifest(ctx(t), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: releaseID,
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:     releaseID,
+		Status:        "ok",
+		CodeBundleURI: "s3://continuo/code-bundles/" + releaseID + "/bundle.json",
+		Topology:      topo,
 	}))
 
 	r, err := store.GetRelease(releaseID)
@@ -234,9 +235,9 @@ func topoTwoSeeds() release.Topology {
 // TestHandleSeedBuildResult_Failed_EmitsUniformRejected verifies that a
 // seed-build failure emits a release.rejected:v1 outbox payload with the
 // canonical uniform shape: stage="seed_build", reason="seed_build_failed",
-// repo, commit_sha, failing_nodes, per_node with dbt_log_uri per entry, and
-// candidate_schema. It also verifies that the release aggregate records a
-// seed_build-stage PerNodeResult with Stage=="seed_build".
+// repo, commit_sha, code_bundle_uri, failing_nodes, per_node with dbt_log_uri
+// per entry, and candidate_schema. It also verifies that the release
+// aggregate records a seed_build-stage PerNodeResult with Stage=="seed_build".
 func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 	deps, store := newTestDeps(t)
 	releaseID := "rel-seed-uniform"
@@ -283,6 +284,11 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 	var commitSHA string
 	require.NoError(t, json.Unmarshal(topLevel["commit_sha"], &commitSHA))
 	assert.Equal(t, "cafebabe", commitSHA)
+
+	var codeBundleURI string
+	require.NoError(t, json.Unmarshal(topLevel["code_bundle_uri"], &codeBundleURI))
+	assert.Equal(t, "s3://continuo/code-bundles/rel-seed-uniform/bundle.json", codeBundleURI,
+		"code_bundle_uri must come from the release aggregate, set at parse time")
 
 	var failingNodes []string
 	require.NoError(t, json.Unmarshal(topLevel["failing_nodes"], &failingNodes))

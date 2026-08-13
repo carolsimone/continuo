@@ -183,7 +183,7 @@ The trigger is pointer-first: the full log stays behind `dbt_log_uri` and the fa
 | `error_signature` | Release-stable normalized dedup key (SHA-256 hex). |
 | `reason` | The matched classifier rule, e.g. `logic:missing_object`, `infra:connection_refused`. |
 | `error_excerpt` | The classifier's key error line, capped at 4 KiB; empty when no log text exists. Kept for the orchestrator's failure-precedent case base. |
-| `code_bundle_uri` | S3 URI of the rejected release's code-bundle document, threaded from `release.rejected:v1`'s top-level `code_bundle_uri`. Empty when parse never completed (compile-stage failures) — no bundle exists for those. Currently always empty: release-controller does not yet stamp this field on `release.rejected:v1`. |
+| `code_bundle_uri` | S3 URI of the rejected release's code-bundle document, threaded from `release.rejected:v1`'s top-level `code_bundle_uri`. Set for duplicate_table, validation, and seed_build rejections. Empty for compile-stage rejections, which precede the parse that produces the bundle. |
 | `dbt_log_uri` | S3 URI of the full dbt execution log. |
 | `candidate_artifact_uri` | S3 URI of the node's candidate artifact — rewritten SQL for a dbt node, a validation spec for a python node (candidate-schema form; omitted for seeds and compile failures). |
 | `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log), seed_build failures (threaded from the candidate topology's `OriginalFilePath`), and duplicate_table failures (the rename target's file, threaded from `per_node[].file_path`). Empty for validation failures. When present for seed_build or duplicate_table, the agent bypasses the Ancestry (orchestrator) lookup. |
