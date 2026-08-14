@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/carolsimone/continuo/cli/internal/cmd/node"
+	"github.com/carolsimone/continuo/cli/internal/cmd/precedents"
 	"github.com/carolsimone/continuo/cli/internal/cmd/schedule"
 	"github.com/carolsimone/continuo/cli/internal/config"
 	"github.com/carolsimone/continuo/cli/internal/output"
@@ -60,6 +61,7 @@ func executeWith(args []string, stdout, stderr io.Writer) int {
 
 	root.AddCommand(schedule.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(node.NewCommand(cfg, stdout, stderr))
+	root.AddCommand(precedents.NewCommand(cfg, stdout, stderr))
 	root.AddCommand(NewDescribeCommand(cfg, stdout, stderr))
 
 	root.SetArgs(args)

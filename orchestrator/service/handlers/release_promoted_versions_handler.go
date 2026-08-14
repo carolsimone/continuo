@@ -158,6 +158,7 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 		"node_versions_created", res.NodeVersionsCreated,
 		"unit_versions_created", res.UnitVersionsCreated,
 		"current_pointers_moved", res.CurrentPointersMoved,
+		"rejections_resolved", res.RejectionsResolved,
 	)
 	return h.complete(ctx, msgProcessingID)
 }

@@ -27,6 +27,7 @@ func wipeVersionFixtures(t *testing.T, client neo4jinfra.Neo4jClient) {
 		`MATCH (n:CodeUnitVersion) DETACH DELETE n`,
 		`MATCH (n:CodeUnit) DETACH DELETE n`,
 		`MATCH (n:Table) DETACH DELETE n`,
+		`MATCH (n:Rejection) DETACH DELETE n`,
 		`MATCH (m:Meta {key:'current_release'}) DELETE m`,
 	} {
 		res, err := s.Run(ctx, q, nil)
@@ -46,6 +47,21 @@ func seedVersionTable(t *testing.T, client neo4jinfra.Neo4jClient, uniqueID, con
 	res, err := s.Run(ctx,
 		`MERGE (t:Table {unique_id: $uid}) SET t.content_hash = $ch, t.active = true`,
 		map[string]any{"uid": uniqueID, "ch": contentHash})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+}
+
+// seedRejection creates a minimal open :Rejection fixture — no [:RESOLVED_BY]
+// edge — so it is eligible for a version write's rejection-linking query.
+func seedRejection(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeID string, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx,
+		`CREATE (:Rejection {release_id: $release_id, node_id: $node_id, at: $at})`,
+		map[string]any{"release_id": releaseID, "node_id": nodeID, "at": at})
 	require.NoError(t, err)
 	_, err = res.Consume(ctx)
 	require.NoError(t, err)
@@ -143,7 +159,7 @@ func TestCodeVersionRepository_UnchangedHashWritesNothing(t *testing.T) {
 		`MATCH (v:NodeVersion {unique_id:'analytics.revenue'}) RETURN count(v) AS v`, nil))
 }
 
-func TestCodeVersionRepository_ChangedHashChainsPrevious(t *testing.T) {
+func TestCodeVersionRepository_ChangedHashWritesNoPreviousEdge(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
@@ -161,16 +177,16 @@ func TestCodeVersionRepository_ChangedHashChainsPrevious(t *testing.T) {
 
 	assert.Equal(t, "sha256:v2", versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
-	assert.Equal(t, "sha256:v1", versionScalar(t, client,
-		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->()-[:PREVIOUS]->(p)
-		 RETURN p.content_hash AS v`, nil))
 	assert.Equal(t, int64(2), versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.version_seq AS v`, nil))
+	assert.Equal(t, int64(0), versionScalar(t, client,
+		`MATCH (:NodeVersion {unique_id:'analytics.revenue'})-[p:PREVIOUS]->()
+		 RETURN count(p) AS v`, nil), "the retired :PREVIOUS chain must not be written")
 }
 
-// A revert must not close the chain into a cycle: the version already exists, so
-// only the pointer moves.
-func TestCodeVersionRepository_RevertMovesCurrentWithoutCreatingACycle(t *testing.T) {
+// A revert must reuse the version that already exists rather than duplicate it,
+// and must not write a :PREVIOUS edge for it.
+func TestCodeVersionRepository_RevertMovesCurrentWithoutWritingAPreviousEdge(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
@@ -192,8 +208,8 @@ func TestCodeVersionRepository_RevertMovesCurrentWithoutCreatingACycle(t *testin
 	assert.Equal(t, "sha256:v1", versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
 	assert.Equal(t, int64(0), versionScalar(t, client,
-		`MATCH (a:NodeVersion {unique_id:'analytics.revenue'})-[:PREVIOUS]->(b)-[:PREVIOUS]->(a)
-		 RETURN count(a) AS v`, nil), "no :PREVIOUS cycle")
+		`MATCH (:NodeVersion {unique_id:'analytics.revenue'})-[p:PREVIOUS]->()
+		 RETURN count(p) AS v`, nil), "the retired :PREVIOUS chain must not be written")
 	assert.Equal(t, int64(1), versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN count(v) AS v`, nil),
 		"exactly one :CURRENT edge")
@@ -251,7 +267,7 @@ func TestCodeVersionRepository_WritesSharedCodeVersionsAndUsesCodeEdges(t *testi
 		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.source AS v`, nil))
 }
 
-func TestCodeVersionRepository_SharedCodeUnitChainsOnChecksumChange(t *testing.T) {
+func TestCodeVersionRepository_SharedCodeUnitChangeWritesNoPreviousEdge(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
@@ -273,8 +289,9 @@ func TestCodeVersionRepository_SharedCodeUnitChainsOnChecksumChange(t *testing.T
 
 	assert.Equal(t, "u2", versionScalar(t, client,
 		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->(v) RETURN v.checksum AS v`, nil))
-	assert.Equal(t, "u1", versionScalar(t, client,
-		`MATCH (:CodeUnit {unit_id:'svc:m1'})-[:CURRENT]->()-[:PREVIOUS]->(p) RETURN p.checksum AS v`, nil))
+	assert.Equal(t, int64(0), versionScalar(t, client,
+		`MATCH (:CodeUnitVersion {unit_id:'svc:m1'})-[p:PREVIOUS]->()
+		 RETURN count(p) AS v`, nil), "the retired :PREVIOUS chain must not be written")
 	assert.Equal(t, int64(1), versionScalar(t, client,
 		`MATCH (c:CodeUnit {unit_id:'svc:m1'}) RETURN count(c) AS v`, nil),
 		"one :CodeUnit per unit id")
@@ -416,9 +433,9 @@ func TestCodeVersionRepository_SameHashPromotionAdvancesTheStaleGuard(t *testing
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
 }
 
-// A late delivery of an older release must not claim to supersede the newer code
-// that is already current: that would reverse the chain's supersession order.
-func TestCodeVersionRepository_OlderReleaseDoesNotChainOverNewerCode(t *testing.T) {
+// A late delivery of an older release must still record its version without
+// disturbing :CURRENT, and must not write a :PREVIOUS edge for it.
+func TestCodeVersionRepository_OlderReleaseWritesNoPreviousEdge(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t)
 	wipeVersionFixtures(t, client)
@@ -437,10 +454,9 @@ func TestCodeVersionRepository_OlderReleaseDoesNotChainOverNewerCode(t *testing.
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), versionScalar(t, client,
-		`MATCH (:NodeVersion {unique_id:'analytics.revenue', content_hash:'sha256:old'})
-		       -[:PREVIOUS]->(:NodeVersion {content_hash:'sha256:new'})
-		 RETURN count(*) AS v`, nil),
-		"the older version must not point at the newer one as its predecessor")
+		`MATCH (:NodeVersion {unique_id:'analytics.revenue'})-[p:PREVIOUS]->()
+		 RETURN count(p) AS v`, nil),
+		"the retired :PREVIOUS chain must not be written")
 	assert.Equal(t, "sha256:new", versionScalar(t, client,
 		`MATCH (:Table {unique_id:'analytics.revenue'})-[:CURRENT]->(v) RETURN v.content_hash AS v`, nil))
 }
@@ -540,4 +556,141 @@ func TestCodeVersionRepository_SwapNotLandedIsNotReportedAsGraphAhead(t *testing
 	assert.False(t, res.GraphAhead, "an older topology means the swap has not landed yet")
 	assert.Equal(t, []string{"analytics.pending"}, res.UnmatchedNodeIDs)
 	assert.Equal(t, 0, res.NodeVersionsCreated, "nothing is written; the handler retries instead")
+}
+
+// A release's version write is the fix for every rejection filed against the
+// node before that release was promoted: once the version becomes current,
+// each such rejection still lacking a resolution is linked to it, a rejection
+// filed after the promotion is left alone, and an already-resolved rejection
+// keeps pointing at its original fix rather than being moved onto whatever
+// version a later release introduces.
+func TestWriteVersions_LinksOpenRejectionsToTheNewVersion(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v0")
+
+	t0 := time.Now().UTC()
+	seedRejection(t, client, "rel-early", "analytics.revenue", t0)
+	seedRejection(t, client, "rel-late", "analytics.revenue", t0.Add(2*time.Hour))
+
+	resolvedByQuery := `MATCH (:Rejection {release_id: $release_id, node_id: 'analytics.revenue'})-[:RESOLVED_BY]->(v)
+		RETURN v.content_hash AS v`
+
+	repo := newVersionRepo(client)
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", t0.Add(time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.RejectionsResolved)
+
+	assert.Equal(t, "sha256:v1", versionScalar(t, client, resolvedByQuery, map[string]any{"release_id": "rel-early"}),
+		"the rejection filed before the promotion is linked to the version that just became current")
+	assert.Nil(t, versionScalar(t, client, resolvedByQuery, map[string]any{"release_id": "rel-late"}),
+		"a rejection dated after the promotion must not be linked")
+
+	// A second, identical write reports no new links: the node's code is
+	// unchanged, so nothing is written or linked.
+	res2, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", t0.Add(time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res2.RejectionsResolved, "a replay of the same release must not report the link again")
+
+	// A later release changes the node's code again. The already-resolved
+	// rejection must keep pointing at its original fix rather than move onto
+	// the newer version, while the still-open one becomes eligible now that
+	// its own promotion has landed.
+	res3, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", t0.Add(3*time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v2")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 1, res3.RejectionsResolved, "only the still-open rejection is newly linked")
+
+	assert.Equal(t, "sha256:v1", versionScalar(t, client, resolvedByQuery, map[string]any{"release_id": "rel-early"}),
+		"an already-resolved rejection must not be moved onto a later version")
+	assert.Equal(t, int64(1), versionScalar(t, client,
+		`MATCH (:Rejection {release_id:'rel-early', node_id:'analytics.revenue'})-[r:RESOLVED_BY]->() RETURN count(r) AS v`, nil),
+		"still exactly one [:RESOLVED_BY] edge on the already-resolved rejection")
+	assert.Equal(t, "sha256:v2", versionScalar(t, client, resolvedByQuery, map[string]any{"release_id": "rel-late"}),
+		"the previously-open rejection is now linked to the version that resolved it")
+}
+
+// A release whose promoted_at trails the node's watermark must not be able to
+// claim it resolved anything, even when that promoted_at is still later than
+// the rejection's — its code is not what the node is actually running. The
+// watermark is advanced past it here by an intervening same-hash promotion,
+// which writes no version and so never runs the linking query itself,
+// leaving the rejection open for the late release to wrongly claim if the
+// watermark guard is missing.
+func TestWriteVersions_StaleRedeliveryCannotLinkAnOpenRejection(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.watermark", "sha256:base")
+
+	repo := newVersionRepo(client)
+	t0 := time.Now().UTC()
+
+	_, err := repo.WriteVersions(ctx, versionWriteInput("rel-base", t0,
+		[]codeversion.NodeVersion{nodeInput("analytics.watermark", "sha256:base")}, nil))
+	require.NoError(t, err)
+
+	seedRejection(t, client, "rel-target", "analytics.watermark", t0.Add(30*time.Minute))
+
+	// A same-hash promotion two hours later advances the node's watermark
+	// without writing a new version, so its batch never adds this node to
+	// currents and its link query never runs for it — the rejection stays
+	// open.
+	_, err = repo.WriteVersions(ctx, versionWriteInput("rel-samehash", t0.Add(2*time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.watermark", "sha256:base")}, nil))
+	require.NoError(t, err)
+
+	// A late-arriving release carries an older promoted_at than the watermark
+	// the same-hash promotion just set, and a different content hash, so it
+	// still writes a version and includes this node in currents — even though
+	// its own promoted_at (t0+1h) is after the rejection's at (t0+30m).
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-stale", t0.Add(time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.watermark", "sha256:reverted")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.CurrentPointersMoved, "the stale release must not move the pointer")
+	assert.Equal(t, 0, res.RejectionsResolved,
+		"the stale release's code is not what is running, so it must not resolve anything")
+
+	assert.Nil(t, versionScalar(t, client,
+		`MATCH (:Rejection {release_id:'rel-target', node_id:'analytics.watermark'})-[:RESOLVED_BY]->(v)
+		 RETURN v.content_hash AS v`, nil),
+		"the rejection must remain unresolved")
+}
+
+// The forward-link stamps the [:RESOLVED_BY] edge with the resolving
+// promotion's own timestamp and release, not just the link to the version
+// node. The precedent detail query needs the edge's promoted_at as its diff
+// baseline, because a reverted-to version node keeps its own, earlier
+// promoted_at forever (version nodes are immutable).
+func TestWriteVersions_StampsResolvedByEdgeWithPromotionMetadata(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v0")
+
+	t0 := time.Now().UTC()
+	seedRejection(t, client, "rel-early", "analytics.revenue", t0)
+
+	repo := newVersionRepo(client)
+	promotedAt := t0.Add(time.Hour)
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", promotedAt,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.RejectionsResolved)
+
+	edgePromotedAt := versionScalar(t, client,
+		`MATCH (:Rejection {release_id:'rel-early'})-[rb:RESOLVED_BY]->() RETURN rb.promoted_at AS v`, nil)
+	at, ok := edgePromotedAt.(time.Time)
+	require.True(t, ok, "rb.promoted_at must round-trip as a time.Time, got %T", edgePromotedAt)
+	assert.True(t, promotedAt.Equal(at), "rb.promoted_at must equal the promotion that resolved it")
+
+	assert.Equal(t, "rel-1", versionScalar(t, client,
+		`MATCH (:Rejection {release_id:'rel-early'})-[rb:RESOLVED_BY]->() RETURN rb.release_id AS v`, nil),
+		"rb.release_id must name the release that resolved it")
 }

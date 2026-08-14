@@ -258,7 +258,10 @@ func TestHandleCompileResult_UnknownReleaseDropped(t *testing.T) {
 // failure emits a release.rejected:v1 outbox payload with the canonical uniform
 // shape: stage="compile", reason="compile_failed", repo, commit_sha,
 // failing_nodes, and per_node with dbt_log_uri. It also verifies that the
-// release aggregate records a compile-stage PerNodeResult with Stage=="compile".
+// release aggregate records a compile-stage PerNodeResult with Stage=="compile",
+// and that code_bundle_uri is present but empty: a compile-stage rejection
+// precedes the parse that produces the code bundle, so the release aggregate
+// has never had a URI to carry.
 func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 	d, fakes := newTestDeps(t)
 	releaseID := "rel-1"
@@ -304,6 +307,11 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 	var commitSHA string
 	require.NoError(t, json.Unmarshal(topLevel["commit_sha"], &commitSHA))
 	assert.Equal(t, "cafebabe", commitSHA)
+
+	var codeBundleURI string
+	require.NoError(t, json.Unmarshal(topLevel["code_bundle_uri"], &codeBundleURI))
+	assert.Equal(t, "", codeBundleURI,
+		"a compile-stage rejection precedes the parse that produces the code bundle, so the URI must be empty")
 
 	var failingNodes []string
 	require.NoError(t, json.Unmarshal(topLevel["failing_nodes"], &failingNodes))

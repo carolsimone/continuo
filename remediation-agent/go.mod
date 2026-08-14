@@ -1,6 +1,6 @@
 module github.com/carolsimone/continuo/remediation-agent
 
-go 1.25.12
+go 1.25.13
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0

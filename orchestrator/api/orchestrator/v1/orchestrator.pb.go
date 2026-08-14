@@ -1298,15 +1298,18 @@ func (x *AncestorNode) GetFilePath() string {
 // VersionView is one recorded code state of a node: identity and hash parts,
 // the provenance stamp, and the code itself.
 type VersionView struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	UniqueId       string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
-	VersionSeq     int64                  `protobuf:"varint,2,opt,name=version_seq,json=versionSeq,proto3" json:"version_seq,omitempty"`
-	ContentHash    string                 `protobuf:"bytes,3,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
-	SourceHash     string                 `protobuf:"bytes,4,opt,name=source_hash,json=sourceHash,proto3" json:"source_hash,omitempty"`
-	SharedCodeHash string                 `protobuf:"bytes,5,opt,name=shared_code_hash,json=sharedCodeHash,proto3" json:"shared_code_hash,omitempty"`
-	ConfigHash     string                 `protobuf:"bytes,6,opt,name=config_hash,json=configHash,proto3" json:"config_hash,omitempty"`
-	Runtime        string                 `protobuf:"bytes,7,opt,name=runtime,proto3" json:"runtime,omitempty"`
-	RawCode        string                 `protobuf:"bytes,8,opt,name=raw_code,json=rawCode,proto3" json:"raw_code,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	// version_seq is a stable per-node handle for addressing one of a node's
+	// versions, not an ordering: it is assigned max+1 at ingestion, so a
+	// late-arriving older release receives the highest value.
+	VersionSeq     int64  `protobuf:"varint,2,opt,name=version_seq,json=versionSeq,proto3" json:"version_seq,omitempty"`
+	ContentHash    string `protobuf:"bytes,3,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
+	SourceHash     string `protobuf:"bytes,4,opt,name=source_hash,json=sourceHash,proto3" json:"source_hash,omitempty"`
+	SharedCodeHash string `protobuf:"bytes,5,opt,name=shared_code_hash,json=sharedCodeHash,proto3" json:"shared_code_hash,omitempty"`
+	ConfigHash     string `protobuf:"bytes,6,opt,name=config_hash,json=configHash,proto3" json:"config_hash,omitempty"`
+	Runtime        string `protobuf:"bytes,7,opt,name=runtime,proto3" json:"runtime,omitempty"`
+	RawCode        string `protobuf:"bytes,8,opt,name=raw_code,json=rawCode,proto3" json:"raw_code,omitempty"`
 	// compiled_code may be truncated to a server-side byte cap; compiled_truncated
 	// is set when it was cut.
 	CompiledCode      string `protobuf:"bytes,9,opt,name=compiled_code,json=compiledCode,proto3" json:"compiled_code,omitempty"`
@@ -1318,8 +1321,8 @@ type VersionView struct {
 	PromotedAt        string `protobuf:"bytes,15,opt,name=promoted_at,json=promotedAt,proto3" json:"promoted_at,omitempty"` // RFC3339
 	Healed            bool   `protobuf:"varint,16,opt,name=healed,proto3" json:"healed,omitempty"`
 	Backfilled        bool   `protobuf:"varint,17,opt,name=backfilled,proto3" json:"backfilled,omitempty"`
-	// is_current marks the version the node runs now. Exactly one version in a
-	// chain walk carries it; a node whose :Table was retired has none.
+	// is_current marks the version the node runs now: exactly one of a node's
+	// versions carries it; a node whose :Table was retired has none.
 	IsCurrent     bool `protobuf:"varint,18,opt,name=is_current,json=isCurrent,proto3" json:"is_current,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2419,6 +2422,344 @@ func (x *GetNodeRunHistoryResponse) GetRuns() []*RunExecution {
 	return nil
 }
 
+type GetPrecedentsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Signature     string                 `protobuf:"bytes,1,opt,name=signature,proto3" json:"signature,omitempty"`
+	Category      string                 `protobuf:"bytes,2,opt,name=category,proto3" json:"category,omitempty"`
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	IncludeCode   bool                   `protobuf:"varint,5,opt,name=include_code,json=includeCode,proto3" json:"include_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPrecedentsRequest) Reset() {
+	*x = GetPrecedentsRequest{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPrecedentsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPrecedentsRequest) ProtoMessage() {}
+
+func (x *GetPrecedentsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPrecedentsRequest.ProtoReflect.Descriptor instead.
+func (*GetPrecedentsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *GetPrecedentsRequest) GetSignature() string {
+	if x != nil {
+		return x.Signature
+	}
+	return ""
+}
+
+func (x *GetPrecedentsRequest) GetCategory() string {
+	if x != nil {
+		return x.Category
+	}
+	return ""
+}
+
+func (x *GetPrecedentsRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *GetPrecedentsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *GetPrecedentsRequest) GetIncludeCode() bool {
+	if x != nil {
+		return x.IncludeCode
+	}
+	return false
+}
+
+// PrecedentProposal is one fix PR opened for a precedent's rejection.
+type PrecedentProposal struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ProposalId string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
+	PrUrl      string                 `protobuf:"bytes,2,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
+	PrNumber   int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
+	// pr_state records the proposal's state when the PR was opened; it is not
+	// updated when the PR is later merged or closed.
+	PrState       string `protobuf:"bytes,4,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrecedentProposal) Reset() {
+	*x = PrecedentProposal{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrecedentProposal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrecedentProposal) ProtoMessage() {}
+
+func (x *PrecedentProposal) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrecedentProposal.ProtoReflect.Descriptor instead.
+func (*PrecedentProposal) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *PrecedentProposal) GetProposalId() string {
+	if x != nil {
+		return x.ProposalId
+	}
+	return ""
+}
+
+func (x *PrecedentProposal) GetPrUrl() string {
+	if x != nil {
+		return x.PrUrl
+	}
+	return ""
+}
+
+func (x *PrecedentProposal) GetPrNumber() int32 {
+	if x != nil {
+		return x.PrNumber
+	}
+	return 0
+}
+
+func (x *PrecedentProposal) GetPrState() string {
+	if x != nil {
+		return x.PrState
+	}
+	return ""
+}
+
+// Precedent is one past rejection with its resolution.
+type Precedent struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ReleaseId    string                 `protobuf:"bytes,1,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	NodeId       string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Stage        string                 `protobuf:"bytes,3,opt,name=stage,proto3" json:"stage,omitempty"`
+	Category     string                 `protobuf:"bytes,4,opt,name=category,proto3" json:"category,omitempty"`
+	Reason       string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	ErrorExcerpt string                 `protobuf:"bytes,6,opt,name=error_excerpt,json=errorExcerpt,proto3" json:"error_excerpt,omitempty"`
+	RejectedAt   string                 `protobuf:"bytes,7,opt,name=rejected_at,json=rejectedAt,proto3" json:"rejected_at,omitempty"` // RFC3339
+	// failing_code is the rejected candidate's raw code; "" unless
+	// include_code was set (and a bundle existed for the rejection).
+	FailingCode string `protobuf:"bytes,8,opt,name=failing_code,json=failingCode,proto3" json:"failing_code,omitempty"`
+	Resolved    bool   `protobuf:"varint,9,opt,name=resolved,proto3" json:"resolved,omitempty"`
+	// resolving_version is present when resolved; its code fields are ""
+	// unless include_code was set.
+	ResolvingVersion *VersionView `protobuf:"bytes,10,opt,name=resolving_version,json=resolvingVersion,proto3" json:"resolving_version,omitempty"`
+	// resolution_diff is a unified diff from the version the fix superseded to
+	// the resolving version; "" when unresolved or no prior version exists.
+	ResolutionDiff          string               `protobuf:"bytes,11,opt,name=resolution_diff,json=resolutionDiff,proto3" json:"resolution_diff,omitempty"`
+	ResolutionDiffTruncated bool                 `protobuf:"varint,12,opt,name=resolution_diff_truncated,json=resolutionDiffTruncated,proto3" json:"resolution_diff_truncated,omitempty"`
+	Proposals               []*PrecedentProposal `protobuf:"bytes,13,rep,name=proposals,proto3" json:"proposals,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *Precedent) Reset() {
+	*x = Precedent{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Precedent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Precedent) ProtoMessage() {}
+
+func (x *Precedent) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Precedent.ProtoReflect.Descriptor instead.
+func (*Precedent) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *Precedent) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *Precedent) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *Precedent) GetStage() string {
+	if x != nil {
+		return x.Stage
+	}
+	return ""
+}
+
+func (x *Precedent) GetCategory() string {
+	if x != nil {
+		return x.Category
+	}
+	return ""
+}
+
+func (x *Precedent) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *Precedent) GetErrorExcerpt() string {
+	if x != nil {
+		return x.ErrorExcerpt
+	}
+	return ""
+}
+
+func (x *Precedent) GetRejectedAt() string {
+	if x != nil {
+		return x.RejectedAt
+	}
+	return ""
+}
+
+func (x *Precedent) GetFailingCode() string {
+	if x != nil {
+		return x.FailingCode
+	}
+	return ""
+}
+
+func (x *Precedent) GetResolved() bool {
+	if x != nil {
+		return x.Resolved
+	}
+	return false
+}
+
+func (x *Precedent) GetResolvingVersion() *VersionView {
+	if x != nil {
+		return x.ResolvingVersion
+	}
+	return nil
+}
+
+func (x *Precedent) GetResolutionDiff() string {
+	if x != nil {
+		return x.ResolutionDiff
+	}
+	return ""
+}
+
+func (x *Precedent) GetResolutionDiffTruncated() bool {
+	if x != nil {
+		return x.ResolutionDiffTruncated
+	}
+	return false
+}
+
+func (x *Precedent) GetProposals() []*PrecedentProposal {
+	if x != nil {
+		return x.Proposals
+	}
+	return nil
+}
+
+type GetPrecedentsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Precedents    []*Precedent           `protobuf:"bytes,1,rep,name=precedents,proto3" json:"precedents,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPrecedentsResponse) Reset() {
+	*x = GetPrecedentsResponse{}
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPrecedentsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPrecedentsResponse) ProtoMessage() {}
+
+func (x *GetPrecedentsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_orchestrator_v1_orchestrator_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPrecedentsResponse.ProtoReflect.Descriptor instead.
+func (*GetPrecedentsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *GetPrecedentsResponse) GetPrecedents() []*Precedent {
+	if x != nil {
+		return x.Precedents
+	}
+	return nil
+}
+
 var File_proto_orchestrator_v1_orchestrator_proto protoreflect.FileDescriptor
 
 const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
@@ -2620,12 +2961,46 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x1c\n" +
 	"\toperation\x18\x03 \x01(\tR\toperation\"N\n" +
 	"\x19GetNodeRunHistoryResponse\x121\n" +
-	"\x04runs\x18\x01 \x03(\v2\x1d.orchestrator.v1.RunExecutionR\x04runs*w\n" +
+	"\x04runs\x18\x01 \x03(\v2\x1d.orchestrator.v1.RunExecutionR\x04runs\"\xa1\x01\n" +
+	"\x14GetPrecedentsRequest\x12\x1c\n" +
+	"\tsignature\x18\x01 \x01(\tR\tsignature\x12\x1a\n" +
+	"\bcategory\x18\x02 \x01(\tR\bcategory\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12!\n" +
+	"\finclude_code\x18\x05 \x01(\bR\vincludeCode\"\x83\x01\n" +
+	"\x11PrecedentProposal\x12\x1f\n" +
+	"\vproposal_id\x18\x01 \x01(\tR\n" +
+	"proposalId\x12\x15\n" +
+	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +
+	"\tpr_number\x18\x03 \x01(\x05R\bprNumber\x12\x19\n" +
+	"\bpr_state\x18\x04 \x01(\tR\aprState\"\x84\x04\n" +
+	"\tPrecedent\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\x01 \x01(\tR\treleaseId\x12\x17\n" +
+	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x14\n" +
+	"\x05stage\x18\x03 \x01(\tR\x05stage\x12\x1a\n" +
+	"\bcategory\x18\x04 \x01(\tR\bcategory\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\x12#\n" +
+	"\rerror_excerpt\x18\x06 \x01(\tR\ferrorExcerpt\x12\x1f\n" +
+	"\vrejected_at\x18\a \x01(\tR\n" +
+	"rejectedAt\x12!\n" +
+	"\ffailing_code\x18\b \x01(\tR\vfailingCode\x12\x1a\n" +
+	"\bresolved\x18\t \x01(\bR\bresolved\x12I\n" +
+	"\x11resolving_version\x18\n" +
+	" \x01(\v2\x1c.orchestrator.v1.VersionViewR\x10resolvingVersion\x12'\n" +
+	"\x0fresolution_diff\x18\v \x01(\tR\x0eresolutionDiff\x12:\n" +
+	"\x19resolution_diff_truncated\x18\f \x01(\bR\x17resolutionDiffTruncated\x12@\n" +
+	"\tproposals\x18\r \x03(\v2\".orchestrator.v1.PrecedentProposalR\tproposals\"S\n" +
+	"\x15GetPrecedentsResponse\x12:\n" +
+	"\n" +
+	"precedents\x18\x01 \x03(\v2\x1a.orchestrator.v1.PrecedentR\n" +
+	"precedents*w\n" +
 	"\vCriticality\x12\x1b\n" +
 	"\x17CRITICALITY_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16CRITICALITY_REGULATORY\x10\x01\x12\x14\n" +
 	"\x10CRITICALITY_CORE\x10\x02\x12\x19\n" +
-	"\x15CRITICALITY_SECONDARY\x10\x032\xea\t\n" +
+	"\x15CRITICALITY_SECONDARY\x10\x032\xca\n" +
+	"\n" +
 	"\x11OrchestratorQuery\x12g\n" +
 	"\x10GetScheduleGraph\x12(.orchestrator.v1.GetScheduleGraphRequest\x1a).orchestrator.v1.GetScheduleGraphResponse\x12O\n" +
 	"\bListRuns\x12 .orchestrator.v1.ListRunsRequest\x1a!.orchestrator.v1.ListRunsResponse\x12X\n" +
@@ -2638,7 +3013,8 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\x12GetNodeVersionDiff\x12*.orchestrator.v1.GetNodeVersionDiffRequest\x1a+.orchestrator.v1.GetNodeVersionDiffResponse\x12m\n" +
 	"\x12GetUpstreamChanges\x12*.orchestrator.v1.GetUpstreamChangesRequest\x1a+.orchestrator.v1.GetUpstreamChangesResponse\x12p\n" +
 	"\x13GetCodeUnitVersions\x12+.orchestrator.v1.GetCodeUnitVersionsRequest\x1a,.orchestrator.v1.GetCodeUnitVersionsResponse\x12j\n" +
-	"\x11GetNodeRunHistory\x12).orchestrator.v1.GetNodeRunHistoryRequest\x1a*.orchestrator.v1.GetNodeRunHistoryResponseBQZOgithub.com/carolsimone/continuo/orchestrator/api/orchestrator/v1;orchestratorv1b\x06proto3"
+	"\x11GetNodeRunHistory\x12).orchestrator.v1.GetNodeRunHistoryRequest\x1a*.orchestrator.v1.GetNodeRunHistoryResponse\x12^\n" +
+	"\rGetPrecedents\x12%.orchestrator.v1.GetPrecedentsRequest\x1a&.orchestrator.v1.GetPrecedentsResponseBQZOgithub.com/carolsimone/continuo/orchestrator/api/orchestrator/v1;orchestratorv1b\x06proto3"
 
 var (
 	file_proto_orchestrator_v1_orchestrator_proto_rawDescOnce sync.Once
@@ -2653,7 +3029,7 @@ func file_proto_orchestrator_v1_orchestrator_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_orchestrator_v1_orchestrator_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_proto_orchestrator_v1_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_proto_orchestrator_v1_orchestrator_proto_goTypes = []any{
 	(Criticality)(0),                       // 0: orchestrator.v1.Criticality
 	(*TableNode)(nil),                      // 1: orchestrator.v1.TableNode
@@ -2691,12 +3067,16 @@ var file_proto_orchestrator_v1_orchestrator_proto_goTypes = []any{
 	(*GetCodeUnitVersionsResponse)(nil),    // 33: orchestrator.v1.GetCodeUnitVersionsResponse
 	(*GetNodeRunHistoryRequest)(nil),       // 34: orchestrator.v1.GetNodeRunHistoryRequest
 	(*GetNodeRunHistoryResponse)(nil),      // 35: orchestrator.v1.GetNodeRunHistoryResponse
-	(*timestamppb.Timestamp)(nil),          // 36: google.protobuf.Timestamp
+	(*GetPrecedentsRequest)(nil),           // 36: orchestrator.v1.GetPrecedentsRequest
+	(*PrecedentProposal)(nil),              // 37: orchestrator.v1.PrecedentProposal
+	(*Precedent)(nil),                      // 38: orchestrator.v1.Precedent
+	(*GetPrecedentsResponse)(nil),          // 39: orchestrator.v1.GetPrecedentsResponse
+	(*timestamppb.Timestamp)(nil),          // 40: google.protobuf.Timestamp
 }
 var file_proto_orchestrator_v1_orchestrator_proto_depIdxs = []int32{
 	0,  // 0: orchestrator.v1.TableNode.criticality:type_name -> orchestrator.v1.Criticality
-	36, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
-	36, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
+	40, // 1: orchestrator.v1.TableNode.last_updated_at:type_name -> google.protobuf.Timestamp
+	40, // 2: orchestrator.v1.TableNode.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 3: orchestrator.v1.GetScheduleGraphResponse.nodes:type_name -> orchestrator.v1.TableNode
 	4,  // 4: orchestrator.v1.GetScheduleGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
 	9,  // 5: orchestrator.v1.ListRunsResponse.runs:type_name -> orchestrator.v1.RunSummary
@@ -2704,9 +3084,9 @@ var file_proto_orchestrator_v1_orchestrator_proto_depIdxs = []int32{
 	4,  // 7: orchestrator.v1.GetRunGraphResponse.edges:type_name -> orchestrator.v1.GraphEdge
 	14, // 8: orchestrator.v1.ListActiveRunDriftsResponse.active_runs:type_name -> orchestrator.v1.ActiveRunDrift
 	17, // 9: orchestrator.v1.ListScheduleTopologiesResponse.schedules:type_name -> orchestrator.v1.ScheduleTopologySummary
-	36, // 10: orchestrator.v1.ScheduleTopologySummary.last_updated_at:type_name -> google.protobuf.Timestamp
+	40, // 10: orchestrator.v1.ScheduleTopologySummary.last_updated_at:type_name -> google.protobuf.Timestamp
 	20, // 11: orchestrator.v1.GetNodeAncestryResponse.ancestors:type_name -> orchestrator.v1.AncestorNode
-	36, // 12: orchestrator.v1.AncestorNode.last_changed_at:type_name -> google.protobuf.Timestamp
+	40, // 12: orchestrator.v1.AncestorNode.last_changed_at:type_name -> google.protobuf.Timestamp
 	21, // 13: orchestrator.v1.VersionDiff.from:type_name -> orchestrator.v1.VersionView
 	21, // 14: orchestrator.v1.VersionDiff.to:type_name -> orchestrator.v1.VersionView
 	22, // 15: orchestrator.v1.UpstreamChange.diff:type_name -> orchestrator.v1.VersionDiff
@@ -2715,35 +3095,40 @@ var file_proto_orchestrator_v1_orchestrator_proto_depIdxs = []int32{
 	23, // 18: orchestrator.v1.GetUpstreamChangesResponse.changes:type_name -> orchestrator.v1.UpstreamChange
 	24, // 19: orchestrator.v1.GetCodeUnitVersionsResponse.versions:type_name -> orchestrator.v1.UnitVersionView
 	25, // 20: orchestrator.v1.GetNodeRunHistoryResponse.runs:type_name -> orchestrator.v1.RunExecution
-	5,  // 21: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
-	7,  // 22: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
-	10, // 23: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
-	12, // 24: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:input_type -> orchestrator.v1.ListActiveRunDriftsRequest
-	15, // 25: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:input_type -> orchestrator.v1.ListScheduleTopologiesRequest
-	18, // 26: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:input_type -> orchestrator.v1.GetNodeAncestryRequest
-	2,  // 27: orchestrator.v1.OrchestratorQuery.GetNode:input_type -> orchestrator.v1.GetNodeRequest
-	26, // 28: orchestrator.v1.OrchestratorQuery.GetNodeVersions:input_type -> orchestrator.v1.GetNodeVersionsRequest
-	28, // 29: orchestrator.v1.OrchestratorQuery.GetNodeVersionDiff:input_type -> orchestrator.v1.GetNodeVersionDiffRequest
-	30, // 30: orchestrator.v1.OrchestratorQuery.GetUpstreamChanges:input_type -> orchestrator.v1.GetUpstreamChangesRequest
-	32, // 31: orchestrator.v1.OrchestratorQuery.GetCodeUnitVersions:input_type -> orchestrator.v1.GetCodeUnitVersionsRequest
-	34, // 32: orchestrator.v1.OrchestratorQuery.GetNodeRunHistory:input_type -> orchestrator.v1.GetNodeRunHistoryRequest
-	6,  // 33: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
-	8,  // 34: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
-	11, // 35: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
-	13, // 36: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:output_type -> orchestrator.v1.ListActiveRunDriftsResponse
-	16, // 37: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:output_type -> orchestrator.v1.ListScheduleTopologiesResponse
-	19, // 38: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:output_type -> orchestrator.v1.GetNodeAncestryResponse
-	3,  // 39: orchestrator.v1.OrchestratorQuery.GetNode:output_type -> orchestrator.v1.GetNodeResponse
-	27, // 40: orchestrator.v1.OrchestratorQuery.GetNodeVersions:output_type -> orchestrator.v1.GetNodeVersionsResponse
-	29, // 41: orchestrator.v1.OrchestratorQuery.GetNodeVersionDiff:output_type -> orchestrator.v1.GetNodeVersionDiffResponse
-	31, // 42: orchestrator.v1.OrchestratorQuery.GetUpstreamChanges:output_type -> orchestrator.v1.GetUpstreamChangesResponse
-	33, // 43: orchestrator.v1.OrchestratorQuery.GetCodeUnitVersions:output_type -> orchestrator.v1.GetCodeUnitVersionsResponse
-	35, // 44: orchestrator.v1.OrchestratorQuery.GetNodeRunHistory:output_type -> orchestrator.v1.GetNodeRunHistoryResponse
-	33, // [33:45] is the sub-list for method output_type
-	21, // [21:33] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	21, // 21: orchestrator.v1.Precedent.resolving_version:type_name -> orchestrator.v1.VersionView
+	37, // 22: orchestrator.v1.Precedent.proposals:type_name -> orchestrator.v1.PrecedentProposal
+	38, // 23: orchestrator.v1.GetPrecedentsResponse.precedents:type_name -> orchestrator.v1.Precedent
+	5,  // 24: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:input_type -> orchestrator.v1.GetScheduleGraphRequest
+	7,  // 25: orchestrator.v1.OrchestratorQuery.ListRuns:input_type -> orchestrator.v1.ListRunsRequest
+	10, // 26: orchestrator.v1.OrchestratorQuery.GetRunGraph:input_type -> orchestrator.v1.GetRunGraphRequest
+	12, // 27: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:input_type -> orchestrator.v1.ListActiveRunDriftsRequest
+	15, // 28: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:input_type -> orchestrator.v1.ListScheduleTopologiesRequest
+	18, // 29: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:input_type -> orchestrator.v1.GetNodeAncestryRequest
+	2,  // 30: orchestrator.v1.OrchestratorQuery.GetNode:input_type -> orchestrator.v1.GetNodeRequest
+	26, // 31: orchestrator.v1.OrchestratorQuery.GetNodeVersions:input_type -> orchestrator.v1.GetNodeVersionsRequest
+	28, // 32: orchestrator.v1.OrchestratorQuery.GetNodeVersionDiff:input_type -> orchestrator.v1.GetNodeVersionDiffRequest
+	30, // 33: orchestrator.v1.OrchestratorQuery.GetUpstreamChanges:input_type -> orchestrator.v1.GetUpstreamChangesRequest
+	32, // 34: orchestrator.v1.OrchestratorQuery.GetCodeUnitVersions:input_type -> orchestrator.v1.GetCodeUnitVersionsRequest
+	34, // 35: orchestrator.v1.OrchestratorQuery.GetNodeRunHistory:input_type -> orchestrator.v1.GetNodeRunHistoryRequest
+	36, // 36: orchestrator.v1.OrchestratorQuery.GetPrecedents:input_type -> orchestrator.v1.GetPrecedentsRequest
+	6,  // 37: orchestrator.v1.OrchestratorQuery.GetScheduleGraph:output_type -> orchestrator.v1.GetScheduleGraphResponse
+	8,  // 38: orchestrator.v1.OrchestratorQuery.ListRuns:output_type -> orchestrator.v1.ListRunsResponse
+	11, // 39: orchestrator.v1.OrchestratorQuery.GetRunGraph:output_type -> orchestrator.v1.GetRunGraphResponse
+	13, // 40: orchestrator.v1.OrchestratorQuery.ListActiveRunDrifts:output_type -> orchestrator.v1.ListActiveRunDriftsResponse
+	16, // 41: orchestrator.v1.OrchestratorQuery.ListScheduleTopologies:output_type -> orchestrator.v1.ListScheduleTopologiesResponse
+	19, // 42: orchestrator.v1.OrchestratorQuery.GetNodeAncestry:output_type -> orchestrator.v1.GetNodeAncestryResponse
+	3,  // 43: orchestrator.v1.OrchestratorQuery.GetNode:output_type -> orchestrator.v1.GetNodeResponse
+	27, // 44: orchestrator.v1.OrchestratorQuery.GetNodeVersions:output_type -> orchestrator.v1.GetNodeVersionsResponse
+	29, // 45: orchestrator.v1.OrchestratorQuery.GetNodeVersionDiff:output_type -> orchestrator.v1.GetNodeVersionDiffResponse
+	31, // 46: orchestrator.v1.OrchestratorQuery.GetUpstreamChanges:output_type -> orchestrator.v1.GetUpstreamChangesResponse
+	33, // 47: orchestrator.v1.OrchestratorQuery.GetCodeUnitVersions:output_type -> orchestrator.v1.GetCodeUnitVersionsResponse
+	35, // 48: orchestrator.v1.OrchestratorQuery.GetNodeRunHistory:output_type -> orchestrator.v1.GetNodeRunHistoryResponse
+	39, // 49: orchestrator.v1.OrchestratorQuery.GetPrecedents:output_type -> orchestrator.v1.GetPrecedentsResponse
+	37, // [37:50] is the sub-list for method output_type
+	24, // [24:37] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_proto_orchestrator_v1_orchestrator_proto_init() }
@@ -2757,7 +3142,7 @@ func file_proto_orchestrator_v1_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_orchestrator_v1_orchestrator_proto_rawDesc), len(file_proto_orchestrator_v1_orchestrator_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   35,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -26,6 +26,7 @@ type OrchestratorClient interface {
 	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since string) (*orchestratorv1.GetUpstreamChangesResponse, error)
 	GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) (*orchestratorv1.GetCodeUnitVersionsResponse, error)
 	GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32, operation string) (*orchestratorv1.GetNodeRunHistoryResponse, error)
+	GetPrecedents(ctx context.Context, signature, category, reason string, limit int32, includeCode bool) (*orchestratorv1.GetPrecedentsResponse, error)
 	Close() error
 }
 
@@ -69,6 +70,13 @@ func (c *orchestratorGRPCClient) GetCodeUnitVersions(ctx context.Context, unitID
 
 func (c *orchestratorGRPCClient) GetNodeRunHistory(ctx context.Context, uniqueID string, limit int32, operation string) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
 	return c.client.GetNodeRunHistory(ctx, &orchestratorv1.GetNodeRunHistoryRequest{UniqueId: uniqueID, Limit: limit, Operation: operation})
+}
+
+func (c *orchestratorGRPCClient) GetPrecedents(ctx context.Context, signature, category, reason string, limit int32, includeCode bool) (*orchestratorv1.GetPrecedentsResponse, error) {
+	return c.client.GetPrecedents(ctx, &orchestratorv1.GetPrecedentsRequest{
+		Signature: signature, Category: category, Reason: reason,
+		Limit: limit, IncludeCode: includeCode,
+	})
 }
 
 func (c *orchestratorGRPCClient) Close() error {

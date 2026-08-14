@@ -607,14 +607,15 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"release_id":    releaseID,
-		"reason":        "duplicate_table",
-		"error_class":   "DuplicatedTable",
-		"error_detail":  detail,
-		"failing_nodes": failing,
-		"per_node":      perNode,
-		"repo":          r.Repo(),
-		"commit_sha":    r.CommitSHA(),
+		"release_id":      releaseID,
+		"reason":          "duplicate_table",
+		"error_class":     "DuplicatedTable",
+		"error_detail":    detail,
+		"failing_nodes":   failing,
+		"per_node":        perNode,
+		"repo":            r.Repo(),
+		"commit_sha":      r.CommitSHA(),
+		"code_bundle_uri": r.CodeBundleURI(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

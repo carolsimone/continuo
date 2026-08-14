@@ -377,9 +377,10 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_b.sql"},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: releaseID,
-		Status:    "ok",
-		Topology:  topo,
+		ReleaseID:     releaseID,
+		Status:        "ok",
+		CodeBundleURI: "s3://continuo/code-bundles/" + releaseID + "/bundle.json",
+		Topology:      topo,
 	}))
 	return deps, store
 }
@@ -388,7 +389,7 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 // that the release.rejected:v1 outbox payload emitted for a validation failure
 // carries:
 //   - per_node[*].candidate_artifact_uri  — S3 URI pointer to the candidate artifact for each node
-//   - top-level "repo" and "commit_sha" — provenance fields from the release aggregate
+//   - top-level "repo", "commit_sha", and "code_bundle_uri" — provenance fields from the release aggregate
 //
 // This allows the consumer to fetch the exact artifact that was validated when
 // investigating a failure without inlining it into the event.
@@ -426,6 +427,11 @@ func TestHandleValidationResult_Rejected_CarriesCandidateArtifactURIAndProvenanc
 	var commitSHA string
 	require.NoError(t, json.Unmarshal(topLevel["commit_sha"], &commitSHA))
 	assert.Equal(t, "deadbeef", commitSHA, "top-level commit_sha must come from release aggregate")
+
+	var codeBundleURI string
+	require.NoError(t, json.Unmarshal(topLevel["code_bundle_uri"], &codeBundleURI))
+	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", codeBundleURI,
+		"top-level code_bundle_uri must come from the release aggregate")
 
 	// Decode per_node and check candidate_artifact_uri per entry
 	var perNode []struct {

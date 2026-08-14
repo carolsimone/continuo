@@ -92,7 +92,7 @@ failure behavior.
 **`release.rejected:v1`** — emitted by release-controller for every terminal
 rejection regardless of which leg failed. The payload always includes:
 `release_id`, `stage` (`compile` | `seed_build` | `validation`; absent for parse-phase rejections), `reason`,
-`repo`, `commit_sha`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
+`repo`, `commit_sha`, `code_bundle_uri`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
 `status`, `dbt_log_uri`, optional `run_results_uri`). Validation entries
 additionally carry `candidate_artifact_uri`; seed_build entries carry
 `candidate_schema`. Consumers must not assume `stage` is always `validation`
@@ -100,11 +100,19 @@ additionally carry `candidate_artifact_uri`; seed_build entries carry
 for the full per-leg payload shape.
 
 **`remediation.requested:v1`** — emitted by remediation for each healable
-failing node. The payload includes a `file_path` field (project-relative source
-file, e.g. `models/order_items.sql`) that is non-empty for `compile` and
-`seed_build` sources; it is derived from the dbt log. For `validation` sources
-it is empty — the downstream agent resolves the path via orchestrator ancestry.
-See `docs/arch/services/remediation.md` for the full payload shape.
+failing node. The payload carries `reason` (the matched classifier rule, e.g.
+`logic:missing_object`) and `error_excerpt` (the classifier's key error line,
+capped at 4 KiB) inline, and points at the full log via `dbt_log_uri` and the
+failing code via `code_bundle_uri` (threaded from `release.rejected:v1`'s
+top-level `code_bundle_uri`; empty for compile-stage rejections, which precede
+the parse that produces the bundle) — kept pointer-first so the orchestrator's
+failure-precedent case base can record the rejection without pulling the full
+log or code inline. The payload also includes a `file_path` field
+(project-relative source file, e.g. `models/order_items.sql`) that is
+non-empty for `compile` and `seed_build` sources; it is derived from the dbt
+log. For `validation` sources it is empty — the downstream agent resolves the
+path via orchestrator ancestry. See `docs/arch/services/remediation.md` for
+the full payload shape.
 
 **`outbox.dead_letter:v1`** — emitted by every outbox-owning service's
 `pkg/outbox.Processor` for a terminal outbox row: a permanent payload error,

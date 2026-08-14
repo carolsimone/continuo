@@ -42,6 +42,14 @@ type fakeNodeOrchestrator struct {
 	gotRunHistoryLimit     int32
 	gotRunHistoryOperation string
 
+	precedentsResp           *orchestratorv1.GetPrecedentsResponse
+	precedentsErr            error
+	gotPrecedentsSignature   string
+	gotPrecedentsCategory    string
+	gotPrecedentsReason      string
+	gotPrecedentsLimit       int32
+	gotPrecedentsIncludeCode bool
+
 	closeErr error
 }
 
@@ -72,6 +80,15 @@ func (f *fakeNodeOrchestrator) GetCodeUnitVersions(_ context.Context, unitID, un
 func (f *fakeNodeOrchestrator) GetNodeRunHistory(_ context.Context, uniqueID string, limit int32, operation string) (*orchestratorv1.GetNodeRunHistoryResponse, error) {
 	f.gotRunHistoryUniqueID, f.gotRunHistoryLimit, f.gotRunHistoryOperation = uniqueID, limit, operation
 	return f.runHistoryResp, f.runHistoryErr
+}
+
+func (f *fakeNodeOrchestrator) GetPrecedents(_ context.Context, signature, category, reason string, limit int32, includeCode bool) (*orchestratorv1.GetPrecedentsResponse, error) {
+	f.gotPrecedentsSignature, f.gotPrecedentsCategory, f.gotPrecedentsReason = signature, category, reason
+	f.gotPrecedentsLimit, f.gotPrecedentsIncludeCode = limit, includeCode
+	if f.precedentsResp == nil && f.precedentsErr == nil {
+		return &orchestratorv1.GetPrecedentsResponse{}, nil
+	}
+	return f.precedentsResp, f.precedentsErr
 }
 
 func (f *fakeNodeOrchestrator) Close() error { return f.closeErr }

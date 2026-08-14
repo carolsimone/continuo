@@ -31,6 +31,7 @@ const (
 	OrchestratorQuery_GetUpstreamChanges_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetUpstreamChanges"
 	OrchestratorQuery_GetCodeUnitVersions_FullMethodName    = "/orchestrator.v1.OrchestratorQuery/GetCodeUnitVersions"
 	OrchestratorQuery_GetNodeRunHistory_FullMethodName      = "/orchestrator.v1.OrchestratorQuery/GetNodeRunHistory"
+	OrchestratorQuery_GetPrecedents_FullMethodName          = "/orchestrator.v1.OrchestratorQuery/GetPrecedents"
 )
 
 // OrchestratorQueryClient is the client API for OrchestratorQuery service.
@@ -82,6 +83,17 @@ type OrchestratorQueryClient interface {
 	// optionally filtered server-side to one operation. An unknown unique_id is
 	// NOT_FOUND; a known node with no matching runs returns an empty runs list.
 	GetNodeRunHistory(ctx context.Context, in *GetNodeRunHistoryRequest, opts ...grpc.CallOption) (*GetNodeRunHistoryResponse, error)
+	// GetPrecedents returns past rejections matching an error signature — or,
+	// when signature is empty, a (category, reason) pair — resolved-first, then
+	// newest. Each entry carries the classified failure, the version that
+	// resolved it (when one exists) with a server-rendered diff against the
+	// version it superseded (8 KiB cap, truncated flag), and any fix-PR
+	// proposals. limit defaults to 5, max 20, applied before code bodies load;
+	// include_code=false keeps failing and resolving code bodies off the wire
+	// (the diff is always present). No match is an EMPTY list, never NOT_FOUND:
+	// a signature is a search key, and "no precedent" is a valid answer.
+	// Neither signature nor a full (category, reason) pair → INVALID_ARGUMENT.
+	GetPrecedents(ctx context.Context, in *GetPrecedentsRequest, opts ...grpc.CallOption) (*GetPrecedentsResponse, error)
 }
 
 type orchestratorQueryClient struct {
@@ -212,6 +224,16 @@ func (c *orchestratorQueryClient) GetNodeRunHistory(ctx context.Context, in *Get
 	return out, nil
 }
 
+func (c *orchestratorQueryClient) GetPrecedents(ctx context.Context, in *GetPrecedentsRequest, opts ...grpc.CallOption) (*GetPrecedentsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPrecedentsResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_GetPrecedents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrchestratorQueryServer is the server API for OrchestratorQuery service.
 // All implementations must embed UnimplementedOrchestratorQueryServer
 // for forward compatibility.
@@ -261,6 +283,17 @@ type OrchestratorQueryServer interface {
 	// optionally filtered server-side to one operation. An unknown unique_id is
 	// NOT_FOUND; a known node with no matching runs returns an empty runs list.
 	GetNodeRunHistory(context.Context, *GetNodeRunHistoryRequest) (*GetNodeRunHistoryResponse, error)
+	// GetPrecedents returns past rejections matching an error signature — or,
+	// when signature is empty, a (category, reason) pair — resolved-first, then
+	// newest. Each entry carries the classified failure, the version that
+	// resolved it (when one exists) with a server-rendered diff against the
+	// version it superseded (8 KiB cap, truncated flag), and any fix-PR
+	// proposals. limit defaults to 5, max 20, applied before code bodies load;
+	// include_code=false keeps failing and resolving code bodies off the wire
+	// (the diff is always present). No match is an EMPTY list, never NOT_FOUND:
+	// a signature is a search key, and "no precedent" is a valid answer.
+	// Neither signature nor a full (category, reason) pair → INVALID_ARGUMENT.
+	GetPrecedents(context.Context, *GetPrecedentsRequest) (*GetPrecedentsResponse, error)
 	mustEmbedUnimplementedOrchestratorQueryServer()
 }
 
@@ -306,6 +339,9 @@ func (UnimplementedOrchestratorQueryServer) GetCodeUnitVersions(context.Context,
 }
 func (UnimplementedOrchestratorQueryServer) GetNodeRunHistory(context.Context, *GetNodeRunHistoryRequest) (*GetNodeRunHistoryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNodeRunHistory not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) GetPrecedents(context.Context, *GetPrecedentsRequest) (*GetPrecedentsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPrecedents not implemented")
 }
 func (UnimplementedOrchestratorQueryServer) mustEmbedUnimplementedOrchestratorQueryServer() {}
 func (UnimplementedOrchestratorQueryServer) testEmbeddedByValue()                           {}
@@ -544,6 +580,24 @@ func _OrchestratorQuery_GetNodeRunHistory_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorQuery_GetPrecedents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPrecedentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).GetPrecedents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_GetPrecedents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).GetPrecedents(ctx, req.(*GetPrecedentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrchestratorQuery_ServiceDesc is the grpc.ServiceDesc for OrchestratorQuery service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -598,6 +652,10 @@ var OrchestratorQuery_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetNodeRunHistory",
 			Handler:    _OrchestratorQuery_GetNodeRunHistory_Handler,
+		},
+		{
+			MethodName: "GetPrecedents",
+			Handler:    _OrchestratorQuery_GetPrecedents_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

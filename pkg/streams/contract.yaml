@@ -335,12 +335,15 @@ streams:
 
   - name: remediation.requested:v1
     const: RemediationRequestedV1
-    description: Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent.
+    description: Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent and by orchestrator's case-base rejections group.
     producers: [remediation]
     consumers:
       - service: remediation-agent
         group: remediation-agent-remediation-requested
         const: RemediationAgentRemediationRequested
+      - service: orchestrator
+        group: orchestrator-remediation-requested-rejections
+        const: OrchestratorRemediationRequestedRejections
 
   # ---------------- remediation-agent streams ----------------
 
@@ -352,9 +355,12 @@ streams:
 
   - name: remediation.pr_opened:v1
     const: RemediationPrOpenedV1
-    description: Audit event emitted when an operator opens a GitHub PR from a fix proposal; pointer-only, no consumer in this slice.
+    description: Emitted when an operator opens a GitHub PR from a fix proposal; consumed by orchestrator's case-base proposals group.
     producers: [remediation-agent]
-    consumers: []
+    consumers:
+      - service: orchestrator
+        group: orchestrator-remediation-pr-opened-proposals
+        const: OrchestratorRemediationPrOpenedProposals
 
   - name: remediation.pr_closed:v1
     const: RemediationPrClosedV1

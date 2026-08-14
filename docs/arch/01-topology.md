@@ -86,6 +86,7 @@ flowchart TD
   RREJ[release.rejected:v1]
   REMREQ[remediation.requested:v1]
   REMPROP[remediation.proposed:v1]
+  PROPENED[remediation.pr_opened:v1]
   SL[schedules.loaded:v1]
   SS[scheduler.started:v1]
   RED[run.entries.dispatched:v1]
@@ -108,8 +109,11 @@ flowchart TD
   RREJ --> REM[remediation]
   REM --> REMREQ
   REMREQ --> REMA[remediation-agent]
+  REMREQ --> OR[orchestrator]
   REMA --> REMPROP
-  RP --> OR[orchestrator]
+  REMA --> PROPENED
+  PROPENED --> OR
+  RP --> OR
   OR --> SL
   SL --> ST[state]
 

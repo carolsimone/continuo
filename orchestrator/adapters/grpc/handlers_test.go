@@ -10,6 +10,7 @@ import (
 	grpcadapter "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/stretchr/testify/assert"
@@ -71,15 +72,19 @@ func (fakeScheduleAndRunLists) GetNode(context.Context, string, string, string) 
 }
 
 func newHandler(rq *fakeDriftAwareRuns) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(&fakeScheduleAndRunLists{}, rq, &fakeCodeVersionHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return grpcadapter.NewQueryHandler(&fakeScheduleAndRunLists{}, rq, &fakeCodeVersionHistoryReader{}, &fakePrecedentHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 func newHandlerWithLists(lists *fakeScheduleAndRunLists) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(lists, &fakeDriftAwareRuns{}, &fakeCodeVersionHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return grpcadapter.NewQueryHandler(lists, &fakeDriftAwareRuns{}, &fakeCodeVersionHistoryReader{}, &fakePrecedentHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 func newHandlerWithCodeVersions(cv *fakeCodeVersionHistoryReader) *grpcadapter.QueryHandler {
-	return grpcadapter.NewQueryHandler(&fakeScheduleAndRunLists{}, &fakeDriftAwareRuns{}, cv, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	return grpcadapter.NewQueryHandler(&fakeScheduleAndRunLists{}, &fakeDriftAwareRuns{}, cv, &fakePrecedentHistoryReader{}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+}
+
+func newHandlerWithPrecedents(pr *fakePrecedentHistoryReader) *grpcadapter.QueryHandler {
+	return grpcadapter.NewQueryHandler(&fakeScheduleAndRunLists{}, &fakeDriftAwareRuns{}, &fakeCodeVersionHistoryReader{}, pr, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 }
 
 // fakeCodeVersionHistoryReader satisfies grpcadapter.CodeVersionHistoryReader.
@@ -578,4 +583,104 @@ func TestQueryHandler_ListRuns_RejectsEmptyScheduleName(t *testing.T) {
 	h := newHandlerWithLists(&fakeScheduleAndRunLists{})
 	_, err := h.ListRuns(context.Background(), &orchestratorv1.ListRunsRequest{ScheduleName: ""})
 	require.Error(t, err)
+}
+
+// ---- GetPrecedents ----
+
+// fakePrecedentHistoryReader satisfies grpcadapter.PrecedentHistoryReader.
+type fakePrecedentHistoryReader struct {
+	precedents []casebase.Precedent
+	err        error
+
+	gotSignature   string
+	gotCategory    string
+	gotReason      string
+	gotLimit       int32
+	gotIncludeCode bool
+}
+
+func (f *fakePrecedentHistoryReader) GetPrecedents(_ context.Context, signature, category, reason string, limit int32, includeCode bool) ([]casebase.Precedent, error) {
+	f.gotSignature, f.gotCategory, f.gotReason, f.gotLimit, f.gotIncludeCode = signature, category, reason, limit, includeCode
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.precedents, nil
+}
+
+func TestGetPrecedents_RequiresSelector(t *testing.T) {
+	cases := []struct {
+		name string
+		req  *orchestratorv1.GetPrecedentsRequest
+	}{
+		{"nothing set", &orchestratorv1.GetPrecedentsRequest{}},
+		{"category only", &orchestratorv1.GetPrecedentsRequest{Category: "compile_error"}},
+		{"reason only", &orchestratorv1.GetPrecedentsRequest{Reason: "syntax_error"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHandlerWithPrecedents(&fakePrecedentHistoryReader{})
+			_, err := h.GetPrecedents(context.Background(), tc.req)
+			require.Equal(t, codes.InvalidArgument, status.Code(err))
+		})
+	}
+}
+
+func TestGetPrecedents_MapsEntries(t *testing.T) {
+	rejectedAt := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	pr := &fakePrecedentHistoryReader{
+		precedents: []casebase.Precedent{
+			{
+				Rejection: casebase.Rejection{
+					ReleaseID: "rel-1", NodeID: "svc.schema.tbl", Stage: "validation",
+					Category: "compile_error", Reason: "syntax_error",
+					ErrorExcerpt: "unexpected token", At: rejectedAt, RawCode: "select 1 !",
+				},
+				Resolved: true,
+				ResolvingVersion: &codeversion.VersionView{
+					UniqueID: "svc.schema.tbl", VersionSeq: 2, RawCode: "select 1",
+				},
+				ResolutionDiff:          "-select 1 !\n+select 1\n",
+				ResolutionDiffTruncated: false,
+				Proposals: []casebase.ProposalView{
+					{ProposalID: "prop-1", PrURL: "https://github.com/acme/demo/pull/9", PrNumber: 9, PrState: "merged"},
+				},
+			},
+		},
+	}
+	h := newHandlerWithPrecedents(pr)
+	resp, err := h.GetPrecedents(context.Background(), &orchestratorv1.GetPrecedentsRequest{Signature: "sig-1", Limit: 5})
+	require.NoError(t, err)
+	require.Len(t, resp.Precedents, 1)
+
+	p := resp.Precedents[0]
+	assert.Equal(t, "rel-1", p.ReleaseId)
+	assert.Equal(t, "svc.schema.tbl", p.NodeId)
+	assert.Equal(t, "validation", p.Stage)
+	assert.Equal(t, "compile_error", p.Category)
+	assert.Equal(t, "syntax_error", p.Reason)
+	assert.Equal(t, "unexpected token", p.ErrorExcerpt)
+	assert.Equal(t, rejectedAt.Format(time.RFC3339), p.RejectedAt)
+	assert.Equal(t, "select 1 !", p.FailingCode)
+	assert.True(t, p.Resolved)
+	require.NotNil(t, p.ResolvingVersion)
+	assert.Equal(t, "svc.schema.tbl", p.ResolvingVersion.UniqueId)
+	assert.Equal(t, int64(2), p.ResolvingVersion.VersionSeq)
+	assert.Equal(t, "select 1", p.ResolvingVersion.RawCode)
+	assert.Equal(t, "-select 1 !\n+select 1\n", p.ResolutionDiff)
+	assert.False(t, p.ResolutionDiffTruncated)
+	require.Len(t, p.Proposals, 1)
+	assert.Equal(t, "prop-1", p.Proposals[0].ProposalId)
+	assert.Equal(t, "https://github.com/acme/demo/pull/9", p.Proposals[0].PrUrl)
+	assert.Equal(t, int32(9), p.Proposals[0].PrNumber)
+	assert.Equal(t, "merged", p.Proposals[0].PrState)
+
+	assert.Equal(t, "sig-1", pr.gotSignature)
+	assert.Equal(t, int32(5), pr.gotLimit)
+}
+
+func TestGetPrecedents_EmptyIsOKNotNotFound(t *testing.T) {
+	h := newHandlerWithPrecedents(&fakePrecedentHistoryReader{precedents: []casebase.Precedent{}})
+	resp, err := h.GetPrecedents(context.Background(), &orchestratorv1.GetPrecedentsRequest{Signature: "sig-unknown"})
+	require.NoError(t, err)
+	assert.Empty(t, resp.Precedents)
 }

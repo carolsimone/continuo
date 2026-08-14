@@ -45,7 +45,7 @@ func TestDescribe_ListsEveryRunnableCommand(t *testing.T) {
 	for _, c := range p.Commands {
 		paths[c.Path] = true
 	}
-	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "describe"} {
+	for _, want := range []string{"schedule list", "schedule trigger", "schedule cancel", "schedule graph", "schedule status", "describe", "precedents"} {
 		assert.True(t, paths[want], "describe missing command %q", want)
 	}
 }

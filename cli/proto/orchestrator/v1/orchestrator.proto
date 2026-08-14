@@ -51,6 +51,18 @@ service OrchestratorQuery {
   // optionally filtered server-side to one operation. An unknown unique_id is
   // NOT_FOUND; a known node with no matching runs returns an empty runs list.
   rpc GetNodeRunHistory(GetNodeRunHistoryRequest) returns (GetNodeRunHistoryResponse);
+
+  // GetPrecedents returns past rejections matching an error signature — or,
+  // when signature is empty, a (category, reason) pair — resolved-first, then
+  // newest. Each entry carries the classified failure, the version that
+  // resolved it (when one exists) with a server-rendered diff against the
+  // version it superseded (8 KiB cap, truncated flag), and any fix-PR
+  // proposals. limit defaults to 5, max 20, applied before code bodies load;
+  // include_code=false keeps failing and resolving code bodies off the wire
+  // (the diff is always present). No match is an EMPTY list, never NOT_FOUND:
+  // a signature is a search key, and "no precedent" is a valid answer.
+  // Neither signature nor a full (category, reason) pair → INVALID_ARGUMENT.
+  rpc GetPrecedents(GetPrecedentsRequest) returns (GetPrecedentsResponse);
 }
 
 message TableNode {
@@ -193,6 +205,9 @@ message AncestorNode {
 // the provenance stamp, and the code itself.
 message VersionView {
   string unique_id = 1;
+  // version_seq is a stable per-node handle for addressing one of a node's
+  // versions, not an ordering: it is assigned max+1 at ingestion, so a
+  // late-arriving older release receives the highest value.
   int64 version_seq = 2;
   string content_hash = 3;
   string source_hash = 4;
@@ -211,8 +226,8 @@ message VersionView {
   string promoted_at = 15;  // RFC3339
   bool healed = 16;
   bool backfilled = 17;
-  // is_current marks the version the node runs now. Exactly one version in a
-  // chain walk carries it; a node whose :Table was retired has none.
+  // is_current marks the version the node runs now: exactly one of a node's
+  // versions carries it; a node whose :Table was retired has none.
   bool is_current = 18;
 }
 
@@ -342,4 +357,49 @@ message GetNodeRunHistoryRequest {
 }
 message GetNodeRunHistoryResponse {
   repeated RunExecution runs = 1;
+}
+
+message GetPrecedentsRequest {
+  string signature = 1;
+  string category = 2;
+  string reason = 3;
+  int32 limit = 4;
+  bool include_code = 5;
+}
+
+// PrecedentProposal is one fix PR opened for a precedent's rejection.
+message PrecedentProposal {
+  string proposal_id = 1;
+  string pr_url = 2;
+  int32 pr_number = 3;
+  // pr_state records the proposal's state when the PR was opened; it is not
+  // updated when the PR is later merged or closed.
+  string pr_state = 4;
+}
+
+// Precedent is one past rejection with its resolution.
+message Precedent {
+  string release_id = 1;
+  string node_id = 2;
+  string stage = 3;
+  string category = 4;
+  string reason = 5;
+  string error_excerpt = 6;
+  string rejected_at = 7;  // RFC3339
+  // failing_code is the rejected candidate's raw code; "" unless
+  // include_code was set (and a bundle existed for the rejection).
+  string failing_code = 8;
+  bool resolved = 9;
+  // resolving_version is present when resolved; its code fields are ""
+  // unless include_code was set.
+  VersionView resolving_version = 10;
+  // resolution_diff is a unified diff from the version the fix superseded to
+  // the resolving version; "" when unresolved or no prior version exists.
+  string resolution_diff = 11;
+  bool resolution_diff_truncated = 12;
+  repeated PrecedentProposal proposals = 13;
+}
+
+message GetPrecedentsResponse {
+  repeated Precedent precedents = 1;
 }

@@ -10,6 +10,7 @@ import (
 	grpcadapter "github.com/carolsimone/continuo/orchestrator/adapters/grpc"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	"github.com/carolsimone/continuo/orchestrator/service/queries"
 	"github.com/stretchr/testify/assert"
@@ -30,7 +31,7 @@ import (
 // return codes.Unimplemented from the embedded UnimplementedOrchestratorQueryServer.
 func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	handler := grpcadapter.NewQueryHandler(stubScheduleAndRunLists{}, stubDriftAwareRuns{}, stubCodeVersionHistoryReader{}, logger)
+	handler := grpcadapter.NewQueryHandler(stubScheduleAndRunLists{}, stubDriftAwareRuns{}, stubCodeVersionHistoryReader{}, stubPrecedentHistoryReader{}, logger)
 	server, err := grpcadapter.NewServer(0, handler, logger) // 0 = ephemeral port
 	require.NoError(t, err)
 	go func() { _ = server.Start() }()
@@ -91,6 +92,10 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 		}},
 		{"GetNodeRunHistory", func() error {
 			_, err := client.GetNodeRunHistory(ctx, &orchestratorv1.GetNodeRunHistoryRequest{UniqueId: "x"})
+			return err
+		}},
+		{"GetPrecedents", func() error {
+			_, err := client.GetPrecedents(ctx, &orchestratorv1.GetPrecedentsRequest{Signature: "x"})
 			return err
 		}},
 	}
@@ -154,5 +159,12 @@ func (stubCodeVersionHistoryReader) GetCodeUnitVersions(context.Context, string,
 	return nil, nil
 }
 func (stubCodeVersionHistoryReader) GetNodeRunHistory(context.Context, string, int32, string) ([]codeversion.RunExecution, error) {
+	return nil, nil
+}
+
+// stubPrecedentHistoryReader satisfies grpcadapter.PrecedentHistoryReader.
+type stubPrecedentHistoryReader struct{}
+
+func (stubPrecedentHistoryReader) GetPrecedents(context.Context, string, string, string, int32, bool) ([]casebase.Precedent, error) {
 	return nil, nil
 }

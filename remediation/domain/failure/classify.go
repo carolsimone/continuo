@@ -1,6 +1,9 @@
 package failure
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // Classification is the result of triaging one failed node.
 type Classification struct {
@@ -8,6 +11,26 @@ type Classification struct {
 	Signature string
 	Decision  Decision
 	Reason    string // matched rule, e.g. "infra:connection_refused" or "logic:missing_relation"
+	// Excerpt is the raw key error line the signature was derived from, kept
+	// for the precedent case base. Capped at maxExcerptBytes; empty when no
+	// log text exists.
+	Excerpt string
+}
+
+// maxExcerptBytes bounds the excerpt carried on the trigger event: it is one
+// log line kept as precedent evidence, not a transport for whole logs.
+const maxExcerptBytes = 4 * 1024
+
+// excerptOf caps the key error line on a rune boundary.
+func excerptOf(s string) string {
+	if len(s) <= maxExcerptBytes {
+		return s
+	}
+	cut := maxExcerptBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // rule pairs a lowercase substring matcher with the reason it records.
@@ -57,21 +80,30 @@ func Classify(ev FailureEvidence, logText string) Classification {
 			Signature: NormalizeSignature(CategoryUnknown, "log_unavailable"),
 			Decision:  DecisionEmit,
 			Reason:    "unknown:log_unavailable",
+			Excerpt:   "",
 		}
 	}
 	lower := strings.ToLower(logText)
 	line := keyErrorLine(logText)
 
 	if r, ok := firstMatch(lower, infraRules); ok {
-		return Classification{CategoryInfraTransient, NormalizeSignature(CategoryInfraTransient, line), DecisionDrop, r.reason}
+		return Classification{Category: CategoryInfraTransient,
+			Signature: NormalizeSignature(CategoryInfraTransient, line),
+			Decision:  DecisionDrop, Reason: r.reason, Excerpt: excerptOf(line)}
 	}
 	if r, ok := firstMatch(lower, testRules); ok {
-		return Classification{CategoryTest, NormalizeSignature(CategoryTest, line), DecisionEmit, r.reason}
+		return Classification{Category: CategoryTest,
+			Signature: NormalizeSignature(CategoryTest, line),
+			Decision:  DecisionEmit, Reason: r.reason, Excerpt: excerptOf(line)}
 	}
 	if r, ok := firstMatch(lower, logicRules); ok {
-		return Classification{CategoryLogic, NormalizeSignature(CategoryLogic, line), DecisionEmit, r.reason}
+		return Classification{Category: CategoryLogic,
+			Signature: NormalizeSignature(CategoryLogic, line),
+			Decision:  DecisionEmit, Reason: r.reason, Excerpt: excerptOf(line)}
 	}
-	return Classification{CategoryUnknown, NormalizeSignature(CategoryUnknown, line), DecisionEmit, "unknown:unmatched"}
+	return Classification{Category: CategoryUnknown,
+		Signature: NormalizeSignature(CategoryUnknown, line),
+		Decision:  DecisionEmit, Reason: "unknown:unmatched", Excerpt: excerptOf(line)}
 }
 
 // ClassifyWithStructured prefers the structured validation result when present:
@@ -87,7 +119,9 @@ func ClassifyWithStructured(ev FailureEvidence, structured *StructuredResult, lo
 	}
 	msg := strings.TrimSpace(structured.Message)
 	if structured.Status == "fail" {
-		return Classification{CategoryTest, NormalizeSignature(CategoryTest, msg), DecisionEmit, "test:status_fail"}
+		return Classification{Category: CategoryTest,
+			Signature: NormalizeSignature(CategoryTest, msg),
+			Decision:  DecisionEmit, Reason: "test:status_fail", Excerpt: excerptOf(msg)}
 	}
 	if msg == "" {
 		// Structured record present but no message — fall back to the text log
@@ -96,12 +130,18 @@ func ClassifyWithStructured(ev FailureEvidence, structured *StructuredResult, lo
 	}
 	lower := strings.ToLower(msg)
 	if r, ok := firstMatch(lower, infraRules); ok {
-		return Classification{CategoryInfraTransient, NormalizeSignature(CategoryInfraTransient, msg), DecisionDrop, r.reason}
+		return Classification{Category: CategoryInfraTransient,
+			Signature: NormalizeSignature(CategoryInfraTransient, msg),
+			Decision:  DecisionDrop, Reason: r.reason, Excerpt: excerptOf(msg)}
 	}
 	if r, ok := firstMatch(lower, logicRules); ok {
-		return Classification{CategoryLogic, NormalizeSignature(CategoryLogic, msg), DecisionEmit, r.reason}
+		return Classification{Category: CategoryLogic,
+			Signature: NormalizeSignature(CategoryLogic, msg),
+			Decision:  DecisionEmit, Reason: r.reason, Excerpt: excerptOf(msg)}
 	}
-	return Classification{CategoryUnknown, NormalizeSignature(CategoryUnknown, msg), DecisionEmit, "unknown:unmatched"}
+	return Classification{Category: CategoryUnknown,
+		Signature: NormalizeSignature(CategoryUnknown, msg),
+		Decision:  DecisionEmit, Reason: "unknown:unmatched", Excerpt: excerptOf(msg)}
 }
 
 // ClassifyDuplicateTable classifies a duplicate-relation rejection from the
@@ -125,6 +165,7 @@ func ClassifyDuplicateTable(ev FailureEvidence) Classification {
 		Signature: NormalizeSignature(CategoryLogic, "duplicate_table "+relationID),
 		Decision:  DecisionEmit,
 		Reason:    "logic:duplicate_table",
+		Excerpt:   excerptOf("multiple nodes produce the relation " + relationID),
 	}
 }
 

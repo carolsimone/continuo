@@ -1,6 +1,6 @@
 module github.com/carolsimone/continuo/agent-runner
 
-go 1.25.12
+go 1.25.13
 
 replace github.com/carolsimone/continuo/pkg => ../pkg
 

@@ -61,4 +61,8 @@ type FailureEvidence struct {
 	NodeType             string // optional; the target claimant's kind for a duplicate-relation failure (dbt-model, dbt-seed, dbt-snapshot, python-model); empty for every other source
 	OtherService         string // optional; for a duplicate-relation failure, the competing service that also produces the contested relation (RelationID)
 	OtherFilePath        string // optional; source path of that competing node — the only discriminator when both claimants are in one service
+	// CodeBundleURI locates the rejected release's code-bundle document;
+	// empty when parse never completed. Forwarded onto the trigger event for
+	// the orchestrator's case base.
+	CodeBundleURI string
 }

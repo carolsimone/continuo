@@ -364,6 +364,17 @@ func main() {
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
 		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, codeVersionRepo, logger)
 
+	// remediation.requested:v1 (rejections) + remediation.pr_opened:v1
+	// (proposals) — the failure-precedent case base. The rejections handler
+	// reuses the versions path's bundle reader to fetch the failing code; the
+	// proposals handler needs no bundle. Orchestrator remains the sole Neo4j
+	// writer.
+	caseBaseRepo := neo4jinfra.NewCaseBaseRepository(neo4jClient, logger)
+	rejectionsHandler := handlers.NewRemediationRequestedRejectionsHandler(
+		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, caseBaseRepo, logger)
+	proposalsHandler := handlers.NewPrOpenedProposalsHandler(
+		postgres.NewPostgresUnitOfWork(pgDB, logger), caseBaseRepo, logger)
+
 	// Every orchestrator consumer is the same shape: a domain handler wrapped
 	// by a redis binding, driven by a StreamConsumer on its (stream, group).
 	// They are declared in one table and started uniformly via runConsumer;
@@ -383,6 +394,8 @@ func main() {
 		{"release_promoted", streams.ReleasePromotedV1, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger)},
 		{"release_promoted_versions", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger)},
 		{"promoted_seeds", streams.TriggerPromotedSeedsV1, streams.OrchestratorPromotedSeeds, redis.NewPromotedSeedsBinding(handlePromotedSeedsHandler, logger)},
+		{"remediation_requested_rejections", streams.RemediationRequestedV1, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger)},
+		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.OrchestratorRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger)},
 	}
 	for _, c := range consumers {
 		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))
@@ -399,7 +412,9 @@ func main() {
 	scheduleGraphReader := neo4jinfra.NewCachingScheduleGraphReader(queryRepo, topologyStateRepo, logger)
 	codeVersionQueryRepo := neo4jinfra.NewCodeVersionQueryRepository(neo4jClient, logger)
 	codeVersionQueries := queries.NewCodeVersionQueryService(codeVersionQueryRepo)
-	queryHandler := grpcinfra.NewQueryHandler(scheduleGraphReader, runQueries, codeVersionQueries, logger)
+	precedentQueryRepo := neo4jinfra.NewPrecedentQueryRepository(neo4jClient, logger)
+	precedentQueries := queries.NewPrecedentQueryService(precedentQueryRepo)
+	queryHandler := grpcinfra.NewQueryHandler(scheduleGraphReader, runQueries, codeVersionQueries, precedentQueries, logger)
 
 	grpcServer, err := grpcinfra.NewServer(cfg.GRPCPort, queryHandler, logger)
 	if err != nil {

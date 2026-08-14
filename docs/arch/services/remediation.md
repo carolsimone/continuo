@@ -100,7 +100,8 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
 1. Parse the event; extract stage ("compile" | "seed_build" | "validation") and,
    for each entry in per_node where status="failed":
    build FailureEvidence {source (derived from stage), release_id, node_id,
-   dbt_log_uri, run_results_uri, candidate_artifact_uri, repo, commit_sha}.
+   dbt_log_uri, run_results_uri, candidate_artifact_uri, repo, commit_sha,
+   code_bundle_uri}.
    When `stage` is absent, the `reason` field is used as the source fallback.
    For source=duplicate_table, FilePath/Service (the rename target),
    OtherService/OtherFilePath (the competing claimant), and RelationID (the
@@ -147,14 +148,17 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
       therefore absent from the promoted topology that Ancestry serves.
     - validation: no FilePath derivation; the agent uses candidate SQL.
 3. ClassifyWithStructured(ev, structured, logText) → Category, Signature, Decision,
-   Reason (pure, deterministic). Prefers the structured record: status=fail → test;
-   status=error → message through the infra/logic rules. Falls back to the text-log
-   Classify path when structured is nil or carries no message.
+   Reason, Excerpt (pure, deterministic). Prefers the structured record: status=fail
+   → test; status=error → message through the infra/logic rules. Falls back to the
+   text-log Classify path when structured is nil or carries no message. Excerpt is
+   the key error line the signature was derived from, capped at 4 KiB.
 4. Open transaction:
    a. Upsert classification_decision (source, release_id, node_id).
       - If already exists (redelivery): inserted=false → skip enqueue, commit, done.
    b. If inserted && category.Healable():
-      - Build RemediationRequested payload (pointer-only: no error text).
+      - Build RemediationRequested payload: pointer-first (the full log stays
+        behind dbt_log_uri, the failing code behind code_bundle_uri), carrying
+        the classifier's reason and capped error_excerpt inline.
       - Enqueue remediation_outbox row (stream=remediation.requested:v1,
         event_id = SHA1(namespace, release_id+"|"+node_id)).
 5. Commit.
@@ -166,7 +170,7 @@ A background goroutine drains `remediation_outbox` rows with `status='pending'` 
 
 ## Payload Shape (`remediation.requested:v1`)
 
-The trigger is pointer-only: it contains no error text, no stack traces, no raw log content. The agent fetches the full log from S3 and performs redaction before any LLM call.
+The trigger is pointer-first: the full log stays behind `dbt_log_uri` and the failing code behind `code_bundle_uri`, and the agent fetches and redacts the full log before any LLM call. The one piece of error text carried inline is `error_excerpt` — the classifier's key error line, capped at 4 KiB — kept so the orchestrator can record the failure as queryable precedent in its case base.
 
 | Field | Description |
 |---|---|
@@ -177,6 +181,9 @@ The trigger is pointer-only: it contains no error text, no stack traces, no raw 
 | `relation_id` | Duplicate_table only: the contested physical relation, threaded from `per_node[].relation_id`. Distinct from `node_id` — the two differ whenever the target claimant carries an alias. Used for the classification signature and the remediation agent's rename prompt, both of which need the relation, not the target's own declared name. Empty for every other source. |
 | `category` | `logic`, `test`, or `unknown`. |
 | `error_signature` | Release-stable normalized dedup key (SHA-256 hex). |
+| `reason` | The matched classifier rule, e.g. `logic:missing_object`, `infra:connection_refused`. |
+| `error_excerpt` | The classifier's key error line, capped at 4 KiB; empty when no log text exists. Kept for the orchestrator's failure-precedent case base. |
+| `code_bundle_uri` | S3 URI of the rejected release's code-bundle document, threaded from `release.rejected:v1`'s top-level `code_bundle_uri`. Set for duplicate_table, validation, and seed_build rejections. Empty for compile-stage rejections, which precede the parse that produces the bundle. |
 | `dbt_log_uri` | S3 URI of the full dbt execution log. |
 | `candidate_artifact_uri` | S3 URI of the node's candidate artifact — rewritten SQL for a dbt node, a validation spec for a python node (candidate-schema form; omitted for seeds and compile failures). |
 | `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log), seed_build failures (threaded from the candidate topology's `OriginalFilePath`), and duplicate_table failures (the rename target's file, threaded from `per_node[].file_path`). Empty for validation failures. When present for seed_build or duplicate_table, the agent bypasses the Ancestry (orchestrator) lookup. |

@@ -1,6 +1,12 @@
 package failure
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestClassifyBuckets(t *testing.T) {
 	cases := []struct {
@@ -128,6 +134,35 @@ func TestClassifyDuplicateTable_SignatureFallsBackToNodeIDWhenRelationIDEmpty(t 
 	if a.Signature == b.Signature {
 		t.Errorf("different node ids must still be different signatures when RelationID is unset, both %q", a.Signature)
 	}
+}
+
+func TestClassify_PopulatesExcerptWithKeyErrorLine(t *testing.T) {
+	log := "Running dbt\n\nDatabase Error in model revenue\n  column \"gross_amt\" does not exist\n"
+	c := Classify(FailureEvidence{}, log)
+	assert.Equal(t, "Database Error in model revenue", c.Excerpt)
+}
+
+func TestClassify_EmptyLogHasEmptyExcerpt(t *testing.T) {
+	c := Classify(FailureEvidence{}, "   ")
+	assert.Equal(t, "", c.Excerpt)
+}
+
+func TestClassifyWithStructured_ExcerptIsStructuredMessage(t *testing.T) {
+	c := ClassifyWithStructured(FailureEvidence{},
+		&StructuredResult{Status: "error", Message: "syntax error at or near SELECT"}, "ignored log")
+	assert.Equal(t, "syntax error at or near SELECT", c.Excerpt)
+}
+
+func TestClassifyDuplicateTable_ExcerptNamesTheRelation(t *testing.T) {
+	c := ClassifyDuplicateTable(FailureEvidence{RelationID: "analytics.orders"})
+	assert.Equal(t, "multiple nodes produce the relation analytics.orders", c.Excerpt)
+}
+
+func TestClassify_ExcerptIsCappedOnARuneBoundary(t *testing.T) {
+	long := "error: " + strings.Repeat("é", 4096) // 2 bytes per rune ⇒ over the 4 KiB cap
+	c := Classify(FailureEvidence{}, long)
+	assert.LessOrEqual(t, len(c.Excerpt), 4096)
+	assert.True(t, utf8.ValidString(c.Excerpt))
 }
 
 func contains(s, sub string) bool {

@@ -73,10 +73,10 @@ func (o *fakeOutbox) GetPendingBatch(_ context.Context, _ int) ([]*outbox.Entry,
 	return nil, nil
 }
 
-func (o *fakeOutbox) MarkProcessed(_ context.Context, _ uuid.UUID) error               { return nil }
-func (o *fakeOutbox) MarkProcessedBatch(_ context.Context, _ []uuid.UUID) error        { return nil }
-func (o *fakeOutbox) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error        { return nil }
-func (o *fakeOutbox) IncrementRetry(_ context.Context, _ uuid.UUID) error              { return nil }
+func (o *fakeOutbox) MarkProcessed(_ context.Context, _ uuid.UUID) error        { return nil }
+func (o *fakeOutbox) MarkProcessedBatch(_ context.Context, _ []uuid.UUID) error { return nil }
+func (o *fakeOutbox) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (o *fakeOutbox) IncrementRetry(_ context.Context, _ uuid.UUID) error       { return nil }
 
 type fakeUoW struct {
 	dec       *fakeDecisionRepo
@@ -84,11 +84,11 @@ type fakeUoW struct {
 	committed bool
 }
 
-func (u *fakeUoW) Begin(context.Context) error                                { return nil }
-func (u *fakeUoW) Commit() error                                              { u.committed = true; return nil }
-func (u *fakeUoW) Rollback() error                                            { return nil }
+func (u *fakeUoW) Begin(context.Context) error                               { return nil }
+func (u *fakeUoW) Commit() error                                             { u.committed = true; return nil }
+func (u *fakeUoW) Rollback() error                                           { return nil }
 func (u *fakeUoW) DecisionRepo() repository.ClassificationDecisionRepository { return u.dec }
-func (u *fakeUoW) OutboxRepo() outbox.Repository                              { return u.ob }
+func (u *fakeUoW) OutboxRepo() outbox.Repository                             { return u.ob }
 
 func depsWith(u *fakeUoW, log string, err error) Deps {
 	return Deps{
@@ -104,12 +104,13 @@ func depsWith(u *fakeUoW, log string, err error) Deps {
 func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{
-		Source:    failure.SourceValidation,
-		ReleaseID: "r1",
-		NodeID:    "s.n",
-		Repo:      "o/r",
-		CommitSHA: "abc",
-		DBTLogURI: "s3://b/k",
+		Source:        failure.SourceValidation,
+		ReleaseID:     "r1",
+		NodeID:        "s.n",
+		Repo:          "o/r",
+		CommitSHA:     "abc",
+		DBTLogURI:     "s3://b/k",
+		CodeBundleURI: "s3://b/code-bundles/rel-1/bundle.json",
 	}
 	err := ClassifyFailure(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), ev)
 	if err != nil {
@@ -125,6 +126,15 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
 	if p.Category != "logic" || p.NodeID != "s.n" || p.EventID != event.RemediationEventID("r1", "s.n").String() {
 		t.Fatalf("bad trigger payload: %+v", p)
+	}
+	if p.Reason != "logic:missing_object" {
+		t.Fatalf("trigger reason = %q, want logic:missing_object", p.Reason)
+	}
+	if p.ErrorExcerpt == "" {
+		t.Fatal("trigger error_excerpt must not be empty")
+	}
+	if p.CodeBundleURI != "s3://b/code-bundles/rel-1/bundle.json" {
+		t.Fatalf("trigger code_bundle_uri = %q, want s3://b/code-bundles/rel-1/bundle.json", p.CodeBundleURI)
 	}
 	if !u.committed {
 		t.Fatal("tx not committed")
