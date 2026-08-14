@@ -72,6 +72,11 @@ type Services struct {
 	Artifacts        ports.ArtifactWriter
 	Logger           *slog.Logger
 	ServiceRepoPaths map[string]string
+	Locator          ports.NodeLocator
+	Upstream         ports.UpstreamChangeReader
+	Versions         ports.VersionReader
+	Precedents       ports.PrecedentReader
+	CandidateSource  ports.CandidateSourceReader
 }
 
 // Result is what a Fixer returns: the proposal (Status always set; artifact

@@ -27,6 +27,32 @@ type UpstreamDiff struct {
 	Diff        string
 }
 
+// UpstreamChange is one recently-changed ancestor with the diffs of its most
+// recent change, shown to the model as root-cause evidence.
+type UpstreamChange struct {
+	NodeID     string
+	Depth      int
+	CodeDiff   string
+	ConfigDiff string
+	Truncated  bool
+}
+
+// Precedent is one past rejection with the same error shape and, when
+// resolved, the change that fixed it.
+type Precedent struct {
+	ReleaseID      string // for self-filtering only; never rendered
+	NodeID         string
+	Stage          string
+	Category       string
+	Reason         string
+	ErrorExcerpt   string
+	RejectedAt     string // RFC3339
+	Resolved       bool
+	ResolutionDiff string
+	DiffTruncated  bool
+	PRURL          string
+}
+
 type Evidence struct {
 	NodeID         string
 	ErrorSignature string

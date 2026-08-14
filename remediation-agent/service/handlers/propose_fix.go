@@ -112,6 +112,11 @@ type Deps struct {
 	// source repo, e.g. "service-1" → "services/service-1". Used by the fixers
 	// to build the full GitHub file path for the offending source file.
 	ServiceRepoPaths map[string]string
+	Locator          ports.NodeLocator
+	Upstream         ports.UpstreamChangeReader
+	Versions         ports.VersionReader
+	Precedents       ports.PrecedentReader
+	CandidateSource  ports.CandidateSourceReader
 }
 
 // ProposeFix turns one healable failure trigger into a fix proposal. It counts
@@ -181,6 +186,8 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		LLM: deps.LLM, Source: deps.Source, Evidence: deps.Evidence,
 		Sanitizer: deps.Sanitizer, Ancestry: deps.Ancestry, Artifacts: deps.Artifacts,
 		Logger: deps.Logger, ServiceRepoPaths: deps.ServiceRepoPaths,
+		Locator: deps.Locator, Upstream: deps.Upstream, Versions: deps.Versions,
+		Precedents: deps.Precedents, CandidateSource: deps.CandidateSource,
 	}
 
 	// Mark this attempt in-flight in its own committed transaction, right before

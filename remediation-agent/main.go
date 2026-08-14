@@ -146,6 +146,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	graphClient, err := grpcadapter.NewGraphClient(cfg.OrchestratorAddr)
+	if err != nil {
+		logger.Error("grpc graph client dial", "error", err)
+		os.Exit(1)
+	}
+
 	// Bound the LLM HTTP client explicitly: passing nil would fall back to
 	// http.DefaultClient, which has NO request timeout, so a single hung LLM
 	// call could block the handler goroutine indefinitely (and, with the
@@ -188,6 +194,12 @@ func main() {
 		Logger:           logger,
 		MaxAttempts:      cfg.MaxAttempts,
 		ServiceRepoPaths: cfg.ServiceRepoPaths,
+		Locator:          graphClient,
+		Upstream:         graphClient,
+		Versions:         graphClient,
+		Precedents:       graphClient,
+		// CandidateSource stays nil until the S3 code-bundle adapter is wired;
+		// no fixer calls it yet.
 	}
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
