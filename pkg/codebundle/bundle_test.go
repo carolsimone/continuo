@@ -3,7 +3,7 @@ package codebundle_test
 import (
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/domain/codebundle"
+	"github.com/carolsimone/continuo/pkg/codebundle"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

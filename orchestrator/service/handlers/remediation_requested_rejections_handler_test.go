@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
-	"github.com/carolsimone/continuo/orchestrator/domain/codebundle"
+	"github.com/carolsimone/continuo/pkg/codebundle"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"

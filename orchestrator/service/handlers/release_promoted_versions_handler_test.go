@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/orchestrator/domain/codebundle"
+	"github.com/carolsimone/continuo/pkg/codebundle"
 	"github.com/carolsimone/continuo/orchestrator/domain/codeversion"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"

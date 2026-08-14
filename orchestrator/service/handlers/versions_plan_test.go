@@ -8,7 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/carolsimone/continuo/orchestrator/domain/codebundle"
+	"github.com/carolsimone/continuo/pkg/codebundle"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/stretchr/testify/assert"
