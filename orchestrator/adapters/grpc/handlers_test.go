@@ -47,10 +47,12 @@ func (f *fakeDriftAwareRuns) ListActiveRunDrifts(ctx context.Context) (*queries.
 // handler computed so pagination clamping can be asserted, and replays a fixed
 // page + total back.
 type fakeScheduleAndRunLists struct {
-	gotLimit  int
-	gotOffset int
-	runs      []*domain.RunSummary
-	total     int
+	gotLimit    int
+	gotOffset   int
+	runs        []*domain.RunSummary
+	total       int
+	location    *domain.NodeLocation
+	locationErr error
 }
 
 func (fakeScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
@@ -69,6 +71,12 @@ func (fakeScheduleAndRunLists) GetNodeAncestry(context.Context, string, int) ([]
 }
 func (fakeScheduleAndRunLists) GetNode(context.Context, string, string, string) (*domain.NodeMeta, error) {
 	return nil, nil
+}
+func (f *fakeScheduleAndRunLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
+	if f.locationErr != nil {
+		return nil, f.locationErr
+	}
+	return f.location, nil
 }
 
 func newHandler(rq *fakeDriftAwareRuns) *grpcadapter.QueryHandler {
@@ -583,6 +591,26 @@ func TestQueryHandler_ListRuns_RejectsEmptyScheduleName(t *testing.T) {
 	h := newHandlerWithLists(&fakeScheduleAndRunLists{})
 	_, err := h.ListRuns(context.Background(), &orchestratorv1.ListRunsRequest{ScheduleName: ""})
 	require.Error(t, err)
+}
+
+// ---- GetNodeLocation ----
+
+func TestQueryHandler_GetNodeLocation_MapsFields(t *testing.T) {
+	lists := &fakeScheduleAndRunLists{
+		location: &domain.NodeLocation{FilePath: "models/loc_target.sql", ServiceName: "service-1"},
+	}
+	h := newHandlerWithLists(lists)
+	resp, err := h.GetNodeLocation(context.Background(), &orchestratorv1.GetNodeLocationRequest{UniqueId: "analytics.loc_target"})
+	require.NoError(t, err)
+	assert.Equal(t, "models/loc_target.sql", resp.FilePath)
+	assert.Equal(t, "service-1", resp.ServiceName)
+}
+
+func TestQueryHandler_GetNodeLocation_UnknownNode_NotFound(t *testing.T) {
+	lists := &fakeScheduleAndRunLists{locationErr: domain.ErrNodeNotFound}
+	h := newHandlerWithLists(lists)
+	_, err := h.GetNodeLocation(context.Background(), &orchestratorv1.GetNodeLocationRequest{UniqueId: "analytics.absent"})
+	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 // ---- GetPrecedents ----

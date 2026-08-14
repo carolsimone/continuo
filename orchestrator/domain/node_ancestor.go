@@ -30,3 +30,10 @@ type NodeAncestor struct {
 	LastChangedAt *time.Time // nil when unknown
 	LastReleaseID string
 }
+
+// NodeLocation is where a node's source lives: the project-relative file path
+// captured from the manifest, and the service that owns the node.
+type NodeLocation struct {
+	FilePath    string
+	ServiceName string
+}

@@ -37,6 +37,9 @@ func (f *fakeAncestryReader) GetNodeAncestry(_ context.Context, uid string, maxD
 func (f *fakeAncestryReader) GetNode(context.Context, string, string, string) (*domain.NodeMeta, error) {
 	return nil, nil
 }
+func (f *fakeAncestryReader) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
+	return nil, nil
+}
 
 func newAncestryHandler(r *fakeAncestryReader) *QueryHandler {
 	return NewQueryHandler(r, nil, nil, nil, slog.Default())

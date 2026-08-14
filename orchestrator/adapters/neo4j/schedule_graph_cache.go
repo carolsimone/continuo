@@ -18,15 +18,17 @@ const scheduleGraphCacheSize = 32
 
 // ScheduleGraphProvider is the full read surface the cache decorates. It caches
 // only GetScheduleGraph (the expensive, immutable topology-shape query) and
-// passes ListRuns / ListScheduleTopologies / GetNodeAncestry / GetNode straight
-// through so the decorator can stand in for the repository wherever the
-// schedule-and-run reader is required. Satisfied by *OrchestratorQueryRepository.
+// passes ListRuns / ListScheduleTopologies / GetNodeAncestry / GetNode /
+// GetNodeLocation straight through so the decorator can stand in for the
+// repository wherever the schedule-and-run reader is required. Satisfied by
+// *OrchestratorQueryRepository.
 type ScheduleGraphProvider interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
 	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
 	GetNodeAncestry(ctx context.Context, nodeUniqueID string, maxDepth int) ([]*domain.NodeAncestor, error)
 	GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error)
+	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
 }
 
 // GenerationProvider returns the orchestrator's current topology_generation.
@@ -131,6 +133,13 @@ func (c *CachingScheduleGraphReader) GetNodeAncestry(ctx context.Context, nodeUn
 // lookup).
 func (c *CachingScheduleGraphReader) GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error) {
 	return c.inner.GetNode(ctx, service, schema, table)
+}
+
+// GetNodeLocation passes straight through: a single-node property read is not
+// worth a cache entry, and the decorator only needs to satisfy the full read
+// surface so it can stand in for the repository.
+func (c *CachingScheduleGraphReader) GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error) {
+	return c.inner.GetNodeLocation(ctx, uniqueID)
 }
 
 func (c *CachingScheduleGraphReader) get(key scheduleGraphKey) (*domain.ScheduleGraph, bool) {

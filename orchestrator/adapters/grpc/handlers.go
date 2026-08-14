@@ -27,6 +27,7 @@ type ScheduleAndRunListReader interface {
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
 	GetNodeAncestry(ctx context.Context, nodeUniqueID string, maxDepth int) ([]*domain.NodeAncestor, error)
 	GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error)
+	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
 }
 
 // DriftAwareRunReader returns view-shaped run data composed from Neo4j
@@ -270,6 +271,20 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeR
 		TestCount:      num.ClampInt32(meta.TestCount),
 		TestCountKnown: meta.TestCountKnown,
 	}, nil
+}
+
+// GetNodeLocation returns where a node's source lives. An unknown unique_id
+// maps to NOT_FOUND per the entity-lookup convention.
+func (h *QueryHandler) GetNodeLocation(ctx context.Context, req *orchestratorv1.GetNodeLocationRequest) (*orchestratorv1.GetNodeLocationResponse, error) {
+	loc, err := h.scheduleAndRunLists.GetNodeLocation(ctx, req.UniqueId)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
+		}
+		h.logger.Error("GetNodeLocation failed", "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "get node location: %v", err)
+	}
+	return &orchestratorv1.GetNodeLocationResponse{FilePath: loc.FilePath, ServiceName: loc.ServiceName}, nil
 }
 
 // maxUpstreamDepth caps GetUpstreamChanges' depth request; the proto

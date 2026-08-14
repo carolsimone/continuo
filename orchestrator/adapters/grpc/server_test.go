@@ -74,6 +74,10 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 			_, err := client.ListScheduleTopologies(ctx, &orchestratorv1.ListScheduleTopologiesRequest{})
 			return err
 		}},
+		{"GetNodeLocation", func() error {
+			_, err := client.GetNodeLocation(ctx, &orchestratorv1.GetNodeLocationRequest{UniqueId: "x"})
+			return err
+		}},
 		{"GetNodeVersions", func() error {
 			_, err := client.GetNodeVersions(ctx, &orchestratorv1.GetNodeVersionsRequest{UniqueId: "x"})
 			return err
@@ -131,6 +135,9 @@ func (stubScheduleAndRunLists) GetNodeAncestry(context.Context, string, int) ([]
 }
 func (stubScheduleAndRunLists) GetNode(context.Context, string, string, string) (*domain.NodeMeta, error) {
 	return nil, nil
+}
+func (stubScheduleAndRunLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
+	return &domain.NodeLocation{}, nil
 }
 
 // stubDriftAwareRuns satisfies grpcadapter.DriftAwareRunReader.

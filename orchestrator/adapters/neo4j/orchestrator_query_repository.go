@@ -537,6 +537,35 @@ func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, sche
 	}, nil
 }
 
+// GetNodeLocation returns the node's project-relative source path and owning
+// service. An unknown or inactive unique_id yields domain.ErrNodeNotFound.
+func (r *OrchestratorQueryRepository) GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+
+	query := `
+		MATCH (t:Table {unique_id: $uid})
+		WHERE COALESCE(t.active, true)
+		RETURN COALESCE(t.original_file_path, '') AS file_path, t.service_name AS service_name
+	`
+	result, err := session.Run(ctx, query, map[string]interface{}{"uid": uniqueID})
+	if err != nil {
+		return nil, fmt.Errorf("GetNodeLocation query failed: %w", err)
+	}
+	if !result.Next(ctx) {
+		if err := result.Err(); err != nil {
+			return nil, fmt.Errorf("GetNodeLocation query error: %w", err)
+		}
+		return nil, domain.ErrNodeNotFound
+	}
+	rec := result.Record()
+	fp, _ := rec.Get("file_path")
+	svc, _ := rec.Get("service_name")
+	fpStr, _ := fp.(string)
+	svcStr, _ := svc.(string)
+	return &domain.NodeLocation{FilePath: fpStr, ServiceName: svcStr}, nil
+}
+
 func ancestorFromProps(props map[string]interface{}, depth int) *domain.NodeAncestor {
 	a := &domain.NodeAncestor{
 		UniqueID:      safeString(props["unique_id"]),

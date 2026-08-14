@@ -26,6 +26,7 @@ const (
 	OrchestratorQuery_ListScheduleTopologies_FullMethodName = "/orchestrator.v1.OrchestratorQuery/ListScheduleTopologies"
 	OrchestratorQuery_GetNodeAncestry_FullMethodName        = "/orchestrator.v1.OrchestratorQuery/GetNodeAncestry"
 	OrchestratorQuery_GetNode_FullMethodName                = "/orchestrator.v1.OrchestratorQuery/GetNode"
+	OrchestratorQuery_GetNodeLocation_FullMethodName        = "/orchestrator.v1.OrchestratorQuery/GetNodeLocation"
 	OrchestratorQuery_GetNodeVersions_FullMethodName        = "/orchestrator.v1.OrchestratorQuery/GetNodeVersions"
 	OrchestratorQuery_GetNodeVersionDiff_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetNodeVersionDiff"
 	OrchestratorQuery_GetUpstreamChanges_FullMethodName     = "/orchestrator.v1.OrchestratorQuery/GetUpstreamChanges"
@@ -45,6 +46,10 @@ type OrchestratorQueryClient interface {
 	ListScheduleTopologies(ctx context.Context, in *ListScheduleTopologiesRequest, opts ...grpc.CallOption) (*ListScheduleTopologiesResponse, error)
 	GetNodeAncestry(ctx context.Context, in *GetNodeAncestryRequest, opts ...grpc.CallOption) (*GetNodeAncestryResponse, error)
 	GetNode(ctx context.Context, in *GetNodeRequest, opts ...grpc.CallOption) (*GetNodeResponse, error)
+	// GetNodeLocation returns where a node's source lives: its project-relative
+	// file path and owning service. An unknown unique_id is NOT_FOUND; a node
+	// whose file path was not captured returns file_path "".
+	GetNodeLocation(ctx context.Context, in *GetNodeLocationRequest, opts ...grpc.CallOption) (*GetNodeLocationResponse, error)
 	// GetNodeVersions returns a node's recorded code-version history, newest
 	// first — ordered by when each version's code was first promoted; is_current
 	// marks the version that actually runs now. A version node is immutable, so
@@ -174,6 +179,16 @@ func (c *orchestratorQueryClient) GetNode(ctx context.Context, in *GetNodeReques
 	return out, nil
 }
 
+func (c *orchestratorQueryClient) GetNodeLocation(ctx context.Context, in *GetNodeLocationRequest, opts ...grpc.CallOption) (*GetNodeLocationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetNodeLocationResponse)
+	err := c.cc.Invoke(ctx, OrchestratorQuery_GetNodeLocation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orchestratorQueryClient) GetNodeVersions(ctx context.Context, in *GetNodeVersionsRequest, opts ...grpc.CallOption) (*GetNodeVersionsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetNodeVersionsResponse)
@@ -245,6 +260,10 @@ type OrchestratorQueryServer interface {
 	ListScheduleTopologies(context.Context, *ListScheduleTopologiesRequest) (*ListScheduleTopologiesResponse, error)
 	GetNodeAncestry(context.Context, *GetNodeAncestryRequest) (*GetNodeAncestryResponse, error)
 	GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error)
+	// GetNodeLocation returns where a node's source lives: its project-relative
+	// file path and owning service. An unknown unique_id is NOT_FOUND; a node
+	// whose file path was not captured returns file_path "".
+	GetNodeLocation(context.Context, *GetNodeLocationRequest) (*GetNodeLocationResponse, error)
 	// GetNodeVersions returns a node's recorded code-version history, newest
 	// first — ordered by when each version's code was first promoted; is_current
 	// marks the version that actually runs now. A version node is immutable, so
@@ -324,6 +343,9 @@ func (UnimplementedOrchestratorQueryServer) GetNodeAncestry(context.Context, *Ge
 }
 func (UnimplementedOrchestratorQueryServer) GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNode not implemented")
+}
+func (UnimplementedOrchestratorQueryServer) GetNodeLocation(context.Context, *GetNodeLocationRequest) (*GetNodeLocationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetNodeLocation not implemented")
 }
 func (UnimplementedOrchestratorQueryServer) GetNodeVersions(context.Context, *GetNodeVersionsRequest) (*GetNodeVersionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetNodeVersions not implemented")
@@ -490,6 +512,24 @@ func _OrchestratorQuery_GetNode_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrchestratorQuery_GetNodeLocation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetNodeLocationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrchestratorQueryServer).GetNodeLocation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrchestratorQuery_GetNodeLocation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrchestratorQueryServer).GetNodeLocation(ctx, req.(*GetNodeLocationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OrchestratorQuery_GetNodeVersions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetNodeVersionsRequest)
 	if err := dec(in); err != nil {
@@ -632,6 +672,10 @@ var OrchestratorQuery_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetNode",
 			Handler:    _OrchestratorQuery_GetNode_Handler,
+		},
+		{
+			MethodName: "GetNodeLocation",
+			Handler:    _OrchestratorQuery_GetNodeLocation_Handler,
 		},
 		{
 			MethodName: "GetNodeVersions",

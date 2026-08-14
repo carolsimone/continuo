@@ -13,6 +13,11 @@ service OrchestratorQuery {
   rpc GetNodeAncestry(GetNodeAncestryRequest) returns (GetNodeAncestryResponse);
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
 
+  // GetNodeLocation returns where a node's source lives: its project-relative
+  // file path and owning service. An unknown unique_id is NOT_FOUND; a node
+  // whose file path was not captured returns file_path "".
+  rpc GetNodeLocation(GetNodeLocationRequest) returns (GetNodeLocationResponse);
+
   // GetNodeVersions returns a node's recorded code-version history, newest
   // first — ordered by when each version's code was first promoted; is_current
   // marks the version that actually runs now. A version node is immutable, so
@@ -93,6 +98,12 @@ message GetNodeResponse {
   string node_type        = 1;
   int32  test_count       = 2;
   bool   test_count_known = 3;
+}
+
+message GetNodeLocationRequest  { string unique_id = 1; }
+message GetNodeLocationResponse {
+  string file_path    = 1;  // dbt original_file_path (project-relative); "" if not captured
+  string service_name = 2;
 }
 
 enum Criticality {

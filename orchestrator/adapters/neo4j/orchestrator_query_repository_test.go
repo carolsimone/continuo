@@ -2,6 +2,7 @@ package neo4jinfra_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -316,4 +317,46 @@ func TestGetScheduleGraph_PopulatesTopologyGeneration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(42), g.TopologyGeneration)
 	assert.Len(t, g.Nodes, 1, "schedule graph must return the seeded node")
+}
+
+func TestGetNodeLocation_ReturnsPathAndService(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, client, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+	ctx := context.Background()
+	marker := t.Name()
+
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	_, err := s.Run(ctx, `
+        CREATE (:Table {unique_id:'analytics.loc_target', service_name:'service-1',
+                        schema_name:'analytics', table_name:'loc_target',
+                        original_file_path:'models/loc_target.sql', active:true,
+                        test_marker:$m})
+    `, map[string]any{"m": marker})
+	require.NoError(t, err)
+	s.Close(ctx)
+	t.Cleanup(func() {
+		ws := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer ws.Close(ctx)
+		_, _ = ws.Run(ctx, "MATCH (t:Table {test_marker:$m}) DETACH DELETE t",
+			map[string]any{"m": marker})
+	})
+
+	loc, err := repo.GetNodeLocation(ctx, "analytics.loc_target")
+	require.NoError(t, err)
+	assert.Equal(t, "models/loc_target.sql", loc.FilePath)
+	assert.Equal(t, "service-1", loc.ServiceName)
+}
+
+func TestGetNodeLocation_UnknownNode_ErrNodeNotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("requires Neo4j")
+	}
+	repo, _, cleanup := newTestQueryRepo(t)
+	defer cleanup()
+
+	_, err := repo.GetNodeLocation(context.Background(), "analytics.absent")
+	require.True(t, errors.Is(err, domain.ErrNodeNotFound))
 }
