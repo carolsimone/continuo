@@ -40,7 +40,6 @@ func TestAssemble_IncludesEvidenceAndForcesTool(t *testing.T) {
 		NodeID:       "e2e_schema.ftable_e",
 		CandidateSQL: "select c.id from e2e_schema.ftable_c c left join public.wrong_name w on c.id=w.id",
 		DBTLog:       "Database Error: relation \"public.wrong_name\" does not exist",
-		Ancestors:    []Ancestor{{NodeID: "e2e_schema.ftable_c", ServiceName: "service-2", Depth: 1}},
 	})
 	if req.ToolName != "propose_fix" {
 		t.Fatalf("tool name = %q, want propose_fix", req.ToolName)
@@ -118,31 +117,34 @@ func TestPrompts_ForbidJinjaRefs(t *testing.T) {
 	}
 }
 
-func TestAssemble_IncludesUpstreamDiffs(t *testing.T) {
+func TestAssemble_RendersOwnChangeUpstreamAndPrecedents(t *testing.T) {
 	req := Assemble(Evidence{
-		NodeID:       "analytics.table_e",
-		CandidateSQL: "select 1",
-		DBTLog:       "boom",
-		Ancestors:    []Ancestor{{NodeID: "analytics.table_c", ServiceName: "service-2", Depth: 1}},
-		UpstreamDiffs: []UpstreamDiff{
-			{NodeID: "analytics.table_c", ServiceName: "service-2", Diff: "@@ -1 +1 @@\n-old_col\n+new_col"},
-		},
+		NodeID: "analytics.orders", CandidateSQL: "select bad", DBTLog: "column x does not exist",
+		OwnChangeDiff: "-select good\n+select bad",
+		UpstreamChanges: []UpstreamChange{{NodeID: "analytics.payments", Depth: 1,
+			CodeDiff: "-a\n+b", ConfigDiff: `-"materialized": "table"` + "\n" + `+"materialized": "incremental"`}},
+		Precedents: precedentFixture(),
 	})
-	if !strings.Contains(req.User, "analytics.table_c") {
-		t.Errorf("diff section must label the upstream node:\n%s", req.User)
-	}
-	if !strings.Contains(req.User, "new_col") || !strings.Contains(req.User, "```diff") {
-		t.Errorf("diff section must render the patch in a diff block:\n%s", req.User)
+	for _, want := range []string{
+		"What this release changed in the failing model",
+		"-select good\n+select bad",
+		"Recent upstream changes",
+		"analytics.payments",
+		`+"materialized": "incremental"`, // config diffs are evidence now
+		"How similar failures were fixed before",
+	} {
+		if !strings.Contains(req.User, want) {
+			t.Fatalf("prompt missing %q\n%s", want, req.User)
+		}
 	}
 }
 
-func TestAssemble_OmitsDiffSectionWhenNoDiffs(t *testing.T) {
-	req := Assemble(Evidence{
-		NodeID:    "analytics.table_e",
-		Ancestors: []Ancestor{{NodeID: "analytics.table_c", ServiceName: "service-2", Depth: 1}},
-	})
-	if strings.Contains(req.User, "```diff") {
-		t.Errorf("no diff block should appear when UpstreamDiffs is empty:\n%s", req.User)
+func TestAssemble_OmitsEmptySections(t *testing.T) {
+	req := Assemble(Evidence{NodeID: "analytics.orders", CandidateSQL: "select 1", DBTLog: "err"})
+	for _, absent := range []string{"What this release changed", "Recent upstream changes", "How similar failures"} {
+		if strings.Contains(req.User, absent) {
+			t.Fatalf("empty evidence must render no %q section", absent)
+		}
 	}
 }
 

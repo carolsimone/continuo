@@ -54,15 +54,13 @@ type Precedent struct {
 }
 
 type Evidence struct {
-	NodeID         string
-	ErrorSignature string
-	CandidateSQL   string
-	DBTLog         string
-	Repo           string
-	CommitSHA      string
-	FilePath       string
-	Ancestors      []Ancestor
-	UpstreamDiffs  []UpstreamDiff
+	NodeID          string
+	ErrorSignature  string
+	CandidateSQL    string
+	DBTLog          string
+	OwnChangeDiff   string
+	UpstreamChanges []UpstreamChange
+	Precedents      []Precedent
 }
 
 type ToolParam struct {
@@ -271,9 +269,9 @@ func AssembleDuplicateTableFix(file NamedFile, relationID, otherService, otherFi
 }
 
 const systemPrompt = `You are a data-engineering assistant that proposes a fix for a failed dbt model.
-You are given the failed model's SQL, the dbt error, and metadata about which upstream
-models changed recently. Propose a corrected version of the failed model's SQL that makes
-validation pass.
+You are given the failed model's SQL, the dbt error, and the diffs of what changed recently
+in this model and its upstreams, and how similar past failures were fixed. Propose a corrected
+version of the failed model's SQL that makes validation pass.
 
 Rules:
 - Fix the model so validation passes without weakening tests or contracts.
@@ -281,6 +279,7 @@ Rules:
 - Reference upstream tables by their physical schema.table name; never introduce {{ ref(...) }} or {{ source(...) }} (the dbt projects are independent and these do not resolve across them).
 - Do not invent columns, sources, or refs that are not justified by the evidence.
 - When upstream change diffs are provided, treat them as the most likely root cause and account for what changed upstream when correcting the failed model.
+- When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the code you are shown.
 - If you cannot determine a safe fix, return the original SQL unchanged with a low confidence and an explanation.
 - Always respond by calling the propose_fix tool.`
 
@@ -291,20 +290,26 @@ func Assemble(ev Evidence) ProposeRequest {
 	fmt.Fprintf(&u, "Failed node: %s\n\n", ev.NodeID)
 	fmt.Fprintf(&u, "Failed model SQL:\n```sql\n%s\n```\n\n", ev.CandidateSQL)
 	fmt.Fprintf(&u, "dbt error:\n```\n%s\n```\n\n", ev.DBTLog)
-	if len(ev.Ancestors) > 0 {
-		u.WriteString("Upstream models, most-recently-changed first:\n")
-		for _, a := range ev.Ancestors {
-			fmt.Fprintf(&u, "- %s (service=%s, depth=%d, last_changed=%s, commit=%s)\n",
-				a.NodeID, a.ServiceName, a.Depth, a.LastChangedAt, a.LastCommitSHA)
+	if ev.OwnChangeDiff != "" {
+		fmt.Fprintf(&u, "What this release changed in the failing model (last promoted -> candidate):\n```diff\n%s\n```\n\n", ev.OwnChangeDiff)
+	}
+	if len(ev.UpstreamChanges) > 0 {
+		u.WriteString("Recent upstream changes, most recent first (each ancestor's code and resolved-config diff):\n")
+		for _, c := range ev.UpstreamChanges {
+			fmt.Fprintf(&u, "Upstream %s (depth=%d):\n", c.NodeID, c.Depth)
+			if c.CodeDiff != "" {
+				fmt.Fprintf(&u, "```diff\n%s\n```\n", c.CodeDiff)
+			}
+			if c.ConfigDiff != "" {
+				fmt.Fprintf(&u, "Config change:\n```diff\n%s\n```\n", c.ConfigDiff)
+			}
+			if c.Truncated {
+				u.WriteString("(diff truncated)\n")
+			}
 		}
 		u.WriteString("\n")
 	}
-	if len(ev.UpstreamDiffs) > 0 {
-		u.WriteString("Recent upstream changes (diffs of what changed in those upstream models):\n")
-		for _, d := range ev.UpstreamDiffs {
-			fmt.Fprintf(&u, "Upstream %s (service=%s):\n```diff\n%s\n```\n\n", d.NodeID, d.ServiceName, d.Diff)
-		}
-	}
+	renderPrecedents(&u, ev.Precedents)
 	u.WriteString("Propose a corrected version of the failed model's SQL.")
 
 	return ProposeRequest{

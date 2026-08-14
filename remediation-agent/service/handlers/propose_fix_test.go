@@ -73,6 +73,42 @@ func (f fakePrecedents) Precedents(_ context.Context, _ ports.PrecedentQuery) ([
 	return nil, f.err
 }
 
+// fakeCandidateSource returns a fixed bundle source, or an error, for
+// CandidateSourceReader.NodeSource. It exists so a validation trigger's
+// candidate-source lookup has a non-nil port to call; the source-ladder
+// behavior itself is exercised in the fixer package's own tests.
+type fakeCandidateSource struct {
+	src ports.CandidateSource
+	err error
+}
+
+func (f fakeCandidateSource) NodeSource(_ context.Context, _, _ string) (ports.CandidateSource, error) {
+	return f.src, f.err
+}
+
+// fakeUpstream returns fixed upstream changes, or an error, for
+// UpstreamChangeReader.UpstreamChanges.
+type fakeUpstream struct {
+	changes []prompt.UpstreamChange
+	err     error
+}
+
+func (f fakeUpstream) UpstreamChanges(_ context.Context, _ string) ([]prompt.UpstreamChange, error) {
+	return f.changes, f.err
+}
+
+// fakeVersions returns a fixed current version, or an error, for
+// VersionReader.CurrentVersion.
+type fakeVersions struct {
+	v   ports.CurrentVersion
+	ok  bool
+	err error
+}
+
+func (f fakeVersions) CurrentVersion(_ context.Context, _ string) (ports.CurrentVersion, bool, error) {
+	return f.v, f.ok, f.err
+}
+
 // fakeLLM returns results from a queue (one per Propose call, in order).
 // When the queue is exhausted, the last entry is repeated. A single-entry queue
 // reproduces the original single-result behaviour. probe, when set, runs on each
@@ -381,6 +417,9 @@ func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 		Locator:          fakeLocator{},
 		Precedents:       fakePrecedents{},
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
 	}
 }
 
@@ -1019,10 +1058,11 @@ func TestProposeFix_InternalSkipFinalizesGenerating(t *testing.T) {
 	}
 }
 
-// TestProposeFix_Step2_SourceResolved verifies that when ancestry returns a
-// file path and the source reader returns the original SQL, the Step-2 LLM call
-// produces source artifacts. The final proposal URIs point to the source
-// artifacts; the candidate artifacts are also recorded on the proposal.
+// TestProposeFix_Step2_SourceResolved verifies that when the orchestrator
+// graph's NodeLocator returns a file path and the source reader returns the
+// original SQL, the Step-2 LLM call produces source artifacts. The final
+// proposal URIs point to the source artifacts; the candidate artifacts are
+// also recorded on the proposal.
 func TestProposeFix_Step2_SourceResolved(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
@@ -1044,7 +1084,11 @@ func TestProposeFix_Step2_SourceResolved(t *testing.T) {
 		NewUoW:           func() uow.UnitOfWork { return u },
 		LLM:              &llm,
 		Evidence:         ev,
-		Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "svc", a: []prompt.Ancestor{}},
+		Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "svc"},
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
+		Precedents:       fakePrecedents{},
 		Source:           src,
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -1138,7 +1182,11 @@ func TestProposeFix_Step2_FallbackOnSourceError(t *testing.T) {
 		NewUoW:           func() uow.UnitOfWork { return u },
 		LLM:              &llm,
 		Evidence:         ev,
-		Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "svc"},
+		Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "svc"},
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
+		Precedents:       fakePrecedents{},
 		Source:           &fakeSource{err: fmt.Errorf("github 503")},
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -1176,9 +1224,9 @@ func TestProposeFix_Step2_FallbackOnSourceError(t *testing.T) {
 	}
 }
 
-// TestProposeFix_Step2_FallbackOnEmptyFilePath verifies that when ancestry
-// returns an empty file path, the handler skips the source read entirely and
-// falls back to the candidate proposal with SourceResolved=false.
+// TestProposeFix_Step2_FallbackOnEmptyFilePath verifies that when the
+// NodeLocator returns an empty file path, the handler skips the source read
+// entirely and falls back to the candidate proposal with SourceResolved=false.
 func TestProposeFix_Step2_FallbackOnEmptyFilePath(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
@@ -1200,7 +1248,11 @@ func TestProposeFix_Step2_FallbackOnEmptyFilePath(t *testing.T) {
 		NewUoW:           func() uow.UnitOfWork { return u },
 		LLM:              &llm,
 		Evidence:         ev,
-		Ancestry:         fakeAncestry{fp: "", svc: "svc"}, // empty file path → skip Step 2.
+		Locator:          fakeLocator{filePath: "", serviceName: "svc"}, // empty file path → skip Step 2.
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
+		Precedents:       fakePrecedents{},
 		Source:           src,
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -1252,7 +1304,11 @@ func TestProposeFix_Step2_FallbackOnUnmappedService(t *testing.T) {
 		NewUoW:           func() uow.UnitOfWork { return u },
 		LLM:              &llm,
 		Evidence:         ev,
-		Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "unknown-service"},
+		Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "unknown-service"},
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
+		Precedents:       fakePrecedents{},
 		Source:           src,
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -1307,7 +1363,11 @@ func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
 			NewUoW:           func() uow.UnitOfWork { return u },
 			LLM:              &llm,
 			Evidence:         ev,
-			Ancestry:         fakeAncestry{fp: "models/orders_d.sql", svc: "service-3", a: []prompt.Ancestor{}},
+			Locator:          fakeLocator{filePath: "models/orders_d.sql", serviceName: "service-3"},
+			CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+			Upstream:         fakeUpstream{},
+			Versions:         fakeVersions{},
+			Precedents:       fakePrecedents{},
 			Source:           src,
 			Sanitizer:        fakeSanitizer{},
 			Artifacts:        art,
@@ -1361,7 +1421,11 @@ func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
 			NewUoW:           func() uow.UnitOfWork { return u },
 			LLM:              &llm,
 			Evidence:         ev,
-			Ancestry:         fakeAncestry{fp: "models/orders_d.sql", svc: "service-3"},
+			Locator:          fakeLocator{filePath: "models/orders_d.sql", serviceName: "service-3"},
+			CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+			Upstream:         fakeUpstream{},
+			Versions:         fakeVersions{},
+			Precedents:       fakePrecedents{},
 			Source:           &fakeSource{err: fmt.Errorf("github 503")},
 			Sanitizer:        fakeSanitizer{},
 			Artifacts:        art,
@@ -1424,7 +1488,11 @@ func TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence(t *testing.T) {
 			NewUoW:           func() uow.UnitOfWork { return u },
 			LLM:              &llm,
 			Evidence:         ev,
-			Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "svc", a: []prompt.Ancestor{}},
+			Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "svc"},
+			CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+			Upstream:         fakeUpstream{},
+			Versions:         fakeVersions{},
+			Precedents:       fakePrecedents{},
 			Source:           &fakeSource{content: originalSQL},
 			Sanitizer:        fakeSanitizer{},
 			Artifacts:        art,
@@ -1464,7 +1532,11 @@ func TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence(t *testing.T) {
 			NewUoW:           func() uow.UnitOfWork { return u },
 			LLM:              &llm,
 			Evidence:         ev,
-			Ancestry:         fakeAncestry{fp: "models/table_e.sql", svc: "svc", a: []prompt.Ancestor{}},
+			Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "svc"},
+			CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+			Upstream:         fakeUpstream{},
+			Versions:         fakeVersions{},
+			Precedents:       fakePrecedents{},
 			Source:           &fakeSource{content: originalSQL},
 			Sanitizer:        fakeSanitizer{},
 			Artifacts:        art,
