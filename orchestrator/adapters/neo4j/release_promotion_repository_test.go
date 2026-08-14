@@ -402,73 +402,37 @@ func TestReleasePromotionRepository_PreservesRunExecutesEdgesWhenRetiringTables(
 	assert.Equal(t, "rB", rid)
 }
 
-// TestReleasePromotionRepository_StampsProvenanceOnlyOnChangedNodes verifies
-// that PromoteRelease writes last_commit_sha/last_repo/last_changed_at/
-// last_release_id onto nodes flagged Changed, and leaves an unchanged node's
-// provenance untouched across a subsequent promotion.
-func TestReleasePromotionRepository_StampsProvenanceOnlyOnChangedNodes(t *testing.T) {
+// TestPromotion_DoesNotStampLastProvenance verifies that PromoteRelease does
+// not write last_commit_sha/last_repo/last_changed_at/last_release_id onto a
+// promoted node — code-version provenance lives on :NodeVersion, and the
+// :Table last_* stamp is retired.
+func TestPromotion_DoesNotStampLastProvenance(t *testing.T) {
 	ctx := context.Background()
 	client := newTestClient(t) // skips if Neo4j is unreachable
 	wipeReleaseFixtures(t, client)
 	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
 
 	repo := newReleaseRepo(client)
-
-	// rel-1: both a and b are new → both changed, stamped with commit c1.
-	t1 := time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC)
-	first := []topology.ReleasePromotedTopologyNode{
+	nodes := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
-			Changed: true, LastCommitSHA: "c1", LastRepo: "acme/demo", LastChangedAt: t1},
-		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "x", Schedule: "d", UpstreamUniqueIDs: []string{"a"},
-			Changed: true, LastCommitSHA: "c1", LastRepo: "acme/demo", LastChangedAt: t1},
+			UpstreamUniqueIDs: []string{}},
 	}
-	_, err := repo.PromoteRelease(ctx, "rel-1", first, time.Now().UTC())
-	require.NoError(t, err)
-
-	// rel-2: a unchanged (keeps c1), b changed → stamped with commit c2.
-	t2 := time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC)
-	second := []topology.ReleasePromotedTopologyNode{
-		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
-			Changed: false},
-		{UniqueID: "b", SchemaName: "p", TableName: "tb", ServiceName: "s", ImageTag: "y", Schedule: "d", UpstreamUniqueIDs: []string{"a"},
-			Changed: true, LastCommitSHA: "c2", LastRepo: "acme/demo", LastChangedAt: t2},
-	}
-	_, err = repo.PromoteRelease(ctx, "rel-2", second, time.Now().UTC())
+	_, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
 	require.NoError(t, err)
 
 	s := client.NewSession(ctx, neo4j.AccessModeRead)
 	defer s.Close(ctx)
-
 	res, err := s.Run(ctx, `
-		MATCH (t:Table)
-		RETURN t.unique_id AS uid, t.last_commit_sha AS sha, t.last_repo AS repo, t.last_release_id AS rid, t.last_changed_at AS changed_at
-		ORDER BY uid
+		MATCH (t:Table {unique_id: 'a'})
+		RETURN t.last_commit_sha AS c, t.last_repo AS r, t.last_changed_at AS at, t.last_release_id AS rel
 	`, nil)
 	require.NoError(t, err)
-	got := map[string]map[string]any{}
-	for res.Next(ctx) {
-		uid, _ := res.Record().Get("uid")
-		sha, _ := res.Record().Get("sha")
-		repoV, _ := res.Record().Get("repo")
-		rid, _ := res.Record().Get("rid")
-		changedAt, _ := res.Record().Get("changed_at")
-		got[uid.(string)] = map[string]any{"sha": sha, "repo": repoV, "rid": rid, "changed_at": changedAt}
+	require.True(t, res.Next(ctx))
+	rec := res.Record()
+	for _, k := range []string{"c", "r", "at", "rel"} {
+		v, _ := rec.Get(k)
+		assert.Nilf(t, v, "promotion stamped %s = %v; last_* is retired", k, v)
 	}
-	require.NoError(t, res.Err())
-
-	// a kept rel-1's provenance (unchanged in rel-2).
-	assert.Equal(t, "c1", got["a"]["sha"])
-	assert.Equal(t, "acme/demo", got["a"]["repo"])
-	assert.Equal(t, "rel-1", got["a"]["rid"])
-	gotA := got["a"]["changed_at"].(time.Time)
-	assert.True(t, t1.Equal(gotA), "a keeps rel-1 timestamp; got %v", gotA)
-
-	// b was re-stamped with rel-2's provenance.
-	assert.Equal(t, "c2", got["b"]["sha"])
-	assert.Equal(t, "acme/demo", got["b"]["repo"])
-	assert.Equal(t, "rel-2", got["b"]["rid"])
-	gotB := got["b"]["changed_at"].(time.Time)
-	assert.True(t, t2.Equal(gotB), "b gets rel-2 timestamp; got %v", gotB)
 }
 
 // TestReleasePromotionRepository_DeletesOrphanedTablesWithNoRunReferences
@@ -550,10 +514,9 @@ func TestReleasePromotionRepository_SetsOriginalFilePathUnconditionally(t *testi
 	t.Cleanup(func() { wipeReleaseFixtures(t, client) })
 
 	repo := newReleaseRepo(client)
-	// node "a" is unchanged (Changed:false) — file_path must STILL be set.
 	nodes := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "a", SchemaName: "p", TableName: "ta", ServiceName: "s", ImageTag: "x", Schedule: "d",
-			OriginalFilePath: "models/a.sql", Changed: false},
+			OriginalFilePath: "models/a.sql"},
 	}
 	_, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
 	require.NoError(t, err)
@@ -579,9 +542,9 @@ func TestReleasePromotionRepository_StoresContentHashOnTable(t *testing.T) {
 	repo := newReleaseRepo(client)
 	nodes := []topology.ReleasePromotedTopologyNode{
 		{UniqueID: "a", SchemaName: "public", TableName: "orders", ServiceName: "svc",
-			ContentHash: "sha256:aaa", Changed: true, UpstreamUniqueIDs: []string{}},
+			ContentHash: "sha256:aaa", UpstreamUniqueIDs: []string{}},
 		{UniqueID: "b", SchemaName: "public", TableName: "customers", ServiceName: "svc",
-			ContentHash: "sha256:bbb", Changed: false, UpstreamUniqueIDs: []string{}},
+			ContentHash: "sha256:bbb", UpstreamUniqueIDs: []string{}},
 	}
 	_, err := repo.PromoteRelease(ctx, "rel-1", nodes, time.Now().UTC())
 	require.NoError(t, err)
