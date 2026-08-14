@@ -1,4 +1,5 @@
-// Package s3 implements ports.EvidenceReader and ports.ArtifactWriter over AWS SDK v2 S3.
+// Package s3 implements ports.EvidenceReader, ports.ArtifactWriter, and
+// ports.CandidateSourceReader over AWS SDK v2 S3.
 package s3
 
 import (

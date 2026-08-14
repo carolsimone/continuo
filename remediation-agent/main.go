@@ -140,6 +140,9 @@ func main() {
 		cfg.S3.SecretAccessKey,
 	)
 
+	bundleReader := s3.NewCandidateSourceReader(
+		cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region, cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey)
+
 	ancestryClient, err := grpcadapter.NewAncestryClient(cfg.OrchestratorAddr)
 	if err != nil {
 		logger.Error("grpc ancestry client dial", "error", err)
@@ -198,8 +201,7 @@ func main() {
 		Upstream:         graphClient,
 		Versions:         graphClient,
 		Precedents:       graphClient,
-		// CandidateSource stays nil until the S3 code-bundle adapter is wired;
-		// no fixer calls it yet.
+		CandidateSource:  bundleReader,
 	}
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
