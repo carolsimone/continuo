@@ -107,12 +107,17 @@ failing code via `code_bundle_uri` (threaded from `release.rejected:v1`'s
 top-level `code_bundle_uri`; empty for compile-stage rejections, which precede
 the parse that produces the bundle) — kept pointer-first so the orchestrator's
 failure-precedent case base can record the rejection without pulling the full
-log or code inline. The payload also includes a `file_path` field
+log or code inline. `remediation-agent` decodes both fields off the trigger:
+`reason`, together with `category`, is its fallback precedent-lookup key
+(`GetPrecedents`) when the exact `error_signature` has no recorded match, and
+`code_bundle_uri` is the validation fixer's primary source for the failing
+node's real code (falling back to a GitHub repo read only on a permanent
+bundle miss). The payload also includes a `file_path` field
 (project-relative source file, e.g. `models/order_items.sql`) that is
 non-empty for `compile` and `seed_build` sources; it is derived from the dbt
 log. For `validation` sources it is empty — the downstream agent resolves the
-path via orchestrator ancestry. See `docs/arch/services/remediation.md` for
-the full payload shape.
+path via the orchestrator's `GetNodeLocation` RPC. See
+`docs/arch/services/remediation.md` for the full payload shape.
 
 **`outbox.dead_letter:v1`** — emitted by every outbox-owning service's
 `pkg/outbox.Processor` for a terminal outbox row: a permanent payload error,

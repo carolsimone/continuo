@@ -519,7 +519,7 @@ sequenceDiagram
     Note over RC: Reject(validation_failed) using stored per-node results<br/>emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri,candidate_artifact_uri}], repo, commit_sha,<br/>code_bundle_uri}
     RC->>R: publish release.rejected:v1
     R->>RM: consume release.rejected:v1
-    Note over RM: stage="validation" → SourceValidation; no file_path at this layer<br/>classify + emit remediation.requested:v1 (agent resolves file_path via ancestry)
+    Note over RM: stage="validation" → SourceValidation; no file_path at this layer<br/>classify + emit remediation.requested:v1 (agent resolves file_path via orchestrator GetNodeLocation)
   end
   Note over RC: advance FIFO queue
 

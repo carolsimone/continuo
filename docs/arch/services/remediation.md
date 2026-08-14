@@ -143,9 +143,10 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
       on release.Node). These are parsed by the release_rejected_binding adapter
       into FailureEvidence.FilePath and FailureEvidence.Service, and forwarded
       into the remediation.requested:v1 trigger. This allows the agent to
-      locate the source file without an Ancestry lookup, which is critical for
-      newly-added seeds that exist only in the candidate release and are
-      therefore absent from the promoted topology that Ancestry serves.
+      locate the source file without a `GetNodeLocation` round trip to
+      orchestrator, which is critical for newly-added seeds that exist only in
+      the candidate release and are therefore absent from the promoted
+      topology `GetNodeLocation` serves.
     - validation: no FilePath derivation; the agent uses candidate SQL.
 3. ClassifyWithStructured(ev, structured, logText) → Category, Signature, Decision,
    Reason, Excerpt (pure, deterministic). Prefers the structured record: status=fail
@@ -186,7 +187,7 @@ The trigger is pointer-first: the full log stays behind `dbt_log_uri` and the fa
 | `code_bundle_uri` | S3 URI of the rejected release's code-bundle document, threaded from `release.rejected:v1`'s top-level `code_bundle_uri`. Set for duplicate_table, validation, and seed_build rejections. Empty for compile-stage rejections, which precede the parse that produces the bundle. |
 | `dbt_log_uri` | S3 URI of the full dbt execution log. |
 | `candidate_artifact_uri` | S3 URI of the node's candidate artifact — rewritten SQL for a dbt node, a validation spec for a python node (candidate-schema form; omitted for seeds and compile failures). |
-| `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log), seed_build failures (threaded from the candidate topology's `OriginalFilePath`), and duplicate_table failures (the rename target's file, threaded from `per_node[].file_path`). Empty for validation failures. When present for seed_build or duplicate_table, the agent bypasses the Ancestry (orchestrator) lookup. |
+| `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log), seed_build failures (threaded from the candidate topology's `OriginalFilePath`), and duplicate_table failures (the rename target's file, threaded from `per_node[].file_path`). Empty for validation failures. When present for seed_build or duplicate_table, the agent bypasses the `GetNodeLocation` (orchestrator) lookup. |
 | `service` | Owning dbt service name for the failing node. Non-empty for seed_build failures (threaded from the candidate topology's ServiceName) and duplicate_table failures (the rename target's service, threaded from `per_node[].service`). Empty for compile (NodeID is the service) and validation. |
 | `node_type` | Duplicate_table only: the target claimant's kind (`dbt-model`, `dbt-seed`, `dbt-snapshot`, or `python-model`), threaded from `per_node[].node_type`. Lets the fixer skip a python target — whose relation is declared in the service's contract.yaml, not in `file_path` — without a topology lookup of its own. Empty for every other source. |
 | `other_service` | Duplicate_table only: the competing claimant's service name — the node that also produces the contested relation (`relation_id`). Empty for every other source. |
