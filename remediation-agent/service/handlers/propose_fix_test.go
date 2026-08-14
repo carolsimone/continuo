@@ -52,6 +52,27 @@ type fakeSanitizer struct{}
 
 func (fakeSanitizer) Sanitize(s string) string { return s }
 
+// fakeLocator returns a fixed file path and service name, or an error, for
+// NodeLocator.Locate.
+type fakeLocator struct {
+	filePath, serviceName string
+	err                   error
+}
+
+func (f fakeLocator) Locate(_ context.Context, _ string) (string, string, error) {
+	return f.filePath, f.serviceName, f.err
+}
+
+// fakePrecedents returns no precedents for any query, or an error if set. It
+// exists so a compile/seed_build trigger's precedent lookup has a non-nil
+// port to call; the precedent content itself is exercised in the fixer
+// package's own tests.
+type fakePrecedents struct{ err error }
+
+func (f fakePrecedents) Precedents(_ context.Context, _ ports.PrecedentQuery) ([]prompt.Precedent, error) {
+	return nil, f.err
+}
+
 // fakeLLM returns results from a queue (one per Propose call, in order).
 // When the queue is exhausted, the last entry is repeated. A single-entry queue
 // reproduces the original single-result behaviour. probe, when set, runs on each
@@ -358,6 +379,8 @@ func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Locator:          fakeLocator{},
+		Precedents:       fakePrecedents{},
 	}
 }
 
@@ -413,6 +436,7 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		MaxAttempts: 3,
 		// Service "core" maps to the repo root, so the full path equals FilePath.
 		ServiceRepoPaths: map[string]string{"core": ""},
+		Precedents:       fakePrecedents{},
 	}
 	tr := Trigger{
 		Source:               "compile",
@@ -495,9 +519,10 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		NewUoW:   func() uow.UnitOfWork { return u },
 		LLM:      &llm,
 		Evidence: ev,
-		// Ancestry must NOT be called: it only has promoted topology, which does
-		// not include newly-added seeds. An error here proves we skip it.
-		Ancestry:         fakeAncestry{err: fmt.Errorf("ancestry must not be called for new seeds")},
+		// Ancestry must NOT be called: seed_build's location fallback resolves via
+		// the orchestrator graph's NodeLocator, not Ancestry. An error here proves
+		// we skip it.
+		Ancestry:         fakeAncestry{err: fmt.Errorf("ancestry must not be called for seed_build")},
 		Source:           src,
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -505,6 +530,7 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Precedents:       fakePrecedents{},
 	}
 	tr := Trigger{
 		Source:         "seed_build",
@@ -512,7 +538,7 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		NodeID:         "svc.customers",
 		ErrorSignature: "seed-err",
 		// FilePath and Service are threaded from the candidate topology by
-		// release-controller, bypassing the need for an Ancestry call.
+		// release-controller, bypassing the need for a NodeLocator call.
 		FilePath:             "seeds/customers.csv",
 		Service:              "svc",
 		CandidateArtifactURI: "",
@@ -550,11 +576,12 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 	}
 }
 
-// TestProposeFix_SeedSourceFallsBackToAncestry verifies the Ancestry fallback
-// path for seed_build: when FilePath is absent on the trigger (e.g. an older
-// rejection payload that predates the candidate-topology threading), the handler
-// falls back to Ancestry to resolve the source location.
-func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
+// TestProposeFix_SeedSourceFallsBackToLocator verifies the NodeLocator
+// fallback path for seed_build: when FilePath is absent on the trigger (e.g.
+// an older rejection payload that predates the candidate-topology threading),
+// the handler falls back to the orchestrator graph's NodeLocator to resolve
+// the source location.
+func TestProposeFix_SeedSourceFallsBackToLocator(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
 		"s3://b/log": "Database Error in seed customers: extra column",
@@ -569,10 +596,13 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
 
 	d := Deps{
-		NewUoW:           func() uow.UnitOfWork { return u },
-		LLM:              &llm,
-		Evidence:         ev,
-		Ancestry:         fakeAncestry{fp: "seeds/customers.csv", svc: "svc"},
+		NewUoW:   func() uow.UnitOfWork { return u },
+		LLM:      &llm,
+		Evidence: ev,
+		// Ancestry must NOT be called: seed_build's location fallback resolves via
+		// NodeLocator, not Ancestry.
+		Ancestry:         fakeAncestry{err: fmt.Errorf("ancestry must not be called for seed_build")},
+		Locator:          fakeLocator{filePath: "seeds/customers.csv", serviceName: "svc"},
 		Source:           src,
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -580,8 +610,9 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Precedents:       fakePrecedents{},
 	}
-	// No FilePath or Service on the trigger: must fall back to Ancestry.
+	// No FilePath or Service on the trigger: must fall back to the NodeLocator.
 	tr := Trigger{
 		Source:               "seed_build",
 		ReleaseID:            "r1",
@@ -605,22 +636,22 @@ func TestProposeFix_SeedSourceFallsBackToAncestry(t *testing.T) {
 	}
 	p := u.pr.inserted[0]
 	if p.Status != proposal.StatusProposed {
-		t.Fatalf("expected proposed status on ancestry fallback, got %s", p.Status)
+		t.Fatalf("expected proposed status on locator fallback, got %s", p.Status)
 	}
 	if !p.SourceResolved {
-		t.Fatal("expected SourceResolved=true on ancestry fallback")
+		t.Fatal("expected SourceResolved=true on locator fallback")
 	}
 	if p.FilePath != "services/svc/seeds/customers.csv" {
 		t.Fatalf("FilePath = %q, want services/svc/seeds/customers.csv", p.FilePath)
 	}
 }
 
-// TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry covers the
+// TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaLocator covers the
 // partial-threading case: a topology node carries a file_path but no service.
-// The handler must fall back to Ancestry for the SERVICE (not treat NodeID as
-// the service) while keeping the threaded file_path — otherwise the proposal is
-// wrongly skipped.
-func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T) {
+// The handler must fall back to the NodeLocator for the SERVICE (not treat
+// NodeID as the service) while keeping the threaded file_path — otherwise the
+// proposal is wrongly skipped.
+func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaLocator(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
 		"s3://b/log": "Database Error in seed customers: extra column",
@@ -638,9 +669,11 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T)
 		NewUoW:   func() uow.UnitOfWork { return u },
 		LLM:      &llm,
 		Evidence: ev,
-		// Ancestry supplies the missing service; its fp is deliberately wrong to
-		// prove the threaded file_path is preserved, not overwritten.
-		Ancestry:         fakeAncestry{fp: "seeds/WRONG.csv", svc: "svc"},
+		Ancestry: fakeAncestry{err: fmt.Errorf("ancestry must not be called for seed_build")},
+		// The NodeLocator supplies the missing service; its filePath is
+		// deliberately wrong to prove the threaded file_path is preserved, not
+		// overwritten.
+		Locator:          fakeLocator{filePath: "seeds/WRONG.csv", serviceName: "svc"},
 		Source:           src,
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -648,6 +681,7 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T)
 		Logger:           slog.Default(),
 		MaxAttempts:      3,
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Precedents:       fakePrecedents{},
 	}
 	tr := Trigger{
 		Source:         "seed_build",
@@ -672,7 +706,7 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaAncestry(t *testing.T)
 	if p.Status != proposal.StatusProposed {
 		t.Fatalf("expected proposed status, got %s", p.Status)
 	}
-	// Threaded file_path preserved + service resolved from Ancestry → svc.
+	// Threaded file_path preserved + service resolved from the NodeLocator → svc.
 	if src.readPath != "services/svc/seeds/customers.csv" {
 		t.Fatalf("ReadFile path = %q, want services/svc/seeds/customers.csv", src.readPath)
 	}

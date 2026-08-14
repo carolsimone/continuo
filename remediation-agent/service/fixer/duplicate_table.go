@@ -98,11 +98,12 @@ func duplicateTableGather(ctx context.Context, svc Services, in Input) (Gathered
 
 // duplicateTableBuild ignores the dbt log: a duplicate-relation rejection
 // happens at parse time, before any Job runs, so there is none.
-func duplicateTableBuild(svc Services, g Gathered, in Input, _ string) prompt.ProposeRequest {
+func duplicateTableBuild(svc Services, g Gathered, in Input, _ string, precedents []prompt.Precedent) prompt.ProposeRequest {
 	return prompt.AssembleDuplicateTableFix(
 		prompt.NamedFile{Path: g.Primary, Content: svc.Sanitizer.Sanitize(g.Files[g.Primary])},
 		in.RelationID,
 		in.OtherService,
 		in.OtherFilePath,
+		precedents,
 	)
 }

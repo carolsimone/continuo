@@ -81,6 +81,38 @@ func (s redactingSanitizer) Sanitize(in string) string {
 	return strings.ReplaceAll(in, s.secret, s.marker)
 }
 
+// fakePrecedents returns precedents from an in-memory signature or
+// category+reason index, or an error if set. calls counts every invocation so
+// a test can assert a skip path never queries it.
+type fakePrecedents struct {
+	bySignature map[string][]prompt.Precedent
+	byClass     map[string][]prompt.Precedent // key: category + "|" + reason
+	err         error
+	calls       int
+}
+
+func (f *fakePrecedents) Precedents(_ context.Context, q ports.PrecedentQuery) ([]prompt.Precedent, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if q.Signature != "" {
+		return f.bySignature[q.Signature], nil
+	}
+	return f.byClass[q.Category+"|"+q.Reason], nil
+}
+
+// fakeLocator returns a fixed file path and service name, or an error, for
+// NodeLocator.Locate.
+type fakeLocator struct {
+	filePath, serviceName string
+	err                   error
+}
+
+func (f fakeLocator) Locate(_ context.Context, _ string) (string, string, error) {
+	return f.filePath, f.serviceName, f.err
+}
+
 // fakeArtifacts records writes in memory and returns deterministic URIs.
 type fakeArtifacts struct {
 	written map[string]string

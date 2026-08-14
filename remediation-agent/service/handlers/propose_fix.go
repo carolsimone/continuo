@@ -169,6 +169,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		NodeID:               t.NodeID,
 		RelationID:           t.RelationID,
 		ErrorSignature:       t.ErrorSignature,
+		Category:             t.Category,
 		Reason:               t.Reason,
 		Repo:                 t.Repo,
 		CommitSHA:            t.CommitSHA,

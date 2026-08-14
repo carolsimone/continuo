@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -67,7 +68,7 @@ func TestAssembleCompileFix_ToolSchemaAndFiles(t *testing.T) {
 	req := AssembleCompileFix([]NamedFile{
 		{Path: "models/x.sql", Content: "select 1"},
 		{Path: "models/schema.yml", Content: "version: 2"},
-	}, "Compilation Error ...", "svc")
+	}, "Compilation Error ...", "svc", nil)
 	names := map[string]bool{}
 	for _, p := range req.ToolParams {
 		names[p.Name] = true
@@ -83,7 +84,7 @@ func TestAssembleCompileFix_ToolSchemaAndFiles(t *testing.T) {
 }
 
 func TestAssembleSeedFix_CSVVocabularyAndSchema(t *testing.T) {
-	req := AssembleSeedFix("seeds/ref.csv", "id,name\n1,\"a,b\"", "Error loading seed", "svc")
+	req := AssembleSeedFix("seeds/ref.csv", "id,name\n1,\"a,b\"", "Error loading seed", "svc", nil)
 	names := map[string]bool{}
 	for _, p := range req.ToolParams {
 		names[p.Name] = true
@@ -156,11 +157,85 @@ func TestAssembleDuplicateTableFix_NamesTheRelationNotTheTargetNodeID(t *testing
 		"analytics.orders",
 		"marketing",
 		"models/orders_v2.sql",
+		nil,
 	)
 	if !strings.Contains(req.User, "Relation: analytics.orders") {
 		t.Errorf("user content must name the contested relation on the Relation: line:\n%s", req.User)
 	}
 	if !strings.Contains(req.User, "marketing") || !strings.Contains(req.User, "models/orders_v2.sql") {
 		t.Errorf("user content must name the competing producer's service and file path:\n%s", req.User)
+	}
+}
+
+func precedentFixture() []Precedent {
+	return []Precedent{
+		{NodeID: "analytics.other", Stage: "validation", Category: "sql_error",
+			Reason: "missing_column", ErrorExcerpt: "column x does not exist",
+			RejectedAt: "2026-08-01T00:00:00Z", Resolved: true,
+			ResolutionDiff: "-select a\n+select a, x", PRURL: "https://github.com/acme/r/pull/7"},
+		{NodeID: "analytics.third", Stage: "validation", Category: "sql_error",
+			Reason: "missing_column", ErrorExcerpt: "column y does not exist",
+			RejectedAt: "2026-07-01T00:00:00Z", Resolved: false},
+	}
+}
+
+func TestAssembleCompileFix_RendersPrecedents(t *testing.T) {
+	req := AssembleCompileFix([]NamedFile{{Path: "models/a.sql", Content: "select 1"}},
+		"compile err", "service-1", precedentFixture())
+	for _, want := range []string{
+		"How similar failures were fixed before",
+		"-select a\n+select a, x",
+		"https://github.com/acme/r/pull/7",
+		"column y does not exist", // unresolved precedent appears as a one-line mention
+	} {
+		if !strings.Contains(req.User, want) {
+			t.Fatalf("prompt missing %q\n%s", want, req.User)
+		}
+	}
+}
+
+func TestAssembleCompileFix_NoPrecedents_NoSection(t *testing.T) {
+	req := AssembleCompileFix([]NamedFile{{Path: "models/a.sql", Content: "select 1"}},
+		"compile err", "service-1", nil)
+	if strings.Contains(req.User, "How similar failures were fixed before") {
+		t.Fatal("empty precedents must render no section")
+	}
+}
+
+func TestRenderPrecedents_DiffsCappedAtFive(t *testing.T) {
+	ps := make([]Precedent, 8)
+	for i := range ps {
+		ps[i] = Precedent{NodeID: fmt.Sprintf("analytics.n%d", i), Resolved: true,
+			ErrorExcerpt: "e", RejectedAt: "2026-08-01T00:00:00Z",
+			ResolutionDiff: fmt.Sprintf("-old%d\n+new%d", i, i)}
+	}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if !strings.Contains(out, "+new4") || strings.Contains(out, "+new5") {
+		t.Fatalf("want diffs for the first 5 only:\n%s", out)
+	}
+	if !strings.Contains(out, "analytics.n7") {
+		t.Fatalf("beyond-cap precedents must still appear as one-line mentions:\n%s", out)
+	}
+}
+
+func TestAssembleSeedFix_RendersPrecedents(t *testing.T) {
+	req := AssembleSeedFix("seeds/ref.csv", "id,name\n1,a", "seed err", "service-1", precedentFixture())
+	for _, want := range []string{"How similar failures were fixed before", "-select a\n+select a, x"} {
+		if !strings.Contains(req.User, want) {
+			t.Fatalf("prompt missing %q\n%s", want, req.User)
+		}
+	}
+}
+
+func TestAssembleDuplicateTableFix_RendersPrecedents(t *testing.T) {
+	req := AssembleDuplicateTableFix(
+		NamedFile{Path: "models/orders_v1.sql", Content: "select 1 as id"},
+		"analytics.orders", "marketing", "models/orders_v2.sql", precedentFixture())
+	for _, want := range []string{"How similar failures were fixed before", "-select a\n+select a, x"} {
+		if !strings.Contains(req.User, want) {
+			t.Fatalf("prompt missing %q\n%s", want, req.User)
+		}
 	}
 }

@@ -34,6 +34,9 @@ type Input struct {
 	// relation the model must stop producing.
 	RelationID     string
 	ErrorSignature string
+	// Category is the classifier's failure category; with Reason it forms the
+	// fallback precedent-lookup key.
+	Category string
 	// Reason is the classifier's finer-grained reason within the failure
 	// category.
 	Reason    string
@@ -157,6 +160,43 @@ func loadDBTLog(ctx context.Context, svc Services, uri string) (string, error) {
 	return svc.Sanitizer.Sanitize(raw), nil
 }
 
+// maxPrecedentsFetch bounds how many precedents one lookup requests; the
+// renderer separately bounds how many carry full diffs.
+const maxPrecedentsFetch = 10
+
+// loadPrecedents fetches precedent for this failure: by exact signature
+// first, then — when the signature has no recorded matches — by the broader
+// (category, reason) class. The failure's own rejection is filtered out (it
+// IS this failure, not precedent for it). Best-effort: any error degrades to
+// no section, never a blocked heal. Each Fixer calls this only after its
+// skip checks pass, so skip paths never pay the lookup.
+func loadPrecedents(ctx context.Context, svc Services, in Input) []prompt.Precedent {
+	fetch := func(q ports.PrecedentQuery) []prompt.Precedent {
+		ps, err := svc.Precedents.Precedents(ctx, q)
+		if err != nil {
+			svc.Logger.Warn("precedent lookup unavailable; proceeding without precedent",
+				"node", in.NodeID, "error", err)
+			return nil
+		}
+		return ps
+	}
+	var ps []prompt.Precedent
+	if in.ErrorSignature != "" {
+		ps = fetch(ports.PrecedentQuery{Signature: in.ErrorSignature, Limit: maxPrecedentsFetch})
+	}
+	if len(ps) == 0 && in.Category != "" && in.Reason != "" {
+		ps = fetch(ports.PrecedentQuery{Category: in.Category, Reason: in.Reason, Limit: maxPrecedentsFetch})
+	}
+	out := ps[:0]
+	for _, p := range ps {
+		if p.ReleaseID == in.ReleaseID && p.NodeID == in.NodeID {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // isLowConfidence reports whether the model's free-form confidence is "low"
 // (case-insensitive). A low-confidence answer is the model's signal that it
 // could not determine a safe fix, so a Fixer must not turn it into a proposal.
@@ -191,7 +231,7 @@ func writeSourceArtifacts(ctx context.Context, svc Services, in Input, original,
 // compileFixer and seedFixer embed it.
 type singleShot struct {
 	gather    func(ctx context.Context, svc Services, in Input) (Gathered, bool, error)
-	build     func(svc Services, g Gathered, in Input, dbtLog string) prompt.ProposeRequest
+	build     func(svc Services, g Gathered, in Input, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest
 	interpret func(res ports.ProposeResult, g Gathered, in Input) Outcome
 }
 
@@ -209,7 +249,8 @@ func (s singleShot) Propose(ctx context.Context, svc Services, in Input) (Result
 	if err != nil {
 		return Result{}, err // transient log read error: driver redelivers
 	}
-	res, err := svc.LLM.Propose(ctx, s.build(svc, g, in, dbtLog))
+	precedents := loadPrecedents(ctx, svc, in)
+	res, err := svc.LLM.Propose(ctx, s.build(svc, g, in, dbtLog, precedents))
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
 	}

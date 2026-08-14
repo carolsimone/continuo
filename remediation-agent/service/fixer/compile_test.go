@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
@@ -323,5 +324,105 @@ func TestCompile_EmptyTargetFile_DefaultsToPrimary(t *testing.T) {
 	}
 	if r.Proposal.Status != proposal.StatusProposed || r.Proposal.FilePath != "services/svc/models/x.sql" {
 		t.Fatalf("got status=%v file=%q, want proposed defaulting to the offending file", r.Proposal.Status, r.Proposal.FilePath)
+	}
+}
+
+// compilePrecedentsSvc builds a Services + Input pair for the precedent tests
+// below, sharing the offending-file/LLM plumbing so each test only varies the
+// Precedents port and the trigger's precedent-lookup fields. It also returns
+// the *fakeLLM so a test can inspect the rendered prompt.
+func compilePrecedentsSvc(precedents ports.PrecedentReader) (Services, Input, *fakeLLM) {
+	fs := &fakeSourceMap{
+		files: map[string]string{"services/svc/models/x.sql": "select 1"},
+		dir:   map[string][]string{"services/svc/models": {"services/svc/models/x.sql"}},
+	}
+	llm := &fakeLLM{queue: []ports.ProposeResult{{TargetFile: "services/svc/models/x.sql", ProposedContent: "select 2", Confidence: "high"}}}
+	svc := Services{
+		Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
+		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Precedents:       precedents,
+	}
+	in := Input{Source: "compile", NodeID: "svc", Repo: "o/repo", CommitSHA: "sha",
+		FilePath: "models/x.sql", ReleaseID: "r", Attempt: 1}
+	return svc, in, llm
+}
+
+// TestCompile_PrecedentsEmbeddedInPrompt proves a resolved precedent returned
+// by exact signature reaches the LLM prompt with its resolution diff.
+func TestCompile_PrecedentsEmbeddedInPrompt(t *testing.T) {
+	precedents := &fakePrecedents{bySignature: map[string][]prompt.Precedent{
+		"sig-1": {{NodeID: "analytics.other", Resolved: true, ErrorExcerpt: "e",
+			RejectedAt: "2026-08-01T00:00:00Z", ResolutionDiff: "-old\n+new"}},
+	}}
+	svc, in, llm := compilePrecedentsSvc(precedents)
+	in.ErrorSignature = "sig-1"
+
+	_, err := compileFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(llm.requests) != 1 || !strings.Contains(llm.requests[0].User, "-old\n+new") {
+		t.Fatalf("prompt missing precedent resolution diff:\n%v", llm.requests)
+	}
+}
+
+// TestCompile_PrecedentFallbackToCategoryReason proves that when the exact
+// signature has no recorded matches, loadPrecedents falls back to the broader
+// (category, reason) class and that result reaches the prompt.
+func TestCompile_PrecedentFallbackToCategoryReason(t *testing.T) {
+	precedents := &fakePrecedents{byClass: map[string][]prompt.Precedent{
+		"sql_error|missing_column": {{NodeID: "analytics.other", Resolved: true, ErrorExcerpt: "e",
+			RejectedAt: "2026-08-01T00:00:00Z", ResolutionDiff: "-old\n+new"}},
+	}}
+	svc, in, llm := compilePrecedentsSvc(precedents)
+	in.ErrorSignature = "sig-missing"
+	in.Category = "sql_error"
+	in.Reason = "missing_column"
+
+	_, err := compileFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(llm.requests) != 1 || !strings.Contains(llm.requests[0].User, "-old\n+new") {
+		t.Fatalf("prompt missing the category/reason fallback precedent:\n%v", llm.requests)
+	}
+}
+
+// TestCompile_SelfPrecedentFiltered proves a precedent that carries this same
+// trigger's own ReleaseID+NodeID (its own rejection, not precedent for it) is
+// filtered out of the rendered prompt.
+func TestCompile_SelfPrecedentFiltered(t *testing.T) {
+	precedents := &fakePrecedents{bySignature: map[string][]prompt.Precedent{
+		"sig-1": {{ReleaseID: "r", NodeID: "svc", Resolved: true, ErrorExcerpt: "e",
+			RejectedAt: "2026-08-01T00:00:00Z", ResolutionDiff: "-old\n+new"}},
+	}}
+	svc, in, llm := compilePrecedentsSvc(precedents)
+	in.ErrorSignature = "sig-1"
+
+	_, err := compileFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(llm.requests) != 1 || strings.Contains(llm.requests[0].User, "How similar failures were fixed before") {
+		t.Fatalf("self-precedent must be filtered out, not rendered:\n%v", llm.requests)
+	}
+}
+
+// TestCompile_PrecedentErrorDegrades proves a precedent-lookup error degrades
+// to no section rather than blocking the heal.
+func TestCompile_PrecedentErrorDegrades(t *testing.T) {
+	svc, in, llm := compilePrecedentsSvc(&fakePrecedents{err: errors.New("neo4j unavailable")})
+	in.ErrorSignature = "sig-1"
+
+	r, err := compileFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed {
+		t.Fatalf("status = %v want proposed despite the precedent lookup error", r.Proposal.Status)
+	}
+	if len(llm.requests) != 1 || strings.Contains(llm.requests[0].User, "How similar failures were fixed before") {
+		t.Fatalf("precedent lookup error must degrade to no section:\n%v", llm.requests)
 	}
 }

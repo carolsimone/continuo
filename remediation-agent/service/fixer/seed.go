@@ -11,9 +11,9 @@ import (
 )
 
 // seedFixer fixes a dbt seed (CSV) load failure. It reads the failing CSV
-// (path + service threaded from the candidate topology, Ancestry as fallback)
-// and asks for a corrected CSV, with an honest low-confidence skip when the bad
-// value cannot be inferred.
+// (path + service threaded from the candidate topology, the orchestrator
+// graph's NodeLocator as fallback) and asks for a corrected CSV, with an
+// honest low-confidence skip when the bad value cannot be inferred.
 type seedFixer struct{}
 
 func (seedFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
@@ -23,9 +23,9 @@ func (seedFixer) Propose(ctx context.Context, svc Services, in Input) (Result, e
 func seedGather(ctx context.Context, svc Services, in Input) (Gathered, bool, error) {
 	filePath, service := in.FilePath, in.Service
 	if filePath == "" || service == "" {
-		fp, svcName, _, err := svc.Ancestry.NodeContext(ctx, in.NodeID)
+		fp, svcName, err := svc.Locator.Locate(ctx, in.NodeID)
 		if err != nil {
-			svc.Logger.Warn("seed fix: ancestry unavailable; skipping", "node", in.NodeID, "error", err)
+			svc.Logger.Warn("seed fix: node location unavailable; skipping", "node", in.NodeID, "error", err)
 			return Gathered{}, true, nil
 		}
 		if filePath == "" {
@@ -56,10 +56,10 @@ func seedGather(ctx context.Context, svc Services, in Input) (Gathered, bool, er
 	return Gathered{Files: map[string]string{full: content}, Order: []string{full}, Primary: full}, false, nil
 }
 
-func seedBuild(svc Services, g Gathered, in Input, dbtLog string) prompt.ProposeRequest {
+func seedBuild(svc Services, g Gathered, in Input, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {
 	// Sanitize the CSV before it leaves for the external LLM; the raw content is
 	// kept in g.Files for the diff and no-op check.
-	return prompt.AssembleSeedFix(g.Primary, svc.Sanitizer.Sanitize(g.Files[g.Primary]), dbtLog, in.NodeID)
+	return prompt.AssembleSeedFix(g.Primary, svc.Sanitizer.Sanitize(g.Files[g.Primary]), dbtLog, in.NodeID, precedents)
 }
 
 func seedInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {

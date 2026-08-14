@@ -74,14 +74,14 @@ func addFile(ctx context.Context, svc Services, in Input, g *Gathered, p string)
 	g.Order = append(g.Order, p)
 }
 
-func compileBuild(svc Services, g Gathered, in Input, dbtLog string) prompt.ProposeRequest {
+func compileBuild(svc Services, g Gathered, in Input, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {
 	files := make([]prompt.NamedFile, 0, len(g.Order))
 	for _, p := range g.Order {
 		// Sanitize each shown file before it leaves for the external LLM; the raw
 		// content is kept in g.Files for the diff and no-op check.
 		files = append(files, prompt.NamedFile{Path: p, Content: svc.Sanitizer.Sanitize(g.Files[p])})
 	}
-	return prompt.AssembleCompileFix(files, dbtLog, in.NodeID)
+	return prompt.AssembleCompileFix(files, dbtLog, in.NodeID, precedents)
 }
 
 // singleFileInterpret is the shared interpreter for every single-file Fixer:
