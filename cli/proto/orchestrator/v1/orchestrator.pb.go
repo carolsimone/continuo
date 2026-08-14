@@ -1298,15 +1298,18 @@ func (x *AncestorNode) GetFilePath() string {
 // VersionView is one recorded code state of a node: identity and hash parts,
 // the provenance stamp, and the code itself.
 type VersionView struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	UniqueId       string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
-	VersionSeq     int64                  `protobuf:"varint,2,opt,name=version_seq,json=versionSeq,proto3" json:"version_seq,omitempty"`
-	ContentHash    string                 `protobuf:"bytes,3,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
-	SourceHash     string                 `protobuf:"bytes,4,opt,name=source_hash,json=sourceHash,proto3" json:"source_hash,omitempty"`
-	SharedCodeHash string                 `protobuf:"bytes,5,opt,name=shared_code_hash,json=sharedCodeHash,proto3" json:"shared_code_hash,omitempty"`
-	ConfigHash     string                 `protobuf:"bytes,6,opt,name=config_hash,json=configHash,proto3" json:"config_hash,omitempty"`
-	Runtime        string                 `protobuf:"bytes,7,opt,name=runtime,proto3" json:"runtime,omitempty"`
-	RawCode        string                 `protobuf:"bytes,8,opt,name=raw_code,json=rawCode,proto3" json:"raw_code,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	UniqueId string                 `protobuf:"bytes,1,opt,name=unique_id,json=uniqueId,proto3" json:"unique_id,omitempty"`
+	// version_seq is a stable per-node handle for addressing one of a node's
+	// versions, not an ordering: it is assigned max+1 at ingestion, so a
+	// late-arriving older release receives the highest value.
+	VersionSeq     int64  `protobuf:"varint,2,opt,name=version_seq,json=versionSeq,proto3" json:"version_seq,omitempty"`
+	ContentHash    string `protobuf:"bytes,3,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"`
+	SourceHash     string `protobuf:"bytes,4,opt,name=source_hash,json=sourceHash,proto3" json:"source_hash,omitempty"`
+	SharedCodeHash string `protobuf:"bytes,5,opt,name=shared_code_hash,json=sharedCodeHash,proto3" json:"shared_code_hash,omitempty"`
+	ConfigHash     string `protobuf:"bytes,6,opt,name=config_hash,json=configHash,proto3" json:"config_hash,omitempty"`
+	Runtime        string `protobuf:"bytes,7,opt,name=runtime,proto3" json:"runtime,omitempty"`
+	RawCode        string `protobuf:"bytes,8,opt,name=raw_code,json=rawCode,proto3" json:"raw_code,omitempty"`
 	// compiled_code may be truncated to a server-side byte cap; compiled_truncated
 	// is set when it was cut.
 	CompiledCode      string `protobuf:"bytes,9,opt,name=compiled_code,json=compiledCode,proto3" json:"compiled_code,omitempty"`
@@ -1318,8 +1321,8 @@ type VersionView struct {
 	PromotedAt        string `protobuf:"bytes,15,opt,name=promoted_at,json=promotedAt,proto3" json:"promoted_at,omitempty"` // RFC3339
 	Healed            bool   `protobuf:"varint,16,opt,name=healed,proto3" json:"healed,omitempty"`
 	Backfilled        bool   `protobuf:"varint,17,opt,name=backfilled,proto3" json:"backfilled,omitempty"`
-	// is_current marks the version the node runs now. Exactly one version in a
-	// chain walk carries it; a node whose :Table was retired has none.
+	// is_current marks the version the node runs now: exactly one of a node's
+	// versions carries it; a node whose :Table was retired has none.
 	IsCurrent     bool `protobuf:"varint,18,opt,name=is_current,json=isCurrent,proto3" json:"is_current,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

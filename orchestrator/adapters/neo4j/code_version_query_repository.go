@@ -22,29 +22,26 @@ import (
 // CodeVersionQueryRepository implements queries.CodeVersionReader against
 // Neo4j.
 //
-// Every chain walk orders by promoted_at, never version_seq, and never
-// follows :PREVIOUS. All three encode order, but only promoted_at is
-// trustworthy:
+// A node's versions are enumerated directly through the (:NodeVersion
+// {unique_id}) index — no edge between them is followed — and ordered by
+// promoted_at, never version_seq:
 //
 //   - promoted_at is when the release that introduced this code was
 //     promoted — chronologically true however late the event was ingested.
-//   - version_seq is assigned max+1 at ingestion time, so a late-arriving
-//     OLDER release receives the HIGHEST seq. Sorting by it would put stale
-//     code at the top of a "newest first" view; a graph-ahead write (an
-//     unattached, backfilled history entry) creates exactly this case.
-//   - :PREVIOUS is written only for a version the writing release actually
-//     creates, which is what keeps the chain acyclic across a revert. A late
-//     older release therefore has no :PREVIOUS link at all, and a revert
-//     re-points :CURRENT at an existing version without touching its chain.
-//     A pure :PREVIOUS walk both omits versions and cannot order them.
+//   - version_seq is a stable per-node handle for addressing one of a node's
+//     versions, not an ordering: it is assigned max+1 at ingestion time, so a
+//     late-arriving OLDER release receives the HIGHEST seq. Sorting by it
+//     would put stale code at the top of a "newest first" view; a
+//     graph-ahead write (an unattached, backfilled history entry) creates
+//     exactly this case.
 //
-// A node's chain walk starts from its :Table's :CURRENT pointer only to
-// compute is_current; the version rows themselves are matched by unique_id
-// directly (node_version_uid backs that lookup), so a retired node — its
-// :Table deleted, its versions still present — still returns its full
-// history, just with is_current false on every row. promoted_at sorting
-// happens over a per-node result set that is small by construction: versions
-// grow with edits, not with releases.
+// A node's version rows are matched by unique_id directly (node_version_uid
+// backs that lookup) and joined against its :Table's :CURRENT pointer only
+// to compute is_current, so a retired node — its :Table deleted, its
+// versions still present — still returns its full history, just with
+// is_current false on every row. promoted_at sorting happens over a per-node
+// result set that is small by construction: versions grow with edits, not
+// with releases.
 type CodeVersionQueryRepository struct {
 	client Neo4jClient
 	logger *slog.Logger
@@ -83,9 +80,10 @@ func nodeVersionColumns(includeCode bool) string {
        (cur IS NOT NULL AND cur.content_hash = v.content_hash) AS is_current`
 }
 
-// NodeVersions walks the chain from :CURRENT, newest first, up to limit.
-// includeCode false omits raw_code/compiled_code from the Cypher projection
-// itself, so a "light" request never pulls those bodies out of Neo4j.
+// NodeVersions enumerates a node's versions by unique_id, ordered
+// promoted_at DESC, up to limit. includeCode false omits raw_code/
+// compiled_code from the Cypher projection itself, so a "light" request
+// never pulls those bodies out of Neo4j.
 func (r *CodeVersionQueryRepository) NodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
@@ -336,10 +334,10 @@ func (r *CodeVersionQueryRepository) Ancestors(ctx context.Context, uniqueID str
 	return out, nil
 }
 
-// UnitVersions walks a shared-code unit's chain, newest first. An unknown
-// unit_id — no :CodeUnit and no :CodeUnitVersion row — returns
-// ErrUnitNotFound; a known unit with no recorded history returns an empty
-// slice.
+// UnitVersions enumerates a shared-code unit's versions, ordered promoted_at
+// DESC. An unknown unit_id — no :CodeUnit and no :CodeUnitVersion row —
+// returns ErrUnitNotFound; a known unit with no recorded history returns an
+// empty slice.
 func (r *CodeVersionQueryRepository) UnitVersions(ctx context.Context, unitID string, limit int32) ([]codeversion.UnitVersionView, error) {
 	byUnit, err := r.UnitVersionsBatch(ctx, []string{unitID}, limit)
 	if err != nil {

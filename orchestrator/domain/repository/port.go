@@ -57,6 +57,15 @@ type ReleasePromotionRepository interface {
 type CodeVersionRepository interface {
 	// WriteVersions ingests one release's versions. It is idempotent: replaying
 	// the same input the second time writes nothing.
+	//
+	// Promoting a node's version also resolves the case base: every still-open
+	// :Rejection of that node is forward-linked [:RESOLVED_BY] to the version
+	// that just became current, under the same per-node watermark guard as the
+	// pointer move. This is the ordinary-case half of the convergence — the
+	// fix promoted after the rejection was recorded; CaseBaseRepository's
+	// RecordRejection covers the reverse order, back-linking a rejection to a
+	// version already promoted before it arrived. RejectionsResolved counts
+	// the links this write created.
 	WriteVersions(ctx context.Context, in codeversion.WriteInput) (codeversion.WriteResult, error)
 }
 

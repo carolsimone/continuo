@@ -311,7 +311,10 @@ the lifecycle completion channel, so there is no fixed sleep.
 
 | Operation | Detail |
 |---|---|
-| `GetObject` | Reads the code-bundle document named by `release.promoted:v1`'s `code_bundle_uri` (`code-bundles/<release_id>/bundle.json`), once per promoted release on the version-ingestion consumer group. Orchestrator does not own the bucket and never writes to it. |
+| `GetObject` | Reads the code-bundle document named by `release.promoted:v1`'s `code_bundle_uri` (`code-bundles/<release_id>/bundle.json`), once per promoted release, on the version-ingestion consumer group. An object absent from storage but possibly still landing is a plain error left in the PEL for redelivery; a malformed or oversized bundle is a permanent failure. |
+| `GetObject` | Reads the same code-bundle document, once per classified rejection, on the case-base rejections consumer group (`RemediationRequestedRejectionsHandler`, driven by `remediation.requested:v1`'s `code_bundle_uri`). An object absent from storage but possibly still landing is likewise left in the PEL for redelivery; a malformed or oversized bundle, or a bundle with no entry for the failing node, records the rejection without its code rather than retrying — losing the code must never cost the precedent. |
+
+Orchestrator does not own the bucket and never writes to it.
 
 Requires `S3_ENDPOINT_URL`, `S3_BUCKET`, and `AWS_DEFAULT_REGION` at start-up (all supplied by the shared ConfigMap under Helm). Startup fails closed on a missing required value, rather than booting an orchestrator that silently records no code history. `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are injected by the chart's deployment template for every storage-reading service, independently of the replaceable `services` list, so an upgrade carrying an older values file keeps its credentials. Both are optional: when they are absent the S3 client falls back to the SDK's default credential chain, which is what an IAM-role or workload-identity install relies on. The object read is bounded at 64 MiB before decoding, and an oversized document is treated as a permanent failure.
 

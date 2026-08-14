@@ -205,6 +205,9 @@ message AncestorNode {
 // the provenance stamp, and the code itself.
 message VersionView {
   string unique_id = 1;
+  // version_seq is a stable per-node handle for addressing one of a node's
+  // versions, not an ordering: it is assigned max+1 at ingestion, so a
+  // late-arriving older release receives the highest value.
   int64 version_seq = 2;
   string content_hash = 3;
   string source_hash = 4;
@@ -223,8 +226,8 @@ message VersionView {
   string promoted_at = 15;  // RFC3339
   bool healed = 16;
   bool backfilled = 17;
-  // is_current marks the version the node runs now. Exactly one version in a
-  // chain walk carries it; a node whose :Table was retired has none.
+  // is_current marks the version the node runs now: exactly one of a node's
+  // versions carries it; a node whose :Table was retired has none.
   bool is_current = 18;
 }
 

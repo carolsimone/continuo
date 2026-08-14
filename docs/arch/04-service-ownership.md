@@ -73,7 +73,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | gRPC server methods owned | `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `ListActiveRunDrifts`, `ListScheduleTopologies`, `GetNodeAncestry`, `GetNode`, `GetNodeVersions`, `GetNodeVersionDiff`, `GetUpstreamChanges`, `GetCodeUnitVersions`, `GetNodeRunHistory`, `GetPrecedents` |
 | Redis consumes | `node.updated:v1`, `release.promoted:v1`, `scheduler.started:v1`, `trigger.rerun:v1`, `trigger.rebase:v1`, `trigger.single_node_run:v1`, `trigger.promoted_seeds:v1`, `run.finalized:v1`, `remediation.requested:v1` (group `orchestrator-remediation-requested-rejections`), `remediation.pr_opened:v1` (group `orchestrator-remediation-pr-opened-proposals`) |
 | Redis produces | `query.model:v1`, `schedules.loaded:v1`, `release.seeds.pending:v1`, `run.entries.dispatched:v1`, `run.entries.dispatch_failed:v1`, `task.status.updated:v1` (SKIPPED on cascade-skip of a downstream node) |
-| S3 reads | `GetObject` — the code-bundle document at `code-bundles/<release_id>/bundle.json` named by each `release.promoted:v1`; read-only, and the bucket is not owned |
+| S3 reads | `GetObject` — the code-bundle document at `code-bundles/<release_id>/bundle.json`: named by each `release.promoted:v1`'s `code_bundle_uri` on the version-ingestion consumer group, and by each `remediation.requested:v1`'s `code_bundle_uri` on the case-base rejections consumer group; read-only, and the bucket is not owned |
 | Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `CancelSchedule` (watchdog only) |
 
 ### Invariants

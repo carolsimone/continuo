@@ -1,8 +1,8 @@
 // File: orchestrator/domain/codeversion/read.go
 //
 // Read-side view types over the code-version graph. They mirror
-// NodeVersion/CodeUnitVersion but shaped for a reader: chain position, diffs,
-// and run provenance rather than write-path identity.
+// NodeVersion/CodeUnitVersion but shaped for a reader: currency, diffs, and
+// run provenance rather than write-path identity.
 package codeversion
 
 import "time"
@@ -27,8 +27,8 @@ type VersionView struct {
 	PromotedAt        time.Time
 	Healed            bool
 	Backfilled        bool
-	// IsCurrent marks the version the node runs now. Exactly one version in a
-	// chain walk carries it; a node whose :Table was retired has none.
+	// IsCurrent marks the version the node runs now: exactly one of a node's
+	// versions carries it; a node whose :Table was retired has none.
 	IsCurrent bool
 }
 
