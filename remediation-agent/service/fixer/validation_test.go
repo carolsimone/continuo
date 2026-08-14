@@ -100,6 +100,29 @@ func (f fakeLocator) Locate(_ context.Context, _ string) (string, string, error)
 	return f.filePath, f.serviceName, f.err
 }
 
+// countingLocator is a fakeLocator that counts every Locate, so a test can
+// assert the fixer preferred the location the trigger carried over the
+// promoted-topology lookup.
+type countingLocator struct {
+	filePath, serviceName string
+	calls                 int
+}
+
+func (f *countingLocator) Locate(_ context.Context, _ string) (string, string, error) {
+	f.calls++
+	return f.filePath, f.serviceName, nil
+}
+
+// countingEvidence counts every Fetch and always errors, so a test can assert a
+// skip path never reached object storage and a fixer that did read fails loudly
+// rather than proceeding on fabricated content.
+type countingEvidence struct{ calls int }
+
+func (f *countingEvidence) Fetch(_ context.Context, _ string) (string, error) {
+	f.calls++
+	return "", fmt.Errorf("evidence reader must not be called on a skip path")
+}
+
 // fakeUpstream returns fixed upstream changes, or an error, for
 // UpstreamChangeReader.UpstreamChanges. calls counts every invocation so a
 // test can assert a skip path never queries it.
@@ -215,7 +238,7 @@ func validationSvc() Services {
 		Source:           &fakeSource{content: "SELECT 0 -- github"},
 		Sanitizer:        fakeSanitizer{},
 		Locator:          fakeLocator{filePath: "models/self.sql", serviceName: "svc"},
-		CandidateSource:  &fakeCandidateSource{src: ports.CandidateSource{RawCode: "SELECT 0 -- bundle"}},
+		CandidateSource:  &fakeCandidateSource{src: ports.CandidateSource{RawCode: "SELECT 0 -- bundle", Runtime: "dbt"}},
 		Upstream:         &fakeUpstream{},
 		Versions:         &fakeVersions{},
 		Precedents:       &fakePrecedents{},
@@ -247,7 +270,7 @@ func twoStepLLM() *fakeLLM {
 // source (from the bundle) with FilePath built from the located path.
 func TestValidation_SourceFromBundle_NoGitHubRead(t *testing.T) {
 	svc := validationSvc()
-	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "SELECT 0 -- bundle"}}
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "SELECT 0 -- bundle", Runtime: "dbt"}}
 	src := &fakeSource{err: fmt.Errorf("must not be called")}
 	svc.Source = src
 
@@ -366,7 +389,7 @@ func TestValidation_BundleTransientError_Redelivers(t *testing.T) {
 // release changed".
 func TestValidation_OwnChangeDiff_InPrompt(t *testing.T) {
 	svc := validationSvc()
-	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "select bad"}}
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "select bad", Runtime: "dbt"}}
 	svc.Versions = &fakeVersions{v: ports.CurrentVersion{RawCode: "select good"}, ok: true}
 	llm := twoStepLLM()
 	svc.LLM = llm
@@ -387,7 +410,7 @@ func TestValidation_OwnChangeDiff_InPrompt(t *testing.T) {
 // secret in a changed line is redacted rather than sent to the external LLM.
 func TestValidation_OwnChangeDiff_Sanitized(t *testing.T) {
 	svc := validationSvc()
-	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "select 1 -- password = SEKRET"}}
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "select 1 -- password = SEKRET", Runtime: "dbt"}}
 	svc.Versions = &fakeVersions{v: ports.CurrentVersion{RawCode: "select 1"}, ok: true}
 	svc.Sanitizer = redactingSanitizer{secret: "SEKRET", marker: "[redacted]"}
 	llm := twoStepLLM()
@@ -528,13 +551,16 @@ func TestValidation_GraphReadsFail_DegradesToBaseEvidence(t *testing.T) {
 	}
 }
 
-// TestValidation_PythonNode_EmptyCandidate_SkipsBeforeAnyRead enforces the
-// non-negotiable project invariant that no remediation path ever produces an
-// LLM call or a proposal for a python node: a validation rejection for a
-// python node carries no candidate SQL (there is nothing to compile), so the
-// empty-CandidateArtifactURI skip must fire before the candidate-source,
-// upstream, version, or precedent lookups are ever consulted.
-func TestValidation_PythonNode_EmptyCandidate_SkipsBeforeAnyRead(t *testing.T) {
+// TestValidation_EmptyCandidateArtifactURI_SkipsBeforeAnyRead verifies that a
+// validation trigger with no candidate artifact is skipped before the
+// candidate-source, upstream, version, or precedent lookups are ever consulted,
+// so a transiently unreadable collaborator cannot turn the intended skip into a
+// redelivery. This covers a rejection with nothing to fix — a dbt seed, whose
+// candidate_artifact_uri is empty. It is NOT what protects the python path: a
+// python node's rejection carries a non-empty candidate_artifact_uri (a JSON
+// validation spec), which is guarded by node_type instead — see
+// TestValidation_PythonNode_SkipsBeforeAnyRead.
+func TestValidation_EmptyCandidateArtifactURI_SkipsBeforeAnyRead(t *testing.T) {
 	cs := &fakeCandidateSource{err: fmt.Errorf("must not be called")}
 	up := &fakeUpstream{err: fmt.Errorf("must not be called")}
 	vs := &fakeVersions{err: fmt.Errorf("must not be called")}
@@ -554,11 +580,141 @@ func TestValidation_PythonNode_EmptyCandidate_SkipsBeforeAnyRead(t *testing.T) {
 		t.Fatalf("status = %v want skipped", r.Proposal.Status)
 	}
 	if llm.calls != 0 {
-		t.Fatalf("expected no LLM call for a python node, got %d", llm.calls)
+		t.Fatalf("expected no LLM call with no candidate artifact, got %d", llm.calls)
 	}
 	if cs.calls != 0 || up.calls != 0 || vs.calls != 0 || pr.calls != 0 {
 		t.Fatalf("expected zero calls to the candidate-source/upstream/versions/precedent fakes, got cs=%d up=%d vs=%d pr=%d",
 			cs.calls, up.calls, vs.calls, pr.calls)
+	}
+}
+
+// TestValidation_PythonNode_SkipsBeforeAnyRead enforces the non-negotiable
+// project invariant that no remediation path ever produces an LLM call or a
+// proposal for a python node, on the shape a python node actually produces:
+// manifest-controller uploads a JSON validation spec for a python node, so its
+// validation rejection carries a NON-EMPTY candidate_artifact_uri and the
+// empty-URI skip never fires. node_type on the trigger is what guards it, and
+// it must fire before the candidate artifact, the dbt log, the node location,
+// the code bundle, the current version, upstream changes, or precedent are
+// read.
+func TestValidation_PythonNode_SkipsBeforeAnyRead(t *testing.T) {
+	ev := &countingEvidence{}
+	cs := &fakeCandidateSource{src: ports.CandidateSource{
+		RawCode: `{"reads":["analytics.orders"],"output_columns":[]}`, Runtime: "python"}}
+	loc := &countingLocator{filePath: "python/report.py", serviceName: "svc"}
+	up := &fakeUpstream{}
+	vs := &fakeVersions{}
+	pr := &fakePrecedents{}
+	llm := &fakeLLM{}
+	svc := Services{
+		LLM: llm, Evidence: ev, CandidateSource: cs, Locator: loc,
+		Upstream: up, Versions: vs, Precedents: pr, Logger: testLogger(),
+	}
+	in := validationInput()
+	in.NodeType = "python-model"
+	in.FilePath, in.Service = "python/report.py", "svc"
+	in.CandidateArtifactURI = "s3://continuo/candidate-sql/r/candidate_n.json"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if r.Proposal.SourceResolved {
+		t.Fatal("a python node must never be recorded as source-resolved")
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call for a python node, got %d", llm.calls)
+	}
+	if ev.calls != 0 {
+		t.Fatalf("expected the evidence reader to be untouched, got %d calls", ev.calls)
+	}
+	if cs.calls != 0 || loc.calls != 0 || up.calls != 0 || vs.calls != 0 || pr.calls != 0 {
+		t.Fatalf("expected zero calls to the candidate-source/locator/upstream/versions/precedent fakes, got cs=%d loc=%d up=%d vs=%d pr=%d",
+			cs.calls, loc.calls, up.calls, vs.calls, pr.calls)
+	}
+}
+
+// TestValidation_BundleRuntimeNonDbt_NoProposal covers a trigger that carries no
+// node_type — the shape emitted before a validation rejection named the failing
+// node's kind. The only remaining signal is the runtime the code bundle records
+// for the node, and a non-dbt bundle entry's raw_code is the node's normalized
+// contract entry rather than model source. The fixer must skip on it: no LLM
+// call, and no repo read substituting for the bundle entry either.
+func TestValidation_BundleRuntimeNonDbt_NoProposal(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{
+		RawCode: `{"reads":["analytics.orders"],"output_columns":[]}`, Runtime: "python"}}
+	src := &fakeSource{content: "print('hello')"}
+	svc.Source = src
+	llm := twoStepLLM()
+	svc.LLM = llm
+
+	in := validationInput() // no node_type, as an older trigger carries none
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call for a non-dbt bundle entry, got %d", llm.calls)
+	}
+	if src.readPath != "" {
+		t.Fatalf("a repo read must not substitute for a non-dbt bundle entry; read %q", src.readPath)
+	}
+}
+
+// TestValidation_CandidateLocationPreferredOverPromotedTopology verifies that a
+// trigger carrying the candidate topology's own file path and service targets
+// that path, and never consults the promoted-topology lookup. The rejected
+// release was never promoted, so that lookup would return the PREVIOUS release's
+// path for a node whose candidate moved it — writing the fix to a file the
+// candidate no longer has.
+func TestValidation_CandidateLocationPreferredOverPromotedTopology(t *testing.T) {
+	svc := validationSvc()
+	loc := &countingLocator{filePath: "models/old_home.sql", serviceName: "svc"}
+	svc.Locator = loc
+
+	in := validationInput()
+	in.FilePath, in.Service = "models/staging/moved.sql", "svc"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v", r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+	if r.Proposal.FilePath != "services/svc/models/staging/moved.sql" {
+		t.Fatalf("file path = %q want the candidate's own path", r.Proposal.FilePath)
+	}
+	if loc.calls != 0 {
+		t.Fatalf("expected the promoted-topology lookup to be skipped, got %d calls", loc.calls)
+	}
+}
+
+// TestValidation_NoCandidateLocation_FallsBackToPromotedTopology verifies that a
+// trigger carrying no location still targets the path the promoted topology
+// reports, so a rejection emitted before the candidate location was carried
+// keeps resolving its source.
+func TestValidation_NoCandidateLocation_FallsBackToPromotedTopology(t *testing.T) {
+	svc := validationSvc()
+	loc := &countingLocator{filePath: "models/self.sql", serviceName: "svc"}
+	svc.Locator = loc
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.FilePath != "services/svc/models/self.sql" {
+		t.Fatalf("file path = %q want the promoted-topology path", r.Proposal.FilePath)
+	}
+	if loc.calls != 1 {
+		t.Fatalf("expected exactly one promoted-topology lookup, got %d", loc.calls)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"path"
 	"unicode/utf8"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
@@ -49,11 +50,24 @@ func truncateDiff(s string, max int) string {
 type validationFixer struct{}
 
 func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
+	// A python node is skipped before anything is read. Its candidate artifact
+	// is a JSON validation spec (declared reads plus output columns), not SQL,
+	// and the code bundle records its source as the normalized contract entry
+	// rather than the script the repository holds — so neither the diagnosis
+	// prompt nor a source fix can be built from what this path has. Deciding it
+	// from the trigger's node_type keeps the LLM out of the python path
+	// entirely, rather than discovering the node's kind after two calls.
+	if in.NodeType == string(pkg_model.NodeTypePythonModel) {
+		svc.Logger.Info("validation fix: failing node is a python node; skipping — "+
+			"its candidate artifact is a validation spec and its bundle entry is a contract "+
+			"entry, neither of which is model source a fix can be proposed against",
+			"node", in.NodeID)
+		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
+	}
+
 	// Validation with no candidate SQL: nothing to fix. This is decided before
 	// any log fetch so a transiently unreadable log cannot turn the intended
-	// skip into a redelivery. A python node's validation rejection carries no
-	// candidate SQL, so this is also what keeps this path from ever calling the
-	// LLM for a python node.
+	// skip into a redelivery.
 	if in.CandidateArtifactURI == "" {
 		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
 	}
@@ -68,20 +82,33 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 		return Result{}, err // transient log read error: driver redelivers
 	}
 
-	// PR targeting: the node's source path and owning service come from the
-	// topology (the validation trigger carries neither). Best-effort — a
-	// failed lookup degrades Step 2 to the candidate-only proposal.
-	filePath, serviceName, err := svc.Locator.Locate(ctx, in.NodeID)
-	if err != nil {
-		svc.Logger.Warn("node location unavailable; source fix will degrade to candidate",
-			"node", in.NodeID, "error", err)
-		filePath, serviceName = "", ""
+	// PR targeting: prefer the source location the trigger carries, which
+	// release-controller stamps from the candidate topology. Falling back to
+	// the promoted topology is correct only for a trigger that carries none,
+	// because the rejected release was never promoted: that lookup holds
+	// nothing for a newly-added node and the previous release's path for a node
+	// whose candidate moved it. Best-effort — a failed lookup degrades Step 2
+	// to the candidate-only proposal.
+	filePath, serviceName := in.FilePath, in.Service
+	if filePath == "" {
+		filePath, serviceName, err = svc.Locator.Locate(ctx, in.NodeID)
+		if err != nil {
+			svc.Logger.Warn("node location unavailable; source fix will degrade to candidate",
+				"node", in.NodeID, "error", err)
+			filePath, serviceName = "", ""
+		}
 	}
 
 	// Candidate source from the release's code bundle; the repo read is only
 	// the fallback. A permanent bundle miss is a degraded path, a transient
-	// fetch error redelivers the trigger.
+	// fetch error redelivers the trigger, and a bundle entry for a non-dbt node
+	// skips the whole fix.
 	candidateSource, sourceOrigin, err := resolveCandidateSource(ctx, svc, in, filePath, serviceName)
+	if errors.Is(err, errNonDbtCandidate) {
+		svc.Logger.Info("validation fix: code bundle records a non-dbt runtime for the failing node; skipping",
+			"node", in.NodeID)
+		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
+	}
 	if err != nil {
 		return Result{}, err
 	}
@@ -188,15 +215,27 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	return Result{Proposal: p, SuspectedRoot: res.SuspectedRootCauseNode}, nil
 }
 
+// errNonDbtCandidate reports that the code bundle records a runtime other than
+// dbt for the failing node. Its RawCode is then the node's normalized contract
+// entry rather than model source, so it can be neither sent to the LLM nor
+// replaced by a repo read of the node's script; the caller turns this into a
+// skipped proposal. It backs the trigger's node_type guard for a trigger that
+// carries no node_type.
+var errNonDbtCandidate = errors.New("code bundle entry is not a dbt node")
+
 // resolveCandidateSource returns the failing candidate's raw source. Order:
 // the release's code bundle (exact failing source, keyed by unique_id, no
 // path mapping needed), then the repo file at the release's commit, then ""
-// — the caller degrades to the candidate-only proposal. Only a transient
-// bundle fetch error propagates, so the trigger redelivers; every permanent
-// miss walks down the ladder.
+// — the caller degrades to the candidate-only proposal. A transient bundle
+// fetch error propagates, so the trigger redelivers, and a bundle entry that is
+// not a dbt node returns errNonDbtCandidate; every permanent miss walks down
+// the ladder.
 func resolveCandidateSource(ctx context.Context, svc Services, in Input, filePath, serviceName string) (source, origin string, err error) {
 	src, berr := svc.CandidateSource.NodeSource(ctx, in.CodeBundleURI, in.NodeID)
 	if berr == nil {
+		if src.Runtime != ports.RuntimeDbt {
+			return "", "", fmt.Errorf("node %q runtime %q: %w", in.NodeID, src.Runtime, errNonDbtCandidate)
+		}
 		return src.RawCode, "bundle", nil
 	}
 	if !errors.Is(berr, ports.ErrNotFound) {

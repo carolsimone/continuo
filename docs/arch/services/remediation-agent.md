@@ -120,12 +120,15 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
    error_signature, category, reason, dbt_log_uri, candidate_artifact_uri,
    code_bundle_uri, file_path, service, node_type, other_service,
    other_file_path, repo, commit_sha.
-   node_type is the target claimant's kind (dbt-model, dbt-seed, dbt-snapshot,
-   python-model); other_service/other_file_path locate the competing node
-   that also produces the contested relation. relation_id is the contested
+   node_type is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
+   python-model), set on duplicate_table and validation triggers — both fixers
+   skip a python node on it. file_path/service are the node's source location,
+   set on seed_build, duplicate_table, and validation triggers, all three from
+   the candidate topology. other_service/other_file_path locate the competing
+   node that also produces the contested relation. relation_id is the contested
    physical relation itself, distinct from node_id (the target claimant's own
    unique_id) — the two differ whenever the target already carries an alias.
-   node_type, other_service, other_file_path, and relation_id are all set
+   other_service, other_file_path, and relation_id are all set
    only on a duplicate_table trigger, empty otherwise. reason is the
    classifier's finer-grained rule (e.g. logic:missing_object); with category
    it forms the fallback precedent-lookup key when error_signature has no
@@ -339,25 +342,41 @@ When no claimant belongs to the changed service — a bootstrap release, or two 
 `validationFixer` (`service/fixer/validation.go`) is the one class that carries a pre-compiled candidate SQL and still runs two LLM calls: a first diagnosis against that candidate — plus the diff of this release's own change, recent upstream changes, and precedent — then a best-effort second pass that applies the diagnosis to the failing node's real source.
 
 ```
+0. node_type == python-model on the trigger: proposal(status=skipped), done,
+   before anything at all is read. A python node's candidate artifact is a JSON
+   validation spec (declared reads + output columns), not SQL, and the code
+   bundle records its source as the normalized contract entry rather than the
+   script the repository holds — neither is model source a fix can be proposed
+   against. This guard is what upholds the invariant that no remediation path
+   ever produces an LLM call or a proposal for a python node; the empty-URI
+   check below does not, because a python node's candidate_artifact_uri is
+   non-empty.
 1. Empty candidate_artifact_uri on the trigger: proposal(status=skipped), done. This
    is decided before any evidence is fetched, so a transiently unreadable dbt log
-   URI cannot turn the intended skip into a redelivery. A python node's
-   validation rejection carries no candidate SQL, so this is also what keeps
-   this path from ever calling the LLM for a python node.
+   URI cannot turn the intended skip into a redelivery. This is the dbt-seed
+   case: a seed has no candidate artifact, so there is nothing to fix.
 2. Fetch the candidate SQL from S3 at candidate_artifact_uri (required; any error is
    transient and the trigger is redelivered), then fetch and sanitize the dbt log
    via loadDBTLog (not-found → ""; any other error is transient and redelivered).
-   Both reads happen only after the empty-candidate skip above.
-3. Call the orchestrator's GetNodeLocation(node_id) once, for PR targeting — the
-   validation trigger carries neither file_path nor service_name. Best-effort:
-   on error, proceed with both empty (source resolution below then has no
-   location to fall back on, and Step 2 degrades).
+   Both reads happen only after the two skips above.
+3. Resolve the PR target. The trigger's own file_path/service — stamped by
+   release-controller from the candidate topology — are used when present. Only
+   a trigger carrying no file_path falls back to the orchestrator's
+   GetNodeLocation(node_id), which serves the PROMOTED topology: the rejected
+   release was never promoted, so that lookup holds nothing for a newly-added
+   node and the previous release's path for a node whose candidate moved it.
+   The fallback is best-effort: on error, proceed with both empty (source
+   resolution below then has no location to fall back on, and Step 2 degrades).
 4. Resolve the failing node's real source (resolveCandidateSource): the
    release's code bundle first (CandidateSourceReader.NodeSource, keyed by
    node_id — no path needed). A transient bundle-fetch error returns and the
-   trigger is redelivered. A permanent bundle miss (ErrNotFound — empty URI,
-   absent object, or no entry for this node) falls back to a GitHub repo read
-   at <repo_path>/<file_path> (only when step 3 resolved both fields and
+   trigger is redelivered. A bundle entry whose runtime is not "dbt" ends the
+   whole flow with proposal(status=skipped) — its raw_code is a contract entry,
+   not model source, and no repo read substitutes for it; this backs the
+   node_type guard in step 0 for a trigger that carries no node_type. A
+   permanent bundle miss (ErrNotFound — empty URI, absent object, or no entry
+   for this node) falls back to a GitHub repo read at
+   <repo_path>/<file_path> (only when step 3 resolved both fields and
    service_repos.yaml maps the service); any error there — 404, network, or
    otherwise — degrades silently to an unresolved source ("").
 5. If the resolved source is non-empty, call the orchestrator's
