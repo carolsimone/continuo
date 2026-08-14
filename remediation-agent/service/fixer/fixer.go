@@ -59,8 +59,9 @@ type Input struct {
 	DBTLogURI            string
 	CandidateArtifactURI string
 	// CodeBundleURI locates the release's code-bundle document, which carries
-	// every parsed node's raw source. Empty when parse never completed
-	// (compile and duplicate-table rejections).
+	// every parsed node's raw source. Empty only for a compile-stage
+	// rejection, which precedes the parse that produces the bundle; every
+	// post-parse rejection (duplicate_table included) carries it.
 	CodeBundleURI string
 	Attempt       int
 }
@@ -191,6 +192,15 @@ func loadPrecedents(ctx context.Context, svc Services, in Input) []prompt.Preced
 		if p.ReleaseID == in.ReleaseID && p.NodeID == in.NodeID {
 			continue
 		}
+		// A precedent's resolution diff and error excerpt are source text from
+		// another team's model and dbt run — the same content class as every
+		// other diff and log sent to the LLM elsewhere in this package.
+		// Sanitized here, the one place every Fixer's precedents pass through,
+		// same as loadDBTLog sanitizes the current failure's own log. Both
+		// arrive already bounded (the excerpt is capped by the classifier, the
+		// diff by the orchestrator's renderer), so no truncation is needed here.
+		p.ResolutionDiff = svc.Sanitizer.Sanitize(p.ResolutionDiff)
+		p.ErrorExcerpt = svc.Sanitizer.Sanitize(p.ErrorExcerpt)
 		out = append(out, p)
 	}
 	return out

@@ -473,6 +473,43 @@ func TestValidation_UpstreamChanges_Sanitized(t *testing.T) {
 	}
 }
 
+// TestValidation_PrecedentFields_Sanitized verifies that a precedent's
+// resolution diff and error excerpt are both run through the LogSanitizer
+// before they are embedded in the Step-1 prompt's "How similar failures were
+// fixed before" section, so a secret in either is redacted rather than sent
+// to the external LLM.
+func TestValidation_PrecedentFields_Sanitized(t *testing.T) {
+	svc := validationSvc()
+	svc.Precedents = &fakePrecedents{bySignature: map[string][]prompt.Precedent{
+		"sig-1": {
+			{
+				ReleaseID: "r-other", NodeID: "other-node",
+				Category: "validation", Reason: "type_mismatch",
+				ErrorExcerpt:   "column x default password = SEKRET",
+				RejectedAt:     "2026-01-01T00:00:00Z",
+				Resolved:       true,
+				ResolutionDiff: "-x\n+password = SEKRET",
+			},
+		},
+	}}
+	svc.Sanitizer = redactingSanitizer{secret: "SEKRET", marker: "[redacted]"}
+	llm := twoStepLLM()
+	svc.LLM = llm
+
+	in := validationInput()
+	in.ErrorSignature = "sig-1"
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, in); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(llm.requests[0].User, "SEKRET") {
+		t.Fatalf("unsanitized secret leaked into the prompt via a precedent:\n%s", llm.requests[0].User)
+	}
+	if strings.Count(llm.requests[0].User, "[redacted]") != 2 {
+		t.Fatalf("expected the marker in place of both the precedent's error excerpt and resolution diff:\n%s", llm.requests[0].User)
+	}
+}
+
 // TestValidation_GraphReadsFail_DegradesToBaseEvidence verifies that when the
 // upstream, version, and precedent lookups all error, the fixer still
 // proposes a fix from the candidate SQL and dbt log alone.

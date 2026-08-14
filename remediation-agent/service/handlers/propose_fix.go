@@ -43,8 +43,9 @@ type Trigger struct {
 	DBTLogURI            string
 	CandidateArtifactURI string
 	// CodeBundleURI locates the release's code-bundle document, which carries
-	// every parsed node's raw source. Empty when parse never completed
-	// (compile and duplicate-table rejections).
+	// every parsed node's raw source. Empty only for a compile-stage
+	// rejection, which precedes the parse that produces the bundle; every
+	// post-parse rejection (duplicate_table included) carries it.
 	CodeBundleURI string
 	// FilePath is the offending dbt-project-relative source path. For compile
 	// failures it is extracted from the dbt log. For seed_build failures it is

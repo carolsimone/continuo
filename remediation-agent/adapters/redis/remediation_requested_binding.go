@@ -35,8 +35,9 @@ type requestedPayload struct {
 	DBTLogURI            string `json:"dbt_log_uri"`
 	CandidateArtifactURI string `json:"candidate_artifact_uri"`
 	// CodeBundleURI locates the release's code-bundle document, which carries
-	// every parsed node's raw source. Empty when parse never completed
-	// (compile and duplicate-table rejections).
+	// every parsed node's raw source. Empty only for a compile-stage
+	// rejection, which precedes the parse that produces the bundle; every
+	// post-parse rejection (duplicate_table included) carries it.
 	CodeBundleURI string `json:"code_bundle_uri"`
 	FilePath      string `json:"file_path"`
 	// Service is the owning dbt service for the failing node. Set for seed_build
