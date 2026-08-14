@@ -142,7 +142,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | HTTP server | `POST /releases` (single-service candidate; requires `repo` + `commit_sha`), `GET /releases`, `GET /releases/{id}` (returns `repo` + `commit_sha`), `GET /current-prod`, `GET /healthz` |
 | gRPC server methods owned | none |
 | Redis consumes | `compile.completed:v1`, `manifest.loaded.candidate:v1`, `seed.build.completed:v1`, `validation.result:v1` |
-| Redis produces | `release.requested:v1`, `validation.requested:v1` (per node: `candidate_artifact_uri`), `release.promoted:v1` (top-level `code_bundle_uri`, `bootstrap`), `release.rejected:v1` (on `validation_failed`: includes top-level `repo` + `commit_sha` and per failing node `candidate_artifact_uri`) |
+| Redis produces | `release.requested:v1`, `validation.requested:v1` (per node: `candidate_artifact_uri`), `release.promoted:v1` (top-level `code_bundle_uri`, `bootstrap`), `release.rejected:v1` (on `validation_failed`: includes top-level `repo` + `commit_sha` and, per node, `candidate_artifact_uri` plus the candidate topology's `node_type`, `file_path`, and `service`) |
 | S3 writes | `DeleteObjects` — prune-time delete of `candidate-sql/<release_id>/` and `code-bundles/<release_id>/` prefixes per pruned release, both soft-fail and both backstopped by a 30-day S3 lifecycle rule on the respective prefix |
 | Outbound gRPC calls | none |
 

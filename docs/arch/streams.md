@@ -94,7 +94,9 @@ rejection regardless of which leg failed. The payload always includes:
 `release_id`, `stage` (`compile` | `seed_build` | `validation`; absent for parse-phase rejections), `reason`,
 `repo`, `commit_sha`, `code_bundle_uri`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
 `status`, `dbt_log_uri`, optional `run_results_uri`). Validation entries
-additionally carry `candidate_artifact_uri`; seed_build entries carry
+additionally carry `candidate_artifact_uri` plus the candidate topology's
+`node_type`, `file_path`, and `service` for that node; seed_build entries carry
+`file_path`/`service` from the same source, and the payload carries
 `candidate_schema`. Consumers must not assume `stage` is always `validation`
 — all three legs reuse this single stream. See `docs/arch/services/release-controller.md`
 for the full per-leg payload shape.

@@ -219,9 +219,13 @@ all stored (and present) nodes ok and aggregate_status ok → handleValidationOK
    transition to Promoted, emit release.promoted:v1
 any stored node not ok (failed or skipped) / aggregate_status not ok → Reject(reason=validation_failed),
    emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,
-        per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_artifact_uri}], repo, commit_sha,
+        per_node[{node_id, status, dbt_log_uri, run_results_uri, candidate_artifact_uri,
+                  node_type, file_path, service}], repo, commit_sha,
         code_bundle_uri}
-        (per_node sourced from the stored read model, enriched with each node's candidate_artifact_uri)
+        (per_node sourced from the stored read model, enriched from the candidate topology with each
+         node's candidate_artifact_uri, node_type, original_file_path, and service_name — the location
+         has to come from the candidate because a rejected release is never promoted, so nothing
+         downstream can resolve it from the promoted topology)
 advance queue
 ```
 
