@@ -177,6 +177,76 @@ func TestCodeVersionQueryRepository_NodeVersions_RetiredNodeReturnsHistoryIsCurr
 	}
 }
 
+// ---- CurrentNodeVersion ----
+
+// The revert case is the point of CurrentNodeVersion: after re-promoting an
+// older, already-recorded version, NodeVersions still lists the superseded
+// version first (it orders by promoted_at, and a version node is immutable),
+// but CurrentNodeVersion must follow :CURRENT back to the reverted-to
+// version instead.
+func TestCodeVersionQueryRepository_CurrentNodeVersion_AfterRevert_ReturnsCurrentNotNewest(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.rev_node", "sha256:h1")
+
+	writer := newVersionRepo(client)
+	base := time.Now().UTC()
+	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.rev_node", "sha256:h1")}, nil))
+	require.NoError(t, err)
+	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+		[]codeversion.NodeVersion{nodeInput("analytics.rev_node", "sha256:h2")}, nil))
+	require.NoError(t, err)
+	// The revert: re-promote content_hash h1. h1's :NodeVersion already
+	// exists, so its own promoted_at (set ON CREATE only) stays at its
+	// original, older value — only the :CURRENT pointer moves.
+	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-3", base.Add(2*time.Minute),
+		[]codeversion.NodeVersion{nodeInput("analytics.rev_node", "sha256:h1")}, nil))
+	require.NoError(t, err)
+
+	repo := newCodeVersionQueryRepo(client)
+	got, err := repo.CurrentNodeVersion(ctx, "analytics.rev_node", true)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "sha256:h1", got[0].ContentHash, "the reverted-to version is current")
+	assert.Equal(t, "select 1", got[0].RawCode)
+	assert.True(t, got[0].IsCurrent)
+
+	// Contrast: newest-first would have led the fixer astray.
+	newest, err := repo.NodeVersions(ctx, "analytics.rev_node", 20, false)
+	require.NoError(t, err)
+	require.NotEmpty(t, newest)
+	assert.Equal(t, "sha256:h2", newest[0].ContentHash, "newest-first still surfaces the superseded version")
+}
+
+func TestCodeVersionQueryRepository_CurrentNodeVersion_KnownNodeNoCurrentReturnsEmpty(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.no_cur", "sha256:v1")
+
+	repo := newCodeVersionQueryRepo(client)
+	got, err := repo.CurrentNodeVersion(ctx, "analytics.no_cur", true)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestCodeVersionQueryRepository_CurrentNodeVersion_UnknownNodeReturnsErrNodeNotFound(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+
+	repo := newCodeVersionQueryRepo(client)
+	got, err := repo.CurrentNodeVersion(ctx, "analytics.ghost", true)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
+	assert.Nil(t, got)
+}
+
 // ---- VersionsBySeq ----
 
 func TestCodeVersionQueryRepository_VersionsBySeq_ReturnsNamedPair(t *testing.T) {

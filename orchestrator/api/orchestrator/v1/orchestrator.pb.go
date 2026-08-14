@@ -1984,7 +1984,11 @@ type GetNodeVersionsRequest struct {
 	// KiB, so leave this false unless the code itself is needed — the default
 	// 20-version response can otherwise approach the transport's receive
 	// limit.
-	IncludeCode   bool `protobuf:"varint,3,opt,name=include_code,json=includeCode,proto3" json:"include_code,omitempty"`
+	IncludeCode bool `protobuf:"varint,3,opt,name=include_code,json=includeCode,proto3" json:"include_code,omitempty"`
+	// current_only, when true, returns only the version marked is_current —
+	// the code the node runs now — and ignores limit. include_code is honored.
+	// A known node with no recorded current version returns an empty list.
+	CurrentOnly   bool `protobuf:"varint,4,opt,name=current_only,json=currentOnly,proto3" json:"current_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2036,6 +2040,13 @@ func (x *GetNodeVersionsRequest) GetLimit() int32 {
 func (x *GetNodeVersionsRequest) GetIncludeCode() bool {
 	if x != nil {
 		return x.IncludeCode
+	}
+	return false
+}
+
+func (x *GetNodeVersionsRequest) GetCurrentOnly() bool {
+	if x != nil {
+		return x.CurrentOnly
 	}
 	return false
 }
@@ -3032,11 +3043,12 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"\fcontent_hash\x18\a \x01(\tR\vcontentHash\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\b \x01(\tR\tcreatedAt\x12!\n" +
-	"\fcompleted_at\x18\t \x01(\tR\vcompletedAt\"n\n" +
+	"\fcompleted_at\x18\t \x01(\tR\vcompletedAt\"\x91\x01\n" +
 	"\x16GetNodeVersionsRequest\x12\x1b\n" +
 	"\tunique_id\x18\x01 \x01(\tR\buniqueId\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12!\n" +
-	"\finclude_code\x18\x03 \x01(\bR\vincludeCode\"S\n" +
+	"\finclude_code\x18\x03 \x01(\bR\vincludeCode\x12!\n" +
+	"\fcurrent_only\x18\x04 \x01(\bR\vcurrentOnly\"S\n" +
 	"\x17GetNodeVersionsResponse\x128\n" +
 	"\bversions\x18\x01 \x03(\v2\x1c.orchestrator.v1.VersionViewR\bversions\"j\n" +
 	"\x19GetNodeVersionDiffRequest\x12\x1b\n" +

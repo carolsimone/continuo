@@ -156,6 +156,9 @@ type stubCodeVersionHistoryReader struct{}
 func (stubCodeVersionHistoryReader) GetNodeVersions(context.Context, string, int32, bool) ([]codeversion.VersionView, error) {
 	return nil, nil
 }
+func (stubCodeVersionHistoryReader) GetCurrentNodeVersion(context.Context, string, bool) ([]codeversion.VersionView, error) {
+	return nil, nil
+}
 func (stubCodeVersionHistoryReader) GetNodeVersionDiff(context.Context, string, int64, int64) (*codeversion.VersionDiff, error) {
 	return &codeversion.VersionDiff{}, nil
 }

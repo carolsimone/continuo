@@ -104,6 +104,10 @@ type fakeCodeVersionHistoryReader struct {
 	nodeVersionsErr error
 	gotIncludeCode  bool
 
+	currentNodeVersion    []codeversion.VersionView
+	currentNodeVersionErr error
+	gotCurrentIncludeCode bool
+
 	diff    *codeversion.VersionDiff
 	diffErr error
 
@@ -128,6 +132,14 @@ func (f *fakeCodeVersionHistoryReader) GetNodeVersions(_ context.Context, _ stri
 		return nil, f.nodeVersionsErr
 	}
 	return f.nodeVersions, nil
+}
+
+func (f *fakeCodeVersionHistoryReader) GetCurrentNodeVersion(_ context.Context, _ string, includeCode bool) ([]codeversion.VersionView, error) {
+	f.gotCurrentIncludeCode = includeCode
+	if f.currentNodeVersionErr != nil {
+		return nil, f.currentNodeVersionErr
+	}
+	return f.currentNodeVersion, nil
 }
 
 func (f *fakeCodeVersionHistoryReader) GetNodeVersionDiff(context.Context, string, int64, int64) (*codeversion.VersionDiff, error) {
@@ -239,6 +251,38 @@ func TestQueryHandler_GetNodeVersions_IncludeCodePassesThrough(t *testing.T) {
 	_, err = h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{UniqueId: "n1", IncludeCode: false})
 	require.NoError(t, err)
 	assert.False(t, cv.gotIncludeCode)
+}
+
+func TestQueryHandler_GetNodeVersions_CurrentOnly_CallsGetCurrentNodeVersion(t *testing.T) {
+	cv := &fakeCodeVersionHistoryReader{
+		currentNodeVersion: []codeversion.VersionView{
+			{ContentHash: "h1", RawCode: "select 1", IsCurrent: true},
+		},
+	}
+	h := newHandlerWithCodeVersions(cv)
+	resp, err := h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{
+		UniqueId: "svc.schema.tbl", CurrentOnly: true, IncludeCode: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Versions, 1)
+	assert.Equal(t, "h1", resp.Versions[0].ContentHash)
+	assert.True(t, resp.Versions[0].IsCurrent)
+	assert.True(t, cv.gotCurrentIncludeCode)
+}
+
+func TestQueryHandler_GetNodeVersions_CurrentOnly_UnknownNode_NotFound(t *testing.T) {
+	cv := &fakeCodeVersionHistoryReader{currentNodeVersionErr: domain.ErrNodeNotFound}
+	h := newHandlerWithCodeVersions(cv)
+	_, err := h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{UniqueId: "ghost", CurrentOnly: true})
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestQueryHandler_GetNodeVersions_CurrentOnly_KnownNodeNoCurrent_Empty(t *testing.T) {
+	cv := &fakeCodeVersionHistoryReader{currentNodeVersion: []codeversion.VersionView{}}
+	h := newHandlerWithCodeVersions(cv)
+	resp, err := h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{UniqueId: "known", CurrentOnly: true})
+	require.NoError(t, err)
+	assert.Empty(t, resp.Versions)
 }
 
 // ---- GetNodeVersionDiff ----

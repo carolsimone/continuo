@@ -47,6 +47,9 @@ type DriftAwareRunReader interface {
 // not in the handler. Satisfied by service/queries.CodeVersionQueryService.
 type CodeVersionHistoryReader interface {
 	GetNodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error)
+	// GetCurrentNodeVersion returns only the version the node runs now — a
+	// 0-or-1 slice, revert-safe where GetNodeVersions' newest-first is not.
+	GetCurrentNodeVersion(ctx context.Context, uniqueID string, includeCode bool) ([]codeversion.VersionView, error)
 	GetNodeVersionDiff(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (*codeversion.VersionDiff, error)
 	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since time.Time) ([]codeversion.UpstreamChange, error)
 	GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) ([]codeversion.UnitVersionView, error)
@@ -294,6 +297,21 @@ const maxUpstreamDepth = 10
 func (h *QueryHandler) GetNodeVersions(ctx context.Context, req *orchestratorv1.GetNodeVersionsRequest) (*orchestratorv1.GetNodeVersionsResponse, error) {
 	if req.UniqueId == "" {
 		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
+	}
+	if req.CurrentOnly {
+		versions, err := h.codeVersions.GetCurrentNodeVersion(ctx, req.UniqueId, req.IncludeCode)
+		if err != nil {
+			if errors.Is(err, domain.ErrNodeNotFound) {
+				return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
+			}
+			h.logger.Error("GetNodeVersions current_only failed", "unique_id", req.UniqueId, "error", err)
+			return nil, status.Errorf(codes.Internal, "get current node version: %v", err)
+		}
+		out := make([]*orchestratorv1.VersionView, 0, len(versions))
+		for _, v := range versions {
+			out = append(out, codeVersionViewToProto(v))
+		}
+		return &orchestratorv1.GetNodeVersionsResponse{Versions: out}, nil
 	}
 	versions, err := h.codeVersions.GetNodeVersions(ctx, req.UniqueId, req.Limit, req.IncludeCode)
 	if err != nil {
