@@ -309,6 +309,88 @@ func TestCaseBaseRepository_BackLinksResolvedByWhenNewerVersionExists(t *testing
 		"still exactly one [:RESOLVED_BY] edge — the existing IS NULL guard must block a second link")
 }
 
+// seedCurrentPointerAt MERGEs a :Table's [:CURRENT] edge to the version
+// addressed by (unique_id, content_hash), stamped with promotedAt — the
+// property the revert branch of RecordRejection's back-link reads, which is
+// independent of the version node's own (immutable) promoted_at.
+func seedCurrentPointerAt(
+	t *testing.T, client neo4jinfra.Neo4jClient,
+	tableUniqueID, versionUniqueID, versionContentHash string, promotedAt time.Time,
+) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `
+		MERGE (t:Table {unique_id: $table_uid})
+		WITH t
+		MATCH (v:NodeVersion {unique_id: $version_uid, content_hash: $hash})
+		MERGE (t)-[cur:CURRENT]->(v)
+		SET cur.promoted_at = $at
+	`, map[string]any{
+		"table_uid": tableUniqueID, "version_uid": versionUniqueID, "hash": versionContentHash,
+		"at": promotedAt.UTC(),
+	})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+}
+
+// TestCaseBaseRepository_BackLinksResolvedByOnRevert verifies the revert
+// branch of the back-link. A revert reuses an existing :NodeVersion node
+// rather than writing a new one, so the version's own promoted_at stays at
+// its original, earlier value and the ordinary "oldest version promoted
+// after the rejection" branch finds no candidate. The [:CURRENT] edge is
+// what the version writer actually overwrites on every promotion, so its
+// promoted_at — newer than the rejection even though the version node's own
+// is not — is what proves the fix landed, and RecordRejection must link to
+// that current version.
+func TestCaseBaseRepository_BackLinksResolvedByOnRevert(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	repo := newCaseBaseRepo(client)
+
+	nodeID := marker + "-node"
+	releaseID := marker + "-rel"
+	t0 := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+
+	// Both versions were promoted BEFORE the rejection, so neither qualifies
+	// under the ordinary branch (v.promoted_at > $at).
+	seedNodeVersion(t, client, nodeID, marker, "hash-v1", t0)
+	seedNodeVersion(t, client, nodeID, marker, "hash-v2", t0.Add(10*time.Minute))
+
+	rejAt := t0.Add(20 * time.Minute)
+
+	// The revert: promoted well after the rejection, but the [:CURRENT] edge
+	// now points back at hash-v1, whose own promoted_at is t0 — before the
+	// rejection.
+	seedCurrentPointerAt(t, client, nodeID, nodeID, "hash-v1", t0.Add(30*time.Minute))
+
+	require.NoError(t, repo.RecordRejection(ctx, casebase.Rejection{
+		ReleaseID: releaseID, NodeID: nodeID, Stage: "validation",
+		Category: "cat", Reason: "reason", Signature: marker + "-sig",
+		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: rejAt,
+	}))
+
+	resolvedHash := runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
+		RETURN v.content_hash AS c
+	`, map[string]any{"release_id": releaseID, "node_id": nodeID}, "c")
+	assert.Equal(t, "hash-v1", resolvedHash,
+		"the revert must link to the CURRENT version, detected via the [:CURRENT] edge's promoted_at, "+
+			"not the version node's own (which the ordinary branch already checked and rejected)")
+
+	edgeCount := runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->() RETURN count(r) AS c
+	`, map[string]any{"release_id": releaseID, "node_id": nodeID}, "c")
+	assert.EqualValues(t, 1, edgeCount, "exactly one [:RESOLVED_BY] edge")
+}
+
 // TestCaseBaseRepository_RecordProposalCreatesStubRejection verifies the
 // out-of-order half of the case base: a proposal arriving before its
 // rejection creates a stub :Rejection so the [:PROPOSED] edge has an anchor,

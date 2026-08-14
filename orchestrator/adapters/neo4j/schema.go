@@ -44,9 +44,15 @@ import (
 //     they already wrote.
 //   - rejection_node_id: backs `[:RESOLVED_BY]` linking from both the
 //     versions consumer and the late-arrival back-link.
+//   - rejection_category_reason: backs the category+reason precedent lookup,
+//     which filters on :Rejection's own (always-current) properties rather
+//     than the :ErrorSignature hub's first-seen ones.
 //   - error_signature_unique: the global precedent hub's MERGE key.
-//   - error_signature_category_reason: backs the category+reason precedent
-//     lookup.
+//   - error_signature_category_reason: no longer backs a read path — the
+//     category+reason precedent lookup filters :Rejection now — but stays:
+//     :ErrorSignature nodes are few (one per distinct signature), so the
+//     write cost is negligible, and the hub's category/reason remain accurate
+//     first-seen metadata worth indexing for direct hub lookups.
 //   - proposal_unique: a proposal's identity.
 var schemaStatements = []string{
 	"CREATE CONSTRAINT run_id_unique IF NOT EXISTS FOR (r:Run) REQUIRE r.run_id IS UNIQUE",
@@ -61,6 +67,7 @@ var schemaStatements = []string{
 	"CREATE INDEX code_unit_version_unit_id IF NOT EXISTS FOR (v:CodeUnitVersion) ON (v.unit_id)",
 	"CREATE CONSTRAINT rejection_unique IF NOT EXISTS FOR (r:Rejection) REQUIRE (r.release_id, r.node_id) IS UNIQUE",
 	"CREATE INDEX rejection_node_id IF NOT EXISTS FOR (r:Rejection) ON (r.node_id)",
+	"CREATE INDEX rejection_category_reason IF NOT EXISTS FOR (r:Rejection) ON (r.category, r.reason)",
 	"CREATE CONSTRAINT error_signature_unique IF NOT EXISTS FOR (s:ErrorSignature) REQUIRE s.signature IS UNIQUE",
 	"CREATE INDEX error_signature_category_reason IF NOT EXISTS FOR (s:ErrorSignature) ON (s.category, s.reason)",
 	"CREATE CONSTRAINT proposal_unique IF NOT EXISTS FOR (p:Proposal) REQUIRE p.proposal_id IS UNIQUE",

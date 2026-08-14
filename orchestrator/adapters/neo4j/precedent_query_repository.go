@@ -38,6 +38,22 @@ func NewPrecedentQueryRepository(client Neo4jClient, logger *slog.Logger) *Prece
 // case base never pays to load code it is about to discard. includeCode
 // controls the failing raw_code only; resolving/prior version bodies are
 // always fetched because the caller renders the resolution diff from them.
+//
+// The (category, reason) fallback filters on the :Rejection's own category and
+// reason, not the :ErrorSignature hub's — the hub's are first-seen metadata
+// (see RecordRejection), so two rejections sharing one signature can carry
+// different reasons, and only the rejection's own property is guaranteed
+// current.
+//
+// A rejection can carry two [:RESOLVED_BY] edges when the two writers race
+// (the versions consumer's forward-link and the rejections consumer's
+// back-link), so the detail query picks one deterministically — oldest
+// resolving version by promoted_at, tie-broken by content_hash — before
+// projecting anything from it, the same "oldest version that could have
+// fixed it" rule the back-link itself applies. The diff baseline against
+// that resolving version prefers the edge's own promoted_at (stamped by the
+// forward-link) over the version node's, since a reverted-to version node
+// keeps its original, earlier promoted_at.
 func (r *PrecedentQueryRepository) Precedents(
 	ctx context.Context,
 	signature, category, reason string,
@@ -48,10 +64,9 @@ func (r *PrecedentQueryRepository) Precedents(
 	defer func() { _ = session.Close(ctx) }()
 
 	idsResult, err := session.Run(ctx, `
-		MATCH (sig:ErrorSignature)
+		MATCH (rej:Rejection)-[:HAS_SIGNATURE]->(sig:ErrorSignature)
 		WHERE ($signature <> '' AND sig.signature = $signature)
-		   OR ($signature = '' AND sig.category = $category AND sig.reason = $reason)
-		MATCH (rej:Rejection)-[:HAS_SIGNATURE]->(sig)
+		   OR ($signature = '' AND rej.category = $category AND rej.reason = $reason)
 		OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res:NodeVersion)
 		WITH rej, sig.signature AS signature, count(res) > 0 AS resolved
 		ORDER BY resolved DESC, rej.at DESC
@@ -89,11 +104,15 @@ func (r *PrecedentQueryRepository) Precedents(
 	detailResult, err := session.Run(ctx, `
 		UNWIND $keys AS k
 		MATCH (rej:Rejection {release_id: k.release_id, node_id: k.node_id})
-		OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res:NodeVersion)
+		OPTIONAL MATCH (rej)-[rb:RESOLVED_BY]->(res:NodeVersion)
+		WITH rej, k.signature AS signature, rb, res
+		  ORDER BY res.promoted_at ASC, res.content_hash ASC
+		WITH rej, signature, head(collect(rb)) AS rb, head(collect(res)) AS res
+		WITH rej, signature, res, coalesce(rb.promoted_at, res.promoted_at) AS resolved_at
 		OPTIONAL MATCH (prior:NodeVersion {unique_id: res.unique_id})
-		  WHERE prior.promoted_at < res.promoted_at
+		  WHERE prior.promoted_at < resolved_at
 		OPTIONAL MATCH (t:Table {unique_id: res.unique_id})-[:CURRENT]->(cur:NodeVersion)
-		WITH rej, k.signature AS signature, res, prior,
+		WITH rej, signature, res, prior,
 		     (cur IS NOT NULL AND res IS NOT NULL AND cur.content_hash = res.content_hash) AS res_is_current
 		  ORDER BY prior.promoted_at DESC
 		WITH rej, signature, res, res_is_current, head(collect(prior)) AS prior

@@ -61,6 +61,7 @@ func TestInitSchema_Idempotent(t *testing.T) {
 		"code_unit_version_unit_id",
 		"rejection_unique",
 		"rejection_node_id",
+		"rejection_category_reason",
 		"error_signature_unique",
 		"error_signature_category_reason",
 		"proposal_unique",

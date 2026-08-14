@@ -207,6 +207,27 @@ func TestRejectionsHandler_PoisonPayloadIsPermanent(t *testing.T) {
 	}
 }
 
+// The URI resolved to a bundle for a different release. Unlike the versions
+// handler (which drops the message — writing the wrong code would corrupt
+// the version graph), losing the code here must not lose the precedent: the
+// rejection is still recorded, without code, and the message ACKs rather
+// than retrying (retrying the same URI would only fetch the same wrong
+// bundle again).
+func TestRejectionsHandler_BundleForAnotherReleaseRecordsWithoutCode(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	b := rejectionsBundle()
+	b.ReleaseID = "rel-99"
+	reader := &fakeBundleReader{bundle: b}
+	repo := &fakeCaseBaseRepository{}
+
+	err := newRejectionsHandler(uow, reader, repo).Handle(context.Background(), "1-0", nil, rejectionInput())
+	require.NoError(t, err)
+	require.Len(t, repo.recordRejectionCalls, 1)
+	assert.Empty(t, repo.recordRejectionCalls[0].RawCode)
+	assert.Empty(t, repo.recordRejectionCalls[0].ContentHash)
+	assert.True(t, uow.CommittedTx)
+}
+
 func TestRejectionsHandler_DedupSkips(t *testing.T) {
 	uow := newFakeUnitOfWork()
 	reader := &fakeBundleReader{bundle: rejectionsBundle()}

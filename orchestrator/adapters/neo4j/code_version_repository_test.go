@@ -661,3 +661,36 @@ func TestWriteVersions_StaleRedeliveryCannotLinkAnOpenRejection(t *testing.T) {
 		 RETURN v.content_hash AS v`, nil),
 		"the rejection must remain unresolved")
 }
+
+// The forward-link stamps the [:RESOLVED_BY] edge with the resolving
+// promotion's own timestamp and release, not just the link to the version
+// node. The precedent detail query needs the edge's promoted_at as its diff
+// baseline, because a reverted-to version node keeps its own, earlier
+// promoted_at forever (version nodes are immutable).
+func TestWriteVersions_StampsResolvedByEdgeWithPromotionMetadata(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v0")
+
+	t0 := time.Now().UTC()
+	seedRejection(t, client, "rel-early", "analytics.revenue", t0)
+
+	repo := newVersionRepo(client)
+	promotedAt := t0.Add(time.Hour)
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", promotedAt,
+		[]codeversion.NodeVersion{nodeInput("analytics.revenue", "sha256:v1")}, nil))
+	require.NoError(t, err)
+	require.Equal(t, 1, res.RejectionsResolved)
+
+	edgePromotedAt := versionScalar(t, client,
+		`MATCH (:Rejection {release_id:'rel-early'})-[rb:RESOLVED_BY]->() RETURN rb.promoted_at AS v`, nil)
+	at, ok := edgePromotedAt.(time.Time)
+	require.True(t, ok, "rb.promoted_at must round-trip as a time.Time, got %T", edgePromotedAt)
+	assert.True(t, promotedAt.Equal(at), "rb.promoted_at must equal the promotion that resolved it")
+
+	assert.Equal(t, "rel-1", versionScalar(t, client,
+		`MATCH (:Rejection {release_id:'rel-early'})-[rb:RESOLVED_BY]->() RETURN rb.release_id AS v`, nil),
+		"rb.release_id must name the release that resolved it")
+}

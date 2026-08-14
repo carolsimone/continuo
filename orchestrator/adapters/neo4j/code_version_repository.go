@@ -384,7 +384,13 @@ func (r *CodeVersionRepository) writeBatch(
 		// The fix for a recorded failure is the first version promoted after
 		// it: link every still-open rejection of these nodes to the version
 		// that just became current. Guarded on the same watermark as the
-		// pointer, so a stale redelivery cannot claim to resolve anything.
+		// pointer, so a stale redelivery cannot claim to resolve anything. The
+		// edge is stamped with this promotion's own timestamp and release
+		// (ON CREATE only, so a later redelivery cannot rewrite it) — the
+		// detail query uses it as the diff baseline instead of the version
+		// node's own promoted_at, which a reverted-to version keeps at its
+		// original, earlier value. The MERGE pattern itself stays free of
+		// those properties so it keeps matching on the edge type alone.
 		linkRes, err := tx.Run(ctx, `
 			UNWIND $currents AS c
 			MATCH (t:Table {unique_id: c.unique_id})
@@ -392,10 +398,12 @@ func (r *CodeVersionRepository) writeBatch(
 			MATCH (v:NodeVersion {unique_id: c.unique_id, content_hash: c.content_hash})
 			MATCH (rej:Rejection {node_id: c.unique_id})
 			WHERE rej.at < $promoted_at AND NOT (rej)-[:RESOLVED_BY]->()
-			MERGE (rej)-[:RESOLVED_BY]->(v)
+			MERGE (rej)-[rb:RESOLVED_BY]->(v)
+			ON CREATE SET rb.promoted_at = $promoted_at, rb.release_id = $release_id
 		`, map[string]any{
 			"currents":    currents,
 			"promoted_at": promotedAt,
+			"release_id":  in.ReleaseID,
 		})
 		if err != nil {
 			return out, fmt.Errorf("link resolved rejections: %w", err)

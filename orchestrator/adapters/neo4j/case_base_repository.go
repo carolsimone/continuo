@@ -31,8 +31,19 @@ func NewCaseBaseRepository(client Neo4jClient, logger *slog.Logger) *CaseBaseRep
 // MERGEs the signature hub and its edge, anchors [:FAILED] only when the
 // node's :Table exists (FOREACH-guarded — this writer must never mint a
 // :Table, which would leak a non-promoted node into scheduler snapshots), and
-// back-links [:RESOLVED_BY] to the OLDEST version promoted after the
-// rejection when the fix already landed before this consumer caught up.
+// back-links [:RESOLVED_BY] when the fix already landed before this consumer
+// caught up. Two branches feed that back-link, and the first to match wins:
+//   - the ordinary case links the OLDEST :NodeVersion whose own promoted_at is
+//     after the rejection;
+//   - the revert case covers a promotion that reuses an existing, older
+//     version node (version nodes are immutable, so a revert's promoted_at
+//     stays at its original, earlier value) — it is detected instead through
+//     the node's [:CURRENT] edge, which the version writer always overwrites
+//     with the promotion that put it there, and only applies when the
+//     ordinary case found nothing.
+//
+// Neither branch can attribute a fix through a revert followed by a further
+// promotion; recovering full promotion history is out of scope here.
 func (r *CaseBaseRepository) RecordRejection(ctx context.Context, rej casebase.Rejection) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer func() { _ = session.Close(ctx) }()
@@ -49,6 +60,10 @@ func (r *CaseBaseRepository) RecordRejection(ctx context.Context, rej casebase.R
 		    rej.content_hash = $content_hash,
 		    rej.stub = false
 		MERGE (sig:ErrorSignature {signature: $signature})
+		// first-seen category/reason only: a later rejection sharing this
+		// signature can carry a different reason, so identity and
+		// category/reason lookups always read the :Rejection's own properties,
+		// never the hub's.
 		ON CREATE SET sig.category = $category, sig.reason = $reason
 		MERGE (rej)-[:HAS_SIGNATURE]->(sig)
 		WITH rej
@@ -60,9 +75,13 @@ func (r *CaseBaseRepository) RecordRejection(ctx context.Context, rej casebase.R
 		WITH rej, existing
 		OPTIONAL MATCH (v:NodeVersion {unique_id: $node_id})
 		  WHERE existing IS NULL AND v.promoted_at > $at
-		WITH rej, v ORDER BY v.promoted_at ASC LIMIT 1
-		FOREACH (_ IN CASE WHEN v IS NULL THEN [] ELSE [1] END |
-		  MERGE (rej)-[:RESOLVED_BY]->(v))
+		WITH rej, existing, v ORDER BY v.promoted_at ASC LIMIT 1
+		OPTIONAL MATCH (t:Table {unique_id: $node_id})-[cur:CURRENT]->(curV:NodeVersion)
+		  WHERE existing IS NULL AND v IS NULL
+		    AND cur.promoted_at > $at AND curV.promoted_at <= $at
+		WITH rej, coalesce(v, curV) AS resolved
+		FOREACH (_ IN CASE WHEN resolved IS NULL THEN [] ELSE [1] END |
+		  MERGE (rej)-[:RESOLVED_BY]->(resolved))
 	`, map[string]any{
 		"release_id":    rej.ReleaseID,
 		"node_id":       rej.NodeID,

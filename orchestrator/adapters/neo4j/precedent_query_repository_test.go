@@ -8,6 +8,7 @@ import (
 	"time"
 
 	neo4jinfra "github.com/carolsimone/continuo/orchestrator/adapters/neo4j"
+	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,6 +99,29 @@ func linkPrecedentResolvedBy(
 	`, map[string]any{
 		"release_id": releaseID, "node_id": nodeID,
 		"uid": versionUniqueID, "hash": versionContentHash,
+	})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+}
+
+// setPrecedentResolvedByPromotedAt stamps promoted_at on an existing
+// [:RESOLVED_BY] edge, matching what the forward-link (code_version_repository.go)
+// writes at resolution time.
+func setPrecedentResolvedByPromotedAt(
+	t *testing.T, client neo4jinfra.Neo4jClient,
+	releaseID, nodeID, versionUniqueID, versionContentHash string, at time.Time,
+) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:NodeVersion {unique_id: $uid, content_hash: $hash})
+		SET rb.promoted_at = $at
+	`, map[string]any{
+		"release_id": releaseID, "node_id": nodeID,
+		"uid": versionUniqueID, "hash": versionContentHash, "at": at.UTC(),
 	})
 	require.NoError(t, err)
 	_, err = res.Consume(ctx)
@@ -327,7 +351,11 @@ func TestPrecedentReader_LimitAppliedBeforeBodies(t *testing.T) {
 // either committed, so the rejection ends up with two edges to two different
 // versions). Without dedup, the rejection consumes two slots in the
 // resolved-first/newest LIMIT window and can appear twice in the response,
-// evicting a genuine precedent.
+// evicting a genuine precedent. It also verifies the detail query resolves
+// the race deterministically — oldest resolving version by promoted_at wins,
+// matching the back-link's own "oldest version that could have fixed it"
+// rule — rather than depending on Neo4j's unspecified row order for a bare
+// OPTIONAL MATCH.
 func TestPrecedentReader_DuplicateResolvedByEdgeIsOneRow(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
@@ -344,14 +372,104 @@ func TestPrecedentReader_DuplicateResolvedByEdgeIsOneRow(t *testing.T) {
 		t0, "select failing", "hash-failing")
 	seedPrecedentVersion(t, client, node, marker, "hash-race-a", "select race a", t0.Add(time.Hour))
 	seedPrecedentVersion(t, client, node, marker, "hash-race-b", "select race b", t0.Add(2*time.Hour))
-	linkPrecedentResolvedBy(t, client, rel, node, node, "hash-race-a")
+	// Linked in reverse promoted_at order, so a query that merely returns
+	// "whichever row Neo4j visits last" cannot coincidentally match the
+	// oldest-wins rule by matching insertion order.
 	linkPrecedentResolvedBy(t, client, rel, node, node, "hash-race-b")
+	linkPrecedentResolvedBy(t, client, rel, node, node, "hash-race-a")
 
 	repo := newPrecedentReader(client)
 	precedents, err := repo.Precedents(ctx, sig, "", "", 10, true)
 	require.NoError(t, err)
 	require.Len(t, precedents, 1, "two RESOLVED_BY edges on one rejection must still yield exactly one row")
 	assert.Equal(t, node, precedents[0].Rejection.NodeID)
+
+	require.NotNil(t, precedents[0].ResolvingVersion)
+	assert.Equal(t, "hash-race-a", precedents[0].ResolvingVersion.ContentHash,
+		"the OLDEST resolving version by promoted_at must win deterministically, not whichever edge Neo4j visits last")
+}
+
+// TestPrecedentReader_CategoryReasonFallbackUsesRejectionsOwnReason verifies
+// the (category, reason) fallback filters on each :Rejection's own
+// properties, not the shared :ErrorSignature hub's. RecordRejection sets the
+// hub's category/reason under ON CREATE only (first writer wins), so a
+// second rejection sharing the signature but classified under a different
+// reason must still be found under ITS OWN reason.
+func TestPrecedentReader_CategoryReasonFallbackUsesRejectionsOwnReason(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig" // one shared signature, two different reasons
+	t0 := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
+	relA, nodeA := marker+"-rel-a", marker+"-node-a"
+	relB, nodeB := marker+"-rel-b", marker+"-node-b"
+
+	caseBase := newCaseBaseRepo(client)
+	// relA lands first, so the :ErrorSignature hub's category/reason freeze
+	// on its values (ON CREATE only).
+	require.NoError(t, caseBase.RecordRejection(ctx, casebase.Rejection{
+		ReleaseID: relA, NodeID: nodeA, Stage: "validation",
+		Category: "logic", Reason: "reason-a", Signature: sig,
+		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
+	}))
+	require.NoError(t, caseBase.RecordRejection(ctx, casebase.Rejection{
+		ReleaseID: relB, NodeID: nodeB, Stage: "validation",
+		Category: "logic", Reason: "reason-b", Signature: sig,
+		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0.Add(time.Minute),
+	}))
+
+	repo := newPrecedentReader(client)
+	precedents, err := repo.Precedents(ctx, "", "logic", "reason-b", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1, "must find the rejection under its OWN reason, not the hub's first-seen one")
+	assert.Equal(t, nodeB, precedents[0].Rejection.NodeID)
+}
+
+// TestPrecedentReader_DiffBaselineUsesEdgePromotedAt verifies the detail
+// query derives the diff baseline from the [:RESOLVED_BY] edge's own
+// promoted_at (set by the forward-link at resolution time) rather than the
+// resolving version node's own promoted_at, which for a reverted-to version
+// stays at its original, much earlier value forever (version nodes are
+// immutable). Using the version's own promoted_at as the baseline would find
+// no qualifying prior version at all here.
+func TestPrecedentReader_DiffBaselineUsesEdgePromotedAt(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
+	rel, node := marker+"-rel", marker+"-node"
+
+	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+
+	// v0 is the reverted-to version: its own promoted_at predates even the
+	// rejection and never changes once created.
+	seedPrecedentVersion(t, client, node, marker, "hash-v0", "select v0", t0.Add(-time.Hour))
+	// v2 is the version v0's revert actually replaced — the one active right
+	// before the resolving (re-)promotion.
+	seedPrecedentVersion(t, client, node, marker, "hash-v2", "select v2", t0.Add(2*time.Hour))
+
+	linkPrecedentResolvedBy(t, client, rel, node, node, "hash-v0")
+	// The resolution's real promotion time, long after v0's own promoted_at.
+	setPrecedentResolvedByPromotedAt(t, client, rel, node, node, "hash-v0", t0.Add(3*time.Hour))
+
+	repo := newPrecedentReader(client)
+	precedents, err := repo.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	require.NotNil(t, precedents[0].PriorVersion,
+		"the baseline must be the edge's promoted_at — using the reverted version's own would find no prior at all")
+	assert.Equal(t, "hash-v2", precedents[0].PriorVersion.ContentHash)
 }
 
 // TestPrecedentReader_IncludeCodeFalseOmitsFailingCode verifies includeCode

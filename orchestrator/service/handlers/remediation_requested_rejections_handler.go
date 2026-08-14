@@ -111,9 +111,10 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 }
 
 // failingCode reads the failing node's code from the release's bundle.
-// Returns ("", "", nil) with a log when there is nothing to read (no URI, node
-// absent, unreadable bundle); returns a non-nil error ONLY for a bundle that
-// is absent from object storage and may still land (transient, retry).
+// Returns ("", "", nil) with a log when there is nothing to read (no URI,
+// bundle for another release, node absent, unreadable bundle); returns a
+// non-nil error ONLY for a bundle that is absent from object storage and may
+// still land (transient, retry).
 func (h *RemediationRequestedRejectionsHandler) failingCode(
 	ctx context.Context, in event.RemediationRequested,
 ) (rawCode, contentHash string, err error) {
@@ -131,6 +132,18 @@ func (h *RemediationRequestedRejectionsHandler) failingCode(
 			return "", "", nil
 		}
 		return "", "", fmt.Errorf("fetch code bundle %s: %w", in.CodeBundleURI, err)
+	}
+	if bundle.ReleaseID != in.ReleaseID {
+		// The URI resolved to a bundle for a different release. Recording its
+		// RawCode/ContentHash would stamp another release's code onto this
+		// rejection's failing precedent. Unlike the versions handler (which
+		// drops the message — writing the wrong code would corrupt the version
+		// graph), losing the code here must not lose the precedent: record the
+		// rejection without it.
+		h.logger.Error("code bundle belongs to a different release — recording rejection without code",
+			"release_id", in.ReleaseID, "bundle_release_id", bundle.ReleaseID,
+			"node_id", in.NodeID, "uri", in.CodeBundleURI)
+		return "", "", nil
 	}
 	n, ok := bundle.Nodes[in.NodeID]
 	if !ok {
