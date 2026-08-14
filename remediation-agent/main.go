@@ -143,12 +143,6 @@ func main() {
 	bundleReader := s3.NewCandidateSourceReader(
 		cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region, cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey)
 
-	ancestryClient, err := grpcadapter.NewAncestryClient(cfg.OrchestratorAddr)
-	if err != nil {
-		logger.Error("grpc ancestry client dial", "error", err)
-		os.Exit(1)
-	}
-
 	graphClient, err := grpcadapter.NewGraphClient(cfg.OrchestratorAddr)
 	if err != nil {
 		logger.Error("grpc graph client dial", "error", err)
@@ -189,7 +183,6 @@ func main() {
 		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
 		LLM:              cachedLLM,
 		Evidence:         store,
-		Ancestry:         ancestryClient,
 		Source:           gh,
 		Sanitizer:        sanitizer.Passthrough{},
 		Artifacts:        store,

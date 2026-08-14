@@ -71,7 +71,7 @@ func TestTriggerFromRequested_InvalidJSON(t *testing.T) {
 // TestTriggerFromRequested_SeedServiceField verifies that when a
 // remediation.requested:v1 payload carries the service field (set for
 // seed_build failures from the candidate topology), it is decoded into
-// trigger.Service so proposeFromSource can skip the Ancestry lookup.
+// trigger.Service so proposeFromSource can skip the NodeLocator lookup.
 func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
 	payload := map[string]any{
 		"event_id":        "evt-seed-1",
@@ -96,7 +96,7 @@ func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
 	require.Equal(t, "seed_build", trigger.Source)
 	require.Equal(t, "seeds/customers.csv", trigger.FilePath)
 	require.Equal(t, "svc-data", trigger.Service,
-		"service field must be decoded so proposeFromSource can skip Ancestry")
+		"service field must be decoded so proposeFromSource can skip the NodeLocator lookup")
 }
 
 func TestTriggerFromRequested_DecodesReasonAndBundleURI(t *testing.T) {

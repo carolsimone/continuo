@@ -47,10 +47,6 @@ func (f *fakeSourceMap) ListDir(_ context.Context, _, _, d string) ([]string, er
 	return paths, nil
 }
 
-func (f *fakeSourceMap) CommitFileDiff(_ context.Context, _, _, _ string) (string, error) {
-	return "", ports.ErrSourceNotFound
-}
-
 func TestCompile_EmptyFilePath_Skips(t *testing.T) {
 	svc := Services{Source: &fakeSource{}, Logger: testLogger(), ServiceRepoPaths: map[string]string{"svc": "services/svc"}}
 	r, err := compileFixer{}.Propose(context.Background(), svc, Input{Source: "compile", NodeID: "svc", FilePath: ""})

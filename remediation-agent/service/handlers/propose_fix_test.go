@@ -34,19 +34,6 @@ func (f fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
 	return f.vals[uri], nil
 }
 
-// fakeAncestry returns a fixed file path, service name, and ancestor slice,
-// or an error if set.
-type fakeAncestry struct {
-	fp  string
-	svc string
-	a   []prompt.Ancestor
-	err error
-}
-
-func (f fakeAncestry) NodeContext(_ context.Context, _ string) (string, string, []prompt.Ancestor, error) {
-	return f.fp, f.svc, f.a, f.err
-}
-
 // fakeSanitizer is a pass-through log sanitizer.
 type fakeSanitizer struct{}
 
@@ -182,10 +169,6 @@ func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, err
 
 func (f *fakeSource) ListDir(_ context.Context, _, _, _ string) ([]string, error) {
 	return nil, ports.ErrSourceNotFound
-}
-
-func (f *fakeSource) CommitFileDiff(_ context.Context, _, _, _ string) (string, error) {
-	return "", ports.ErrSourceNotFound
 }
 
 // fakeClock returns a fixed UTC timestamp.
@@ -407,7 +390,6 @@ func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
 		NewUoW:           func() uow.UnitOfWork { return u },
 		LLM:              llm,
 		Evidence:         ev,
-		Ancestry:         fakeAncestry{},
 		Source:           &fakeSource{},
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -439,10 +421,10 @@ func baseTrigger() Trigger {
 }
 
 // TestProposeFix_CompileSource verifies the compile branch: a compile trigger
-// carries no candidate SQL but a FilePath. The handler must bypass Ancestry,
-// read the offending source from version control, prompt the LLM with the dbt
-// error + raw source, and persist a non-skipped, source-resolved proposal whose
-// FilePath and Source are preserved. A non-empty proposed-fix artifact is written.
+// carries no candidate SQL but a FilePath. The handler must read the offending
+// source from version control, prompt the LLM with the dbt error + raw source,
+// and persist a non-skipped, source-resolved proposal whose FilePath and Source
+// are preserved. A non-empty proposed-fix artifact is written.
 func TestProposeFix_CompileSource(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
@@ -466,7 +448,6 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		NewUoW:      func() uow.UnitOfWork { return u },
 		LLM:         &llm,
 		Evidence:    ev,
-		Ancestry:    fakeAncestry{err: fmt.Errorf("ancestry must not be called for compile")},
 		Source:      src,
 		Sanitizer:   fakeSanitizer{},
 		Artifacts:   art,
@@ -537,9 +518,9 @@ func TestProposeFix_CompileSource(t *testing.T) {
 
 // TestProposeFix_SeedSourceViaThreadedPayload verifies the primary seed_build
 // path: when FilePath and Service are carried on the trigger (threaded from the
-// candidate topology), the handler must NOT call Ancestry and must produce a
-// source-resolved proposal. This is the common case for newly-added seeds that
-// do not yet exist in the promoted topology that Ancestry serves.
+// candidate topology), the handler must produce a source-resolved proposal
+// without a NodeLocator call. This is the common case for newly-added seeds
+// that do not yet exist in the promoted topology the NodeLocator serves.
 func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
@@ -558,10 +539,9 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		NewUoW:   func() uow.UnitOfWork { return u },
 		LLM:      &llm,
 		Evidence: ev,
-		// Ancestry must NOT be called: seed_build's location fallback resolves via
-		// the orchestrator graph's NodeLocator, not Ancestry. An error here proves
-		// we skip it.
-		Ancestry:         fakeAncestry{err: fmt.Errorf("ancestry must not be called for seed_build")},
+		// Locator is deliberately left unset: FilePath and Service are threaded on
+		// the trigger, so the NodeLocator fallback must never be called — a call
+		// here would panic on the nil port.
 		Source:           src,
 		Sanitizer:        fakeSanitizer{},
 		Artifacts:        art,
@@ -635,12 +615,9 @@ func TestProposeFix_SeedSourceFallsBackToLocator(t *testing.T) {
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
 
 	d := Deps{
-		NewUoW:   func() uow.UnitOfWork { return u },
-		LLM:      &llm,
-		Evidence: ev,
-		// Ancestry must NOT be called: seed_build's location fallback resolves via
-		// NodeLocator, not Ancestry.
-		Ancestry:         fakeAncestry{err: fmt.Errorf("ancestry must not be called for seed_build")},
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
 		Locator:          fakeLocator{filePath: "seeds/customers.csv", serviceName: "svc"},
 		Source:           src,
 		Sanitizer:        fakeSanitizer{},
@@ -708,7 +685,6 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaLocator(t *testing.T) 
 		NewUoW:   func() uow.UnitOfWork { return u },
 		LLM:      &llm,
 		Evidence: ev,
-		Ancestry: fakeAncestry{err: fmt.Errorf("ancestry must not be called for seed_build")},
 		// The NodeLocator supplies the missing service; its filePath is
 		// deliberately wrong to prove the threaded file_path is preserved, not
 		// overwritten.

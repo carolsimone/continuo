@@ -49,12 +49,12 @@ type Trigger struct {
 	// FilePath is the offending dbt-project-relative source path. For compile
 	// failures it is extracted from the dbt log. For seed_build failures it is
 	// threaded from the candidate topology (OriginalFilePath on release.Node).
-	// Empty means fall back to Ancestry.
+	// Empty means fall back to the orchestrator graph's NodeLocator.
 	FilePath string
 	// Service is the owning dbt service name for the failing node. Set for
 	// seed_build failures from the candidate topology so source resolution does
-	// not depend on Ancestry (which only holds promoted topology). Empty for
-	// compile failures where NodeID acts as the service discriminator.
+	// not depend on a NodeLocator lookup. Empty for compile failures where
+	// NodeID acts as the service discriminator.
 	Service string
 	// NodeType is the target claimant's kind (dbt-model, dbt-seed,
 	// dbt-snapshot, or python-model), set on a duplicate-relation failure so
@@ -101,7 +101,6 @@ type Deps struct {
 	NewUoW      func() uow.UnitOfWork
 	LLM         ports.LLMProvider
 	Evidence    ports.EvidenceReader
-	Ancestry    ports.AncestryClient
 	Source      ports.SourceReader
 	Sanitizer   ports.LogSanitizer
 	Artifacts   ports.ArtifactWriter
@@ -185,7 +184,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	}
 	svc := fixer.Services{
 		LLM: deps.LLM, Source: deps.Source, Evidence: deps.Evidence,
-		Sanitizer: deps.Sanitizer, Ancestry: deps.Ancestry, Artifacts: deps.Artifacts,
+		Sanitizer: deps.Sanitizer, Artifacts: deps.Artifacts,
 		Logger: deps.Logger, ServiceRepoPaths: deps.ServiceRepoPaths,
 		Locator: deps.Locator, Upstream: deps.Upstream, Versions: deps.Versions,
 		Precedents: deps.Precedents, CandidateSource: deps.CandidateSource,

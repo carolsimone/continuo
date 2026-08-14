@@ -9,24 +9,6 @@ import (
 	"strings"
 )
 
-type Ancestor struct {
-	NodeID        string
-	ServiceName   string
-	LastCommitSHA string
-	LastRepo      string
-	FilePath      string
-	LastChangedAt string
-	Depth         int
-}
-
-// UpstreamDiff is the diff of a recent change to one upstream ancestor, shown to
-// the model as diagnostic context for a validation failure.
-type UpstreamDiff struct {
-	NodeID      string
-	ServiceName string
-	Diff        string
-}
-
 // UpstreamChange is one recently-changed ancestor with the diffs of its most
 // recent change, shown to the model as root-cause evidence.
 type UpstreamChange struct {

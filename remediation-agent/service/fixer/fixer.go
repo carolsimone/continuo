@@ -71,7 +71,6 @@ type Services struct {
 	Source           ports.SourceReader
 	Evidence         ports.EvidenceReader
 	Sanitizer        ports.LogSanitizer
-	Ancestry         ports.AncestryClient
 	Artifacts        ports.ArtifactWriter
 	Logger           *slog.Logger
 	ServiceRepoPaths map[string]string
