@@ -34,10 +34,13 @@ type Input struct {
 	// relation the model must stop producing.
 	RelationID     string
 	ErrorSignature string
-	Repo           string
-	CommitSHA      string
-	FilePath       string
-	Service        string
+	// Reason is the classifier's finer-grained reason within the failure
+	// category.
+	Reason    string
+	Repo      string
+	CommitSHA string
+	FilePath  string
+	Service   string
 	// NodeType is the target claimant's kind, set on a duplicate-relation
 	// failure. The duplicate-table Fixer skips a python target — its relation
 	// is declared in the service's contract.yaml, whose repository path this
@@ -52,7 +55,11 @@ type Input struct {
 	OtherFilePath        string
 	DBTLogURI            string
 	CandidateArtifactURI string
-	Attempt              int
+	// CodeBundleURI locates the release's code-bundle document, which carries
+	// every parsed node's raw source. Empty when parse never completed
+	// (compile and duplicate-table rejections).
+	CodeBundleURI string
+	Attempt       int
 }
 
 // Services bundles the ports a Fixer uses to produce a proposal.

@@ -33,11 +33,19 @@ type Trigger struct {
 	// trigger, distinct from NodeID (the target claimant's own unique_id) —
 	// the two differ whenever the target already carries an alias. Empty for
 	// every other source.
-	RelationID           string
-	ErrorSignature       string
-	Category             string
+	RelationID     string
+	ErrorSignature string
+	Category       string
+	// Reason is the classifier's finer-grained reason within Category; with
+	// Category it forms the fallback precedent-lookup key when the exact
+	// signature has no recorded matches.
+	Reason               string
 	DBTLogURI            string
 	CandidateArtifactURI string
+	// CodeBundleURI locates the release's code-bundle document, which carries
+	// every parsed node's raw source. Empty when parse never completed
+	// (compile and duplicate-table rejections).
+	CodeBundleURI string
 	// FilePath is the offending dbt-project-relative source path. For compile
 	// failures it is extracted from the dbt log. For seed_build failures it is
 	// threaded from the candidate topology (OriginalFilePath on release.Node).
@@ -156,6 +164,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		NodeID:               t.NodeID,
 		RelationID:           t.RelationID,
 		ErrorSignature:       t.ErrorSignature,
+		Reason:               t.Reason,
 		Repo:                 t.Repo,
 		CommitSHA:            t.CommitSHA,
 		FilePath:             t.FilePath,
@@ -165,6 +174,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		OtherFilePath:        t.OtherFilePath,
 		DBTLogURI:            t.DBTLogURI,
 		CandidateArtifactURI: t.CandidateArtifactURI,
+		CodeBundleURI:        t.CodeBundleURI,
 		Attempt:              attempt,
 	}
 	svc := fixer.Services{

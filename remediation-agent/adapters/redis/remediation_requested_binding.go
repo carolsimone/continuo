@@ -25,12 +25,20 @@ type requestedPayload struct {
 	// trigger, distinct from NodeID (the target claimant's own unique_id) —
 	// the two differ whenever the target carries an alias. Empty for every
 	// other source.
-	RelationID           string `json:"relation_id"`
-	Category             string `json:"category"`
-	ErrorSignature       string `json:"error_signature"`
+	RelationID     string `json:"relation_id"`
+	Category       string `json:"category"`
+	ErrorSignature string `json:"error_signature"`
+	// Reason is the classifier's finer-grained reason within Category; with
+	// Category it forms the fallback precedent-lookup key when the exact
+	// signature has no recorded matches.
+	Reason               string `json:"reason"`
 	DBTLogURI            string `json:"dbt_log_uri"`
 	CandidateArtifactURI string `json:"candidate_artifact_uri"`
-	FilePath             string `json:"file_path"`
+	// CodeBundleURI locates the release's code-bundle document, which carries
+	// every parsed node's raw source. Empty when parse never completed
+	// (compile and duplicate-table rejections).
+	CodeBundleURI string `json:"code_bundle_uri"`
+	FilePath      string `json:"file_path"`
 	// Service is the owning dbt service for the failing node. Set for seed_build
 	// failures where the source location is threaded from the candidate topology.
 	Service string `json:"service"`
@@ -61,8 +69,10 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 		RelationID:           p.RelationID,
 		Category:             p.Category,
 		ErrorSignature:       p.ErrorSignature,
+		Reason:               p.Reason,
 		DBTLogURI:            p.DBTLogURI,
 		CandidateArtifactURI: p.CandidateArtifactURI,
+		CodeBundleURI:        p.CodeBundleURI,
 		FilePath:             p.FilePath,
 		Service:              p.Service,
 		NodeType:             p.NodeType,
