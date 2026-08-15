@@ -69,7 +69,7 @@ type fakeCandidateSource struct {
 	err error
 }
 
-func (f fakeCandidateSource) NodeSource(_ context.Context, _, _ string) (ports.CandidateSource, error) {
+func (f fakeCandidateSource) NodeSource(_ context.Context, _, _, _ string) (ports.CandidateSource, error) {
 	return f.src, f.err
 }
 

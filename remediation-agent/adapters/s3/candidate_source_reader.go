@@ -45,10 +45,11 @@ func NewCandidateSourceReader(endpointURL, bucket, region, accessKeyID, secretKe
 }
 
 // NodeSource returns the node's bundle entry. Every permanently-unreadable
-// condition — empty URI, missing object, missing node, malformed document —
-// maps to ports.ErrNotFound so the caller takes its repo-read fallback;
-// transient fetch errors return as-is so the trigger redelivers.
-func (r *CandidateSourceReader) NodeSource(ctx context.Context, bundleURI, uniqueID string) (ports.CandidateSource, error) {
+// condition — empty URI, missing object, missing node, malformed document, or
+// a bundle for a release other than releaseID — maps to ports.ErrNotFound so
+// the caller takes its repo-read fallback; transient fetch errors return as-is
+// so the trigger redelivers.
+func (r *CandidateSourceReader) NodeSource(ctx context.Context, bundleURI, uniqueID, releaseID string) (ports.CandidateSource, error) {
 	if strings.TrimSpace(bundleURI) == "" {
 		return ports.CandidateSource{}, ports.ErrNotFound
 	}
@@ -74,6 +75,15 @@ func (r *CandidateSourceReader) NodeSource(ctx context.Context, bundleURI, uniqu
 	}
 	bundle, err := codebundle.Decode(body)
 	if err != nil {
+		return ports.CandidateSource{}, ports.ErrNotFound
+	}
+	if bundle.ReleaseID != releaseID {
+		// The URI resolved to a bundle for a different release than the trigger's
+		// own — a stale or misrouted object naming the same node id. Returning its
+		// RawCode would stamp another release's source onto this node's fix, the
+		// same guard the orchestrator applies to the same bundle document in
+		// remediation_requested_rejections_handler.go and
+		// release_promoted_versions_handler.go.
 		return ports.CandidateSource{}, ports.ErrNotFound
 	}
 	node, ok := bundle.Nodes[uniqueID]

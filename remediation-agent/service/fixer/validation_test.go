@@ -161,7 +161,7 @@ type fakeCandidateSource struct {
 	calls int
 }
 
-func (f *fakeCandidateSource) NodeSource(_ context.Context, _, _ string) (ports.CandidateSource, error) {
+func (f *fakeCandidateSource) NodeSource(_ context.Context, _, _, _ string) (ports.CandidateSource, error) {
 	f.calls++
 	return f.src, f.err
 }
@@ -303,6 +303,26 @@ func TestValidation_BundleNotFound_FallsBackToGitHub(t *testing.T) {
 	}
 	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
 		t.Fatalf("got status=%v sourceResolved=%v, want the github fallback to resolve the source", r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+}
+
+// TestValidation_BundleEmptyRawCode_FallsBackToGitHub verifies that a bundle
+// entry that exists (Runtime dbt, no error) but carries an empty RawCode is
+// treated as a permanent miss rather than a resolved-but-empty source: Step 2
+// falls back to the GitHub read and resolves the source from there, instead of
+// returning early with nothing to diff or fix.
+func TestValidation_BundleEmptyRawCode_FallsBackToGitHub(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "", Runtime: "dbt"}}
+	svc.Source = &fakeSource{content: "SELECT 0 -- github"}
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v, want the github fallback to resolve the source when the bundle's raw_code is empty",
+			r.Proposal.Status, r.Proposal.SourceResolved)
 	}
 }
 

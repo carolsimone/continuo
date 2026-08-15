@@ -405,6 +405,41 @@ func TestCompile_SelfPrecedentFiltered(t *testing.T) {
 	}
 }
 
+// TestCompile_SelfPrecedentFallsBackWhenExactSignatureIsOnlySelf proves that
+// when the exact-signature lookup returns only this failure's own recorded
+// rejection, the (category, reason) fallback still fires and its result
+// reaches the prompt. The orchestrator records this same remediation.requested
+// trigger into the case base under its own signature
+// (remediation_requested_rejections_handler.go), so a first-of-its-kind
+// signature must not let that self row suppress the fallback.
+func TestCompile_SelfPrecedentFallsBackWhenExactSignatureIsOnlySelf(t *testing.T) {
+	precedents := &fakePrecedents{
+		bySignature: map[string][]prompt.Precedent{
+			"sig-1": {{ReleaseID: "r", NodeID: "svc", Resolved: true, ErrorExcerpt: "e",
+				RejectedAt: "2026-08-01T00:00:00Z", ResolutionDiff: "-old\n+new"}},
+		},
+		byClass: map[string][]prompt.Precedent{
+			"sql_error|missing_column": {{NodeID: "analytics.other", Resolved: true, ErrorExcerpt: "e2",
+				RejectedAt: "2026-08-01T00:00:00Z", ResolutionDiff: "-fallback_old\n+fallback_new"}},
+		},
+	}
+	svc, in, llm := compilePrecedentsSvc(precedents)
+	in.ErrorSignature = "sig-1"
+	in.Category = "sql_error"
+	in.Reason = "missing_column"
+
+	_, err := compileFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if precedents.calls != 2 {
+		t.Fatalf("precedent lookups = %d, want 2 (exact signature, then the class fallback)", precedents.calls)
+	}
+	if len(llm.requests) != 1 || !strings.Contains(llm.requests[0].User, "-fallback_old\n+fallback_new") {
+		t.Fatalf("fallback precedent must reach the prompt when the exact-signature match is only this failure's own rejection:\n%v", llm.requests)
+	}
+}
+
 // TestCompile_PrecedentErrorDegrades proves a precedent-lookup error degrades
 // to no section rather than blocking the heal.
 func TestCompile_PrecedentErrorDegrades(t *testing.T) {

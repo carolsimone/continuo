@@ -112,7 +112,9 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	svc.Logger.Info("validation fix: candidate source resolved", "node", in.NodeID, "source_origin", sourceOrigin)
+	if sourceOrigin != "" {
+		svc.Logger.Info("validation fix: candidate source resolved", "node", in.NodeID, "source_origin", sourceOrigin)
+	}
 
 	// Own-change diff: what this release changed relative to the code that
 	// runs now. Absent history (a new node) simply omits the section. Sanitized
@@ -228,21 +230,27 @@ var errNonDbtCandidate = errors.New("code bundle entry is not a dbt node")
 // path mapping needed), then the repo file at the release's commit, then ""
 // — the caller degrades to the candidate-only proposal. A transient bundle
 // fetch error propagates, so the trigger redelivers, and a bundle entry that is
-// not a dbt node returns errNonDbtCandidate; every permanent miss walks down
-// the ladder.
+// not a dbt node returns errNonDbtCandidate; every permanent miss — including a
+// bundle for a different release (NodeSource itself rejects the mismatch as
+// ports.ErrNotFound) and a dbt entry with no source text — walks down the
+// ladder.
 func resolveCandidateSource(ctx context.Context, svc Services, in Input, filePath, serviceName string) (source, origin string, err error) {
-	src, berr := svc.CandidateSource.NodeSource(ctx, in.CodeBundleURI, in.NodeID)
+	src, berr := svc.CandidateSource.NodeSource(ctx, in.CodeBundleURI, in.NodeID, in.ReleaseID)
 	if berr == nil {
 		if src.Runtime != ports.RuntimeDbt {
 			return "", "", fmt.Errorf("node %q runtime %q: %w", in.NodeID, src.Runtime, errNonDbtCandidate)
 		}
-		return src.RawCode, "bundle", nil
-	}
-	if !errors.Is(berr, ports.ErrNotFound) {
+		if src.RawCode != "" {
+			return src.RawCode, "bundle", nil
+		}
+		svc.Logger.Warn("candidate source in bundle is empty; falling back to repo read",
+			"node", in.NodeID, "bundle_uri", in.CodeBundleURI)
+	} else if !errors.Is(berr, ports.ErrNotFound) {
 		return "", "", fmt.Errorf("fetch code bundle: %w", berr)
+	} else {
+		svc.Logger.Warn("candidate source not in bundle; falling back to repo read",
+			"node", in.NodeID, "bundle_uri", in.CodeBundleURI)
 	}
-	svc.Logger.Warn("candidate source not in bundle; falling back to repo read",
-		"node", in.NodeID, "bundle_uri", in.CodeBundleURI)
 	if filePath == "" || serviceName == "" {
 		return "", "", nil
 	}

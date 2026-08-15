@@ -165,11 +165,18 @@ func loadDBTLog(ctx context.Context, svc Services, uri string) (string, error) {
 const maxPrecedentsFetch = 10
 
 // loadPrecedents fetches precedent for this failure: by exact signature
-// first, then — when the signature has no recorded matches — by the broader
-// (category, reason) class. The failure's own rejection is filtered out (it
-// IS this failure, not precedent for it). Best-effort: any error degrades to
-// no section, never a blocked heal. Each Fixer calls this only after its
-// skip checks pass, so skip paths never pay the lookup.
+// first, then — when removing this failure's own recorded rejection leaves
+// the exact-signature result empty — by the broader (category, reason) class.
+// The orchestrator records this same remediation.requested trigger into the
+// case base this reads, so on a first occurrence of a signature the exact
+// match can consist of nothing but that self row; withoutSelf therefore runs
+// on each fetch BEFORE the fallback decision, not after, or a
+// first-of-its-kind signature would see len(ps)==1, skip the fallback as
+// unnecessary, and only then have the self-filter empty the result — losing
+// the fallback precisely when it is the only thing that could help.
+// Best-effort: any lookup error degrades to no section, never a blocked heal.
+// Each Fixer calls this only after its skip checks pass, so skip paths never
+// pay the lookup.
 func loadPrecedents(ctx context.Context, svc Services, in Input) []prompt.Precedent {
 	fetch := func(q ports.PrecedentQuery) []prompt.Precedent {
 		ps, err := svc.Precedents.Precedents(ctx, q)
@@ -178,7 +185,7 @@ func loadPrecedents(ctx context.Context, svc Services, in Input) []prompt.Preced
 				"node", in.NodeID, "error", err)
 			return nil
 		}
-		return ps
+		return withoutSelf(ps, in, svc.Sanitizer)
 	}
 	var ps []prompt.Precedent
 	if in.ErrorSignature != "" {
@@ -187,20 +194,27 @@ func loadPrecedents(ctx context.Context, svc Services, in Input) []prompt.Preced
 	if len(ps) == 0 && in.Category != "" && in.Reason != "" {
 		ps = fetch(ports.PrecedentQuery{Category: in.Category, Reason: in.Reason, Limit: maxPrecedentsFetch})
 	}
-	out := ps[:0]
+	return ps
+}
+
+// withoutSelf drops this failure's own recorded rejection from a precedent
+// result set (it IS this failure, not precedent for it) and sanitizes each
+// remaining precedent's free-text fields — the one place every Fixer's
+// precedents pass through, same as loadDBTLog sanitizes the current failure's
+// own log. Both arrive already bounded (the excerpt is capped by the
+// classifier, the diff by the orchestrator's renderer), so no truncation is
+// needed here. It allocates a fresh slice rather than filtering ps in place,
+// since ps is backed by whatever the PrecedentReader returned — a test fake's
+// fixture map today, potentially a caching adapter tomorrow — and reusing its
+// backing array would corrupt that value across calls.
+func withoutSelf(ps []prompt.Precedent, in Input, sanitizer ports.LogSanitizer) []prompt.Precedent {
+	out := make([]prompt.Precedent, 0, len(ps))
 	for _, p := range ps {
 		if p.ReleaseID == in.ReleaseID && p.NodeID == in.NodeID {
 			continue
 		}
-		// A precedent's resolution diff and error excerpt are source text from
-		// another team's model and dbt run — the same content class as every
-		// other diff and log sent to the LLM elsewhere in this package.
-		// Sanitized here, the one place every Fixer's precedents pass through,
-		// same as loadDBTLog sanitizes the current failure's own log. Both
-		// arrive already bounded (the excerpt is capped by the classifier, the
-		// diff by the orchestrator's renderer), so no truncation is needed here.
-		p.ResolutionDiff = svc.Sanitizer.Sanitize(p.ResolutionDiff)
-		p.ErrorExcerpt = svc.Sanitizer.Sanitize(p.ErrorExcerpt)
+		p.ResolutionDiff = sanitizer.Sanitize(p.ResolutionDiff)
+		p.ErrorExcerpt = sanitizer.Sanitize(p.ErrorExcerpt)
 		out = append(out, p)
 	}
 	return out
