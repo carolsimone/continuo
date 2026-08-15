@@ -85,7 +85,7 @@ Its own inbound gRPC surface (`RemediationProposals`) is described in the inboun
 
 | Operation | Purpose |
 |---|---|
-| `GetObject` (`CandidateSourceReader.NodeSource`, `adapters/s3/candidate_source_reader.go`) | Reads the release's code-bundle document at the trigger's `code_bundle_uri` and decodes it via the shared `pkg/codebundle` contract decoder, returning the one failing node's `raw_code`/`runtime` entry. Called only by the validation fixer, as the primary source of the failing node's real source — used both for the own-change diff and as the base for the Step-2 real-source fix. An empty URI, an absent object, an oversized object, a body that fails `codebundle.Decode` (malformed JSON, an unsupported `contract_version`), or a document that decodes but carries no entry for the node — all map to `ErrNotFound`, a permanent miss that falls back to a GitHub repo read (below) rather than redelivering the trigger. Any other error (S3 unreachable, a non-`NoSuchKey` failure reading the object) is transient and propagates, so the trigger is redelivered. |
+| `GetObject` (`CandidateSourceReader.NodeSource`, `adapters/s3/candidate_source_reader.go`) | Reads the release's code-bundle document at the trigger's `code_bundle_uri` and decodes it via the shared `pkg/codebundle` contract decoder, returning the one failing node's `raw_code`/`runtime` entry after confirming the document's `release_id` matches the trigger's own — a stale or misrouted object could otherwise resolve to another release's bundle naming the same `unique_id`. Called only by the validation fixer, as the primary source of the failing node's real source — used both for the own-change diff and as the base for the Step-2 real-source fix. An empty URI, an absent object, an oversized object, a body that fails `codebundle.Decode` (malformed JSON, an unsupported `contract_version`), a document for a different `release_id`, a document that decodes but carries no entry for the node, or a dbt-runtime entry with an empty `raw_code` — all map to `ErrNotFound`, a permanent miss that falls back to a GitHub repo read (below) rather than redelivering the trigger. Any other error (S3 unreachable, a non-`NoSuchKey` failure reading the object) is transient and propagates, so the trigger is redelivered. |
 
 ### Outbound HTTP — GitHub Contents API
 
@@ -369,16 +369,17 @@ When no claimant belongs to the changed service — a bootstrap release, or two 
    resolution below then has no location to fall back on, and Step 2 degrades).
 4. Resolve the failing node's real source (resolveCandidateSource): the
    release's code bundle first (CandidateSourceReader.NodeSource, keyed by
-   node_id — no path needed). A transient bundle-fetch error returns and the
-   trigger is redelivered. A bundle entry whose runtime is not "dbt" ends the
-   whole flow with proposal(status=skipped) — its raw_code is a contract entry,
-   not model source, and no repo read substitutes for it; this backs the
-   node_type guard in step 0 for a trigger that carries no node_type. A
-   permanent bundle miss (ErrNotFound — empty URI, absent object, or no entry
-   for this node) falls back to a GitHub repo read at
-   <repo_path>/<file_path> (only when step 3 resolved both fields and
-   service_repos.yaml maps the service); any error there — 404, network, or
-   otherwise — degrades silently to an unresolved source ("").
+   node_id and the trigger's release_id — no path needed). A transient
+   bundle-fetch error returns and the trigger is redelivered. A bundle entry
+   whose runtime is not "dbt" ends the whole flow with proposal(status=skipped)
+   — its raw_code is a contract entry, not model source, and no repo read
+   substitutes for it; this backs the node_type guard in step 0 for a trigger
+   that carries no node_type. A permanent bundle miss (ErrNotFound — empty
+   URI, absent object, a document for a different release_id, no entry for
+   this node, or a dbt entry with an empty raw_code) falls back to a GitHub
+   repo read at <repo_path>/<file_path> (only when step 3 resolved both fields
+   and service_repos.yaml maps the service); any error there — 404, network,
+   or otherwise — degrades silently to an unresolved source ("").
 5. If the resolved source is non-empty, call the orchestrator's
    GetNodeVersions(node_id, current_only=true) for the code the node runs
    *now*, diff it against the resolved source, sanitize, and truncate to
