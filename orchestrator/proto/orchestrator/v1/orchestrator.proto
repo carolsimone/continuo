@@ -10,8 +10,12 @@ service OrchestratorQuery {
   rpc ListActiveRunDrifts(ListActiveRunDriftsRequest) returns (ListActiveRunDriftsResponse);
   rpc ListScheduleTopologies(ListScheduleTopologiesRequest)
       returns (ListScheduleTopologiesResponse);
-  rpc GetNodeAncestry(GetNodeAncestryRequest) returns (GetNodeAncestryResponse);
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
+
+  // GetNodeLocation returns where a node's source lives: its project-relative
+  // file path and owning service. An unknown unique_id is NOT_FOUND; a node
+  // whose file path was not captured returns file_path "".
+  rpc GetNodeLocation(GetNodeLocationRequest) returns (GetNodeLocationResponse);
 
   // GetNodeVersions returns a node's recorded code-version history, newest
   // first — ordered by when each version's code was first promoted; is_current
@@ -95,6 +99,12 @@ message GetNodeResponse {
   bool   test_count_known = 3;
 }
 
+message GetNodeLocationRequest  { string unique_id = 1; }
+message GetNodeLocationResponse {
+  string file_path    = 1;  // dbt original_file_path (project-relative); "" if not captured
+  string service_name = 2;
+}
+
 enum Criticality {
   CRITICALITY_UNSPECIFIED = 0;
   CRITICALITY_REGULATORY = 1;
@@ -176,29 +186,6 @@ message ScheduleTopologySummary {
   string schedule_name                       = 1;
   int32  node_count                          = 2;
   google.protobuf.Timestamp last_updated_at  = 3;
-}
-
-message GetNodeAncestryRequest {
-  string node_unique_id = 1;  // :Table unique_id (schema.table) of the failed node
-  int32  max_depth      = 2;  // 0 = full ancestry closure; >0 caps hops from the node
-}
-
-message GetNodeAncestryResponse {
-  repeated AncestorNode ancestors = 1;  // node itself at depth 0, then upstreams; changed_at DESC nulls last
-}
-
-message AncestorNode {
-  string unique_id    = 1;
-  string schema_name  = 2;
-  string table_name   = 3;
-  string service_name = 4;
-  string node_type    = 5;
-  int32  depth        = 6;  // 0 = the queried node itself; 1 = direct upstream; ...
-  string last_commit_sha = 7;   // "" when unknown (pre-tracking)
-  string last_repo       = 8;   // "" when unknown
-  google.protobuf.Timestamp last_changed_at = 9;  // unset when unknown
-  string last_release_id = 10;  // "" when unknown
-  string file_path       = 11;  // dbt original_file_path (project-relative); "" if not captured
 }
 
 // VersionView is one recorded code state of a node: identity and hash parts,
@@ -300,6 +287,10 @@ message GetNodeVersionsRequest {
   // 20-version response can otherwise approach the transport's receive
   // limit.
   bool include_code = 3;
+  // current_only, when true, returns only the version marked is_current —
+  // the code the node runs now — and ignores limit. include_code is honored.
+  // A known node with no recorded current version returns an empty list.
+  bool current_only = 4;
 }
 message GetNodeVersionsResponse {
   repeated VersionView versions = 1;

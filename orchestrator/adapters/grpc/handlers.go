@@ -25,8 +25,8 @@ type ScheduleAndRunListReader interface {
 	GetScheduleGraph(ctx context.Context, scheduleName string) (*domain.ScheduleGraph, error)
 	ListRuns(ctx context.Context, scheduleName string, limit, offset int) ([]*domain.RunSummary, int, error)
 	ListScheduleTopologies(ctx context.Context) ([]*domain.ScheduleTopologySummary, error)
-	GetNodeAncestry(ctx context.Context, nodeUniqueID string, maxDepth int) ([]*domain.NodeAncestor, error)
 	GetNode(ctx context.Context, service, schema, table string) (*domain.NodeMeta, error)
+	GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error)
 }
 
 // DriftAwareRunReader returns view-shaped run data composed from Neo4j
@@ -46,6 +46,9 @@ type DriftAwareRunReader interface {
 // not in the handler. Satisfied by service/queries.CodeVersionQueryService.
 type CodeVersionHistoryReader interface {
 	GetNodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error)
+	// GetCurrentNodeVersion returns only the version the node runs now — a
+	// 0-or-1 slice, revert-safe where GetNodeVersions' newest-first is not.
+	GetCurrentNodeVersion(ctx context.Context, uniqueID string, includeCode bool) ([]codeversion.VersionView, error)
 	GetNodeVersionDiff(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (*codeversion.VersionDiff, error)
 	GetUpstreamChanges(ctx context.Context, uniqueID string, depth int32, since time.Time) ([]codeversion.UpstreamChange, error)
 	GetCodeUnitVersions(ctx context.Context, unitID, uniqueID string, limit int32) ([]codeversion.UnitVersionView, error)
@@ -106,10 +109,6 @@ const (
 	defaultListRunsPageSize = 50
 	maxListRunsPageSize     = 200
 )
-
-// maxAncestryDepth caps GetNodeAncestry's hop count so a single call cannot walk
-// an unbounded path; mirrors the page-size clamp philosophy.
-const maxAncestryDepth = 100
 
 func clampPageSize(requested int32) int {
 	size := int(requested)
@@ -225,34 +224,6 @@ func (h *QueryHandler) ListScheduleTopologies(ctx context.Context, _ *orchestrat
 	return resp, nil
 }
 
-func (h *QueryHandler) GetNodeAncestry(ctx context.Context, req *orchestratorv1.GetNodeAncestryRequest) (*orchestratorv1.GetNodeAncestryResponse, error) {
-	if req.NodeUniqueId == "" {
-		return nil, status.Error(codes.InvalidArgument, "node_unique_id is required")
-	}
-	if req.MaxDepth < 0 {
-		return nil, status.Error(codes.InvalidArgument, "max_depth must be >= 0")
-	}
-	depth := int(req.MaxDepth)
-	if depth > maxAncestryDepth {
-		depth = maxAncestryDepth
-	}
-	ancestors, err := h.scheduleAndRunLists.GetNodeAncestry(ctx, req.NodeUniqueId, depth)
-	if err != nil {
-		if errors.Is(err, domain.ErrNodeNotFound) {
-			return nil, status.Errorf(codes.NotFound, "node %q not found", req.NodeUniqueId)
-		}
-		h.logger.Error("GetNodeAncestry failed", "node", req.NodeUniqueId, "error", err)
-		return nil, status.Errorf(codes.Internal, "GetNodeAncestry: %v", err)
-	}
-	resp := &orchestratorv1.GetNodeAncestryResponse{
-		Ancestors: make([]*orchestratorv1.AncestorNode, 0, len(ancestors)),
-	}
-	for _, a := range ancestors {
-		resp.Ancestors = append(resp.Ancestors, domainToProtoAncestor(a))
-	}
-	return resp, nil
-}
-
 func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeRequest) (*orchestratorv1.GetNodeResponse, error) {
 	if req.ServiceName == "" || req.SchemaName == "" || req.TableName == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_name, schema_name and table_name are required")
@@ -272,6 +243,20 @@ func (h *QueryHandler) GetNode(ctx context.Context, req *orchestratorv1.GetNodeR
 	}, nil
 }
 
+// GetNodeLocation returns where a node's source lives. An unknown unique_id
+// maps to NOT_FOUND per the entity-lookup convention.
+func (h *QueryHandler) GetNodeLocation(ctx context.Context, req *orchestratorv1.GetNodeLocationRequest) (*orchestratorv1.GetNodeLocationResponse, error) {
+	loc, err := h.scheduleAndRunLists.GetNodeLocation(ctx, req.UniqueId)
+	if err != nil {
+		if errors.Is(err, domain.ErrNodeNotFound) {
+			return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
+		}
+		h.logger.Error("GetNodeLocation failed", "unique_id", req.UniqueId, "error", err)
+		return nil, status.Errorf(codes.Internal, "get node location: %v", err)
+	}
+	return &orchestratorv1.GetNodeLocationResponse{FilePath: loc.FilePath, ServiceName: loc.ServiceName}, nil
+}
+
 // maxUpstreamDepth caps GetUpstreamChanges' depth request; the proto
 // documents this as the maximum and rejects anything above it.
 const maxUpstreamDepth = 10
@@ -279,6 +264,21 @@ const maxUpstreamDepth = 10
 func (h *QueryHandler) GetNodeVersions(ctx context.Context, req *orchestratorv1.GetNodeVersionsRequest) (*orchestratorv1.GetNodeVersionsResponse, error) {
 	if req.UniqueId == "" {
 		return nil, status.Error(codes.InvalidArgument, "unique_id is required")
+	}
+	if req.CurrentOnly {
+		versions, err := h.codeVersions.GetCurrentNodeVersion(ctx, req.UniqueId, req.IncludeCode)
+		if err != nil {
+			if errors.Is(err, domain.ErrNodeNotFound) {
+				return nil, status.Errorf(codes.NotFound, "node %q not found", req.UniqueId)
+			}
+			h.logger.Error("GetNodeVersions current_only failed", "unique_id", req.UniqueId, "error", err)
+			return nil, status.Errorf(codes.Internal, "get current node version: %v", err)
+		}
+		out := make([]*orchestratorv1.VersionView, 0, len(versions))
+		for _, v := range versions {
+			out = append(out, codeVersionViewToProto(v))
+		}
+		return &orchestratorv1.GetNodeVersionsResponse{Versions: out}, nil
 	}
 	versions, err := h.codeVersions.GetNodeVersions(ctx, req.UniqueId, req.Limit, req.IncludeCode)
 	if err != nil {
@@ -515,25 +515,6 @@ func codeRunExecutionToProto(r codeversion.RunExecution) *orchestratorv1.RunExec
 		CreatedAt:    formatOptionalRFC3339(r.CreatedAt),
 		CompletedAt:  formatOptionalRFC3339(r.CompletedAt),
 	}
-}
-
-func domainToProtoAncestor(a *domain.NodeAncestor) *orchestratorv1.AncestorNode {
-	node := &orchestratorv1.AncestorNode{
-		UniqueId:      a.UniqueID,
-		SchemaName:    a.SchemaName,
-		TableName:     a.TableName,
-		ServiceName:   a.ServiceName,
-		NodeType:      a.NodeType,
-		Depth:         num.ClampInt32(a.Depth),
-		LastCommitSha: a.LastCommitSHA,
-		LastRepo:      a.LastRepo,
-		LastReleaseId: a.LastReleaseID,
-		FilePath:      a.FilePath,
-	}
-	if a.LastChangedAt != nil {
-		node.LastChangedAt = timestamppb.New(*a.LastChangedAt)
-	}
-	return node
 }
 
 func domainToProtoNode(n *domain.TableNode) *orchestratorv1.TableNode {

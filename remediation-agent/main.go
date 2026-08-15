@@ -140,9 +140,12 @@ func main() {
 		cfg.S3.SecretAccessKey,
 	)
 
-	ancestryClient, err := grpcadapter.NewAncestryClient(cfg.OrchestratorAddr)
+	bundleReader := s3.NewCandidateSourceReader(
+		cfg.S3.EndpointURL, cfg.S3.Bucket, cfg.S3.Region, cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey)
+
+	graphClient, err := grpcadapter.NewGraphClient(cfg.OrchestratorAddr)
 	if err != nil {
-		logger.Error("grpc ancestry client dial", "error", err)
+		logger.Error("grpc graph client dial", "error", err)
 		os.Exit(1)
 	}
 
@@ -180,7 +183,6 @@ func main() {
 		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
 		LLM:              cachedLLM,
 		Evidence:         store,
-		Ancestry:         ancestryClient,
 		Source:           gh,
 		Sanitizer:        sanitizer.Passthrough{},
 		Artifacts:        store,
@@ -188,6 +190,11 @@ func main() {
 		Logger:           logger,
 		MaxAttempts:      cfg.MaxAttempts,
 		ServiceRepoPaths: cfg.ServiceRepoPaths,
+		Locator:          graphClient,
+		Upstream:         graphClient,
+		Versions:         graphClient,
+		Precedents:       graphClient,
+		CandidateSource:  bundleReader,
 	}
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs

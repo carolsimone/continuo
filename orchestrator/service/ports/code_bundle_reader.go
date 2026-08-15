@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/carolsimone/continuo/orchestrator/domain/codebundle"
+	"github.com/carolsimone/continuo/pkg/codebundle"
 )
 
 // ErrBundleNotFound means the release's code-bundle object is absent from object

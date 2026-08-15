@@ -177,6 +177,113 @@ func TestCodeVersionQueryRepository_NodeVersions_RetiredNodeReturnsHistoryIsCurr
 	}
 }
 
+// ---- CurrentNodeVersion ----
+
+// The revert case is the point of CurrentNodeVersion: after re-promoting an
+// older, already-recorded version, NodeVersions still lists the superseded
+// version first (it orders by promoted_at, and a version node is immutable),
+// but CurrentNodeVersion must follow :CURRENT back to the reverted-to
+// version instead.
+func TestCodeVersionQueryRepository_CurrentNodeVersion_AfterRevert_ReturnsCurrentNotNewest(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.rev_node", "sha256:h1")
+
+	writer := newVersionRepo(client)
+	base := time.Now().UTC()
+	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", base,
+		[]codeversion.NodeVersion{nodeInput("analytics.rev_node", "sha256:h1")}, nil))
+	require.NoError(t, err)
+	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-2", base.Add(time.Minute),
+		[]codeversion.NodeVersion{nodeInput("analytics.rev_node", "sha256:h2")}, nil))
+	require.NoError(t, err)
+	// The revert: re-promote content_hash h1. h1's :NodeVersion already
+	// exists, so its own promoted_at (set ON CREATE only) stays at its
+	// original, older value — only the :CURRENT pointer moves.
+	_, err = writer.WriteVersions(ctx, versionWriteInput("rel-3", base.Add(2*time.Minute),
+		[]codeversion.NodeVersion{nodeInput("analytics.rev_node", "sha256:h1")}, nil))
+	require.NoError(t, err)
+
+	repo := newCodeVersionQueryRepo(client)
+	got, err := repo.CurrentNodeVersion(ctx, "analytics.rev_node", true)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "sha256:h1", got[0].ContentHash, "the reverted-to version is current")
+	assert.Equal(t, "select 1", got[0].RawCode)
+	assert.True(t, got[0].IsCurrent)
+
+	// Contrast: newest-first would have led the fixer astray.
+	newest, err := repo.NodeVersions(ctx, "analytics.rev_node", 20, false)
+	require.NoError(t, err)
+	require.NotEmpty(t, newest)
+	assert.Equal(t, "sha256:h2", newest[0].ContentHash, "newest-first still surfaces the superseded version")
+}
+
+func TestCodeVersionQueryRepository_CurrentNodeVersion_KnownNodeNoCurrentReturnsEmpty(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.no_cur", "sha256:v1")
+
+	repo := newCodeVersionQueryRepo(client)
+	got, err := repo.CurrentNodeVersion(ctx, "analytics.no_cur", true)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestCodeVersionQueryRepository_CurrentNodeVersion_UnknownNodeReturnsErrNodeNotFound(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+
+	repo := newCodeVersionQueryRepo(client)
+	got, err := repo.CurrentNodeVersion(ctx, "analytics.ghost", true)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
+	assert.Nil(t, got)
+}
+
+// TestCodeVersionQueryRepository_CurrentNodeVersion_RetiredTableReturnsEmpty
+// proves a soft-retired node is excluded from CurrentNodeVersion rather than
+// reported as running its obsolete code. release_promotion_repository.go's
+// Step B retires a table a newer release dropped by setting active=false
+// without removing its :CURRENT edge — it is kept, inactive, solely so a
+// :Run-[:EXECUTES] edge from run history is not destroyed — so the :CURRENT
+// match here still finds a version unless the read filters on t.active.
+func TestCodeVersionQueryRepository_CurrentNodeVersion_RetiredTableReturnsEmpty(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.retired_node", "sha256:v1")
+
+	writer := newVersionRepo(client)
+	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
+		[]codeversion.NodeVersion{nodeInput("analytics.retired_node", "sha256:v1")}, nil))
+	require.NoError(t, err)
+
+	// Soft-retire: active=false, :CURRENT edge left untouched — exactly what
+	// Step B does, and distinct from the hard-orphan case above (DETACH DELETE
+	// of the :Table itself), which NodeVersions' retired-node test already
+	// covers.
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	res, err := s.Run(ctx,
+		`MATCH (t:Table {unique_id:'analytics.retired_node'}) SET t.active = false, t.retired_at = datetime()`, nil)
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.Close(ctx))
+
+	repo := newCodeVersionQueryRepo(client)
+	got, err := repo.CurrentNodeVersion(ctx, "analytics.retired_node", true)
+	require.NoError(t, err)
+	assert.Empty(t, got, "a retired table's obsolete :CURRENT version must not be reported as running now")
+}
+
 // ---- VersionsBySeq ----
 
 func TestCodeVersionQueryRepository_VersionsBySeq_ReturnsNamedPair(t *testing.T) {

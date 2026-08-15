@@ -11,6 +11,62 @@ service OrchestratorQuery {
   rpc ListScheduleTopologies(ListScheduleTopologiesRequest)
       returns (ListScheduleTopologiesResponse);
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
+
+  // GetNodeLocation returns where a node's source lives: its project-relative
+  // file path and owning service. An unknown unique_id is NOT_FOUND; a node
+  // whose file path was not captured returns file_path "".
+  rpc GetNodeLocation(GetNodeLocationRequest) returns (GetNodeLocationResponse);
+
+  // GetNodeVersions returns a node's recorded code-version history, newest
+  // first — ordered by when each version's code was first promoted; is_current
+  // marks the version that actually runs now. A version node is immutable, so
+  // a revert that re-points the running code at an earlier version does not
+  // change that version's position in this ordering, only which row carries
+  // is_current. An unknown unique_id is NOT_FOUND; a known node with no
+  // recorded history returns an empty versions list — that is a valid,
+  // non-error answer.
+  rpc GetNodeVersions(GetNodeVersionsRequest) returns (GetNodeVersionsResponse);
+  // GetNodeVersionDiff renders the diff between two named versions of one
+  // node. from_seq/to_seq are stable per-node handles used to address a
+  // version — they are NOT a chronological ordering, and neither is required
+  // to be the newer of the pair. An unknown unique_id, or a seq that node has
+  // no recorded version for, is NOT_FOUND.
+  rpc GetNodeVersionDiff(GetNodeVersionDiffRequest) returns (GetNodeVersionDiffResponse);
+  // GetUpstreamChanges returns the node's transitive ancestors' most recent
+  // code change, most-recently-changed first. "Most recent" is each
+  // ancestor's effective last-change time — when a revert re-points its
+  // running code at an already-recorded version, that counts as a change at
+  // the moment of the revert, and the reported diff is the actual
+  // before/after of that revert rather than the two versions' original
+  // creation order. Results are capped at the 5 most-recently-changed
+  // ancestors, and each diff is independently capped at 8 KiB with truncated
+  // set on the diffs that were cut — consumers size prompts against both
+  // caps. An unknown unique_id is NOT_FOUND; a node with no changed ancestors
+  // returns an empty changes list.
+  rpc GetUpstreamChanges(GetUpstreamChangesRequest) returns (GetUpstreamChangesResponse);
+  // GetCodeUnitVersions returns a shared-code unit's version chain, newest
+  // first. Exactly one of unit_id/unique_id must be set: unit_id queries one
+  // unit directly, unique_id resolves the node's current units first and
+  // returns each of their chains concatenated. An unknown unit_id/unique_id
+  // is NOT_FOUND; a known unit with no recorded history returns an empty
+  // versions list.
+  rpc GetCodeUnitVersions(GetCodeUnitVersionsRequest) returns (GetCodeUnitVersionsResponse);
+  // GetNodeRunHistory returns runs that executed the node, newest first,
+  // optionally filtered server-side to one operation. An unknown unique_id is
+  // NOT_FOUND; a known node with no matching runs returns an empty runs list.
+  rpc GetNodeRunHistory(GetNodeRunHistoryRequest) returns (GetNodeRunHistoryResponse);
+
+  // GetPrecedents returns past rejections matching an error signature — or,
+  // when signature is empty, a (category, reason) pair — resolved-first, then
+  // newest. Each entry carries the classified failure, the version that
+  // resolved it (when one exists) with a server-rendered diff against the
+  // version it superseded (8 KiB cap, truncated flag), and any fix-PR
+  // proposals. limit defaults to 5, max 20, applied before code bodies load;
+  // include_code=false keeps failing and resolving code bodies off the wire
+  // (the diff is always present). No match is an EMPTY list, never NOT_FOUND:
+  // a signature is a search key, and "no precedent" is a valid answer.
+  // Neither signature nor a full (category, reason) pair → INVALID_ARGUMENT.
+  rpc GetPrecedents(GetPrecedentsRequest) returns (GetPrecedentsResponse);
 }
 
 message TableNode {
@@ -43,6 +99,12 @@ message GetNodeResponse {
   bool   test_count_known = 3;
 }
 
+message GetNodeLocationRequest  { string unique_id = 1; }
+message GetNodeLocationResponse {
+  string file_path    = 1;  // dbt original_file_path (project-relative); "" if not captured
+  string service_name = 2;
+}
+
 enum Criticality {
   CRITICALITY_UNSPECIFIED = 0;
   CRITICALITY_REGULATORY = 1;
@@ -65,8 +127,21 @@ message GetScheduleGraphResponse {
   int64 topology_generation             = 3;
 }
 
-message ListRunsRequest { string schedule_name = 1; }
-message ListRunsResponse { repeated RunSummary runs = 1; }
+message ListRunsRequest {
+  string schedule_name = 1;
+  // page_size bounds the rows returned. Server clamps to [1, 200]; 0 (unset)
+  // defaults to 50. Mirrors the StateService.ListNodes pagination contract.
+  int32 page_size = 2;
+  // page_offset skips this many rows before the page. Negative values are
+  // treated as 0.
+  int32 page_offset = 3;
+}
+message ListRunsResponse {
+  repeated RunSummary runs = 1;
+  // total_count is the number of completed runs matching schedule_name,
+  // independent of page_size/page_offset, so callers can paginate.
+  int32 total_count = 2;
+}
 message RunSummary {
   string run_id = 1;
   string schedule_name = 2;
@@ -111,4 +186,211 @@ message ScheduleTopologySummary {
   string schedule_name                       = 1;
   int32  node_count                          = 2;
   google.protobuf.Timestamp last_updated_at  = 3;
+}
+
+// VersionView is one recorded code state of a node: identity and hash parts,
+// the provenance stamp, and the code itself.
+message VersionView {
+  string unique_id = 1;
+  // version_seq is a stable per-node handle for addressing one of a node's
+  // versions, not an ordering: it is assigned max+1 at ingestion, so a
+  // late-arriving older release receives the highest value.
+  int64 version_seq = 2;
+  string content_hash = 3;
+  string source_hash = 4;
+  string shared_code_hash = 5;
+  string config_hash = 6;
+  string runtime = 7;
+  string raw_code = 8;
+  // compiled_code may be truncated to a server-side byte cap; compiled_truncated
+  // is set when it was cut.
+  string compiled_code = 9;
+  bool compiled_truncated = 10;
+  string config_json = 11;
+  string repo = 12;
+  string commit_sha = 13;
+  string release_id = 14;
+  string promoted_at = 15;  // RFC3339
+  bool healed = 16;
+  bool backfilled = 17;
+  // is_current marks the version the node runs now: exactly one of a node's
+  // versions carries it; a node whose :Table was retired has none.
+  bool is_current = 18;
+}
+
+// VersionDiff is a server-rendered comparison of two versions of one node.
+// The diffs are rendered server-side so every caller sees the same thing.
+message VersionDiff {
+  string unique_id = 1;
+  VersionView from = 2;
+  VersionView to = 3;
+  // raw_code_diff is a unified diff of raw_code; "" when the source is
+  // unchanged.
+  string raw_code_diff = 4;
+  // config_diff is a unified diff over the canonical (sorted-key, indented)
+  // config JSON; "" when unchanged.
+  string config_diff = 5;
+  bool source_changed = 6;
+  bool shared_code_changed = 7;
+  bool config_changed = 8;
+  // truncated is set when either diff above was cut to the per-diff 8 KiB
+  // byte cap.
+  bool truncated = 9;
+}
+
+// UpstreamChange is one ancestor of a node together with its most recent
+// code change.
+message UpstreamChange {
+  string unique_id = 1;
+  int32 depth = 2;
+  VersionDiff diff = 3;
+}
+
+// UnitVersionView is one recorded state of a shared-code unit.
+message UnitVersionView {
+  string unit_id     = 1;
+  string checksum    = 2;
+  string source      = 3;
+  string repo        = 4;
+  string commit_sha  = 5;
+  string release_id  = 6;
+  string promoted_at = 7;  // RFC3339
+  bool   is_current  = 8;
+}
+
+// RunExecution is one run that executed a node, with the code it actually
+// ran.
+message RunExecution {
+  string run_id        = 1;
+  string task_id       = 2;
+  string status        = 3;
+  string schedule_name = 4;
+  string operation     = 5;
+  string image_tag     = 6;
+  // content_hash is the code the run executed, stamped on the :EXECUTES edge
+  // at snapshot time. Empty for runs that predate the stamp.
+  string content_hash = 7;
+  string created_at   = 8;  // RFC3339
+  string completed_at = 9;  // RFC3339, "" while the run has not finished
+}
+
+message GetNodeVersionsRequest {
+  string unique_id = 1;
+  // limit bounds the number of versions returned, newest first. <= 0
+  // defaults to 20; values above 200 are clamped to it.
+  int32 limit = 2;
+  // include_code controls whether raw_code/compiled_code are populated.
+  // false (default): both come back "" on every returned version; every
+  // other field (hashes, config_json, provenance) is unaffected. true: full
+  // bodies are returned. A single version's compiled_code can run to 256
+  // KiB, so leave this false unless the code itself is needed — the default
+  // 20-version response can otherwise approach the transport's receive
+  // limit.
+  bool include_code = 3;
+  // current_only, when true, returns only the version marked is_current —
+  // the code the node runs now — and ignores limit. include_code is honored.
+  // A known node with no recorded current version returns an empty list.
+  bool current_only = 4;
+}
+message GetNodeVersionsResponse {
+  repeated VersionView versions = 1;
+}
+
+message GetNodeVersionDiffRequest {
+  string unique_id = 1;
+  int64 from_seq = 2;
+  int64 to_seq = 3;
+}
+message GetNodeVersionDiffResponse {
+  VersionDiff diff = 1;
+}
+
+message GetUpstreamChangesRequest {
+  string unique_id = 1;
+  // depth bounds how many hops upstream to walk; <= 0 defaults to 3 hops
+  // server-side. Server-validated: depth above 10 is rejected as invalid.
+  int32 depth = 2;
+  // since is an RFC3339 timestamp; ancestors whose newest version predates it
+  // are excluded. "" (empty) applies no time filter.
+  string since = 3;
+}
+message GetUpstreamChangesResponse {
+  repeated UpstreamChange changes = 1;
+}
+
+// GetCodeUnitVersionsRequest addresses a shared-code unit's version chain by
+// exactly one of unit_id or unique_id — never both, never neither.
+message GetCodeUnitVersionsRequest {
+  // unit_id queries one unit's chain directly. Mutually exclusive with
+  // unique_id.
+  string unit_id = 1;
+  // unique_id resolves the node's current units first and returns each of
+  // their chains concatenated in resolution order. Mutually exclusive with
+  // unit_id.
+  string unique_id = 2;
+  // limit bounds the number of versions returned per unit, newest first.
+  // <= 0 defaults to 20; values above 200 are clamped to it.
+  int32 limit = 3;
+}
+message GetCodeUnitVersionsResponse {
+  repeated UnitVersionView versions = 1;
+}
+
+message GetNodeRunHistoryRequest {
+  string unique_id = 1;
+  // limit bounds the number of runs returned, newest first. <= 0 defaults to
+  // 20; values above 200 are clamped to it.
+  int32 limit = 2;
+  // operation filters to runs of exactly this operation ("run"/"test"/
+  // "build"). "" (empty, default) applies no filter and returns every
+  // operation.
+  string operation = 3;
+}
+message GetNodeRunHistoryResponse {
+  repeated RunExecution runs = 1;
+}
+
+message GetPrecedentsRequest {
+  string signature = 1;
+  string category = 2;
+  string reason = 3;
+  int32 limit = 4;
+  bool include_code = 5;
+}
+
+// PrecedentProposal is one fix PR opened for a precedent's rejection.
+message PrecedentProposal {
+  string proposal_id = 1;
+  string pr_url = 2;
+  int32 pr_number = 3;
+  // pr_state records the proposal's state when the PR was opened; it is not
+  // updated when the PR is later merged or closed.
+  string pr_state = 4;
+}
+
+// Precedent is one past rejection with its resolution.
+message Precedent {
+  string release_id = 1;
+  string node_id = 2;
+  string stage = 3;
+  string category = 4;
+  string reason = 5;
+  string error_excerpt = 6;
+  string rejected_at = 7;  // RFC3339
+  // failing_code is the rejected candidate's raw code; "" unless
+  // include_code was set (and a bundle existed for the rejection).
+  string failing_code = 8;
+  bool resolved = 9;
+  // resolving_version is present when resolved; its code fields are ""
+  // unless include_code was set.
+  VersionView resolving_version = 10;
+  // resolution_diff is a unified diff from the version the fix superseded to
+  // the resolving version; "" when unresolved or no prior version exists.
+  string resolution_diff = 11;
+  bool resolution_diff_truncated = 12;
+  repeated PrecedentProposal proposals = 13;
+}
+
+message GetPrecedentsResponse {
+  repeated Precedent precedents = 1;
 }

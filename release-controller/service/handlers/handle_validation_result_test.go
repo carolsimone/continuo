@@ -372,9 +372,11 @@ func seedToValidatingWithURIs(t *testing.T, releaseID string) (*handlers.Deps, *
 
 	topo := release.Topology{
 		{UniqueID: "a", ServiceName: "svc-a", UpstreamUniqueIDs: []string{},
+			NodeType: "dbt-model", OriginalFilePath: "models/a.sql",
 			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_a.sql"},
 		{UniqueID: "b", ServiceName: "svc-a", UpstreamUniqueIDs: []string{"a"},
-			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_b.sql"},
+			NodeType: "python-model", OriginalFilePath: "python/b.py",
+			CandidateArtifactURI: "s3://continuo/svc-a/" + releaseID + "/candidate_b.json"},
 	}
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:     releaseID,
@@ -452,10 +454,59 @@ func TestHandleValidationResult_Rejected_CarriesCandidateArtifactURIAndProvenanc
 	}
 	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a.sql", byID["a"],
 		"ok nodes must also carry candidate_artifact_uri (pointer, not inline content)")
-	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_b.sql", byID["b"],
+	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_b.json", byID["b"],
 		"failing node must carry candidate_artifact_uri")
 	assert.Equal(t, "run-results/rA/b.json", runResultsByID["b"],
 		"failing node must carry run_results_uri through to release.rejected:v1")
+}
+
+// TestHandleValidationResult_Rejected_CarriesCandidateNodeTypeAndLocation asserts
+// that each per_node entry of a validation rejection carries the candidate
+// topology's own node_type, file_path, and service for that node.
+//
+// These come from the candidate topology rather than the promoted graph because
+// a rejected release is never promoted: the promoted topology holds nothing for
+// a newly-added node and the PREVIOUS release's path for a node whose candidate
+// moved it. node_type additionally lets the remediation agent recognise a python
+// node — whose candidate artifact is a JSON validation spec, not SQL — and skip
+// it before reading anything.
+func TestHandleValidationResult_Rejected_CarriesCandidateNodeTypeAndLocation(t *testing.T) {
+	deps, store := seedToValidatingWithURIs(t, "rLoc")
+	seedValidationNodes(t, deps, "rLoc", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/rLoc/b.log"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rLoc",
+		AggregateStatus: "failed",
+	}))
+
+	entries := outboxEntries(store)
+	require.Len(t, entries, 4)
+	var topLevel map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(entries[3].Payload, &topLevel))
+
+	var perNode []struct {
+		NodeID   string `json:"node_id"`
+		NodeType string `json:"node_type,omitempty"`
+		FilePath string `json:"file_path,omitempty"`
+		Service  string `json:"service,omitempty"`
+	}
+	require.NoError(t, json.Unmarshal(topLevel["per_node"], &perNode))
+	require.Len(t, perNode, 2)
+
+	byID := map[string]struct{ nodeType, filePath, service string }{}
+	for _, pn := range perNode {
+		byID[pn.NodeID] = struct{ nodeType, filePath, service string }{pn.NodeType, pn.FilePath, pn.Service}
+	}
+	assert.Equal(t, "dbt-model", byID["a"].nodeType)
+	assert.Equal(t, "models/a.sql", byID["a"].filePath)
+	assert.Equal(t, "svc-a", byID["a"].service)
+	assert.Equal(t, "python-model", byID["b"].nodeType,
+		"a python node's rejection must name its kind so the agent can skip it")
+	assert.Equal(t, "python/b.py", byID["b"].filePath)
+	assert.Equal(t, "svc-a", byID["b"].service)
 }
 
 // TestHandleValidationResult_AggregateStatusFailed_Rejects covers the edge case

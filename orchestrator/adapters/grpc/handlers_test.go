@@ -47,10 +47,12 @@ func (f *fakeDriftAwareRuns) ListActiveRunDrifts(ctx context.Context) (*queries.
 // handler computed so pagination clamping can be asserted, and replays a fixed
 // page + total back.
 type fakeScheduleAndRunLists struct {
-	gotLimit  int
-	gotOffset int
-	runs      []*domain.RunSummary
-	total     int
+	gotLimit    int
+	gotOffset   int
+	runs        []*domain.RunSummary
+	total       int
+	location    *domain.NodeLocation
+	locationErr error
 }
 
 func (fakeScheduleAndRunLists) GetScheduleGraph(context.Context, string) (*domain.ScheduleGraph, error) {
@@ -64,11 +66,14 @@ func (f *fakeScheduleAndRunLists) ListRuns(_ context.Context, _ string, limit, o
 func (fakeScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
-func (fakeScheduleAndRunLists) GetNodeAncestry(context.Context, string, int) ([]*domain.NodeAncestor, error) {
-	return nil, nil
-}
 func (fakeScheduleAndRunLists) GetNode(context.Context, string, string, string) (*domain.NodeMeta, error) {
 	return nil, nil
+}
+func (f *fakeScheduleAndRunLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
+	if f.locationErr != nil {
+		return nil, f.locationErr
+	}
+	return f.location, nil
 }
 
 func newHandler(rq *fakeDriftAwareRuns) *grpcadapter.QueryHandler {
@@ -96,6 +101,10 @@ type fakeCodeVersionHistoryReader struct {
 	nodeVersionsErr error
 	gotIncludeCode  bool
 
+	currentNodeVersion    []codeversion.VersionView
+	currentNodeVersionErr error
+	gotCurrentIncludeCode bool
+
 	diff    *codeversion.VersionDiff
 	diffErr error
 
@@ -120,6 +129,14 @@ func (f *fakeCodeVersionHistoryReader) GetNodeVersions(_ context.Context, _ stri
 		return nil, f.nodeVersionsErr
 	}
 	return f.nodeVersions, nil
+}
+
+func (f *fakeCodeVersionHistoryReader) GetCurrentNodeVersion(_ context.Context, _ string, includeCode bool) ([]codeversion.VersionView, error) {
+	f.gotCurrentIncludeCode = includeCode
+	if f.currentNodeVersionErr != nil {
+		return nil, f.currentNodeVersionErr
+	}
+	return f.currentNodeVersion, nil
 }
 
 func (f *fakeCodeVersionHistoryReader) GetNodeVersionDiff(context.Context, string, int64, int64) (*codeversion.VersionDiff, error) {
@@ -231,6 +248,38 @@ func TestQueryHandler_GetNodeVersions_IncludeCodePassesThrough(t *testing.T) {
 	_, err = h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{UniqueId: "n1", IncludeCode: false})
 	require.NoError(t, err)
 	assert.False(t, cv.gotIncludeCode)
+}
+
+func TestQueryHandler_GetNodeVersions_CurrentOnly_CallsGetCurrentNodeVersion(t *testing.T) {
+	cv := &fakeCodeVersionHistoryReader{
+		currentNodeVersion: []codeversion.VersionView{
+			{ContentHash: "h1", RawCode: "select 1", IsCurrent: true},
+		},
+	}
+	h := newHandlerWithCodeVersions(cv)
+	resp, err := h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{
+		UniqueId: "svc.schema.tbl", CurrentOnly: true, IncludeCode: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Versions, 1)
+	assert.Equal(t, "h1", resp.Versions[0].ContentHash)
+	assert.True(t, resp.Versions[0].IsCurrent)
+	assert.True(t, cv.gotCurrentIncludeCode)
+}
+
+func TestQueryHandler_GetNodeVersions_CurrentOnly_UnknownNode_NotFound(t *testing.T) {
+	cv := &fakeCodeVersionHistoryReader{currentNodeVersionErr: domain.ErrNodeNotFound}
+	h := newHandlerWithCodeVersions(cv)
+	_, err := h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{UniqueId: "ghost", CurrentOnly: true})
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestQueryHandler_GetNodeVersions_CurrentOnly_KnownNodeNoCurrent_Empty(t *testing.T) {
+	cv := &fakeCodeVersionHistoryReader{currentNodeVersion: []codeversion.VersionView{}}
+	h := newHandlerWithCodeVersions(cv)
+	resp, err := h.GetNodeVersions(context.Background(), &orchestratorv1.GetNodeVersionsRequest{UniqueId: "known", CurrentOnly: true})
+	require.NoError(t, err)
+	assert.Empty(t, resp.Versions)
 }
 
 // ---- GetNodeVersionDiff ----
@@ -583,6 +632,26 @@ func TestQueryHandler_ListRuns_RejectsEmptyScheduleName(t *testing.T) {
 	h := newHandlerWithLists(&fakeScheduleAndRunLists{})
 	_, err := h.ListRuns(context.Background(), &orchestratorv1.ListRunsRequest{ScheduleName: ""})
 	require.Error(t, err)
+}
+
+// ---- GetNodeLocation ----
+
+func TestQueryHandler_GetNodeLocation_MapsFields(t *testing.T) {
+	lists := &fakeScheduleAndRunLists{
+		location: &domain.NodeLocation{FilePath: "models/loc_target.sql", ServiceName: "service-1"},
+	}
+	h := newHandlerWithLists(lists)
+	resp, err := h.GetNodeLocation(context.Background(), &orchestratorv1.GetNodeLocationRequest{UniqueId: "analytics.loc_target"})
+	require.NoError(t, err)
+	assert.Equal(t, "models/loc_target.sql", resp.FilePath)
+	assert.Equal(t, "service-1", resp.ServiceName)
+}
+
+func TestQueryHandler_GetNodeLocation_UnknownNode_NotFound(t *testing.T) {
+	lists := &fakeScheduleAndRunLists{locationErr: domain.ErrNodeNotFound}
+	h := newHandlerWithLists(lists)
+	_, err := h.GetNodeLocation(context.Background(), &orchestratorv1.GetNodeLocationRequest{UniqueId: "analytics.absent"})
+	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 // ---- GetPrecedents ----

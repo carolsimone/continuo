@@ -8,7 +8,7 @@ This is a monorepo with multiple microservices.
 * `k8s-controller` — watches Kubernetes Jobs and surfaces their terminal status back into the run lifecycle.
 * `release-controller` — manages blue/green candidate-release lifecycle; tracks the `current_prod` pointer and drives promotion/rejection.
 * `remediation` — failure classifier; triages validation rejections and emits heal triggers for fixable failures.
-* `remediation-agent` — LLM fix-proposer; receives heal triggers, reads the failing model source from GitHub (read-only), and proposes a fix PR for human approval.
+* `remediation-agent` — LLM fix-proposer; receives heal triggers, reads the failing node's source from GitHub (read-only) for compile/seed_build/duplicate_table failures, and for validation failures reads it primarily from the release's code bundle in S3 (falling back to GitHub only on a permanent bundle miss); also reads narrow graph context (source location, upstream diffs, current version, failure precedent) from orchestrator; proposes a fix PR for human approval.
 * `agent-runner` — chat and agent gRPC backend; hosts the conversational LLM interface used by the UI.
 
 ## Python service (1)

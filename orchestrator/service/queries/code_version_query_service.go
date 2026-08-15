@@ -48,6 +48,11 @@ type CodeVersionReader interface {
 	// ErrNodeNotFound; a known node with no recorded history returns an empty
 	// slice.
 	NodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error)
+	// CurrentNodeVersion returns the single version :CURRENT points at, as a
+	// 0-or-1 slice — revert-safe where NodeVersions' newest-first is not. An
+	// unknown node returns ErrNodeNotFound; a known node with no current
+	// version returns an empty slice.
+	CurrentNodeVersion(ctx context.Context, uniqueID string, includeCode bool) ([]codeversion.VersionView, error)
 	// VersionsBySeq returns the two named versions of one node. An unknown
 	// node, or a seq that node has no recorded version for, returns
 	// ErrNodeNotFound.
@@ -103,6 +108,17 @@ func (s *CodeVersionQueryService) GetNodeVersions(ctx context.Context, uniqueID 
 	versions, err := s.reader.NodeVersions(ctx, uniqueID, clampQueryLimit(limit), includeCode)
 	if err != nil {
 		return nil, fmt.Errorf("CodeVersionQueryService.GetNodeVersions: %w", err)
+	}
+	return versions, nil
+}
+
+// GetCurrentNodeVersion returns only the version the node runs now, honoring
+// includeCode. The 0-or-1 slice shape matches GetNodeVersions so the gRPC
+// response is identical in form.
+func (s *CodeVersionQueryService) GetCurrentNodeVersion(ctx context.Context, uniqueID string, includeCode bool) ([]codeversion.VersionView, error) {
+	versions, err := s.reader.CurrentNodeVersion(ctx, uniqueID, includeCode)
+	if err != nil {
+		return nil, fmt.Errorf("CodeVersionQueryService.GetCurrentNodeVersion: %w", err)
 	}
 	return versions, nil
 }

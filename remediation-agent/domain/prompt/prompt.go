@@ -9,34 +9,40 @@ import (
 	"strings"
 )
 
-type Ancestor struct {
-	NodeID        string
-	ServiceName   string
-	LastCommitSHA string
-	LastRepo      string
-	FilePath      string
-	LastChangedAt string
-	Depth         int
+// UpstreamChange is one recently-changed ancestor with the diffs of its most
+// recent change, shown to the model as root-cause evidence.
+type UpstreamChange struct {
+	NodeID     string
+	Depth      int
+	CodeDiff   string
+	ConfigDiff string
+	Truncated  bool
 }
 
-// UpstreamDiff is the diff of a recent change to one upstream ancestor, shown to
-// the model as diagnostic context for a validation failure.
-type UpstreamDiff struct {
-	NodeID      string
-	ServiceName string
-	Diff        string
+// Precedent is one past rejection with the same error shape and, when
+// resolved, the change that fixed it.
+type Precedent struct {
+	ReleaseID      string // for self-filtering only; never rendered
+	NodeID         string
+	Stage          string
+	Category       string
+	Reason         string
+	ErrorExcerpt   string
+	RejectedAt     string // RFC3339
+	Resolved       bool
+	ResolutionDiff string
+	DiffTruncated  bool
+	PRURL          string
 }
 
 type Evidence struct {
-	NodeID         string
-	ErrorSignature string
-	CandidateSQL   string
-	DBTLog         string
-	Repo           string
-	CommitSHA      string
-	FilePath       string
-	Ancestors      []Ancestor
-	UpstreamDiffs  []UpstreamDiff
+	NodeID          string
+	ErrorSignature  string
+	CandidateSQL    string
+	DBTLog          string
+	OwnChangeDiff   string
+	UpstreamChanges []UpstreamChange
+	Precedents      []Precedent
 }
 
 type ToolParam struct {
@@ -93,6 +99,43 @@ type NamedFile struct {
 	Content string
 }
 
+// maxPrecedentDiffRender bounds how many precedents are shown with their full
+// resolution diff; the rest appear as one-line mentions so breadth survives
+// without unbounded prompt growth.
+const maxPrecedentDiffRender = 5
+
+// renderPrecedents writes the "How similar failures were fixed before"
+// section: the first maxPrecedentDiffRender resolved precedents in full
+// (excerpt, diff, fix-PR link), every other precedent as a one-line mention.
+// No precedents → no section.
+func renderPrecedents(b *strings.Builder, ps []Precedent) {
+	if len(ps) == 0 {
+		return
+	}
+	b.WriteString("How similar failures were fixed before (same error shape, any service):\n")
+	diffs := 0
+	for _, p := range ps {
+		if p.Resolved && p.ResolutionDiff != "" && diffs < maxPrecedentDiffRender {
+			diffs++
+			fmt.Fprintf(b, "- %s (%s/%s, %s): %s\n", p.NodeID, p.Category, p.Reason, p.RejectedAt, p.ErrorExcerpt)
+			fmt.Fprintf(b, "  Fix that resolved it:\n```diff\n%s\n```\n", p.ResolutionDiff)
+			if p.DiffTruncated {
+				b.WriteString("  (diff truncated)\n")
+			}
+			if p.PRURL != "" {
+				fmt.Fprintf(b, "  Fix PR: %s\n", p.PRURL)
+			}
+			continue
+		}
+		status := "unresolved"
+		if p.Resolved {
+			status = "resolved"
+		}
+		fmt.Fprintf(b, "- %s (%s/%s, %s, %s): %s\n", p.NodeID, p.Category, p.Reason, p.RejectedAt, status, p.ErrorExcerpt)
+	}
+	b.WriteString("\n")
+}
+
 const compileFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt project that failed to compile.
 You are given every candidate source file (the offending model and its co-located schema.yml and the project's dbt_project.yml) and the dbt compile error. The dbt projects are independent and reference upstream tables by their physical schema-qualified name (e.g. analytics.table_a), NEVER with {{ ref(...) }} / {{ source(...) }}.
 
@@ -101,17 +144,19 @@ Rules:
 - Return the COMPLETE corrected content of that file in proposed_content, preserving formatting and unrelated content.
 - Never introduce {{ ref(...) }} or {{ source(...) }}.
 - If you cannot determine a safe fix, return the offending file unchanged with low confidence and an explanation.
+- When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the code you are shown.
 - Always respond by calling the propose_fix tool.`
 
 // AssembleCompileFix builds a multi-file compile-fix request. The model chooses
 // which shown file to change (target_file) and returns its corrected content.
-func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string) ProposeRequest {
+func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []Precedent) ProposeRequest {
 	var u strings.Builder
 	fmt.Fprintf(&u, "Service: %s\n\n", nodeID)
 	for _, f := range files {
 		fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", f.Path, f.Content)
 	}
 	fmt.Fprintf(&u, "dbt compile error:\n```\n%s\n```\n\n", dbtLog)
+	renderPrecedents(&u, precedents)
 	u.WriteString("Return the complete corrected content of the ONE file that must change.")
 
 	return ProposeRequest{
@@ -135,14 +180,16 @@ You are given the seed CSV file and the dbt seed error. dbt seed loads a comma-s
 Rules:
 - Return the COMPLETE corrected CSV in proposed_content, changing only what the error requires (fix quoting, repair the malformed row). Preserve every other row and the header exactly.
 - Do NOT invent or guess data values. If the failure is a genuinely wrong or missing data value that cannot be inferred from the file and error alone, return the CSV UNCHANGED with low confidence and explain why in rationale.
+- When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the code you are shown.
 - Always respond by calling the propose_fix tool.`
 
 // AssembleSeedFix builds a CSV-specific seed-fix request.
-func AssembleSeedFix(csvPath, csvContent, dbtLog, nodeID string) ProposeRequest {
+func AssembleSeedFix(csvPath, csvContent, dbtLog, nodeID string, precedents []Precedent) ProposeRequest {
 	var u strings.Builder
 	fmt.Fprintf(&u, "Seed: %s (node %s)\n\n", csvPath, nodeID)
 	fmt.Fprintf(&u, "CSV content:\n```\n%s\n```\n\n", csvContent)
 	fmt.Fprintf(&u, "dbt seed error:\n```\n%s\n```\n\n", dbtLog)
+	renderPrecedents(&u, precedents)
 	u.WriteString("Return the complete corrected CSV, or the CSV unchanged with low confidence if the bad value cannot be inferred.")
 
 	return ProposeRequest{
@@ -167,6 +214,7 @@ Rules:
 - Pick a name that describes what THIS model produces and could not collide again — prefer qualifying it with the owning service or the grain, not a numeric suffix.
 - Return the COMPLETE corrected file content in proposed_content.
 - If the file gives you no safe way to change the relation it produces, return it UNCHANGED with low confidence and explain why in rationale.
+- When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the code you are shown.
 - Always respond by calling the propose_fix tool.`
 
 // AssembleDuplicateTableFix builds a rename request for the one model that must
@@ -180,11 +228,12 @@ Rules:
 // unique_id — the two differ whenever the target already carries an alias.
 // Naming the target's unique_id here would tell the model to stop producing
 // a relation it may not even write.
-func AssembleDuplicateTableFix(file NamedFile, relationID, otherService, otherFilePath string) ProposeRequest {
+func AssembleDuplicateTableFix(file NamedFile, relationID, otherService, otherFilePath string, precedents []Precedent) ProposeRequest {
 	var u strings.Builder
 	fmt.Fprintf(&u, "Relation: %s\n", relationID)
 	fmt.Fprintf(&u, "Also produced by: %s (%s)\n\n", otherService, otherFilePath)
 	fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", file.Path, file.Content)
+	renderPrecedents(&u, precedents)
 	u.WriteString("Return the complete corrected content of this file, renaming what it produces so it no longer collides.")
 
 	return ProposeRequest{
@@ -202,9 +251,9 @@ func AssembleDuplicateTableFix(file NamedFile, relationID, otherService, otherFi
 }
 
 const systemPrompt = `You are a data-engineering assistant that proposes a fix for a failed dbt model.
-You are given the failed model's SQL, the dbt error, and metadata about which upstream
-models changed recently. Propose a corrected version of the failed model's SQL that makes
-validation pass.
+You are given the failed model's SQL, the dbt error, and the diffs of what changed recently
+in this model and its upstreams, and how similar past failures were fixed. Propose a corrected
+version of the failed model's SQL that makes validation pass.
 
 Rules:
 - Fix the model so validation passes without weakening tests or contracts.
@@ -212,6 +261,7 @@ Rules:
 - Reference upstream tables by their physical schema.table name; never introduce {{ ref(...) }} or {{ source(...) }} (the dbt projects are independent and these do not resolve across them).
 - Do not invent columns, sources, or refs that are not justified by the evidence.
 - When upstream change diffs are provided, treat them as the most likely root cause and account for what changed upstream when correcting the failed model.
+- When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the code you are shown.
 - If you cannot determine a safe fix, return the original SQL unchanged with a low confidence and an explanation.
 - Always respond by calling the propose_fix tool.`
 
@@ -222,20 +272,26 @@ func Assemble(ev Evidence) ProposeRequest {
 	fmt.Fprintf(&u, "Failed node: %s\n\n", ev.NodeID)
 	fmt.Fprintf(&u, "Failed model SQL:\n```sql\n%s\n```\n\n", ev.CandidateSQL)
 	fmt.Fprintf(&u, "dbt error:\n```\n%s\n```\n\n", ev.DBTLog)
-	if len(ev.Ancestors) > 0 {
-		u.WriteString("Upstream models, most-recently-changed first:\n")
-		for _, a := range ev.Ancestors {
-			fmt.Fprintf(&u, "- %s (service=%s, depth=%d, last_changed=%s, commit=%s)\n",
-				a.NodeID, a.ServiceName, a.Depth, a.LastChangedAt, a.LastCommitSHA)
+	if ev.OwnChangeDiff != "" {
+		fmt.Fprintf(&u, "What this release changed in the failing model (last promoted -> candidate):\n```diff\n%s\n```\n\n", ev.OwnChangeDiff)
+	}
+	if len(ev.UpstreamChanges) > 0 {
+		u.WriteString("Recent upstream changes, most recent first (each ancestor's code and resolved-config diff):\n")
+		for _, c := range ev.UpstreamChanges {
+			fmt.Fprintf(&u, "Upstream %s (depth=%d):\n", c.NodeID, c.Depth)
+			if c.CodeDiff != "" {
+				fmt.Fprintf(&u, "```diff\n%s\n```\n", c.CodeDiff)
+			}
+			if c.ConfigDiff != "" {
+				fmt.Fprintf(&u, "Config change:\n```diff\n%s\n```\n", c.ConfigDiff)
+			}
+			if c.Truncated {
+				u.WriteString("(diff truncated)\n")
+			}
 		}
 		u.WriteString("\n")
 	}
-	if len(ev.UpstreamDiffs) > 0 {
-		u.WriteString("Recent upstream changes (diffs of what changed in those upstream models):\n")
-		for _, d := range ev.UpstreamDiffs {
-			fmt.Fprintf(&u, "Upstream %s (service=%s):\n```diff\n%s\n```\n\n", d.NodeID, d.ServiceName, d.Diff)
-		}
-	}
+	renderPrecedents(&u, ev.Precedents)
 	u.WriteString("Propose a corrected version of the failed model's SQL.")
 
 	return ProposeRequest{

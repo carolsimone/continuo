@@ -74,6 +74,10 @@ func TestServer_RoutesEveryOrchestratorQueryRPC(t *testing.T) {
 			_, err := client.ListScheduleTopologies(ctx, &orchestratorv1.ListScheduleTopologiesRequest{})
 			return err
 		}},
+		{"GetNodeLocation", func() error {
+			_, err := client.GetNodeLocation(ctx, &orchestratorv1.GetNodeLocationRequest{UniqueId: "x"})
+			return err
+		}},
 		{"GetNodeVersions", func() error {
 			_, err := client.GetNodeVersions(ctx, &orchestratorv1.GetNodeVersionsRequest{UniqueId: "x"})
 			return err
@@ -126,11 +130,11 @@ func (stubScheduleAndRunLists) ListRuns(context.Context, string, int, int) ([]*d
 func (stubScheduleAndRunLists) ListScheduleTopologies(context.Context) ([]*domain.ScheduleTopologySummary, error) {
 	return nil, nil
 }
-func (stubScheduleAndRunLists) GetNodeAncestry(context.Context, string, int) ([]*domain.NodeAncestor, error) {
-	return nil, nil
-}
 func (stubScheduleAndRunLists) GetNode(context.Context, string, string, string) (*domain.NodeMeta, error) {
 	return nil, nil
+}
+func (stubScheduleAndRunLists) GetNodeLocation(context.Context, string) (*domain.NodeLocation, error) {
+	return &domain.NodeLocation{}, nil
 }
 
 // stubDriftAwareRuns satisfies grpcadapter.DriftAwareRunReader.
@@ -147,6 +151,9 @@ func (stubDriftAwareRuns) ListActiveRunDrifts(context.Context) (*queries.ActiveR
 type stubCodeVersionHistoryReader struct{}
 
 func (stubCodeVersionHistoryReader) GetNodeVersions(context.Context, string, int32, bool) ([]codeversion.VersionView, error) {
+	return nil, nil
+}
+func (stubCodeVersionHistoryReader) GetCurrentNodeVersion(context.Context, string, bool) ([]codeversion.VersionView, error) {
 	return nil, nil
 }
 func (stubCodeVersionHistoryReader) GetNodeVersionDiff(context.Context, string, int64, int64) (*codeversion.VersionDiff, error) {

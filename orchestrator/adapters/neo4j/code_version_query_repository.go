@@ -124,6 +124,51 @@ func (r *CodeVersionQueryRepository) NodeVersions(ctx context.Context, uniqueID 
 	return versions, nil
 }
 
+// CurrentNodeVersion returns the single version the node runs now — the
+// :CURRENT target — as a 0-or-1 slice. Unlike NodeVersions' newest-first
+// ordering, this is revert-safe: after a revert the current version is not
+// the newest. An unknown node returns ErrNodeNotFound; a known node with no
+// current version returns an empty slice — which is also what a retired node
+// returns: retirement (release_promotion_repository.go) sets t.active=false
+// without removing the :CURRENT edge, so a run-referenced retired :Table can
+// still point at code that no longer runs. The active filter here excludes
+// that obsolete version rather than reporting it as current, matching how
+// GetNodeLocation and the Ancestors traversal already treat retired tables.
+func (r *CodeVersionQueryRepository) CurrentNodeVersion(ctx context.Context, uniqueID string, includeCode bool) ([]codeversion.VersionView, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+
+	query := `
+		MATCH (t:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion)
+		WHERE COALESCE(t.active, true)
+		WITH v, v AS cur
+		RETURN ` + nodeVersionColumns(includeCode) + `
+		LIMIT 1
+	`
+	result, err := session.Run(ctx, query, map[string]any{"uid": uniqueID})
+	if err != nil {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.CurrentNodeVersion: %w", err)
+	}
+	versions := make([]codeversion.VersionView, 0, 1)
+	for result.Next(ctx) {
+		versions = append(versions, versionViewFromRecord(result.Record(), uniqueID))
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.CurrentNodeVersion: %w", err)
+	}
+	if len(versions) > 0 {
+		return versions, nil
+	}
+	known, err := r.nodeKnown(ctx, session, uniqueID)
+	if err != nil {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.CurrentNodeVersion: %w", err)
+	}
+	if !known {
+		return nil, fmt.Errorf("CodeVersionQueryRepository.CurrentNodeVersion: node %s: %w", uniqueID, domain.ErrNodeNotFound)
+	}
+	return versions, nil
+}
+
 // nodeKnown reports whether uniqueID is a recorded node: either it still has
 // an active :Table, or it has at least one :NodeVersion (a retired node whose
 // :Table was deleted but whose history survives). This is the same

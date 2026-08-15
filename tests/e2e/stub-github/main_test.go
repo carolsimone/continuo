@@ -294,33 +294,3 @@ func TestGetUnknownPullIs404(t *testing.T) {
 		t.Fatalf("want 404, got %d", rec.Code)
 	}
 }
-
-// TestHandleCommits_ReturnsCannedFilePatch verifies GET /repos/.../commits/{sha}
-// returns a commit whose files[] carries the canned upstream patch, exercising
-// the remediation-agent CommitFileDiff read path.
-func TestHandleCommits_ReturnsCannedFilePatch(t *testing.T) {
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/repos/owner/repo/commits/anysha", nil)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	handleRepos(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var commit struct {
-		Files []struct {
-			Filename string `json:"filename"`
-			Patch    string `json:"patch"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &commit); err != nil {
-		t.Fatal(err)
-	}
-	if len(commit.Files) == 0 || commit.Files[0].Patch == "" {
-		t.Fatalf("expected a file with a patch, got %+v", commit.Files)
-	}
-	if commit.Files[0].Filename != "services/service-2/models/ftable_upstream_diff.sql" {
-		t.Errorf("filename = %q, want services/service-2/models/ftable_upstream_diff.sql", commit.Files[0].Filename)
-	}
-}

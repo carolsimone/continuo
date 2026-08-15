@@ -1,4 +1,4 @@
-// Package codebundle is the orchestrator's reader for the code-bundle contract
+// Package codebundle is the shared reader for the code-bundle contract
 // document manifest-controller writes once per release
 // (code-bundles/<release_id>/bundle.json).
 //

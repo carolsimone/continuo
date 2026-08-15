@@ -33,25 +33,37 @@ type Trigger struct {
 	// trigger, distinct from NodeID (the target claimant's own unique_id) —
 	// the two differ whenever the target already carries an alias. Empty for
 	// every other source.
-	RelationID           string
-	ErrorSignature       string
-	Category             string
+	RelationID     string
+	ErrorSignature string
+	Category       string
+	// Reason is the classifier's finer-grained reason within Category; with
+	// Category it forms the fallback precedent-lookup key when the exact
+	// signature has no recorded matches.
+	Reason               string
 	DBTLogURI            string
 	CandidateArtifactURI string
+	// CodeBundleURI locates the release's code-bundle document, which carries
+	// every parsed node's raw source. Empty only for a compile-stage
+	// rejection, which precedes the parse that produces the bundle; every
+	// post-parse rejection (duplicate_table included) carries it.
+	CodeBundleURI string
 	// FilePath is the offending dbt-project-relative source path. For compile
-	// failures it is extracted from the dbt log. For seed_build failures it is
-	// threaded from the candidate topology (OriginalFilePath on release.Node).
-	// Empty means fall back to Ancestry.
+	// failures it is extracted from the dbt log. For validation, seed_build,
+	// and duplicate_table failures it is threaded from the candidate topology
+	// (OriginalFilePath on release.Node). Empty on a validation or seed_build
+	// trigger falls back to the orchestrator graph's NodeLocator; a
+	// duplicate_table trigger has no such fallback.
 	FilePath string
 	// Service is the owning dbt service name for the failing node. Set for
-	// seed_build failures from the candidate topology so source resolution does
-	// not depend on Ancestry (which only holds promoted topology). Empty for
-	// compile failures where NodeID acts as the service discriminator.
+	// validation, seed_build, and duplicate_table failures from the candidate
+	// topology. Empty for compile failures where NodeID acts as the service
+	// discriminator.
 	Service string
-	// NodeType is the target claimant's kind (dbt-model, dbt-seed,
-	// dbt-snapshot, or python-model), set on a duplicate-relation failure so
-	// the duplicate-table Fixer can skip a python target — whose source is not
-	// a single readable file — without a topology lookup of its own.
+	// NodeType is the failing node's kind (dbt-model, dbt-seed,
+	// dbt-snapshot, or python-model), set on validation and duplicate-relation
+	// failures so the validation and duplicate-table Fixers can each skip a
+	// python node — whose source is not a single readable file — without a
+	// topology lookup of their own.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID), set on a duplicate-relation
@@ -93,7 +105,6 @@ type Deps struct {
 	NewUoW      func() uow.UnitOfWork
 	LLM         ports.LLMProvider
 	Evidence    ports.EvidenceReader
-	Ancestry    ports.AncestryClient
 	Source      ports.SourceReader
 	Sanitizer   ports.LogSanitizer
 	Artifacts   ports.ArtifactWriter
@@ -104,6 +115,11 @@ type Deps struct {
 	// source repo, e.g. "service-1" → "services/service-1". Used by the fixers
 	// to build the full GitHub file path for the offending source file.
 	ServiceRepoPaths map[string]string
+	Locator          ports.NodeLocator
+	Upstream         ports.UpstreamChangeReader
+	Versions         ports.VersionReader
+	Precedents       ports.PrecedentReader
+	CandidateSource  ports.CandidateSourceReader
 }
 
 // ProposeFix turns one healable failure trigger into a fix proposal. It counts
@@ -156,6 +172,8 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		NodeID:               t.NodeID,
 		RelationID:           t.RelationID,
 		ErrorSignature:       t.ErrorSignature,
+		Category:             t.Category,
+		Reason:               t.Reason,
 		Repo:                 t.Repo,
 		CommitSHA:            t.CommitSHA,
 		FilePath:             t.FilePath,
@@ -165,12 +183,15 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		OtherFilePath:        t.OtherFilePath,
 		DBTLogURI:            t.DBTLogURI,
 		CandidateArtifactURI: t.CandidateArtifactURI,
+		CodeBundleURI:        t.CodeBundleURI,
 		Attempt:              attempt,
 	}
 	svc := fixer.Services{
 		LLM: deps.LLM, Source: deps.Source, Evidence: deps.Evidence,
-		Sanitizer: deps.Sanitizer, Ancestry: deps.Ancestry, Artifacts: deps.Artifacts,
+		Sanitizer: deps.Sanitizer, Artifacts: deps.Artifacts,
 		Logger: deps.Logger, ServiceRepoPaths: deps.ServiceRepoPaths,
+		Locator: deps.Locator, Upstream: deps.Upstream, Versions: deps.Versions,
+		Precedents: deps.Precedents, CandidateSource: deps.CandidateSource,
 	}
 
 	// Mark this attempt in-flight in its own committed transaction, right before

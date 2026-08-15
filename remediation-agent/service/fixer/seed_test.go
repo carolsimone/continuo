@@ -101,44 +101,45 @@ func TestSeed_SanitizesCSVBeforeLLM(t *testing.T) {
 	}
 }
 
-// TestSeed_FallsBackToAncestry_WhenServiceMissing proves that when in.Service
-// is empty, seedGather fills it (and any missing FilePath) from
-// Ancestry.NodeContext before resolving the repo path, mirroring the
-// compile/validation fixers' priority (trigger evidence first, Ancestry as
-// fallback).
-func TestSeed_FallsBackToAncestry_WhenServiceMissing(t *testing.T) {
+// TestSeed_FallbackUsesLocator proves that when in.FilePath or in.Service is
+// empty, seedGather fills both from the orchestrator graph's NodeLocator
+// before resolving the repo path, and that the CSV read uses the located
+// path.
+func TestSeed_FallbackUsesLocator(t *testing.T) {
 	fs := &fakeSourceMap{files: map[string]string{"services/svc/seeds/ref.csv": "id,name\n1,a,b"}}
 	svc := Services{
 		Source:   fs,
-		Ancestry: fakeAncestry{filePath: "seeds/ref.csv", service: "svc"},
+		Locator:  fakeLocator{filePath: "seeds/ref.csv", serviceName: "svc"},
 		LLM:      &fakeLLM{queue: []ports.ProposeResult{{ProposedContent: "id,name\n1,\"a,b\"", Confidence: "high"}}},
 		Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
-	in := Input{Source: "seed_build", NodeID: "analytics.ref", FilePath: "seeds/ref.csv",
+	in := Input{Source: "seed_build", NodeID: "analytics.ref",
 		Repo: "o/repo", CommitSHA: "sha", DBTLogURI: "s3://log", ReleaseID: "r", Attempt: 1}
 	r, err := seedFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Proposal.Status != proposal.StatusProposed || r.Proposal.FilePath != "services/svc/seeds/ref.csv" {
-		t.Fatalf("got status=%v file=%q, want proposed via the ancestry-resolved service", r.Proposal.Status, r.Proposal.FilePath)
+		t.Fatalf("got status=%v file=%q, want proposed via the located service", r.Proposal.Status, r.Proposal.FilePath)
+	}
+	if got := fs.readPaths(); len(got) != 1 || got[0] != "services/svc/seeds/ref.csv" {
+		t.Fatalf("readPaths = %v, want the CSV read to use the located path", got)
 	}
 }
 
-// TestSeed_AncestryError_Skips proves that an Ancestry error (used only when
-// FilePath or Service is empty) is treated as a skip, not a hard error: the
-// same-degrade-gracefully rule as the other fixers' best-effort Ancestry use.
-func TestSeed_AncestryError_Skips(t *testing.T) {
+// TestSeed_LocatorError_Skips proves that a NodeLocator error (consulted only
+// when FilePath or Service is empty) is treated as a skip, not a hard error.
+func TestSeed_LocatorError_Skips(t *testing.T) {
 	svc := Services{
-		Ancestry: fakeAncestry{err: errors.New("ancestry unavailable")},
-		Logger:   testLogger(),
+		Locator: fakeLocator{err: errors.New("node location unavailable")},
+		Logger:  testLogger(),
 	}
 	in := Input{Source: "seed_build", NodeID: "analytics.ref", Repo: "o/repo", CommitSHA: "sha"}
 	r, err := seedFixer{}.Propose(context.Background(), svc, in)
 	if err != nil {
-		t.Fatalf("ancestry error must not be returned as a hard error: %v", err)
+		t.Fatalf("locator error must not be returned as a hard error: %v", err)
 	}
 	if r.Proposal.Status != proposal.StatusSkipped {
 		t.Fatalf("status = %v want skipped", r.Proposal.Status)

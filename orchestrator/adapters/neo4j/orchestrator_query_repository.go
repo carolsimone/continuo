@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
@@ -408,96 +407,6 @@ func (r *OrchestratorQueryRepository) parseNeo4jTimestamp(field, value string) t
 	return ts
 }
 
-// GetNodeAncestry returns the node identified by uniqueID at depth 0 plus its
-// transitive upstream ancestors (following OUTGOING :DEPENDS_ON edges, since the
-// edge points downstream -> upstream), deduped to shallowest depth, ordered by
-// last_changed_at DESC with unknown-provenance nodes last. maxDepth <= 0 walks
-// the full closure; maxDepth > 0 caps the hop count. Returns domain.ErrNodeNotFound
-// when uniqueID is not an active :Table.
-func (r *OrchestratorQueryRepository) GetNodeAncestry(ctx context.Context, uniqueID string, maxDepth int) ([]*domain.NodeAncestor, error) {
-	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
-	defer func() { _ = session.Close(ctx) }()
-
-	// Cypher cannot parameterize the *1..N path-length bound, so interpolate the
-	// validated integer (handler enforces 0..100). Unbounded when maxDepth <= 0.
-	hop := "*1.."
-	if maxDepth > 0 {
-		hop = fmt.Sprintf("*1..%d", maxDepth)
-	}
-	query := fmt.Sprintf(`
-		MATCH (n:Table {unique_id: $uid})
-		// COALESCE treats a missing active flag as true to remain consistent with all
-		// other topology queries in this repository; do not tighten to n.active = true.
-		WHERE COALESCE(n.active, true)
-		OPTIONAL MATCH path = (n)-[:DEPENDS_ON%s]->(anc:Table)
-		// Constrain EVERY node on the path to active, not just the terminal ancestor:
-		// retired :Table nodes are kept for run history but are not part of the current
-		// topology, and an active node reachable only THROUGH a retired one is a severed
-		// dependency. Mirrors the active-upstream filter in GetScheduleGraph.
-		WHERE ALL(m IN nodes(path) WHERE COALESCE(m.active, true))
-		WITH n, anc, min(length(path)) AS depth
-		RETURN n AS self,
-		       collect(CASE WHEN anc IS NULL THEN null ELSE {node: anc, depth: depth} END) AS ancestors
-	`, hop)
-
-	result, err := session.Run(ctx, query, map[string]interface{}{"uid": uniqueID})
-	if err != nil {
-		return nil, fmt.Errorf("GetNodeAncestry query failed: %w", err)
-	}
-	if !result.Next(ctx) {
-		if err := result.Err(); err != nil {
-			return nil, fmt.Errorf("GetNodeAncestry query error: %w", err)
-		}
-		return nil, domain.ErrNodeNotFound
-	}
-	record := result.Record()
-
-	selfRaw, _ := record.Get("self")
-	selfNode, ok := selfRaw.(neo4j.Node)
-	if !ok {
-		return nil, domain.ErrNodeNotFound
-	}
-
-	out := []*domain.NodeAncestor{ancestorFromProps(selfNode.Props, 0)}
-
-	if ancRaw, ok := record.Get("ancestors"); ok {
-		if ancList, ok := ancRaw.([]interface{}); ok {
-			for _, item := range ancList {
-				m, ok := item.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				node, ok := m["node"].(neo4j.Node)
-				if !ok {
-					continue
-				}
-				depth := 0
-				if d, ok := m["depth"].(int64); ok {
-					depth = int(d)
-				}
-				out = append(out, ancestorFromProps(node.Props, depth))
-			}
-		}
-	}
-
-	// Order by last_changed_at DESC, unknown (nil) last. Neo4j orders nulls first
-	// under DESC, so sort in Go instead.
-	sort.SliceStable(out, func(i, j int) bool {
-		ci, cj := out[i].LastChangedAt, out[j].LastChangedAt
-		if ci == nil && cj == nil {
-			return false
-		}
-		if ci == nil {
-			return false
-		}
-		if cj == nil {
-			return true
-		}
-		return ci.After(*cj)
-	})
-	return out, nil
-}
-
 // GetNode returns per-node topology metadata for a single active :Table,
 // addressed by its (service, schema, table) identity. Returns
 // domain.ErrNodeNotFound when no active node matches. test_count is read via
@@ -537,26 +446,31 @@ func (r *OrchestratorQueryRepository) GetNode(ctx context.Context, service, sche
 	}, nil
 }
 
-func ancestorFromProps(props map[string]interface{}, depth int) *domain.NodeAncestor {
-	a := &domain.NodeAncestor{
-		UniqueID:      safeString(props["unique_id"]),
-		SchemaName:    safeString(props["schema_name"]),
-		TableName:     safeString(props["table_name"]),
-		ServiceName:   safeString(props["service_name"]),
-		NodeType:      safeString(props["node_type"]),
-		Depth:         depth,
-		FilePath:      safeString(props["original_file_path"]),
-		LastCommitSHA: safeString(props["last_commit_sha"]),
-		LastRepo:      safeString(props["last_repo"]),
-		LastReleaseID: safeString(props["last_release_id"]),
+// GetNodeLocation returns the node's project-relative source path and owning
+// service. An unknown or inactive unique_id yields domain.ErrNodeNotFound.
+func (r *OrchestratorQueryRepository) GetNodeLocation(ctx context.Context, uniqueID string) (*domain.NodeLocation, error) {
+	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
+	defer func() { _ = session.Close(ctx) }()
+
+	query := `
+		MATCH (t:Table {unique_id: $uid})
+		WHERE COALESCE(t.active, true)
+		RETURN COALESCE(t.original_file_path, '') AS file_path, t.service_name AS service_name
+	`
+	result, err := session.Run(ctx, query, map[string]interface{}{"uid": uniqueID})
+	if err != nil {
+		return nil, fmt.Errorf("GetNodeLocation query failed: %w", err)
 	}
-	switch v := props["last_changed_at"].(type) {
-	case time.Time:
-		t := v
-		a.LastChangedAt = &t
-	case neo4j.LocalDateTime:
-		t := v.Time()
-		a.LastChangedAt = &t
+	if !result.Next(ctx) {
+		if err := result.Err(); err != nil {
+			return nil, fmt.Errorf("GetNodeLocation query error: %w", err)
+		}
+		return nil, domain.ErrNodeNotFound
 	}
-	return a
+	rec := result.Record()
+	fp, _ := rec.Get("file_path")
+	svc, _ := rec.Get("service_name")
+	fpStr, _ := fp.(string)
+	svcStr, _ := svc.(string)
+	return &domain.NodeLocation{FilePath: fpStr, ServiceName: svcStr}, nil
 }

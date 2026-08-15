@@ -32,19 +32,6 @@ func (f fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
 	return f.data[uri], nil
 }
 
-// fakeAncestry returns a fixed file path, service name, and ancestor slice,
-// or an error if set.
-type fakeAncestry struct {
-	filePath string
-	service  string
-	ancestry []prompt.Ancestor
-	err      error
-}
-
-func (f fakeAncestry) NodeContext(_ context.Context, _ string) (string, string, []prompt.Ancestor, error) {
-	return f.filePath, f.service, f.ancestry, f.err
-}
-
 // fakeSanitizer is a pass-through log sanitizer.
 type fakeSanitizer struct{}
 
@@ -81,6 +68,104 @@ func (s redactingSanitizer) Sanitize(in string) string {
 	return strings.ReplaceAll(in, s.secret, s.marker)
 }
 
+// fakePrecedents returns precedents from an in-memory signature or
+// category+reason index, or an error if set. calls counts every invocation so
+// a test can assert a skip path never queries it.
+type fakePrecedents struct {
+	bySignature map[string][]prompt.Precedent
+	byClass     map[string][]prompt.Precedent // key: category + "|" + reason
+	err         error
+	calls       int
+}
+
+func (f *fakePrecedents) Precedents(_ context.Context, q ports.PrecedentQuery) ([]prompt.Precedent, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if q.Signature != "" {
+		return f.bySignature[q.Signature], nil
+	}
+	return f.byClass[q.Category+"|"+q.Reason], nil
+}
+
+// fakeLocator returns a fixed file path and service name, or an error, for
+// NodeLocator.Locate.
+type fakeLocator struct {
+	filePath, serviceName string
+	err                   error
+}
+
+func (f fakeLocator) Locate(_ context.Context, _ string) (string, string, error) {
+	return f.filePath, f.serviceName, f.err
+}
+
+// countingLocator is a fakeLocator that counts every Locate, so a test can
+// assert the fixer preferred the location the trigger carried over the
+// promoted-topology lookup.
+type countingLocator struct {
+	filePath, serviceName string
+	calls                 int
+}
+
+func (f *countingLocator) Locate(_ context.Context, _ string) (string, string, error) {
+	f.calls++
+	return f.filePath, f.serviceName, nil
+}
+
+// countingEvidence counts every Fetch and always errors, so a test can assert a
+// skip path never reached object storage and a fixer that did read fails loudly
+// rather than proceeding on fabricated content.
+type countingEvidence struct{ calls int }
+
+func (f *countingEvidence) Fetch(_ context.Context, _ string) (string, error) {
+	f.calls++
+	return "", fmt.Errorf("evidence reader must not be called on a skip path")
+}
+
+// fakeUpstream returns fixed upstream changes, or an error, for
+// UpstreamChangeReader.UpstreamChanges. calls counts every invocation so a
+// test can assert a skip path never queries it.
+type fakeUpstream struct {
+	changes []prompt.UpstreamChange
+	err     error
+	calls   int
+}
+
+func (f *fakeUpstream) UpstreamChanges(_ context.Context, _ string) ([]prompt.UpstreamChange, error) {
+	f.calls++
+	return f.changes, f.err
+}
+
+// fakeVersions returns a fixed current version, or an error, for
+// VersionReader.CurrentVersion. calls counts every invocation so a test can
+// assert a skip path never queries it.
+type fakeVersions struct {
+	v     ports.CurrentVersion
+	ok    bool
+	err   error
+	calls int
+}
+
+func (f *fakeVersions) CurrentVersion(_ context.Context, _ string) (ports.CurrentVersion, bool, error) {
+	f.calls++
+	return f.v, f.ok, f.err
+}
+
+// fakeCandidateSource returns a fixed bundle source, or an error, for
+// CandidateSourceReader.NodeSource. calls counts every invocation so a test
+// can assert a skip path never queries it.
+type fakeCandidateSource struct {
+	src   ports.CandidateSource
+	err   error
+	calls int
+}
+
+func (f *fakeCandidateSource) NodeSource(_ context.Context, _, _, _ string) (ports.CandidateSource, error) {
+	f.calls++
+	return f.src, f.err
+}
+
 // fakeArtifacts records writes in memory and returns deterministic URIs.
 type fakeArtifacts struct {
 	written map[string]string
@@ -94,16 +179,12 @@ func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, e
 	return "s3://bucket/" + key, nil
 }
 
-// fakeSource returns a fixed file content or an error for ReadFile, and a fixed
-// diff or an error for CommitFileDiff. readPath records the last ReadFile path;
-// diffPaths records every CommitFileDiff path so tests can assert selection.
+// fakeSource returns a fixed file content or an error for ReadFile. readPath
+// records the last ReadFile path so tests can assert selection.
 type fakeSource struct {
-	content   string
-	err       error
-	readPath  string
-	diff      string
-	diffErr   error
-	diffPaths []string
+	content  string
+	err      error
+	readPath string
 }
 
 func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, error) {
@@ -113,11 +194,6 @@ func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, err
 
 func (f *fakeSource) ListDir(_ context.Context, _, _, _ string) ([]string, error) {
 	return nil, nil
-}
-
-func (f *fakeSource) CommitFileDiff(_ context.Context, _, _, path string) (string, error) {
-	f.diffPaths = append(f.diffPaths, path)
-	return f.diff, f.diffErr
 }
 
 // TestValidation_NoCandidateSQL_Skips verifies that a validation trigger with
@@ -133,104 +209,13 @@ func TestValidation_NoCandidateSQL_Skips(t *testing.T) {
 	}
 }
 
-// TestValidation_Step2Success_ResolvesSource verifies that when Ancestry, the
-// service repo mapping, and the source read all succeed, and Step-2 returns a
-// confident, changed result, the final proposal points to the source
-// artifacts, SourceResolved is true, FilePath is the joined repo path, and the
-// candidate artifacts (Step 1) are still present on the proposal.
-func TestValidation_Step2Success_ResolvesSource(t *testing.T) {
-	svc := Services{
-		LLM: &fakeLLM{queue: []ports.ProposeResult{
-			{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"}, // step 1
-			{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},    // step 2
-		}},
-		Evidence:         fakeEvidence{data: map[string]string{"s3://cand": "SELECT 0", "s3://log": "boom"}},
-		Source:           &fakeSource{content: "SELECT 0 -- original"},
-		Sanitizer:        fakeSanitizer{},
-		Ancestry:         fakeAncestry{filePath: "models/x.sql", service: "svc"},
-		Artifacts:        &fakeArtifacts{},
-		Logger:           testLogger(),
-		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
-	}
-	in := Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
-		CandidateArtifactURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
-	r, err := validationFixer{}.Propose(context.Background(), svc, in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
-		t.Fatalf("got status=%v sourceResolved=%v", r.Proposal.Status, r.Proposal.SourceResolved)
-	}
-	if r.Proposal.FilePath != "services/svc/models/x.sql" {
-		t.Fatalf("FilePath = %q", r.Proposal.FilePath)
-	}
-	if r.Proposal.Repo != "o/repo" || r.Proposal.CommitSHA != "sha" {
-		t.Fatalf("Repo/CommitSHA not set on source-resolved proposal: %+v", r.Proposal)
-	}
-	if r.Proposal.CandidateFixSQLURI == "" || r.Proposal.CandidateFixDiffURI == "" {
-		t.Fatal("candidate artifacts must be written unconditionally")
-	}
-	if r.Proposal.ProposedSQLURI == r.Proposal.CandidateFixSQLURI {
-		t.Fatal("final ProposedSQLURI must point to the source artifact, not the candidate")
-	}
-}
-
-// TestValidation_Step2Degrade_SourceReadError verifies that when the source
-// read fails, the handler falls back to the candidate proposal:
-// SourceResolved=false, FilePath/Repo/CommitSHA empty, candidate artifacts
-// still written, status still proposed (step 1 succeeded).
-func TestValidation_Step2Degrade_SourceReadError(t *testing.T) {
-	svc := Services{
-		LLM: &fakeLLM{queue: []ports.ProposeResult{
-			{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
-		}},
-		Evidence:         fakeEvidence{data: map[string]string{"s3://cand": "SELECT 0", "s3://log": "boom"}},
-		Source:           &fakeSource{err: fmt.Errorf("github 503")},
-		Sanitizer:        fakeSanitizer{},
-		Ancestry:         fakeAncestry{filePath: "models/x.sql", service: "svc"},
-		Artifacts:        &fakeArtifacts{},
-		Logger:           testLogger(),
-		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
-	}
-	in := Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
-		CandidateArtifactURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
-	r, err := validationFixer{}.Propose(context.Background(), svc, in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Proposal.Status != proposal.StatusProposed {
-		t.Fatalf("status = %v want proposed", r.Proposal.Status)
-	}
-	if r.Proposal.SourceResolved {
-		t.Fatal("expected SourceResolved=false on source read error")
-	}
-	if r.Proposal.FilePath != "" || r.Proposal.Repo != "" || r.Proposal.CommitSHA != "" {
-		t.Fatalf("expected empty source-location fields on degrade, got %+v", r.Proposal)
-	}
-	if r.Proposal.CandidateFixSQLURI == "" || r.Proposal.CandidateFixDiffURI == "" {
-		t.Fatal("candidate artifacts must still be written on degrade")
-	}
-	if r.Proposal.ProposedSQLURI != r.Proposal.CandidateFixSQLURI {
-		t.Fatal("final ProposedSQLURI must fall back to the candidate on degrade")
-	}
-}
-
 // TestValidation_Step1Empty_Fails verifies that an empty Step-1 LLM result is
 // recorded as failed without any artifact writes.
 func TestValidation_Step1Empty_Fails(t *testing.T) {
-	svc := Services{
-		LLM:              &fakeLLM{queue: []ports.ProposeResult{{ProposedSQL: ""}}},
-		Evidence:         fakeEvidence{data: map[string]string{"s3://cand": "SELECT 0", "s3://log": "boom"}},
-		Source:           &fakeSource{content: "SELECT 0 -- original"},
-		Sanitizer:        fakeSanitizer{},
-		Ancestry:         fakeAncestry{filePath: "models/x.sql", service: "svc"},
-		Artifacts:        &fakeArtifacts{},
-		Logger:           testLogger(),
-		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
-	}
-	in := Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
-		CandidateArtifactURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
-	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	svc := validationSvc()
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{ProposedSQL: ""}}}
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,27 +224,117 @@ func TestValidation_Step1Empty_Fails(t *testing.T) {
 	}
 }
 
-// TestValidation_AncestryError_ProceedsDegraded verifies the best-effort
-// Ancestry contract: an Ancestry error must not fail the fixer. It proceeds
-// with nil ancestors and empty filePath/serviceName, which in turn means Step 2
-// degrades to the candidate proposal (no repo mapping is possible without a
-// service name).
-func TestValidation_AncestryError_ProceedsDegraded(t *testing.T) {
-	svc := Services{
+// validationSvc builds a Services wired for a validation-fix happy path: a
+// located source file, a bundle that resolves the candidate source, a current
+// version, no upstream changes, and no precedents. Individual tests override
+// whichever collaborator their scenario needs.
+func validationSvc() Services {
+	return Services{
 		LLM: &fakeLLM{queue: []ports.ProposeResult{
-			{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+			{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"}, // step 1
+			{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},    // step 2
 		}},
 		Evidence:         fakeEvidence{data: map[string]string{"s3://cand": "SELECT 0", "s3://log": "boom"}},
-		Source:           &fakeSource{err: fmt.Errorf("must not be called")},
+		Source:           &fakeSource{content: "SELECT 0 -- github"},
 		Sanitizer:        fakeSanitizer{},
-		Ancestry:         fakeAncestry{err: fmt.Errorf("ancestry unavailable")},
+		Locator:          fakeLocator{filePath: "models/self.sql", serviceName: "svc"},
+		CandidateSource:  &fakeCandidateSource{src: ports.CandidateSource{RawCode: "SELECT 0 -- bundle", Runtime: "dbt"}},
+		Upstream:         &fakeUpstream{},
+		Versions:         &fakeVersions{},
+		Precedents:       &fakePrecedents{},
 		Artifacts:        &fakeArtifacts{},
 		Logger:           testLogger(),
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 	}
-	in := Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
-		CandidateArtifactURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
-	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+}
+
+func validationInput() Input {
+	return Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
+		CandidateArtifactURI: "s3://cand", DBTLogURI: "s3://log",
+		CodeBundleURI: "s3://continuo/code-bundles/rel-1/bundle.json", Attempt: 1}
+}
+
+// twoStepLLM returns a fresh fake LLM whose Step-1 and Step-2 calls both
+// succeed, for tests that only care about the evidence assembled, not the
+// LLM's answers.
+func twoStepLLM() *fakeLLM {
+	return &fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
+		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+	}}
+}
+
+// TestValidation_SourceFromBundle_NoGitHubRead verifies that when the code
+// bundle resolves the candidate source, Step 2 never reads GitHub: the
+// GitHub fake is set to error if called, and the proposal still resolves the
+// source (from the bundle) with FilePath built from the located path.
+func TestValidation_SourceFromBundle_NoGitHubRead(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "SELECT 0 -- bundle", Runtime: "dbt"}}
+	src := &fakeSource{err: fmt.Errorf("must not be called")}
+	svc.Source = src
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v", r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+	if r.Proposal.FilePath != "services/svc/models/self.sql" {
+		t.Fatalf("FilePath = %q, want the located path joined with the repo prefix", r.Proposal.FilePath)
+	}
+	if src.readPath != "" {
+		t.Fatalf("Step 2 must not read GitHub when the bundle resolves the source, read %q", src.readPath)
+	}
+}
+
+// TestValidation_BundleNotFound_FallsBackToGitHub verifies that a bundle miss
+// (ports.ErrNotFound) falls back to a GitHub read at the located path, still
+// resolving the source.
+func TestValidation_BundleNotFound_FallsBackToGitHub(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
+	svc.Source = &fakeSource{content: "SELECT 0 -- github"}
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v, want the github fallback to resolve the source", r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+}
+
+// TestValidation_BundleEmptyRawCode_FallsBackToGitHub verifies that a bundle
+// entry that exists (Runtime dbt, no error) but carries an empty RawCode is
+// treated as a permanent miss rather than a resolved-but-empty source: Step 2
+// falls back to the GitHub read and resolves the source from there, instead of
+// returning early with nothing to diff or fix.
+func TestValidation_BundleEmptyRawCode_FallsBackToGitHub(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "", Runtime: "dbt"}}
+	svc.Source = &fakeSource{content: "SELECT 0 -- github"}
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v, want the github fallback to resolve the source when the bundle's raw_code is empty",
+			r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+}
+
+// TestValidation_BundleAndGitHubUnavailable_CandidateOnly verifies that when
+// both the bundle and the GitHub fallback miss, the proposal degrades to the
+// pre-existing candidate-only end state: still proposed, SourceResolved=false.
+func TestValidation_BundleAndGitHubUnavailable_CandidateOnly(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
+	svc.Source = &fakeSource{err: ports.ErrSourceNotFound}
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,109 +342,118 @@ func TestValidation_AncestryError_ProceedsDegraded(t *testing.T) {
 		t.Fatalf("status = %v want proposed", r.Proposal.Status)
 	}
 	if r.Proposal.SourceResolved {
-		t.Fatal("expected SourceResolved=false when ancestry errors")
+		t.Fatal("expected SourceResolved=false when both the bundle and github are unavailable")
 	}
 }
 
-// validationSvc builds a Services wired for a validation-fix happy path with the
-// given ancestors and source.
-func validationSvc(ancestors []prompt.Ancestor, src *fakeSource) Services {
-	return Services{
-		LLM: &fakeLLM{queue: []ports.ProposeResult{
-			{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
-			{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
-		}},
-		Evidence:         fakeEvidence{data: map[string]string{"s3://cand": "SELECT 0", "s3://log": "boom"}},
-		Source:           src,
-		Sanitizer:        fakeSanitizer{},
-		Ancestry:         fakeAncestry{filePath: "models/self.sql", service: "svc", ancestry: ancestors},
-		Artifacts:        &fakeArtifacts{},
-		Logger:           testLogger(),
-		ServiceRepoPaths: map[string]string{"svc": "services/svc", "up-svc": "services/up-svc"},
+// TestValidation_BundleResolvedButLocationUnavailable_CandidateOnly verifies
+// that a bundle-resolved candidate source alone never produces a
+// source-resolved proposal: the bundle needs no file path to resolve (it is
+// keyed by node id), but Step 2 still requires a located file path and a
+// mapped service to build the path a PR would target, so it must degrade to
+// the candidate-only proposal rather than record one built from an empty or
+// unmapped location.
+func TestValidation_BundleResolvedButLocationUnavailable_CandidateOnly(t *testing.T) {
+	t.Run("locator_error", func(t *testing.T) {
+		svc := validationSvc()
+		svc.Locator = fakeLocator{err: fmt.Errorf("node location unavailable")}
+
+		r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Proposal.Status != proposal.StatusProposed {
+			t.Fatalf("status = %v want proposed", r.Proposal.Status)
+		}
+		if r.Proposal.SourceResolved {
+			t.Fatal("expected SourceResolved=false when the node cannot be located, even though the bundle resolved a candidate source")
+		}
+	})
+
+	t.Run("unmapped_service", func(t *testing.T) {
+		svc := validationSvc()
+		svc.Locator = fakeLocator{filePath: "models/self.sql", serviceName: "unknown-service"}
+
+		r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Proposal.Status != proposal.StatusProposed {
+			t.Fatalf("status = %v want proposed", r.Proposal.Status)
+		}
+		if r.Proposal.SourceResolved {
+			t.Fatal("expected SourceResolved=false when the located service has no repo mapping, even though the bundle resolved a candidate source")
+		}
+	})
+}
+
+// TestValidation_BundleTransientError_Redelivers verifies that a transient
+// bundle fetch error (not ports.ErrNotFound) propagates as an error rather
+// than degrading, so the trigger is redelivered and no proposal is produced.
+func TestValidation_BundleTransientError_Redelivers(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{err: fmt.Errorf("s3 5xx")}
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err == nil {
+		t.Fatal("expected a transient bundle error to be returned so the trigger redelivers")
+	}
+	if r.Proposal.Status != "" {
+		t.Fatalf("expected no proposal on a transient bundle error, got %+v", r.Proposal)
 	}
 }
 
-func validationInput() Input {
-	return Input{Source: "validation", ReleaseID: "r", NodeID: "n", Repo: "o/repo", CommitSHA: "sha",
-		CandidateArtifactURI: "s3://cand", DBTLogURI: "s3://log", Attempt: 1}
-}
-
-// TestValidation_UpstreamDiffs_EmbeddedInStep1Prompt verifies that a changed
-// ancestor's diff is fetched at its own repo/commit and rendered into the Step-1
-// prompt.
-func TestValidation_UpstreamDiffs_EmbeddedInStep1Prompt(t *testing.T) {
-	llm := &fakeLLM{queue: []ports.ProposeResult{
-		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
-		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
-	}}
-	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ -1 +1 @@\n-old_col\n+new_col"}
-	svc := validationSvc([]prompt.Ancestor{
-		{NodeID: "up.node", ServiceName: "up-svc", LastCommitSHA: "upsha", LastRepo: "o/up-repo", FilePath: "models/up.sql", Depth: 1},
-	}, src)
+// TestValidation_OwnChangeDiff_InPrompt verifies that when the node has a
+// recorded current version, the unified diff from that version to the
+// resolved candidate source is embedded in the Step-1 prompt under "What this
+// release changed".
+func TestValidation_OwnChangeDiff_InPrompt(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "select bad", Runtime: "dbt"}}
+	svc.Versions = &fakeVersions{v: ports.CurrentVersion{RawCode: "select good"}, ok: true}
+	llm := twoStepLLM()
 	svc.LLM = llm
 
-	_, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
-	if err != nil {
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
 		t.Fatal(err)
 	}
-	if len(src.diffPaths) != 1 || src.diffPaths[0] != "services/up-svc/models/up.sql" {
-		t.Fatalf("CommitFileDiff paths = %v, want [services/up-svc/models/up.sql]", src.diffPaths)
+	if len(llm.requests) == 0 || !strings.Contains(llm.requests[0].User, "What this release changed") {
+		t.Fatalf("step-1 prompt must contain the own-change diff section:\n%s", llm.requests[0].User)
 	}
-	if len(llm.requests) == 0 || !strings.Contains(llm.requests[0].User, "new_col") {
-		t.Fatalf("step-1 prompt must contain the upstream diff:\n%s", llm.requests[0].User)
+	if !strings.Contains(llm.requests[0].User, "-select good") || !strings.Contains(llm.requests[0].User, "+select bad") {
+		t.Fatalf("step-1 prompt must contain the diff of the last promoted version to the candidate:\n%s", llm.requests[0].User)
 	}
 }
 
-// TestValidation_UpstreamDiffs_SkipsUnstampedAncestors verifies ancestors without
-// a commit sha, repo, file path, or a known service mapping are not fetched.
-func TestValidation_UpstreamDiffs_SkipsUnstampedAncestors(t *testing.T) {
-	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ x @@"}
-	svc := validationSvc([]prompt.Ancestor{
-		{NodeID: "no-sha", ServiceName: "up-svc", LastRepo: "o/up-repo", FilePath: "models/a.sql", Depth: 1},
-		{NodeID: "no-repo", ServiceName: "up-svc", LastCommitSHA: "s", FilePath: "models/b.sql", Depth: 1},
-		{NodeID: "no-map", ServiceName: "unknown", LastCommitSHA: "s", LastRepo: "o/x", FilePath: "c.sql", Depth: 1},
-	}, src)
+// TestValidation_OwnChangeDiff_Sanitized verifies the own-change diff is run
+// through the LogSanitizer before it is embedded in the Step-1 prompt, so a
+// secret in a changed line is redacted rather than sent to the external LLM.
+func TestValidation_OwnChangeDiff_Sanitized(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "select 1 -- password = SEKRET", Runtime: "dbt"}}
+	svc.Versions = &fakeVersions{v: ports.CurrentVersion{RawCode: "select 1"}, ok: true}
+	svc.Sanitizer = redactingSanitizer{secret: "SEKRET", marker: "[redacted]"}
+	llm := twoStepLLM()
+	svc.LLM = llm
 
 	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
 		t.Fatal(err)
 	}
-	if len(src.diffPaths) != 0 {
-		t.Fatalf("no diff should be fetched for unstamped/unmapped ancestors, got %v", src.diffPaths)
+	if strings.Contains(llm.requests[0].User, "SEKRET") {
+		t.Fatalf("unsanitized secret leaked into the prompt via the own-change diff:\n%s", llm.requests[0].User)
+	}
+	if !strings.Contains(llm.requests[0].User, "[redacted]") {
+		t.Fatalf("sanitized marker missing from the embedded own-change diff:\n%s", llm.requests[0].User)
 	}
 }
 
-// TestValidation_UpstreamDiffs_CapsAtFive verifies at most maxUpstreamDiffs diffs
-// are fetched even when more eligible ancestors are present.
-func TestValidation_UpstreamDiffs_CapsAtFive(t *testing.T) {
-	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ x @@"}
-	var ancestors []prompt.Ancestor
-	for i := 0; i < 8; i++ {
-		ancestors = append(ancestors, prompt.Ancestor{
-			NodeID: fmt.Sprintf("up.%d", i), ServiceName: "up-svc", LastCommitSHA: "s",
-			LastRepo: "o/up-repo", FilePath: fmt.Sprintf("models/up%d.sql", i), Depth: 1,
-		})
-	}
-	svc := validationSvc(ancestors, src)
-
-	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
-		t.Fatal(err)
-	}
-	if len(src.diffPaths) != maxUpstreamDiffs {
-		t.Fatalf("fetched %d diffs, want cap of %d", len(src.diffPaths), maxUpstreamDiffs)
-	}
-}
-
-// TestValidation_UpstreamDiffs_BestEffortOnError verifies a CommitFileDiff error
-// is swallowed: the proposal is still produced and no diff block is added.
-func TestValidation_UpstreamDiffs_BestEffortOnError(t *testing.T) {
-	llm := &fakeLLM{queue: []ports.ProposeResult{
-		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
-		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
-	}}
-	src := &fakeSource{content: "SELECT 0 -- original", diffErr: fmt.Errorf("github 503")}
-	svc := validationSvc([]prompt.Ancestor{
-		{NodeID: "up.node", ServiceName: "up-svc", LastCommitSHA: "upsha", LastRepo: "o/up-repo", FilePath: "models/up.sql", Depth: 1},
-	}, src)
+// TestValidation_NoCurrentVersion_NoOwnChangeSection verifies that when the
+// node has no recorded current version, the prompt has no own-change section,
+// and the proposal is still produced.
+func TestValidation_NoCurrentVersion_NoOwnChangeSection(t *testing.T) {
+	svc := validationSvc()
+	svc.Versions = &fakeVersions{ok: false}
+	llm := twoStepLLM()
 	svc.LLM = llm
 
 	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
@@ -379,58 +463,278 @@ func TestValidation_UpstreamDiffs_BestEffortOnError(t *testing.T) {
 	if r.Proposal.Status != proposal.StatusProposed {
 		t.Fatalf("status = %v want proposed", r.Proposal.Status)
 	}
-	if strings.Contains(llm.requests[0].User, "```diff") {
-		t.Fatalf("failed diff fetch must not add a diff block:\n%s", llm.requests[0].User)
+	if strings.Contains(llm.requests[0].User, "What this release changed") {
+		t.Fatalf("no current version means no own-change section:\n%s", llm.requests[0].User)
 	}
 }
 
-// TestValidation_UpstreamDiffs_CapsAttemptsOnError verifies the five-fetch cap
-// counts attempts, not successes: when every eligible ancestor's diff read fails,
-// the loop still issues at most maxUpstreamDiffs CommitFileDiff calls rather than
-// one per ancestor. This bounds the blast radius of a GitHub outage over a wide
-// ancestry on a serial consumer.
-func TestValidation_UpstreamDiffs_CapsAttemptsOnError(t *testing.T) {
-	src := &fakeSource{content: "SELECT 0 -- original", diffErr: fmt.Errorf("github 503")}
-	var ancestors []prompt.Ancestor
-	for i := 0; i < 8; i++ {
-		ancestors = append(ancestors, prompt.Ancestor{
-			NodeID: fmt.Sprintf("up.%d", i), ServiceName: "up-svc", LastCommitSHA: "s",
-			LastRepo: "o/up-repo", FilePath: fmt.Sprintf("models/up%d.sql", i), Depth: 1,
-		})
-	}
-	svc := validationSvc(ancestors, src)
+// TestValidation_UpstreamChanges_InPrompt verifies that an upstream change's
+// code diff and resolved-config diff both render in the Step-1 prompt.
+func TestValidation_UpstreamChanges_InPrompt(t *testing.T) {
+	svc := validationSvc()
+	svc.Upstream = &fakeUpstream{changes: []prompt.UpstreamChange{
+		{NodeID: "analytics.payments", Depth: 1, CodeDiff: "-a\n+b",
+			ConfigDiff: `-"materialized": "table"` + "\n" + `+"materialized": "incremental"`},
+	}}
+	llm := twoStepLLM()
+	svc.LLM = llm
 
 	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
 		t.Fatal(err)
 	}
-	if len(src.diffPaths) != maxUpstreamDiffs {
-		t.Fatalf("attempted %d fetches on all-error ancestry, want cap of %d", len(src.diffPaths), maxUpstreamDiffs)
+	if !strings.Contains(llm.requests[0].User, "analytics.payments") || !strings.Contains(llm.requests[0].User, "-a\n+b") {
+		t.Fatalf("step-1 prompt missing the upstream code diff:\n%s", llm.requests[0].User)
+	}
+	if !strings.Contains(llm.requests[0].User, `+"materialized": "incremental"`) {
+		t.Fatalf("step-1 prompt missing the upstream config diff:\n%s", llm.requests[0].User)
 	}
 }
 
-// TestValidation_UpstreamDiffs_SanitizesPatch verifies the upstream patch is run
-// through the LogSanitizer before it is embedded in the prompt, so a secret in a
-// patched line is redacted rather than sent to the external LLM.
-func TestValidation_UpstreamDiffs_SanitizesPatch(t *testing.T) {
-	llm := &fakeLLM{queue: []ports.ProposeResult{
-		{ProposedSQL: "SELECT 1 -- candidate", Confidence: "high"},
-		{ProposedSQL: "SELECT 1 -- source", Confidence: "high"},
+// TestValidation_UpstreamChanges_Sanitized verifies that an upstream change's
+// code diff and config diff are both run through the LogSanitizer before they
+// are embedded in the Step-1 prompt, so a secret in either is redacted rather
+// than sent to the external LLM.
+func TestValidation_UpstreamChanges_Sanitized(t *testing.T) {
+	svc := validationSvc()
+	svc.Upstream = &fakeUpstream{changes: []prompt.UpstreamChange{
+		{NodeID: "analytics.payments", Depth: 1,
+			CodeDiff:   "-a\n+password = SEKRET",
+			ConfigDiff: `-"x": "y"` + "\n" + `+"token": "SEKRET"`},
 	}}
-	src := &fakeSource{content: "SELECT 0 -- original", diff: "@@ -1 +1 @@\n-old\n+password = SEKRET"}
-	svc := validationSvc([]prompt.Ancestor{
-		{NodeID: "up.node", ServiceName: "up-svc", LastCommitSHA: "upsha", LastRepo: "o/up-repo", FilePath: "models/up.sql", Depth: 1},
-	}, src)
-	svc.LLM = llm
 	svc.Sanitizer = redactingSanitizer{secret: "SEKRET", marker: "[redacted]"}
+	llm := twoStepLLM()
+	svc.LLM = llm
 
 	if _, err := (validationFixer{}).Propose(context.Background(), svc, validationInput()); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(llm.requests[0].User, "SEKRET") {
-		t.Fatalf("unsanitized secret leaked into the prompt:\n%s", llm.requests[0].User)
+		t.Fatalf("unsanitized secret leaked into the prompt via an upstream diff:\n%s", llm.requests[0].User)
 	}
-	if !strings.Contains(llm.requests[0].User, "[redacted]") {
-		t.Fatalf("sanitized marker missing from the embedded diff:\n%s", llm.requests[0].User)
+	if strings.Count(llm.requests[0].User, "[redacted]") != 2 {
+		t.Fatalf("expected the marker in place of both the code and config diff secrets:\n%s", llm.requests[0].User)
+	}
+}
+
+// TestValidation_PrecedentFields_Sanitized verifies that a precedent's
+// resolution diff and error excerpt are both run through the LogSanitizer
+// before they are embedded in the Step-1 prompt's "How similar failures were
+// fixed before" section, so a secret in either is redacted rather than sent
+// to the external LLM.
+func TestValidation_PrecedentFields_Sanitized(t *testing.T) {
+	svc := validationSvc()
+	svc.Precedents = &fakePrecedents{bySignature: map[string][]prompt.Precedent{
+		"sig-1": {
+			{
+				ReleaseID: "r-other", NodeID: "other-node",
+				Category: "validation", Reason: "type_mismatch",
+				ErrorExcerpt:   "column x default password = SEKRET",
+				RejectedAt:     "2026-01-01T00:00:00Z",
+				Resolved:       true,
+				ResolutionDiff: "-x\n+password = SEKRET",
+			},
+		},
+	}}
+	svc.Sanitizer = redactingSanitizer{secret: "SEKRET", marker: "[redacted]"}
+	llm := twoStepLLM()
+	svc.LLM = llm
+
+	in := validationInput()
+	in.ErrorSignature = "sig-1"
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, in); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(llm.requests[0].User, "SEKRET") {
+		t.Fatalf("unsanitized secret leaked into the prompt via a precedent:\n%s", llm.requests[0].User)
+	}
+	if strings.Count(llm.requests[0].User, "[redacted]") != 2 {
+		t.Fatalf("expected the marker in place of both the precedent's error excerpt and resolution diff:\n%s", llm.requests[0].User)
+	}
+}
+
+// TestValidation_GraphReadsFail_DegradesToBaseEvidence verifies that when the
+// upstream, version, and precedent lookups all error, the fixer still
+// proposes a fix from the candidate SQL and dbt log alone.
+func TestValidation_GraphReadsFail_DegradesToBaseEvidence(t *testing.T) {
+	svc := validationSvc()
+	svc.Upstream = &fakeUpstream{err: fmt.Errorf("graph unavailable")}
+	svc.Versions = &fakeVersions{err: fmt.Errorf("graph unavailable")}
+	svc.Precedents = &fakePrecedents{err: fmt.Errorf("neo4j unavailable")}
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed {
+		t.Fatalf("status = %v want proposed even when every graph read degrades", r.Proposal.Status)
+	}
+}
+
+// TestValidation_EmptyCandidateArtifactURI_SkipsBeforeAnyRead verifies that a
+// validation trigger with no candidate artifact is skipped before the
+// candidate-source, upstream, version, or precedent lookups are ever consulted,
+// so a transiently unreadable collaborator cannot turn the intended skip into a
+// redelivery. This covers a rejection with nothing to fix — a dbt seed, whose
+// candidate_artifact_uri is empty. It is NOT what protects the python path: a
+// python node's rejection carries a non-empty candidate_artifact_uri (a JSON
+// validation spec), which is guarded by node_type instead — see
+// TestValidation_PythonNode_SkipsBeforeAnyRead.
+func TestValidation_EmptyCandidateArtifactURI_SkipsBeforeAnyRead(t *testing.T) {
+	cs := &fakeCandidateSource{err: fmt.Errorf("must not be called")}
+	up := &fakeUpstream{err: fmt.Errorf("must not be called")}
+	vs := &fakeVersions{err: fmt.Errorf("must not be called")}
+	pr := &fakePrecedents{err: fmt.Errorf("must not be called")}
+	llm := &fakeLLM{}
+	svc := Services{
+		LLM: llm, CandidateSource: cs, Upstream: up, Versions: vs, Precedents: pr,
+		Logger: testLogger(),
+	}
+	in := Input{Source: "validation", ReleaseID: "r", NodeID: "n", CandidateArtifactURI: ""}
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call with no candidate artifact, got %d", llm.calls)
+	}
+	if cs.calls != 0 || up.calls != 0 || vs.calls != 0 || pr.calls != 0 {
+		t.Fatalf("expected zero calls to the candidate-source/upstream/versions/precedent fakes, got cs=%d up=%d vs=%d pr=%d",
+			cs.calls, up.calls, vs.calls, pr.calls)
+	}
+}
+
+// TestValidation_PythonNode_SkipsBeforeAnyRead enforces the non-negotiable
+// project invariant that no remediation path ever produces an LLM call or a
+// proposal for a python node, on the shape a python node actually produces:
+// manifest-controller uploads a JSON validation spec for a python node, so its
+// validation rejection carries a NON-EMPTY candidate_artifact_uri and the
+// empty-URI skip never fires. node_type on the trigger is what guards it, and
+// it must fire before the candidate artifact, the dbt log, the node location,
+// the code bundle, the current version, upstream changes, or precedent are
+// read.
+func TestValidation_PythonNode_SkipsBeforeAnyRead(t *testing.T) {
+	ev := &countingEvidence{}
+	cs := &fakeCandidateSource{src: ports.CandidateSource{
+		RawCode: `{"reads":["analytics.orders"],"output_columns":[]}`, Runtime: "python"}}
+	loc := &countingLocator{filePath: "python/report.py", serviceName: "svc"}
+	up := &fakeUpstream{}
+	vs := &fakeVersions{}
+	pr := &fakePrecedents{}
+	llm := &fakeLLM{}
+	svc := Services{
+		LLM: llm, Evidence: ev, CandidateSource: cs, Locator: loc,
+		Upstream: up, Versions: vs, Precedents: pr, Logger: testLogger(),
+	}
+	in := validationInput()
+	in.NodeType = "python-model"
+	in.FilePath, in.Service = "python/report.py", "svc"
+	in.CandidateArtifactURI = "s3://continuo/candidate-sql/r/candidate_n.json"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if r.Proposal.SourceResolved {
+		t.Fatal("a python node must never be recorded as source-resolved")
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call for a python node, got %d", llm.calls)
+	}
+	if ev.calls != 0 {
+		t.Fatalf("expected the evidence reader to be untouched, got %d calls", ev.calls)
+	}
+	if cs.calls != 0 || loc.calls != 0 || up.calls != 0 || vs.calls != 0 || pr.calls != 0 {
+		t.Fatalf("expected zero calls to the candidate-source/locator/upstream/versions/precedent fakes, got cs=%d loc=%d up=%d vs=%d pr=%d",
+			cs.calls, loc.calls, up.calls, vs.calls, pr.calls)
+	}
+}
+
+// TestValidation_BundleRuntimeNonDbt_NoProposal covers a trigger that carries no
+// node_type — the shape emitted before a validation rejection named the failing
+// node's kind. The only remaining signal is the runtime the code bundle records
+// for the node, and a non-dbt bundle entry's raw_code is the node's normalized
+// contract entry rather than model source. The fixer must skip on it: no LLM
+// call, and no repo read substituting for the bundle entry either.
+func TestValidation_BundleRuntimeNonDbt_NoProposal(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{
+		RawCode: `{"reads":["analytics.orders"],"output_columns":[]}`, Runtime: "python"}}
+	src := &fakeSource{content: "print('hello')"}
+	svc.Source = src
+	llm := twoStepLLM()
+	svc.LLM = llm
+
+	in := validationInput() // no node_type, as an older trigger carries none
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call for a non-dbt bundle entry, got %d", llm.calls)
+	}
+	if src.readPath != "" {
+		t.Fatalf("a repo read must not substitute for a non-dbt bundle entry; read %q", src.readPath)
+	}
+}
+
+// TestValidation_CandidateLocationPreferredOverPromotedTopology verifies that a
+// trigger carrying the candidate topology's own file path and service targets
+// that path, and never consults the promoted-topology lookup. The rejected
+// release was never promoted, so that lookup would return the PREVIOUS release's
+// path for a node whose candidate moved it — writing the fix to a file the
+// candidate no longer has.
+func TestValidation_CandidateLocationPreferredOverPromotedTopology(t *testing.T) {
+	svc := validationSvc()
+	loc := &countingLocator{filePath: "models/old_home.sql", serviceName: "svc"}
+	svc.Locator = loc
+
+	in := validationInput()
+	in.FilePath, in.Service = "models/staging/moved.sql", "svc"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v", r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+	if r.Proposal.FilePath != "services/svc/models/staging/moved.sql" {
+		t.Fatalf("file path = %q want the candidate's own path", r.Proposal.FilePath)
+	}
+	if loc.calls != 0 {
+		t.Fatalf("expected the promoted-topology lookup to be skipped, got %d calls", loc.calls)
+	}
+}
+
+// TestValidation_NoCandidateLocation_FallsBackToPromotedTopology verifies that a
+// trigger carrying no location still targets the path the promoted topology
+// reports, so a rejection emitted before the candidate location was carried
+// keeps resolving its source.
+func TestValidation_NoCandidateLocation_FallsBackToPromotedTopology(t *testing.T) {
+	svc := validationSvc()
+	loc := &countingLocator{filePath: "models/self.sql", serviceName: "svc"}
+	svc.Locator = loc
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.FilePath != "services/svc/models/self.sql" {
+		t.Fatalf("file path = %q want the promoted-topology path", r.Proposal.FilePath)
+	}
+	if loc.calls != 1 {
+		t.Fatalf("expected exactly one promoted-topology lookup, got %d", loc.calls)
 	}
 }
 

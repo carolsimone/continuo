@@ -58,19 +58,26 @@ func TestDuplicateTable_ReadsOnlyTheChangedFileAndProposesARename(t *testing.T) 
 	}
 }
 
-// TestDuplicateTable_SkipsAPythonTarget proves the fixer never reads or
-// prompts for a python claimant: its relation is declared in the service's
-// contract.yaml, whose repository path this system does not carry, so the
-// script named by FilePath cannot contain the fix. Before the NodeType check
-// existed, this Fixer read the script (the fake source map below would have
-// served it) and would have proposed a cosmetic, non-fixing edit.
-func TestDuplicateTable_SkipsAPythonTarget(t *testing.T) {
+// TestDuplicateTable_PythonTarget_NeverCallsLLMOrPrecedents proves the fixer
+// never reads, prompts, or queries precedents for a python claimant: its
+// relation is declared in the service's contract.yaml, whose repository path
+// this system does not carry, so the script named by FilePath cannot contain
+// the fix. Before the NodeType check existed, this Fixer read the script (the
+// fake source map below would have served it) and would have proposed a
+// cosmetic, non-fixing edit.
+//
+// This is a non-negotiable project invariant: no remediation path may ever
+// produce an LLM call or a proposal for a python node, so both the LLM fake
+// and the precedent fake must show zero calls, not just the terminal status.
+func TestDuplicateTable_PythonTarget_NeverCallsLLMOrPrecedents(t *testing.T) {
 	fs := &fakeSourceMap{files: map[string]string{"services/marketing/models/orders.py": "print('hello')"}}
 	llm := &fakeLLM{}
+	precedents := &fakePrecedents{}
 	svc := Services{
 		Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
 		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
 		ServiceRepoPaths: map[string]string{"marketing": "services/marketing", "finance": "services/finance"},
+		Precedents:       precedents,
 	}
 	in := Input{
 		Source: "duplicate_table", ReleaseID: "rel-1", NodeID: "analytics.orders",
@@ -87,8 +94,11 @@ func TestDuplicateTable_SkipsAPythonTarget(t *testing.T) {
 	if got := fs.readPaths(); len(got) != 0 {
 		t.Fatalf("readPaths = %v, want no read for a python target", got)
 	}
-	if len(llm.requests) != 0 {
-		t.Fatalf("expected no LLM call for a python target, got %d", len(llm.requests))
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call for a python target, got %d", llm.calls)
+	}
+	if precedents.calls != 0 {
+		t.Fatalf("expected no precedent lookup for a python target, got %d", precedents.calls)
 	}
 }
 

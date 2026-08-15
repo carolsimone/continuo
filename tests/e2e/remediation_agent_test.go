@@ -91,10 +91,10 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
 	// 3b. Seed the ftable_e :Table topology node in Neo4j so that the
-	//     remediation-agent's NodeContext (GetNodeAncestry gRPC) can resolve the
+	//     remediation-agent's Locator (GetNodeLocation gRPC) can resolve the
 	//     node's file path and service name. In a cold e2e no release has been
-	//     promoted yet, so Neo4j is empty; without this seed, NodeContext returns
-	//     NOT_FOUND and Step-2 source resolution degrades silently to
+	//     promoted yet, so Neo4j is empty; without this seed, GetNodeLocation
+	//     returns NOT_FOUND and Step-2 source resolution degrades silently to
 	//     source_resolved=false.
 	seedFTableETopologyNode(t, ctx, clients)
 
@@ -568,9 +568,11 @@ func stripS3Prefix(uri string) string {
 
 // seedFTableETopologyNode inserts a minimal :Table node for e2e_schema.ftable_e
 // into Neo4j. In a cold e2e no release has been promoted, so Neo4j is empty.
-// The remediation-agent's Step-2 source resolution calls GetNodeAncestry to
-// obtain the node's original_file_path and service_name; without this seed,
-// the gRPC call returns NOT_FOUND and source_resolved stays false.
+// The remediation-agent's Step-2 source resolution calls GetNodeLocation to
+// obtain the node's original_file_path and service_name (the candidate source
+// itself is read from the release's code bundle first, falling back to a
+// GitHub repo read only when the bundle misses); without this seed,
+// GetNodeLocation returns NOT_FOUND and source_resolved stays false.
 //
 // The node uses the same unique_id key format that the release-promotion handler
 // writes: "{schema_name}.{table_name}" (e.g. "e2e_schema.ftable_e"). The
@@ -603,10 +605,12 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 	})
 	require.NoError(t, err, "seed ftable_e topology node in Neo4j")
 
-	// Seed one upstream ancestor with stamped provenance (last_repo, last_commit_sha,
-	// last_changed_at) and a DEPENDS_ON edge from ftable_e, so GetNodeAncestry returns
-	// it as a recently-changed upstream and the remediation-agent fetches its diff from
-	// stub-github. The edge points downstream -> upstream, matching the promotion writer.
+	// Seed one upstream :Table with a DEPENDS_ON edge from ftable_e. The
+	// remediation-agent's upstream evidence now comes from GetUpstreamChanges,
+	// which ranks ancestors by their :NodeVersion history rather than by :Table
+	// properties; this cold e2e seeds no :NodeVersion for the ancestor, so it
+	// carries no change evidence and GetUpstreamChanges skips it. Kept as a
+	// topology fixture only — nothing in this test asserts on it.
 	// This ancestor node is private to this test (not the shared ftable_c fixture owned
 	// by seed_topology_test.go) so cleanup cannot corrupt or delete a node other e2e
 	// tests depend on.
@@ -617,10 +621,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 		    up.service_name       = $up_service,
 		    up.original_file_path = $up_file,
 		    up.node_type          = 'model',
-		    up.active             = true,
-		    up.last_repo          = $up_repo,
-		    up.last_commit_sha    = $up_sha,
-		    up.last_changed_at    = datetime($up_changed)
+		    up.active             = true
 		WITH up
 		MATCH (t:Table {unique_id: $uid})
 		MERGE (t)-[:DEPENDS_ON]->(up)
@@ -630,9 +631,6 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 		"up_table":   "ftable_upstream_diff",
 		"up_service": "service-2",
 		"up_file":    "models/ftable_upstream_diff.sql",
-		"up_repo":    "continuo/dbt-service-2",
-		"up_sha":     "upstreamsha0000000000000000000000000000000",
-		"up_changed": "2026-01-01T00:00:00Z",
 		"uid":        "e2e_schema.ftable_e",
 	})
 	require.NoError(t, err, "seed ftable_upstream_diff upstream ancestor in Neo4j")

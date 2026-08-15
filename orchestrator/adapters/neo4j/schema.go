@@ -85,9 +85,17 @@ var schemaStatements = []string{
 //     and unit versions alike). Ordering is promoted_at; the chain could
 //     neither order nor enumerate correctly, and nothing writes it any more.
 //     Re-running finds no edges and is a no-op.
+//   - remove_table_last_stamps: strips the retired last_* provenance stamp
+//     from every :Table. Version provenance lives on :NodeVersion; nothing
+//     reads these properties, and leaving them would serve stale commits to
+//     any future reader. Idempotent: REMOVE on an absent property is a no-op.
 var dataMigrations = []string{
 	"MATCH (r:Run) WHERE r.terminal_status IN ['SUCCEEDED', 'FAILED'] SET r.terminal_status = toLower(r.terminal_status)",
 	"MATCH ()-[p:PREVIOUS]->() DELETE p",
+	`MATCH (t:Table)
+	 WHERE t.last_commit_sha IS NOT NULL OR t.last_repo IS NOT NULL
+	    OR t.last_changed_at IS NOT NULL OR t.last_release_id IS NOT NULL
+	 REMOVE t.last_commit_sha, t.last_repo, t.last_changed_at, t.last_release_id`,
 }
 
 // awaitIndexTimeoutSeconds bounds how long InitSchema waits for the freshly

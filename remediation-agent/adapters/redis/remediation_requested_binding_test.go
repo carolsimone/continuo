@@ -71,7 +71,7 @@ func TestTriggerFromRequested_InvalidJSON(t *testing.T) {
 // TestTriggerFromRequested_SeedServiceField verifies that when a
 // remediation.requested:v1 payload carries the service field (set for
 // seed_build failures from the candidate topology), it is decoded into
-// trigger.Service so proposeFromSource can skip the Ancestry lookup.
+// trigger.Service so proposeFromSource can skip the NodeLocator lookup.
 func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
 	payload := map[string]any{
 		"event_id":        "evt-seed-1",
@@ -96,5 +96,21 @@ func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
 	require.Equal(t, "seed_build", trigger.Source)
 	require.Equal(t, "seeds/customers.csv", trigger.FilePath)
 	require.Equal(t, "svc-data", trigger.Service,
-		"service field must be decoded so proposeFromSource can skip Ancestry")
+		"service field must be decoded so proposeFromSource can skip the NodeLocator lookup")
+}
+
+func TestTriggerFromRequested_DecodesReasonAndBundleURI(t *testing.T) {
+	raw := []byte(`{"source":"validation","release_id":"rel-1","node_id":"analytics.orders",` +
+		`"error_signature":"sig-1","category":"sql_error","reason":"missing_column",` +
+		`"code_bundle_uri":"s3://continuo/code-bundles/rel-1/bundle.json"}`)
+	tr, err := triggerFromRequested(goredis.XMessage{ID: "1-1"}, raw)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if tr.Reason != "missing_column" {
+		t.Fatalf("Reason = %q", tr.Reason)
+	}
+	if tr.CodeBundleURI != "s3://continuo/code-bundles/rel-1/bundle.json" {
+		t.Fatalf("CodeBundleURI = %q", tr.CodeBundleURI)
+	}
 }

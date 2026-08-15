@@ -21,6 +21,9 @@ type fakeCodeVersionReader struct {
 	nodeVersions    []codeversion.VersionView
 	nodeVersionsErr error
 
+	currentNodeVersion    []codeversion.VersionView
+	currentNodeVersionErr error
+
 	versionsBySeqFrom codeversion.VersionView
 	versionsBySeqTo   codeversion.VersionView
 	versionsBySeqErr  error
@@ -41,16 +44,17 @@ type fakeCodeVersionReader struct {
 	runExecutionsErr error
 
 	// captured args, for assertions on what the service passed down.
-	gotNodeVersionsLimit       int32
-	gotNodeVersionsIncludeCode []bool // one entry per call, in call order
-	gotAncestorsDepth          int32
-	gotAncestorsSince          time.Time
-	gotAncestorsCap            int32
-	gotRunExecutionsLimit      int32
-	gotRunExecutionsOperation  string
-	gotUnitVersionsLimit       map[string]int32
-	gotUnitVersionsBatchIDs    []string
-	gotUnitVersionsBatchLimit  int32
+	gotNodeVersionsLimit             int32
+	gotNodeVersionsIncludeCode       []bool // one entry per call, in call order
+	gotCurrentNodeVersionIncludeCode []bool // one entry per call, in call order
+	gotAncestorsDepth                int32
+	gotAncestorsSince                time.Time
+	gotAncestorsCap                  int32
+	gotRunExecutionsLimit            int32
+	gotRunExecutionsOperation        string
+	gotUnitVersionsLimit             map[string]int32
+	gotUnitVersionsBatchIDs          []string
+	gotUnitVersionsBatchLimit        int32
 }
 
 func (f *fakeCodeVersionReader) NodeVersions(ctx context.Context, uniqueID string, limit int32, includeCode bool) ([]codeversion.VersionView, error) {
@@ -60,6 +64,14 @@ func (f *fakeCodeVersionReader) NodeVersions(ctx context.Context, uniqueID strin
 		return nil, f.nodeVersionsErr
 	}
 	return f.nodeVersions, nil
+}
+
+func (f *fakeCodeVersionReader) CurrentNodeVersion(ctx context.Context, uniqueID string, includeCode bool) ([]codeversion.VersionView, error) {
+	f.gotCurrentNodeVersionIncludeCode = append(f.gotCurrentNodeVersionIncludeCode, includeCode)
+	if f.currentNodeVersionErr != nil {
+		return nil, f.currentNodeVersionErr
+	}
+	return f.currentNodeVersion, nil
 }
 
 func (f *fakeCodeVersionReader) VersionsBySeq(ctx context.Context, uniqueID string, fromSeq, toSeq int64) (codeversion.VersionView, codeversion.VersionView, error) {
@@ -424,6 +436,52 @@ func TestCodeVersionQueryService_GetNodeVersions_IncludeCodePassesThrough(t *tes
 	require.NoError(t, err)
 	require.Len(t, r.gotNodeVersionsIncludeCode, 2)
 	assert.False(t, r.gotNodeVersionsIncludeCode[1])
+}
+
+// ---- GetCurrentNodeVersion ----
+
+func TestCodeVersionQueryService_GetCurrentNodeVersion_EmptyReturnsEmptySlice(t *testing.T) {
+	r := &fakeCodeVersionReader{currentNodeVersion: []codeversion.VersionView{}}
+	svc := newCodeVersionSvc(r)
+
+	versions, err := svc.GetCurrentNodeVersion(context.Background(), "known-node", false)
+	require.NoError(t, err)
+	assert.Empty(t, versions)
+	assert.NotNil(t, versions)
+}
+
+func TestCodeVersionQueryService_GetCurrentNodeVersion_UnknownNodeReturnsError(t *testing.T) {
+	r := &fakeCodeVersionReader{currentNodeVersionErr: domain.ErrNodeNotFound}
+	svc := newCodeVersionSvc(r)
+
+	_, err := svc.GetCurrentNodeVersion(context.Background(), "ghost-node", false)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrNodeNotFound))
+}
+
+func TestCodeVersionQueryService_GetCurrentNodeVersion_IncludeCodePassesThrough(t *testing.T) {
+	r := &fakeCodeVersionReader{}
+	svc := newCodeVersionSvc(r)
+
+	_, err := svc.GetCurrentNodeVersion(context.Background(), "node-1", true)
+	require.NoError(t, err)
+	require.Len(t, r.gotCurrentNodeVersionIncludeCode, 1)
+	assert.True(t, r.gotCurrentNodeVersionIncludeCode[0])
+
+	_, err = svc.GetCurrentNodeVersion(context.Background(), "node-1", false)
+	require.NoError(t, err)
+	require.Len(t, r.gotCurrentNodeVersionIncludeCode, 2)
+	assert.False(t, r.gotCurrentNodeVersionIncludeCode[1])
+}
+
+func TestCodeVersionQueryService_GetCurrentNodeVersion_ReturnsReaderResult(t *testing.T) {
+	want := []codeversion.VersionView{{ContentHash: "h1", RawCode: "select 1", IsCurrent: true}}
+	r := &fakeCodeVersionReader{currentNodeVersion: want}
+	svc := newCodeVersionSvc(r)
+
+	got, err := svc.GetCurrentNodeVersion(context.Background(), "node-1", true)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
 }
 
 // ---- GetNodeRunHistory ----

@@ -34,15 +34,26 @@ type Input struct {
 	// relation the model must stop producing.
 	RelationID     string
 	ErrorSignature string
-	Repo           string
-	CommitSHA      string
-	FilePath       string
-	Service        string
-	// NodeType is the target claimant's kind, set on a duplicate-relation
-	// failure. The duplicate-table Fixer skips a python target — its relation
-	// is declared in the service's contract.yaml, whose repository path this
-	// system does not carry, so the file named by FilePath cannot contain the
-	// fix.
+	// Category is the classifier's failure category; with Reason it forms the
+	// fallback precedent-lookup key.
+	Category string
+	// Reason is the classifier's finer-grained reason within the failure
+	// category.
+	Reason    string
+	Repo      string
+	CommitSHA string
+	FilePath  string
+	Service   string
+	// NodeType is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
+	// or python-model), set on validation and duplicate-relation failures.
+	// Both the validation and duplicate-table Fixers check it before reading
+	// anything, to enforce the invariant that no remediation path ever
+	// produces an LLM call or a proposal for a python node: the duplicate-table
+	// Fixer's target relation is declared in the service's contract.yaml,
+	// whose repository path this system does not carry, so the file named by
+	// FilePath cannot contain the fix; the validation Fixer's candidate
+	// artifact is a JSON validation spec, not SQL, so neither the diagnosis
+	// prompt nor a source fix can be built from what it carries.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID). Set on a duplicate-relation
@@ -52,7 +63,12 @@ type Input struct {
 	OtherFilePath        string
 	DBTLogURI            string
 	CandidateArtifactURI string
-	Attempt              int
+	// CodeBundleURI locates the release's code-bundle document, which carries
+	// every parsed node's raw source. Empty only for a compile-stage
+	// rejection, which precedes the parse that produces the bundle; every
+	// post-parse rejection (duplicate_table included) carries it.
+	CodeBundleURI string
+	Attempt       int
 }
 
 // Services bundles the ports a Fixer uses to produce a proposal.
@@ -61,10 +77,14 @@ type Services struct {
 	Source           ports.SourceReader
 	Evidence         ports.EvidenceReader
 	Sanitizer        ports.LogSanitizer
-	Ancestry         ports.AncestryClient
 	Artifacts        ports.ArtifactWriter
 	Logger           *slog.Logger
 	ServiceRepoPaths map[string]string
+	Locator          ports.NodeLocator
+	Upstream         ports.UpstreamChangeReader
+	Versions         ports.VersionReader
+	Precedents       ports.PrecedentReader
+	CandidateSource  ports.CandidateSourceReader
 }
 
 // Result is what a Fixer returns: the proposal (Status always set; artifact
@@ -145,6 +165,66 @@ func loadDBTLog(ctx context.Context, svc Services, uri string) (string, error) {
 	return svc.Sanitizer.Sanitize(raw), nil
 }
 
+// maxPrecedentsFetch bounds how many precedents one lookup requests; the
+// renderer separately bounds how many carry full diffs.
+const maxPrecedentsFetch = 10
+
+// loadPrecedents fetches precedent for this failure: by exact signature
+// first, then — when removing this failure's own recorded rejection leaves
+// the exact-signature result empty — by the broader (category, reason) class.
+// The orchestrator records this same remediation.requested trigger into the
+// case base this reads, so on a first occurrence of a signature the exact
+// match can consist of nothing but that self row; withoutSelf therefore runs
+// on each fetch BEFORE the fallback decision, not after, or a
+// first-of-its-kind signature would see len(ps)==1, skip the fallback as
+// unnecessary, and only then have the self-filter empty the result — losing
+// the fallback precisely when it is the only thing that could help.
+// Best-effort: any lookup error degrades to no section, never a blocked heal.
+// Each Fixer calls this only after its skip checks pass, so skip paths never
+// pay the lookup.
+func loadPrecedents(ctx context.Context, svc Services, in Input) []prompt.Precedent {
+	fetch := func(q ports.PrecedentQuery) []prompt.Precedent {
+		ps, err := svc.Precedents.Precedents(ctx, q)
+		if err != nil {
+			svc.Logger.Warn("precedent lookup unavailable; proceeding without precedent",
+				"node", in.NodeID, "error", err)
+			return nil
+		}
+		return withoutSelf(ps, in, svc.Sanitizer)
+	}
+	var ps []prompt.Precedent
+	if in.ErrorSignature != "" {
+		ps = fetch(ports.PrecedentQuery{Signature: in.ErrorSignature, Limit: maxPrecedentsFetch})
+	}
+	if len(ps) == 0 && in.Category != "" && in.Reason != "" {
+		ps = fetch(ports.PrecedentQuery{Category: in.Category, Reason: in.Reason, Limit: maxPrecedentsFetch})
+	}
+	return ps
+}
+
+// withoutSelf drops this failure's own recorded rejection from a precedent
+// result set (it IS this failure, not precedent for it) and sanitizes each
+// remaining precedent's free-text fields — the one place every Fixer's
+// precedents pass through, same as loadDBTLog sanitizes the current failure's
+// own log. Both arrive already bounded (the excerpt is capped by the
+// classifier, the diff by the orchestrator's renderer), so no truncation is
+// needed here. It allocates a fresh slice rather than filtering ps in place,
+// since ps is backed by whatever the PrecedentReader returned — a test fake's
+// fixture map today, potentially a caching adapter tomorrow — and reusing its
+// backing array would corrupt that value across calls.
+func withoutSelf(ps []prompt.Precedent, in Input, sanitizer ports.LogSanitizer) []prompt.Precedent {
+	out := make([]prompt.Precedent, 0, len(ps))
+	for _, p := range ps {
+		if p.ReleaseID == in.ReleaseID && p.NodeID == in.NodeID {
+			continue
+		}
+		p.ResolutionDiff = sanitizer.Sanitize(p.ResolutionDiff)
+		p.ErrorExcerpt = sanitizer.Sanitize(p.ErrorExcerpt)
+		out = append(out, p)
+	}
+	return out
+}
+
 // isLowConfidence reports whether the model's free-form confidence is "low"
 // (case-insensitive). A low-confidence answer is the model's signal that it
 // could not determine a safe fix, so a Fixer must not turn it into a proposal.
@@ -179,7 +259,7 @@ func writeSourceArtifacts(ctx context.Context, svc Services, in Input, original,
 // compileFixer and seedFixer embed it.
 type singleShot struct {
 	gather    func(ctx context.Context, svc Services, in Input) (Gathered, bool, error)
-	build     func(svc Services, g Gathered, in Input, dbtLog string) prompt.ProposeRequest
+	build     func(svc Services, g Gathered, in Input, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest
 	interpret func(res ports.ProposeResult, g Gathered, in Input) Outcome
 }
 
@@ -197,7 +277,8 @@ func (s singleShot) Propose(ctx context.Context, svc Services, in Input) (Result
 	if err != nil {
 		return Result{}, err // transient log read error: driver redelivers
 	}
-	res, err := svc.LLM.Propose(ctx, s.build(svc, g, in, dbtLog))
+	precedents := loadPrecedents(ctx, svc, in)
+	res, err := svc.LLM.Propose(ctx, s.build(svc, g, in, dbtLog, precedents))
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
 	}

@@ -126,6 +126,66 @@ func TestInitSchema_NormalizesLegacyTerminalStatusCasing(t *testing.T) {
 	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "second apply must be a no-op")
 }
 
+// TestDataMigration_RemovesTableLastStamps verifies the data migration strips
+// the retired last_commit_sha/last_repo/last_changed_at/last_release_id stamp
+// from a :Table while leaving the node's other properties untouched, and that
+// re-running InitSchema against an already-clean node stays a no-op.
+func TestDataMigration_RemovesTableLastStamps(t *testing.T) {
+	client := newTestClient(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx := context.Background()
+
+	marker := t.Name()
+	session := client.NewSession(ctx, neo4j.AccessModeWrite)
+	cleanup := func() {
+		s := client.NewSession(ctx, neo4j.AccessModeWrite)
+		defer s.Close(ctx)
+		_, _ = s.Run(ctx, "MATCH (t:Table {unique_id: $u}) DETACH DELETE t", map[string]any{"u": marker})
+	}
+	cleanup()
+	defer cleanup()
+
+	_, err := session.Run(ctx, `
+		CREATE (:Table {
+			unique_id: $u, schema_name: 'p', table_name: 't', service_name: 's',
+			last_commit_sha: 'a1', last_repo: 'acme/demo',
+			last_changed_at: datetime(), last_release_id: 'rel-1'
+		})
+	`, map[string]any{"u": marker})
+	require.NoError(t, err)
+	session.Close(ctx)
+
+	assertStampsGone := func(label string) {
+		read := client.NewSession(ctx, neo4j.AccessModeRead)
+		defer read.Close(ctx)
+		res, err := read.Run(ctx, `
+			MATCH (t:Table {unique_id: $u})
+			RETURN t.last_commit_sha AS c, t.last_repo AS r, t.last_changed_at AS at,
+			       t.last_release_id AS rel, t.schema_name AS schema_name,
+			       t.table_name AS table_name, t.service_name AS service_name
+		`, map[string]any{"u": marker})
+		require.NoError(t, err)
+		require.True(t, res.Next(ctx))
+		rec := res.Record()
+		for _, k := range []string{"c", "r", "at", "rel"} {
+			v, _ := rec.Get(k)
+			require.Nilf(t, v, "%s: last_* property %q must be gone", label, k)
+		}
+		schemaName, _ := rec.Get("schema_name")
+		tableName, _ := rec.Get("table_name")
+		serviceName, _ := rec.Get("service_name")
+		require.Equal(t, "p", schemaName, "%s: schema_name must survive the migration", label)
+		require.Equal(t, "t", tableName, "%s: table_name must survive the migration", label)
+		require.Equal(t, "s", serviceName, "%s: service_name must survive the migration", label)
+	}
+
+	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "first apply")
+	assertStampsGone("after first InitSchema")
+
+	require.NoError(t, neo4jinfra.InitSchema(ctx, client, logger), "second apply must be a no-op")
+	assertStampsGone("after second InitSchema")
+}
+
 // TestInitSchema_DeletesLegacyPreviousChainEdges verifies the data migration
 // removes the retired :PREVIOUS chain (both node and unit versions) while
 // leaving the version nodes themselves untouched.

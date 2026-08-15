@@ -246,12 +246,28 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		return fmt.Errorf("save release: %w", err)
 	}
 
-	// Build a map from node UniqueID to CandidateArtifactURI so each per-node entry
-	// in the rejected payload can carry the S3 pointer to the artifact that was
-	// validated — mirroring the dbt_log_uri pattern as a pointer, not inline content.
-	uriByNodeID := make(map[string]string, len(r.CandidateTopology()))
+	// Build a per-node lookup over the candidate topology so each entry in the
+	// rejected payload carries, alongside its outcome:
+	//   - candidate_artifact_uri: the S3 pointer to the artifact that was
+	//     validated — mirroring the dbt_log_uri pattern as a pointer, not inline
+	//     content;
+	//   - node_type, file_path, service: the node's kind and source location as
+	//     THIS candidate declares them.
+	// The location comes from the candidate topology rather than being resolved
+	// downstream because a rejected release is never promoted: the promoted
+	// topology holds nothing for a newly-added node, and the previous release's
+	// path for a node whose candidate moved it. node_type additionally lets the
+	// remediation agent recognise a python node — whose candidate artifact is a
+	// JSON validation spec rather than SQL — without a topology lookup of its own.
+	type candidateFacts struct{ artifactURI, nodeType, filePath, service string }
+	factsByNodeID := make(map[string]candidateFacts, len(r.CandidateTopology()))
 	for _, n := range r.CandidateTopology() {
-		uriByNodeID[n.UniqueID] = n.CandidateArtifactURI
+		factsByNodeID[n.UniqueID] = candidateFacts{
+			artifactURI: n.CandidateArtifactURI,
+			nodeType:    n.NodeType,
+			filePath:    n.OriginalFilePath,
+			service:     n.ServiceName,
+		}
 	}
 
 	type perNodeEntry struct {
@@ -260,20 +276,28 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		DBTLogURI            string `json:"dbt_log_uri,omitempty"`
 		RunResultsURI        string `json:"run_results_uri,omitempty"`
 		CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
+		NodeType             string `json:"node_type,omitempty"`
+		FilePath             string `json:"file_path,omitempty"`
+		Service              string `json:"service,omitempty"`
 	}
 	// Source the per-node audit rows from the projected read model, enriched with
-	// each node's candidate artifact pointer from the candidate topology.
+	// each node's candidate artifact pointer, kind, and source location from the
+	// candidate topology.
 	var perNode []perNodeEntry
 	for _, nr := range r.PerNodeResults() {
 		if nr.Stage != "validation" {
 			continue
 		}
+		f := factsByNodeID[nr.NodeID]
 		perNode = append(perNode, perNodeEntry{
 			NodeID:               nr.NodeID,
 			Status:               nr.Status,
 			DBTLogURI:            nr.DBTLogURI,
 			RunResultsURI:        nr.RunResultsURI,
-			CandidateArtifactURI: uriByNodeID[nr.NodeID],
+			CandidateArtifactURI: f.artifactURI,
+			NodeType:             f.nodeType,
+			FilePath:             f.filePath,
+			Service:              f.service,
 		})
 	}
 

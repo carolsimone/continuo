@@ -56,9 +56,9 @@ type FailureEvidence struct {
 	CandidateArtifactURI string
 	Repo                 string
 	CommitSHA            string
-	FilePath             string // optional; offending source path for compile (from dbt log) or seed_build (from candidate topology); empty → resolve via Ancestry(NodeID)
-	Service              string // optional; owning dbt service for source resolution; set for seed_build failures; empty for compile (NodeID is the service)
-	NodeType             string // optional; the target claimant's kind for a duplicate-relation failure (dbt-model, dbt-seed, dbt-snapshot, python-model); empty for every other source
+	FilePath             string // optional; offending source path — extracted from the dbt log for compile; threaded from the candidate topology for validation, seed_build, and duplicate_table
+	Service              string // optional; owning dbt service for source resolution; set for validation, seed_build, and duplicate_table failures; empty for compile (NodeID is the service)
+	NodeType             string // optional; the failing node's kind (dbt-model, dbt-seed, dbt-snapshot, python-model); set for validation and duplicate-relation failures — this is what lets the agent skip a python node without a topology lookup of its own; empty for compile and seed_build
 	OtherService         string // optional; for a duplicate-relation failure, the competing service that also produces the contested relation (RelationID)
 	OtherFilePath        string // optional; source path of that competing node — the only discriminator when both claimants are in one service
 	// CodeBundleURI locates the rejected release's code-bundle document;

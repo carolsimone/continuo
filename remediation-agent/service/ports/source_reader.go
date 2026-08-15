@@ -15,8 +15,4 @@ type SourceReader interface {
 	// ListDir returns the repo-relative paths of the files (not directories)
 	// directly under dir at ref. A missing directory → ErrSourceNotFound.
 	ListDir(ctx context.Context, repo, ref, dir string) ([]string, error)
-	// CommitFileDiff returns the unified patch for path as it changed in commit
-	// sha. A missing commit/repo, a commit that did not touch path, or a file
-	// returned without a patch → ErrSourceNotFound.
-	CommitFileDiff(ctx context.Context, repo, sha, path string) (string, error)
 }
