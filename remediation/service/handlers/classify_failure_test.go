@@ -205,7 +205,7 @@ func TestClassifyFailure_SeedSourceFilePathIsEmpty(t *testing.T) {
 	// A seed_build failure whose dbt log names a seeds/...csv path must NOT
 	// have file_path populated in the RemediationRequested trigger. Seed
 	// failures carry a real dbt node unique_id, so the remediation agent
-	// resolves the source file via the ancestry node lookup (NodeContext).
+	// resolves the source file via the orchestrator's GetNodeLocation.
 	// Populating file_path for seeds would send a service-name-like NodeID
 	// as serviceName in the agent, causing a miss on ServiceRepoPaths.
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
