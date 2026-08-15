@@ -44,11 +44,16 @@ type Input struct {
 	CommitSHA string
 	FilePath  string
 	Service   string
-	// NodeType is the target claimant's kind, set on a duplicate-relation
-	// failure. The duplicate-table Fixer skips a python target — its relation
-	// is declared in the service's contract.yaml, whose repository path this
-	// system does not carry, so the file named by FilePath cannot contain the
-	// fix.
+	// NodeType is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
+	// or python-model), set on validation and duplicate-relation failures.
+	// Both the validation and duplicate-table Fixers check it before reading
+	// anything, to enforce the invariant that no remediation path ever
+	// produces an LLM call or a proposal for a python node: the duplicate-table
+	// Fixer's target relation is declared in the service's contract.yaml,
+	// whose repository path this system does not carry, so the file named by
+	// FilePath cannot contain the fix; the validation Fixer's candidate
+	// artifact is a JSON validation spec, not SQL, so neither the diagnosis
+	// prompt nor a source fix can be built from what it carries.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID). Set on a duplicate-relation

@@ -510,8 +510,8 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // plus the competing claimant's service and file path, so the remediation
 // classifier can build evidence without resolving the source location
 // itself. That resolution is not available downstream: a rejected release is
-// never promoted, so Ancestry (which serves the promoted topology) holds
-// nothing for these nodes. relation_id carries the contested relation itself
+// never promoted, so GetNodeLocation (which serves the promoted topology)
+// holds nothing for these nodes. relation_id carries the contested relation itself
 // (DuplicateClaim.RelationID), separately from node_id (the target
 // claimant's own identity): remediation's classification signature and the
 // remediation agent's rename prompt need the relation, not the target's

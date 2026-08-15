@@ -48,19 +48,22 @@ type Trigger struct {
 	// post-parse rejection (duplicate_table included) carries it.
 	CodeBundleURI string
 	// FilePath is the offending dbt-project-relative source path. For compile
-	// failures it is extracted from the dbt log. For seed_build failures it is
-	// threaded from the candidate topology (OriginalFilePath on release.Node).
-	// Empty means fall back to the orchestrator graph's NodeLocator.
+	// failures it is extracted from the dbt log. For validation, seed_build,
+	// and duplicate_table failures it is threaded from the candidate topology
+	// (OriginalFilePath on release.Node). Empty on a validation or seed_build
+	// trigger falls back to the orchestrator graph's NodeLocator; a
+	// duplicate_table trigger has no such fallback.
 	FilePath string
 	// Service is the owning dbt service name for the failing node. Set for
-	// seed_build failures from the candidate topology so source resolution does
-	// not depend on a NodeLocator lookup. Empty for compile failures where
-	// NodeID acts as the service discriminator.
+	// validation, seed_build, and duplicate_table failures from the candidate
+	// topology. Empty for compile failures where NodeID acts as the service
+	// discriminator.
 	Service string
-	// NodeType is the target claimant's kind (dbt-model, dbt-seed,
-	// dbt-snapshot, or python-model), set on a duplicate-relation failure so
-	// the duplicate-table Fixer can skip a python target — whose source is not
-	// a single readable file — without a topology lookup of its own.
+	// NodeType is the failing node's kind (dbt-model, dbt-seed,
+	// dbt-snapshot, or python-model), set on validation and duplicate-relation
+	// failures so the validation and duplicate-table Fixers can each skip a
+	// python node — whose source is not a single readable file — without a
+	// topology lookup of their own.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID), set on a duplicate-relation

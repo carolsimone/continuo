@@ -72,7 +72,8 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 	// perNodeEntry is the outbox wire shape for a single seed-build-leg result.
 	// FilePath and Service carry the source location from the candidate topology
 	// so the remediation agent can locate the seed source file without querying
-	// Ancestry, which only holds promoted topology and cannot find newly-added seeds.
+	// GetNodeLocation, which only holds promoted topology and cannot find
+	// newly-added seeds.
 	type perNodeEntry struct {
 		NodeID        string `json:"node_id"`
 		Status        string `json:"status"`

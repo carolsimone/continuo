@@ -187,7 +187,7 @@ func TestEvidenceFromRejected_ParseExportLegRejections(t *testing.T) {
 // release.rejected:v1 payload carries file_path and service on a seed_build
 // per-node entry, evidenceFromRejected threads them into FailureEvidence so
 // the classifier can forward them to the remediation trigger — allowing the
-// agent to locate the source file without querying Ancestry.
+// agent to locate the source file without querying GetNodeLocation.
 func TestEvidenceFromRejected_SeedFilePathAndService(t *testing.T) {
 	raw := []byte(`{
 		"release_id":"rel-seed","stage":"seed_build","reason":"seed_build_failed",

@@ -55,13 +55,14 @@ type RemediationRequested struct {
 	CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
 	FilePath             string `json:"file_path,omitempty"`
 	// Service is the owning dbt service name for the failing node. Set for
-	// seed_build failures from the candidate topology so the agent can locate
-	// the source file without a Ancestry lookup.
+	// validation, seed_build, and duplicate_table failures from the candidate
+	// topology so the agent can locate the source file without a GetNodeLocation
+	// lookup.
 	Service string `json:"service,omitempty"`
-	// NodeType is the target claimant's kind (dbt-model, dbt-seed,
-	// dbt-snapshot, or python-model), set on duplicate-relation failures so the
-	// agent can skip a python target — whose source is not a single readable
-	// file — without a topology lookup of its own.
+	// NodeType is the failing node's kind (dbt-model, dbt-seed,
+	// dbt-snapshot, or python-model), set on validation and duplicate-relation
+	// failures so the agent can skip a python node — whose source is not a
+	// single readable file — without a topology lookup of its own.
 	NodeType string `json:"node_type,omitempty"`
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID). Set on duplicate-relation

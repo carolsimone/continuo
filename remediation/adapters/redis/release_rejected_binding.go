@@ -37,16 +37,18 @@ type rejectedPayload struct {
 		// claimant's own unique_id) — the two differ whenever the target
 		// carries an alias. Empty for every other reason.
 		RelationID string `json:"relation_id"`
-		// FilePath and Service carry the seed source location from the candidate
-		// topology (set by release-controller on seed_build rejections). When
-		// present, the remediation agent can locate the source file without
-		// querying Ancestry, which only holds promoted topology.
+		// FilePath and Service carry the source location from the candidate
+		// topology, set by release-controller on validation, seed_build, and
+		// duplicate_table rejections. When present, the remediation agent can
+		// locate the source file without querying GetNodeLocation, which only
+		// holds promoted topology.
 		FilePath string `json:"file_path"`
 		Service  string `json:"service"`
-		// NodeType is the target claimant's kind (dbt-model, dbt-seed,
-		// dbt-snapshot, or python-model), set on duplicate-relation rejections so
-		// the fixer can tell a python target apart from a dbt one without a
-		// topology lookup of its own.
+		// NodeType is the failing node's kind (dbt-model, dbt-seed,
+		// dbt-snapshot, or python-model), set by release-controller on
+		// validation and duplicate-relation rejections so the fixer can tell a
+		// python target apart from a dbt one without a topology lookup of its
+		// own.
 		NodeType string `json:"node_type"`
 		// OtherService and OtherFilePath locate the competing node that also
 		// produces the contested relation (RelationID), set on duplicate-relation
@@ -93,8 +95,9 @@ func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 // The Source field is derived from the payload's stage field; when stage is
 // absent, the reason field is used as a fallback. FilePath and Service carry
 // whatever the rejection payload set directly (populated by release-controller
-// for seed_build and duplicate_table); for compile failures, which have none,
-// the handler extracts FilePath from the dbt log after the log is fetched.
+// for validation, seed_build, and duplicate_table); for compile failures,
+// which have none, the handler extracts FilePath from the dbt log after the
+// log is fetched.
 func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	var p rejectedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {

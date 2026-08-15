@@ -40,11 +40,13 @@ type requestedPayload struct {
 	// post-parse rejection (duplicate_table included) carries it.
 	CodeBundleURI string `json:"code_bundle_uri"`
 	FilePath      string `json:"file_path"`
-	// Service is the owning dbt service for the failing node. Set for seed_build
-	// failures where the source location is threaded from the candidate topology.
+	// Service is the owning dbt service for the failing node. Set for
+	// validation, seed_build, and duplicate_table failures where the source
+	// location is threaded from the candidate topology.
 	Service string `json:"service"`
-	// NodeType is the target claimant's kind, set on a duplicate-relation
-	// failure so the fixer can skip a python target without a topology lookup.
+	// NodeType is the failing node's kind, set on validation and
+	// duplicate-relation failures so the fixer can skip a python node without a
+	// topology lookup.
 	NodeType string `json:"node_type"`
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID), set on a duplicate-relation

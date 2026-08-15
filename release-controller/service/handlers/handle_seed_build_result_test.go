@@ -425,8 +425,9 @@ func topoSeedsWithFilePath() release.Topology {
 // TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndService verifies
 // that when the candidate topology carries OriginalFilePath and ServiceName for
 // a seed node, the release.rejected:v1 per_node entry includes those values so
-// the remediation agent can locate the source file without querying Ancestry
-// (which only has promoted topology and cannot find newly-added seeds).
+// the remediation agent can locate the source file without querying
+// GetNodeLocation (which only has promoted topology and cannot find
+// newly-added seeds).
 func TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndService(t *testing.T) {
 	deps, store := newTestDeps(t)
 	releaseID := "rel-seed-fp"
