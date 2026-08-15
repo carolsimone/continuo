@@ -247,6 +247,43 @@ func TestCodeVersionQueryRepository_CurrentNodeVersion_UnknownNodeReturnsErrNode
 	assert.Nil(t, got)
 }
 
+// TestCodeVersionQueryRepository_CurrentNodeVersion_RetiredTableReturnsEmpty
+// proves a soft-retired node is excluded from CurrentNodeVersion rather than
+// reported as running its obsolete code. release_promotion_repository.go's
+// Step B retires a table a newer release dropped by setting active=false
+// without removing its :CURRENT edge — it is kept, inactive, solely so a
+// :Run-[:EXECUTES] edge from run history is not destroyed — so the :CURRENT
+// match here still finds a version unless the read filters on t.active.
+func TestCodeVersionQueryRepository_CurrentNodeVersion_RetiredTableReturnsEmpty(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.retired_node", "sha256:v1")
+
+	writer := newVersionRepo(client)
+	_, err := writer.WriteVersions(ctx, versionWriteInput("rel-1", time.Now().UTC(),
+		[]codeversion.NodeVersion{nodeInput("analytics.retired_node", "sha256:v1")}, nil))
+	require.NoError(t, err)
+
+	// Soft-retire: active=false, :CURRENT edge left untouched — exactly what
+	// Step B does, and distinct from the hard-orphan case above (DETACH DELETE
+	// of the :Table itself), which NodeVersions' retired-node test already
+	// covers.
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	res, err := s.Run(ctx,
+		`MATCH (t:Table {unique_id:'analytics.retired_node'}) SET t.active = false, t.retired_at = datetime()`, nil)
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+	require.NoError(t, s.Close(ctx))
+
+	repo := newCodeVersionQueryRepo(client)
+	got, err := repo.CurrentNodeVersion(ctx, "analytics.retired_node", true)
+	require.NoError(t, err)
+	assert.Empty(t, got, "a retired table's obsolete :CURRENT version must not be reported as running now")
+}
+
 // ---- VersionsBySeq ----
 
 func TestCodeVersionQueryRepository_VersionsBySeq_ReturnsNamedPair(t *testing.T) {

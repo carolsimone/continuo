@@ -128,13 +128,19 @@ func (r *CodeVersionQueryRepository) NodeVersions(ctx context.Context, uniqueID 
 // :CURRENT target — as a 0-or-1 slice. Unlike NodeVersions' newest-first
 // ordering, this is revert-safe: after a revert the current version is not
 // the newest. An unknown node returns ErrNodeNotFound; a known node with no
-// current version returns an empty slice.
+// current version returns an empty slice — which is also what a retired node
+// returns: retirement (release_promotion_repository.go) sets t.active=false
+// without removing the :CURRENT edge, so a run-referenced retired :Table can
+// still point at code that no longer runs. The active filter here excludes
+// that obsolete version rather than reporting it as current, matching how
+// GetNodeLocation and the Ancestors traversal already treat retired tables.
 func (r *CodeVersionQueryRepository) CurrentNodeVersion(ctx context.Context, uniqueID string, includeCode bool) ([]codeversion.VersionView, error) {
 	session := r.client.NewSession(ctx, neo4j.AccessModeRead)
 	defer func() { _ = session.Close(ctx) }()
 
 	query := `
 		MATCH (t:Table {unique_id: $uid})-[:CURRENT]->(v:NodeVersion)
+		WHERE COALESCE(t.active, true)
 		WITH v, v AS cur
 		RETURN ` + nodeVersionColumns(includeCode) + `
 		LIMIT 1
