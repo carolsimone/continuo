@@ -688,6 +688,201 @@ func TestValidation_BundleRuntimeNonDbt_NoProposal(t *testing.T) {
 	}
 }
 
+// TestValidation_BundleRuntimeNonDbt_TrustedNodeType_StillSkips verifies that
+// the bundle-runtime check fires regardless of node_type: a trigger carrying
+// a trusted node_type (dbt-model) must not override the bundle's own recorded
+// runtime. Unlike the fallback path's extension check, which is trusted away
+// once node_type is present, the bundle's recorded runtime is authoritative
+// whenever the bundle resolves at all — the node_type guard is decided before
+// the bundle is ever read and cannot see what the bundle later says.
+func TestValidation_BundleRuntimeNonDbt_TrustedNodeType_StillSkips(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{
+		RawCode: `{"reads":["analytics.orders"],"output_columns":[]}`, Runtime: "python"}}
+	src := &fakeSource{content: "print('hello')"}
+	svc.Source = src
+	llm := twoStepLLM()
+	svc.LLM = llm
+
+	in := validationInput()
+	in.NodeType = "dbt-model" // trusted node_type must not override the bundle's recorded runtime
+	in.FilePath, in.Service = "models/self.sql", "svc"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call for a non-dbt bundle entry even with a trusted node_type, got %d", llm.calls)
+	}
+	if src.readPath != "" {
+		t.Fatalf("a repo read must not substitute for a non-dbt bundle entry even with a trusted node_type; read %q", src.readPath)
+	}
+}
+
+// TestValidation_FallbackPathNonSQL_NoProposal covers a trigger that carries no
+// node_type (the legacy shape: an older trigger, or an outbox replay) and
+// whose code bundle permanently misses: with no node_type to trust, the only
+// remaining signal is the resolved fallback path itself, and a path that does
+// not end in ".sql" is a python node's script — the fixer must skip on it
+// before ever reading it: no LLM call, and the GitHub source reader is never
+// consulted. NodeType is set to "" explicitly (not just left at Input's zero
+// value) so the test proves this is the no-node_type path, not an accident of
+// the fixture's defaults.
+func TestValidation_FallbackPathNonSQL_NoProposal(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
+	src := &fakeSource{content: "print('hello')"}
+	svc.Source = src
+	llm := twoStepLLM()
+	svc.LLM = llm
+
+	in := validationInput()
+	in.NodeType = ""
+	in.FilePath, in.Service = "python/report.py", "svc"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call for a non-sql fallback path, got %d", llm.calls)
+	}
+	if src.readPath != "" {
+		t.Fatalf("the github source reader must not be called for a non-sql fallback path; read %q", src.readPath)
+	}
+}
+
+// TestValidation_FallbackPathSQL_NoNodeType_StillResolvesFromGitHub is the
+// regression guard for TestValidation_FallbackPathNonSQL_NoProposal: a trigger
+// with no node_type, a permanent bundle miss, and a ".sql" fallback path falls
+// back to the repo read and resolves the source.
+func TestValidation_FallbackPathSQL_NoNodeType_StillResolvesFromGitHub(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
+	svc.Source = &fakeSource{content: "SELECT 0 -- github"}
+
+	in := validationInput()
+	in.NodeType = ""
+	in.FilePath, in.Service = "models/report.sql", "svc"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v, want the github fallback to resolve a .sql candidate",
+			r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+}
+
+// TestValidation_ModelFallbackPathSQL_WithNodeType_Resolves verifies that a
+// trigger carrying node_type=dbt-model and a ".sql" fallback path resolves the
+// source from the repo read on a permanent bundle miss: an explicit dbt
+// node_type is trusted, and its path already ends in ".sql".
+func TestValidation_ModelFallbackPathSQL_WithNodeType_Resolves(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
+	svc.Source = &fakeSource{content: "SELECT 0 -- github"}
+
+	in := validationInput()
+	in.NodeType = "dbt-model"
+	in.FilePath, in.Service = "models/report.sql", "svc"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v, want a dbt-model's .sql fallback path to resolve from github",
+			r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+}
+
+// TestValidation_SnapshotFallbackPathYAML_Resolves verifies that a trigger
+// carrying node_type=dbt-snapshot trusts that node_type over the fallback
+// path's extension: a dbt snapshot's source is legitimately a ".yml" file, so
+// a permanent bundle miss still falls back to the repo read and resolves the
+// source, rather than the ".yml" path being misclassified as non-dbt.
+func TestValidation_SnapshotFallbackPathYAML_Resolves(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
+	svc.Source = &fakeSource{content: "target_schema: analytics\nstrategy: timestamp\n"}
+
+	in := validationInput()
+	in.NodeType = "dbt-snapshot"
+	in.FilePath, in.Service = "snapshots/orders.yml", "svc"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v, want a dbt-snapshot's .yml fallback path to resolve from github",
+			r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+}
+
+// TestValidation_TrustedNodeType_UnreadableFallbackPath_DegradesToCandidateOnly
+// verifies that a trusted node_type (dbt-snapshot) bypasses the extension
+// check but still goes through the actual repo read, and an unreadable path
+// there degrades quietly to the candidate-only proposal — StatusProposed with
+// SourceResolved=false — the same as any other repo-read failure, and
+// specifically not StatusSkipped. Trusting node_type over the extension must
+// not also bypass read-failure handling.
+func TestValidation_TrustedNodeType_UnreadableFallbackPath_DegradesToCandidateOnly(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
+	svc.Source = &fakeSource{err: ports.ErrSourceNotFound}
+
+	in := validationInput()
+	in.NodeType = "dbt-snapshot"
+	in.FilePath, in.Service = "snapshots/orders.yml", "svc"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed {
+		t.Fatalf("status = %v want proposed (candidate-only degrade), not skipped", r.Proposal.Status)
+	}
+	if r.Proposal.SourceResolved {
+		t.Fatal("expected SourceResolved=false when the trusted node_type's fallback path is unreadable")
+	}
+}
+
+// TestValidation_BundlePrimaryPath_IgnoresFileExtension verifies that a dbt
+// bundle entry with non-empty raw_code resolves the candidate source before
+// the file-extension guard is ever reached, regardless of what the located
+// path looks like: the guard applies to the fallback repo read only.
+func TestValidation_BundlePrimaryPath_IgnoresFileExtension(t *testing.T) {
+	svc := validationSvc()
+	svc.CandidateSource = &fakeCandidateSource{src: ports.CandidateSource{RawCode: "SELECT 0 -- bundle", Runtime: "dbt"}}
+	src := &fakeSource{err: fmt.Errorf("must not be called")}
+	svc.Source = src
+
+	in := validationInput() // no node_type
+	in.FilePath, in.Service = "python/report.py", "svc"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusProposed || !r.Proposal.SourceResolved {
+		t.Fatalf("got status=%v sourceResolved=%v, want the bundle to resolve regardless of the located path's extension",
+			r.Proposal.Status, r.Proposal.SourceResolved)
+	}
+	if src.readPath != "" {
+		t.Fatalf("the github source reader must not be called when the bundle resolves the source; read %q", src.readPath)
+	}
+}
+
 // TestValidation_CandidateLocationPreferredOverPromotedTopology verifies that a
 // trigger carrying the candidate topology's own file path and service targets
 // that path, and never consults the promoted-topology lookup. The rejected

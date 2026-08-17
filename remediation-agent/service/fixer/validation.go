@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strings"
 	"unicode/utf8"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
@@ -101,12 +102,13 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 
 	// Candidate source from the release's code bundle; the repo read is only
 	// the fallback. A permanent bundle miss is a degraded path, a transient
-	// fetch error redelivers the trigger, and a bundle entry for a non-dbt node
-	// skips the whole fix.
+	// fetch error redelivers the trigger, and either a bundle entry for a
+	// non-dbt node, or — only when the trigger carries no node_type — a
+	// non-".sql" fallback path, skips the whole fix.
 	candidateSource, sourceOrigin, err := resolveCandidateSource(ctx, svc, in, filePath, serviceName)
 	if errors.Is(err, errNonDbtCandidate) {
-		svc.Logger.Info("validation fix: code bundle records a non-dbt runtime for the failing node; skipping",
-			"node", in.NodeID)
+		svc.Logger.Info("validation fix: failing node's candidate source is not a dbt model; skipping",
+			"node", in.NodeID, "error", err)
 		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
 	}
 	if err != nil {
@@ -217,23 +219,35 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	return Result{Proposal: p, SuspectedRoot: res.SuspectedRootCauseNode}, nil
 }
 
-// errNonDbtCandidate reports that the code bundle records a runtime other than
-// dbt for the failing node. Its RawCode is then the node's normalized contract
-// entry rather than model source, so it can be neither sent to the LLM nor
-// replaced by a repo read of the node's script; the caller turns this into a
-// skipped proposal. It backs the trigger's node_type guard for a trigger that
-// carries no node_type.
-var errNonDbtCandidate = errors.New("code bundle entry is not a dbt node")
+// errNonDbtCandidate reports that the failing node's candidate source is not a
+// dbt model, on either of two signals: a code bundle entry whose recorded
+// runtime is not dbt (its RawCode is then the node's normalized contract
+// entry rather than model source) — checked regardless of node_type, since
+// the bundle's own recorded runtime is authoritative whenever it is present —
+// or, only when the trigger carries no node_type, a fallback repo path that
+// does not end in ".sql" (a python node's script, which is the only non-dbt
+// source this system tracks a path for; a trigger that does carry a node_type
+// trusts it instead of the extension, since a dbt snapshot's source can
+// legitimately be a .yml file). Neither can be sent to the LLM nor read as
+// model source; the caller turns this into a skipped proposal.
+var errNonDbtCandidate = errors.New("candidate source is not a dbt model")
 
 // resolveCandidateSource returns the failing candidate's raw source. Order:
 // the release's code bundle (exact failing source, keyed by unique_id, no
 // path mapping needed), then the repo file at the release's commit, then ""
 // — the caller degrades to the candidate-only proposal. A transient bundle
-// fetch error propagates, so the trigger redelivers, and a bundle entry that is
-// not a dbt node returns errNonDbtCandidate; every permanent miss — including a
-// bundle for a different release (NodeSource itself rejects the mismatch as
-// ports.ErrNotFound) and a dbt entry with no source text — walks down the
-// ladder.
+// fetch error propagates, so the trigger redelivers. A bundle entry that is
+// not a dbt node returns errNonDbtCandidate immediately; every permanent bundle
+// miss — including a bundle for a different release (NodeSource itself rejects
+// the mismatch as ports.ErrNotFound) and a dbt entry with no source text —
+// walks down to the repo fallback instead. There, an empty file path, an empty
+// service name, or a service with no entry in ServiceRepoPaths still degrades
+// quietly to an unresolved source (these are location gaps, not evidence about
+// the node's kind). Only when the trigger carries no node_type does a resolved
+// path that does not end in ".sql" also return errNonDbtCandidate: a trigger
+// that does carry a node_type is trusted over the extension and always
+// proceeds to the read (any error there degrades quietly, same as an
+// unreadable ".sql" path does).
 func resolveCandidateSource(ctx context.Context, svc Services, in Input, filePath, serviceName string) (source, origin string, err error) {
 	src, berr := svc.CandidateSource.NodeSource(ctx, in.CodeBundleURI, in.NodeID, in.ReleaseID)
 	if berr == nil {
@@ -257,6 +271,17 @@ func resolveCandidateSource(ctx context.Context, svc Services, in Input, filePat
 	prefix, ok := svc.ServiceRepoPaths[serviceName]
 	if !ok {
 		return "", "", nil
+	}
+	// Extension inference applies only when the trigger carries no node_type:
+	// that is the one shape where the fallback path's kind is genuinely
+	// unknown, since node_type is authoritative whenever the trigger carries
+	// one — python already ended the flow earlier in Propose, so every
+	// node_type reaching here is some dbt kind, and a dbt snapshot's source
+	// is legitimately a .yml file rather than .sql. With no node_type, a
+	// non-.sql path is a python node's script (the only non-dbt source this
+	// system ever tracks a path for), and is refused without ever being read.
+	if in.NodeType == "" && !strings.HasSuffix(filePath, ".sql") {
+		return "", "", fmt.Errorf("node %q path %q: %w", in.NodeID, filePath, errNonDbtCandidate)
 	}
 	full := path.Join(prefix, filePath)
 	content, gerr := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, full)
