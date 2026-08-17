@@ -376,10 +376,20 @@ When no claimant belongs to the changed service — a bootstrap release, or two 
    substitutes for it; this backs the node_type guard in step 0 for a trigger
    that carries no node_type. A permanent bundle miss (ErrNotFound — empty
    URI, absent object, a document for a different release_id, no entry for
-   this node, or a dbt entry with an empty raw_code) falls back to a GitHub
-   repo read at <repo_path>/<file_path> (only when step 3 resolved both fields
-   and service_repos.yaml maps the service); any error there — 404, network,
-   or otherwise — degrades silently to an unresolved source ("").
+   this node, or a dbt entry with an empty raw_code) falls back toward a
+   GitHub repo read: an empty file_path or service_name from step 3, or a
+   service with no entry in service_repos.yaml, degrades silently to an
+   unresolved source (""). Once a repo path is actually about to be read,
+   extension inference applies only when the trigger carries no node_type: a
+   resolved path that doesn't end in ".sql" then ends the flow the same way as
+   the runtime check above, with proposal(status=skipped), because with no
+   node_type the only non-dbt source this system ever tracks a path for is a
+   python node's script. A trigger that does carry a node_type (a dbt model,
+   seed, or snapshot — python already ended the flow in step 0) is trusted
+   over the extension and always proceeds to the GitHub read at
+   <repo_path>/<file_path>, since a dbt snapshot's source can legitimately be a
+   ".yml" file rather than ".sql". Any error from that read — 404, network, or
+   otherwise — degrades silently to an unresolved source ("").
 5. If the resolved source is non-empty, call the orchestrator's
    GetNodeVersions(node_id, current_only=true) for the code the node runs
    *now*, diff it against the resolved source, sanitize, and truncate to
