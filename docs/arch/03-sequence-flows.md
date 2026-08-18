@@ -601,15 +601,15 @@ sequenceDiagram
       end
 
       UI->>GH: mint installation token (App JWT → /installations/:id/access_tokens)
-      UI->>GH: GET /repos/{repo}/git/refs/heads/main → main SHA
-      UI->>GH: POST /repos/{repo}/git/refs (branch_name off main SHA)
+      Note over UI: base sha = commit_sha (a granted claim's source_resolved=true guard means it is always present);<br/>the GET .../refs/heads/main fallback pull-request-creator.ts also supports is never reached here
+      UI->>GH: POST /repos/{repo}/git/refs (branch_name off commit_sha)
       Note over GH: deterministic branch: remediation/<release_id>/<node>-attempt<n><br/>422 "Reference already exists" treated as idempotent
-      UI->>GH: GET /repos/{repo}/git/commits/{base_sha} → base tree SHA
+      UI->>GH: GET /repos/{repo}/git/commits/{commit_sha} → base tree SHA
       loop each edit
         UI->>GH: POST /repos/{repo}/git/blobs (base64 content)
       end
       UI->>GH: POST /repos/{repo}/git/trees (base_tree=base tree SHA, one entry per edit, mode 100644)
-      UI->>GH: POST /repos/{repo}/git/commits (tree=new tree SHA, parents=[base_sha])
+      UI->>GH: POST /repos/{repo}/git/commits (tree=new tree SHA, parents=[commit_sha])
       Note over GH: every edited file lands in this one commit
       UI->>GH: PATCH /repos/{repo}/git/refs/heads/{branch_name} (sha=new commit SHA, force=true)
       UI->>GH: POST /repos/{repo}/pulls (base=main, head=branch_name)
