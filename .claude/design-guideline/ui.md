@@ -62,6 +62,32 @@ The `160px` chrome budget is the page padding + `.page-header` +
 keep the same pattern (viewport-anchored container + stretched
 children) and adjust the offset.
 
+### Direct manipulation outranks a background refresh
+
+Spatial surfaces are usually fed by a poll, and their contents are
+usually placed by a layout algorithm. Whenever the user can move, size
+or reorder something on such a surface, that placement is **user state**
+and the poll must not overwrite it. A layout recomputed from server data
+applies to the elements the user has not touched; the ones they have
+touched keep where they were put. Anything else silently discards
+deliberate work seconds after it is done, and the surface reads as
+broken rather than automatic.
+
+Rules:
+
+- Hold the user's placements in a map keyed by element id and overlay
+  them on each recomputed layout, rather than trying to suppress the
+  recomputation. The automatic layout stays correct for everything else,
+  including elements that appear later.
+- Pair it with a **`Reset layout`** `.btn--secondary` that drops every
+  override and re-frames the surface. Render it only once there is
+  something to reset, so the control does not sit dead in the chrome.
+- An explicit reset is exempt from whatever suppression keeps automatic
+  re-framing from yanking the view — the user asked for the default
+  back, so give them all of it.
+- Scope the overrides to the mounted surface unless the user asked for
+  more. Placement that silently outlives a reload is its own surprise.
+
 ## Buttons
 
 One class for the shape, three variants, two orthogonal states.

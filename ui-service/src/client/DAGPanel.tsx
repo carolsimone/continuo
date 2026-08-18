@@ -4,7 +4,9 @@ import {
   Edge,
   MiniMap,
   Node,
+  OnNodeDrag,
   ReactFlow,
+  XYPosition,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -286,6 +288,20 @@ function buildLayout(
   return { nodes, edges };
 }
 
+// Overlays the positions the operator has dragged nodes to onto a freshly
+// computed dagre layout. `buildLayout` derives every position from the
+// topology alone, and it re-runs whenever the graph poll, a status change or a
+// selection produces new inputs; without this overlay each of those would snap
+// a moved node back to its computed slot. Nodes the operator has not touched
+// keep following the automatic layout.
+function applyManualPositions(nodes: Node[], manual: Map<string, XYPosition>): Node[] {
+  if (manual.size === 0) return nodes;
+  return nodes.map((node) => {
+    const position = manual.get(node.id);
+    return position ? { ...node, position } : node;
+  });
+}
+
 function miniMapNodeColor(node: Node): string {
   const style = node.style as React.CSSProperties | undefined;
   const bg = style?.background as string | undefined;
@@ -341,7 +357,16 @@ export default function DAGPanel({
       ),
     [graphEdges, graphNodes, selectedNodeId, tasks, colorByStatus, serviceView, expandedServices, colors],
   );
-  const [nodes, setNodes, onNodesChange] = useNodesState(layout.nodes);
+  // Positions the operator has dragged nodes to, keyed by canvas node id (a
+  // model node id, or a service vertex id in service view). They live for as
+  // long as the panel is mounted, so an arrangement built to isolate a few
+  // services survives the graph poll, status updates and selection changes.
+  const [manualPositions, setManualPositions] = useState<Map<string, XYPosition>>(
+    () => new Map(),
+  );
+  const [nodes, setNodes, onNodesChange] = useNodesState(
+    applyManualPositions(layout.nodes, manualPositions),
+  );
   const [edges, setEdges, onEdgesChange] = useEdgesState(layout.edges);
   const { fitView, getViewport, zoomIn, zoomOut } = useReactFlow();
 
@@ -358,9 +383,33 @@ export default function DAGPanel({
   const hasFittedOnceRef = useRef(false);
 
   useEffect(() => {
-    setNodes(layout.nodes);
+    setNodes(applyManualPositions(layout.nodes, manualPositions));
     setEdges(layout.edges);
-  }, [layout, setEdges, setNodes]);
+  }, [layout, manualPositions, setEdges, setNodes]);
+
+  // React Flow reports every node moved by the gesture, which is more than one
+  // when several are selected together.
+  const handleNodeDragStop = useCallback<OnNodeDrag<Node>>(
+    (_event, node, draggedNodes) => {
+      const moved = draggedNodes.length > 0 ? draggedNodes : [node];
+      setManualPositions((previous) => {
+        const next = new Map(previous);
+        moved.forEach((dragged) => next.set(dragged.id, { ...dragged.position }));
+        return next;
+      });
+    },
+    [],
+  );
+
+  const resetLayout = useCallback(() => {
+    setManualPositions(new Map());
+    // The automatic fit is suppressed while a selection or search is active so
+    // it never yanks the view; an explicit reset is the operator asking for the
+    // full graph back, so it re-frames unconditionally.
+    if (layout.nodes.length > 0) {
+      fitView({ padding: 0.1, nodes: layout.nodes, maxZoom: 1.5, duration: 300 });
+    }
+  }, [fitView, layout.nodes]);
 
   const focusFullGraph = useCallback(() => {
     if (layout.nodes.length === 0) {
@@ -463,6 +512,13 @@ export default function DAGPanel({
             setSearchQuery(next);
           }}
         />
+        {/* Only offered once there is something to undo, so the strip stays a
+            search bar until the operator has actually rearranged the canvas. */}
+        {manualPositions.size > 0 && (
+          <button className="btn btn--secondary" onClick={resetLayout} type="button">
+            Reset layout
+          </button>
+        )}
       </div>
 
       <div className="dag-viewport" ref={viewportRef}>
@@ -472,6 +528,7 @@ export default function DAGPanel({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeClick={handleNodeClick}
+          onNodeDragStop={handleNodeDragStop}
           onMove={() => setZoomLevel(Math.round(getViewport().zoom * 100))}
           minZoom={0.2}
           maxZoom={2}

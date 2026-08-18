@@ -269,13 +269,17 @@ body {
 
 /* ---- Graph search strip ---- */
 .dag-search-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid #f1f5f9;
   flex-shrink: 0;
 }
 
 .dag-search-input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 5px 10px 5px 28px;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
