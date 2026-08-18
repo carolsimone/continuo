@@ -232,13 +232,12 @@ func isLowConfidence(c string) bool {
 	return strings.EqualFold(strings.TrimSpace(c), "low")
 }
 
-// writeSourceArtifacts writes the corrected source and its unified diff (against
-// the original) as the attempt's source artifacts and returns them as a
-// FileEdit with both URIs set (Path is left zero-valued; the caller — which
-// already knows the model's file path — fills it in). Both singleShot
+// writeSourceArtifacts writes the corrected source and its unified diff
+// (against the original) as the attempt's source artifacts and returns them as
+// a complete FileEdit naming filePath and both URIs. Both singleShot
 // (compile/seed) and the validation fixer's real-source step use it, so the
 // artifact key layout and content type live in one place.
-func writeSourceArtifacts(ctx context.Context, svc Services, in Input, original, corrected string) (proposal.FileEdit, error) {
+func writeSourceArtifacts(ctx context.Context, svc Services, in Input, filePath, original, corrected string) (proposal.FileEdit, error) {
 	diff := proposal.ComputeUnifiedDiff(original, corrected, in.NodeID)
 	sqlURI, err := svc.Artifacts.Write(ctx,
 		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", in.ReleaseID, in.NodeID, in.Attempt),
@@ -252,7 +251,7 @@ func writeSourceArtifacts(ctx context.Context, svc Services, in Input, original,
 	if err != nil {
 		return proposal.FileEdit{}, fmt.Errorf("write source diff: %w", err)
 	}
-	return proposal.FileEdit{ContentURI: sqlURI, DiffURI: diffURI}, nil
+	return proposal.FileEdit{Path: filePath, ContentURI: sqlURI, DiffURI: diffURI}, nil
 }
 
 // writeEditArtifacts writes one edit's corrected content and its unified diff
@@ -313,11 +312,10 @@ func (s singleShot) Propose(ctx context.Context, svc Services, in Input) (Result
 	// Diff and artifacts are computed against the raw original (g.Files), not the
 	// sanitized copy sent to the LLM, because the fix is applied to the real file.
 	original := g.Files[out.TargetFile]
-	edit, err := writeSourceArtifacts(ctx, svc, in, original, out.CorrectedContent)
+	edit, err := writeSourceArtifacts(ctx, svc, in, out.TargetFile, original, out.CorrectedContent)
 	if err != nil {
 		return Result{}, err
 	}
-	edit.Path = out.TargetFile
 	return Result{
 		Proposal: proposal.Proposal{
 			Status:         proposal.StatusProposed,

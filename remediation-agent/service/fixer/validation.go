@@ -192,11 +192,10 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	// candidate source, the file path, the service mapping, or the LLM result
 	// is unavailable, or when the LLM did not improve the source.
 	if src, fullPath, ok := resolveValidationSource(ctx, svc, in, filePath, serviceName, candidateSource, res); ok {
-		edit, err := writeSourceArtifacts(ctx, svc, in, src.original, src.corrected)
+		edit, err := writeSourceArtifacts(ctx, svc, in, fullPath, src.original, src.corrected)
 		if err != nil {
 			return Result{}, err
 		}
-		edit.Path = fullPath
 		finalSQLURI, finalDiffURI, sourceResolved = edit.ContentURI, edit.DiffURI, true
 		resolvedFilePath = fullPath
 		edits = []proposal.FileEdit{edit}

@@ -375,6 +375,7 @@ func TestValidation_BundleResolvedButLocationUnavailable_CandidateOnly(t *testin
 		if r.Proposal.SourceResolved {
 			t.Fatal("expected SourceResolved=false when the node cannot be located, even though the bundle resolved a candidate source")
 		}
+		require.Empty(t, r.Proposal.Edits, "a candidate-only proposal has no resolved repository file path to attach an edit to")
 	})
 
 	t.Run("unmapped_service", func(t *testing.T) {
@@ -391,6 +392,7 @@ func TestValidation_BundleResolvedButLocationUnavailable_CandidateOnly(t *testin
 		if r.Proposal.SourceResolved {
 			t.Fatal("expected SourceResolved=false when the located service has no repo mapping, even though the bundle resolved a candidate source")
 		}
+		require.Empty(t, r.Proposal.Edits, "a candidate-only proposal has no resolved repository file path to attach an edit to")
 	})
 }
 
