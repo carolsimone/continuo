@@ -1179,6 +1179,22 @@ func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, edits, got.Edits, "a non-empty Edits slice must round-trip unchanged")
 
+	// The stored JSONB must use the documented snake_case wire keys
+	// ("path", "content_uri", "diff_uri"), not the Go field names. A Go-level
+	// round-trip through the same struct on both write and read cannot catch
+	// a PascalCase regression, so this asserts the raw column contents
+	// directly: a wrong key name here means ->>'path' etc. return NULL.
+	var path, contentURI, diffURI string
+	require.NoError(t, db.GetContext(ctx, &path,
+		`SELECT file_edits->0->>'path' FROM proposal WHERE id=$1`, id))
+	require.NoError(t, db.GetContext(ctx, &contentURI,
+		`SELECT file_edits->0->>'content_uri' FROM proposal WHERE id=$1`, id))
+	require.NoError(t, db.GetContext(ctx, &diffURI,
+		`SELECT file_edits->0->>'diff_uri' FROM proposal WHERE id=$1`, id))
+	require.Equal(t, edits[0].Path, path, "stored JSON must use the snake_case key \"path\"")
+	require.Equal(t, edits[0].ContentURI, contentURI, "stored JSON must use the snake_case key \"content_uri\"")
+	require.Equal(t, edits[0].DiffURI, diffURI, "stored JSON must use the snake_case key \"diff_uri\"")
+
 	legacy := proposal.Proposal{
 		Source:         "validation",
 		ReleaseID:      "r-file-edits-1",
