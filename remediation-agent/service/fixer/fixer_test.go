@@ -1,7 +1,10 @@
 package fixer
 
 import (
+	"context"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 )
@@ -18,6 +21,32 @@ func TestFor_UnknownSource(t *testing.T) {
 	if _, err := For("nonsense"); err == nil {
 		t.Fatal("For(nonsense): want error, got nil")
 	}
+}
+
+// TestWriteEditArtifacts_KeysAreEditScoped verifies that writeEditArtifacts
+// keys each edit's content and diff by attempt AND edit index, so two edits
+// written for the same attempt land under distinct keys instead of colliding
+// on the single node-scoped key writeSourceArtifacts uses.
+func TestWriteEditArtifacts_KeysAreEditScoped(t *testing.T) {
+	w := &fakeArtifacts{}
+	svc := Services{Artifacts: w, Logger: testLogger()}
+	in := Input{ReleaseID: "r", NodeID: "n"}
+
+	edit, err := writeEditArtifacts(context.Background(), svc, in, 2, 1, "contracts/a.yml", "old", "new")
+	require.NoError(t, err)
+	require.Contains(t, w.written, "proposed-fix/r/n/attempt-2/edit-1.content")
+	require.Contains(t, w.written, "proposed-fix/r/n/attempt-2/edit-1.diff")
+	require.Equal(t, "contracts/a.yml", edit.Path)
+	require.Equal(t, "s3://bucket/proposed-fix/r/n/attempt-2/edit-1.content", edit.ContentURI)
+	require.Equal(t, "s3://bucket/proposed-fix/r/n/attempt-2/edit-1.diff", edit.DiffURI)
+
+	// A second edit in the same attempt must not collide with the first: the
+	// old node-scoped key (attempt-2 alone, no edit index) would overwrite
+	// edit-1's content here.
+	_, err = writeEditArtifacts(context.Background(), svc, in, 2, 2, "contracts/b.yml", "old2", "new2")
+	require.NoError(t, err)
+	require.Contains(t, w.written, "proposed-fix/r/n/attempt-2/edit-2.content")
+	require.Equal(t, "new", w.written["proposed-fix/r/n/attempt-2/edit-1.content"], "edit-1's content must survive writing edit-2 of the same attempt")
 }
 
 func TestNormalizeConfidence(t *testing.T) {
