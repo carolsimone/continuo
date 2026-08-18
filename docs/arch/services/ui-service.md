@@ -17,7 +17,7 @@ It provides:
 - single-node run triggering: proxies `POST /api/nodes/:service/:schema/:table/run` to the `TriggerSingleNodeRun` gRPC method on `state`, carrying the caller's chosen run/test/build `operation`
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`, carrying the caller's chosen run/test/build `operation`
 - per-node topology metadata: proxies `GET /api/nodes/:service/:schema/:table/meta` to the `GetNode` gRPC method on `orchestrator`, used to decide whether a node's single-node `test` operation is meaningful
-- a **Remediation** tab (5th dashboard tab): lists fix proposals from `remediation-agent` with diff, rationale, confidence, and source lineage; `operator` users can click **Create PR** to open a GitHub pull request applying the corrected real-source SQL; `viewer` users see the surface read-only. ui-service holds the GitHub App write credential, reads the corrected source from S3, and records the PR result back to remediation-agent over gRPC. Each proposal's `pr_state` is rendered as a colored chip once it reaches a terminal outcome — `merged` or `rejected` — mirrored from GitHub by remediation-agent's PR-outcome reconciler; non-terminal `pr_state` values render as plain text. The release detail page carries a lightweight back-link to any associated proposal.
+- a **Remediation** tab (5th dashboard tab): lists fix proposals from `remediation-agent` with diff, rationale, confidence, and source lineage; `operator` users can click **Create PR** to open a GitHub pull request committing every file the proposal changes in a single commit; `viewer` users see the surface read-only. ui-service holds the GitHub App write credential, reads each changed file's corrected content from S3, and records the PR result back to remediation-agent over gRPC. Each proposal's `pr_state` is rendered as a colored chip once it reaches a terminal outcome — `merged` or `rejected` — mirrored from GitHub by remediation-agent's PR-outcome reconciler; non-terminal `pr_state` values render as plain text. The release detail page carries a lightweight back-link to any associated proposal.
 - a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): an operator-only WebSocket (WS) endpoint that relays browser messages over a bidirectional gRPC stream to `agent-runner`, which runs the LLM (Large Language Model) tool-use loop; the WebSocket upgrade is operator-only and the endpoint is gated off by default
 
 Every mutation proxied to `state` (trigger, cancel, rerun, rebase, single-node run) forwards the authenticated user's id as the `x-continuo-user-id` gRPC metadata header so `state` and `orchestrator` record the initiating user for full provenance. The header key and the `userMetadata(req)` helper live in `src/server/grpc-client.ts`; the key value matches `pkg/identity.MetadataKey` on the Go side. An unauthenticated request records the `system` sentinel.
@@ -247,7 +247,7 @@ All `/api` routes below require an authenticated session; mutating methods (ever
 |---|---|---|---|
 | `/api/remediation/proposals` | GET | authenticated | `ListProposals` → remediation-agent gRPC. Returns proposals ordered `created_at DESC`. Supports `status` and `pr_state` filter query params for the inbox view. |
 | `/api/remediation/proposals/:id` | GET | authenticated | `GetProposal` → remediation-agent gRPC. |
-| `/api/remediation/proposals/:id/pull-request` | POST | `operator` | `BeginPullRequest` → claim; S3 read of `proposed_sql_uri`; GitHub App: create branch + commit file + open PR; `RecordPullRequest` on success or `FailPullRequest` on GitHub error. Returns `{ pr_url }`. Returns 409 when the proposal is already `opening`/`open` (with existing `pr_url`). Returns 422 when `source_resolved=false`. |
+| `/api/remediation/proposals/:id/pull-request` | POST | `operator` | `BeginPullRequest` → claim; S3 read of every edit's `content_uri` from the claim's `edits` list (one entry per changed file); a claim whose `edits` list is empty is refused — the claim is released via `FailPullRequest` and the route returns 502 rather than opening a pull request with no files. GitHub App: create branch + one tree commit carrying every fetched file + open PR; `RecordPullRequest` on success or `FailPullRequest` on GitHub error. Returns `{ pr_url }`. Returns 409 when the proposal is already `opening`/`open` (with existing `pr_url`). Returns 422 when `source_resolved=false`. Returns 502 on an empty edits list, a failed S3 read, or a failed GitHub PR creation. |
 
 The Create PR route requires the GitHub App to be provisioned (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`); without them it returns a clear configuration-error response while the read/list paths remain functional.
 
@@ -309,9 +309,9 @@ Each WebSocket connection opens one bidirectional `AgentChat.Chat` gRPC stream. 
 
 ui-service holds the GitHub App ID, private key, and installation ID (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`). For each Create PR request it mints a short-lived (~1h) installation token and performs:
 
-1. Fetch `main` branch HEAD SHA (to base the new branch on).
-2. Create branch `remediation/<release_id>/<node_id>-attempt<n>` (deterministic; a 422 "Reference already exists" is treated as idempotent).
-3. Create or update `file_path` with the corrected source SQL read from S3.
+1. Resolve the commit to branch from: the proposal's `commit_sha` when the claim carries one, otherwise `main`'s current HEAD SHA (`git.getRef`).
+2. Create branch `remediation/<release_id>/<node_id>-attempt<n>` from that commit (deterministic; a 422 "Reference already exists" is treated as idempotent).
+3. Commit every changed file in one commit: read the base commit's tree (`git.getCommit`), create one blob per file (`git.createBlob`), assemble one tree layered on the base commit's tree (`git.createTree`, `base_tree` = the base commit's tree, each entry at file mode `100644`), create one commit on that tree parented on the resolved base commit (`git.createCommit`), then force-move the head branch onto it (`git.updateRef`). One commit carries every one of the proposal's edits regardless of how many files it touches — never one commit per file.
 4. Open a PR (`base=main`, `head=<branch>`). A 422 "PR already exists for head" is handled by looking up and returning the existing PR.
 
 The App is installed on the single dbt-demo repo only (`contents:write` + `pull-requests:write`). It never calls merge or delete APIs and never targets `main` directly. `main` branch protection (require PR + review) is the final gate.
@@ -372,7 +372,7 @@ Beyond the session keyspace above, `ui-service` reaches backends through gRPC (`
 | Pod logs | S3 (via `log_s3_key` from task execution records) |
 | dbt validation logs | S3 (via `dbt_log_uri` from per-node validation results) |
 | Remediation proposals (list + detail, incl. PR state) | `remediation-agent.ListProposals` / `GetProposal` |
-| Corrected real-source SQL (for PR creation) | S3 (`proposed_sql_uri` → `.source.sql`) |
+| Every changed file's corrected content, for PR creation | S3 (one `GetObject` per edit's `content_uri`, from the claim's `edits` list) |
 | Login session records | Redis `uisession:<id>` keys (oidc mode) |
 
 ## What It Writes

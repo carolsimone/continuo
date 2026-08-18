@@ -579,7 +579,7 @@ sequenceDiagram
 
   OP->>UI: POST /api/remediation/proposals/:id/pull-request (operator role required)
   UI->>RA: BeginPullRequest(id)
-  Note over RA: CAS: pr_state '' or 'failed' → 'opening' (atomic, source_resolved=true guard)<br/>Stamps pr_claimed_at; RETURNING reads it back into the response<br/>Returns repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, claimed_at<br/>Returns FAILED_PRECONDITION + existing pr_url if already opening/open<br/>Returns FAILED_PRECONDITION if source_resolved=false
+  Note over RA: CAS: pr_state '' or 'failed' → 'opening' (atomic, source_resolved=true guard)<br/>Stamps pr_claimed_at; RETURNING reads it back into the response<br/>Returns repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, claimed_at, edits<br/>edits is one {path, content_uri, diff_uri} per changed file (or a one-element synthesis of the legacy scalar fields for a pre-migration row)<br/>Returns FAILED_PRECONDITION + existing pr_url if already opening/open<br/>Returns FAILED_PRECONDITION if source_resolved=false
 
   alt already opening or open
     RA-->>UI: FAILED_PRECONDITION { pr_url }
@@ -588,29 +588,44 @@ sequenceDiagram
     RA-->>UI: FAILED_PRECONDITION (no source)
     UI-->>OP: 422 (button should have been disabled)
   else claim granted
-    RA-->>UI: { repo, commit_sha, file_path, proposed_sql_uri, branch_name, claimed_at, ... }
+    RA-->>UI: { repo, commit_sha, file_path, proposed_sql_uri, branch_name, claimed_at, edits, ... }
 
-    UI->>S3: GetObject(proposed_sql_uri → .source.sql)
-    S3-->>UI: corrected SQL content
-
-    UI->>GH: mint installation token (App JWT → /installations/:id/access_tokens)
-    UI->>GH: GET /repos/{repo}/git/refs/heads/main → main SHA
-    UI->>GH: POST /repos/{repo}/git/refs (branch_name off main SHA)
-    Note over GH: deterministic branch: remediation/<release_id>/<node>-attempt<n><br/>422 "Reference already exists" treated as idempotent
-    UI->>GH: PUT /repos/{repo}/contents/{file_path} (create/update file with corrected SQL)
-    UI->>GH: POST /repos/{repo}/pulls (base=main, head=branch_name)
-    Note over GH: 422 "PR already exists for head" → GET existing PR
-
-    alt GitHub step errors
+    alt edits list empty
+      Note over UI: two sides disagree about the contract — refuse rather than open an empty PR
       UI->>RA: FailPullRequest(id, claimed_at)
-      Note over RA: CAS: pr_state 'opening' → 'failed' (retryable)<br/>WHERE pr_state='opening' AND pr_claimed_at=claimed_at<br/>released=false (not an error) if the claim already moved on —<br/>e.g. the opening sweep released it first on a slow S3/GitHub step
-      UI-->>OP: 502 error
-    else GitHub step succeeds
-      GH-->>UI: { pr_url, pr_number }
-      UI->>RA: RecordPullRequest(id, pr_url, pr_number, opened_by=session.user_id)
-      Note over RA: CAS: pr_state 'opening' → 'open' (WHERE pr_state='opening')<br/>pr_opened_at = now(), pr_opened_by = user_id<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1, pointer-only)<br/>a CAS miss (e.g. the opening sweep already recorded this same claim) is a silent no-op, not an error
-      RA-->>UI: ok
-      UI-->>OP: 200 { pr_url }
+      UI-->>OP: 502 { error: "proposal carries no file edits" }
+    else edits present
+      loop each edit in edits
+        UI->>S3: GetObject(edit.content_uri)
+        S3-->>UI: corrected file content
+      end
+
+      UI->>GH: mint installation token (App JWT → /installations/:id/access_tokens)
+      UI->>GH: GET /repos/{repo}/git/refs/heads/main → main SHA
+      UI->>GH: POST /repos/{repo}/git/refs (branch_name off main SHA)
+      Note over GH: deterministic branch: remediation/<release_id>/<node>-attempt<n><br/>422 "Reference already exists" treated as idempotent
+      UI->>GH: GET /repos/{repo}/git/commits/{base_sha} → base tree SHA
+      loop each edit
+        UI->>GH: POST /repos/{repo}/git/blobs (base64 content)
+      end
+      UI->>GH: POST /repos/{repo}/git/trees (base_tree=base tree SHA, one entry per edit, mode 100644)
+      UI->>GH: POST /repos/{repo}/git/commits (tree=new tree SHA, parents=[base_sha])
+      Note over GH: every edited file lands in this one commit
+      UI->>GH: PATCH /repos/{repo}/git/refs/heads/{branch_name} (sha=new commit SHA, force=true)
+      UI->>GH: POST /repos/{repo}/pulls (base=main, head=branch_name)
+      Note over GH: 422 "PR already exists for head" → GET existing PR
+
+      alt GitHub step errors
+        UI->>RA: FailPullRequest(id, claimed_at)
+        Note over RA: CAS: pr_state 'opening' → 'failed' (retryable)<br/>WHERE pr_state='opening' AND pr_claimed_at=claimed_at<br/>released=false (not an error) if the claim already moved on —<br/>e.g. the opening sweep released it first on a slow S3/GitHub step
+        UI-->>OP: 502 error
+      else GitHub step succeeds
+        GH-->>UI: { pr_url, pr_number }
+        UI->>RA: RecordPullRequest(id, pr_url, pr_number, opened_by=session.user_id)
+        Note over RA: CAS: pr_state 'opening' → 'open' (WHERE pr_state='opening')<br/>pr_opened_at = now(), pr_opened_by = user_id<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1, pointer-only)<br/>a CAS miss (e.g. the opening sweep already recorded this same claim) is a silent no-op, not an error
+        RA-->>UI: ok
+        UI-->>OP: 200 { pr_url }
+      end
     end
   end
 ```
