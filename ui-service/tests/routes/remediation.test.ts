@@ -329,10 +329,9 @@ describe('remediation router', () => {
     });
   });
 
-  // ── POST — a claim with no edits is a contract violation, not a fallback ──
+  // ── POST — an empty edits list ────────────────────────────────────────────
 
-  it('returns 502 and fails the claim when the claim carries no edits', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('falls back to the single-file claim fields when the edits list is empty', async () => {
     const remediation = makeRemediation({
       beginPullRequest: vi.fn().mockResolvedValue({
         proposed_sql_uri: 's3://continuo/proposals/p1/fix.sql',
@@ -342,7 +341,40 @@ describe('remediation router', () => {
         repo: 'owner/repo',
         commit_sha: 'abc123',
         claimed_at: '2026-06-24T00:00:00Z',
-        // An empty repeated field arrives as undefined over the wire.
+        // Under this project's proto-loader options an empty repeated field
+        // arrives as [], which is what a peer that predates the edits list
+        // sends.
+        edits: [],
+      }),
+    });
+    const prCreator = makePrCreator();
+    const getObject = makeGetObject('SELECT 1 -- fixed');
+    const app = appWith({ remediation, prCreator, getObject });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(200);
+    expect(res.body.pr_url).toBe('https://github.com/owner/repo/pull/42');
+    expect(prCreator.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        files: [{ path: 'models/mymodel.sql', content: 'SELECT 1 -- fixed' }],
+      }),
+    );
+    expect(remediation.failPullRequest).not.toHaveBeenCalled();
+    expect(remediation.recordPullRequest).toHaveBeenCalled();
+  });
+
+  it('returns 502 and fails the claim when there is neither an edits list nor a file path', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const remediation = makeRemediation({
+      beginPullRequest: vi.fn().mockResolvedValue({
+        proposed_sql_uri: '',
+        diff_uri: '',
+        branch: 'remediation/p1',
+        file_path: '',
+        repo: 'owner/repo',
+        commit_sha: 'abc123',
+        claimed_at: '2026-06-24T00:00:00Z',
+        edits: [],
       }),
     });
     const prCreator = makePrCreator();
@@ -351,7 +383,7 @@ describe('remediation router', () => {
 
     const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
     expect(res.status).toBe(502);
-    // No silent fall back to the single-file scalars, and no empty-tree PR.
+    // Nothing to commit, so no empty-tree PR and no S3 read.
     expect(getObject).not.toHaveBeenCalled();
     expect(prCreator.create).not.toHaveBeenCalled();
     expect(remediation.recordPullRequest).not.toHaveBeenCalled();

@@ -261,6 +261,17 @@ describe('makePullRequestCreator', () => {
     });
   });
 
+  describe('no files to commit', () => {
+    it('rejects naming the empty file list, before touching GitHub', async () => {
+      const octokit = buildFakeOctokit({});
+      const creator = makePullRequestCreator(octokit);
+
+      await expect(creator.create({ ...baseInput, files: [] })).rejects.toThrow(/no files to commit/);
+      expect(octokit.git.createRef).not.toHaveBeenCalled();
+      expect(octokit.pulls.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('head branch already exists — createRef 422 → continues without error', () => {
     it('proceeds to commit the files and open the PR when the branch already exists', async () => {
       const octokit = buildFakeOctokit({ createRefStatus: 422 });

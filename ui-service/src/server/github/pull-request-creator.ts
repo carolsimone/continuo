@@ -107,6 +107,14 @@ export interface OctokitLike {
 export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator {
   return {
     async create(input: CreatePRInput): Promise<{ url: string; number: number }> {
+      // A commit over no files produces a tree identical to its parent, which
+      // GitHub then refuses to open a pull request for — surfacing several
+      // steps later as an unexplained 422 with no PR to fall back to. Say what
+      // is actually wrong here instead.
+      if (input.files.length === 0) {
+        throw new Error('cannot open a pull request: no files to commit');
+      }
+
       const [owner, repoName] = input.repo.split('/');
 
       // Step 1: resolve the commit to branch from — the proposal's commit when
@@ -157,6 +165,10 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
         blobShas.push(blob.data.sha);
       }
 
+      // Every entry is written as a regular non-executable file. A tree entry
+      // states the mode outright rather than inheriting the path's existing
+      // one, so remediating a file that is executable in the repository drops
+      // its executable bit.
       const tree = await octokit.git.createTree({
         owner,
         repo: repoName,
@@ -177,9 +189,15 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
         parents: [baseSha],
       });
 
-      // Step 4: move the head branch onto the new commit. force is safe because
-      // the branch name is scoped to this proposal attempt: the only tip it can
-      // overwrite is one an earlier attempt at the same proposal left behind.
+      // Step 4: move the head branch onto the new commit. The branch name is
+      // scoped to this proposal attempt, so the only tip force can overwrite
+      // is one left by an earlier run of this same attempt. That is normally a
+      // discarded commit of the same proposal — but not always: if the earlier
+      // run opened the pull request and then failed to record it, the claim
+      // can be retried while the branch already carries a pull request someone
+      // may have pushed to. The reconciler's opening sweep records rather than
+      // releases a claim whose pull request exists, which keeps that window
+      // narrow rather than closing it.
       await octokit.git.updateRef({
         owner,
         repo: repoName,

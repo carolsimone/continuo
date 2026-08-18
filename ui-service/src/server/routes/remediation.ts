@@ -141,15 +141,28 @@ export function createRemediationRouter(
     const claimedAt = claim.claimed_at;
 
     // Every file the proposal changes, in the order the agent produced them.
-    // A claimable proposal always resolved a real source, so the claim always
-    // carries at least one edit; an empty list means the two sides disagree
-    // about the contract. Committing it anyway would open a pull request that
-    // changes nothing, so release the claim and fail loudly instead.
-    const edits: Array<{ path: string; content_uri: string; diff_uri: string }> =
-      claim.edits ?? [];
+    // The list is empty when the claim came from a remediation-agent instance
+    // that predates it — the same rolling-upgrade skew safeFailPullRequest
+    // tolerates on claimed_at — so fall back to the claim's single-file
+    // fields, which describe exactly the one file such a peer proposes. This
+    // mirrors the synthesis the repository itself applies to a row stored
+    // before the edits list existed.
+    let edits: Array<{ path: string; content_uri: string; diff_uri: string }> = claim.edits ?? [];
+    if (edits.length === 0 && claim.file_path && claim.proposed_sql_uri) {
+      edits = [
+        {
+          path: claim.file_path,
+          content_uri: claim.proposed_sql_uri,
+          diff_uri: claim.diff_uri ?? '',
+        },
+      ];
+    }
+    // With neither a list nor a single-file description there is nothing to
+    // commit at all, and a pull request built from it would change no files.
+    // Release the claim and fail loudly rather than open one.
     if (edits.length === 0) {
       console.error(
-        '[remediation] proposal %s was claimed with no file edits — refusing to open an empty pull request',
+        '[remediation] proposal %s was claimed with no file edits and no file path — refusing to open an empty pull request',
         id,
       );
       await safeFailPullRequest(remediation, id, claimedAt);
