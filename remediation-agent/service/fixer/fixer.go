@@ -258,17 +258,18 @@ func writeSourceArtifacts(ctx context.Context, svc Services, in Input, filePath,
 // (against the original) under a key scoped to both the attempt and the edit's
 // position within it, so several edits proposed in one attempt cannot
 // overwrite each other's artifacts, and returns them as a FileEdit naming path
-// and both URIs.
-func writeEditArtifacts(ctx context.Context, svc Services, in Input, attempt, i int, filePath, original, corrected string) (proposal.FileEdit, error) {
-	diff := proposal.ComputeUnifiedDiff(original, corrected, in.NodeID)
+// and both URIs. The diff is labelled with filePath, so each edit of a
+// multi-file proposal carries a header naming the file it actually changes.
+func writeEditArtifacts(ctx context.Context, svc Services, in Input, i int, filePath, original, corrected string) (proposal.FileEdit, error) {
+	diff := proposal.ComputeUnifiedDiff(original, corrected, filePath)
 	contentURI, err := svc.Artifacts.Write(ctx,
-		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d/edit-%d.content", in.ReleaseID, in.NodeID, attempt, i),
+		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d/edit-%d.content", in.ReleaseID, in.NodeID, in.Attempt, i),
 		corrected, "text/plain")
 	if err != nil {
 		return proposal.FileEdit{}, fmt.Errorf("write edit content: %w", err)
 	}
 	diffURI, err := svc.Artifacts.Write(ctx,
-		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d/edit-%d.diff", in.ReleaseID, in.NodeID, attempt, i),
+		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d/edit-%d.diff", in.ReleaseID, in.NodeID, in.Attempt, i),
 		diff, "text/plain")
 	if err != nil {
 		return proposal.FileEdit{}, fmt.Errorf("write edit diff: %w", err)

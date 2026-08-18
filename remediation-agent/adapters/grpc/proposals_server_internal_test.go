@@ -20,3 +20,14 @@ func TestViewToProto_PRCloseFields(t *testing.T) {
 	p = viewToProto(proposal.View{ID: "p2", PrState: "open", PrClosedAt: nil})
 	require.Equal(t, "", p.PrClosedAt)
 }
+
+// TestEditsToProto_EmptyInputYieldsNoElements verifies that a nil or empty
+// edit list converts to an absent repeated field rather than a one-element
+// list holding a zero-valued FileEdit. A proposal that resolves no source file
+// — a validation fix built from the candidate artifact alone — reaches this
+// path, and a reader that saw one empty-path edit would try to commit a file
+// with no name.
+func TestEditsToProto_EmptyInputYieldsNoElements(t *testing.T) {
+	require.Empty(t, editsToProto(nil))
+	require.Empty(t, editsToProto([]proposal.FileEdit{}))
+}
