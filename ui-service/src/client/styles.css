@@ -1156,6 +1156,13 @@ body {
   margin-bottom: 12px;
 }
 
+.detail-card__edit-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #374151;
+  margin-right: 4px;
+}
+
 .pr-chip {
   display: inline-block;
   padding: 0.05rem 0.5rem;

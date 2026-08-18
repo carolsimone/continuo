@@ -140,18 +140,39 @@ export function createRemediationRouter(
     // opening sweep) since this request began.
     const claimedAt = claim.claimed_at;
 
-    // Fetch the proposed SQL content from S3.
-    let content: string;
+    // Every file the proposal changes, in the order the agent produced them.
+    // A claimable proposal always resolved a real source, so the claim always
+    // carries at least one edit; an empty list means the two sides disagree
+    // about the contract. Committing it anyway would open a pull request that
+    // changes nothing, so release the claim and fail loudly instead.
+    const edits: Array<{ path: string; content_uri: string; diff_uri: string }> =
+      claim.edits ?? [];
+    if (edits.length === 0) {
+      console.error(
+        '[remediation] proposal %s was claimed with no file edits — refusing to open an empty pull request',
+        id,
+      );
+      await safeFailPullRequest(remediation, id, claimedAt);
+      return res.status(502).json({ error: 'proposal carries no file edits' });
+    }
+
+    // Fetch the proposed content of every edited file from S3.
+    let files: Array<{ path: string; content: string }>;
     try {
-      content = await getObject(normalizeKey(claim.proposed_sql_uri));
+      files = await Promise.all(
+        edits.map(async (edit) => ({
+          path: edit.path,
+          content: await getObject(normalizeKey(edit.content_uri)),
+        })),
+      );
     } catch (err) {
       console.error(
-        '[remediation] failed to fetch proposed SQL for proposal %s: %s',
+        '[remediation] failed to fetch proposed file content for proposal %s: %s',
         id,
         err instanceof Error ? err.message : String(err),
       );
       await safeFailPullRequest(remediation, id, claimedAt);
-      return res.status(502).json({ error: 'failed to fetch proposed SQL from S3' });
+      return res.status(502).json({ error: 'failed to fetch proposed file content from S3' });
     }
 
     // Build the PR title and body.
@@ -159,10 +180,12 @@ export function createRemediationRouter(
     const releaseId = claim.release_id ?? '';
     const title = `[remediation] fix ${nodeId} (release ${releaseId})`;
 
+    // A single inline preview keeps the body readable on a multi-file proposal;
+    // the rest of the diffs are one click away in the pull request itself.
     let diffBlock = '';
-    if (claim.diff_uri) {
+    if (edits[0].diff_uri) {
       try {
-        const diff = await getObject(normalizeKey(claim.diff_uri));
+        const diff = await getObject(normalizeKey(edits[0].diff_uri));
         diffBlock = `\n\n### Proposed diff\n\`\`\`diff\n${diff}\n\`\`\``;
       } catch (err) {
         // Diff is best-effort — omit on failure, but still log why so a
@@ -183,6 +206,9 @@ export function createRemediationRouter(
       claim.error_signature ? `**Error signature:** ${claim.error_signature}` : '',
       claim.model ? `**Model:** ${claim.model}` : '',
       claim.confidence !== undefined ? `**Confidence:** ${claim.confidence}` : '',
+      ``,
+      `### Files changed`,
+      ...files.map((file) => `- \`${file.path}\``),
       ``,
       claim.rationale ? `### Rationale\n${claim.rationale}` : '',
       diffBlock,
@@ -209,8 +235,7 @@ export function createRemediationRouter(
         // drifted on main since — rather than silently reverting that drift.
         baseSha: claim.commit_sha,
         headBranch: claim.branch,
-        filePath: claim.file_path,
-        content,
+        files,
         commitMessage,
         title,
         body,

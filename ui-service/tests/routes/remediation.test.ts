@@ -38,6 +38,13 @@ function makeRemediation(overrides: Partial<RemediationClient> = {}): Remediatio
       repo: 'owner/repo',
       commit_sha: 'abc123',
       claimed_at: '2026-06-24T00:00:00Z',
+      edits: [
+        {
+          path: 'models/mymodel.sql',
+          content_uri: 's3://continuo/proposals/p1/fix.sql',
+          diff_uri: 's3://continuo/proposals/p1/fix.diff',
+        },
+      ],
     }),
     recordPullRequest: vi.fn().mockResolvedValue({}),
     failPullRequest: vi.fn().mockResolvedValue({}),
@@ -197,7 +204,7 @@ describe('remediation router', () => {
         headBranch: 'remediation/p1',
         baseBranch: 'main',
         baseSha: 'abc123',
-        filePath: 'models/mymodel.sql',
+        files: [{ path: 'models/mymodel.sql', content: 'SELECT 1 -- fixed' }],
       }),
     );
     expect(remediation.recordPullRequest).toHaveBeenCalledWith(
@@ -217,6 +224,13 @@ describe('remediation router', () => {
         branch: 'remediation/p1',
         file_path: 'models/mymodel.sql',
         repo: 'owner/repo',
+        edits: [
+          {
+            path: 'models/mymodel.sql',
+            content_uri: 's3://continuo/proposals/p1/fix.sql',
+            diff_uri: '',
+          },
+        ],
       }),
     });
     const prCreator = makePrCreator();
@@ -226,6 +240,130 @@ describe('remediation router', () => {
     await request(app).post('/api/remediation/proposals/p1/pull-request');
     // Must strip the s3://<bucket>/ prefix before calling getObject
     expect(getObject).toHaveBeenCalledWith(expect.not.stringContaining('s3://'));
+  });
+
+  // ── POST — multi-file claims ──────────────────────────────────────────────
+
+  function multiEditRemediation() {
+    return makeRemediation({
+      beginPullRequest: vi.fn().mockResolvedValue({
+        proposed_sql_uri: 's3://continuo/proposals/p1/contract.yml',
+        diff_uri: 's3://continuo/proposals/p1/contract.diff',
+        branch: 'remediation/p1',
+        file_path: 'contracts/a.yml',
+        repo: 'owner/repo',
+        commit_sha: 'abc123',
+        claimed_at: '2026-06-24T00:00:00Z',
+        node_id: 'svc.schema.a',
+        release_id: 'rel-1',
+        edits: [
+          {
+            path: 'contracts/a.yml',
+            content_uri: 's3://continuo/proposals/p1/contract.yml',
+            diff_uri: 's3://continuo/proposals/p1/contract.diff',
+          },
+          {
+            path: 'scripts/a.py',
+            content_uri: 's3://continuo/proposals/p1/script.py',
+            diff_uri: 's3://continuo/proposals/p1/script.diff',
+          },
+        ],
+      }),
+    });
+  }
+
+  it('fetches every edit content and passes one file per edit to the PR creator', async () => {
+    const remediation = multiEditRemediation();
+    const prCreator = makePrCreator();
+    const getObject = vi.fn().mockImplementation(async (key: string) => `content of ${key}`);
+    const app = appWith({ remediation, prCreator, getObject });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(200);
+
+    expect(getObject).toHaveBeenCalledWith('proposals/p1/contract.yml');
+    expect(getObject).toHaveBeenCalledWith('proposals/p1/script.py');
+    expect(prCreator.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        files: [
+          { path: 'contracts/a.yml', content: 'content of proposals/p1/contract.yml' },
+          { path: 'scripts/a.py', content: 'content of proposals/p1/script.py' },
+        ],
+      }),
+    );
+  });
+
+  it('lists every edited path in the PR body and inlines only the first edit diff', async () => {
+    const remediation = multiEditRemediation();
+    const prCreator = makePrCreator();
+    const getObject = vi.fn().mockImplementation(async (key: string) => `content of ${key}`);
+    const app = appWith({ remediation, prCreator, getObject });
+
+    await request(app).post('/api/remediation/proposals/p1/pull-request');
+
+    const body: string = (prCreator.create as any).mock.calls[0][0].body;
+    expect(body).toContain('contracts/a.yml');
+    expect(body).toContain('scripts/a.py');
+    // The inline preview comes from the first edit's diff, not from a second one.
+    expect(getObject).toHaveBeenCalledWith('proposals/p1/contract.diff');
+    expect(getObject).not.toHaveBeenCalledWith('proposals/p1/script.diff');
+    expect(body).toContain('content of proposals/p1/contract.diff');
+  });
+
+  it('calls failPullRequest and returns 502 when a single edit content fetch rejects', async () => {
+    const remediation = multiEditRemediation();
+    const prCreator = makePrCreator();
+    const getObject = vi.fn().mockImplementation(async (key: string) => {
+      if (key === 'proposals/p1/script.py') throw new Error('S3 NoSuchKey');
+      return 'ok';
+    });
+    const app = appWith({ remediation, prCreator, getObject });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(502);
+    expect(res.body.error).toMatch(/S3/i);
+    expect(prCreator.create).not.toHaveBeenCalled();
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({
+      id: 'p1',
+      claimed_at: '2026-06-24T00:00:00Z',
+    });
+  });
+
+  // ── POST — a claim with no edits is a contract violation, not a fallback ──
+
+  it('returns 502 and fails the claim when the claim carries no edits', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const remediation = makeRemediation({
+      beginPullRequest: vi.fn().mockResolvedValue({
+        proposed_sql_uri: 's3://continuo/proposals/p1/fix.sql',
+        diff_uri: 's3://continuo/proposals/p1/fix.diff',
+        branch: 'remediation/p1',
+        file_path: 'models/mymodel.sql',
+        repo: 'owner/repo',
+        commit_sha: 'abc123',
+        claimed_at: '2026-06-24T00:00:00Z',
+        // An empty repeated field arrives as undefined over the wire.
+      }),
+    });
+    const prCreator = makePrCreator();
+    const getObject = makeGetObject();
+    const app = appWith({ remediation, prCreator, getObject });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(502);
+    // No silent fall back to the single-file scalars, and no empty-tree PR.
+    expect(getObject).not.toHaveBeenCalled();
+    expect(prCreator.create).not.toHaveBeenCalled();
+    expect(remediation.recordPullRequest).not.toHaveBeenCalled();
+    expect(remediation.failPullRequest).toHaveBeenCalledWith({
+      id: 'p1',
+      claimed_at: '2026-06-24T00:00:00Z',
+    });
+
+    const logged = consoleError.mock.calls.map((call) => call.join(' ')).join('\n');
+    expect(logged).toContain('p1');
+
+    consoleError.mockRestore();
   });
 
   // ── POST — GitHub failure → failPullRequest + 502 ─────────────────────────
@@ -365,6 +503,13 @@ describe('remediation router', () => {
         repo: 'owner/repo',
         commit_sha: 'abc123',
         claimed_at: '', // proto3 default when the peer predates the field
+        edits: [
+          {
+            path: 'models/mymodel.sql',
+            content_uri: 's3://continuo/proposals/p1/fix.sql',
+            diff_uri: '',
+          },
+        ],
       }),
     });
     const prCreator = makePrCreator({
@@ -387,6 +532,13 @@ describe('remediation router', () => {
         repo: 'owner/repo',
         commit_sha: 'abc123',
         claimed_at: '',
+        edits: [
+          {
+            path: 'models/mymodel.sql',
+            content_uri: 's3://continuo/proposals/p1/fix.sql',
+            diff_uri: '',
+          },
+        ],
       }),
     });
     const prCreator = makePrCreator();
@@ -431,6 +583,13 @@ describe('remediation router', () => {
         repo: 'owner/repo',
         commit_sha: 'abc123',
         claimed_at: '2026-07-01T12:34:56Z',
+        edits: [
+          {
+            path: 'models/mymodel.sql',
+            content_uri: 's3://continuo/proposals/p1/fix.sql',
+            diff_uri: '',
+          },
+        ],
       }),
     });
     const prCreator = makePrCreator({

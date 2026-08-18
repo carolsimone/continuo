@@ -145,6 +145,54 @@ describe('RemediationPanel', () => {
     expect(screen.getByRole('link', { name: /open full ↗/i })).toBeInTheDocument();
   });
 
+  it('renders one labelled diff view per edit when the proposal carries edits', async () => {
+    const proposal = makeProposal({
+      status: 'skipped',
+      diff_uri: 's3://bucket/legacy.patch',
+      edits: [
+        { path: 'contracts/a.yml', content_uri: 's3://bucket/a.yml', diff_uri: 's3://bucket/a.diff' },
+        { path: 'scripts/a.py', content_uri: 's3://bucket/a.py', diff_uri: 's3://bucket/py.diff' },
+      ],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    fireEvent.click(screen.getByText('svc.schema.my_model'));
+
+    expect(screen.getByText('contracts/a.yml')).toBeInTheDocument();
+    expect(screen.getByText('scripts/a.py')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^view$/i })).toHaveLength(2);
+
+    const links = screen.getAllByRole('link', { name: /open full ↗/i });
+    expect(links).toHaveLength(2);
+    expect(links[0].getAttribute('href')).toContain(encodeURIComponent('s3://bucket/a.diff'));
+    expect(links[1].getAttribute('href')).toContain(encodeURIComponent('s3://bucket/py.diff'));
+    // The per-file diffs replace the single-file preview rather than adding to it.
+    expect(
+      links.some((l) => l.getAttribute('href')?.includes(encodeURIComponent('s3://bucket/legacy.patch'))),
+    ).toBe(false);
+  });
+
+  it('falls back to the single unlabelled diff view when the proposal carries no edits', async () => {
+    const proposal = makeProposal({
+      status: 'skipped',
+      diff_uri: 's3://bucket/candidate.patch',
+      edits: [],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    fireEvent.click(screen.getByText('svc.schema.my_model'));
+
+    const links = screen.getAllByRole('link', { name: /open full ↗/i });
+    expect(links).toHaveLength(1);
+    expect(links[0].getAttribute('href')).toContain(encodeURIComponent('s3://bucket/candidate.patch'));
+  });
+
   it('renders a merged chip for a proposal whose PR was merged', async () => {
     const proposal = makeProposal({
       pr_state: 'merged',

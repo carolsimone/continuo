@@ -89,11 +89,18 @@ function ProposalDetailCard({
           {proposal.rationale}
         </p>
 
-        {proposal.diff_uri && (
-          <div className="detail-card__row">
-            <DiffView uri={proposal.diff_uri} />
-          </div>
-        )}
+        {proposal.edits && proposal.edits.length > 0
+          ? proposal.edits.map((edit) => (
+              <div className="detail-card__row" key={edit.path}>
+                <span className="detail-card__edit-path">{edit.path}</span>{' '}
+                {edit.diff_uri && <DiffView uri={edit.diff_uri} />}
+              </div>
+            ))
+          : proposal.diff_uri && (
+              <div className="detail-card__row">
+                <DiffView uri={proposal.diff_uri} />
+              </div>
+            )}
 
         {!proposal.source_resolved && (
           <div className="info-strip info-strip--warning detail-card__row">

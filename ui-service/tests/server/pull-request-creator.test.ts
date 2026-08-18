@@ -6,19 +6,17 @@ import type { CreatePRInput } from '../../src/server/github/pull-request-creator
 // Minimal octokit-like fake covering only the methods used
 function buildFakeOctokit(opts: {
   defaultBranchSha?: string;
-  fileSha?: string;
   prCreate422?: boolean;
-  createRef422?: boolean;
+  createRefStatus?: number;
   existingPR?: { html_url: string; number: number };
-  getContent404?: boolean;
+  existingPRs?: Array<{ html_url: string; number: number }>;
 }) {
   const {
     defaultBranchSha = 'sha-base',
-    fileSha = undefined,
     prCreate422 = false,
-    createRef422 = false,
+    createRefStatus = undefined,
     existingPR = { html_url: 'https://github.com/o/r/pull/7', number: 7 },
-    getContent404 = false,
+    existingPRs = [existingPR],
   } = opts;
 
   const getRef = vi.fn().mockResolvedValue({
@@ -26,22 +24,18 @@ function buildFakeOctokit(opts: {
   });
 
   const createRef = vi.fn().mockImplementation(async () => {
-    if (createRef422) {
-      const err = { status: 422, message: 'Reference already exists' };
+    if (createRefStatus !== undefined) {
+      const err = { status: createRefStatus, message: 'createRef rejected' };
       throw err;
     }
     return {};
   });
 
-  const getContent = vi.fn().mockImplementation(async () => {
-    if (getContent404) {
-      const err = { status: 404 };
-      throw err;
-    }
-    return { data: { sha: fileSha } };
-  });
-
+  // The tree flow is content-addressed and never upserts a file directly.
+  // Kept only so tests can assert it stays untouched.
   const createOrUpdateFileContents = vi.fn().mockResolvedValue({});
+
+  let blobCounter = 0;
 
   const prCreate = vi.fn().mockImplementation(async () => {
     if (prCreate422) {
@@ -52,12 +46,18 @@ function buildFakeOctokit(opts: {
   });
 
   const prList = vi.fn().mockResolvedValue({
-    data: [existingPR],
+    data: existingPRs,
   });
 
+  const getCommit = vi.fn().mockResolvedValue({ data: { tree: { sha: 'base-tree-sha' } } });
+  const createBlob = vi.fn().mockImplementation(async () => ({ data: { sha: `blob-${++blobCounter}` } }));
+  const createTree = vi.fn().mockResolvedValue({ data: { sha: 'new-tree-sha' } });
+  const createCommit = vi.fn().mockResolvedValue({ data: { sha: 'new-commit-sha' } });
+  const updateRef = vi.fn().mockResolvedValue({});
+
   return {
-    git: { getRef, createRef },
-    repos: { getContent, createOrUpdateFileContents },
+    git: { getRef, createRef, getCommit, createBlob, createTree, createCommit, updateRef },
+    repos: { createOrUpdateFileContents },
     pulls: { create: prCreate, list: prList },
   };
 }
@@ -66,17 +66,16 @@ const baseInput: CreatePRInput = {
   repo: 'o/continuo-dbt-demo',
   baseBranch: 'main',
   headBranch: 'remediation/r-1/orders_d-attempt1',
-  filePath: 'models/orders_d.sql',
-  content: 'SELECT 1',
+  files: [{ path: 'models/orders_d.sql', content: 'SELECT 1' }],
   commitMessage: 'fix: remediation for orders_d',
   title: 'Remediation fix for orders_d',
   body: 'Auto-generated fix proposal.',
 };
 
 describe('makePullRequestCreator', () => {
-  describe('happy path — creates branch, upserts file with existing sha, opens PR', () => {
+  describe('happy path — creates branch, commits the files, opens PR', () => {
     it('calls createRef with refs/heads/<headBranch> and base sha', async () => {
-      const octokit = buildFakeOctokit({ defaultBranchSha: 'base1', fileSha: 'f1' });
+      const octokit = buildFakeOctokit({ defaultBranchSha: 'base1' });
       const creator = makePullRequestCreator(octokit);
       const res = await creator.create(baseInput);
 
@@ -92,25 +91,31 @@ describe('makePullRequestCreator', () => {
       });
     });
 
-    it('upserts file with base64-encoded content and existing file sha', async () => {
-      const octokit = buildFakeOctokit({ defaultBranchSha: 'base1', fileSha: 'f1' });
+    it('commits a single file through the same tree flow, with no prior read of the file', async () => {
+      const octokit = buildFakeOctokit({ defaultBranchSha: 'base1' });
       const creator = makePullRequestCreator(octokit);
       await creator.create(baseInput);
 
-      expect(octokit.repos.createOrUpdateFileContents).toHaveBeenCalledWith(
+      expect(octokit.git.createBlob).toHaveBeenCalledWith(
         expect.objectContaining({
-          path: 'models/orders_d.sql',
-          content: Buffer.from('SELECT 1').toString('base64'),
-          branch: 'remediation/r-1/orders_d-attempt1',
-          sha: 'f1',
+          content: Buffer.from('SELECT 1', 'utf8').toString('base64'),
+          encoding: 'base64',
         })
       );
+      expect(octokit.git.createTree).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tree: [
+            { path: 'models/orders_d.sql', mode: '100644', type: 'blob', sha: 'blob-1' },
+          ],
+        })
+      );
+      expect(octokit.repos.createOrUpdateFileContents).not.toHaveBeenCalled();
     });
   });
 
   describe('baseSha provided — branches from the proposal commit, not base HEAD', () => {
     it('creates the branch from baseSha and does not resolve base branch HEAD', async () => {
-      const octokit = buildFakeOctokit({ defaultBranchSha: 'base1', fileSha: 'f1' });
+      const octokit = buildFakeOctokit({ defaultBranchSha: 'base1' });
       const creator = makePullRequestCreator(octokit);
       await creator.create({ ...baseInput, baseSha: 'commit-abc' });
 
@@ -123,18 +128,6 @@ describe('makePullRequestCreator', () => {
       );
       // No need to look up the base branch HEAD when the commit is known.
       expect(octokit.git.getRef).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('new file — getContent returns 404, no sha passed to createOrUpdateFileContents', () => {
-    it('calls createOrUpdateFileContents WITHOUT sha when file does not exist', async () => {
-      const octokit = buildFakeOctokit({ defaultBranchSha: 'base1', getContent404: true });
-      const creator = makePullRequestCreator(octokit);
-      await creator.create(baseInput);
-
-      const call = octokit.repos.createOrUpdateFileContents.mock.calls[0][0];
-      expect(call).not.toHaveProperty('sha');
-      expect(call.content).toBe(Buffer.from('SELECT 1').toString('base64'));
     });
   });
 
@@ -155,15 +148,127 @@ describe('makePullRequestCreator', () => {
       );
       expect(res).toEqual({ url: 'https://github.com/o/r/pull/7', number: 7 });
     });
+
+    it('throws when pulls.create returns 422 but pulls.list finds no open PR', async () => {
+      const octokit = buildFakeOctokit({ prCreate422: true, existingPRs: [] });
+      const creator = makePullRequestCreator(octokit);
+
+      await expect(creator.create(baseInput)).rejects.toThrow(
+        /422 but no open PR found for head o:remediation\/r-1\/orders_d-attempt1/
+      );
+    });
+  });
+
+  describe('non-422 failures propagate to the caller', () => {
+    it('rethrows a createRef error whose status is not 422', async () => {
+      const octokit = buildFakeOctokit({ createRefStatus: 500 });
+      const creator = makePullRequestCreator(octokit);
+
+      await expect(creator.create(baseInput)).rejects.toMatchObject({ status: 500 });
+      expect(octokit.git.createBlob).not.toHaveBeenCalled();
+    });
+
+    it('rethrows a pulls.create error whose status is not 422', async () => {
+      const octokit = buildFakeOctokit({});
+      octokit.pulls.create.mockRejectedValue({ status: 500, message: 'server error' });
+      const creator = makePullRequestCreator(octokit);
+
+      await expect(creator.create(baseInput)).rejects.toMatchObject({ status: 500 });
+      expect(octokit.pulls.list).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('multi-file commit — one tree commit carrying every file', () => {
+    const multiFileInput: CreatePRInput = {
+      repo: 'o/r',
+      baseBranch: 'main',
+      baseSha: 'base',
+      headBranch: 'b',
+      files: [
+        { path: 'contracts/a.yml', content: 'x' },
+        { path: 'scripts/a.py', content: 'y' },
+      ],
+      commitMessage: 'm',
+      title: 't',
+      body: 'b',
+    };
+
+    it('commits N files in one tree commit', async () => {
+      const octokit = buildFakeOctokit({});
+      const create = makePullRequestCreator(octokit);
+      await create.create(multiFileInput);
+
+      expect(octokit.git.createBlob).toHaveBeenCalledTimes(2);
+      expect(octokit.git.createTree).toHaveBeenCalledTimes(1);
+      expect(
+        octokit.git.createTree.mock.calls[0][0].tree.map((e: any) => e.path)
+      ).toEqual(['contracts/a.yml', 'scripts/a.py']);
+      expect(octokit.git.createCommit).toHaveBeenCalledTimes(1);
+      expect(octokit.git.updateRef).toHaveBeenCalledWith(
+        expect.objectContaining({ ref: 'heads/b', force: true })
+      );
+      expect(octokit.repos.createOrUpdateFileContents).not.toHaveBeenCalled();
+    });
+
+    it('base64-encodes each file into its own blob and wires the blob shas into the tree', async () => {
+      const octokit = buildFakeOctokit({});
+      const create = makePullRequestCreator(octokit);
+      await create.create(multiFileInput);
+
+      expect(octokit.git.createBlob).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          content: Buffer.from('x', 'utf8').toString('base64'),
+          encoding: 'base64',
+        })
+      );
+      expect(octokit.git.createBlob).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          content: Buffer.from('y', 'utf8').toString('base64'),
+          encoding: 'base64',
+        })
+      );
+      expect(octokit.git.createTree).toHaveBeenCalledWith(
+        expect.objectContaining({
+          base_tree: 'base-tree-sha',
+          tree: [
+            { path: 'contracts/a.yml', mode: '100644', type: 'blob', sha: 'blob-1' },
+            { path: 'scripts/a.py', mode: '100644', type: 'blob', sha: 'blob-2' },
+          ],
+        })
+      );
+      expect(octokit.git.createCommit).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'm', tree: 'new-tree-sha', parents: ['base'] })
+      );
+      expect(octokit.git.updateRef).toHaveBeenCalledWith(
+        expect.objectContaining({ ref: 'heads/b', sha: 'new-commit-sha', force: true })
+      );
+    });
+
+    it('reads the base tree from, and parents the commit on, the resolved base sha when baseSha is omitted', async () => {
+      const octokit = buildFakeOctokit({ defaultBranchSha: 'head-of-main' });
+      const create = makePullRequestCreator(octokit);
+      const { baseSha: _omitted, ...withoutBaseSha } = multiFileInput;
+      await create.create(withoutBaseSha);
+
+      expect(octokit.git.getCommit).toHaveBeenCalledWith(
+        expect.objectContaining({ commit_sha: 'head-of-main' })
+      );
+      expect(octokit.git.createCommit).toHaveBeenCalledWith(
+        expect.objectContaining({ parents: ['head-of-main'] })
+      );
+    });
   });
 
   describe('head branch already exists — createRef 422 → continues without error', () => {
-    it('proceeds to upsert file and open PR when branch already exists', async () => {
-      const octokit = buildFakeOctokit({ createRef422: true, fileSha: 'f2' });
+    it('proceeds to commit the files and open the PR when the branch already exists', async () => {
+      const octokit = buildFakeOctokit({ createRefStatus: 422 });
       const creator = makePullRequestCreator(octokit);
       const res = await creator.create(baseInput);
 
-      expect(octokit.repos.createOrUpdateFileContents).toHaveBeenCalled();
+      expect(octokit.git.createCommit).toHaveBeenCalled();
+      expect(octokit.git.updateRef).toHaveBeenCalled();
       expect(res).toEqual({
         url: 'https://github.com/o/r/pull/7',
         number: 7,
