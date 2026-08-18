@@ -590,7 +590,7 @@ sequenceDiagram
   else claim granted
     RA-->>UI: { repo, commit_sha, file_path, proposed_sql_uri, branch_name, claimed_at, edits, ... }
 
-    alt edits list empty and no file_path
+    alt edits list empty and file_path or proposed_sql_uri missing
       Note over UI: nothing to commit at all — refuse rather than open a PR that changes no files
       UI->>RA: FailPullRequest(id, claimed_at)
       UI-->>OP: 502 { error: "proposal carries no file edits" }
