@@ -162,7 +162,7 @@ export function createRemediationRouter(
     // Release the claim and fail loudly rather than open one.
     if (edits.length === 0) {
       console.error(
-        '[remediation] proposal %s was claimed with no file edits and no file path — refusing to open an empty pull request',
+        '[remediation] proposal %s was claimed with no file edits and no single file to fall back to — refusing to open an empty pull request',
         id,
       );
       await safeFailPullRequest(remediation, id, claimedAt);
