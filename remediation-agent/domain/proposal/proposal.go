@@ -19,6 +19,14 @@ const (
 	StatusEscalated  Status = "escalated"
 )
 
+// FileEdit is one proposed change to a single file: its repository-relative
+// path and the S3 URIs of the proposed content and unified diff.
+type FileEdit struct {
+	Path       string
+	ContentURI string
+	DiffURI    string
+}
+
 // Confidence is the model's self-reported confidence in the proposed fix.
 type Confidence string
 
@@ -31,34 +39,39 @@ const (
 // Proposal is the append-only record of one fix-proposal attempt for a failed
 // node. One row per attempt; unique on (release_id, node_id, attempt).
 type Proposal struct {
-	Source              string
-	ReleaseID           string
-	NodeID              string
-	ErrorSignature      string
-	Attempt             int
-	Status              Status
-	Confidence          Confidence
-	Rationale           string
-	ProposedSQLURI      string
-	DiffURI             string
+	Source         string
+	ReleaseID      string
+	NodeID         string
+	ErrorSignature string
+	Attempt        int
+	Status         Status
+	Confidence     Confidence
+	Rationale      string
+	ProposedSQLURI string
+	DiffURI        string
 	// CandidateFixSQLURI is the S3 URI of the SQL fix generated from the real
 	// model source fetched from version control (empty when the step was skipped).
-	CandidateFixSQLURI  string
+	CandidateFixSQLURI string
 	// CandidateFixDiffURI is the S3 URI of the unified diff between the
 	// original source and the candidate fix (empty when the step was skipped).
 	CandidateFixDiffURI string
 	// SourceResolved indicates that the real-source fix step produced a
 	// confident result; false when the step was skipped or inconclusive.
-	SourceResolved      bool
+	SourceResolved bool
 	// Repo is the version-control repository (owner/name) from which the source
 	// file was fetched (e.g. "owner/continuo-dbt-demo"). Empty when not resolved.
-	Repo                string
+	Repo string
 	// CommitSHA is the git commit hash at which the source file was fetched.
 	// Empty when not resolved.
-	CommitSHA           string
+	CommitSHA string
 	// FilePath is the repository-relative path of the dbt model source file
 	// (e.g. "services/service-3/models/orders_d.sql"). Empty when not resolved.
-	FilePath            string
-	Model               string
-	CreatedAt           time.Time
+	FilePath string
+	// Edits is the list of proposed file changes for this attempt. A row
+	// written before this field existed has an empty list; readers fall back
+	// to the single-file scalar fields above (FilePath, ProposedSQLURI,
+	// DiffURI) to synthesize one edit.
+	Edits     []FileEdit
+	Model     string
+	CreatedAt time.Time
 }

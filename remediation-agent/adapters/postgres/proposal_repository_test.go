@@ -1147,6 +1147,65 @@ func TestRecordPROutcome_CASAndListOpen(t *testing.T) {
 	require.Empty(t, open)
 }
 
+// TestProposalRepository_FileEditsRoundTripAndLegacySynthesis verifies that a
+// non-empty Edits slice round-trips through Get unchanged, and that a row
+// written with Edits=nil but non-empty legacy scalar columns (file_path,
+// proposed_sql_uri, diff_uri) reads back as a single synthesized FileEdit.
+func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	edits := []proposal.FileEdit{
+		{Path: "contracts/a.yml", ContentURI: "s3://b/1.content", DiffURI: "s3://b/1.diff"},
+		{Path: "scripts/a.py", ContentURI: "s3://b/2.content", DiffURI: "s3://b/2.diff"},
+	}
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-file-edits-1",
+		NodeID:         "model.p.multi_edit",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "rationale",
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+		Edits:          edits,
+	}
+	id := seedProposal(t, repo, db, p)
+
+	got, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, edits, got.Edits, "a non-empty Edits slice must round-trip unchanged")
+
+	legacy := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-file-edits-1",
+		NodeID:         "analytics.legacy_node",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "rationale",
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+		Edits:          nil, // simulates a pre-V12 writer
+		FilePath:       "models/x.sql",
+		ProposedSQLURI: "s3://b/x.sql",
+		DiffURI:        "s3://b/x.diff",
+	}
+	legacyID := seedProposal(t, repo, db, legacy)
+
+	got2, err := repo.Get(ctx, legacyID)
+	require.NoError(t, err)
+	require.Equal(t,
+		[]proposal.FileEdit{{Path: "models/x.sql", ContentURI: "s3://b/x.sql", DiffURI: "s3://b/x.diff"}},
+		got2.Edits,
+		"a row with an empty file_edits array must synthesize one edit from the legacy scalar columns",
+	)
+}
+
 // TestRecordPROutcome_RejectedAndNonOpenRows verifies the rejected transition
 // and that rows with an empty pr_state, or 'opening', or 'failed', are never
 // transitioned nor listed.
