@@ -205,6 +205,7 @@ guards:
 	bash scripts/check-validation-image-sideload.sh
 	cd pkg && go test ./...
 	diff state/proto/state/v1/state.proto ui-service/proto/state.proto
+	diff remediation-agent/proto/remediation/v1/remediation.proto ui-service/proto/remediation/v1/remediation.proto
 
 .PHONY: stack-up
 stack-up:

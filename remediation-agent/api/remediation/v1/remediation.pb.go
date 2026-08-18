@@ -34,16 +34,19 @@ type Proposal struct {
 	Status         string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
 	Confidence     string                 `protobuf:"bytes,8,opt,name=confidence,proto3" json:"confidence,omitempty"`
 	Rationale      string                 `protobuf:"bytes,9,opt,name=rationale,proto3" json:"rationale,omitempty"`
-	// legacy single-file mirror of edits[0]; kept populated
+	// single-file view of the proposal: edits[0]'s content_uri when edits is
+	// non-empty, otherwise the candidate-only fix artifact
 	ProposedSqlUri string `protobuf:"bytes,10,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
-	// legacy single-file mirror of edits[0]; kept populated
+	// single-file view of the proposal: edits[0]'s diff_uri when edits is
+	// non-empty, otherwise the diff of the candidate-only fix artifact
 	DiffUri             string `protobuf:"bytes,11,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
 	CandidateFixSqlUri  string `protobuf:"bytes,12,opt,name=candidate_fix_sql_uri,json=candidateFixSqlUri,proto3" json:"candidate_fix_sql_uri,omitempty"`
 	CandidateFixDiffUri string `protobuf:"bytes,13,opt,name=candidate_fix_diff_uri,json=candidateFixDiffUri,proto3" json:"candidate_fix_diff_uri,omitempty"`
 	SourceResolved      bool   `protobuf:"varint,14,opt,name=source_resolved,json=sourceResolved,proto3" json:"source_resolved,omitempty"`
 	Repo                string `protobuf:"bytes,15,opt,name=repo,proto3" json:"repo,omitempty"`
 	CommitSha           string `protobuf:"bytes,16,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
-	// legacy single-file mirror of edits[0]; kept populated
+	// single-file view of the proposal: edits[0]'s path when edits is
+	// non-empty, empty when the proposal carries only a candidate fix
 	FilePath string `protobuf:"bytes,17,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
 	Model    string `protobuf:"bytes,18,opt,name=model,proto3" json:"model,omitempty"`
 	// created_at is an RFC3339-formatted timestamp string.
@@ -474,11 +477,14 @@ type BeginPullRequestResponse struct {
 	ProposalId string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
 	Repo       string                 `protobuf:"bytes,2,opt,name=repo,proto3" json:"repo,omitempty"`
 	CommitSha  string                 `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
-	// legacy single-file mirror of edits[0]; kept populated
+	// single-file view of the proposal: edits[0]'s path when edits is
+	// non-empty, empty when the proposal carries only a candidate fix
 	FilePath string `protobuf:"bytes,4,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
-	// legacy single-file mirror of edits[0]; kept populated
+	// single-file view of the proposal: edits[0]'s content_uri when edits is
+	// non-empty, otherwise the candidate-only fix artifact
 	ProposedSqlUri string `protobuf:"bytes,5,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
-	// legacy single-file mirror of edits[0]; kept populated
+	// single-file view of the proposal: edits[0]'s diff_uri when edits is
+	// non-empty, otherwise the diff of the candidate-only fix artifact
 	DiffUri    string `protobuf:"bytes,6,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
 	ReleaseId  string `protobuf:"bytes,7,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
 	NodeId     string `protobuf:"bytes,8,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
