@@ -24,25 +24,28 @@ const (
 // Proposal is a read-only projection of a remediation proposal row, including
 // all PR-lifecycle columns. Fields mirror proposal.View (snake_case).
 type Proposal struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	Id                  string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Source              string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
-	ReleaseId           string                 `protobuf:"bytes,3,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
-	NodeId              string                 `protobuf:"bytes,4,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	ErrorSignature      string                 `protobuf:"bytes,5,opt,name=error_signature,json=errorSignature,proto3" json:"error_signature,omitempty"`
-	Attempt             int32                  `protobuf:"varint,6,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	Status              string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
-	Confidence          string                 `protobuf:"bytes,8,opt,name=confidence,proto3" json:"confidence,omitempty"`
-	Rationale           string                 `protobuf:"bytes,9,opt,name=rationale,proto3" json:"rationale,omitempty"`
-	ProposedSqlUri      string                 `protobuf:"bytes,10,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
-	DiffUri             string                 `protobuf:"bytes,11,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
-	CandidateFixSqlUri  string                 `protobuf:"bytes,12,opt,name=candidate_fix_sql_uri,json=candidateFixSqlUri,proto3" json:"candidate_fix_sql_uri,omitempty"`
-	CandidateFixDiffUri string                 `protobuf:"bytes,13,opt,name=candidate_fix_diff_uri,json=candidateFixDiffUri,proto3" json:"candidate_fix_diff_uri,omitempty"`
-	SourceResolved      bool                   `protobuf:"varint,14,opt,name=source_resolved,json=sourceResolved,proto3" json:"source_resolved,omitempty"`
-	Repo                string                 `protobuf:"bytes,15,opt,name=repo,proto3" json:"repo,omitempty"`
-	CommitSha           string                 `protobuf:"bytes,16,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
-	FilePath            string                 `protobuf:"bytes,17,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
-	Model               string                 `protobuf:"bytes,18,opt,name=model,proto3" json:"model,omitempty"`
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Source         string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
+	ReleaseId      string                 `protobuf:"bytes,3,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	NodeId         string                 `protobuf:"bytes,4,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	ErrorSignature string                 `protobuf:"bytes,5,opt,name=error_signature,json=errorSignature,proto3" json:"error_signature,omitempty"`
+	Attempt        int32                  `protobuf:"varint,6,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Status         string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
+	Confidence     string                 `protobuf:"bytes,8,opt,name=confidence,proto3" json:"confidence,omitempty"`
+	Rationale      string                 `protobuf:"bytes,9,opt,name=rationale,proto3" json:"rationale,omitempty"`
+	// legacy single-file mirror of edits[0]; kept populated
+	ProposedSqlUri string `protobuf:"bytes,10,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
+	// legacy single-file mirror of edits[0]; kept populated
+	DiffUri             string `protobuf:"bytes,11,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
+	CandidateFixSqlUri  string `protobuf:"bytes,12,opt,name=candidate_fix_sql_uri,json=candidateFixSqlUri,proto3" json:"candidate_fix_sql_uri,omitempty"`
+	CandidateFixDiffUri string `protobuf:"bytes,13,opt,name=candidate_fix_diff_uri,json=candidateFixDiffUri,proto3" json:"candidate_fix_diff_uri,omitempty"`
+	SourceResolved      bool   `protobuf:"varint,14,opt,name=source_resolved,json=sourceResolved,proto3" json:"source_resolved,omitempty"`
+	Repo                string `protobuf:"bytes,15,opt,name=repo,proto3" json:"repo,omitempty"`
+	CommitSha           string `protobuf:"bytes,16,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	// legacy single-file mirror of edits[0]; kept populated
+	FilePath string `protobuf:"bytes,17,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
+	Model    string `protobuf:"bytes,18,opt,name=model,proto3" json:"model,omitempty"`
 	// created_at is an RFC3339-formatted timestamp string.
 	CreatedAt string `protobuf:"bytes,19,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	PrUrl     string `protobuf:"bytes,20,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
@@ -53,7 +56,8 @@ type Proposal struct {
 	PrOpenedBy string `protobuf:"bytes,24,opt,name=pr_opened_by,json=prOpenedBy,proto3" json:"pr_opened_by,omitempty"`
 	// pr_closed_at is an RFC3339-formatted timestamp string, empty until the PR
 	// reaches a terminal outcome (pr_state 'merged' or 'rejected').
-	PrClosedAt    string `protobuf:"bytes,25,opt,name=pr_closed_at,json=prClosedAt,proto3" json:"pr_closed_at,omitempty"`
+	PrClosedAt    string      `protobuf:"bytes,25,opt,name=pr_closed_at,json=prClosedAt,proto3" json:"pr_closed_at,omitempty"`
+	Edits         []*FileEdit `protobuf:"bytes,26,rep,name=edits,proto3" json:"edits,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -263,6 +267,13 @@ func (x *Proposal) GetPrClosedAt() string {
 	return ""
 }
 
+func (x *Proposal) GetEdits() []*FileEdit {
+	if x != nil {
+		return x.Edits
+	}
+	return nil
+}
+
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
 type ListProposalsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -459,26 +470,30 @@ func (x *BeginPullRequestRequest) GetId() string {
 
 // BeginPullRequestResponse carries all data needed to open a GitHub pull-request.
 type BeginPullRequestResponse struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ProposalId     string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
-	Repo           string                 `protobuf:"bytes,2,opt,name=repo,proto3" json:"repo,omitempty"`
-	CommitSha      string                 `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
-	FilePath       string                 `protobuf:"bytes,4,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
-	ProposedSqlUri string                 `protobuf:"bytes,5,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
-	DiffUri        string                 `protobuf:"bytes,6,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
-	ReleaseId      string                 `protobuf:"bytes,7,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
-	NodeId         string                 `protobuf:"bytes,8,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Attempt        int32                  `protobuf:"varint,9,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	Rationale      string                 `protobuf:"bytes,10,opt,name=rationale,proto3" json:"rationale,omitempty"`
-	Confidence     string                 `protobuf:"bytes,11,opt,name=confidence,proto3" json:"confidence,omitempty"`
-	Model          string                 `protobuf:"bytes,12,opt,name=model,proto3" json:"model,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ProposalId string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
+	Repo       string                 `protobuf:"bytes,2,opt,name=repo,proto3" json:"repo,omitempty"`
+	CommitSha  string                 `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"`
+	// legacy single-file mirror of edits[0]; kept populated
+	FilePath string `protobuf:"bytes,4,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
+	// legacy single-file mirror of edits[0]; kept populated
+	ProposedSqlUri string `protobuf:"bytes,5,opt,name=proposed_sql_uri,json=proposedSqlUri,proto3" json:"proposed_sql_uri,omitempty"`
+	// legacy single-file mirror of edits[0]; kept populated
+	DiffUri    string `protobuf:"bytes,6,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
+	ReleaseId  string `protobuf:"bytes,7,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	NodeId     string `protobuf:"bytes,8,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Attempt    int32  `protobuf:"varint,9,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Rationale  string `protobuf:"bytes,10,opt,name=rationale,proto3" json:"rationale,omitempty"`
+	Confidence string `protobuf:"bytes,11,opt,name=confidence,proto3" json:"confidence,omitempty"`
+	Model      string `protobuf:"bytes,12,opt,name=model,proto3" json:"model,omitempty"`
 	// branch is the git branch name to open the PR from.
 	Branch string `protobuf:"bytes,13,opt,name=branch,proto3" json:"branch,omitempty"`
 	// claimed_at is an RFC3339-formatted timestamp string: the pr_claimed_at
 	// value this claim actually persisted. FailPullRequest must echo it back
 	// so the repository's compare-and-set only releases this exact claim,
 	// never a fresher one taken by someone else since.
-	ClaimedAt     string `protobuf:"bytes,14,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
+	ClaimedAt     string      `protobuf:"bytes,14,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
+	Edits         []*FileEdit `protobuf:"bytes,15,rep,name=edits,proto3" json:"edits,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -609,6 +624,13 @@ func (x *BeginPullRequestResponse) GetClaimedAt() string {
 		return x.ClaimedAt
 	}
 	return ""
+}
+
+func (x *BeginPullRequestResponse) GetEdits() []*FileEdit {
+	if x != nil {
+		return x.Edits
+	}
+	return nil
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
@@ -822,11 +844,73 @@ func (x *FailPullRequestResponse) GetReleased() bool {
 	return false
 }
 
+// One proposed file change. content_uri/diff_uri point at S3 objects
+// holding the full corrected file content and its unified diff.
+type FileEdit struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	ContentUri    string                 `protobuf:"bytes,2,opt,name=content_uri,json=contentUri,proto3" json:"content_uri,omitempty"`
+	DiffUri       string                 `protobuf:"bytes,3,opt,name=diff_uri,json=diffUri,proto3" json:"diff_uri,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileEdit) Reset() {
+	*x = FileEdit{}
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileEdit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileEdit) ProtoMessage() {}
+
+func (x *FileEdit) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileEdit.ProtoReflect.Descriptor instead.
+func (*FileEdit) Descriptor() ([]byte, []int) {
+	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *FileEdit) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FileEdit) GetContentUri() string {
+	if x != nil {
+		return x.ContentUri
+	}
+	return ""
+}
+
+func (x *FileEdit) GetDiffUri() string {
+	if x != nil {
+		return x.DiffUri
+	}
+	return ""
+}
+
 var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x93\x06\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xc3\x06\n" +
 	"\bProposal\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
@@ -861,7 +945,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\fpr_opened_by\x18\x18 \x01(\tR\n" +
 	"prOpenedBy\x12 \n" +
 	"\fpr_closed_at\x18\x19 \x01(\tR\n" +
-	"prClosedAt\"_\n" +
+	"prClosedAt\x12.\n" +
+	"\x05edits\x18\x1a \x03(\v2\x18.remediation.v1.FileEditR\x05edits\"_\n" +
 	"\x14ListProposalsRequest\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x19\n" +
 	"\bpr_state\x18\x02 \x01(\tR\aprState\x12\x14\n" +
@@ -871,7 +956,7 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x12GetProposalRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\")\n" +
 	"\x17BeginPullRequestRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"\xad\x03\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\xdd\x03\n" +
 	"\x18BeginPullRequestResponse\x12\x1f\n" +
 	"\vproposal_id\x18\x01 \x01(\tR\n" +
 	"proposalId\x12\x12\n" +
@@ -893,7 +978,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x05model\x18\f \x01(\tR\x05model\x12\x16\n" +
 	"\x06branch\x18\r \x01(\tR\x06branch\x12\x1d\n" +
 	"\n" +
-	"claimed_at\x18\x0e \x01(\tR\tclaimedAt\"{\n" +
+	"claimed_at\x18\x0e \x01(\tR\tclaimedAt\x12.\n" +
+	"\x05edits\x18\x0f \x03(\v2\x18.remediation.v1.FileEditR\x05edits\"{\n" +
 	"\x18RecordPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +
@@ -905,7 +991,12 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
 	"claimed_at\x18\x02 \x01(\tR\tclaimedAt\"5\n" +
 	"\x17FailPullRequestResponse\x12\x1a\n" +
-	"\breleased\x18\x01 \x01(\bR\breleased2\xf6\x03\n" +
+	"\breleased\x18\x01 \x01(\bR\breleased\"Z\n" +
+	"\bFileEdit\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
+	"\vcontent_uri\x18\x02 \x01(\tR\n" +
+	"contentUri\x12\x19\n" +
+	"\bdiff_uri\x18\x03 \x01(\tR\adiffUri2\xf6\x03\n" +
 	"\x14RemediationProposals\x12\\\n" +
 	"\rListProposals\x12$.remediation.v1.ListProposalsRequest\x1a%.remediation.v1.ListProposalsResponse\x12K\n" +
 	"\vGetProposal\x12\".remediation.v1.GetProposalRequest\x1a\x18.remediation.v1.Proposal\x12e\n" +
@@ -925,7 +1016,7 @@ func file_proto_remediation_v1_remediation_proto_rawDescGZIP() []byte {
 	return file_proto_remediation_v1_remediation_proto_rawDescData
 }
 
-var file_proto_remediation_v1_remediation_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_proto_remediation_v1_remediation_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_proto_remediation_v1_remediation_proto_goTypes = []any{
 	(*Proposal)(nil),                  // 0: remediation.v1.Proposal
 	(*ListProposalsRequest)(nil),      // 1: remediation.v1.ListProposalsRequest
@@ -937,24 +1028,27 @@ var file_proto_remediation_v1_remediation_proto_goTypes = []any{
 	(*RecordPullRequestResponse)(nil), // 7: remediation.v1.RecordPullRequestResponse
 	(*FailPullRequestRequest)(nil),    // 8: remediation.v1.FailPullRequestRequest
 	(*FailPullRequestResponse)(nil),   // 9: remediation.v1.FailPullRequestResponse
+	(*FileEdit)(nil),                  // 10: remediation.v1.FileEdit
 }
 var file_proto_remediation_v1_remediation_proto_depIdxs = []int32{
-	0, // 0: remediation.v1.ListProposalsResponse.proposals:type_name -> remediation.v1.Proposal
-	1, // 1: remediation.v1.RemediationProposals.ListProposals:input_type -> remediation.v1.ListProposalsRequest
-	3, // 2: remediation.v1.RemediationProposals.GetProposal:input_type -> remediation.v1.GetProposalRequest
-	4, // 3: remediation.v1.RemediationProposals.BeginPullRequest:input_type -> remediation.v1.BeginPullRequestRequest
-	6, // 4: remediation.v1.RemediationProposals.RecordPullRequest:input_type -> remediation.v1.RecordPullRequestRequest
-	8, // 5: remediation.v1.RemediationProposals.FailPullRequest:input_type -> remediation.v1.FailPullRequestRequest
-	2, // 6: remediation.v1.RemediationProposals.ListProposals:output_type -> remediation.v1.ListProposalsResponse
-	0, // 7: remediation.v1.RemediationProposals.GetProposal:output_type -> remediation.v1.Proposal
-	5, // 8: remediation.v1.RemediationProposals.BeginPullRequest:output_type -> remediation.v1.BeginPullRequestResponse
-	7, // 9: remediation.v1.RemediationProposals.RecordPullRequest:output_type -> remediation.v1.RecordPullRequestResponse
-	9, // 10: remediation.v1.RemediationProposals.FailPullRequest:output_type -> remediation.v1.FailPullRequestResponse
-	6, // [6:11] is the sub-list for method output_type
-	1, // [1:6] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	10, // 0: remediation.v1.Proposal.edits:type_name -> remediation.v1.FileEdit
+	0,  // 1: remediation.v1.ListProposalsResponse.proposals:type_name -> remediation.v1.Proposal
+	10, // 2: remediation.v1.BeginPullRequestResponse.edits:type_name -> remediation.v1.FileEdit
+	1,  // 3: remediation.v1.RemediationProposals.ListProposals:input_type -> remediation.v1.ListProposalsRequest
+	3,  // 4: remediation.v1.RemediationProposals.GetProposal:input_type -> remediation.v1.GetProposalRequest
+	4,  // 5: remediation.v1.RemediationProposals.BeginPullRequest:input_type -> remediation.v1.BeginPullRequestRequest
+	6,  // 6: remediation.v1.RemediationProposals.RecordPullRequest:input_type -> remediation.v1.RecordPullRequestRequest
+	8,  // 7: remediation.v1.RemediationProposals.FailPullRequest:input_type -> remediation.v1.FailPullRequestRequest
+	2,  // 8: remediation.v1.RemediationProposals.ListProposals:output_type -> remediation.v1.ListProposalsResponse
+	0,  // 9: remediation.v1.RemediationProposals.GetProposal:output_type -> remediation.v1.Proposal
+	5,  // 10: remediation.v1.RemediationProposals.BeginPullRequest:output_type -> remediation.v1.BeginPullRequestResponse
+	7,  // 11: remediation.v1.RemediationProposals.RecordPullRequest:output_type -> remediation.v1.RecordPullRequestResponse
+	9,  // 12: remediation.v1.RemediationProposals.FailPullRequest:output_type -> remediation.v1.FailPullRequestResponse
+	8,  // [8:13] is the sub-list for method output_type
+	3,  // [3:8] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_proto_remediation_v1_remediation_proto_init() }
@@ -968,7 +1062,7 @@ func file_proto_remediation_v1_remediation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_remediation_v1_remediation_proto_rawDesc), len(file_proto_remediation_v1_remediation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
