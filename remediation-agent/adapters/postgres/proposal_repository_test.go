@@ -1270,3 +1270,46 @@ func TestRecordPROutcome_RejectedAndNonOpenRows(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "opening", v.PrState)
 }
+
+// TestBeginPR_ClaimCarriesFileEdits verifies the projection the pull-request
+// writer actually consumes: BeginPR's RETURNING clause must surface the
+// file_edits column on the claim, with every edit in the order it was
+// written. It also covers a row whose file_edits is empty but whose scalar
+// columns describe a single file — the shape a row written before the column
+// existed has — which must claim as one synthesized edit rather than none.
+func TestBeginPR_ClaimCarriesFileEdits(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	edits := []proposal.FileEdit{
+		{Path: "contracts/a.yml", ContentURI: "s3://b/1.content", DiffURI: "s3://b/1.diff"},
+		{Path: "scripts/a.py", ContentURI: "s3://b/2.content", DiffURI: "s3://b/2.diff"},
+	}
+	multiID := seedProposal(t, repo, db, proposal.Proposal{
+		Source: "validation", ReleaseID: "rel-claim-edits", NodeID: "model.p.multi",
+		ErrorSignature: "sig", Attempt: 1, Status: proposal.StatusProposed,
+		SourceResolved: true, Repo: "acme/dbt-repo", CommitSHA: "sha1",
+		CreatedAt: time.Now().UTC(), Edits: edits,
+	})
+
+	claim, err := repo.BeginPR(ctx, multiID, "remediation/rel-claim-edits/multi-attempt1", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, edits, claim.Edits, "every edit must reach the claim, in order")
+
+	legacyID := seedProposal(t, repo, db, proposal.Proposal{
+		Source: "validation", ReleaseID: "rel-claim-edits", NodeID: "model.p.single",
+		ErrorSignature: "sig", Attempt: 1, Status: proposal.StatusProposed,
+		SourceResolved: true, Repo: "acme/dbt-repo", CommitSHA: "sha1",
+		CreatedAt: time.Now().UTC(), Edits: nil,
+		FilePath: "models/x.sql", ProposedSQLURI: "s3://b/x.sql", DiffURI: "s3://b/x.diff",
+	})
+
+	legacyClaim, err := repo.BeginPR(ctx, legacyID, "remediation/rel-claim-edits/single-attempt1", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t,
+		[]proposal.FileEdit{{Path: "models/x.sql", ContentURI: "s3://b/x.sql", DiffURI: "s3://b/x.diff"}},
+		legacyClaim.Edits,
+		"a row with no file_edits must claim as one edit synthesized from the single-file columns",
+	)
+}

@@ -20,13 +20,11 @@ const (
 )
 
 // FileEdit is one proposed change to a single file: its repository-relative
-// path and the S3 URIs of the proposed content and unified diff. The JSON
-// tags are the wire/storage shape persisted in the proposal table's
-// file_edits column: [{"path","content_uri","diff_uri"}, ...].
+// path and the S3 URIs of the proposed content and unified diff.
 type FileEdit struct {
-	Path       string `json:"path"`
-	ContentURI string `json:"content_uri"`
-	DiffURI    string `json:"diff_uri"`
+	Path       string
+	ContentURI string
+	DiffURI    string
 }
 
 // Confidence is the model's self-reported confidence in the proposed fix.

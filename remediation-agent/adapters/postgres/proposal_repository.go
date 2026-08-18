@@ -98,22 +98,17 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			commit_sha             = EXCLUDED.commit_sha,
 			file_path              = EXCLUDED.file_path,
 			file_edits             = EXCLUDED.file_edits`
-	edits := []byte("[]")
-	if p.Edits != nil {
-		var err error
-		edits, err = json.Marshal(p.Edits)
-		if err != nil {
-			return fmt.Errorf("marshal proposal file edits: %w", err)
-		}
+	edits, err := marshalFileEdits(p.Edits)
+	if err != nil {
+		return fmt.Errorf("marshal proposal file edits: %w", err)
 	}
-	_, err := r.q.ExecContext(ctx, stmt,
+	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, p.NodeID, p.ErrorSignature, p.Attempt,
 		p.Status, p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
 		p.Repo, p.CommitSHA, p.FilePath, edits,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("insert proposal: %w", err)
 	}
 	return nil
@@ -151,19 +146,44 @@ type proposalRow struct {
 	PrClosedAt          *time.Time `db:"pr_closed_at"`
 }
 
+// fileEditRow is the persistence DTO for one element of the file_edits JSONB
+// column. The json tags — a storage concern — live here in the adapter so the
+// domain proposal.FileEdit carries no serialization annotations. The stored
+// shape is [{"path","content_uri","diff_uri"}, ...].
+type fileEditRow struct {
+	Path       string `json:"path"`
+	ContentURI string `json:"content_uri"`
+	DiffURI    string `json:"diff_uri"`
+}
+
+// marshalFileEdits encodes the domain edits as the file_edits column value.
+// A nil or empty slice encodes as an empty JSON array, so the column is never
+// written as SQL NULL.
+func marshalFileEdits(edits []proposal.FileEdit) ([]byte, error) {
+	rows := make([]fileEditRow, 0, len(edits))
+	for _, e := range edits {
+		rows = append(rows, fileEditRow{Path: e.Path, ContentURI: e.ContentURI, DiffURI: e.DiffURI})
+	}
+	return json.Marshal(rows)
+}
+
 // editsOrLegacy decodes the file_edits JSONB column into a []proposal.FileEdit.
 // A malformed blob is treated the same as an empty array rather than failing
 // the read: a proposal row must stay readable even if its file_edits value
-// were ever corrupted, since the legacy scalar columns still carry the same
-// information for a single-file proposal. When the decoded (or defaulted)
-// list is empty and filePath is non-empty, one edit is synthesized from the
-// legacy scalar columns (filePath, contentURI, diffURI) so pre-migration rows
-// keep reading as a single file change.
+// were ever corrupted, since the single-file scalar columns still carry the
+// same information for a one-file proposal. When the decoded (or defaulted)
+// list is empty and filePath is non-empty, one edit is synthesized from those
+// scalar columns (filePath, contentURI, diffURI), which is how a row written
+// before the file_edits column existed keeps reading as a single file change.
 func editsOrLegacy(raw []byte, filePath, contentURI, diffURI string) []proposal.FileEdit {
-	var edits []proposal.FileEdit
-	_ = json.Unmarshal(raw, &edits)
-	if len(edits) == 0 && filePath != "" {
+	var rows []fileEditRow
+	_ = json.Unmarshal(raw, &rows)
+	if len(rows) == 0 && filePath != "" {
 		return []proposal.FileEdit{{Path: filePath, ContentURI: contentURI, DiffURI: diffURI}}
+	}
+	edits := make([]proposal.FileEdit, 0, len(rows))
+	for _, r := range rows {
+		edits = append(edits, proposal.FileEdit{Path: r.Path, ContentURI: r.ContentURI, DiffURI: r.DiffURI})
 	}
 	return edits
 }
