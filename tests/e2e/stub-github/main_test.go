@@ -299,8 +299,6 @@ func TestGetUnknownPullIs404(t *testing.T) {
 // with a sha, and that the sha is a deterministic function of the posted
 // content: the same content always yields the same sha, and different
 // content yields a different one.
-// Fails if: the route is not wired into handleRepos yet, in which case the
-// dispatcher's default case 404s instead of returning 201 with a sha.
 func TestHandleGitBlobs_Create(t *testing.T) {
 	post := func(content string) (int, string) {
 		rec := httptest.NewRecorder()
@@ -335,8 +333,6 @@ func TestHandleGitBlobs_Create(t *testing.T) {
 // TestHandleGitCommits_Get verifies GET /repos/.../git/commits/{sha} returns
 // the requested commit's sha plus a tree.sha, since the PR creator reads
 // baseCommit.data.tree.sha to use as the new tree's base_tree.
-// Fails if: the route is not wired into handleRepos yet, in which case the
-// dispatcher's default case 404s instead of returning the commit body.
 func TestHandleGitCommits_Get(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/git/commits/"+stubBaseSHA, nil))
@@ -362,11 +358,9 @@ func TestHandleGitCommits_Get(t *testing.T) {
 }
 
 // TestHandleGitTrees_Create verifies POST /repos/.../git/trees returns 201
-// with a sha, and that the posted entries are recorded under that sha so a
-// test can assert which paths were committed.
-// Fails if: the route is not wired into handleRepos yet (404 instead of
-// 201), or recordedTreeFor does not exist yet to retrieve the recorded
-// entries (a build failure — the state and the handler land together).
+// with a sha, and that the posted entries are recorded under that sha —
+// retrievable via recordedTreeFor — so a test can assert which paths were
+// committed, in which order, and onto which base tree.
 func TestHandleGitTrees_Create(t *testing.T) {
 	resetGitWrites()
 
@@ -404,10 +398,8 @@ func TestHandleGitTrees_Create(t *testing.T) {
 
 // TestHandleGitCommits_Create verifies POST /repos/.../git/commits returns
 // 201 with a sha, and that the posted message/tree/parents are recorded
-// under that sha so a test can assert what a given commit carries.
-// Fails if: handleGitCommits only handles GET (the routing note in the task
-// brief requires POST git/commits to work too) — the method-not-allowed
-// branch 405s instead of returning 201.
+// under that sha so a test can assert what a given commit carries. The same
+// git/commits path serves both GET and POST.
 func TestHandleGitCommits_Create(t *testing.T) {
 	resetGitWrites()
 
@@ -439,9 +431,8 @@ func TestHandleGitCommits_Create(t *testing.T) {
 
 // TestHandleGitRefs_UpdatePatch verifies PATCH
 // /repos/.../git/refs/heads/{branch} returns 200 with the updated ref
-// object, moving the head branch onto a new commit sha.
-// Fails if: handleGitRefs still only accepts POST, so PATCH falls into its
-// method-not-allowed branch and 405s instead of returning 200.
+// object, moving the head branch onto a new commit sha. The same git/refs
+// path serves both POST (create) and PATCH (update).
 func TestHandleGitRefs_UpdatePatch(t *testing.T) {
 	reqBody := `{"sha":"newcommitsha0","force":true}`
 	rec := httptest.NewRecorder()
