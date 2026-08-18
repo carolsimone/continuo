@@ -28,7 +28,7 @@ The `proposal` table records one row per attempt: it is written `generating` whe
 
 ### gRPC server — `RemediationProposals` (port 50054)
 
-Exposes proposal data and the PR lifecycle to ui-service. Handlers are thin and delegate to application services; all persistence goes through the `ProposalRepository` port. Every `Proposal` and `BeginPullRequestResponse` message carries a `repeated FileEdit edits` field, mapped from the domain object's `Edits` list — a nil or empty list produces an absent repeated field, never a list containing a zero-valued element. The legacy single-file fields on the same messages (`file_path`, `proposed_sql_uri`, `diff_uri`) are populated straight from the domain object's own same-named fields, not derived from `edits[0]`.
+Exposes proposal data and the PR lifecycle to ui-service. Handlers are thin and delegate to application services; all persistence goes through the `ProposalRepository` port. Every `Proposal` and `BeginPullRequestResponse` message carries a `repeated FileEdit edits` field, mapped from the domain object's `Edits` list — a nil or empty list produces an absent repeated field, never a list containing a zero-valued element. The single-file fields on the same messages (`file_path`, `proposed_sql_uri`, `diff_uri`) are populated straight from the domain object's own same-named fields, not derived from `edits[0]`: they equal `edits[0]` whenever `edits` is non-empty, and for a validation proposal whose real-source step did not resolve they describe the candidate fix artifact while `edits` is empty.
 
 | Method | Description |
 |---|---|

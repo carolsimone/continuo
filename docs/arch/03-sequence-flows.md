@@ -590,11 +590,12 @@ sequenceDiagram
   else claim granted
     RA-->>UI: { repo, commit_sha, file_path, proposed_sql_uri, branch_name, claimed_at, edits, ... }
 
-    alt edits list empty
-      Note over UI: two sides disagree about the contract — refuse rather than open an empty PR
+    alt edits list empty and no file_path
+      Note over UI: nothing to commit at all — refuse rather than open a PR that changes no files
       UI->>RA: FailPullRequest(id, claimed_at)
       UI-->>OP: 502 { error: "proposal carries no file edits" }
-    else edits present
+    else edits usable
+      Note over UI: an empty edits list alongside a populated file_path/proposed_sql_uri<br/>(a remediation-agent that predates the list, mid rolling upgrade)<br/>is read as one edit synthesized from those single-file fields
       alt S3 fetch fails for any edit
         UI->>S3: GetObject(edit.content_uri) (any edit)
         S3-->>UI: error
