@@ -311,9 +311,17 @@ func (r *Release) TransitionFromSeedBuilding(validationNodeIDs []string, now tim
 	return nil
 }
 
+// TransitionToPromoted ships a validated candidate to production. A shadow
+// release is refused: it carries a fix nobody has reviewed, submitted by
+// remediation-agent purely to find out whether the fix passes validation, so
+// promoting it would put unreviewed content into production. Its only terminal
+// success is Validated (TransitionToValidated).
 func (r *Release) TransitionToPromoted(now time.Time) error {
 	if r.status != StatusValidating {
 		return fmt.Errorf("cannot transition to promoted from %s", r.status)
+	}
+	if r.shadow {
+		return fmt.Errorf("release %s is a shadow release and cannot be promoted", r.id)
 	}
 	r.status = StatusPromoted
 	r.resolvedAt = &now
@@ -323,9 +331,15 @@ func (r *Release) TransitionToPromoted(now time.Time) error {
 
 // TransitionToValidated ends a shadow release in Validated: it completed
 // validation but, unlike a normal release, stops here instead of promoting.
+// Only a shadow release may take it — Validated is terminal and never
+// promotes, so a normal release that reached it would stall there forever,
+// neither shipped nor rejected.
 func (r *Release) TransitionToValidated(now time.Time) error {
 	if r.status != StatusValidating {
 		return fmt.Errorf("cannot transition to validated from %s", r.status)
+	}
+	if !r.shadow {
+		return fmt.Errorf("release %s is not a shadow release and cannot end in validated", r.id)
 	}
 	r.status = StatusValidated
 	r.resolvedAt = &now

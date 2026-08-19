@@ -358,6 +358,30 @@ func TestTransitionToValidated_OnlyFromValidating(t *testing.T) {
 	assert.Error(t, r2.TransitionToValidated(time.Unix(1, 0)))
 }
 
+// TestTransitionToPromoted_RefusesShadow pins the aggregate's own guard on the
+// one safety property this feature rests on: a shadow release carries an
+// unreviewed, model-authored contract, so it must never reach production. The
+// application layer stops short of promotion on its own, but the rule lives
+// here so a promotion path added later cannot lose it silently.
+func TestTransitionToPromoted_RefusesShadow(t *testing.T) {
+	r := newValidatingRelease(t, true)
+	assert.Error(t, r.TransitionToPromoted(time.Unix(3, 0)))
+	assert.Equal(t, release.StatusValidating, r.Status(), "a refused promotion must leave the release untouched")
+
+	plain := newValidatingRelease(t, false)
+	require.NoError(t, plain.TransitionToPromoted(time.Unix(3, 0)))
+	assert.Equal(t, release.StatusPromoted, plain.Status())
+}
+
+// TestTransitionToValidated_RefusesNonShadow pins the inverse: `validated` is
+// terminal and never promotes, so a normal release that reached it would stall
+// there forever — never shipped, never rejected.
+func TestTransitionToValidated_RefusesNonShadow(t *testing.T) {
+	r := newValidatingRelease(t, false)
+	assert.Error(t, r.TransitionToValidated(time.Unix(3, 0)))
+	assert.Equal(t, release.StatusValidating, r.Status(), "a refused validated transition must leave the release untouched")
+}
+
 func TestNewRelease_CarriesShadow(t *testing.T) {
 	shadow := release.New("sha-abc", "svc1", "sha-abc", false, true, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	assert.True(t, shadow.IsShadow())
