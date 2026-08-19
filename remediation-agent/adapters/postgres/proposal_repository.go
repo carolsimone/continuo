@@ -371,32 +371,49 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 // ErrPRConflict. The RETURNING clause reads pr_claimed_at back from the row
 // rather than trusting the claimedAt argument verbatim, so the returned
 // PRClaim.ClaimedAt is always the value actually persisted — the one a later
-// FailStuckOpeningPR call must CAS against. Returns ErrNotSourceResolved when
-// source_resolved=false, ErrNotFound when the id is unknown.
+// FailStuckOpeningPR call must CAS against.
+//
+// The claim requires status='proposed' as well as source_resolved, and the CAS
+// itself carries that condition rather than only the lookup above it: a python
+// contract fix is written as 'verifying' with source_resolved=true the moment
+// its shadow release is submitted, and a shadow rejection changes nothing but
+// the status — so without it a caller could open a pull request for a fix still
+// being judged, or for one already judged wrong.
+//
+// Returns ErrNotSourceResolved when source_resolved=false, ErrNotProposed when
+// the attempt has not reached 'proposed', ErrNotFound when the id is unknown.
 func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
-	// Distinguish "not source-resolved" from "already claimed" for a precise error.
-	var sr bool
-	if err := r.q.GetContext(ctx, &sr, `SELECT source_resolved FROM proposal WHERE id=$1`, id); err != nil {
+	// Read both preconditions first so each returns its own error rather than
+	// collapsing into the CAS's "already claimed".
+	var pre struct {
+		SourceResolved bool   `db:"source_resolved"`
+		Status         string `db:"status"`
+	}
+	if err := r.q.GetContext(ctx, &pre, `SELECT source_resolved, status FROM proposal WHERE id=$1`, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrNotFound
 		}
 		return proposal.PRClaim{}, fmt.Errorf("begin pr lookup: %w", err)
 	}
-	if !sr {
+	if !pre.SourceResolved {
 		return proposal.PRClaim{}, repository.ErrNotSourceResolved
+	}
+	if proposal.Status(pre.Status) != proposal.StatusProposed {
+		return proposal.PRClaim{}, repository.ErrNotProposed
 	}
 
 	const stmt = `
 		UPDATE proposal SET pr_state = 'opening', pr_claimed_at = $2
 		WHERE id = $1
 		  AND source_resolved
+		  AND status = $3
 		  AND pr_state IN ('', 'failed')
 		RETURNING id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
 		          file_edits,
 		          release_id, node_id, attempt, rationale, confidence, model,
 		          pr_claimed_at`
 	var row claimRow
-	if err := r.q.GetContext(ctx, &row, stmt, id, claimedAt); err != nil {
+	if err := r.q.GetContext(ctx, &row, stmt, id, claimedAt, proposal.StatusProposed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrPRConflict
 		}

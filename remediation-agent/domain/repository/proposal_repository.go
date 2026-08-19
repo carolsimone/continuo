@@ -20,6 +20,13 @@ var (
 	// ErrNotSourceResolved is returned by BeginPR when the proposal has not
 	// completed source resolution (source_resolved=false), so a PR cannot be opened.
 	ErrNotSourceResolved = errors.New("proposal source not resolved")
+	// ErrNotProposed is returned by BeginPR when the attempt has not reached
+	// 'proposed'. A fix still being generated, still being verified by a shadow
+	// release, or already rejected by one is not a fix anyone may open a pull
+	// request for, and status is the only thing that says so: a python contract
+	// fix carries source_resolved=true from the moment it is submitted for
+	// verification, and a shadow rejection changes nothing but the status.
+	ErrNotProposed = errors.New("proposal is not in the proposed state")
 )
 
 // ProposalFilter constrains the rows returned by ProposalRepository.List.
@@ -128,8 +135,13 @@ type ProposalRepository interface {
 	// claimedAt. It returns the data needed to open the PR, including the
 	// claimed ClaimedAt read back from the row — the caller carries this value
 	// forward and hands it to FailStuckOpeningPR if it later needs to release
-	// this exact claim. Returns ErrNotSourceResolved if source_resolved=false,
-	// ErrPRConflict if already claimed, ErrNotFound if the id is unknown.
+	// this exact claim. Claiming requires status='proposed' as well as
+	// source_resolved, and the compare-and-set carries both conditions, so a
+	// fix still being generated or verified — or one a shadow release already
+	// rejected — can never be turned into a pull request. Returns
+	// ErrNotSourceResolved if source_resolved=false, ErrNotProposed if the
+	// attempt has not reached 'proposed', ErrPRConflict if already claimed,
+	// ErrNotFound if the id is unknown.
 	BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error)
 
 	// RecordPR atomically transitions pr_state 'opening' -> 'open', writing

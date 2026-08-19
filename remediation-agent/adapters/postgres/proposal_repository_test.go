@@ -988,6 +988,57 @@ func TestBeginPR_RejectsUnresolvedSource(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrNotSourceResolved)
 }
 
+// TestBeginPR_RejectsAnAttemptThatIsNotProposed pins the invariant the PR
+// claim itself has to carry: only an attempt that reached 'proposed' may be
+// turned into a pull request.
+//
+// A python contract fix is persisted as 'verifying' with source_resolved=true
+// while a shadow release is still judging it, and a rejected one becomes
+// 'failed' with only its status changed. Claiming on source_resolved and
+// pr_state alone therefore let a caller open a PR for a fix still being
+// verified, or for one a release had already rejected. The UI's own
+// status==='proposed' predicate is not that invariant: it does not run for a
+// direct or stale gRPC client.
+func TestBeginPR_RejectsAnAttemptThatIsNotProposed(t *testing.T) {
+	for name, status := range map[string]proposal.Status{
+		"still being verified by a shadow release": proposal.StatusVerifying,
+		"rejected by its shadow release":           proposal.StatusFailed,
+		"still being generated":                    proposal.StatusGenerating,
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := newTestDB(t)
+			ctx := context.Background()
+			repo := NewProposalRepository(db)
+
+			id := seedProposal(t, repo, db, proposal.Proposal{
+				Source:          "validation",
+				ReleaseID:       "r-notproposed-" + string(status),
+				NodeID:          "analytics.py_daily_kpis",
+				ErrorSignature:  "sig",
+				Attempt:         1,
+				Status:          status,
+				ShadowReleaseID: "shadow-r-1-analytics.py_daily_kpis-a1",
+				Confidence:      proposal.ConfidenceHigh,
+				Rationale:       "rationale",
+				SourceResolved:  true,
+				Repo:            "owner/demo",
+				CommitSHA:       "deadbeef",
+				FilePath:        "services/svc-py/contracts/py_daily_kpis.yml",
+				Model:           "test-model",
+				CreatedAt:       time.Now().UTC(),
+			})
+
+			_, err := repo.BeginPR(ctx, id, "b", time.Now().UTC())
+			require.ErrorIs(t, err, repository.ErrNotProposed,
+				"a fix that is not proposed must not be claimable for a pull request")
+
+			var prState string
+			require.NoError(t, db.GetContext(ctx, &prState, `SELECT pr_state FROM proposal WHERE id=$1`, id))
+			require.Equal(t, "", prState, "a refused claim must leave the row unclaimed")
+		})
+	}
+}
+
 // TestRecordPR_ThenGet verifies that RecordPR flips pr_state to 'open' and that
 // Get returns the updated row with the PR details.
 func TestRecordPR_ThenGet(t *testing.T) {

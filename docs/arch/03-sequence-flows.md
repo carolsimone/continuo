@@ -634,7 +634,7 @@ sequenceDiagram
 
   OP->>UI: POST /api/remediation/proposals/:id/pull-request (operator role required)
   UI->>RA: BeginPullRequest(id)
-  Note over RA: CAS: pr_state '' or 'failed' → 'opening' (atomic, source_resolved=true guard)<br/>Stamps pr_claimed_at; RETURNING reads it back into the response<br/>Returns repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, claimed_at, edits<br/>edits is one {path, content_uri, diff_uri} per changed file (or a one-element synthesis of the legacy scalar fields for a pre-migration row)<br/>Returns FAILED_PRECONDITION + existing pr_url if already opening/open<br/>Returns FAILED_PRECONDITION if source_resolved=false
+  Note over RA: CAS: pr_state '' or 'failed' → 'opening' (atomic, guarded on source_resolved=true AND status='proposed')<br/>Stamps pr_claimed_at; RETURNING reads it back into the response<br/>Returns repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, claimed_at, edits<br/>edits is one {path, content_uri, diff_uri} per changed file (or a one-element synthesis of the legacy scalar fields for a pre-migration row)<br/>Returns FAILED_PRECONDITION + existing pr_url if already opening/open<br/>Returns FAILED_PRECONDITION if source_resolved=false<br/>Returns FAILED_PRECONDITION if status is not 'proposed' (still generating, awaiting a shadow verdict, or rejected by one)
 
   alt already opening or open
     RA-->>UI: FAILED_PRECONDITION { pr_url }
@@ -642,6 +642,9 @@ sequenceDiagram
   else source_resolved=false
     RA-->>UI: FAILED_PRECONDITION (no source)
     UI-->>OP: 409 { error, pr_url: undefined } (button should have been disabled)
+  else status is not 'proposed'
+    RA-->>UI: FAILED_PRECONDITION (attempt not proposed)
+    UI-->>OP: 409 { error, pr_url: undefined } (the fix is unverified or was rejected)
   else claim granted
     RA-->>UI: { repo, commit_sha, file_path, proposed_sql_uri, branch_name, claimed_at, edits, ... }
 

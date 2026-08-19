@@ -87,8 +87,10 @@ func (s *ProposalsServer) GetProposal(ctx context.Context, req *remediationv1.Ge
 // persisted pr_claimed_at for this claim, which the caller must present back
 // to FailPullRequest to release this exact claim. Returns FAILED_PRECONDITION
 // when the proposal is already claimed (carrying the existing pr_url in the
-// message) or when source resolution has not completed. Returns NOT_FOUND when
-// the proposal does not exist.
+// message), when source resolution has not completed, or when the attempt has
+// not reached 'proposed' — a fix still being generated or verified, or one a
+// shadow release rejected, is not one a pull request may be opened for. Returns
+// NOT_FOUND when the proposal does not exist.
 func (s *ProposalsServer) BeginPullRequest(ctx context.Context, req *remediationv1.BeginPullRequestRequest) (*remediationv1.BeginPullRequestResponse, error) {
 	claim, err := s.svc.Begin(ctx, req.Id)
 	if err != nil {
@@ -154,6 +156,8 @@ func toGRPCError(err error) error {
 	case errors.Is(err, repository.ErrPRConflict):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, repository.ErrNotSourceResolved):
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, repository.ErrNotProposed):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
