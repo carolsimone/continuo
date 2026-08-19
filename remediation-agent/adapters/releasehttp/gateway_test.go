@@ -162,6 +162,70 @@ func TestVerdict_RejectedFallsBackToReleaseRejectDetail(t *testing.T) {
 	require.Contains(t, v.NodeErrors["analytics.py_daily_kpis"], "1 node failed")
 }
 
+// TestVerdict_RejectedReadsSentinelJSONSurroundedByOutput pins that the object
+// at run_results_uri is not required to be pure JSON. k8s-controller uploads
+// the raw text captured between the validation pod's sentinel markers, which
+// carries whatever the runner wrote around the structured record: a log
+// preamble before it — possibly with braces of its own — and further output
+// after it. A strict decode of the whole body fails on all of that and drops
+// the node to the release-level fallback, which for a validation rejection is
+// the bare word "validation_failed" with no detail, leaving the next fix
+// attempt with no real error to learn from.
+func TestVerdict_RejectedReadsSentinelJSONSurroundedByOutput(t *testing.T) {
+	body := `{
+		"release_id": "shadow-1",
+		"status": "rejected",
+		"reject_reason": "validation_failed",
+		"reject_detail": "",
+		"per_node_results": [
+			{"stage": "validation", "node_id": "analytics.py_daily_kpis", "status": "failed", "run_results_uri": "s3://bucket/run-results/analytics.py_daily_kpis.json"}
+		]
+	}`
+	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK, body)
+	defer srv.Close()
+
+	// A brace-bearing log line first, then the structured record, then more
+	// output. Only the middle object carries a status.
+	noisy := "WARNING: unable to reach the metrics sink {\"attempt\": 1}\n" +
+		`{"status":"error","message":"column \"revenue_total\" does not exist"}` + "\n" +
+		"INFO: uploading artifacts\n"
+
+	evidence := &fakeEvidence{byURI: map[string]string{
+		"s3://bucket/run-results/analytics.py_daily_kpis.json": noisy,
+	}}
+	g := NewGateway(srv.URL, evidence, srv.Client())
+	v, err := g.Verdict(context.Background(), "shadow-1")
+	require.NoError(t, err)
+	require.Equal(t, `column "revenue_total" does not exist`, v.NodeErrors["analytics.py_daily_kpis"],
+		"the node's own error must survive a log preamble and trailing output")
+}
+
+// TestVerdict_RejectedFallsBackWhenNoSentinelJSON pins the other half of the
+// lenient scan: a body holding no status-bearing JSON object at all is still a
+// miss, so the node falls back to the release-level reject text rather than
+// reporting a message scraped out of unrelated output.
+func TestVerdict_RejectedFallsBackWhenNoSentinelJSON(t *testing.T) {
+	body := `{
+		"release_id": "shadow-1",
+		"status": "rejected",
+		"reject_reason": "validation_failed",
+		"reject_detail": "1 node failed",
+		"per_node_results": [
+			{"stage": "validation", "node_id": "analytics.py_daily_kpis", "status": "failed", "run_results_uri": "s3://bucket/run-results/analytics.py_daily_kpis.json"}
+		]
+	}`
+	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK, body)
+	defer srv.Close()
+
+	evidence := &fakeEvidence{byURI: map[string]string{
+		"s3://bucket/run-results/analytics.py_daily_kpis.json": "traceback: the runner died before writing a result {\"attempt\": 1}\n",
+	}}
+	g := NewGateway(srv.URL, evidence, srv.Client())
+	v, err := g.Verdict(context.Background(), "shadow-1")
+	require.NoError(t, err)
+	require.Equal(t, "validation_failed — 1 node failed", v.NodeErrors["analytics.py_daily_kpis"])
+}
+
 // TestImageTag covers case (d): ImageTag reads image_tags[service] from the
 // release the id names, erroring for a service absent from that map.
 func TestImageTag(t *testing.T) {

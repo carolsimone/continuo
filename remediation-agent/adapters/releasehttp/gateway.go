@@ -134,6 +134,35 @@ type sentinelResult struct {
 	Message string `json:"message"`
 }
 
+// parseSentinelResult locates the structured validation-result record inside an
+// uploaded run-results object.
+//
+// What is stored at run_results_uri is the raw text captured between the
+// validation pod's sentinel markers, so it can carry a stderr/log preamble
+// before the JSON and further output after it. Unmarshalling the whole body
+// strictly fails on any of that and costs the caller the node's real error
+// text, so the object is located instead: scan from each '{', decode a single
+// JSON value (ignoring trailing content), and accept the first that yields a
+// status-bearing record. A preamble containing braces of its own therefore
+// decodes to a record with no status and is skipped rather than accepted.
+//
+// ok is false for a body holding no such object, which is a genuine miss the
+// caller answers by falling back to the release-level reject text.
+func parseSentinelResult(raw []byte) (sentinelResult, bool) {
+	for start := bytes.IndexByte(raw, '{'); start >= 0; {
+		var sr sentinelResult
+		if err := json.NewDecoder(bytes.NewReader(raw[start:])).Decode(&sr); err == nil && sr.Status != "" {
+			return sr, true
+		}
+		next := bytes.IndexByte(raw[start+1:], '{')
+		if next < 0 {
+			break
+		}
+		start += next + 1
+	}
+	return sentinelResult{}, false
+}
+
 // getRelease fetches and decodes GET /releases/{releaseID}.
 func (g *Gateway) getRelease(ctx context.Context, releaseID string) (releaseResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.baseURL+"/releases/"+releaseID, nil)
@@ -221,8 +250,8 @@ func (g *Gateway) fetchMessage(ctx context.Context, uri string) string {
 	if err != nil {
 		return ""
 	}
-	var sr sentinelResult
-	if err := json.Unmarshal([]byte(raw), &sr); err != nil {
+	sr, ok := parseSentinelResult([]byte(raw))
+	if !ok {
 		return ""
 	}
 	return sr.Message
