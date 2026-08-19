@@ -4,6 +4,7 @@ import {
   Edge,
   MiniMap,
   Node,
+  OnMove,
   OnNodeDrag,
   ReactFlow,
   XYPosition,
@@ -372,6 +373,12 @@ export default function DAGPanel({
 
   const [zoomLevel, setZoomLevel] = useState(100);
   const [searchQuery, setSearchQuery] = useState('');
+  // Set once the operator zooms or pans the canvas themselves. From then on
+  // the panel stops re-framing the graph for them: the automatic fit exists to
+  // give a sensible starting view, not to overrule the one they chose. Without
+  // this, a container resize or a cleared selection re-fits and throws away the
+  // zoom seconds after it was set.
+  const [viewportPinned, setViewportPinned] = useState(false);
   const lastAutoFocusKeyRef = useRef<string | null>(null);
   const lastSearchMatchRef = useRef<string | null>(null);
   // Tracks whether the graph has ever been fitted, independent of the
@@ -401,11 +408,20 @@ export default function DAGPanel({
     [],
   );
 
+  // A user gesture arrives with the DOM event that caused it; a move the panel
+  // made itself (fitView, the zoom buttons) arrives with a null event. Only the
+  // former means the operator has chosen their own framing.
+  const handleMove = useCallback<OnMove>((event, viewport) => {
+    setZoomLevel(Math.round(viewport.zoom * 100));
+    if (event) setViewportPinned(true);
+  }, []);
+
   const resetLayout = useCallback(() => {
     setManualPositions(new Map());
-    // The automatic fit is suppressed while a selection or search is active so
-    // it never yanks the view; an explicit reset is the operator asking for the
-    // full graph back, so it re-frames unconditionally.
+    setViewportPinned(false);
+    // The automatic fit is suppressed while a selection or search is active, and
+    // once the operator has framed the canvas themselves; an explicit reset is
+    // them asking for the default back, so it re-frames unconditionally.
     if (layout.nodes.length > 0) {
       fitView({ padding: 0.1, nodes: layout.nodes, maxZoom: 1.5, duration: 300 });
     }
@@ -416,6 +432,10 @@ export default function DAGPanel({
       lastAutoFocusKeyRef.current = null;
       return;
     }
+    // Leave a hand-set viewport alone. The key is deliberately not cleared
+    // here: clearing it is what arms the next automatic fit, and there must
+    // not be one until the operator resets the view.
+    if (viewportPinned) return;
     // Every fit after the first is suppressed while a search or a selection
     // is active, so the view is never yanked away from what the user is
     // looking at. The very first fit is exempt from that suppression so the
@@ -436,7 +456,7 @@ export default function DAGPanel({
       duration: 300,
     });
     hasFittedOnceRef.current = true;
-  }, [fitView, layout.nodes, searchQuery, selectedNodeId]);
+  }, [fitView, layout.nodes, searchQuery, selectedNodeId, viewportPinned]);
 
   useEffect(() => {
     focusFullGraph();
@@ -447,12 +467,17 @@ export default function DAGPanel({
     const el = viewportRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
+      // A resize normally re-frames the graph, since the old fit was computed
+      // against a container that no longer exists. Once the operator has framed
+      // the canvas themselves that no longer applies, and clearing the key here
+      // would arm a fit that undoes their zoom.
+      if (viewportPinned) return;
       lastAutoFocusKeyRef.current = null;
       focusFullGraph();
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [focusFullGraph]);
+  }, [focusFullGraph, viewportPinned]);
 
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -513,8 +538,9 @@ export default function DAGPanel({
           }}
         />
         {/* Only offered once there is something to undo, so the strip stays a
-            search bar until the operator has actually rearranged the canvas. */}
-        {manualPositions.size > 0 && (
+            search bar until the operator has actually rearranged the canvas or
+            framed it themselves. */}
+        {(manualPositions.size > 0 || viewportPinned) && (
           <button className="btn btn--secondary" onClick={resetLayout} type="button">
             Reset layout
           </button>
@@ -529,7 +555,7 @@ export default function DAGPanel({
           onEdgesChange={onEdgesChange}
           onNodeClick={handleNodeClick}
           onNodeDragStop={handleNodeDragStop}
-          onMove={() => setZoomLevel(Math.round(getViewport().zoom * 100))}
+          onMove={handleMove}
           minZoom={0.2}
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
@@ -543,6 +569,7 @@ export default function DAGPanel({
             className="dag-zoom-btn"
             onClick={() => {
               zoomIn();
+              setViewportPinned(true);
               setZoomLevel(Math.round(getViewport().zoom * 100));
             }}
             title="Zoom in"
@@ -554,6 +581,7 @@ export default function DAGPanel({
             className="dag-zoom-btn"
             onClick={() => {
               zoomOut();
+              setViewportPinned(true);
               setZoomLevel(Math.round(getViewport().zoom * 100));
             }}
             title="Zoom out"
