@@ -451,12 +451,27 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 
 // sentinelResult is the subset of the structured validation-result contract
 // fetchAndUploadLogs reads. The block carries more fields (failures,
-// unique_id); only status and message are consumed here, so this mirrors just
-// those two rather than the full contract in
+// unique_id); only schema_version, status, and message are consumed here —
+// schema_version to validate the contract (see parseSentinelResult), status
+// and message to build the error message — so this mirrors just those three
+// rather than the full contract in
 // remediation/domain/failure.StructuredResult.
 type sentinelResult struct {
-	Status  string `json:"status"`
-	Message string `json:"message"`
+	SchemaVersion int    `json:"schema_version"`
+	Status        string `json:"status"`
+	Message       string `json:"message"`
+}
+
+// supportedRunStatuses is the structured-result contract's status vocabulary —
+// dbt's RunStatus, per continuo_validation_contract/result.py's docstring. A
+// scanned candidate is accepted only when its status is one of these, so an
+// unrelated status-bearing JSON object elsewhere in the log (e.g. a sidecar
+// diagnostic) cannot pass as the contract's result block on status alone.
+var supportedRunStatuses = map[string]bool{
+	"success": true,
+	"error":   true,
+	"fail":    true,
+	"skipped": true,
 }
 
 // parseSentinelResult decodes the JSON object inside a structured
@@ -466,13 +481,26 @@ type sentinelResult struct {
 // — the same condition remediation/domain/failure.ParseStructuredResult was
 // fixed to tolerate — so this scans for the object rather than unmarshalling
 // the whole body: try each '{' in turn, decode a single JSON value from there
-// (ignoring anything after it), and accept the first candidate that carries a
-// non-empty status. ok is false when no such object is found.
+// (ignoring anything after it), and accept the first candidate whose
+// schema_version matches the wire contract (validationresult.SchemaVersion)
+// and whose status is one of supportedRunStatuses. Because the scan tolerates
+// arbitrary preamble text, it can otherwise reach an unrelated status-bearing
+// JSON object before the real result; requiring both checks is what tells the
+// two apart — a candidate that decodes but fails either one is not the
+// contract's block, so scanning continues to the next '{' rather than
+// accepting it. ok is false when no such object is found.
+//
+// This guard is only as good as validationresult.SchemaVersion: a future
+// contract schema bump must update that constant too, or every block from the
+// new schema is silently rejected here and the error message quietly
+// degrades to the log tail.
 func parseSentinelResult(raw string) (sr sentinelResult, ok bool) {
 	body := []byte(raw)
 	for start := bytes.IndexByte(body, '{'); start >= 0; {
 		var candidate sentinelResult
-		if err := json.NewDecoder(bytes.NewReader(body[start:])).Decode(&candidate); err == nil && candidate.Status != "" {
+		if err := json.NewDecoder(bytes.NewReader(body[start:])).Decode(&candidate); err == nil &&
+			candidate.SchemaVersion == validationresult.SchemaVersion &&
+			supportedRunStatuses[candidate.Status] {
 			return candidate, true
 		}
 		next := bytes.IndexByte(body[start+1:], '{')
@@ -551,13 +579,24 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	// production jobs do not, so cleanLog == fullLog for them.
 	cleanLog, structured := SplitValidationResult(fullLog)
 
+	// GetPodLogs fetches the full log and the tail independently and each
+	// soft-fails on its own, so the full log can come back empty while the
+	// tail — the pod's last output, which is exactly where the sentinel block
+	// sits — still carries the complete block. This fallback is scoped to the
+	// error message only: cleanLog and the run-results upload below still use
+	// the full-log block exclusively, never the tail's.
+	sentinelJSON := structured
+	if sentinelJSON == "" {
+		_, sentinelJSON = SplitValidationResult(tail)
+	}
+
 	// A non-success block's message is the real cause of the failure and is
 	// preferred over the log tail below. A "success" block belongs to a pod
 	// that completed its work and then crashed for an unrelated reason (e.g. a
 	// container-level failure); its message (e.g. "rows=42") describes the
 	// successful run, not the crash, so it must not become the error message.
-	if structured != "" {
-		if sr, ok := parseSentinelResult(structured); ok && sr.Status != "success" {
+	if sentinelJSON != "" {
+		if sr, ok := parseSentinelResult(sentinelJSON); ok && sr.Status != "success" {
 			sentinelErrMsg = strings.TrimSpace(sr.Message)
 		}
 	}

@@ -20,3 +20,15 @@ func TestSentinelMarkersMatchWireContract(t *testing.T) {
 		t.Errorf("sentinel END drift: go %q != wire contract", SentinelEnd)
 	}
 }
+
+// TestSchemaVersionMatchesWireContract pins SchemaVersion to
+// continuo_validation_contract/result.py's SCHEMA_VERSION constant, the other
+// side of this field in the structured-result JSON. k8s-controller uses
+// SchemaVersion to tell the contract's result block apart from an unrelated
+// status-bearing JSON object that happens to appear in the same pod log; a
+// silent drift here would make that check reject every real block.
+func TestSchemaVersionMatchesWireContract(t *testing.T) {
+	if SchemaVersion != 1 {
+		t.Errorf("schema_version drift: go %d != wire contract's SCHEMA_VERSION", SchemaVersion)
+	}
+}

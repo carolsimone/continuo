@@ -188,7 +188,7 @@ Each completed row's `aggregate_id` is a deterministic UUIDv5 over an immutable 
 
 - Full pod log uploaded on any failure (retryable or permanent)
 - S3 upload is **soft-fail**: if upload fails, a warning is logged but processing continues with empty log key
-- Error message stored in `task.execution.recorded:v1` payload prefers the structured result block's `message` (when the pod printed one and its `status` is not `success`); falls back to the log tail, then to the K8s termination message
+- Error message stored in `task.execution.recorded:v1` payload prefers the structured result block's `message` — parsed from the full log, or from the tail when the full log carried no block (the two are fetched independently and either can come back empty); the block is accepted only when its `schema_version` and `status` match the contract, and its `status` is not `success`. Falls back to the raw log tail, then to the K8s termination message, when no valid block is found either way.
 - `ErrorMessageMaxLen` config truncates the stored error message
 
 ## Redis Payload Reference

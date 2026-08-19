@@ -31,8 +31,13 @@ type fakeK8sClient struct {
 	err         error
 	labels      map[string]string
 	annotations map[string]string
-	podLog      string // full pod log returned by GetPodLogs (tail mirrors it)
-	podLogsErr  error  // when set, GetPodLogs fails
+	podLog      string // full pod log returned by GetPodLogs (tail mirrors it unless tailLog is set)
+	// tailLog, when non-empty, is returned as the tail distinctly from podLog
+	// (the full log) — GetPodLogs fetches the two independently in the real
+	// k8s client and each soft-fails on its own, so a test can exercise an
+	// empty full log whose tail still carries the complete sentinel block.
+	tailLog    string
+	podLogsErr error // when set, GetPodLogs fails
 	// blockPodLogs makes GetPodLogs hang until its context expires, standing in
 	// for an unreachable kubelet or a stalled API read.
 	blockPodLogs bool
@@ -50,7 +55,11 @@ func (f *fakeK8sClient) GetPodLogs(ctx context.Context, _, _ string, _ int64) (s
 	if f.podLogsErr != nil {
 		return "", "", f.podLogsErr
 	}
-	return f.podLog, f.podLog, nil
+	tail := f.podLog
+	if f.tailLog != "" {
+		tail = f.tailLog
+	}
+	return f.podLog, tail, nil
 }
 
 func (f *fakeK8sClient) GetJobMeta(_ context.Context, _, _ string) (labels, annotations map[string]string, err error) {
@@ -2095,6 +2104,100 @@ func TestHandleFailedWithRetry_SentinelMessageAsErrorMessage(t *testing.T) {
 	want := "ReadError: unknown read 'orders'"
 	if payload.ErrorMessage != want {
 		t.Errorf("error_message: expected the sentinel block's message %q on the retry path, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_DecoyStatusBearingPreambleIgnored guards the
+// schema_version + status-vocabulary guard in parseSentinelResult: because the
+// scanner tolerates arbitrary preamble text inside the sentinel markers, an
+// unrelated status-bearing JSON object in that preamble (e.g. a sidecar
+// diagnostic with no schema_version field) must not be mistaken for the
+// contract's result block. The real block's message must win.
+func TestHandleFailedPermanent_DecoyStatusBearingPreambleIgnored(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	podLog := "running node analytics.orders -> analytics.orders\n" +
+		validationresult.SentinelBegin + "\n" +
+		`{"status":"error","message":"sidecar: connection reset"}` + "\n" +
+		`{"schema_version":1,"status":"error","message":"ConformError: column 'id' cannot be safely cast to INTEGER","failures":1,"unique_id":"analytics.orders"}` + "\n" +
+		validationresult.SentinelEnd + "\n"
+	k8s := &fakeK8sClient{status: failedResult(), podLog: podLog}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-decoy-preamble",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the real contract block's message %q, got the decoy or something else: %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_DecoyWrongSchemaVersionIgnored proves schema_version
+// specifically is what discriminates a real contract block from a decoy, not
+// mere field presence: a decoy carrying a well-formed but wrong schema_version
+// must still be skipped in favor of the real (schema_version:1) block.
+func TestHandleFailedPermanent_DecoyWrongSchemaVersionIgnored(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	podLog := "running node analytics.orders -> analytics.orders\n" +
+		validationresult.SentinelBegin + "\n" +
+		`{"schema_version":2,"status":"error","message":"decoy: wrong schema version"}` + "\n" +
+		`{"schema_version":1,"status":"error","message":"ConformError: column 'id' cannot be safely cast to INTEGER","failures":1,"unique_id":"analytics.orders"}` + "\n" +
+		validationresult.SentinelEnd + "\n"
+	k8s := &fakeK8sClient{status: failedResult(), podLog: podLog}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-decoy-version",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the schema_version:1 block's message %q, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_EmptyFullLog_SentinelMessageFromTail guards the
+// GetPodLogs soft-fail seam: the full log and the tail are fetched
+// independently and each can fail on its own, so the full log can come back
+// empty while the tail — the pod's last output, which is exactly where the
+// sentinel block sits — still carries the complete block. error_message must
+// fall back to parsing the tail in that case rather than reporting the empty
+// (or marker-bearing) tail as-is.
+func TestHandleFailedPermanent_EmptyFullLog_SentinelMessageFromTail(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status:  failedResult(),
+		podLog:  "", // full log fetch soft-failed
+		tailLog: pythonResultBlockLog("error", "ConformError: column 'id' cannot be safely cast to INTEGER"),
+	}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-empty-fulllog",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the tail's sentinel block message %q, got %q", want, payload.ErrorMessage)
 	}
 }
 

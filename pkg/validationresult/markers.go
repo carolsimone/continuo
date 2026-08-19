@@ -11,3 +11,11 @@ const (
 	SentinelBegin = "===CONTINUO_VALIDATION_RESULT_BEGIN==="
 	SentinelEnd   = "===CONTINUO_VALIDATION_RESULT_END==="
 )
+
+// SchemaVersion is the structured-result JSON contract's schema_version field,
+// emitted by every call to continuo_validation_contract/result.py's
+// result_block() (its SCHEMA_VERSION constant). k8s-controller checks a
+// candidate's schema_version against this before trusting it as the contract's
+// result block, rather than an unrelated status-bearing JSON object that
+// happens to appear in the same log.
+const SchemaVersion = 1
