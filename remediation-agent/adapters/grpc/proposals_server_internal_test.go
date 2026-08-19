@@ -31,3 +31,26 @@ func TestEditsToProto_EmptyInputYieldsNoElements(t *testing.T) {
 	require.Empty(t, editsToProto(nil))
 	require.Empty(t, editsToProto([]proposal.FileEdit{}))
 }
+
+// TestViewToProto_ShadowVerificationFields verifies that the release judging a
+// fix, and the reason it rejected one, both cross the gRPC boundary.
+//
+// Both live only in Postgres otherwise. An operator then sees a "Verifying
+// fix…" chip on one screen and a release labelled as a verification on
+// another with nothing connecting them, and a python proposal that failed
+// shows the bare word "failed" while the reason sits unread in the row.
+func TestViewToProto_ShadowVerificationFields(t *testing.T) {
+	p := viewToProto(proposal.View{
+		ID:              "p1",
+		Status:          proposal.StatusFailed,
+		ShadowReleaseID: "shadow-rel-abc1234-1-analytics.py_kpis-a1",
+		VerifyError:     `column "revenue_total" does not exist`,
+	})
+	require.Equal(t, "shadow-rel-abc1234-1-analytics.py_kpis-a1", p.ShadowReleaseId)
+	require.Equal(t, `column "revenue_total" does not exist`, p.VerifyError)
+
+	// An attempt judged synchronously carries neither.
+	p = viewToProto(proposal.View{ID: "p2", Status: proposal.StatusProposed})
+	require.Equal(t, "", p.ShadowReleaseId)
+	require.Equal(t, "", p.VerifyError)
+}

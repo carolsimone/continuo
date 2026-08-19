@@ -217,6 +217,8 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		PrOpenedBy:          v.PrOpenedBy,
 		PrClosedAt:          prClosedAt,
 		Edits:               editsToProto(v.Edits),
+		ShadowReleaseId:     v.ShadowReleaseID,
+		VerifyError:         v.VerifyError,
 	}
 }
 

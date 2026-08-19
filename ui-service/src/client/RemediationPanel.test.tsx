@@ -40,6 +40,8 @@ const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   pr_opened_at: '',
   pr_opened_by: '',
   pr_closed_at: '',
+  shadow_release_id: '',
+  verify_error: '',
   ...overrides,
 });
 
@@ -373,6 +375,41 @@ describe('RemediationPanel — a fix awaiting shadow verification', () => {
     const chip = await screen.findByText(/Verifying fix/);
     expect(chip).toHaveAttribute('aria-busy', 'true');
     expect(screen.queryByText('verifying')).toBeNull();
+  });
+
+  it('links a verifying proposal to the release that is judging it', async () => {
+    // The chip says a fix is being verified; without the link the operator has
+    // no way to reach the release doing the verifying, which is on another
+    // screen under a name they have never been shown.
+    mockFetchProposals.mockResolvedValue([
+      makeProposal({ status: 'verifying', shadow_release_id: 'shadow-rel-abc-svc.schema.my_model-a1' }),
+    ]);
+
+    renderPanelAsOperator();
+
+    await screen.findByText(/Verifying fix/);
+    fireEvent.click(screen.getByText('svc.schema.my_model'));
+
+    const link = await screen.findByRole('link', { name: /shadow-rel-abc-svc.schema.my_model-a1/ });
+    expect(link).toHaveAttribute('href', '/releases/shadow-rel-abc-svc.schema.my_model-a1');
+  });
+
+  it('shows why verification failed instead of the bare word "failed"', async () => {
+    // verify_error is the whole reason a python contract attempt failed. Left
+    // unrendered it sits unread in the database while the operator is told
+    // only "failed".
+    mockFetchProposals.mockResolvedValue([
+      makeProposal({
+        status: 'failed',
+        shadow_release_id: 'shadow-rel-abc-svc.schema.my_model-a1',
+        verify_error: 'column "revenue_total" does not exist',
+      }),
+    ]);
+
+    renderPanelAsOperator();
+
+    fireEvent.click(await screen.findByText('svc.schema.my_model'));
+    expect(await screen.findByText(/column "revenue_total" does not exist/)).toBeInTheDocument();
   });
 
   it('offers an operator no Create PR while the fix is still being verified', async () => {

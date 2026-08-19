@@ -235,6 +235,15 @@ export interface ProposalDTO {
   pr_opened_at: string;
   pr_opened_by: string;
   pr_closed_at: string;
+  // shadow_release_id names the release that ran this attempt's fix through
+  // the whole validation pipeline to decide whether it holds. Set while the
+  // attempt is 'verifying' and still set on the 'proposed' or 'failed' row it
+  // became, so the release that decided an attempt is always reachable from
+  // it. Empty on an attempt judged without one.
+  shadow_release_id: string;
+  // verify_error is why that release rejected the fix — the reason a python
+  // contract attempt reached 'failed'. Empty unless verification failed.
+  verify_error: string;
   // Every file this proposal changes. Absent or empty on a proposal that has
   // no real repository source to edit — a candidate-only fix — in which case
   // the single-file diff_uri above still points at a previewable diff.

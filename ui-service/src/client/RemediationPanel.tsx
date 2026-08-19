@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { ProposalDTO } from './types';
 import { fetchProposals } from './remediation-api';
 import { useCurrentUser } from './auth/AuthContext';
@@ -105,6 +106,29 @@ function ProposalDetailCard({
         <p className="detail-card__rationale">
           {proposal.rationale}
         </p>
+
+        {/* Why the release rejected this fix. It is the whole reason a fix
+            verified by a release reached 'failed', so a card that omitted it
+            would leave the operator with the word alone. */}
+        {proposal.verify_error && (
+          <div className="info-strip info-strip--error detail-card__row">
+            <span className="info-strip__icon">⚠</span>
+            Verification failed: {proposal.verify_error}
+          </div>
+        )}
+
+        {/* The release that judged this fix. Without the link it is named on a
+            different screen with nothing connecting the two. */}
+        {proposal.shadow_release_id && (
+          <div className="detail-card__row">
+            <Link
+              to={`/releases/${proposal.shadow_release_id}`}
+              className="btn btn--secondary"
+            >
+              verification release {proposal.shadow_release_id} →
+            </Link>
+          </div>
+        )}
 
         {proposal.edits && proposal.edits.length > 0
           ? proposal.edits.map((edit) => (
