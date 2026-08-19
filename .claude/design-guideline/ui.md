@@ -73,6 +73,17 @@ touched keep where they were put. Anything else silently discards
 deliberate work seconds after it is done, and the surface reads as
 broken rather than automatic.
 
+This covers **how the surface is framed**, not just what sits on it.
+Zoom and pan are placements too. An automatic fit exists to give a
+sensible *starting* view; the moment the user zooms or pans, it has done
+its job and must stop firing. Watch for the indirect triggers, which are
+the ones that actually bite: a `ResizeObserver` re-fitting because a
+neighbouring column changed height as data arrived, or a piece of state
+that "arms" a fit for later so it lands seconds after the interaction
+that caused it. Prefer a discriminator the framework already gives you —
+a pointer/DOM event present on user-driven callbacks and absent on
+programmatic ones — over trying to infer intent from the values.
+
 Rules:
 
 - Hold the user's placements in a map keyed by element id and overlay
@@ -80,8 +91,10 @@ Rules:
   recomputation. The automatic layout stays correct for everything else,
   including elements that appear later.
 - Pair it with a **`Reset layout`** `.btn--secondary` that drops every
-  override and re-frames the surface. Render it only once there is
-  something to reset, so the control does not sit dead in the chrome.
+  override, restores the automatic framing, and lets automatic behaviour
+  resume. Render it only once there is something to reset — which
+  includes the user having only re-framed the surface, with nothing
+  moved — so the control does not sit dead in the chrome.
 - An explicit reset is exempt from whatever suppression keeps automatic
   re-framing from yanking the view — the user asked for the default
   back, so give them all of it.
