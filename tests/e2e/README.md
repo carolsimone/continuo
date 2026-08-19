@@ -200,6 +200,8 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | `topology_versioning_test.go` | `TestTopologyVersioning_MidRunIsolation` — lazy generation switch (in-flight runs immutable) |
 | `watchdog_termination_test.go` | `TestWatchdog_TerminatesStuckSchedule` |
 | `release_promote_test.go` | dbt blue/green release tests — see [Blue/Green Release Tests](#bluegreen-release-tests) |
+| `release_promote_python_test.go` | `TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes`, `TestE2E_PythonNodeRun_MaterializesAndReportsFailures` — a python-contract release skips the compile leg, validates via `build_from_columns`, promotes; then each node runs in its own image |
+| `remediation_python_test.go` | `TestE2E_PythonValidationFailure_ShadowVerifiedFix`, `TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt` — a rejected python node is repaired in the contract yaml, verified by a real shadow release that stops at `validated`, and proposed for review; the second test proves a rejected shadow's error feeds the next attempt and produces no remediation trigger of its own. Uses the fixture repository under `fixtures/py-remediation-repo`, which `stub-github` serves as a tarball |
 | `seed_topology_test.go` | `seedTopology` helper — publishes `release.promoted:v1` to establish the e2e DAG in Neo4j (the kept production path) |
 | `ui_http_test.go` | HTTP assertions against the ui-service (`verifyUIService`) |
 | `auth_oidc_test.go` | `TestAuthOIDC` — real OIDC login flow against Dex (auth-e2e profile); skipped unless `UI_AUTH_HTTP_BASE` is set |

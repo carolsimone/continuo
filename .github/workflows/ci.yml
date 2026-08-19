@@ -43,9 +43,9 @@ jobs:
       || fromJSON('["self-hosted","kind"]') }}
     # Hard backstop against runaway runs. Without this the job inherits GitHub's
     # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
-    # hours of Actions minutes. A healthy run is ~55 min; cap well below the
+    # hours of Actions minutes. A healthy run is ~75 min; cap well below the
     # default. The slow setup phase carries its own tighter cap below.
-    timeout-minutes: 75
+    timeout-minutes: 100
 
     # The repo's default workflow token is restricted (contents/metadata/packages
     # read only), which denies the pull-requests API that paths-filter uses to
@@ -284,14 +284,14 @@ jobs:
         # Start the ui container, wait for it to become healthy, deploy k8s
         # controllers, then run the full e2e suite inside the orchestrator
         # container where the test code lives. Comfortably exceeds the go
-        # test -timeout below (40m) plus the ui-wait/deploy steps that run
+        # test -timeout below (70m) plus the ui-wait/deploy steps that run
         # first in this same step.
-        timeout-minutes: 45
+        timeout-minutes: 75
         run: |
           source scripts/lib/common.sh
           docker compose up -d ui && wait_for_http_host http://localhost:8090/api/schedulers
           bash tests/e2e/deploy-k8s-controllers.sh
-          docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 40m /app/tests/e2e/...
+          docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 70m /app/tests/e2e/...
 
       - name: Cleanup k8s controllers
         if: always()
