@@ -148,6 +148,12 @@ export function createRemediationRouter(
     // mirrors the synthesis the repository itself applies to a row stored
     // before the edits list existed.
     let edits: Array<{ path: string; content_uri: string; diff_uri: string }> = claim.edits ?? [];
+    // The Go read path (editsOrLegacy in remediation-agent's proposal
+    // repository) already guarantees every PRClaim carries a non-empty edits
+    // list, synthesizing one from the single-file fields when the row has
+    // none. So this branch is only reachable when talking to a
+    // remediation-agent build that predates the edits field entirely — not a
+    // routinely-exercised path against the current fleet.
     if (edits.length === 0 && claim.file_path && claim.proposed_sql_uri) {
       edits = [
         {
