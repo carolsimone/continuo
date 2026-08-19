@@ -513,6 +513,14 @@ services:
     build:
       context: ./tests/e2e/stub-github
     container_name: stub-github
+    environment:
+      # The working tree stub-github serves from GET /repos/{o}/{r}/tarball/{ref}.
+      # remediation-agent fetches a whole repository checkout there when it
+      # repairs a python node, whose declaring contract yaml has no recorded
+      # path and so has to be searched for across the tree.
+      - REPO_FIXTURE_DIR=/fixtures/repo
+    volumes:
+      - ./tests/e2e/fixtures/py-remediation-repo:/fixtures/repo:ro
     ports:
       - "9200:9200"
     networks:

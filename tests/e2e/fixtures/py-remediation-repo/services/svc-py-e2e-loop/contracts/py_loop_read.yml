@@ -1,0 +1,23 @@
+nodes:
+  # Same unbindable-read failure as svc-py-e2e's py_bad_read, declared under a
+  # second service so the two remediation scenarios never share a contract
+  # directory: the packaging step merges a whole directory, so one still-broken
+  # node beside the node under repair would sink the other scenario's shadow
+  # release.
+  #
+  # This node's read names public.loop_wrong_name, which is what the canned
+  # model in tests/e2e/stub-llm keys on to answer the first attempt with a fix
+  # that is still wrong (public.still_wrong_name) and the second — the one that
+  # is shown the first attempt's shadow error — with the binding relation
+  # public.right_name.
+  - schema: e2e_schema
+    table: py_loop_read
+    owner: e2e
+    schedule: daily
+    criticality: SECONDARY
+    script: scripts/py_loop_read.py
+    description: "python node whose declared read cannot bind, repaired over two attempts"
+    reads:
+      missing: select id from public.loop_wrong_name
+    output_columns:
+      - {name: id, type: INTEGER, nullable: false}
