@@ -51,9 +51,11 @@ type rejectedPayload struct {
 		Service  string `json:"service"`
 		// NodeType is the failing node's kind (dbt-model, dbt-seed,
 		// dbt-snapshot, or python-model), set by release-controller on
-		// validation and duplicate-relation rejections so the fixer can tell a
-		// python target apart from a dbt one without a topology lookup of its
-		// own.
+		// validation and duplicate-relation rejections. It travels onto the
+		// remediation trigger, where it tells a python target apart from a dbt
+		// one without a topology lookup of its own: a python validation failure
+		// selects the fixer that repairs the contract yaml declaring the node,
+		// and a python duplicate-relation failure is skipped.
 		NodeType string `json:"node_type"`
 		// OtherService and OtherFilePath locate the competing node that also
 		// produces the contested relation (RelationID), set on duplicate-relation

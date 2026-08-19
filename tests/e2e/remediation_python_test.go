@@ -69,6 +69,42 @@ const (
 	pyStillBrokenRelation = "public.still_wrong_name"
 )
 
+// Stage wait budgets. pollUntil does not select on the test's context, so a
+// context that expires before a stage's own budget turns every remaining stage
+// into a silent stall that ends on the wrong assertion — and a suite timeout
+// that expires first replaces a named assertion with a goroutine dump. Each
+// test's context deadline is therefore strictly greater than the sum of the
+// budgets it uses, and the suite's go test -timeout strictly greater than the
+// sum of both contexts (see the Makefile and .github/workflows/ci.yml).
+//
+// Each budget is sized for the stage it covers and no more: a budget ten times
+// a stage's normal duration buys nothing when the stage works and costs exactly
+// that much when it breaks.
+const (
+	// pyReleaseVerdictBudget covers a python release from POST to a terminal
+	// verdict: queue activation, the contract parse, candidate-artifact upload,
+	// the ensure-schema Job, one build_from_columns Job, and teardown. A python
+	// release skips the compile leg entirely, which is the slow half of the dbt
+	// budget the rest of this suite uses; the margin here is for cold Job
+	// scheduling in kind, and this is the first release of each test.
+	pyReleaseVerdictBudget = 6 * time.Minute
+	// pyShadowVerdictBudget covers the same shape for a shadow release
+	// submitted later in the same test, against a stack that is warm by then.
+	pyShadowVerdictBudget = 5 * time.Minute
+	// pyAttemptStartBudget covers trigger to recorded attempt: classification,
+	// the agent consuming it, the repository fetch, the model call, packaging
+	// via the runtime CLI, the artifact upload, and the shadow submission.
+	pyAttemptStartBudget = 3 * time.Minute
+	// pyAttemptFinalizeBudget covers a terminal shadow verdict reaching the
+	// proposal row: one reconciler tick, 5s in this compose stack.
+	pyAttemptFinalizeBudget = 2 * time.Minute
+	// pyRecordVisibleBudget covers a write becoming readable through another
+	// service's API or stream: a submitted release appearing in the release
+	// list, an emitted event reaching its stream, a classification decision
+	// landing in Postgres.
+	pyRecordVisibleBudget = 1 * time.Minute
+)
+
 // TestE2E_PythonValidationFailure_ShadowVerifiedFix drives the whole python
 // remediation lane on a single-attempt repair:
 //
@@ -95,7 +131,9 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// 22 minutes: strictly greater than the 18 this test's stage budgets sum to
+	// (release 6 + attempt 3 + listed 1 + shadow 5 + finalize 2 + event 1).
+	ctx, cancel := context.WithTimeout(context.Background(), 22*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -124,7 +162,7 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 	// 1. The fixer produced an attempt and parked it awaiting its shadow
 	//    release. The shadow id is read off the row rather than re-derived
 	//    here, so the naming rule is asserted as the system's, not the test's.
-	verifying := waitForProposal(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "verifying", 6*time.Minute)
+	verifying := waitForProposal(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "verifying", pyAttemptStartBudget)
 	shadowID := verifying.ShadowReleaseID
 	require.NotEmpty(t, shadowID, "a verifying proposal must name the release that is judging it")
 	require.True(t, strings.HasPrefix(shadowID, "shadow-"),
@@ -139,10 +177,10 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 	assertReleaseListedAsShadow(t, ctx, clients, shadowID)
 
 	// 3. It runs the real pipeline and stops at validated.
-	waitForReleaseStatus(t, ctx, clients, shadowID, "validated", 12*time.Minute)
+	waitForReleaseStatus(t, ctx, clients, shadowID, "validated", pyShadowVerdictBudget)
 
 	// 4. The reconciler turns the verified attempt into a reviewable fix.
-	proposed := waitForProposal(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "proposed", 3*time.Minute)
+	proposed := waitForProposal(t, ctx, clients, releaseID, pyBadReadUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
 	require.Empty(t, proposed.VerifyError, "a verified fix records no verification error")
 	require.Equal(t, shadowID, proposed.ShadowReleaseID,
 		"finalizing an attempt must not change which release verified it")
@@ -164,20 +202,24 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 		"the fix must keep declaring the same node, not replace it with a different one")
 
 	// 5. The fix is announced for human review.
-	waitForRemediationProposed(t, ctx, clients, releaseID, pyBadReadUniqueID, 2*time.Minute)
+	waitForRemediationProposed(t, ctx, clients, releaseID, pyBadReadUniqueID, pyRecordVisibleBudget)
 
-	// 6. Nothing shadow reached production. The pointer for the service is
-	//    still absent (the failing release did not promote and neither did the
-	//    shadow), and no promoted code version was ever recorded for it.
+	// 6. Nothing shadow reached production. The proof that the no-promote gate
+	//    held is the shadow release reaching "validated" above rather than
+	//    "promoted"; these two checks confirm the consequences of that, and
+	//    would also catch a promotion that took some other route.
 	var prodRows int
 	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
 		`SELECT count(*) FROM service_prod WHERE service_name = $1`, pyBadReadService))
 	require.Zero(t, prodRows, "a shadow release must never write the service's production pointer")
 	assertNoNodeVersionsFor(t, ctx, clients, shadowID)
 
-	// 7. No remediation trigger was ever produced for the shadow release. This
-	//    is checked after the proposal is terminal, so the classifier has long
-	//    since seen everything this release produced.
+	// 7. No remediation trigger names the shadow release. This scan cannot fail
+	//    here — a validated release emits no rejection, so no classifier path
+	//    could produce one — and it is kept as a cheap guard against a future
+	//    trigger source, not as evidence. The anti-loop rule is proved where it
+	//    can actually be violated: the sibling test below, whose first shadow
+	//    release is genuinely rejected.
 	assertNoRemediationTriggerFor(t, ctx, clients, shadowID)
 
 	t.Log("✅ a rejected python node was repaired, verified by a real shadow release, and proposed for review")
@@ -189,11 +231,14 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 // attempt n changed and the error its shadow release reported back.
 //
 // The canned model answers the first attempt with a read that still cannot
-// bind, and answers a retry — recognised solely by the prior-attempts section
-// of the prompt — with the binding one. So attempt 2 reaching 'proposed' is
-// itself proof that the failed attempt's evidence was assembled and shown: a
-// retry whose prompt lost that section gets the answer that already failed,
-// and this test never goes green.
+// bind, and answers a retry with the binding one — recognising a retry by the
+// still-broken relation name appearing anywhere in the request. That name can
+// reach the prompt only through the first attempt's recorded verification error
+// or the diff it applied: the repository checkout is pristine on every attempt,
+// so the contract file never carries it. Attempt 2 reaching 'proposed' is
+// therefore proof that the failed attempt's evidence was assembled AND shown,
+// not merely that an attempt row existed; a retry whose prompt lost that
+// evidence gets the answer that already failed, and this test never goes green.
 //
 // It also proves the loop cannot eat itself: the rejected shadow release is
 // recorded as a dropped classification and produces no remediation trigger.
@@ -201,7 +246,10 @@ func TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
+	// 34 minutes: strictly greater than the 29 this test's stage budgets sum to
+	// (release 6 + attempt 3 + listed 1 + shadow 5 + finalize 2, then attempt 3
+	// + listed 1 + shadow 5 + finalize 2, then the decision read 1).
+	ctx, cancel := context.WithTimeout(context.Background(), 34*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -223,15 +271,15 @@ func TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt(t *testing.T) {
 
 	// 1. Attempt 1's shadow release rejects the fix, and its error is recorded
 	//    on the attempt as the evidence attempt 2 will be shown.
-	firstVerifying := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "verifying", 6*time.Minute)
+	firstVerifying := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "verifying", pyAttemptStartBudget)
 	firstShadowID := firstVerifying.ShadowReleaseID
 	require.NotEmpty(t, firstShadowID)
 	require.True(t, strings.HasSuffix(firstShadowID, "-a1"),
 		"the first attempt's shadow release id must name attempt 1; got %q", firstShadowID)
 	assertReleaseListedAsShadow(t, ctx, clients, firstShadowID)
-	waitForReleaseStatus(t, ctx, clients, firstShadowID, "rejected", 12*time.Minute)
+	waitForReleaseStatus(t, ctx, clients, firstShadowID, "rejected", pyShadowVerdictBudget)
 
-	firstFailed := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "failed", 3*time.Minute)
+	firstFailed := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 1, "failed", pyAttemptFinalizeBudget)
 	require.NotEmpty(t, firstFailed.VerifyError,
 		"a rejected attempt must record why, or the next attempt has nothing new to learn from")
 	require.NotContains(t, firstFailed.VerifyError, "timed out",
@@ -242,7 +290,7 @@ func TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt(t *testing.T) {
 	t.Logf("attempt 1 failed verification: %s", firstFailed.VerifyError)
 
 	// 2. Attempt 2 runs against a second shadow release and this one validates.
-	secondVerifying := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "verifying", 6*time.Minute)
+	secondVerifying := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "verifying", pyAttemptStartBudget)
 	secondShadowID := secondVerifying.ShadowReleaseID
 	require.NotEmpty(t, secondShadowID)
 	require.NotEqual(t, firstShadowID, secondShadowID,
@@ -250,9 +298,9 @@ func TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt(t *testing.T) {
 	require.True(t, strings.HasSuffix(secondShadowID, "-a2"),
 		"the second attempt's shadow release id must name attempt 2; got %q", secondShadowID)
 	assertReleaseListedAsShadow(t, ctx, clients, secondShadowID)
-	waitForReleaseStatus(t, ctx, clients, secondShadowID, "validated", 12*time.Minute)
+	waitForReleaseStatus(t, ctx, clients, secondShadowID, "validated", pyShadowVerdictBudget)
 
-	secondProposed := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "proposed", 3*time.Minute)
+	secondProposed := waitForProposal(t, ctx, clients, releaseID, pyLoopUniqueID, 2, "proposed", pyAttemptFinalizeBudget)
 	edits := decodeFileEdits(t, secondProposed.FileEdits)
 	require.Len(t, edits, 1)
 	require.Equal(t, pyLoopContract, edits[0].Path)
@@ -273,7 +321,7 @@ func TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt(t *testing.T) {
 		Decision string `db:"decision"`
 		Reason   string `db:"reason"`
 	}
-	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
+	pollUntil(t, ctx, pyRecordVisibleBudget, 2*time.Second, func() (bool, error) {
 		err := clients.remediationDB.GetContext(ctx, &decision,
 			`SELECT category, decision, reason
 			   FROM classification_decision
@@ -337,7 +385,7 @@ func rejectPythonFixtureRelease(
 		[]byte(pyRemediationContractYAML(t, service, contractPath, scriptPath)))
 	postPythonRelease(t, clients, service, releaseID, pyFixtureImage)
 
-	waitForReleaseRejected(t, ctx, clients, releaseID, 12*time.Minute)
+	waitForReleaseRejected(t, ctx, clients, releaseID, pyReleaseVerdictBudget)
 	return cleanup
 }
 
@@ -398,13 +446,18 @@ func pyRemediationContractYAML(t *testing.T, service, contractPath, scriptPath s
 // pool is still open.
 func ensureBindingRelation(t *testing.T, ctx context.Context, clients *testClients) func() {
 	t.Helper()
+	// The relation name is interpolated because a table name cannot be bound as
+	// a query parameter. pyBindingRelation is a constant in this file and the
+	// same one the assertions read, so the table this creates and the table the
+	// repaired contract is checked against can never name different relations.
 	_, err := clients.dbtDB.ExecContext(ctx,
-		`CREATE TABLE IF NOT EXISTS public.right_name (id integer)`)
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id integer)`, pyBindingRelation))
 	require.NoError(t, err, "create %s in the warehouse", pyBindingRelation)
 	return func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := clients.dbtDB.ExecContext(cleanupCtx, `DROP TABLE IF EXISTS public.right_name`); err != nil {
+		if _, err := clients.dbtDB.ExecContext(cleanupCtx,
+			fmt.Sprintf(`DROP TABLE IF EXISTS %s`, pyBindingRelation)); err != nil {
 			t.Errorf("cleanup: drop %s: %v", pyBindingRelation, err)
 		}
 	}
@@ -488,8 +541,7 @@ func decodeFileEdits(t *testing.T, raw []byte) []pyFileEdit {
 // the row is visible to a concurrent reader.
 func assertReleaseListedAsShadow(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
 	t.Helper()
-	var found bool
-	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
+	pollUntil(t, ctx, pyRecordVisibleBudget, 2*time.Second, func() (bool, error) {
 		resp, err := http.Get(clients.releaseBase + "/releases?limit=50")
 		if err != nil {
 			return false, nil
@@ -511,13 +563,11 @@ func assertReleaseListedAsShadow(t *testing.T, ctx context.Context, clients *tes
 			if rel.ReleaseID == releaseID {
 				require.True(t, rel.Shadow,
 					"release %s must be listed as a shadow so the UI can label it a fix verification", releaseID)
-				found = true
 				return true, nil
 			}
 		}
 		return false, nil
 	}, fmt.Sprintf("timeout waiting for shadow release %s to appear in GET /releases", releaseID))
-	require.True(t, found)
 	t.Logf("shadow release %s is listed and flagged", releaseID)
 }
 

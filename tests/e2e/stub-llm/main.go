@@ -251,15 +251,6 @@ const (
 	bindingRead       = "public.right_name"
 )
 
-// priorAttemptsMarker is the heading prompt.AssemblePythonContractFix renders
-// above the earlier attempts at the same failure. Its presence is the only
-// thing that distinguishes a retry from a first attempt in the request, which
-// is exactly the evidence a model needs to stop repeating a rejected fix — so
-// the stub keys the loop fixture's second answer on it. A retry whose prompt
-// lost that section therefore keeps getting the answer that already failed,
-// and the e2e test that drives it never goes green.
-const priorAttemptsMarker = "Previous fix attempts for this node"
-
 // contractFilePath returns the repository path of the contract file the prompt
 // shows, read back from the "Contract file <path> that declares it:" line
 // prompt.AssemblePythonContractFix renders. Returning the path from the prompt
@@ -304,8 +295,16 @@ func contractYAML(userContent string) string {
 //     stillBrokenRead — a relation that does not exist either, so the shadow
 //     release verifying it is rejected and its error becomes the next
 //     attempt's evidence;
-//   - the loop fixture on a retry (recognised by priorAttemptsMarker) gets
-//     bindingRead, so the second shadow release validates;
+//   - the loop fixture on a retry gets bindingRead, so the second shadow
+//     release validates. A retry is recognised by stillBrokenRead appearing
+//     ANYWHERE in the request, which is a strictly stronger signal than the
+//     prior-attempts heading: that heading is rendered for any earlier attempt
+//     row, even one carrying no error, whereas this relation name reaches the
+//     prompt only through the previous attempt's recorded verification error or
+//     the diff it applied. The repository checkout is pristine on every
+//     attempt, so the contract file itself never contains it. A retry whose
+//     prompt lost that evidence therefore keeps getting the answer that already
+//     failed, and the e2e test driving it never goes green;
 //   - every other fixture gets bindingRead immediately.
 //
 // A prompt with no contract file in it yields an empty updated_files list,
@@ -320,9 +319,9 @@ func writeProposePythonFixResponse(w http.ResponseWriter, userContent string) {
 		var fixed string
 		switch {
 		case strings.Contains(original, loopBrokenRead):
-			replacement := bindingRead
-			if !strings.Contains(userContent, priorAttemptsMarker) {
-				replacement = stillBrokenRead
+			replacement := stillBrokenRead
+			if strings.Contains(userContent, stillBrokenRead) {
+				replacement = bindingRead
 			}
 			fixed = strings.ReplaceAll(original, loopBrokenRead, replacement)
 		default:

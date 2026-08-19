@@ -43,9 +43,10 @@ jobs:
       || fromJSON('["self-hosted","kind"]') }}
     # Hard backstop against runaway runs. Without this the job inherits GitHub's
     # 6-hour default, so a stuck step (e.g. a hung image build) can silently burn
-    # hours of Actions minutes. A healthy run is ~75 min; cap well below the
-    # default. The slow setup phase carries its own tighter cap below.
-    timeout-minutes: 100
+    # hours of Actions minutes. Deliberately below the sum of the two step caps
+    # below (50 + 110), keeping the same ratio to them this cap has always had:
+    # it is a backstop against a hang, not a budget any healthy run approaches.
+    timeout-minutes: 125
 
     # The repo's default workflow token is restricted (contents/metadata/packages
     # read only), which denies the pull-requests API that paths-filter uses to
@@ -284,14 +285,21 @@ jobs:
         # Start the ui container, wait for it to become healthy, deploy k8s
         # controllers, then run the full e2e suite inside the orchestrator
         # container where the test code lives. Comfortably exceeds the go
-        # test -timeout below (70m) plus the ui-wait/deploy steps that run
+        # test -timeout below (100m) plus the ui-wait/deploy steps that run
         # first in this same step.
-        timeout-minutes: 75
+        #
+        # The 100m go timeout is derived, not measured: it strictly exceeds the
+        # 56 minutes the two python-remediation tests' own context deadlines sum
+        # to (22 + 34, see tests/e2e/remediation_python_test.go) plus the 40m
+        # this suite budgeted for everything else before they existed. Every
+        # per-test context must be able to fire first, or an operator gets a
+        # goroutine dump instead of a named assertion.
+        timeout-minutes: 110
         run: |
           source scripts/lib/common.sh
           docker compose up -d ui && wait_for_http_host http://localhost:8090/api/schedulers
           bash tests/e2e/deploy-k8s-controllers.sh
-          docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 70m /app/tests/e2e/...
+          docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 100m /app/tests/e2e/...
 
       - name: Cleanup k8s controllers
         if: always()
