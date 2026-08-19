@@ -39,7 +39,10 @@ func TestNewCLIPackager_RefusesWhenTheCLIIsMissing(t *testing.T) {
 func TestNewCLIPackager_ResolvesTheCLIOnPATH(t *testing.T) {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, runtimeBinary)
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+	// The stub must carry the executable bit or exec.LookPath will not resolve
+	// it, which is the whole point of the fixture; it lives in a per-test temp
+	// directory the test framework removes.
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil { //nolint:gosec // G306: an executable fixture is required, scoped to a temp dir.
 		t.Fatalf("write stub %s: %v", stub, err)
 	}
 	t.Setenv("PATH", dir)
