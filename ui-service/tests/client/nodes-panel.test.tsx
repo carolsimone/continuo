@@ -101,6 +101,7 @@ describe('NodesPanel service grouping', () => {
       id: 'exec-1', task_id: 'svc-b.sch.m1', error_message: 'boom',
       execution_time_seconds: 3, started_at: '2026-01-01T00:00:00Z',
       completed_at: '2026-01-01T00:01:00Z', log_s3_key: 'logs/m1.log',
+      run_results_uri: null,
     }];
     setup({ expandedServices: new Set(['svc-b']), executions, onNodeSelect });
 
@@ -109,5 +110,44 @@ describe('NodesPanel service grouping', () => {
     expect(screen.getAllByText('boom').length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: /logs/i }).getAttribute('href'))
       .toContain(encodeURIComponent('logs/m1.log'));
+  });
+
+  it('orders same-status rows by completed_at descending (last finished first)', () => {
+    // n1 finished earlier than n2; without a tiebreak they'd stay in task order (n1, n2).
+    const executions: TaskExecution[] = [
+      {
+        id: 'exec-n1', task_id: 'svc-a.sch.n1', error_message: null,
+        execution_time_seconds: 1, started_at: '2026-01-01T00:00:00Z',
+        completed_at: '2026-01-01T00:01:00Z', log_s3_key: null, run_results_uri: null,
+      },
+      {
+        id: 'exec-n2', task_id: 'svc-a.sch.n2', error_message: null,
+        execution_time_seconds: 1, started_at: '2026-01-01T00:02:00Z',
+        completed_at: '2026-01-01T00:03:00Z', log_s3_key: null, run_results_uri: null,
+      },
+    ];
+    const { container } = setup({ expandedServices: new Set(['svc-a']), executions });
+    const names = [...container.querySelectorAll('.nodes-node-name')].map(el => el.textContent);
+    expect(names).toEqual(['n2', 'n1']);
+  });
+
+  it('renders a Completed column sourced from completed_at, dash when absent', () => {
+    // Column order: Node, Status, Attempt, Error, Started, Completed, Logs.
+    const COMPLETED_COL = 5;
+    const executions: TaskExecution[] = [{
+      id: 'exec-n1', task_id: 'svc-a.sch.n1', error_message: null,
+      execution_time_seconds: 1, started_at: '2026-01-01T00:00:00Z',
+      completed_at: '2026-01-01T00:01:00Z', log_s3_key: null, run_results_uri: null,
+    }];
+    const { container } = setup({ expandedServices: new Set(['svc-a']), executions });
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    const rows = [...container.querySelectorAll('.nodes-table tbody tr')]
+      .filter(r => !r.classList.contains('nodes-group-row'));
+    const n1Row = rows.find(r => r.textContent?.includes('n1'))!;
+    const n2Row = rows.find(r => r.textContent?.includes('n2'))!;
+    expect(n1Row.querySelectorAll('td')[COMPLETED_COL].textContent).toBe(
+      new Date('2026-01-01T00:01:00Z').toLocaleTimeString(),
+    );
+    expect(n2Row.querySelectorAll('td')[COMPLETED_COL].textContent).toBe('—');
   });
 });
