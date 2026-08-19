@@ -71,6 +71,27 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 	return nil
 }
 
+// FailGenerating finalizes every in-flight 'generating' row for the
+// (source, node_id, error_signature) triple, recording reason as the
+// rationale, and returns how many rows moved. The status filter is what makes
+// it safe to run at any time: a row that has already reached a terminal state
+// is left exactly as it is.
+func (r *ProposalRepository) FailGenerating(ctx context.Context, source, nodeID, errorSignature, reason string) (int, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal SET status=$5, rationale=$4
+		  WHERE source=$1 AND node_id=$2 AND error_signature=$3 AND status=$6`,
+		source, nodeID, errorSignature, reason,
+		proposal.StatusFailed, proposal.StatusGenerating)
+	if err != nil {
+		return 0, fmt.Errorf("fail generating proposals: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("fail generating proposals: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
 // Upsert records the terminal outcome of a proposal attempt on the natural key
 // (release_id, source, node_id, attempt): when an in-flight generating row
 // exists (the common healable path) it is finalized in place via

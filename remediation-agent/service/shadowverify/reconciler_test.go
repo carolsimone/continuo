@@ -172,7 +172,27 @@ func (r *fakeProposalRepo) CountAttempts(context.Context, string, string, string
 
 func (r *fakeProposalRepo) InsertGenerating(_ context.Context, p proposal.Proposal) error {
 	r.generating = append(r.generating, p)
+	v := proposal.View{
+		ID: fmt.Sprintf("%s-a%d", p.NodeID, p.Attempt), Source: p.Source,
+		ReleaseID: p.ReleaseID, NodeID: p.NodeID, ErrorSignature: p.ErrorSignature,
+		Attempt: p.Attempt, Status: p.Status, CreatedAt: p.CreatedAt,
+	}
+	r.rows = append(r.rows, &v)
 	return nil
+}
+
+func (r *fakeProposalRepo) FailGenerating(_ context.Context, source, nodeID, errorSignature, reason string) (int, error) {
+	n := 0
+	for _, v := range r.rows {
+		if v.Status != proposal.StatusGenerating ||
+			v.Source != source || v.NodeID != nodeID || v.ErrorSignature != errorSignature {
+			continue
+		}
+		v.Status = proposal.StatusFailed
+		v.Rationale = reason
+		n++
+	}
+	return n, nil
 }
 
 func (r *fakeProposalRepo) Upsert(_ context.Context, p proposal.Proposal) error {
@@ -677,5 +697,50 @@ func TestRunStopsOnContextCancellation(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after its context was cancelled")
+	}
+}
+
+// failingArchive is a ports.RepoArchive whose fetch always fails, which is how
+// this test makes the real driver commit an in-flight attempt and then return
+// an error — the python fixer's first act is to fetch the checkout.
+type failingArchive struct{}
+
+func (failingArchive) Fetch(context.Context, string, string) (string, func(), error) {
+	return "", nil, errors.New("github unreachable")
+}
+
+// TestReconcileOnce_FailedNextAttemptLeavesNoGeneratingRow pins the cleanup a
+// retry needs and the stream consumer does not.
+//
+// The driver commits a 'generating' row of its own, in its own transaction,
+// immediately before calling the model — that row is what the release page
+// renders as "Generating fix…". When the driver then errors on the consumer's
+// path, the message is left unacknowledged and the redelivery reuses that row.
+// Nothing redelivers here: this attempt was started by a release's verdict,
+// not by a consumed message, and no sweep exists. So the row would say a fix
+// is being generated for as long as the database keeps it.
+func TestReconcileOnce_FailedNextAttemptLeavesNoGeneratingRow(t *testing.T) {
+	row := verifyingRow("p1", 1, time.Minute)
+	h := newHarness(row)
+	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+		Terminal: true, Validated: false,
+		NodeErrors: map[string]string{"analytics.orders": "still wrong"},
+	}
+
+	// The real driver, with the repository fetch the python fixer opens with
+	// made to fail: it marks the next attempt in flight, then returns.
+	deps := h.handlerDeps(5)
+	deps.RepoArchive = failingArchive{}
+	h.proposer.delegate = func(ctx context.Context, t handlers.Trigger) error {
+		return handlers.ProposeFix(ctx, deps, t)
+	}
+
+	h.rec.ReconcileOnce(context.Background())
+
+	require.Len(t, h.repo.generating, 1,
+		"fixture check: the driver must have marked the next attempt in flight")
+	for _, v := range h.repo.rows {
+		assert.NotEqual(t, proposal.StatusGenerating, v.Status,
+			"proposal %s was left in flight with nothing that will ever finish it", v.ID)
 	}
 }

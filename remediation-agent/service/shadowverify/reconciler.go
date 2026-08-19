@@ -276,9 +276,11 @@ func (r *Reconciler) failIfExpired(ctx context.Context, v proposal.View) {
 // dedup axis, and the original value would collide on it just as the message
 // id would.
 //
-// A next attempt that fails to start is logged rather than retried here: the
-// row it would follow is already terminal, so the following pass no longer
-// lists it. The failure stands as the recorded outcome for the node.
+// A next attempt that fails to start is not retried here: the row it would
+// follow is already terminal, so the following pass no longer lists it. The
+// failure stands as the recorded outcome for the node — but the driver has by
+// then committed an in-flight row for that attempt, which abandonInFlight
+// closes out so the failure is what the node's last row actually says.
 func (r *Reconciler) retry(ctx context.Context, v proposal.View) {
 	if len(v.TriggerPayload) == 0 {
 		r.logger.Warn("shadow verify: attempt has no stored trigger; no further attempt can be started",
@@ -296,7 +298,46 @@ func (r *Reconciler) retry(ctx context.Context, v proposal.View) {
 	if err := r.propose(ctx, t); err != nil {
 		r.logger.Error("shadow verify: could not start the next fix attempt",
 			"proposal_id", v.ID, "node", v.NodeID, "release", v.ReleaseID, "error", err)
+		r.abandonInFlight(ctx, v, err)
 	}
+}
+
+// abandonInFlight closes out the in-flight row a next attempt left behind when
+// it could not start.
+//
+// The driver commits a 'generating' row of its own, in its own transaction,
+// immediately before calling the model — that row is what the release page
+// renders as "Generating fix…" for the node. On the stream consumer's path a
+// driver error leaves the message unacknowledged, and the redelivery reuses
+// that row. Nothing redelivers this attempt: it was started by a release's
+// verdict, not by a consumed message. Left alone the row would report a fix as
+// still being generated for as long as the database keeps it, and no sweep
+// exists to notice. It is failed here instead, carrying why, so the node's last
+// row says what actually happened.
+func (r *Reconciler) abandonInFlight(ctx context.Context, v proposal.View, cause error) {
+	u := r.newUoW()
+	if err := u.Begin(ctx); err != nil {
+		r.logger.Warn("shadow verify: begin (abandon in-flight attempt)", "proposal_id", v.ID, "error", err)
+		return
+	}
+	defer func() { _ = u.Rollback() }()
+
+	n, err := u.ProposalRepo().FailGenerating(ctx, v.Source, v.NodeID, v.ErrorSignature,
+		"the next fix attempt could not be started: "+cause.Error())
+	if err != nil {
+		r.logger.Warn("shadow verify: abandon in-flight attempt",
+			"proposal_id", v.ID, "node", v.NodeID, "error", err)
+		return
+	}
+	if n == 0 {
+		return
+	}
+	if err := u.Commit(); err != nil {
+		r.logger.Warn("shadow verify: commit (abandon in-flight attempt)", "proposal_id", v.ID, "error", err)
+		return
+	}
+	r.logger.Info("shadow verify: closed out the attempt that could not be started",
+		"proposal_id", v.ID, "node", v.NodeID, "release", v.ReleaseID, "rows", n)
 }
 
 // proposedEvent projects a recorded attempt back onto the aggregate the

@@ -209,6 +209,21 @@ func (r *fakeProposalRepo) InsertGenerating(_ context.Context, p proposal.Propos
 	return nil
 }
 
+func (r *fakeProposalRepo) FailGenerating(_ context.Context, source, nodeID, errorSignature, reason string) (int, error) {
+	n := 0
+	for i := range r.generating {
+		g := &r.generating[i]
+		if g.Status != proposal.StatusGenerating ||
+			g.Source != source || g.NodeID != nodeID || g.ErrorSignature != errorSignature {
+			continue
+		}
+		g.Status = proposal.StatusFailed
+		g.Rationale = reason
+		n++
+	}
+	return n, nil
+}
+
 func (r *fakeProposalRepo) Upsert(_ context.Context, p proposal.Proposal) error {
 	r.inserted = append(r.inserted, p)
 	return nil

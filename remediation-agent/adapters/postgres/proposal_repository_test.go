@@ -1529,3 +1529,66 @@ func TestList_FilterByFailingNode(t *testing.T) {
 		require.Equal(t, "analytics.py_kpis", v.NodeID)
 	}
 }
+
+// TestProposalRepositoryFailGenerating verifies that FailGenerating closes out
+// only the in-flight rows of the failure it names: a 'generating' row for that
+// (source, node_id, error_signature) triple becomes 'failed' with the reason as
+// its rationale, while a row already terminal and a row belonging to a
+// different failure are both left exactly as they were. Running it again moves
+// nothing, since no row is generating any more.
+func TestProposalRepositoryFailGenerating(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	inFlight := proposal.Proposal{
+		Source: "validation", ReleaseID: "rel-fg-1", NodeID: "analytics.py_kpis",
+		ErrorSignature: "sig-fg-1", Attempt: 2, Status: proposal.StatusGenerating,
+		CreatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, repo.InsertGenerating(ctx, inFlight))
+
+	// Same failure, already terminal — the attempt whose rejection started the
+	// one above. It must not be rewritten.
+	settled := inFlight
+	settled.Attempt = 1
+	settled.Status = proposal.StatusFailed
+	settled.Rationale = "the shadow release rejected this fix"
+	settledID := seedProposal(t, repo, db, settled)
+
+	// A different node's in-flight attempt must be untouched.
+	other := inFlight
+	other.NodeID = "analytics.py_other"
+	other.ErrorSignature = "sig-fg-2"
+	require.NoError(t, repo.InsertGenerating(ctx, other))
+
+	n, err := repo.FailGenerating(ctx, "validation", "analytics.py_kpis", "sig-fg-1",
+		"the next fix attempt could not be started: github unreachable")
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "only the named failure's in-flight row may move")
+
+	var got struct {
+		Status    string `db:"status"`
+		Rationale string `db:"rationale"`
+	}
+	require.NoError(t, db.GetContext(ctx, &got,
+		`SELECT status, rationale FROM proposal WHERE release_id=$1 AND node_id=$2 AND attempt=$3`,
+		"rel-fg-1", "analytics.py_kpis", 2))
+	require.Equal(t, string(proposal.StatusFailed), got.Status)
+	require.Equal(t, "the next fix attempt could not be started: github unreachable", got.Rationale)
+
+	stillSettled, err := repo.Get(ctx, settledID)
+	require.NoError(t, err)
+	require.Equal(t, "the shadow release rejected this fix", stillSettled.Rationale,
+		"a row that already reached a terminal state must not be rewritten")
+
+	var otherStatus string
+	require.NoError(t, db.GetContext(ctx, &otherStatus,
+		`SELECT status FROM proposal WHERE node_id=$1 AND attempt=$2`, "analytics.py_other", 2))
+	require.Equal(t, string(proposal.StatusGenerating), otherStatus,
+		"another failure's in-flight attempt must be left alone")
+
+	n, err = repo.FailGenerating(ctx, "validation", "analytics.py_kpis", "sig-fg-1", "again")
+	require.NoError(t, err)
+	require.Zero(t, n, "a second call moves nothing: no row is generating any more")
+}
