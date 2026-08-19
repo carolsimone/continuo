@@ -30,24 +30,32 @@ type Locator struct {
 }
 
 var _ ports.ContractLocator = (*Locator)(nil)
+var _ ports.ContractInspector = (*Locator)(nil)
 
 // NewLocator builds a Locator that reports skipped files through logger.
 func NewLocator(logger *slog.Logger) *Locator {
 	return &Locator{logger: logger}
 }
 
-// contractDoc is the subset of a contract yaml's shape this search needs: a
-// top-level "nodes:" list, each entry matched on schema and table only. A
-// filename convention is deliberately never assumed — a single file can
-// declare many nodes (a dbt-schema.yml-style layout), and nothing about a
-// file's name is guaranteed to relate to any one of them.
+// contractDoc is the subset of a contract yaml's shape this package needs: a
+// top-level "nodes:" list. A filename convention is deliberately never assumed
+// — a single file can declare many nodes (a dbt-schema.yml-style layout), and
+// nothing about a file's name is guaranteed to relate to any one of them.
 type contractDoc struct {
 	Nodes []contractNode `yaml:"nodes"`
 }
 
+// contractNode is one entry of that list, narrowed to the fields that identify
+// the node. The search matches on schema and table; the remaining fields are
+// read so a caller can tell an entry that was repaired apart from one that was
+// re-identified.
 type contractNode struct {
-	Schema string `yaml:"schema"`
-	Table  string `yaml:"table"`
+	Schema      string `yaml:"schema"`
+	Table       string `yaml:"table"`
+	Script      string `yaml:"script"`
+	Owner       string `yaml:"owner"`
+	Schedule    string `yaml:"schedule"`
+	Criticality string `yaml:"criticality"`
 }
 
 // match pairs a candidate file's repo-relative path with the content already
@@ -147,6 +155,34 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 		}
 		return ports.Located{}, fmt.Errorf("schema %q table %q found in %v: %w", schema, table, paths, ports.ErrAmbiguousDeclaration)
 	}
+}
+
+// Identities parses yamlText as a contract document and returns the identity of
+// every node under its "nodes:" list, in declaration order.
+//
+// A document that parses but declares no nodes yields an empty result and no
+// error: a yaml file holding something else entirely is a normal member of a
+// contract directory, and it declares nothing to compare. Text that is not
+// valid yaml returns an error, because a caller comparing declarations across
+// an edit cannot tell "declares nothing" apart from "could not be read" and
+// must not treat the second as the first.
+func (l *Locator) Identities(yamlText string) ([]ports.NodeIdentity, error) {
+	var doc contractDoc
+	if err := yaml.Unmarshal([]byte(yamlText), &doc); err != nil {
+		return nil, fmt.Errorf("parse contract document: %w", err)
+	}
+	out := make([]ports.NodeIdentity, 0, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		out = append(out, ports.NodeIdentity{
+			Schema:      n.Schema,
+			Table:       n.Table,
+			Script:      n.Script,
+			Owner:       n.Owner,
+			Schedule:    n.Schedule,
+			Criticality: n.Criticality,
+		})
+	}
+	return out, nil
 }
 
 // buildLocated derives ContractDir and RepoRoot from where the matched file

@@ -99,6 +99,10 @@ type Services struct {
 	// ContractLocator finds which contract yaml in that checkout declares the
 	// python node being fixed.
 	ContractLocator ports.ContractLocator
+	// ContractInspector reads the node declarations out of a contract yaml
+	// document, so the answer's effect on them can be compared against what
+	// the repository held before it was applied.
+	ContractInspector ports.ContractInspector
 	// Packager turns a directory of python-node contract yaml files into the
 	// merged wire contract a release is submitted with.
 	Packager ports.ContractPackager

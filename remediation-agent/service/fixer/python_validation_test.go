@@ -188,6 +188,9 @@ func pythonInput() Input {
 func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager, *fakeReleases, *fakeArtifacts) {
 	t.Helper()
 	arch := &fakeArchive{root: root}
+	// The real repofs adapter answers both contract ports, so a test cannot
+	// pass a search and an inspection that disagree about a document's shape.
+	locator := repofs.NewLocator(testLogger())
 	pkgr := &fakePackager{merged: []byte("merged: contract\n")}
 	arts := &fakeArtifacts{}
 	rel := &fakeReleases{
@@ -209,8 +212,9 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 		Precedents:      &fakePrecedents{},
 		CandidateSource: &fakeCandidateSource{src: ports.CandidateSource{RawCode: `{"output_columns":[]}`, Runtime: "python"}},
 		Archive:         arch,
-		ContractLocator: repofs.NewLocator(testLogger()),
-		Packager:        pkgr,
+		ContractLocator:   locator,
+		ContractInspector: locator,
+		Packager:          pkgr,
 		Releases:        rel,
 		PriorAttempts:   &fakeAttempts{},
 		SQLDialect:      "postgres",
@@ -619,6 +623,111 @@ func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
 	b, rerr := os.ReadFile(filepath.Join(root, "services", "service-py", "contracts", "py_daily_kpis.yml")) //nolint:gosec // G304: a path under the test's own temp tree
 	require.NoError(t, rerr)
 	require.Equal(t, declaringYAML, string(b))
+}
+
+// TestPythonValidation_AnswerThatChangesNodeIdentity_Fails covers the one way
+// this lane can produce a confident WRONG answer.
+//
+// The fix is packaged from the whole contract directory and verified by a real
+// release, so the release only ever judges the nodes the packaged contract
+// still declares. An answer that DELETES or RENAMES the failing node therefore
+// removes the very thing under test: the release has nothing left to reject, it
+// reaches "validated", and the edit that deleted a broken node is recorded as a
+// verified fix and offered to a human as a pull request. The same holds for a
+// sibling declared beside it — an answer that quietly re-identifies one changes
+// what production builds under cover of repairing something else.
+//
+// So every node the answer's own files declared before it was applied must
+// still be declared afterwards, with the fields that say WHICH node it is
+// (schema, table, script, owner, schedule, criticality) untouched. Anything
+// else ends the attempt as failed, naming what moved.
+func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
+	const target = "services/service-py/contracts/py_daily_kpis.yml"
+	const sibling = "services/service-py/contracts/other.yml"
+
+	cases := map[string]struct {
+		files []ports.ProposedFile
+		want  string
+	}{
+		"the failing node is deleted": {
+			files: []ports.ProposedFile{{Path: target, Content: "nodes: []\n"}},
+			want:  "analytics.py_daily_kpis",
+		},
+		"the failing node is renamed": {
+			files: []ports.ProposedFile{{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_daily_kpis_v2
+    script: scripts/py_daily_kpis.py
+    output_columns:
+      - name: revenue_total
+`}},
+			want: "analytics.py_daily_kpis",
+		},
+		"the failing node is pointed at another script": {
+			files: []ports.ProposedFile{{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    script: scripts/py_daily_kpis_v2.py
+    output_columns:
+      - name: revenue_total
+`}},
+			want: "script",
+		},
+		"a sibling in the same directory is renamed": {
+			files: []ports.ProposedFile{
+				{Path: target, Content: correctedYAML},
+				{Path: sibling, Content: "nodes:\n  - schema: analytics\n    table: other_renamed\n"},
+			},
+			want: "analytics.other",
+		},
+		"a returned file is not parseable contract yaml": {
+			files: []ports.ProposedFile{{Path: target, Content: "nodes:\n\t- schema: analytics\n"}},
+			want:  target,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := pythonRepoTree(t)
+			svc, _, pkgr, rel, arts := pythonSvc(t, root)
+			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: tc.files, Confidence: "high"}}}
+
+			r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+			require.NoError(t, err)
+			require.Equal(t, proposal.StatusFailed, r.Proposal.Status,
+				"an answer that re-identifies a node must never be verified as a fix")
+			require.Contains(t, r.Proposal.Rationale, tc.want,
+				"a failed attempt must record what the answer moved")
+			require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
+			require.Empty(t, rel.submissions, "no release slot is spent proving a deletion")
+			require.Empty(t, arts.written, "a refused answer writes no artifacts")
+		})
+	}
+}
+
+// TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails covers the
+// variant the before/after comparison of the answer's own files cannot see: the
+// declaring file is left alone and the node is declared a SECOND time in a new
+// file. Nothing was removed or renamed, so every identity the answer touched
+// still holds — but the packaged directory now declares one node twice, which
+// is a contract no release can validate and a repository state the next attempt
+// could not search either.
+func TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails(t *testing.T) {
+	root := pythonRepoTree(t)
+	svc, _, pkgr, rel, _ := pythonSvc(t, root)
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
+		Files: []ports.ProposedFile{
+			{Path: "services/service-py/contracts/copy.yml", Content: correctedYAML},
+		},
+		Confidence: "high",
+	}}}
+
+	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
+	require.Contains(t, r.Proposal.Rationale, "analytics.py_daily_kpis")
+	require.Empty(t, pkgr.calls)
+	require.Empty(t, rel.submissions)
 }
 
 // TestShadowReleaseID_BoundedForTheCandidateSchema pins the length rule the

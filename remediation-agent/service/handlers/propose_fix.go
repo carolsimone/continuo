@@ -132,6 +132,10 @@ type Deps struct {
 	// ContractLocator finds which contract yaml in that checkout declares a
 	// given python node.
 	ContractLocator ports.ContractLocator
+	// ContractInspector reads the node declarations out of a contract yaml
+	// document, so a proposed edit can be checked against the declarations the
+	// repository already held.
+	ContractInspector ports.ContractInspector
 	// Packager merges a directory of python-node contract yaml files into the
 	// wire contract a release is submitted with.
 	Packager ports.ContractPackager
@@ -218,7 +222,8 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		Locator: deps.Locator, Upstream: deps.Upstream, Versions: deps.Versions,
 		Precedents: deps.Precedents, CandidateSource: deps.CandidateSource,
 		Archive: deps.RepoArchive, ContractLocator: deps.ContractLocator,
-		Packager: deps.Packager, Releases: deps.Releases,
+		ContractInspector: deps.ContractInspector,
+		Packager:          deps.Packager, Releases: deps.Releases,
 		PriorAttempts: deps.PriorAttempts, SQLDialect: deps.SQLDialect,
 	}
 

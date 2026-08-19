@@ -559,7 +559,32 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
    the recorded diffs describe the change against what the repository held.
    Only then package: running the packager before the answer is written would
    verify the contract that already failed.
-9. Package with ContractPackager.Merge — a subprocess call to
+9. Check that the node survived its own repair, before anything is packaged.
+   A shadow release can only reject what the packaged contract still declares,
+   so an answer that DELETED or RENAMED the failing node leaves the release
+   nothing to fail on: it validates, and the edit that removed a broken node is
+   recorded as a proven fix and offered to a human. Two checks close that:
+   - Every node the answer's own files declared BEFORE it was applied must
+     still be declared after, with its identity fields — schema, table, script,
+     owner, schedule, criticality — unchanged (ContractInspector.Identities,
+     read on both sides of each returned *.yml/*.yaml file). A missing or
+     mutated entry is proposal(status=failed) naming the node and the fields
+     that moved. Both sides are compared as a whole rather than file by file,
+     so moving an entry between two of the answer's own files — which packages
+     identically — is not read as deleting it. A node the answer ADDS is not
+     refused: it is packaged, so the shadow release judges it honestly. A
+     returned file that no longer parses as yaml is proposal(status=failed)
+     too, since "declares nothing" and "cannot be read" must not be confused.
+   - The declaring-file search is re-run over the patched checkout
+     (ContractLocator.Locate): the node must still be declared by exactly one
+     file, still inside the contract directory being packaged. This covers what
+     comparing only the returned files cannot — a second declaration added in a
+     new file, which leaves every touched entry intact while making the
+     packaged directory declare one node twice. ErrNodeNotDeclared,
+     ErrAmbiguousDeclaration, or a different contract directory each end the
+     attempt as proposal(status=failed); any other search error is transient
+     and the trigger is redelivered.
+10. Package with ContractPackager.Merge — a subprocess call to
    `continuo-runtime merge <contractDir> --service <service> --repo-root
    <appRoot> --dialect <dialect> --out <tmp>/contract.yaml`, the same command
    the team's own release CI runs after a merge. The hash fold verifies against
@@ -570,7 +595,7 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
    rejected for a hash mismatch unrelated to the fix. --dialect comes from the
    install's configured warehouse engine (see WAREHOUSE_ENGINE below), so the
    contract is rendered under the same rules the pipeline validates it against.
-10. Mint the shadow release id — shadow-<original_release_id>-<node_id>-a<n>,
+11. Mint the shadow release id — shadow-<original_release_id>-<node_id>-a<n>,
     with every character outside [A-Za-z0-9._-] replaced by a dash. It is
     unique per attempt, legible in every log line and release listing, and
     stable across a redelivery of the same attempt (release-controller's
@@ -582,19 +607,19 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
     the release-and-node middle is shortened and given an 8-hex digest of what
     it held, so the prefix and attempt number stay whole and two nodes whose
     names diverge only past the cut still get separate schemas.
-11. Upload the merged contract to <service>/<shadow_id>/contract.yaml — the
+12. Upload the merged contract to <service>/<shadow_id>/contract.yaml — the
     canonical per-release key release-controller reads a python service's
     release artifact from — BEFORE submitting, because release-controller
     reads that object as soon as the submission is accepted.
-12. Read the ORIGINAL failing release's image tag for the service
+13. Read the ORIGINAL failing release's image tag for the service
     (ReleaseGateway.ImageTag), then submit the shadow release
     (ReleaseGateway.Submit) under the minted id.
-13. Write one audit artifact pair per edited file:
+14. Write one audit artifact pair per edited file:
       proposed-fix/<release_id>/<node_id>/attempt-<n>/edit-<i>.content
       proposed-fix/<release_id>/<node_id>/attempt-<n>/edit-<i>.diff
     Edits of one attempt share a directory and are numbered within it, so two
     edits can never write the same key.
-14. Return proposal(status=verifying) naming the shadow release, with the edits
+15. Return proposal(status=verifying) naming the shadow release, with the edits
     list, source_resolved=true (the edits name real files at a real commit,
     which is what a pull request needs — the shadow release decides whether
     they are right), and the single-file view (file_path/proposed_sql_uri/
@@ -759,7 +784,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Duplicate-table fixer (single-file rename, no dbt log, shares `singleFileInterpret` with compile) | `remediation-agent/service/fixer/duplicate_table.go` |
 | Validation fixer, dbt node (two-step candidate + real-source flow, best-effort upstream-diff gather) | `remediation-agent/service/fixer/validation.go` |
 | Validation fixer, python node (repo checkout, contract repair, packaging, shadow submission) | `remediation-agent/service/fixer/python_validation.go` |
-| Contract-yaml search across a repository checkout | `remediation-agent/adapters/repofs/contract_locator.go` |
+| Contract-yaml search across a repository checkout, and the node-identity read a proposed edit is checked against (`ContractLocator` + `ContractInspector`) | `remediation-agent/adapters/repofs/contract_locator.go` |
 | Shadow-verify reconciler loop (verdict polling, CAS finalization, next-attempt start) | `remediation-agent/service/shadowverify/reconciler.go` |
 | PR lifecycle application service (claim/record/fail/fail-stuck-claim/record-outcome + outbox) | `remediation-agent/service/proposals/service.go` |
 | PR-outcome reconciler loop, incl. permission-gap degraded signal and the opening sweep (recover-or-fail stuck `pr_state='opening'` claims, CAS-guarded fail, cursor-paginated rotation) | `remediation-agent/service/proposals/reconciler.go` |

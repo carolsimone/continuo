@@ -67,7 +67,10 @@ func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 	llm := newFakeLLM(ports.ProposeResult{
 		Files: []ports.ProposedFile{{
 			Path:    "services/service-py/contracts/kpis.yml",
-			Content: "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    owner: data\n",
+			// A repair declares what the node produces; it leaves the fields
+			// that identify the node exactly as the repository declared them,
+			// because an answer that changes one is refused before packaging.
+			Content: "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    output_columns:\n      - name: revenue\n",
 		}},
 		Rationale:  "declared the missing column",
 		Confidence: "high",
@@ -77,7 +80,9 @@ func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 
 	d := deps(u, fakeEvidence{}, &llm, art)
 	d.RepoArchive = handlerArchive{root: pythonCheckout(t)}
-	d.ContractLocator = repofs.NewLocator(slog.Default())
+	contracts := repofs.NewLocator(slog.Default())
+	d.ContractLocator = contracts
+	d.ContractInspector = contracts
 	d.Packager = handlerPackager{}
 	d.Releases = rel
 	d.PriorAttempts = u.pr

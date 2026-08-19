@@ -141,6 +141,35 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 	if err != nil {
 		return Result{}, err
 	}
+
+	// Step 7 — the node under repair must have survived its own repair. A
+	// shadow release can only reject what the packaged contract still declares,
+	// so an answer that deleted or renamed the failing node leaves the release
+	// nothing to fail on: it validates, and the edit that removed a broken node
+	// is recorded as a proven fix and offered to a human. The same holds for a
+	// sibling declared beside it, whose identity this attempt was never asked to
+	// touch.
+	if reason := identityBreach(svc, res.Files, originals); reason != "" {
+		return failPython(svc, in, reason)
+	}
+	// The before/after comparison above sees only the files the answer returned.
+	// Re-running the search over the patched checkout covers what it cannot: the
+	// node must still be declared, exactly once, and still inside the directory
+	// this fix packages.
+	relocated, err := svc.ContractLocator.Locate(root, schema, table)
+	switch {
+	case errors.Is(err, ports.ErrNodeNotDeclared), errors.Is(err, ports.ErrAmbiguousDeclaration):
+		return failPython(svc, in, fmt.Sprintf(
+			"after applying the model's answer, %s is no longer declared by exactly one contract file (%s); "+
+				"a fix may correct what a node declares but never change which node is declared", in.NodeID, err))
+	case err != nil:
+		return Result{}, fmt.Errorf("re-locate contract for %s after applying the fix: %w", in.NodeID, err)
+	case relocated.ContractDir != located.ContractDir:
+		return failPython(svc, in, fmt.Sprintf(
+			"the model's answer moved %s out of the contract directory %q into %q, so the fix would not be packaged with the node it repairs",
+			in.NodeID, located.ContractDir, relocated.ContractDir))
+	}
+
 	merged, err := svc.Packager.Merge(ctx,
 		filepath.Join(root, filepath.FromSlash(located.ContractDir)),
 		filepath.Join(root, filepath.FromSlash(located.RepoRoot)),
@@ -149,7 +178,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("package contract for %s: %w", in.NodeID, err)
 	}
 
-	// Step 7 — the merged contract goes to the per-release artifact location
+	// Step 8 — the merged contract goes to the per-release artifact location
 	// release-controller reads a python service's release payload from, under
 	// the shadow release's own id.
 	shadowID := shadowReleaseID(in)
@@ -158,7 +187,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("write shadow contract: %w", err)
 	}
 
-	// Step 8 — submit. The image tag is read from the ORIGINAL failing release
+	// Step 9 — submit. The image tag is read from the ORIGINAL failing release
 	// (the trigger carries none, and the shadow runs the same image); the
 	// submission itself runs under the shadow's own id. This happens after the
 	// upload because release-controller reads that object as soon as the
@@ -177,7 +206,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("submit shadow release %s: %w", shadowID, err)
 	}
 
-	// Step 9 — one audit artifact pair per edited file, diffed against what the
+	// Step 10 — one audit artifact pair per edited file, diffed against what the
 	// repository held before the answer was applied.
 	edits := make([]proposal.FileEdit, 0, len(res.Files))
 	for i, f := range res.Files {
@@ -207,6 +236,114 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		SourceResolved: true,
 		Edits:          edits,
 	}}, nil
+}
+
+// identityBreach compares the node declarations the answer's own files held
+// before it was applied with the ones they hold after, and returns the reason
+// to refuse the answer — or "" when every declaration survived intact.
+//
+// Only the returned files are examined, and that is complete: a declaration can
+// only change if the file carrying it changed, and every changed file is in
+// this list. Both sides are read as a whole rather than file by file, so moving
+// an entry between two of the answer's own files — which packages identically —
+// is not mistaken for deleting it from one.
+//
+// A node the answer ADDS is not refused here. It is declared in the packaged
+// directory, so the shadow release runs it and judges it like any other node,
+// which is an honest verdict rather than a false one.
+func identityBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
+	before := map[string]ports.NodeIdentity{}
+	after := map[string]ports.NodeIdentity{}
+
+	for _, f := range files {
+		if !isContractYAMLPath(f.Path) {
+			continue
+		}
+		// A prior content that does not parse declared nothing this answer can
+		// be held to: the contract search skips such a file too, so the node it
+		// might have named was never the node under repair.
+		if ids, err := svc.ContractInspector.Identities(originals[f.Path]); err == nil {
+			for _, id := range ids {
+				before[identityKey(id)] = id
+			}
+		}
+		ids, err := svc.ContractInspector.Identities(f.Content)
+		if err != nil {
+			return fmt.Sprintf("the model returned %q, which is not a readable contract file: %v", f.Path, err)
+		}
+		for _, id := range ids {
+			after[identityKey(id)] = id
+		}
+	}
+
+	// Sorted so an answer that moves several nodes always names the same one,
+	// and a re-run of the same attempt records the same rationale.
+	keys := make([]string, 0, len(before))
+	for k := range before {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		was := before[k]
+		now, still := after[k]
+		if !still {
+			return fmt.Sprintf(
+				"the model's answer no longer declares %s. A fix corrects what a node declares; removing or renaming "+
+					"the node itself would leave the release nothing to validate, so the change could never be proven correct", k)
+		}
+		if now != was {
+			return fmt.Sprintf(
+				"the model's answer changed the fields that identify %s (%s). Those fields say which node the entry is, "+
+					"so changing one makes it a different node rather than a repaired one", k, identityDelta(was, now))
+		}
+	}
+	return ""
+}
+
+// identityKey is the node id a contract entry declares — "<schema>.<table>",
+// lowercased, the same form every trigger and release verdict names a node by.
+// Folding case is what makes a re-spelling of a name show up as a mutated
+// entry rather than as one node deleted and an unrelated one added.
+func identityKey(id ports.NodeIdentity) string {
+	return strings.ToLower(id.Schema + "." + id.Table)
+}
+
+// identityDelta renders the identity fields that differ between two versions of
+// one entry, so a refused answer says which field moved instead of only that
+// something did.
+func identityDelta(was, now ports.NodeIdentity) string {
+	fields := []struct {
+		name     string
+		was, now string
+	}{
+		{"schema", was.Schema, now.Schema},
+		{"table", was.Table, now.Table},
+		{"script", was.Script, now.Script},
+		{"owner", was.Owner, now.Owner},
+		{"schedule", was.Schedule, now.Schedule},
+		{"criticality", was.Criticality, now.Criticality},
+	}
+	changed := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f.was != f.now {
+			changed = append(changed, fmt.Sprintf("%s %q -> %q", f.name, f.was, f.now))
+		}
+	}
+	return strings.Join(changed, ", ")
+}
+
+// isContractYAMLPath reports whether a repository path is one the contract
+// search would parse. Only those files can declare a node, so only those are
+// compared across the edit; a script or a data file the answer also returns
+// carries no declaration to preserve.
+func isContractYAMLPath(p string) bool {
+	switch strings.ToLower(path.Ext(filepath.ToSlash(p))) {
+	case ".yml", ".yaml":
+		return true
+	default:
+		return false
+	}
 }
 
 // siblingFailure names another node that failed validation in the same release

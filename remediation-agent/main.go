@@ -204,6 +204,7 @@ func main() {
 	// the gRPC read path, the reconciler, and the fixers' prior-attempt reads
 	// all use it outside any unit of work.
 	proposalRepo := postgres.NewProposalRepository(db)
+	contracts := repofs.NewLocator(logger)
 
 	deps := handlers.Deps{
 		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
@@ -222,8 +223,11 @@ func main() {
 		Precedents:       graphClient,
 		CandidateSource:  bundleReader,
 		RepoArchive:      gh,
-		ContractLocator:  repofs.NewLocator(logger),
-		Packager:         packager,
+		ContractLocator:  contracts,
+		// The same adapter answers both: locating the file that declares a node
+		// and reading the declarations a file holds are one yaml shape.
+		ContractInspector: contracts,
+		Packager:          packager,
 		Releases:         releaseGateway,
 		PriorAttempts:    proposalRepo,
 		SQLDialect:       cfg.SQLDialect,
