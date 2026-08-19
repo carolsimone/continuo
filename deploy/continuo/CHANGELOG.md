@@ -14,14 +14,15 @@ shipped in those.
 
 ### Added
 - `remediation-agent.env.RELEASE_CONTROLLER_URL` (default
-  `http://release-controller:8088`) and `remediation-agent.env.SHADOW_VERIFY_TIMEOUT`
-  (default `"20m"`) — release-controller's HTTP address and a poll-timeout for
-  the remediation-agent's release gateway, which submits python-node fix
-  proposals as shadow verification releases and polls them for a terminal
-  verdict. Both sit in the same free-form `env` map as the existing
-  `REMEDIATION_PR_POLL_INTERVAL`/`REMEDIATION_PR_OPENING_GRACE_PERIOD` keys, so
-  no schema change is required; an unmodified existing values file already
-  gets these defaults via the chart's own `env` defaults.
+  `http://release-controller:8088`), `remediation-agent.env.SHADOW_VERIFY_TIMEOUT`
+  (default `"20m"`) and `remediation-agent.env.SHADOW_VERIFY_POLL_INTERVAL`
+  (default `"15s"`) — release-controller's HTTP address, how long a python-node
+  fix proposal waits for its shadow verification release to reach a verdict
+  before the attempt is recorded as failed, and how often the remediation-agent
+  reads those releases. All three sit in the same free-form `env` map as the
+  existing `REMEDIATION_PR_POLL_INTERVAL`/`REMEDIATION_PR_OPENING_GRACE_PERIOD`
+  keys, so no schema change is required; an unmodified existing values file
+  already gets these defaults via the chart's own `env` defaults.
 
 ### Changed
 - The `orchestrator` service now requires object storage to be reachable at

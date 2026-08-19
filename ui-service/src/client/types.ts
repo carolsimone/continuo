@@ -211,6 +211,11 @@ export interface ProposalDTO {
   node_id: string;
   error_signature: string;
   attempt: number;
+  // Lifecycle of one fix attempt. Two are in flight and carry no reviewable
+  // fix yet: 'generating' while the fix is being produced, and 'verifying'
+  // while a shadow release runs the produced fix through the full validation
+  // pipeline. The rest are terminal: 'proposed' (a fix ready for review),
+  // 'skipped', 'failed', 'escalated'.
   status: string;
   confidence: string;
   rationale: string;

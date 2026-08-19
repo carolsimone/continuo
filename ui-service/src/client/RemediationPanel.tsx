@@ -43,6 +43,23 @@ function sourceLabel(resolved: boolean): string {
   return resolved ? 'yes' : 'no';
 }
 
+// statusChip renders a proposal's status. 'verifying' is the one status whose
+// raw word does not say what is happening — the fix is written and a shadow
+// release is running it through the full validation pipeline to decide whether
+// it holds — so it reads as that wait, in the same non-actionable busy chip the
+// release page shows for an in-flight fix. Every other status is already a
+// plain statement of where the attempt ended.
+function statusChip(status: string) {
+  if (status === 'verifying') {
+    return (
+      <span className="btn btn--secondary is-disabled" aria-disabled="true" aria-busy="true">
+        Verifying fix…
+      </span>
+    );
+  }
+  return <>{status}</>;
+}
+
 // prStateBadge renders terminal PR outcomes as colored chips; non-terminal
 // pr_state values stay plain text.
 function prStateBadge(prState: string) {
@@ -233,7 +250,7 @@ export default function RemediationPanel() {
                       <td>{p.release_id}</td>
                       <td>{p.confidence}</td>
                       <td>{sourceLabel(p.source_resolved)}</td>
-                      <td>{p.status}{p.pr_state ? <> · {prStateBadge(p.pr_state)}</> : null}</td>
+                      <td>{statusChip(p.status)}{p.pr_state ? <> · {prStateBadge(p.pr_state)}</> : null}</td>
                     </tr>
                     {showCard && (
                       <tr

@@ -231,3 +231,42 @@ func TestLoad_ShadowVerifyTimeoutNonPositiveFallsBackToDefault(t *testing.T) {
 		})
 	}
 }
+
+// TestLoad_ShadowVerifyPollIntervalDefault verifies an install that never set
+// SHADOW_VERIFY_POLL_INTERVAL gets the documented 15 second cadence for the
+// loop that reads each waiting attempt's shadow release.
+func TestLoad_ShadowVerifyPollIntervalDefault(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("SHADOW_VERIFY_POLL_INTERVAL", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, 15*time.Second, cfg.ShadowVerifyPollInterval)
+}
+
+// TestLoad_ShadowVerifyPollIntervalOverride verifies the env var overrides the
+// default cadence.
+func TestLoad_ShadowVerifyPollIntervalOverride(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("SHADOW_VERIFY_POLL_INTERVAL", "5s")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, 5*time.Second, cfg.ShadowVerifyPollInterval)
+}
+
+// TestLoad_ShadowVerifyPollIntervalNonPositiveFallsBackToDefault verifies a
+// zero or negative interval is clamped back to the default rather than
+// producing a hot loop (0 panics a ticker) or one that never runs.
+func TestLoad_ShadowVerifyPollIntervalNonPositiveFallsBackToDefault(t *testing.T) {
+	for _, val := range []string{"0s", "-1s"} {
+		t.Run(val, func(t *testing.T) {
+			setBaseEnv(t)
+			t.Setenv("SHADOW_VERIFY_POLL_INTERVAL", val)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			require.Empty(t, v.Missing())
+			assert.Equal(t, 15*time.Second, cfg.ShadowVerifyPollInterval)
+		})
+	}
+}

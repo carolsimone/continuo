@@ -370,7 +370,7 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 		if len(suspectedRoot) > 0 {
 			root = suspectedRoot[0]
 		}
-		if err := enqueue(ctx, u, deps, t, p, root, sourceResolved, msgProcID); err != nil {
+		if err := Enqueue(ctx, u, deps.Clock, p, root, sourceResolved, msgProcID); err != nil {
 			return err
 		}
 	}
@@ -383,19 +383,25 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	return nil
 }
 
-// enqueue builds the deterministic remediation.proposed:v1 outbox entry and
-// creates it on the repository bound to the caller's transaction.
-// sourceResolved indicates whether the real-source Step-2 fix succeeded.
-// msgProcID is the message_processing row UUID for the inbound trigger;
-// it is stored on the outbox entry for provenance.
-func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p proposal.Proposal, suspectedRoot string, sourceResolved bool, msgProcID uuid.UUID) error {
-	eventID := event.RemediationEventID(t.ReleaseID, t.NodeID, p.Attempt)
+// Enqueue builds the deterministic remediation.proposed:v1 outbox entry for a
+// proposal that is ready for human review, and creates it on the repository
+// bound to the caller's transaction. Two writers announce a fix and both go
+// through here, so the event they emit cannot drift apart: the driver, for a
+// fix judged as it was produced, and the shadow-verification reconciler, for
+// one a release proved afterwards. p carries the whole announcement, including
+// the failure it addresses (source, release, node, error signature).
+// sourceResolved indicates whether the fix rewrote real version-controlled
+// source. msgProcID is the message_processing row UUID of the inbound trigger
+// behind the write, stored on the outbox entry for provenance; uuid.Nil for a
+// write no inbound message drove.
+func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposal.Proposal, suspectedRoot string, sourceResolved bool, msgProcID uuid.UUID) error {
+	eventID := event.RemediationEventID(p.ReleaseID, p.NodeID, p.Attempt)
 	payload := event.RemediationProposed{
 		EventID:                eventID.String(),
-		Source:                 t.Source,
-		ReleaseID:              t.ReleaseID,
-		NodeID:                 t.NodeID,
-		ErrorSignature:         t.ErrorSignature,
+		Source:                 p.Source,
+		ReleaseID:              p.ReleaseID,
+		NodeID:                 p.NodeID,
+		ErrorSignature:         p.ErrorSignature,
 		ProposedSQLURI:         p.ProposedSQLURI,
 		DiffURI:                p.DiffURI,
 		Rationale:              p.Rationale,
@@ -404,17 +410,17 @@ func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p prop
 		Model:                  p.Model,
 		Attempt:                p.Attempt,
 		SourceResolved:         sourceResolved,
-		ProposedAt:             deps.Clock.Now().Format(time.RFC3339),
+		ProposedAt:             clock.Now().Format(time.RFC3339),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal proposed event: %w", err)
 	}
-	now := deps.Clock.Now()
+	now := clock.Now()
 	entry := &outbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
 		AggregateType: "remediation_agent",
-		AggregateID:   event.AggregateIDForRelease(t.ReleaseID),
+		AggregateID:   event.AggregateIDForRelease(p.ReleaseID),
 		EventType:     event.EventType,
 		Payload:       body,
 		StreamName:    streams.RemediationProposedV1,

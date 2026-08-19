@@ -32,6 +32,7 @@ import (
 	"github.com/carolsimone/continuo/remediation-agent/service/llmcache"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 	"github.com/carolsimone/continuo/remediation-agent/service/proposals"
+	"github.com/carolsimone/continuo/remediation-agent/service/shadowverify"
 	"github.com/carolsimone/continuo/remediation-agent/service/uow"
 )
 
@@ -277,6 +278,27 @@ func main() {
 		OpeningGracePeriod: cfg.PROpeningGracePeriod,
 	})
 	go reconciler.Run(ctx)
+
+	// Resolve proposals whose fix is being judged by a shadow release: read
+	// each waiting attempt's release, finalize the ones it validated so an
+	// operator can review them, and record why the rest failed before starting
+	// the next attempt. The decoder and the fix proposer are the same ones the
+	// remediation.requested consumer uses, so a retried attempt runs through
+	// exactly the code path the original trigger did.
+	shadowReconciler := shadowverify.New(shadowverify.Deps{
+		Lister:   proposalRepo,
+		Releases: releaseGateway,
+		NewUoW:   func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		Decode:   rredis.TriggerFromPayload,
+		Propose: func(ctx context.Context, t handlers.Trigger) error {
+			return handlers.ProposeFix(ctx, deps, t)
+		},
+		Clock:    ports.SystemClock{},
+		Logger:   logger,
+		Interval: cfg.ShadowVerifyPollInterval,
+		Timeout:  cfg.ShadowVerifyTimeout,
+	})
+	go shadowReconciler.Run(ctx)
 
 	logger.Info("remediation-agent started", "http_port", cfg.HTTPPort, "grpc_port", cfg.GRPCPort)
 	<-ctx.Done()

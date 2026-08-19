@@ -18,6 +18,41 @@ const MAX_POLLS = Math.floor(MAX_POLL_MS / POLL_INTERVAL_MS);
 // detail page polls until the release reaches one of these, then stops.
 const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'validated', 'rejected', 'superseded']);
 
+// What the FIX cell can say about a failed node, ordered by how far its fix has
+// progressed: still being written, then being run through a shadow release to
+// see whether it holds, then ready for a human to review. A node can carry
+// several attempts at once — a later one can supersede an earlier in-flight
+// one — so the cell shows the furthest-along of them. Every other proposal
+// status is terminal-but-blank (skipped/failed/escalated) and leaves the cell
+// empty.
+type FixState = 'generating' | 'verifying' | 'proposed';
+
+const FIX_STATE_RANK: Record<FixState, number> = { generating: 1, verifying: 2, proposed: 3 };
+
+function isFixState(status: string): status is FixState {
+  return status in FIX_STATE_RANK;
+}
+
+// FixCell renders one node's remediation state: a link to the proposal once a
+// fix is ready to review, and a non-actionable chip while one is still being
+// produced or verified, so a node whose fix is in flight says so instead of
+// showing an empty cell.
+function FixCell({ state }: { state?: FixState }) {
+  if (state === 'proposed') {
+    return (
+      <Link to="/?tab=remediation" className="btn btn--secondary">
+        Proposed fix available →
+      </Link>
+    );
+  }
+  if (!state) return null;
+  return (
+    <span className="btn btn--secondary is-disabled" aria-disabled="true" aria-busy="true">
+      {state === 'verifying' ? 'Verifying fix…' : 'Generating fix…'}
+    </span>
+  );
+}
+
 function LogView({ uri }: { uri: string }) {
   const [open, setOpen] = useState(false);
   const [content, setContent] = useState<string | null>(null);
@@ -57,10 +92,9 @@ export default function ReleaseDetailPage() {
   // showing `rel` and this just surfaces that a retry is pending.
   const [pollError, setPollError] = useState<string | null>(null);
   // Per (stage, node_id) FIX-cell state, bucketed from the node's remediation
-  // proposals: 'proposed' when a fix is ready to review, 'generating' while a fix
-  // is still in flight. Nodes with only terminal-but-blank outcomes
+  // proposals — see FixState. Nodes with only terminal-but-blank outcomes
   // (skipped/failed/escalated) or none carry no entry and render nothing.
-  const [fixState, setFixState] = useState<Map<string, 'proposed' | 'generating'>>(new Map());
+  const [fixState, setFixState] = useState<Map<string, FixState>>(new Map());
 
   // Poll the release detail while it is still progressing, so per-node validation
   // results (projected incrementally by the backend) render live without a manual
@@ -156,15 +190,15 @@ export default function ReleaseDetailPage() {
         .then(proposals => {
           if (cancelled || seq <= applied) return;
           applied = seq;
-          // Bucket each failed node by its proposals. A ready 'proposed' fix
-          // dominates an in-flight 'generating' one (a later attempt can supersede
-          // an earlier in-flight row); terminal-but-blank statuses
+          // Bucket each failed node by its proposals, keeping the furthest-along
+          // state any of its attempts reached; terminal-but-blank statuses
           // (skipped/failed/escalated) leave the node without an entry.
-          const byKey = new Map<string, 'proposed' | 'generating'>();
+          const byKey = new Map<string, FixState>();
           for (const p of proposals.filter(p => p.release_id === id)) {
+            if (!isFixState(p.status)) continue;
             const k = proposalKey(p.source, p.node_id);
-            if (p.status === 'proposed') byKey.set(k, 'proposed');
-            else if (p.status === 'generating' && byKey.get(k) !== 'proposed') byKey.set(k, 'generating');
+            const current = byKey.get(k);
+            if (!current || FIX_STATE_RANK[p.status] > FIX_STATE_RANK[current]) byKey.set(k, p.status);
           }
           setFixState(byKey);
           // Stop only when every failed node has a ready fix; keep polling through
@@ -278,19 +312,7 @@ export default function ReleaseDetailPage() {
                       <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
                       <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
                       <td>
-                        {fixState.get(proposalKey(stage, n.node_id)) === 'proposed' ? (
-                          <Link to="/?tab=remediation" className="btn btn--secondary">
-                            Proposed fix available →
-                          </Link>
-                        ) : fixState.get(proposalKey(stage, n.node_id)) === 'generating' ? (
-                          <span
-                            className="btn btn--secondary is-disabled"
-                            aria-disabled="true"
-                            aria-busy="true"
-                          >
-                            Generating fix…
-                          </span>
-                        ) : null}
+                        <FixCell state={fixState.get(proposalKey(stage, n.node_id))} />
                       </td>
                     </tr>
                   ))}

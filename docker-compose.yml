@@ -489,6 +489,7 @@ services:
       - WAREHOUSE_ENGINE=postgres
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
       - SHADOW_VERIFY_TIMEOUT=${SHADOW_VERIFY_TIMEOUT:-20m}
+      - SHADOW_VERIFY_POLL_INTERVAL=${SHADOW_VERIFY_POLL_INTERVAL:-5s}
     volumes:
       - ./remediation-agent/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
     ports:

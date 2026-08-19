@@ -602,6 +602,7 @@ services:
       SERVICE_REPO_MAP_PATH: /etc/continuo/service_repos.yaml
       RELEASE_CONTROLLER_URL: http://release-controller:8088
       SHADOW_VERIFY_TIMEOUT: "20m"
+      SHADOW_VERIFY_POLL_INTERVAL: "15s"
     volumeMounts:
       - {name: service-repos, mountPath: /etc/continuo, readOnly: true}
     volumes:

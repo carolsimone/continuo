@@ -4,6 +4,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import RemediationPanel from './RemediationPanel';
 import { ProposalDTO } from './types';
+import { AuthContext } from './auth/AuthContext';
+import type { AuthUser } from './auth/useAuth';
 
 vi.mock('./remediation-api', () => ({
   fetchProposals: vi.fn(),
@@ -345,5 +347,52 @@ describe('RemediationPanel', () => {
     const row = screen.getAllByText('svc.schema.my_model')[0].closest('tr')!;
     expect(row).not.toHaveAttribute('role');
     expect(row).not.toHaveAttribute('tabIndex');
+  });
+});
+
+describe('RemediationPanel — a fix awaiting shadow verification', () => {
+  const operator: AuthUser = {
+    userId: 'u-1', email: 'op@example.com', name: 'Op', role: 'operator',
+  };
+
+  function renderPanelAsOperator() {
+    return render(
+      <AuthContext.Provider value={operator}>
+        <MemoryRouter>
+          <RemediationPanel />
+        </MemoryRouter>
+      </AuthContext.Provider>
+    );
+  }
+
+  it('reads as "Verifying fix…" instead of the raw status word', async () => {
+    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'verifying' })]);
+
+    renderPanelAsOperator();
+
+    const chip = await screen.findByText(/Verifying fix/);
+    expect(chip).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText('verifying')).toBeNull();
+  });
+
+  it('offers an operator no Create PR while the fix is still being verified', async () => {
+    mockFetchProposals.mockResolvedValue([
+      makeProposal({ status: 'verifying', source_resolved: true, pr_state: '' }),
+    ]);
+
+    renderPanelAsOperator();
+
+    await screen.findByText(/Verifying fix/);
+    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
+  });
+
+  it('offers that same operator Create PR once verification finished and the fix is proposed', async () => {
+    mockFetchProposals.mockResolvedValue([
+      makeProposal({ status: 'proposed', source_resolved: true, pr_state: '' }),
+    ]);
+
+    renderPanelAsOperator();
+
+    expect(await screen.findByRole('button', { name: /Create PR/i })).toBeInTheDocument();
   });
 });

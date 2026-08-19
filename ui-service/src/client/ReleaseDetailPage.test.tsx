@@ -139,6 +139,39 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     expect(screen.queryByText(/Generating fix/)).toBeNull();
   });
 
+  it('shows a disabled "Verifying fix…" chip while a shadow release is judging the fix', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'validation', node_id: 'svc', status: 'verifying' })]);
+    renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
+    await screen.findByText('contracts/svc.yaml');
+    const chip = await screen.findByText(/Verifying fix/);
+    expect(chip).toHaveAttribute('aria-disabled', 'true');
+    // Not a link, and not the earlier phase's chip: verification follows generation.
+    expect(screen.queryByText(/Proposed fix available/)).toBeNull();
+    expect(screen.queryByText(/Generating fix/)).toBeNull();
+  });
+
+  it('prefers the proposed link over a verifying chip when both exist for a node', async () => {
+    mockFetchProposals.mockResolvedValue([
+      proposal({ source: 'validation', node_id: 'svc', attempt: 1, status: 'verifying' }),
+      proposal({ source: 'validation', node_id: 'svc', attempt: 2, status: 'proposed' }),
+    ]);
+    renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
+    await screen.findByText('contracts/svc.yaml');
+    await waitFor(() => expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument());
+    expect(screen.queryByText(/Verifying fix/)).toBeNull();
+  });
+
+  it('prefers the verifying chip over a generating chip when both exist for a node', async () => {
+    mockFetchProposals.mockResolvedValue([
+      proposal({ source: 'validation', node_id: 'svc', attempt: 1, status: 'generating' }),
+      proposal({ source: 'validation', node_id: 'svc', attempt: 2, status: 'verifying' }),
+    ]);
+    renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
+    await screen.findByText('contracts/svc.yaml');
+    await waitFor(() => expect(screen.getByText(/Verifying fix/)).toBeInTheDocument());
+    expect(screen.queryByText(/Generating fix/)).toBeNull();
+  });
+
   it('renders nothing in the FIX cell for a skipped proposal', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc', status: 'skipped' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
