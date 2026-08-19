@@ -499,7 +499,7 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
    proposal(status=skipped) with the reason recorded, since redelivering would
    retry it forever. Any other fetch error is transient and the trigger is
    redelivered. The extracted tree is removed when the attempt finishes.
-3. Locate the declaring yaml (pythonlocate.Locate): walk the checkout for every
+3. Locate the declaring yaml (ContractLocator.Locate): walk the checkout for every
    *.yml/*.yaml file, parse each as a contract document, and take the one whose
    nodes list contains an entry matching the schema and table, folding case on
    both sides. A file over 1 MiB, or one that does not parse as yaml, is skipped
@@ -735,7 +735,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Duplicate-table fixer (single-file rename, no dbt log, shares `singleFileInterpret` with compile) | `remediation-agent/service/fixer/duplicate_table.go` |
 | Validation fixer, dbt node (two-step candidate + real-source flow, best-effort upstream-diff gather) | `remediation-agent/service/fixer/validation.go` |
 | Validation fixer, python node (repo checkout, contract repair, packaging, shadow submission) | `remediation-agent/service/fixer/python_validation.go` |
-| Contract-yaml search across a repository checkout | `remediation-agent/service/fixer/pythonlocate/locate.go` |
+| Contract-yaml search across a repository checkout | `remediation-agent/adapters/repofs/contract_locator.go` |
 | Shadow-verify reconciler loop (verdict polling, CAS finalization, next-attempt start) | `remediation-agent/service/shadowverify/reconciler.go` |
 | PR lifecycle application service (claim/record/fail/fail-stuck-claim/record-outcome + outbox) | `remediation-agent/service/proposals/service.go` |
 | PR-outcome reconciler loop, incl. permission-gap degraded signal and the opening sweep (recover-or-fail stuck `pr_state='opening'` claims, CAS-guarded fail, cursor-paginated rotation) | `remediation-agent/service/proposals/reconciler.go` |

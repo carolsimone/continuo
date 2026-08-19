@@ -13,7 +13,6 @@ import (
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
-	"github.com/carolsimone/continuo/remediation-agent/service/fixer/pythonlocate"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
 
@@ -68,8 +67,8 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 	// "several files declare it" is a transient failure, and neither may be
 	// guessed past: both end the attempt with the reason recorded, so an
 	// operator sees why the heal stopped instead of finding nothing at all.
-	located, err := pythonlocate.Locate(root, schema, table)
-	if errors.Is(err, pythonlocate.ErrNodeNotDeclared) || errors.Is(err, pythonlocate.ErrAmbiguousDeclaration) {
+	located, err := svc.ContractLocator.Locate(root, schema, table)
+	if errors.Is(err, ports.ErrNodeNotDeclared) || errors.Is(err, ports.ErrAmbiguousDeclaration) {
 		return skipPython(svc, in, err.Error())
 	}
 	if err != nil {
@@ -301,7 +300,7 @@ func applyFiles(root string, files []ports.ProposedFile) (map[string]string, err
 // blocked heal costs the operator the fix entirely. Only a transient
 // object-storage failure is returned as an error, so the trigger is redelivered
 // rather than answered from evidence that could not be read.
-func pythonEvidence(ctx context.Context, svc Services, in Input, located pythonlocate.Located) (prompt.PythonEvidence, error) {
+func pythonEvidence(ctx context.Context, svc Services, in Input, located ports.Located) (prompt.PythonEvidence, error) {
 	runnerLog, err := loadDBTLog(ctx, svc, in.DBTLogURI)
 	if err != nil {
 		return prompt.PythonEvidence{}, err

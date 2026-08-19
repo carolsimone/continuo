@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/remediation-agent/adapters/repofs"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
@@ -200,6 +201,7 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 		Precedents:      &fakePrecedents{},
 		CandidateSource: &fakeCandidateSource{src: ports.CandidateSource{RawCode: `{"output_columns":[]}`, Runtime: "python"}},
 		Archive:         arch,
+		ContractLocator: repofs.NewLocator(testLogger()),
 		Packager:        pkgr,
 		Releases:        rel,
 		PriorAttempts:   &fakeAttempts{},

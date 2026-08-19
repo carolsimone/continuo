@@ -1,13 +1,10 @@
-// Package pythonlocate searches a repository's working tree for the contract
-// yaml file that declares a given python node, since — unlike a dbt model's
-// source path, which the control plane already carries end to end — a python
-// node's declaring yaml path is recorded nowhere: manifest-controller reads
-// it once at candidate-build time and discards the path, and the release's
-// code bundle stores only the parsed contract entry, not its file location.
-package pythonlocate
+// Package repofs reads a repository checkout on local disk. It implements the
+// ports whose subject is the tree an archive fetch already extracted, keeping
+// the directory walk, the file reads, and the yaml deserialization out of the
+// application layer.
+package repofs
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -16,18 +13,9 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
-
-// ErrNodeNotDeclared reports that no yaml file under the searched tree
-// declares a node matching the given schema and table.
-var ErrNodeNotDeclared = errors.New("node not declared in any contract yaml")
-
-// ErrAmbiguousDeclaration reports that more than one yaml file declares a
-// node with the same schema and table. The system's duplicate-node gate
-// should make this state impossible upstream, so seeing it here means the
-// repository has drifted from what the control plane believes — not that the
-// search should just pick one.
-var ErrAmbiguousDeclaration = errors.New("node declared in more than one contract yaml")
 
 // maxContractYAMLBytes caps the size of a yaml file this search will parse.
 // A contract file declaring one or many python nodes is always small; a file
@@ -35,19 +23,17 @@ var ErrAmbiguousDeclaration = errors.New("node declared in more than one contrac
 // elsewhere in the repository is never loaded into memory on this path.
 const maxContractYAMLBytes = 1 << 20 // 1 MiB
 
-// Located is the contract yaml file that declares a python node, and the
-// repository locations derived from where that file lives.
-type Located struct {
-	// YAMLPath is the repo-relative path of the declaring file.
-	YAMLPath string
-	// YAMLText is the file's verbatim content, unparsed.
-	YAMLText string
-	// ContractDir is the repo-relative directory holding the file — the
-	// directory a fix is merged into.
-	ContractDir string
-	// RepoRoot is the repo-relative parent of ContractDir: the python node's
-	// application root, matching the runtime image's APP_ROOT convention.
-	RepoRoot string
+// Locator searches a repository checkout for the contract yaml declaring a
+// python node.
+type Locator struct {
+	logger *slog.Logger
+}
+
+var _ ports.ContractLocator = (*Locator)(nil)
+
+// NewLocator builds a Locator that reports skipped files through logger.
+func NewLocator(logger *slog.Logger) *Locator {
+	return &Locator{logger: logger}
 }
 
 // contractDoc is the subset of a contract yaml's shape this search needs: a
@@ -85,14 +71,14 @@ type match struct {
 // capitalizes a name. Only the comparison folds: the returned paths and text
 // are exactly what is on disk.
 //
-// Zero matching files returns ErrNodeNotDeclared. More than one matching file
-// returns ErrAmbiguousDeclaration — including two files whose declarations
-// differ only in case, which name one relation and one node identity, so
-// neither may be picked over the other. A file over maxContractYAMLBytes, or
-// one that fails to parse as yaml, is skipped (logged) rather than treated as
-// a search error — one malformed or oversized file elsewhere in the tree must
-// not prevent finding the real match.
-func Locate(rootDir, schema, table string) (Located, error) {
+// Zero matching files returns ports.ErrNodeNotDeclared. More than one matching
+// file returns ports.ErrAmbiguousDeclaration — including two files whose
+// declarations differ only in case, which name one relation and one node
+// identity, so neither may be picked over the other. A file over
+// maxContractYAMLBytes, or one that fails to parse as yaml, is skipped
+// (logged) rather than treated as a search error — one malformed or oversized
+// file elsewhere in the tree must not prevent finding the real match.
+func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 	var matches []match
 
 	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
@@ -109,24 +95,24 @@ func Locate(rootDir, schema, table string) (Located, error) {
 
 		info, err := d.Info()
 		if err != nil {
-			slog.Default().Warn("pythonlocate: stat failed; skipping", "path", path, "error", err)
+			l.logger.Warn("contract search: stat failed; skipping", "path", path, "error", err)
 			return nil
 		}
 		if info.Size() > maxContractYAMLBytes {
-			slog.Default().Warn("pythonlocate: file exceeds size cap; skipping",
+			l.logger.Warn("contract search: file exceeds size cap; skipping",
 				"path", path, "size", info.Size(), "cap", maxContractYAMLBytes)
 			return nil
 		}
 
 		raw, err := os.ReadFile(path) //nolint:gosec // G304: path is produced by filepath.WalkDir over rootDir, the caller-supplied repository checkout root — not external/user input.
 		if err != nil {
-			slog.Default().Warn("pythonlocate: read failed; skipping", "path", path, "error", err)
+			l.logger.Warn("contract search: read failed; skipping", "path", path, "error", err)
 			return nil
 		}
 
 		var doc contractDoc
 		if err := yaml.Unmarshal(raw, &doc); err != nil {
-			slog.Default().Warn("pythonlocate: unparseable yaml; skipping", "path", path, "error", err)
+			l.logger.Warn("contract search: unparseable yaml; skipping", "path", path, "error", err)
 			return nil
 		}
 
@@ -146,12 +132,12 @@ func Locate(rootDir, schema, table string) (Located, error) {
 		return nil
 	})
 	if err != nil {
-		return Located{}, fmt.Errorf("search %q for schema %q table %q: %w", rootDir, schema, table, err)
+		return ports.Located{}, fmt.Errorf("search %q for schema %q table %q: %w", rootDir, schema, table, err)
 	}
 
 	switch len(matches) {
 	case 0:
-		return Located{}, fmt.Errorf("schema %q table %q: %w", schema, table, ErrNodeNotDeclared)
+		return ports.Located{}, fmt.Errorf("schema %q table %q: %w", schema, table, ports.ErrNodeNotDeclared)
 	case 1:
 		return buildLocated(matches[0]), nil
 	default:
@@ -159,17 +145,17 @@ func Locate(rootDir, schema, table string) (Located, error) {
 		for i, m := range matches {
 			paths[i] = m.relPath
 		}
-		return Located{}, fmt.Errorf("schema %q table %q found in %v: %w", schema, table, paths, ErrAmbiguousDeclaration)
+		return ports.Located{}, fmt.Errorf("schema %q table %q found in %v: %w", schema, table, paths, ports.ErrAmbiguousDeclaration)
 	}
 }
 
 // buildLocated derives ContractDir and RepoRoot from where the matched file
 // lives: ContractDir is the file's own directory, and RepoRoot is that
 // directory's parent — the python node's application root.
-func buildLocated(m match) Located {
+func buildLocated(m match) ports.Located {
 	contractDir := filepath.ToSlash(filepath.Dir(m.relPath))
 	repoRoot := filepath.ToSlash(filepath.Dir(contractDir))
-	return Located{
+	return ports.Located{
 		YAMLPath:    m.relPath,
 		YAMLText:    m.text,
 		ContractDir: contractDir,

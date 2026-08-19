@@ -129,6 +129,9 @@ type Deps struct {
 	// needs to search across many files (e.g. locating a python node's
 	// declaring contract yaml) rather than read one file at a time.
 	RepoArchive ports.RepoArchive
+	// ContractLocator finds which contract yaml in that checkout declares a
+	// given python node.
+	ContractLocator ports.ContractLocator
 	// Packager merges a directory of python-node contract yaml files into the
 	// wire contract a release is submitted with.
 	Packager ports.ContractPackager
@@ -214,7 +217,8 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		Logger: deps.Logger, ServiceRepoPaths: deps.ServiceRepoPaths,
 		Locator: deps.Locator, Upstream: deps.Upstream, Versions: deps.Versions,
 		Precedents: deps.Precedents, CandidateSource: deps.CandidateSource,
-		Archive: deps.RepoArchive, Packager: deps.Packager, Releases: deps.Releases,
+		Archive: deps.RepoArchive, ContractLocator: deps.ContractLocator,
+		Packager: deps.Packager, Releases: deps.Releases,
 		PriorAttempts: deps.PriorAttempts, SQLDialect: deps.SQLDialect,
 	}
 

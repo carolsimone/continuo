@@ -1,12 +1,22 @@
-package pythonlocate
+package repofs
 
 import (
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
+
+// newLocator builds the Locator under test with a discarding logger: the
+// skipped-file warnings it emits are not what these tests assert.
+func newLocator() *Locator {
+	return NewLocator(slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
 
 // writeFile creates path (and its parent directories) under root with the
 // given content.
@@ -30,7 +40,7 @@ func TestLocate_FindsSecondOfTwoFiles(t *testing.T) {
 	writeFile(t, root, "services/service-py/contracts/other.yml", "nodes:\n  - schema: analytics\n    table: other_kpis\n    script: scripts/other.py\n")
 	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n    script: scripts/py_daily_kpis.py\n")
 
-	got, err := Locate(root, "analytics", "py_daily_kpis")
+	got, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -66,7 +76,7 @@ func TestLocate_MultiNodeFileTargetInMiddle(t *testing.T) {
     script: scripts/last.py
 `)
 
-	got, err := Locate(root, "analytics", "middle_node")
+	got, err := newLocator().Locate(root, "analytics", "middle_node")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -83,9 +93,9 @@ func TestLocate_NoMatchIsErrNodeNotDeclared(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
 
-	_, err := Locate(root, "analytics", "does_not_exist")
-	if !errors.Is(err, ErrNodeNotDeclared) {
-		t.Fatalf("err = %v, want ErrNodeNotDeclared", err)
+	_, err := newLocator().Locate(root, "analytics", "does_not_exist")
+	if !errors.Is(err, ports.ErrNodeNotDeclared) {
+		t.Fatalf("err = %v, want ports.ErrNodeNotDeclared", err)
 	}
 }
 
@@ -99,9 +109,9 @@ func TestLocate_DuplicateDeclarationIsErrAmbiguous(t *testing.T) {
 	writeFile(t, root, "services/service-py/contracts/a.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
 	writeFile(t, root, "services/other/contracts/b.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
 
-	_, err := Locate(root, "analytics", "py_daily_kpis")
-	if !errors.Is(err, ErrAmbiguousDeclaration) {
-		t.Fatalf("err = %v, want ErrAmbiguousDeclaration", err)
+	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+	if !errors.Is(err, ports.ErrAmbiguousDeclaration) {
+		t.Fatalf("err = %v, want ports.ErrAmbiguousDeclaration", err)
 	}
 }
 
@@ -117,9 +127,9 @@ func TestLocate_SkipsOversizeFile(t *testing.T) {
 	oversized := "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n# " + string(padding) + "\n"
 	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", oversized)
 
-	_, err := Locate(root, "analytics", "py_daily_kpis")
-	if !errors.Is(err, ErrNodeNotDeclared) {
-		t.Fatalf("err = %v, want ErrNodeNotDeclared (oversize file should be skipped, not matched)", err)
+	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+	if !errors.Is(err, ports.ErrNodeNotDeclared) {
+		t.Fatalf("err = %v, want ports.ErrNodeNotDeclared (oversize file should be skipped, not matched)", err)
 	}
 }
 
@@ -131,7 +141,7 @@ func TestLocate_SkipsUnparseableYAML(t *testing.T) {
 	writeFile(t, root, "services/broken/contracts/broken.yml", "nodes: [this is not: valid: yaml")
 	writeFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
 
-	got, err := Locate(root, "analytics", "py_daily_kpis")
+	got, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -147,9 +157,9 @@ func TestLocate_IgnoresNonYAMLFiles(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "services/service-py/scripts/py_daily_kpis.py", "nodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
 
-	_, err := Locate(root, "analytics", "py_daily_kpis")
-	if !errors.Is(err, ErrNodeNotDeclared) {
-		t.Fatalf("err = %v, want ErrNodeNotDeclared", err)
+	_, err := newLocator().Locate(root, "analytics", "py_daily_kpis")
+	if !errors.Is(err, ports.ErrNodeNotDeclared) {
+		t.Fatalf("err = %v, want ports.ErrNodeNotDeclared", err)
 	}
 }
 
@@ -166,7 +176,7 @@ func TestLocate_MatchesDeclaredCaseInsensitively(t *testing.T) {
 	writeFile(t, root, "services/service-py/contracts/orders.yml",
 		"nodes:\n  - schema: Analytics\n    table: Orders\n    script: scripts/orders.py\n")
 
-	got, err := Locate(root, "analytics", "orders")
+	got, err := newLocator().Locate(root, "analytics", "orders")
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
 	}
@@ -193,8 +203,8 @@ func TestLocate_CaseVariantsAreOneAmbiguity(t *testing.T) {
 	writeFile(t, root, "contracts/a.yml", "nodes:\n  - schema: Analytics\n    table: Orders\n")
 	writeFile(t, root, "contracts/b.yml", "nodes:\n  - schema: analytics\n    table: orders\n")
 
-	_, err := Locate(root, "analytics", "orders")
-	if !errors.Is(err, ErrAmbiguousDeclaration) {
-		t.Fatalf("Locate error = %v, want ErrAmbiguousDeclaration", err)
+	_, err := newLocator().Locate(root, "analytics", "orders")
+	if !errors.Is(err, ports.ErrAmbiguousDeclaration) {
+		t.Fatalf("Locate error = %v, want ports.ErrAmbiguousDeclaration", err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/remediation-agent/adapters/repofs"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 	"github.com/carolsimone/continuo/remediation-agent/service/uow"
@@ -76,6 +77,7 @@ func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 
 	d := deps(u, fakeEvidence{}, &llm, art)
 	d.RepoArchive = handlerArchive{root: pythonCheckout(t)}
+	d.ContractLocator = repofs.NewLocator(slog.Default())
 	d.Packager = handlerPackager{}
 	d.Releases = rel
 	d.PriorAttempts = u.pr

@@ -24,6 +24,7 @@ import (
 	"github.com/carolsimone/continuo/remediation-agent/adapters/postgres"
 	rredis "github.com/carolsimone/continuo/remediation-agent/adapters/redis"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/releasehttp"
+	"github.com/carolsimone/continuo/remediation-agent/adapters/repofs"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/s3"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/sanitizer"
 	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
@@ -212,6 +213,7 @@ func main() {
 		Precedents:       graphClient,
 		CandidateSource:  bundleReader,
 		RepoArchive:      gh,
+		ContractLocator:  repofs.NewLocator(logger),
 		Packager:         packaging.NewCLIPackager(),
 		Releases:         releaseGateway,
 		PriorAttempts:    proposalRepo,

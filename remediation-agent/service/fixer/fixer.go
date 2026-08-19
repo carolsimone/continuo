@@ -3,7 +3,11 @@
 // Fixer that decides which source files to read, which prompt to send, and how
 // to read the model's answer. The shared driver in service/handlers owns the
 // attempt cap, dedup, proposal row, and outbox emit; a Fixer only produces the
-// proposal. This package imports no adapter: every collaborator is a port.
+// proposal. This package imports no adapter, and every collaborator is a port
+// with one exception: the python contract fixer writes the model's answer
+// straight onto the repository checkout RepoArchive extracted (see applyFiles),
+// because the packager it then runs is a subprocess that must see the corrected
+// tree on real disk.
 package fixer
 
 import (
@@ -92,6 +96,9 @@ type Services struct {
 	// Archive fetches a whole repository checkout at a commit, for a fix that
 	// has to search the tree rather than read one known file.
 	Archive ports.RepoArchive
+	// ContractLocator finds which contract yaml in that checkout declares the
+	// python node being fixed.
+	ContractLocator ports.ContractLocator
 	// Packager turns a directory of python-node contract yaml files into the
 	// merged wire contract a release is submitted with.
 	Packager ports.ContractPackager
