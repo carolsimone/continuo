@@ -13,8 +13,10 @@ import (
 	"log/slog"
 	"strings"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
+	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
 
@@ -48,15 +50,14 @@ type Input struct {
 	FilePath     string
 	Service      string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
-	// or python-model), set on validation and duplicate-relation failures.
-	// Both the validation and duplicate-table Fixers check it before reading
-	// anything, to enforce the invariant that no remediation path ever
-	// produces an LLM call or a proposal for a python node: the duplicate-table
-	// Fixer's target relation is declared in the service's contract.yaml,
-	// whose repository path this system does not carry, so the file named by
-	// FilePath cannot contain the fix; the validation Fixer's candidate
-	// artifact is a JSON validation spec, not SQL, so neither the diagnosis
-	// prompt nor a source fix can be built from what it carries.
+	// or python-model), set on validation and duplicate-relation failures. It
+	// selects which Fixer runs for a validation failure (see For), and every
+	// Fixer that can be reached by a python node also checks it before reading
+	// anything: the duplicate-table Fixer's target relation is declared in the
+	// service's contract.yaml, whose repository path this system does not
+	// carry, so the file named by FilePath cannot contain the fix, and the dbt
+	// validation Fixer's candidate artifact is a JSON validation spec rather
+	// than SQL, so no source fix can be built from what it carries.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID). Set on a duplicate-relation
@@ -88,10 +89,28 @@ type Services struct {
 	Versions         ports.VersionReader
 	Precedents       ports.PrecedentReader
 	CandidateSource  ports.CandidateSourceReader
+	// Archive fetches a whole repository checkout at a commit, for a fix that
+	// has to search the tree rather than read one known file.
+	Archive ports.RepoArchive
+	// Packager turns a directory of python-node contract yaml files into the
+	// merged wire contract a release is submitted with.
+	Packager ports.ContractPackager
+	// Releases submits a fix as a shadow verification release and reads the
+	// failing release's image tag.
+	Releases ports.ReleaseGateway
+	// PriorAttempts reads the attempts already recorded for the failing node,
+	// so a later attempt's prompt can show what earlier ones tried.
+	PriorAttempts repository.AttemptLister
+	// SQLDialect is the sqlglot dialect the warehouse this install runs
+	// speaks, resolved from the operator's configured warehouse engine and
+	// passed to the packager so a contract is rendered under the same rules
+	// the release pipeline validated it against.
+	SQLDialect string
 }
 
 // Result is what a Fixer returns: the proposal (Status always set; artifact
-// URIs, diff, and FilePath populated on a proposed outcome) plus the optional
+// URIs, diff, and FilePath populated on a proposed outcome, and on a verifying
+// one whose fix a shadow release is still judging) plus the optional
 // suspected-root-cause node forwarded to the outbox event.
 type Result struct {
 	Proposal      proposal.Proposal
@@ -123,15 +142,26 @@ type Fixer interface {
 	Propose(ctx context.Context, svc Services, in Input) (Result, error)
 }
 
-// For resolves the Fixer for a trigger's error class. An unknown source is a
-// programming error (the classifier produces only the four known values).
-func For(source string) (Fixer, error) {
+// For resolves the Fixer for a trigger's error class and failing node kind. An
+// unknown source is a programming error (the classifier produces only the four
+// known values).
+//
+// nodeType selects a lane only for validation failures, where the two node
+// kinds need entirely different fixes: a dbt model is corrected in its SQL
+// file, while a python node is corrected in the contract yaml that declares it
+// and verified by a shadow release. Every other error class ignores nodeType —
+// those classes have no python fix to offer, and each already refuses a python
+// node in its own way.
+func For(source, nodeType string) (Fixer, error) {
 	switch source {
 	case sourceCompile:
 		return compileFixer{}, nil
 	case sourceSeed:
 		return seedFixer{}, nil
 	case sourceValidation:
+		if nodeType == string(pkg_model.NodeTypePythonModel) {
+			return pythonValidationFixer{}, nil
+		}
 		return validationFixer{}, nil
 	case sourceDuplicateTable:
 		return duplicateTableFixer{}, nil
@@ -255,6 +285,26 @@ func writeSourceArtifacts(ctx context.Context, svc Services, in Input, filePath,
 		return proposal.FileEdit{}, fmt.Errorf("write source diff: %w", err)
 	}
 	return proposal.FileEdit{Path: filePath, ContentURI: sqlURI, DiffURI: diffURI}, nil
+}
+
+// writeEditArtifacts writes one file's corrected content and its unified diff
+// (against what the repository held) as artifacts of a multi-file attempt, and
+// returns them as a complete FileEdit. The attempt's edits share a directory
+// and are numbered within it, so two edits of the same attempt can never write
+// the same key — a collision would leave both FileEdits pointing at whichever
+// file was written last.
+func writeEditArtifacts(ctx context.Context, svc Services, in Input, attempt, index int, filePath, original, corrected string) (proposal.FileEdit, error) {
+	prefix := fmt.Sprintf("proposed-fix/%s/%s/attempt-%d/edit-%d", in.ReleaseID, in.NodeID, attempt, index)
+	contentURI, err := svc.Artifacts.Write(ctx, prefix+".content", corrected, "text/plain")
+	if err != nil {
+		return proposal.FileEdit{}, fmt.Errorf("write edit content for %s: %w", filePath, err)
+	}
+	diffURI, err := svc.Artifacts.Write(ctx, prefix+".diff",
+		proposal.ComputeUnifiedDiff(original, corrected, filePath), "text/plain")
+	if err != nil {
+		return proposal.FileEdit{}, fmt.Errorf("write edit diff for %s: %w", filePath, err)
+	}
+	return proposal.FileEdit{Path: filePath, ContentURI: contentURI, DiffURI: diffURI}, nil
 }
 
 // singleShot builds a Fixer whose flow is: gather source files → build one

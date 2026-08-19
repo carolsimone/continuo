@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation-agent/domain/event"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
+	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 	"github.com/carolsimone/continuo/remediation-agent/service/fixer"
 	"github.com/carolsimone/continuo/remediation-agent/service/llmcache"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
@@ -64,9 +65,10 @@ type Trigger struct {
 	Service string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed,
 	// dbt-snapshot, or python-model), set on validation and duplicate-relation
-	// failures so the validation and duplicate-table Fixers can each skip a
-	// python node — whose source is not a single readable file — without a
-	// topology lookup of their own.
+	// failures. It selects the Fixer for a validation failure — a python node,
+	// whose source is not a single readable file, is fixed in the contract yaml
+	// declaring it — and lets the duplicate-table Fixer skip a python node
+	// without a topology lookup of its own.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID), set on a duplicate-relation
@@ -127,6 +129,18 @@ type Deps struct {
 	// needs to search across many files (e.g. locating a python node's
 	// declaring contract yaml) rather than read one file at a time.
 	RepoArchive ports.RepoArchive
+	// Packager merges a directory of python-node contract yaml files into the
+	// wire contract a release is submitted with.
+	Packager ports.ContractPackager
+	// Releases submits shadow verification releases and reads a release's
+	// image tag.
+	Releases ports.ReleaseGateway
+	// PriorAttempts reads the attempts already recorded for a failing node, so
+	// a fixer can show the model what earlier attempts tried.
+	PriorAttempts repository.AttemptLister
+	// SQLDialect is the sqlglot dialect the operator's warehouse engine
+	// speaks, used when packaging a proposed contract fix.
+	SQLDialect string
 }
 
 // ProposeFix turns one healable failure trigger into a fix proposal. It counts
@@ -164,7 +178,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		}, false, false)
 	}
 
-	fx, err := fixer.For(t.Source)
+	fx, err := fixer.For(t.Source, t.NodeType)
 	if err != nil {
 		return err // unknown error class: surfaced loudly, not silently skipped
 	}
@@ -200,6 +214,8 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		Logger: deps.Logger, ServiceRepoPaths: deps.ServiceRepoPaths,
 		Locator: deps.Locator, Upstream: deps.Upstream, Versions: deps.Versions,
 		Precedents: deps.Precedents, CandidateSource: deps.CandidateSource,
+		Archive: deps.RepoArchive, Packager: deps.Packager, Releases: deps.Releases,
+		PriorAttempts: deps.PriorAttempts, SQLDialect: deps.SQLDialect,
 	}
 
 	// Mark this attempt in-flight in its own committed transaction, right before
@@ -310,6 +326,13 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	p.ErrorSignature = t.ErrorSignature
 	p.Attempt = attempt
 	p.CreatedAt = deps.Clock.Now()
+	// An attempt whose fix is being verified by a shadow release stores the
+	// trigger that produced it, so the reconciler resolving that release can
+	// rebuild the trigger and retry with the shadow's error as new evidence.
+	// Every other status resolves within this call and needs nothing to replay.
+	if p.Status == proposal.StatusVerifying {
+		p.TriggerPayload = t.RawPayload
+	}
 
 	u := deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {

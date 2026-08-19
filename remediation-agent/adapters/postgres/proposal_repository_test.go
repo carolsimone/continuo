@@ -1494,3 +1494,38 @@ func TestProposalRepositoryCountAttemptsExcludesVerifying(t *testing.T) {
 
 	require.NoError(t, tx.Commit())
 }
+
+// TestList_FilterByFailingNode verifies that List can address the attempts of
+// one failing node in one release. A fixer assembling evidence for attempt N+1
+// reads exactly that slice; without the filter it would read the whole table
+// and show the model attempts from unrelated nodes and releases as if they were
+// its own history.
+func TestList_FilterByFailingNode(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	base := func(release, source, node string, attempt int) proposal.Proposal {
+		return proposal.Proposal{
+			Source: source, ReleaseID: release, NodeID: node,
+			ErrorSignature: "sig", Attempt: attempt,
+			Status: proposal.StatusFailed, CreatedAt: time.Now().UTC(),
+		}
+	}
+	_ = seedProposal(t, repo, db, base("rel-node-a", "validation", "analytics.py_kpis", 1))
+	_ = seedProposal(t, repo, db, base("rel-node-a", "validation", "analytics.py_kpis", 2))
+	_ = seedProposal(t, repo, db, base("rel-node-a", "validation", "analytics.other", 1))
+	_ = seedProposal(t, repo, db, base("rel-node-a", "compile", "analytics.py_kpis", 1))
+	_ = seedProposal(t, repo, db, base("rel-node-b", "validation", "analytics.py_kpis", 1))
+
+	views, err := repo.List(ctx, repository.ProposalFilter{
+		ReleaseID: "rel-node-a", Source: "validation", NodeID: "analytics.py_kpis",
+	})
+	require.NoError(t, err)
+	require.Len(t, views, 2)
+	for _, v := range views {
+		require.Equal(t, "rel-node-a", v.ReleaseID)
+		require.Equal(t, "validation", v.Source)
+		require.Equal(t, "analytics.py_kpis", v.NodeID)
+	}
+}

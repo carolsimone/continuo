@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -29,6 +30,11 @@ func TestLLMResponseCache_PutGetRoundTrip(t *testing.T) {
 		Confidence:             "high",
 		SuspectedRootCauseNode: "model.svc.upstream",
 		Model:                  "claude-x",
+		// A multi-file answer (a python node's contract fix) must survive the
+		// round-trip too: a redelivered trigger reuses the cached result
+		// instead of re-paying the model call, so a dropped file list would
+		// turn a redelivery into a failed attempt.
+		Files: []ports.ProposedFile{{Path: "contracts/a.yml", Content: "nodes: []\n"}},
 	}
 
 	if err := c.Put(ctx, "llmcache:abc", want); err != nil {
@@ -42,7 +48,7 @@ func TestLLMResponseCache_PutGetRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("expected cache hit, got miss")
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("round-trip mismatch:\n got %+v\nwant %+v", got, want)
 	}
 }

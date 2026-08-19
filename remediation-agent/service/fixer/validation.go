@@ -55,9 +55,11 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	// is a JSON validation spec (declared reads plus output columns), not SQL,
 	// and the code bundle records its source as the normalized contract entry
 	// rather than the script the repository holds — so neither the diagnosis
-	// prompt nor a source fix can be built from what this path has. Deciding it
-	// from the trigger's node_type keeps the LLM out of the python path
-	// entirely, rather than discovering the node's kind after two calls.
+	// prompt nor a source fix can be built from what this path has. A python
+	// node's validation failure is dispatched to its own Fixer, which corrects
+	// the contract yaml declaring it, so this check is normally unreachable; it
+	// stays because a trigger carrying no node_type at all resolves to this
+	// Fixer, and the node's kind must still be able to stop it here.
 	if in.NodeType == string(pkg_model.NodeTypePythonModel) {
 		svc.Logger.Info("validation fix: failing node is a python node; skipping — "+
 			"its candidate artifact is a validation spec and its bundle entry is a contract "+

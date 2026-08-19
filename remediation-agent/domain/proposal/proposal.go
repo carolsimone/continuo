@@ -55,13 +55,17 @@ type Proposal struct {
 	Attempt        int
 	Status         Status
 	// ShadowReleaseID is the id of the shadow release posted to verify this
-	// attempt's fix, set when Status is StatusVerifying. Empty for every
-	// other status.
+	// attempt's fix, written when Status is (or was) StatusVerifying. It is
+	// kept when the attempt is finalized, so a resolved row still names the
+	// release that judged it. Empty for an attempt that never entered
+	// verification.
 	ShadowReleaseID string
 	// TriggerPayload is the raw remediation.requested:v1 payload that drove
-	// this attempt, stored when Status is StatusVerifying so a later
-	// reconciler pass can rebuild the trigger and retry with the shadow
-	// release's error as new evidence. Empty for every other status.
+	// this attempt, written when Status is (or was) StatusVerifying so a
+	// reconciler can rebuild the trigger and retry with the shadow release's
+	// error as new evidence. It is kept when the attempt is finalized —
+	// rebuilding the retry reads it from a row that has already moved to
+	// 'failed'. Empty for an attempt that never entered verification.
 	TriggerPayload []byte
 	Confidence     Confidence
 	Rationale      string

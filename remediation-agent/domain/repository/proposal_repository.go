@@ -27,7 +27,22 @@ var (
 type ProposalFilter struct {
 	Status  string
 	PRState string
-	Limit   int
+	// ReleaseID, Source, and NodeID together address the attempts recorded
+	// for one failing node in one release — the slice a fixer reads to show
+	// the model what earlier attempts tried and why they were rejected.
+	ReleaseID string
+	Source    string
+	NodeID    string
+	Limit     int
+}
+
+// AttemptLister is the repository slice a fixer reads while assembling
+// evidence: the attempts already recorded for the failing node it is fixing.
+// It is a narrower view of the List method ProposalRepository already
+// declares, so a consumer that only needs this one slice does not have to
+// depend on the full repository.
+type AttemptLister interface {
+	List(ctx context.Context, filter ProposalFilter) ([]proposal.View, error)
 }
 
 // OpeningCursor is the keyset position for paginating stuck 'opening' claims

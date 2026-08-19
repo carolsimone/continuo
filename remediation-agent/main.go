@@ -20,8 +20,10 @@ import (
 	ragithub "github.com/carolsimone/continuo/remediation-agent/adapters/github"
 	grpcadapter "github.com/carolsimone/continuo/remediation-agent/adapters/grpc"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/llm"
+	"github.com/carolsimone/continuo/remediation-agent/adapters/packaging"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/postgres"
 	rredis "github.com/carolsimone/continuo/remediation-agent/adapters/redis"
+	"github.com/carolsimone/continuo/remediation-agent/adapters/releasehttp"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/s3"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/sanitizer"
 	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
@@ -180,6 +182,18 @@ func main() {
 	// adapter.
 	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
 
+	// Shadow verification: a proposed python-node fix is packaged by the same
+	// continuo-runtime CLI the team's release CI runs, then submitted to
+	// release-controller as a release that runs the full validation pipeline
+	// but stops before promoting.
+	releaseGateway := releasehttp.NewGateway(cfg.ReleaseControllerURL, store,
+		&http.Client{Timeout: 30 * time.Second})
+
+	// The proposal repository is bound to the DB rather than to a transaction:
+	// the gRPC read path, the reconciler, and the fixers' prior-attempt reads
+	// all use it outside any unit of work.
+	proposalRepo := postgres.NewProposalRepository(db)
+
 	deps := handlers.Deps{
 		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
 		LLM:              cachedLLM,
@@ -197,6 +211,10 @@ func main() {
 		Precedents:       graphClient,
 		CandidateSource:  bundleReader,
 		RepoArchive:      gh,
+		Packager:         packaging.NewCLIPackager(),
+		Releases:         releaseGateway,
+		PriorAttempts:    proposalRepo,
+		SQLDialect:       cfg.SQLDialect,
 	}
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
@@ -223,7 +241,6 @@ func main() {
 	// Start the RemediationProposals gRPC server. The proposal service uses a
 	// DB-bound (non-transactional) repository for reads and the UoW factory for
 	// write operations, matching the consumer's wiring above.
-	proposalRepo := postgres.NewProposalRepository(db)
 	proposalSvc := proposals.New(proposals.Deps{
 		Repo:   proposalRepo,
 		NewUoW: func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },

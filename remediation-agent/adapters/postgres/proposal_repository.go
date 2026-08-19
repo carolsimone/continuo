@@ -305,7 +305,7 @@ func (r *ProposalRepository) Get(ctx context.Context, id string) (proposal.View,
 // Empty filter fields are treated as "no constraint". Limit=0 means no limit.
 func (r *ProposalRepository) List(ctx context.Context, filter repository.ProposalFilter) ([]proposal.View, error) {
 	q := `SELECT ` + proposalColumns + ` FROM proposal WHERE 1=1`
-	args := make([]any, 0, 3)
+	args := make([]any, 0, 6)
 
 	if filter.Status != "" {
 		args = append(args, filter.Status)
@@ -314,6 +314,18 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	if filter.PRState != "" {
 		args = append(args, filter.PRState)
 		q += fmt.Sprintf(" AND pr_state = $%d", len(args))
+	}
+	if filter.ReleaseID != "" {
+		args = append(args, filter.ReleaseID)
+		q += fmt.Sprintf(" AND release_id = $%d", len(args))
+	}
+	if filter.Source != "" {
+		args = append(args, filter.Source)
+		q += fmt.Sprintf(" AND source = $%d", len(args))
+	}
+	if filter.NodeID != "" {
+		args = append(args, filter.NodeID)
+		q += fmt.Sprintf(" AND node_id = $%d", len(args))
 	}
 	q += " ORDER BY created_at DESC"
 	if filter.Limit > 0 {
@@ -484,7 +496,7 @@ func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cu
 	}
 	q := `SELECT id, repo, release_id, node_id, attempt, pr_claimed_at, created_at
 	      FROM proposal WHERE pr_state = 'opening'`
-	args := make([]any, 0, 3)
+	args := make([]any, 0, 6)
 	if cursor != nil {
 		args = append(args, cursor.CreatedAt, cursor.ID)
 		q += fmt.Sprintf(" AND (created_at, id) > ($%d, $%d)", len(args)-1, len(args))

@@ -59,27 +59,14 @@ type openaiTool struct {
 
 // openaiToolFunction holds the function name, description, and parameter schema.
 type openaiToolFunction struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Parameters  openaiToolParams `json:"parameters"`
-}
-
-// openaiToolParams is the JSON Schema object describing the function's parameters.
-type openaiToolParams struct {
-	Type       string                       `json:"type"`
-	Properties map[string]openaiParamProp   `json:"properties"`
-	Required   []string                     `json:"required"`
-}
-
-// openaiParamProp is a single parameter definition within the parameter schema.
-type openaiParamProp struct {
-	Type        string `json:"type"`
-	Description string `json:"description,omitempty"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Parameters  objectSchema `json:"parameters"`
 }
 
 // openaiToolChoice forces the model to call a specific function.
 type openaiToolChoice struct {
-	Type     string                  `json:"type"`
+	Type     string                   `json:"type"`
 	Function openaiToolChoiceFunction `json:"function"`
 }
 
@@ -114,14 +101,23 @@ type openaiResponseFunction struct {
 	Arguments string `json:"arguments"`
 }
 
-// openaiToolArgs holds the fields parsed from the propose_fix tool call.
+// openaiToolArgs holds the fields parsed from a fix tool call. Which of them a
+// given response fills depends on the tool the request forced; UpdatedFiles
+// carries a multi-file answer, the other fields a single-file one.
 type openaiToolArgs struct {
-	ProposedSQL            string `json:"proposed_sql"`
-	ProposedContent        string `json:"proposed_content"`
-	TargetFile             string `json:"target_file"`
-	Rationale              string `json:"rationale"`
-	Confidence             string `json:"confidence"`
-	SuspectedRootCauseNode string `json:"suspected_root_cause_node"`
+	ProposedSQL            string              `json:"proposed_sql"`
+	ProposedContent        string              `json:"proposed_content"`
+	TargetFile             string              `json:"target_file"`
+	UpdatedFiles           []openaiUpdatedFile `json:"updated_files"`
+	Rationale              string              `json:"rationale"`
+	Confidence             string              `json:"confidence"`
+	SuspectedRootCauseNode string              `json:"suspected_root_cause_node"`
+}
+
+// openaiUpdatedFile is one entry of a multi-file answer's updated_files array.
+type openaiUpdatedFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 // Propose sends a single-shot, non-streaming, tool-forced request to an OpenAI-compatible
@@ -155,18 +151,6 @@ func (p *openaiProvider) Propose(ctx context.Context, req ports.ProposeRequest) 
 
 // buildRequest marshals the ProposeRequest into the OpenAI chat-completions wire format.
 func (p *openaiProvider) buildRequest(req ports.ProposeRequest) ([]byte, error) {
-	props := make(map[string]openaiParamProp, len(req.ToolParams))
-	required := make([]string, 0, len(req.ToolParams))
-	for _, param := range req.ToolParams {
-		props[param.Name] = openaiParamProp{
-			Type:        param.Type,
-			Description: param.Description,
-		}
-		if param.Required {
-			required = append(required, param.Name)
-		}
-	}
-
 	wireReq := openaiRequest{
 		Model:     p.model,
 		MaxTokens: 16000,
@@ -181,11 +165,7 @@ func (p *openaiProvider) buildRequest(req ports.ProposeRequest) ([]byte, error) 
 				Function: openaiToolFunction{
 					Name:        req.ToolName,
 					Description: req.ToolDescription,
-					Parameters: openaiToolParams{
-						Type:       "object",
-						Properties: props,
-						Required:   required,
-					},
+					Parameters:  buildToolSchema(req.ToolParams),
 				},
 			},
 		},
@@ -226,9 +206,23 @@ func (p *openaiProvider) parseResponse(r io.Reader) (ports.ProposeResult, error)
 		ProposedSQL:            args.ProposedSQL,
 		ProposedContent:        args.ProposedContent,
 		TargetFile:             args.TargetFile,
+		Files:                  openaiFiles(args.UpdatedFiles),
 		Rationale:              args.Rationale,
 		Confidence:             args.Confidence,
 		SuspectedRootCauseNode: args.SuspectedRootCauseNode,
 		Model:                  p.model,
 	}, nil
+}
+
+// openaiFiles converts the wire form of a multi-file answer to the
+// provider-agnostic one.
+func openaiFiles(in []openaiUpdatedFile) []ports.ProposedFile {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ports.ProposedFile, 0, len(in))
+	for _, f := range in {
+		out = append(out, ports.ProposedFile{Path: f.Path, Content: f.Content})
+	}
+	return out
 }
