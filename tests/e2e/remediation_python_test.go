@@ -106,8 +106,10 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 	requireReleaseControllerHealthy(t, clients)
 
 	// The relation a correct fix reads from has to exist before the shadow
-	// release bind-checks it.
-	ensureBindingRelation(t, ctx, clients)
+	// release bind-checks it. Both cleanups are deferred after
+	// clients.close(ctx) above, so LIFO runs them while the pools are open.
+	dropRelation := ensureBindingRelation(t, ctx, clients)
+	defer dropRelation()
 
 	// Release ids are kept short on purpose: the candidate schema of a shadow
 	// release is "_candidate_" plus its id, and a shadow id embeds the failing
@@ -115,7 +117,9 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 	releaseID := "pyfix-" + uuid.NewString()[:8]
 	t.Logf("release_id=%s service=%s node=%s", releaseID, pyBadReadService, pyBadReadUniqueID)
 
-	rejectPythonFixtureRelease(t, ctx, clients, pyBadReadService, pyBadReadContract, pyBadReadScript, releaseID)
+	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
+		pyBadReadService, pyBadReadContract, pyBadReadScript, releaseID)
+	defer clearProd()
 
 	// 1. The fixer produced an attempt and parked it awaiting its shadow
 	//    release. The shadow id is read off the row rather than re-derived
@@ -148,11 +152,14 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 	require.Equal(t, pyBadReadContract, edits[0].Path,
 		"the edit must name the declaring contract file as the repository holds it")
 
+	// Assert on the declared read itself, not on the relation name anywhere in
+	// the file: the fixture's own comments name these relations too, so a
+	// bare substring check would pass on an unrepaired contract.
 	content := string(getS3ObjectByKey(t, ctx, clients, stripS3Prefix(edits[0].ContentURI)))
-	require.Contains(t, content, pyBindingRelation,
-		"the proposed contract must read from a relation that exists")
-	require.NotContains(t, content, pyBrokenRelation,
-		"the proposed contract must no longer read from the relation that failed to bind")
+	require.Contains(t, content, "select id from "+pyBindingRelation,
+		"the proposed contract must declare a read against a relation that exists")
+	require.NotContains(t, content, "select id from "+pyBrokenRelation,
+		"the proposed contract must no longer declare the read that failed to bind")
 	require.Contains(t, content, "table: py_bad_read",
 		"the fix must keep declaring the same node, not replace it with a different one")
 
@@ -204,12 +211,15 @@ func TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt(t *testing.T) {
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
 
-	ensureBindingRelation(t, ctx, clients)
+	dropRelation := ensureBindingRelation(t, ctx, clients)
+	defer dropRelation()
 
 	releaseID := "pyloop-" + uuid.NewString()[:8]
 	t.Logf("release_id=%s service=%s node=%s", releaseID, pyLoopService, pyLoopUniqueID)
 
-	rejectPythonFixtureRelease(t, ctx, clients, pyLoopService, pyLoopContract, pyLoopScript, releaseID)
+	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
+		pyLoopService, pyLoopContract, pyLoopScript, releaseID)
+	defer clearProd()
 
 	// 1. Attempt 1's shadow release rejects the fix, and its error is recorded
 	//    on the attempt as the evidence attempt 2 will be shown.
@@ -248,18 +258,24 @@ func TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt(t *testing.T) {
 	require.Equal(t, pyLoopContract, edits[0].Path)
 
 	content := string(getS3ObjectByKey(t, ctx, clients, stripS3Prefix(edits[0].ContentURI)))
-	require.Contains(t, content, pyBindingRelation,
-		"the second attempt must read from a relation that exists")
-	require.NotContains(t, content, pyStillBrokenRelation,
+	require.Contains(t, content, "select id from "+pyBindingRelation,
+		"the second attempt must declare a read against a relation that exists")
+	require.NotContains(t, content, "select id from "+pyStillBrokenRelation,
 		"the second attempt must not repeat the read the first attempt was rejected for")
+	require.Contains(t, content, "table: py_loop_read",
+		"the fix must keep declaring the same node, not replace it with a different one")
 
 	// 3. The rejected shadow release fed the classifier nothing. Its decision
 	//    is recorded (no drop is invisible) but nothing was emitted, which is
 	//    what stops a failed fix from remediating itself.
-	var decision classificationDecisionRow
+	var decision struct {
+		Category string `db:"category"`
+		Decision string `db:"decision"`
+		Reason   string `db:"reason"`
+	}
 	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
 		err := clients.remediationDB.GetContext(ctx, &decision,
-			`SELECT source, release_id, node_id, category, decision
+			`SELECT category, decision, reason
 			   FROM classification_decision
 			  WHERE source = 'validation' AND release_id = $1 AND node_id = $2`,
 			firstShadowID, pyLoopUniqueID)
@@ -267,6 +283,10 @@ func TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt(t *testing.T) {
 	}, fmt.Sprintf("timeout waiting for the classification decision recorded for shadow release %s", firstShadowID))
 	require.Equal(t, "drop", decision.Decision,
 		"a shadow rejection must be dropped, not healed")
+	require.Equal(t, "shadow_verification", decision.Reason,
+		"the drop must be attributed to the shadow verification, not to an unhealable category")
+	require.NotEmpty(t, decision.Category,
+		"the recorded row must still say what the failure was; only the routing is overridden")
 	assertNoRemediationTriggerFor(t, ctx, clients, firstShadowID)
 	assertNoNodeVersionsFor(t, ctx, clients, firstShadowID)
 	assertNoNodeVersionsFor(t, ctx, clients, secondShadowID)
@@ -280,16 +300,16 @@ func TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt(t *testing.T) {
 // checkout holds, so the node the release fails on is the node the fixer will
 // later find in the checkout.
 //
-// It clears both python services' production pointers before posting and
-// registers a cleanup that clears them again: a leftover pointer would drag
+// It clears both python fixture services' production pointers before posting
+// and returns a cleanup that clears them again — a leftover pointer would drag
 // this fixture's contract into every later test's assembled manifest set. The
-// cleanup is registered with t.Cleanup rather than returned because nothing in
-// these tests promotes, so no pointer is expected to exist by the end — the
-// cleanup is a backstop, not part of the flow.
+// cleanup is returned rather than registered with t.Cleanup because it needs
+// the release-controller pool, and t.Cleanup functions run after every
+// deferred call, including the one that closes every pool.
 func rejectPythonFixtureRelease(
 	t *testing.T, ctx context.Context, clients *testClients,
 	service, contractPath, scriptPath, releaseID string,
-) {
+) func() {
 	t.Helper()
 
 	// Baseline: every dbt service keeps its live pointer; the python fixture
@@ -310,7 +330,7 @@ func rejectPythonFixtureRelease(
 	seedCurrentProd(t, ctx, clients, prodNodes)
 	seedServiceProdExcept(t, ctx, clients, allServices, service)
 	clearPythonServiceProd(t, ctx, clients)
-	t.Cleanup(func() { clearPythonServiceProd(t, context.Background(), clients) })
+	cleanup := func() { clearPythonServiceProd(t, context.Background(), clients) }
 
 	contractKey := fmt.Sprintf("%s/%s/contract.yaml", service, releaseID)
 	putS3Object(t, ctx, clients, contractKey,
@@ -318,6 +338,7 @@ func rejectPythonFixtureRelease(
 	postPythonRelease(t, clients, service, releaseID, pyFixtureImage)
 
 	waitForReleaseRejected(t, ctx, clients, releaseID, 12*time.Minute)
+	return cleanup
 }
 
 // pyRemediationContractYAML renders the merged contract_version-1 wire artifact
@@ -364,23 +385,29 @@ func pyRemediationContractYAML(t *testing.T, service, contractPath, scriptPath s
 	return string(merged)
 }
 
-// ensureBindingRelation creates the relation a repaired contract reads from.
-// It lives outside the node registry, so the candidate-schema rewriter passes
-// it through verbatim and the validation Job's bind check resolves it against
-// the real warehouse — which is exactly why it has to exist for a shadow
-// release to validate.
-func ensureBindingRelation(t *testing.T, ctx context.Context, clients *testClients) {
+// ensureBindingRelation creates the relation a repaired contract reads from
+// and returns a cleanup that drops it. It lives outside the node registry, so
+// the candidate-schema rewriter passes it through verbatim and the validation
+// Job's bind check resolves it against the real warehouse — which is exactly
+// why it has to exist for a shadow release to validate.
+//
+// The cleanup is returned rather than registered with t.Cleanup because it
+// needs the warehouse pool, and t.Cleanup functions run after every deferred
+// call — including the one that closes every pool. A caller that registers it
+// with defer after `defer clients.close(ctx)` gets it run first, while the
+// pool is still open.
+func ensureBindingRelation(t *testing.T, ctx context.Context, clients *testClients) func() {
 	t.Helper()
 	_, err := clients.dbtDB.ExecContext(ctx,
 		`CREATE TABLE IF NOT EXISTS public.right_name (id integer)`)
 	require.NoError(t, err, "create %s in the warehouse", pyBindingRelation)
-	t.Cleanup(func() {
+	return func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if _, err := clients.dbtDB.ExecContext(cleanupCtx, `DROP TABLE IF EXISTS public.right_name`); err != nil {
-			t.Logf("cleanup: drop %s: %v", pyBindingRelation, err)
+			t.Errorf("cleanup: drop %s: %v", pyBindingRelation, err)
 		}
-	})
+	}
 }
 
 // clearPythonServiceProd removes the production pointers of both remediation
@@ -408,9 +435,11 @@ type pyProposalRow struct {
 }
 
 // waitForProposal polls the remediation-agent's proposal table until the named
-// attempt for a node reaches want, and returns the row. It reports the last
-// status it saw on timeout, so a run that stalls in 'generating' or 'verifying'
-// is distinguishable from one that never produced an attempt at all.
+// attempt for a node reaches want, and returns the row. Every status change it
+// observes is logged, so a run that stalls in 'generating' or 'verifying' is
+// distinguishable from one that never produced an attempt at all — the timeout
+// message itself cannot carry that, since pollUntil evaluates it before any
+// polling happens.
 func waitForProposal(
 	t *testing.T, ctx context.Context, clients *testClients,
 	releaseID, nodeID string, attempt int, want string, timeout time.Duration,
@@ -432,8 +461,8 @@ func waitForProposal(
 			last = row.Status
 		}
 		return row.Status == want, nil
-	}, fmt.Sprintf("timeout waiting for proposal %s/%s attempt %d to reach %q (last status %q)",
-		releaseID, nodeID, attempt, want, last))
+	}, fmt.Sprintf("timeout waiting for proposal %s/%s attempt %d to reach %q (see the logged status changes above)",
+		releaseID, nodeID, attempt, want))
 	return row
 }
 
@@ -525,7 +554,7 @@ func waitForReleaseStatus(
 			last = r.Status
 		}
 		return r.Status == want, nil
-	}, fmt.Sprintf("timeout waiting for release %s to reach %q (last status %q)", releaseID, want, last))
+	}, fmt.Sprintf("timeout waiting for release %s to reach %q (see the logged status changes above)", releaseID, want))
 }
 
 // waitForRemediationProposed polls remediation.proposed:v1 for the fix a
