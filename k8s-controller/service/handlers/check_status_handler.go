@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,27 +41,6 @@ var seedBuildLabelNamespace = uuid.MustParse("c7a3e1d9-5f2b-4e6c-8d0a-1b4f7c2e9a
 // seedBuildLabelNamespace. Distinct from both to avoid aggregate-ID collisions
 // between compile, seed-build, and validation events for the same release.
 var compileLabelNamespace = uuid.MustParse("e2b8d4f6-1a3c-5e7f-9b0d-2c4e6a8f0b2d")
-
-// SplitValidationResult removes the structured-result sentinel block from a
-// validation pod log and returns the cleaned log plus the inner single-line
-// JSON. The sentinel markers are the shared cross-language contract in
-// pkg/validationresult (the Python pod emits them; a guard test binds the two
-// sides). When no well-formed block is present (production jobs, old images,
-// truncated logs) it returns the log unchanged and an empty structured string —
-// the caller then degrades to the text-log-only path.
-func SplitValidationResult(log string) (cleanLog, structuredJSON string) {
-	bi := strings.Index(log, validationresult.SentinelBegin)
-	if bi < 0 {
-		return log, ""
-	}
-	ei := strings.Index(log, validationresult.SentinelEnd)
-	if ei < 0 || ei < bi {
-		return log, ""
-	}
-	inner := strings.TrimSpace(log[bi+len(validationresult.SentinelBegin) : ei])
-	clean := log[:bi] + log[ei+len(validationresult.SentinelEnd):]
-	return clean, strings.TrimSpace(inner)
-}
 
 // K8sStatusChecker defines interface for checking K8s job status
 type K8sStatusChecker interface {
@@ -449,69 +427,6 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 	return nil
 }
 
-// sentinelResult is the subset of the structured validation-result contract
-// fetchAndUploadLogs reads. The block carries more fields (failures,
-// unique_id); only schema_version, status, and message are consumed here —
-// schema_version to validate the contract (see parseSentinelResult), status
-// and message to build the error message — so this mirrors just those three
-// rather than the full contract in
-// remediation/domain/failure.StructuredResult.
-type sentinelResult struct {
-	SchemaVersion int    `json:"schema_version"`
-	Status        string `json:"status"`
-	Message       string `json:"message"`
-}
-
-// supportedRunStatuses is the structured-result contract's status vocabulary —
-// dbt's RunStatus, per continuo_validation_contract/result.py's docstring. A
-// scanned candidate is accepted only when its status is one of these, so an
-// unrelated status-bearing JSON object elsewhere in the log (e.g. a sidecar
-// diagnostic) cannot pass as the contract's result block on status alone.
-var supportedRunStatuses = map[string]bool{
-	"success": true,
-	"error":   true,
-	"fail":    true,
-	"skipped": true,
-}
-
-// parseSentinelResult decodes the JSON object inside a structured
-// validation-result block (the string SplitValidationResult already isolated
-// between the sentinel markers). Real pod logs can carry a stderr preamble
-// before the JSON object, and/or trailing text after it, inside those markers
-// — the same condition remediation/domain/failure.ParseStructuredResult was
-// fixed to tolerate — so this scans for the object rather than unmarshalling
-// the whole body: try each '{' in turn, decode a single JSON value from there
-// (ignoring anything after it), and accept the first candidate whose
-// schema_version matches the wire contract (validationresult.SchemaVersion)
-// and whose status is one of supportedRunStatuses. Because the scan tolerates
-// arbitrary preamble text, it can otherwise reach an unrelated status-bearing
-// JSON object before the real result; requiring both checks is what tells the
-// two apart — a candidate that decodes but fails either one is not the
-// contract's block, so scanning continues to the next '{' rather than
-// accepting it. ok is false when no such object is found.
-//
-// This guard is only as good as validationresult.SchemaVersion: a future
-// contract schema bump must update that constant too, or every block from the
-// new schema is silently rejected here and the error message quietly
-// degrades to the log tail.
-func parseSentinelResult(raw string) (sr sentinelResult, ok bool) {
-	body := []byte(raw)
-	for start := bytes.IndexByte(body, '{'); start >= 0; {
-		var candidate sentinelResult
-		if err := json.NewDecoder(bytes.NewReader(body[start:])).Decode(&candidate); err == nil &&
-			candidate.SchemaVersion == validationresult.SchemaVersion &&
-			supportedRunStatuses[candidate.Status] {
-			return candidate, true
-		}
-		next := bytes.IndexByte(body[start+1:], '{')
-		if next < 0 {
-			break
-		}
-		start += next + 1
-	}
-	return sentinelResult{}, false
-}
-
 // fetchAndUploadLogs fetches pod logs and uploads them to S3. The text log (with
 // any structured-result sentinel block stripped) is uploaded under logs/...; when
 // the pod emitted a structured block, that JSON is uploaded separately under
@@ -577,7 +492,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	// Separate the structured validation-result block (if any) from the text log.
 	// Validation pods and the python production harness emit the block; dbt
 	// production jobs do not, so cleanLog == fullLog for them.
-	cleanLog, structured := SplitValidationResult(fullLog)
+	cleanLog, structured := validationresult.Split(fullLog)
 
 	// GetPodLogs fetches the full log and the tail independently and each
 	// soft-fails on its own, so the full log can come back empty while the
@@ -587,7 +502,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	// the full-log block exclusively, never the tail's.
 	sentinelJSON := structured
 	if sentinelJSON == "" {
-		_, sentinelJSON = SplitValidationResult(tail)
+		_, sentinelJSON = validationresult.Split(tail)
 	}
 
 	// A non-success block's message is the real cause of the failure and is
@@ -596,8 +511,8 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	// container-level failure); its message (e.g. "rows=42") describes the
 	// successful run, not the crash, so it must not become the error message.
 	if sentinelJSON != "" {
-		if sr, ok := parseSentinelResult(sentinelJSON); ok && sr.Status != "success" {
-			sentinelErrMsg = strings.TrimSpace(sr.Message)
+		if r, err := validationresult.Parse([]byte(sentinelJSON)); err == nil && r.Status != "success" {
+			sentinelErrMsg = strings.TrimSpace(r.Message)
 		}
 	}
 

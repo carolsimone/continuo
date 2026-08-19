@@ -13,6 +13,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/validationresult"
 	"github.com/carolsimone/continuo/remediation/domain/event"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/domain/repository"
@@ -104,11 +105,16 @@ func classify(ctx context.Context, deps Deps, ev *failure.FailureEvidence) (fail
 			return failure.Classification{}, fmt.Errorf("fetch run results %q: %w", ev.RunResultsURI, ferr)
 		}
 		if ferr == nil {
-			if sr, perr := failure.ParseStructuredResult([]byte(body)); perr != nil {
+			if r, perr := validationresult.Parse([]byte(body)); perr != nil {
 				deps.Logger.Warn("run_results parse failed — falling back to text log",
 					"uri", ev.RunResultsURI, "error", perr)
 			} else {
-				structured = sr
+				structured = &failure.StructuredResult{
+					Status:   r.Status,
+					Message:  r.Message,
+					Failures: r.Failures,
+					UniqueID: r.UniqueID,
+				}
 			}
 		}
 	}

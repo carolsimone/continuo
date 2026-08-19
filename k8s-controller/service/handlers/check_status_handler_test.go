@@ -1387,28 +1387,6 @@ func keysOf(m map[string]string) []string {
 	return out
 }
 
-func TestSplitValidationResult(t *testing.T) {
-	log := "line a\nline b\n" +
-		"===CONTINUO_VALIDATION_RESULT_BEGIN===\n" +
-		`{"schema_version":1,"status":"error","message":"boom","failures":0,"unique_id":"model.svc.x"}` + "\n" +
-		"===CONTINUO_VALIDATION_RESULT_END===\n"
-	clean, structured := handlers.SplitValidationResult(log)
-	if strings.Contains(clean, "CONTINUO_VALIDATION_RESULT") {
-		t.Fatalf("clean log still contains sentinel: %q", clean)
-	}
-	if !strings.Contains(structured, `"status":"error"`) {
-		t.Fatalf("structured JSON not extracted: %q", structured)
-	}
-
-	clean2, structured2 := handlers.SplitValidationResult("just a normal log\n")
-	if structured2 != "" {
-		t.Fatalf("expected no structured block, got %q", structured2)
-	}
-	if clean2 != "just a normal log\n" {
-		t.Fatalf("clean log altered when no block present: %q", clean2)
-	}
-}
-
 // repeatStr returns s repeated n times.
 func repeatStr(s string, n int) string {
 	out := ""
