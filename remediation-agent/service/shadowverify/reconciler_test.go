@@ -582,10 +582,14 @@ func TestReconcileOnce_NonTerminalWithinTheTimeoutIsLeftAlone(t *testing.T) {
 // that keeps a wedged shadow release from pinning a proposal in 'verifying'
 // forever: past the budget the attempt is failed with the timeout as its
 // recorded reason and the next attempt starts, exactly as a rejection does.
+// The budget is spent from the moment the release started running, so the
+// verdict carries an activation that far back.
 func TestReconcileOnce_NonTerminalPastTheTimeoutFailsTheAttempt(t *testing.T) {
 	row := verifyingRow("p1", 1, testTimeout+time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: false}
+	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+		Terminal: false, ActivatedAt: testNow.Add(-(testTimeout + time.Minute)),
+	}
 
 	h.rec.ReconcileOnce(context.Background())
 
@@ -593,6 +597,45 @@ func TestReconcileOnce_NonTerminalPastTheTimeoutFailsTheAttempt(t *testing.T) {
 	assert.Equal(t, proposal.StatusFailed, stored.Status)
 	assert.Equal(t, "shadow verification timed out", stored.VerifyError)
 	assert.Len(t, h.proposer.triggers, 1)
+}
+
+// TestReconcileOnce_QueuedTimeDoesNotSpendTheVerificationBudget pins what the
+// timeout is a budget FOR.
+//
+// A shadow release joins the same global FIFO queue as every other release and
+// only one release runs at a time, so a backlog — or one long normal release —
+// can hold it in 'received' for the entire window. Measuring from when the
+// proposal was recorded therefore failed an attempt whose release had not run
+// at all, and would do the same to every retry behind it, burning the whole
+// per-failure budget on releases that were never given a chance to answer.
+func TestReconcileOnce_QueuedTimeDoesNotSpendTheVerificationBudget(t *testing.T) {
+	t.Run("still queued", func(t *testing.T) {
+		row := verifyingRow("p1", 1, testTimeout+time.Hour)
+		h := newHarness(row)
+		// No activation: release-controller has not started this release.
+		h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: false}
+
+		h.rec.ReconcileOnce(context.Background())
+
+		assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status,
+			"a release that has not left the queue has not spent any of its verification budget")
+		assert.Empty(t, h.proposer.triggers)
+		assert.Zero(t, h.uow.commits)
+	})
+
+	t.Run("queued long, running briefly", func(t *testing.T) {
+		row := verifyingRow("p1", 1, testTimeout+time.Hour)
+		h := newHarness(row)
+		h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+			Terminal: false, ActivatedAt: testNow.Add(-time.Minute),
+		}
+
+		h.rec.ReconcileOnce(context.Background())
+
+		assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status,
+			"the budget runs from when the release started, not from when the attempt was recorded")
+		assert.Empty(t, h.proposer.triggers)
+	})
 }
 
 // TestReconcileOnce_UnreadableVerdictWithinTheTimeoutBurnsNoAttempt pins the

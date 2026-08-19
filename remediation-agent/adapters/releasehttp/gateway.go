@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
@@ -104,6 +105,13 @@ type releaseNodeResult struct {
 	RunResultsURI string `json:"run_results_uri"`
 }
 
+// releaseTransition is one entry of a release's status history: the status it
+// moved into and when.
+type releaseTransition struct {
+	To string    `json:"to"`
+	At time.Time `json:"at"`
+}
+
 // releaseResponse mirrors the JSON object release-controller's GET
 // /releases/{id} returns (adapters/http/handler_get_release.go's
 // getReleaseResponse), narrowed to the fields this gateway reads.
@@ -113,6 +121,7 @@ type releaseResponse struct {
 	RejectDetail   string              `json:"reject_detail"`
 	PerNodeResults []releaseNodeResult `json:"per_node_results"`
 	ImageTags      map[string]string   `json:"image_tags"`
+	Transitions    []releaseTransition `json:"transitions"`
 }
 
 // Release statuses this gateway distinguishes. Every other value from GET
@@ -123,6 +132,9 @@ type releaseResponse struct {
 const (
 	releaseStatusValidated = "validated"
 	releaseStatusRejected  = "rejected"
+	// releaseStatusReceived is the status a release holds while it waits its
+	// turn in the global release queue, before any pipeline work begins.
+	releaseStatusReceived = "received"
 )
 
 // sentinelResult is the cross-language structured validation-result contract
@@ -185,21 +197,41 @@ func (g *Gateway) getRelease(ctx context.Context, releaseID string) (releaseResp
 	return out, nil
 }
 
-// Verdict reads the shadow release identified by releaseID and reports its
-// current status.
+// Verdict reads the release identified by releaseID — a shadow release, or the
+// original failing one the sibling-failure check asks the same question of (see
+// the ports.ReleaseGateway doc comment) — and reports its current status,
+// together with the moment it left the release queue.
 func (g *Gateway) Verdict(ctx context.Context, releaseID string) (ports.ShadowVerdict, error) {
 	rel, err := g.getRelease(ctx, releaseID)
 	if err != nil {
 		return ports.ShadowVerdict{}, err
 	}
+	activatedAt := activationTime(rel.Transitions)
 	switch rel.Status {
 	case releaseStatusValidated:
-		return ports.ShadowVerdict{Terminal: true, Validated: true}, nil
+		return ports.ShadowVerdict{Terminal: true, Validated: true, ActivatedAt: activatedAt}, nil
 	case releaseStatusRejected:
-		return ports.ShadowVerdict{Terminal: true, Validated: false, NodeErrors: g.nodeErrors(ctx, rel)}, nil
+		return ports.ShadowVerdict{
+			Terminal: true, Validated: false,
+			NodeErrors: g.nodeErrors(ctx, rel), ActivatedAt: activatedAt,
+		}, nil
 	default:
-		return ports.ShadowVerdict{}, nil
+		return ports.ShadowVerdict{ActivatedAt: activatedAt}, nil
 	}
+}
+
+// activationTime is when the release stopped waiting in the queue and the
+// pipeline picked it up: the timestamp of its first transition into anything
+// other than "received". A release that has only ever been "received" returns
+// the zero time, which is how a caller tells "still queued" apart from "running
+// too long".
+func activationTime(transitions []releaseTransition) time.Time {
+	for _, t := range transitions {
+		if t.To != releaseStatusReceived {
+			return t.At
+		}
+	}
+	return time.Time{}
 }
 
 // rejectFallback combines the release's reject_reason and reject_detail into

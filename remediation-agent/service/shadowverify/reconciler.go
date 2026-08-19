@@ -52,10 +52,10 @@ type FixProposer func(ctx context.Context, t handlers.Trigger) error
 const defaultInterval = 15 * time.Second
 
 // defaultTimeout bounds how long an attempt may wait for its shadow release to
-// reach a verdict. Twenty minutes comfortably exceeds the compile+parse+
-// validate pipeline a healthy shadow release completes in, while still ending
-// an attempt whose release wedges rather than pinning the proposal in
-// 'verifying' forever.
+// reach a verdict, counted from the moment that release started running.
+// Twenty minutes comfortably exceeds the compile+parse+validate pipeline a
+// healthy shadow release completes in, while still ending an attempt whose
+// release wedges rather than pinning the proposal in 'verifying' forever.
 const defaultTimeout = 20 * time.Minute
 
 // timedOutError is the reason recorded on an attempt whose shadow release
@@ -80,7 +80,9 @@ type Deps struct {
 	// Interval between passes; <=0 falls back to defaultInterval.
 	Interval time.Duration
 	// Timeout bounds how long an attempt waits for a terminal verdict, measured
-	// from the moment the attempt was recorded; <=0 falls back to defaultTimeout.
+	// from the moment its shadow release left the release queue and started
+	// running — or, when no verdict can be read at all, from the moment the
+	// attempt was recorded. <=0 falls back to defaultTimeout.
 	Timeout time.Duration
 }
 
@@ -166,7 +168,7 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 	if err != nil {
 		r.logger.Warn("shadow verify: read shadow release verdict",
 			"proposal_id", v.ID, "shadow_release", v.ShadowReleaseID, "error", err)
-		r.failIfExpired(ctx, v)
+		r.failIfUnreadableTooLong(ctx, v)
 		return
 	}
 	switch {
@@ -175,7 +177,7 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 	case verdict.Terminal:
 		r.rejected(ctx, v, verifyError(v, verdict))
 	default:
-		r.failIfExpired(ctx, v)
+		r.failIfVerificationExpired(ctx, v, verdict.ActivatedAt)
 	}
 }
 
@@ -252,11 +254,36 @@ func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr st
 	r.retry(ctx, v)
 }
 
-// failIfExpired ends an attempt whose shadow release has had longer than the
-// verification budget — measured from when the attempt was recorded — to
-// reach a readable verdict. Inside the budget the row is left exactly as it
-// is, so a release still working is never cut short.
-func (r *Reconciler) failIfExpired(ctx context.Context, v proposal.View) {
+// failIfVerificationExpired ends an attempt whose shadow release has been
+// RUNNING longer than the verification budget. Inside the budget the row is
+// left exactly as it is, so a release still working is never cut short.
+//
+// activatedAt is when the release left the queue, and the budget is measured
+// from there rather than from when the attempt was recorded. A shadow release
+// joins the same global FIFO queue as every other release and only one release
+// runs at a time, so measuring from the proposal would let a backlog fail an
+// attempt whose release never ran — and do the same to every retry behind it,
+// spending the whole per-failure budget on releases that were never given a
+// chance to answer. A release still queued (no activation) is therefore left
+// alone however long ago the attempt was recorded: it has not started, so it
+// has not spent anything. Its wait is still bounded, because a queue that never
+// advances is a stopped pipeline, and a release that runs and then wedges is
+// caught by this budget from the moment it started.
+func (r *Reconciler) failIfVerificationExpired(ctx context.Context, v proposal.View, activatedAt time.Time) {
+	if activatedAt.IsZero() || r.clock.Now().Sub(activatedAt) < r.timeout {
+		return
+	}
+	r.rejected(ctx, v, timedOutError)
+}
+
+// failIfUnreadableTooLong ends an attempt whose shadow release has not produced
+// a READABLE verdict inside the budget. Here the budget runs from when the
+// attempt was recorded, because no verdict could be read there is nothing else
+// to measure from — and this is the path that must stay bounded regardless: a
+// release id release-controller will never know reads exactly like a release
+// controller that is briefly unreachable, so without this an attempt whose
+// submission was lost would sit in 'verifying' for as long as the row exists.
+func (r *Reconciler) failIfUnreadableTooLong(ctx context.Context, v proposal.View) {
 	if r.clock.Now().Sub(v.CreatedAt) < r.timeout {
 		return
 	}

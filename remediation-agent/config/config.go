@@ -74,10 +74,10 @@ type Config struct {
 	ReleaseControllerURL string
 
 	// ShadowVerifyTimeout bounds how long a proposal awaits its shadow
-	// release's verdict, measured from when the attempt was recorded, before
-	// the shadow-verify reconciler ends the attempt as failed. Non-positive
-	// values fall back to the default so a misconfigured timeout can never
-	// leave a proposal waiting indefinitely.
+	// release's verdict before the shadow-verify reconciler ends the attempt as
+	// failed. It is measured from when that release left the release queue and
+	// started running, so a backlog never spends it; when no verdict can be
+	// read at all, it is measured from when the attempt was recorded instead.
 	ShadowVerifyTimeout time.Duration
 
 	// ShadowVerifyPollInterval is how often the shadow-verify reconciler reads

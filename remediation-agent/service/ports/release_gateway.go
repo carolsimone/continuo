@@ -1,6 +1,9 @@
 package ports
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // ShadowSubmission is the release-controller POST /releases body for a shadow
 // verification release: a real release that runs the full parse →
@@ -29,6 +32,16 @@ type ShadowVerdict struct {
 	Terminal   bool
 	Validated  bool
 	NodeErrors map[string]string
+	// ActivatedAt is when the release left the queue — the moment of its first
+	// transition past "received" — and zero while it is still waiting its turn.
+	//
+	// A shadow release joins the same global FIFO queue every other release
+	// does, and only one release runs at a time, so an arbitrary amount of the
+	// wall-clock time since submission can be time the release has not been
+	// running at all. A caller bounding how long verification may take measures
+	// from this, so a backlog cannot consume the budget of a release that never
+	// started.
+	ActivatedAt time.Time
 }
 
 // ReleaseGateway is remediation-agent's client of release-controller's public

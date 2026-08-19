@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -240,4 +241,40 @@ func TestImageTag(t *testing.T) {
 
 	_, err = g.ImageTag(context.Background(), "rel-original", "svc-unknown")
 	require.Error(t, err)
+}
+
+// TestVerdict_ReportsWhenTheReleaseLeftTheQueue pins the moment the caller
+// measures a verification budget from. A shadow release joins the same global
+// FIFO queue as every other release and sits in "received" until its turn, so
+// the wait a timeout is meant to bound starts when the pipeline actually picked
+// it up — the first transition past "received" — not when it was submitted.
+func TestVerdict_ReportsWhenTheReleaseLeftTheQueue(t *testing.T) {
+	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK,
+		`{"release_id":"shadow-1","status":"validating","per_node_results":[],
+		  "transitions":[{"to":"received","at":"2026-08-19T10:00:00Z"},
+		                 {"to":"parsing","at":"2026-08-19T11:30:00Z"},
+		                 {"to":"validating","at":"2026-08-19T11:32:00Z"}]}`)
+	defer srv.Close()
+
+	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
+	v, err := g.Verdict(context.Background(), "shadow-1")
+	require.NoError(t, err)
+	require.Equal(t, time.Date(2026, 8, 19, 11, 30, 0, 0, time.UTC), v.ActivatedAt.UTC(),
+		"activation is the first transition past 'received', not the last one and not the submission")
+}
+
+// TestVerdict_AQueuedReleaseHasNoActivationMoment is the other half: a release
+// still waiting its turn reports no activation at all, so a caller can tell
+// "this has been running too long" apart from "this has not started".
+func TestVerdict_AQueuedReleaseHasNoActivationMoment(t *testing.T) {
+	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK,
+		`{"release_id":"shadow-1","status":"received","per_node_results":[],
+		  "transitions":[{"to":"received","at":"2026-08-19T10:00:00Z"}]}`)
+	defer srv.Close()
+
+	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
+	v, err := g.Verdict(context.Background(), "shadow-1")
+	require.NoError(t, err)
+	require.False(t, v.Terminal)
+	require.True(t, v.ActivatedAt.IsZero(), "a release still in the queue has not started being verified")
 }
