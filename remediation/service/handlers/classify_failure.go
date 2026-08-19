@@ -46,14 +46,25 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 	}
 	defer func() { _ = u.Rollback() }()
 
+	// A shadow release verifies a remediation-agent fix proposal: it never
+	// promotes and never touches current_prod, so its rejection means the
+	// proposed fix did not work. The decision is still recorded — so the drop
+	// is never invisible — but overridden to drop, because emitting a trigger
+	// for it would remediate a failed fix attempt with another fix attempt,
+	// looping forever.
+	decision, reason := c.Decision, c.Reason
+	if ev.Shadow {
+		decision, reason = failure.DecisionDrop, "shadow_verification"
+	}
+
 	inserted, err := u.DecisionRepo().Upsert(ctx, repository.ClassificationDecision{
 		Source:         ev.Source,
 		ReleaseID:      ev.ReleaseID,
 		NodeID:         ev.NodeID,
 		Category:       c.Category,
 		ErrorSignature: c.Signature,
-		Decision:       c.Decision,
-		Reason:         c.Reason,
+		Decision:       decision,
+		Reason:         reason,
 		DBTLogURI:      ev.DBTLogURI,
 		CreatedAt:      deps.Clock.Now(),
 	})
@@ -61,7 +72,8 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 		return fmt.Errorf("upsert decision: %w", err)
 	}
 
-	if inserted && c.Category.Healable() {
+	emitted := inserted && c.Category.Healable() && !ev.Shadow
+	if emitted {
 		if err := enqueueTrigger(ctx, u, deps, ev, c); err != nil {
 			return err
 		}
@@ -72,8 +84,8 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 	}
 	deps.Logger.Info("classified failure",
 		"node", ev.NodeID, "release", ev.ReleaseID,
-		"category", c.Category, "decision", c.Decision, "reason", c.Reason,
-		"emitted", inserted && c.Category.Healable())
+		"category", c.Category, "decision", decision, "reason", reason,
+		"shadow", ev.Shadow, "emitted", emitted)
 	return nil
 }
 
