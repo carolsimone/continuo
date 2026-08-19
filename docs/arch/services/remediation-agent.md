@@ -458,7 +458,7 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
 
 ### Artifact keys
 
-Every fixer above writes its corrected file and unified diff under the attempt-level keys `proposed-fix/<release_id>/<node_id>/attempt-<n>.source.sql` and `.source.diff` (or, for validation's Step-1 candidate, `attempt-<n>.sql`/`.diff`), and every proposed outcome carries exactly one edit built from that pair. A second, per-edit key layout — `proposed-fix/<release_id>/<node_id>/attempt-<n>/edit-<i>.content` and `.diff`, scoping a file's content and diff to both the attempt and the edit's position within it so several edits in one attempt cannot overwrite each other's artifacts — is also defined in the fixer package; no fixer currently produces more than one edit per attempt, so this per-edit layout is not written by any of the flows above.
+Every fixer above writes its corrected file and unified diff under the attempt-level keys `proposed-fix/<release_id>/<node_id>/attempt-<n>.source.sql` and `.source.diff` (or, for validation's Step-1 candidate, `attempt-<n>.sql`/`.diff`), and every proposed outcome carries exactly one edit built from that pair.
 
 ### Outbox publisher
 

@@ -254,29 +254,6 @@ func writeSourceArtifacts(ctx context.Context, svc Services, in Input, filePath,
 	return proposal.FileEdit{Path: filePath, ContentURI: sqlURI, DiffURI: diffURI}, nil
 }
 
-// writeEditArtifacts writes one edit's corrected content and its unified diff
-// (against the original) under a key scoped to both the attempt and the edit's
-// position within it, so several edits proposed in one attempt cannot
-// overwrite each other's artifacts, and returns them as a FileEdit naming path
-// and both URIs. The diff is labelled with filePath, so each edit of a
-// multi-file proposal carries a header naming the file it actually changes.
-func writeEditArtifacts(ctx context.Context, svc Services, in Input, i int, filePath, original, corrected string) (proposal.FileEdit, error) {
-	diff := proposal.ComputeUnifiedDiff(original, corrected, filePath)
-	contentURI, err := svc.Artifacts.Write(ctx,
-		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d/edit-%d.content", in.ReleaseID, in.NodeID, in.Attempt, i),
-		corrected, "text/plain")
-	if err != nil {
-		return proposal.FileEdit{}, fmt.Errorf("write edit content: %w", err)
-	}
-	diffURI, err := svc.Artifacts.Write(ctx,
-		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d/edit-%d.diff", in.ReleaseID, in.NodeID, in.Attempt, i),
-		diff, "text/plain")
-	if err != nil {
-		return proposal.FileEdit{}, fmt.Errorf("write edit diff: %w", err)
-	}
-	return proposal.FileEdit{Path: filePath, ContentURI: contentURI, DiffURI: diffURI}, nil
-}
-
 // singleShot builds a Fixer whose flow is: gather source files → build one
 // prompt → one LLM call → interpret → (on a proposed outcome) diff the chosen
 // file against its original content and write the source + diff artifacts.
