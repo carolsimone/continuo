@@ -61,13 +61,26 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 	assert.Equal(t, "acme/demo", decoded["repo"])
 	assert.Equal(t, "deadbeefcafe1234", decoded["commit_sha"])
 	// Guard the full response shape so an accidental field drop in the extracted
-	// helper is caught: 11 pre-existing keys plus repo + commit_sha.
-	assert.Len(t, decoded, 13)
+	// helper is caught: 11 pre-existing keys plus repo + commit_sha + shadow.
+	assert.Len(t, decoded, 14)
 	assert.Equal(t, "rPROV", decoded["release_id"])
 }
 
+// TestGetReleaseResponse_IncludesShadow verifies that the shadow flag is
+// exposed by GET /releases/{id} so a caller can distinguish a fix-verification
+// release from a normal one.
+func TestGetReleaseResponse_IncludesShadow(t *testing.T) {
+	shadowRel := release.New("rel-shadow", "finance", "tag", false, true, "owner/repo", "abc123",
+		release.ManifestKindDbt, time.Unix(1, 0).UTC())
+	assert.Equal(t, true, getReleaseResponse(shadowRel)["shadow"])
+
+	plainRel := release.New("rel-plain", "finance", "tag", false, false, "owner/repo", "abc123",
+		release.ManifestKindDbt, time.Unix(1, 0).UTC())
+	assert.Equal(t, false, getReleaseResponse(plainRel)["shadow"])
+}
+
 func TestGetReleaseResponse_IncludesRejectDetail(t *testing.T) {
-	r := release.New("rel-1", "finance", "tag", false, "owner/repo", "abc123",
+	r := release.New("rel-1", "finance", "tag", false, false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
 	require.NoError(t, r.TransitionToRejected("duplicate_table",

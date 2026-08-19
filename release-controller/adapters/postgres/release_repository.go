@@ -58,6 +58,7 @@ type releaseRow struct {
 	CreatedAt         sql.NullTime   `db:"created_at"`
 	TransitionsJSON   []byte         `db:"transitions"`
 	Bootstrap         bool           `db:"bootstrap"`
+	Shadow            bool           `db:"shadow"`
 	Repo              string         `db:"repo"`
 	CommitSHA         string         `db:"commit_sha"`
 	CodeBundleURI     string         `db:"code_bundle_uri"`
@@ -70,7 +71,7 @@ func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Releas
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
+		        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE release_id = $1`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -89,7 +90,7 @@ func (r *ReleaseRepository) Load(ctx context.Context, id string) (*release.Relea
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
+		        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE release_id = $1 FOR UPDATE`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -107,7 +108,7 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
+		        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE status = 'received'
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -126,7 +127,7 @@ func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release
 	err := r.q.GetContext(ctx, &row,
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
-		        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
+		        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind
 		 FROM releases WHERE status IN ('compiling','parsing','seed_building','validating')
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -167,8 +168,8 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		`INSERT INTO releases (
 		   release_id, status, image_tags, changed_service,
 		   candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
-		   per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
-		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		   per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind
+		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		 ON CONFLICT (release_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
@@ -183,7 +184,7 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		rel.ID(), string(rel.Status()),
 		imageTagsJSON, rel.ChangedService(), topoJSON, pq.StringArray(rel.ValidationNodeIDs()),
 		rejectReason, rel.RejectDetail(), pq.StringArray(rel.FailingNodes()), perNodeJSON,
-		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap(), rel.Repo(), rel.CommitSHA(), rel.CodeBundleURI(),
+		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap(), rel.IsShadow(), rel.Repo(), rel.CommitSHA(), rel.CodeBundleURI(),
 		string(rel.ManifestKind()))
 	if err != nil {
 		return fmt.Errorf("upsert release: %w", err)
@@ -231,6 +232,7 @@ func rowToRelease(row releaseRow) (*release.Release, error) {
 		CreatedAt:         row.CreatedAt.Time,
 		Transitions:       transitions,
 		Bootstrap:         row.Bootstrap,
+		Shadow:            row.Shadow,
 		Repo:              row.Repo,
 		CommitSHA:         row.CommitSHA,
 		CodeBundleURI:     row.CodeBundleURI,
@@ -265,7 +267,7 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 	args = append(args, limit+1)
 	query := fmt.Sprintf(`SELECT release_id, status, image_tags, changed_service,
 	        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
-	        per_node_results, created_at, transitions, bootstrap, repo, commit_sha, code_bundle_uri, kind
+	        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind
 	 FROM releases %s
 	 ORDER BY created_at DESC, release_id DESC
 	 LIMIT $%d`, where, len(args))
@@ -302,7 +304,7 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 }
 
 // DeleteResolvedBefore removes releases that are in a terminal state
-// (promoted, rejected, or superseded), were created before the given cutoff,
+// (promoted, rejected, superseded, or validated), were created before the given cutoff,
 // and are not in the keepReleaseIDs set. An empty keepReleaseIDs slice means
 // no extra releases are preserved. Returns the number of rows deleted.
 // After deleting each row, it also attempts to remove the corresponding
@@ -319,7 +321,7 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 func (r *ReleaseRepository) DeleteResolvedBefore(ctx context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	rows, err := r.q.QueryxContext(ctx,
 		`DELETE FROM releases
-		 WHERE status IN ('promoted','rejected','superseded')
+		 WHERE status IN ('promoted','rejected','superseded','validated')
 		   AND created_at < $1
 		   AND release_id <> ALL($2)
 		 RETURNING release_id`,

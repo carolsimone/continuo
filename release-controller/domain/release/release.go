@@ -16,6 +16,10 @@ const (
 	StatusPromoted     Status = "promoted"
 	StatusRejected     Status = "rejected"
 	StatusSuperseded   Status = "superseded"
+	// StatusValidated is the terminal status for a shadow release: it completed
+	// the same parse+validation pipeline as a normal release but stopped short
+	// of promoting to production.
+	StatusValidated Status = "validated"
 )
 
 type Transition struct {
@@ -107,6 +111,7 @@ type Release struct {
 	resolvedAt          *time.Time
 	transitions         []Transition
 	bootstrap           bool
+	shadow              bool
 	repo                string
 	commitSHA           string
 	codeBundleURI       string
@@ -119,14 +124,18 @@ type Release struct {
 // SetAssembledImageTags for the rationale). repo (GitHub owner/name) and
 // commitSHA (full SHA) record the source change and are immutable after creation.
 // kind records how the service's artifact is parsed (dbt manifest.json or python
-// contract.yaml) and is immutable after creation.
-func New(id, changedService, imageTag string, bootstrap bool, repo, commitSHA string, kind ManifestKind, now time.Time) *Release {
+// contract.yaml) and is immutable after creation. shadow marks a fix-verification
+// release posted by remediation-agent: it runs the normal pipeline but stops at
+// StatusValidated instead of promoting, and is immutable after creation like
+// bootstrap.
+func New(id, changedService, imageTag string, bootstrap, shadow bool, repo, commitSHA string, kind ManifestKind, now time.Time) *Release {
 	return &Release{
 		id:             id,
 		status:         StatusReceived,
 		imageTags:      map[string]string{changedService: imageTag},
 		changedService: changedService,
 		bootstrap:      bootstrap,
+		shadow:         shadow,
 		repo:           repo,
 		commitSHA:      commitSHA,
 		createdAt:      now,
@@ -140,6 +149,7 @@ func (r *Release) Status() Status               { return r.status }
 func (r *Release) ImageTags() map[string]string { return r.imageTags }
 func (r *Release) ChangedService() string       { return r.changedService }
 func (r *Release) IsBootstrap() bool            { return r.bootstrap }
+func (r *Release) IsShadow() bool               { return r.shadow }
 func (r *Release) Repo() string                 { return r.repo }
 func (r *Release) CommitSHA() string            { return r.commitSHA }
 func (r *Release) CodeBundleURI() string        { return r.codeBundleURI }
@@ -311,6 +321,18 @@ func (r *Release) TransitionToPromoted(now time.Time) error {
 	return nil
 }
 
+// TransitionToValidated ends a shadow release in Validated: it completed
+// validation but, unlike a normal release, stops here instead of promoting.
+func (r *Release) TransitionToValidated(now time.Time) error {
+	if r.status != StatusValidating {
+		return fmt.Errorf("cannot transition to validated from %s", r.status)
+	}
+	r.status = StatusValidated
+	r.resolvedAt = &now
+	r.transitions = append(r.transitions, Transition{To: StatusValidated, At: now})
+	return nil
+}
+
 // TransitionToRejected ends the release in Rejected. detail is the
 // operator-facing explanation shown on the release page and carried as
 // error_detail on release.rejected:v1; pass "" when the path has none.
@@ -344,6 +366,7 @@ type RehydrateInput struct {
 	CreatedAt         time.Time
 	Transitions       []Transition
 	Bootstrap         bool
+	Shadow            bool
 	Repo              string
 	CommitSHA         string
 	CodeBundleURI     string
@@ -367,6 +390,7 @@ func Rehydrate(in RehydrateInput) *Release {
 		createdAt:         in.CreatedAt,
 		transitions:       in.Transitions,
 		bootstrap:         in.Bootstrap,
+		shadow:            in.Shadow,
 		repo:              in.Repo,
 		commitSHA:         in.CommitSHA,
 		codeBundleURI:     in.CodeBundleURI,

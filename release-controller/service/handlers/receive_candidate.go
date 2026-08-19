@@ -28,6 +28,11 @@ type ReceiveCandidateInput struct {
 	// untouched) or "python" (contract.yaml, uploaded by the domain repo's CI
 	// before this POST). Anything else is rejected (HTTP 400).
 	Kind string `json:"kind"`
+	// Shadow marks a fix-verification release posted by remediation-agent: it
+	// runs the normal parse+validation pipeline but stops at StatusValidated
+	// instead of promoting to production. Absent means false — the default
+	// for every existing caller.
+	Shadow bool `json:"shadow"`
 }
 
 func (i ReceiveCandidateInput) validate() error {
@@ -82,7 +87,7 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 		return u.Commit()
 	}
 
-	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, kind, d.Clock.Now())
+	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Shadow, in.Repo, in.CommitSHA, kind, d.Clock.Now())
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
