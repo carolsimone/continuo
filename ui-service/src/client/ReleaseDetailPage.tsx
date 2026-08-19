@@ -16,7 +16,7 @@ const MAX_POLLS = Math.floor(MAX_POLL_MS / POLL_INTERVAL_MS);
 // Release statuses that will never change again. Per-node validation results land
 // incrementally while the release is still progressing (e.g. 'validating'), so the
 // detail page polls until the release reaches one of these, then stops.
-const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'rejected', 'superseded']);
+const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'validated', 'rejected', 'superseded']);
 
 function LogView({ uri }: { uri: string }) {
   const [open, setOpen] = useState(false);
@@ -207,6 +207,9 @@ export default function ReleaseDetailPage() {
       <header className="page-header">
         <button type="button" className="detail-back-link" onClick={() => navigate('/?tab=releases')}>← Back</button>
         <div className="detail-page-title">{rel.release_id}</div>
+        {rel.shadow && (
+          <span className="pill-sm pill-sm--verification">fix verification run</span>
+        )}
         <span className={`pill ${releasePillClass(rel.status)}`}>{rel.status}</span>
       </header>
 

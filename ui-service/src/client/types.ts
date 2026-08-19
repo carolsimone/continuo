@@ -124,11 +124,12 @@ export interface TopologyListResponse {
 
 export interface ReleaseListItem {
   release_id: string;
-  status: string; // received|compiling|parsing|seed_building|validating|promoted|rejected|superseded
+  status: string; // received|compiling|parsing|seed_building|validating|promoted|validated|rejected|superseded
   created_at: string;
   resolved_at: string | null;
   node_count: number;
   bootstrap: boolean;
+  shadow: boolean;
   reject_reason?: string;
 }
 
@@ -167,8 +168,8 @@ export interface ReleaseDetail {
   failing_nodes: string[] | null;
   per_node_results: NodeValidationResult[] | null;
   image_tags: Record<string, string>;
-  manifests_uri: string;
   bootstrap: boolean;
+  shadow: boolean;
 }
 
 export interface NodeSummary {
