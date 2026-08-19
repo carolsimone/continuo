@@ -161,8 +161,12 @@ export default function ReleaseDetailPage() {
   // chip and then the "Proposed fix available →" link without a manual refresh.
   // Polling runs only while a failed node has not yet reached a ready proposal,
   // stops once every failed node has one, and is capped so unhealable failures
-  // (which never produce a ready proposal) do not poll forever. Errors are
-  // swallowed so a transient failure never breaks the page; the next tick retries.
+  // (which never produce a ready proposal) do not poll forever. The cap is
+  // suspended while any failed node's fix is 'verifying': that verdict comes
+  // from a whole release the backend runs behind a global queue, which routinely
+  // outlasts the cap, and it always arrives — the backend ends the attempt
+  // itself if the release never answers. Errors are swallowed so a transient
+  // failure never breaks the page; the next tick retries.
   useEffect(() => {
     if (!id || !isRejected) return;
     const failed = failedKey ? failedKey.split('\n') : [];
@@ -176,6 +180,14 @@ export default function ReleaseDetailPage() {
     // already found every proposal and stopped polling.
     let issued = 0;
     let applied = 0;
+    // Whether the last applied response showed a fix a shadow release is still
+    // judging. Such a verdict is coming — the backend runs a whole release to
+    // produce it, behind a global release queue, and ends the attempt itself if
+    // it never arrives — so the cap below, which exists for failures that will
+    // never be healed at all, must not apply while one is outstanding.
+    // Otherwise a healthy transition to 'proposed' lands after polling stopped
+    // and the page sits on "Verifying fix…" until someone reloads it.
+    let verifying = false;
 
     const stop = () => {
       if (timer !== undefined) {
@@ -201,6 +213,7 @@ export default function ReleaseDetailPage() {
             if (!current || FIX_STATE_RANK[p.status] > FIX_STATE_RANK[current]) byKey.set(k, p.status);
           }
           setFixState(byKey);
+          verifying = failed.some(k => byKey.get(k) === 'verifying');
           // Stop only when every failed node has a ready fix; keep polling through
           // the generating→proposed swap and until the cap for unhealable nodes.
           if (failed.every(k => byKey.get(k) === 'proposed')) stop();
@@ -215,7 +228,7 @@ export default function ReleaseDetailPage() {
     if (failed.length > 0) {
       timer = setInterval(() => {
         polls += 1;
-        if (polls > MAX_POLLS) { stop(); return; }
+        if (polls > MAX_POLLS && !verifying) { stop(); return; }
         refresh();
       }, POLL_INTERVAL_MS);
     }
