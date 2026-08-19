@@ -99,6 +99,23 @@ func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
 		"service field must be decoded so proposeFromSource can skip the NodeLocator lookup")
 }
 
+// TestTriggerFromRequested_DecodesErrorExcerpt verifies that a
+// remediation.requested:v1 payload's error_excerpt field decodes onto
+// trigger.ErrorExcerpt, so downstream fixers have the failure text without an
+// extra evidence fetch.
+func TestTriggerFromRequested_DecodesErrorExcerpt(t *testing.T) {
+	raw := []byte(`{"source":"validation","release_id":"rel-1","node_id":"analytics.orders",` +
+		`"error_signature":"sig-1","category":"sql_error",` +
+		`"error_excerpt":"column \"x\" does not exist"}`)
+	tr, err := triggerFromRequested(goredis.XMessage{ID: "1-1"}, raw)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if tr.ErrorExcerpt != `column "x" does not exist` {
+		t.Fatalf("ErrorExcerpt = %q", tr.ErrorExcerpt)
+	}
+}
+
 func TestTriggerFromRequested_DecodesReasonAndBundleURI(t *testing.T) {
 	raw := []byte(`{"source":"validation","release_id":"rel-1","node_id":"analytics.orders",` +
 		`"error_signature":"sig-1","category":"sql_error","reason":"missing_column",` +

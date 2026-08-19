@@ -31,7 +31,10 @@ type requestedPayload struct {
 	// Reason is the classifier's finer-grained reason within Category; with
 	// Category it forms the fallback precedent-lookup key when the exact
 	// signature has no recorded matches.
-	Reason               string `json:"reason"`
+	Reason string `json:"reason"`
+	// ErrorExcerpt is the classifier's key error line for this failure (capped
+	// at 4 KiB).
+	ErrorExcerpt         string `json:"error_excerpt"`
 	DBTLogURI            string `json:"dbt_log_uri"`
 	CandidateArtifactURI string `json:"candidate_artifact_uri"`
 	// CodeBundleURI locates the release's code-bundle document, which carries
@@ -73,6 +76,7 @@ func triggerFromRequested(msg goredis.XMessage, raw []byte) (handlers.Trigger, e
 		Category:             p.Category,
 		ErrorSignature:       p.ErrorSignature,
 		Reason:               p.Reason,
+		ErrorExcerpt:         p.ErrorExcerpt,
 		DBTLogURI:            p.DBTLogURI,
 		CandidateArtifactURI: p.CandidateArtifactURI,
 		CodeBundleURI:        p.CodeBundleURI,

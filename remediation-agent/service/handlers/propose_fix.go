@@ -39,7 +39,10 @@ type Trigger struct {
 	// Reason is the classifier's finer-grained reason within Category; with
 	// Category it forms the fallback precedent-lookup key when the exact
 	// signature has no recorded matches.
-	Reason               string
+	Reason string
+	// ErrorExcerpt is the classifier's key error line for this failure (capped
+	// at 4 KiB).
+	ErrorExcerpt         string
 	DBTLogURI            string
 	CandidateArtifactURI string
 	// CodeBundleURI locates the release's code-bundle document, which carries
@@ -174,6 +177,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		ErrorSignature:       t.ErrorSignature,
 		Category:             t.Category,
 		Reason:               t.Reason,
+		ErrorExcerpt:         t.ErrorExcerpt,
 		Repo:                 t.Repo,
 		CommitSHA:            t.CommitSHA,
 		FilePath:             t.FilePath,

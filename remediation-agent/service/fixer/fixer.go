@@ -39,11 +39,14 @@ type Input struct {
 	Category string
 	// Reason is the classifier's finer-grained reason within the failure
 	// category.
-	Reason    string
-	Repo      string
-	CommitSHA string
-	FilePath  string
-	Service   string
+	Reason string
+	// ErrorExcerpt is the classifier's key error line for this failure (capped
+	// at 4 KiB).
+	ErrorExcerpt string
+	Repo         string
+	CommitSHA    string
+	FilePath     string
+	Service      string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
 	// or python-model), set on validation and duplicate-relation failures.
 	// Both the validation and duplicate-table Fixers check it before reading
