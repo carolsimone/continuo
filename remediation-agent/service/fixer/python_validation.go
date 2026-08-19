@@ -2,6 +2,8 @@ package fixer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -223,12 +225,46 @@ func splitNodeID(nodeID string) (schema, table string, ok bool) {
 	return schema, table, true
 }
 
+// maxShadowReleaseIDLen bounds the minted id so every name derived from it
+// downstream stays legal. The tightest consumer is the candidate schema
+// release-controller creates for the release, built as "_candidate_" followed
+// by the release id with every character outside [A-Za-z0-9_] replaced
+// one-for-one — so the schema is exactly 11 bytes longer than the id.
+// PostgreSQL truncates an identifier past 63 bytes rather than rejecting it,
+// and what it cuts is the tail: the attempt suffix, then the node name. Two
+// attempts at one node would then share a schema and each would validate
+// against the other's leftovers, so the id is bounded here instead.
+const maxShadowReleaseIDLen = 63 - len("_candidate_")
+
+// shadowIDPrefix marks a release as a fix verification at a glance, in release
+// listings and in every log line that names one.
+const shadowIDPrefix = "shadow-"
+
 // shadowReleaseID mints the id of the release that verifies this attempt. It
 // embeds the failing release, node, and attempt so it is unique per attempt and
 // legible in release listings, and so a redelivery of the same attempt reuses
 // the same id — release-controller's submission is idempotent on it.
+//
+// Past maxShadowReleaseIDLen the middle — the failing release and node — is
+// shortened and given a digest of what it held. The prefix and the attempt
+// number are kept whole because they are what a reader identifies the release
+// by, and the digest is what keeps two nodes whose names diverge only past the
+// cut on separate candidate schemas.
 func shadowReleaseID(in Input) string {
-	return fmt.Sprintf("shadow-%s-%s-a%d", in.ReleaseID, sanitizeIDSegment(in.NodeID), in.Attempt)
+	middle := sanitizeIDSegment(in.ReleaseID) + "-" + sanitizeIDSegment(in.NodeID)
+	suffix := fmt.Sprintf("-a%d", in.Attempt)
+	if len(shadowIDPrefix)+len(middle)+len(suffix) <= maxShadowReleaseIDLen {
+		return shadowIDPrefix + middle + suffix
+	}
+	digest := sha256.Sum256([]byte(middle))
+	tail := hex.EncodeToString(digest[:4]) // 8 hex chars
+	// Reserve the digest and its separator before cutting, so shortening eats
+	// the readable head rather than the part that restores uniqueness.
+	budget := maxShadowReleaseIDLen - len(shadowIDPrefix) - len(suffix) - len(tail) - 1
+	if budget < 0 {
+		budget = 0
+	}
+	return shadowIDPrefix + strings.TrimRight(middle[:budget], "-") + "-" + tail + suffix
 }
 
 // sanitizeIDSegment reduces a value to the characters a release id and the S3

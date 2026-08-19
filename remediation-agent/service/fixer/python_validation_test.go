@@ -612,3 +612,70 @@ func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
 	require.NoError(t, rerr)
 	require.Equal(t, declaringYAML, string(b))
 }
+
+// TestShadowReleaseID_BoundedForTheCandidateSchema pins the length rule the
+// minted id has to satisfy, and what survives when it cannot be satisfied
+// verbatim.
+//
+// The id is not just a label: release-controller derives the release's
+// candidate schema from it, as "_candidate_" plus the id with every character
+// outside [A-Za-z0-9_] replaced one-for-one. PostgreSQL silently truncates an
+// identifier past 63 bytes, and what truncation removes is exactly the tail
+// that discriminates one attempt from another — so two attempts at the same
+// node would share a schema and each would validate against the other's
+// leftovers. That is a wrong verdict, which is the one output this lane exists
+// to produce.
+func TestShadowReleaseID_BoundedForTheCandidateSchema(t *testing.T) {
+	// A node name long enough to push the untruncated id past the bound.
+	longNode := "analytics.py_daily_kpis_by_region_and_channel"
+
+	t.Run("a short id is left readable", func(t *testing.T) {
+		in := pythonInput()
+		require.Equal(t, wantShadowID, shadowReleaseID(in),
+			"an id that already fits must not be hashed")
+	})
+
+	t.Run("an overlong id is bounded", func(t *testing.T) {
+		in := pythonInput()
+		in.NodeID = longNode
+		in.ReleaseID = "rel-c627c38-111"
+		id := shadowReleaseID(in)
+		require.Greater(t, len("shadow-"+in.ReleaseID+"-"+in.NodeID+"-a1"), maxShadowReleaseIDLen,
+			"fixture check: this input must actually overflow, or the test proves nothing")
+		require.LessOrEqual(t, len(id), maxShadowReleaseIDLen)
+	})
+
+	t.Run("the prefix and the attempt survive truncation", func(t *testing.T) {
+		in := pythonInput()
+		in.NodeID = longNode
+		in.Attempt = 2
+		id := shadowReleaseID(in)
+		require.True(t, strings.HasPrefix(id, "shadow-"),
+			"every log line and UI row reads the shadow- prefix")
+		require.True(t, strings.HasSuffix(id, "-a2"),
+			"the attempt number is what tells two attempts at one node apart")
+	})
+
+	t.Run("two attempts at one node stay distinct", func(t *testing.T) {
+		a1, a2 := pythonInput(), pythonInput()
+		a1.NodeID, a2.NodeID = longNode, longNode
+		a1.Attempt, a2.Attempt = 1, 2
+		require.NotEqual(t, shadowReleaseID(a1), shadowReleaseID(a2))
+	})
+
+	t.Run("nodes differing only past the cut stay distinct", func(t *testing.T) {
+		a, b := pythonInput(), pythonInput()
+		a.NodeID = longNode + "_north"
+		b.NodeID = longNode + "_south"
+		require.NotEqual(t, shadowReleaseID(a), shadowReleaseID(b),
+			"truncation alone would map both to one schema")
+	})
+
+	t.Run("the same input always mints the same id", func(t *testing.T) {
+		in := pythonInput()
+		in.NodeID = longNode
+		require.Equal(t, shadowReleaseID(in), shadowReleaseID(in),
+			"release-controller's submission is idempotent on this id, so a "+
+				"redelivered attempt must resubmit under the same one")
+	})
+}
