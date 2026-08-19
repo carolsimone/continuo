@@ -181,10 +181,10 @@ func (r *fakeProposalRepo) InsertGenerating(_ context.Context, p proposal.Propos
 	return nil
 }
 
-func (r *fakeProposalRepo) FailGenerating(_ context.Context, source, nodeID, errorSignature, reason string) (int, error) {
+func (r *fakeProposalRepo) FailGenerating(_ context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error) {
 	n := 0
 	for _, v := range r.rows {
-		if v.Status != proposal.StatusGenerating ||
+		if v.Status != proposal.StatusGenerating || v.ReleaseID != releaseID ||
 			v.Source != source || v.NodeID != nodeID || v.ErrorSignature != errorSignature {
 			continue
 		}

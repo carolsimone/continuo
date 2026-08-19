@@ -333,7 +333,10 @@ func (r *Reconciler) retry(ctx context.Context, v proposal.View) {
 }
 
 // abandonInFlight closes out the in-flight row a next attempt left behind when
-// it could not start.
+// it could not start. It names the release the attempt belongs to, so a
+// concurrent attempt at the same node and the same failure under a DIFFERENT
+// release — an ordinary situation, since the two share a source, node id and
+// error signature — is neither failed nor charged an attempt for this one.
 //
 // The driver commits a 'generating' row of its own, in its own transaction,
 // immediately before calling the model — that row is what the release page
@@ -352,7 +355,7 @@ func (r *Reconciler) abandonInFlight(ctx context.Context, v proposal.View, cause
 	}
 	defer func() { _ = u.Rollback() }()
 
-	n, err := u.ProposalRepo().FailGenerating(ctx, v.Source, v.NodeID, v.ErrorSignature,
+	n, err := u.ProposalRepo().FailGenerating(ctx, v.ReleaseID, v.Source, v.NodeID, v.ErrorSignature,
 		"the next fix attempt could not be started: "+cause.Error())
 	if err != nil {
 		r.logger.Warn("shadow verify: abandon in-flight attempt",

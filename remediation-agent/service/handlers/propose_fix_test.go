@@ -209,11 +209,11 @@ func (r *fakeProposalRepo) InsertGenerating(_ context.Context, p proposal.Propos
 	return nil
 }
 
-func (r *fakeProposalRepo) FailGenerating(_ context.Context, source, nodeID, errorSignature, reason string) (int, error) {
+func (r *fakeProposalRepo) FailGenerating(_ context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error) {
 	n := 0
 	for i := range r.generating {
 		g := &r.generating[i]
-		if g.Status != proposal.StatusGenerating ||
+		if g.Status != proposal.StatusGenerating || g.ReleaseID != releaseID ||
 			g.Source != source || g.NodeID != nodeID || g.ErrorSignature != errorSignature {
 			continue
 		}

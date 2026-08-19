@@ -71,16 +71,26 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 	return nil
 }
 
-// FailGenerating finalizes every in-flight 'generating' row for the
-// (source, node_id, error_signature) triple, recording reason as the
-// rationale, and returns how many rows moved. The status filter is what makes
-// it safe to run at any time: a row that has already reached a terminal state
-// is left exactly as it is.
-func (r *ProposalRepository) FailGenerating(ctx context.Context, source, nodeID, errorSignature, reason string) (int, error) {
+// FailGenerating finalizes the in-flight 'generating' row of the
+// (release_id, source, node_id, error_signature) attempt, recording reason as
+// the rationale, and returns how many rows moved.
+//
+// The release is part of the match, not a detail: the same node failing the
+// same way in two releases at once is ordinary, and both rows carry the same
+// source, node id and error signature. Without the release the update would
+// reach into another release's in-flight attempt, marking it failed and — since
+// the driver counts terminal rows — spending one of the attempts that release
+// was allowed on a failure that happened elsewhere. Within one release only one
+// attempt per (source, node) can be generating at a time, so this matches at
+// most one row.
+//
+// The status filter is what makes it safe to run at any time: a row that has
+// already reached a terminal state is left exactly as it is.
+func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$5, rationale=$4
-		  WHERE source=$1 AND node_id=$2 AND error_signature=$3 AND status=$6`,
-		source, nodeID, errorSignature, reason,
+		`UPDATE proposal SET status=$6, rationale=$5
+		  WHERE release_id=$1 AND source=$2 AND node_id=$3 AND error_signature=$4 AND status=$7`,
+		releaseID, source, nodeID, errorSignature, reason,
 		proposal.StatusFailed, proposal.StatusGenerating)
 	if err != nil {
 		return 0, fmt.Errorf("fail generating proposals: %w", err)

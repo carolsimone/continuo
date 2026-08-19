@@ -102,9 +102,9 @@ type ProposalRepository interface {
 	// no-op, so at most one generating row exists per attempt.
 	InsertGenerating(ctx context.Context, p proposal.Proposal) error
 
-	// FailGenerating finalizes every in-flight 'generating' row recorded for the
-	// (source, nodeID, errorSignature) triple, transitioning it to 'failed' with
-	// reason as its rationale, and returns how many rows it moved.
+	// FailGenerating finalizes the in-flight 'generating' row recorded for the
+	// (releaseID, source, nodeID, errorSignature) attempt, transitioning it to
+	// 'failed' with reason as its rationale, and returns how many rows it moved.
 	//
 	// It exists for the one writer that starts an attempt with nothing behind it
 	// to redeliver. A trigger consumed from the stream is redelivered when the
@@ -113,7 +113,12 @@ type ProposalRepository interface {
 	// from a release's verdict instead, so when the driver errors there the row
 	// stays in flight with nothing that will ever finish it — and every reader,
 	// the release page included, keeps reporting a fix as still being generated.
-	FailGenerating(ctx context.Context, source, nodeID, errorSignature, reason string) (int, error)
+	//
+	// releaseID scopes the write to the attempt that actually failed. The same
+	// node failing the same way under two releases at once shares a source, node
+	// id and error signature, so without it this would fail an unrelated
+	// release's in-flight attempt and spend one of that release's attempts.
+	FailGenerating(ctx context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error)
 
 	// Upsert records the terminal outcome of an attempt on the natural key
 	// (release_id, source, node_id, attempt): it finalizes the in-flight

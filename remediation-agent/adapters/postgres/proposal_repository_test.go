@@ -1582,11 +1582,10 @@ func TestList_FilterByFailingNode(t *testing.T) {
 }
 
 // TestProposalRepositoryFailGenerating verifies that FailGenerating closes out
-// only the in-flight rows of the failure it names: a 'generating' row for that
-// (source, node_id, error_signature) triple becomes 'failed' with the reason as
-// its rationale, while a row already terminal and a row belonging to a
-// different failure are both left exactly as they were. Running it again moves
-// nothing, since no row is generating any more.
+// only the in-flight row of the attempt it names: that row becomes 'failed'
+// with the reason as its rationale, while a row already terminal and a row
+// belonging to a different failure are both left exactly as they were. Running
+// it again moves nothing, since no row is generating any more.
 func TestProposalRepositoryFailGenerating(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -1613,7 +1612,7 @@ func TestProposalRepositoryFailGenerating(t *testing.T) {
 	other.ErrorSignature = "sig-fg-2"
 	require.NoError(t, repo.InsertGenerating(ctx, other))
 
-	n, err := repo.FailGenerating(ctx, "validation", "analytics.py_kpis", "sig-fg-1",
+	n, err := repo.FailGenerating(ctx, "rel-fg-1", "validation", "analytics.py_kpis", "sig-fg-1",
 		"the next fix attempt could not be started: github unreachable")
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "only the named failure's in-flight row may move")
@@ -1639,7 +1638,54 @@ func TestProposalRepositoryFailGenerating(t *testing.T) {
 	require.Equal(t, string(proposal.StatusGenerating), otherStatus,
 		"another failure's in-flight attempt must be left alone")
 
-	n, err = repo.FailGenerating(ctx, "validation", "analytics.py_kpis", "sig-fg-1", "again")
+	n, err = repo.FailGenerating(ctx, "rel-fg-1", "validation", "analytics.py_kpis", "sig-fg-1", "again")
 	require.NoError(t, err)
 	require.Zero(t, n, "a second call moves nothing: no row is generating any more")
+}
+
+// TestProposalRepositoryFailGenerating_LeavesAnotherReleasesAttemptAlone is the
+// case a (source, node_id, error_signature) match cannot distinguish, and the
+// one that makes this write dangerous.
+//
+// The same node failing the same way in two releases at once is ordinary — a
+// re-release of the same broken commit, or two candidates in flight — and both
+// carry the same source, node id and error signature. A write matching on that
+// triple alone reaches into the other release and marks its in-flight attempt
+// failed, which is both a wrong record and a spent attempt: the driver counts
+// terminal rows, so a release loses one of the attempts it is allowed to a
+// failure that happened somewhere else entirely.
+func TestProposalRepositoryFailGenerating_LeavesAnotherReleasesAttemptAlone(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	mine := proposal.Proposal{
+		Source: "validation", ReleaseID: "rel-mine", NodeID: "analytics.py_kpis",
+		ErrorSignature: "sig-shared", Attempt: 2, Status: proposal.StatusGenerating,
+		CreatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, repo.InsertGenerating(ctx, mine))
+
+	// The same node, failing the same way, being fixed under a different
+	// release — in flight at the same moment.
+	theirs := mine
+	theirs.ReleaseID = "rel-theirs"
+	require.NoError(t, repo.InsertGenerating(ctx, theirs))
+
+	n, err := repo.FailGenerating(ctx, "rel-mine", "validation", "analytics.py_kpis", "sig-shared",
+		"the next fix attempt could not be started: github unreachable")
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "exactly one row — this release's own in-flight attempt — may move")
+
+	var theirStatus string
+	require.NoError(t, db.GetContext(ctx, &theirStatus,
+		`SELECT status FROM proposal WHERE release_id=$1 AND node_id=$2 AND attempt=$3`,
+		"rel-theirs", "analytics.py_kpis", 2))
+	require.Equal(t, string(proposal.StatusGenerating), theirStatus,
+		"another release's in-flight attempt must not be failed, nor its attempt budget spent")
+
+	count, err := repo.CountAttempts(ctx, "validation", "analytics.py_kpis", "sig-shared")
+	require.NoError(t, err)
+	require.Equal(t, 1, count,
+		"only the attempt that actually failed may count against the shared per-failure budget")
 }
