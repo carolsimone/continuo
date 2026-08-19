@@ -75,3 +75,20 @@ type Proposal struct {
 	Model     string
 	CreatedAt time.Time
 }
+
+// NormalizeSingleFileView enforces that FilePath, ProposedSQLURI, and DiffURI
+// are the single-file view of the proposal: edits[0] when Edits is
+// non-empty, otherwise the candidate-only fix artifact already held in those
+// fields. When Edits is non-empty it overwrites the three scalars with
+// Edits[0]'s Path, ContentURI, and DiffURI, so they cannot name a different
+// file or artifact than the first edit. When Edits is empty it leaves the
+// scalars untouched, since they are then the only record of the fix.
+func (p *Proposal) NormalizeSingleFileView() {
+	if len(p.Edits) == 0 {
+		return
+	}
+	first := p.Edits[0]
+	p.FilePath = first.Path
+	p.ProposedSQLURI = first.ContentURI
+	p.DiffURI = first.DiffURI
+}
