@@ -31,8 +31,13 @@ type fakeK8sClient struct {
 	err         error
 	labels      map[string]string
 	annotations map[string]string
-	podLog      string // full pod log returned by GetPodLogs (tail mirrors it)
-	podLogsErr  error  // when set, GetPodLogs fails
+	podLog      string // full pod log returned by GetPodLogs (tail mirrors it unless tailLog is set)
+	// tailLog, when non-empty, is returned as the tail distinctly from podLog
+	// (the full log) — GetPodLogs fetches the two independently in the real
+	// k8s client and each soft-fails on its own, so a test can exercise an
+	// empty full log whose tail still carries the complete sentinel block.
+	tailLog    string
+	podLogsErr error // when set, GetPodLogs fails
 	// blockPodLogs makes GetPodLogs hang until its context expires, standing in
 	// for an unreachable kubelet or a stalled API read.
 	blockPodLogs bool
@@ -50,7 +55,11 @@ func (f *fakeK8sClient) GetPodLogs(ctx context.Context, _, _ string, _ int64) (s
 	if f.podLogsErr != nil {
 		return "", "", f.podLogsErr
 	}
-	return f.podLog, f.podLog, nil
+	tail := f.podLog
+	if f.tailLog != "" {
+		tail = f.tailLog
+	}
+	return f.podLog, tail, nil
 }
 
 func (f *fakeK8sClient) GetJobMeta(_ context.Context, _, _ string) (labels, annotations map[string]string, err error) {
@@ -1378,28 +1387,6 @@ func keysOf(m map[string]string) []string {
 	return out
 }
 
-func TestSplitValidationResult(t *testing.T) {
-	log := "line a\nline b\n" +
-		"===CONTINUO_VALIDATION_RESULT_BEGIN===\n" +
-		`{"schema_version":1,"status":"error","message":"boom","failures":0,"unique_id":"model.svc.x"}` + "\n" +
-		"===CONTINUO_VALIDATION_RESULT_END===\n"
-	clean, structured := handlers.SplitValidationResult(log)
-	if strings.Contains(clean, "CONTINUO_VALIDATION_RESULT") {
-		t.Fatalf("clean log still contains sentinel: %q", clean)
-	}
-	if !strings.Contains(structured, `"status":"error"`) {
-		t.Fatalf("structured JSON not extracted: %q", structured)
-	}
-
-	clean2, structured2 := handlers.SplitValidationResult("just a normal log\n")
-	if structured2 != "" {
-		t.Fatalf("expected no structured block, got %q", structured2)
-	}
-	if clean2 != "just a normal log\n" {
-		t.Fatalf("clean log altered when no block present: %q", clean2)
-	}
-}
-
 // repeatStr returns s repeated n times.
 func repeatStr(s string, n int) string {
 	out := ""
@@ -1947,6 +1934,248 @@ func TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI(t *testing.T) {
 	}
 	if strings.Contains(string(entry.Payload), "run_results_uri") {
 		t.Errorf("dbt payload must not carry run_results_uri, got %s", entry.Payload)
+	}
+}
+
+// TestHandleFailedPermanent_SentinelMessageAsErrorMessage verifies a permanently
+// failed python node's error_message is the sentinel block's decoded message,
+// not the noisy log tail around it — the real cause ("ConformError: ...") wins
+// over marker text and truncated stack chatter.
+func TestHandleFailedPermanent_SentinelMessageAsErrorMessage(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: failedResult(),
+		podLog: pythonResultBlockLog("error", "ConformError: column 'id' cannot be safely cast to INTEGER"),
+	}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-failed",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the sentinel block's message %q, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_NoSentinelBlock_ErrorMessageIsRawTail pins the dbt
+// case: a pod log with no sentinel block must keep reporting the raw log tail
+// byte-for-byte, unaffected by the new sentinel-message precedence.
+func TestHandleFailedPermanent_NoSentinelBlock_ErrorMessageIsRawTail(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{status: failedResult(), podLog: "Database Error in model orders\n"}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-dbt-failed",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "Database Error in model orders\n"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected raw log tail %q unchanged, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_SuccessBlockDoesNotOverrideTail guards a pod that
+// ran successfully and then crashed (e.g. a container-level failure after the
+// dbt/python step completed): its sentinel block reports status:"success", and
+// that block's message must never become the error_message — a post-success
+// crash must not surface "rows=42" as its cause.
+func TestHandleFailedPermanent_SuccessBlockDoesNotOverrideTail(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	rawLog := pythonResultBlockLog("success", "rows=42")
+	k8s := &fakeK8sClient{status: failedResult(), podLog: rawLog}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-crash-after-success",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	if payload.ErrorMessage == "rows=42" {
+		t.Fatal("a success-status sentinel block's message must not become the error_message")
+	}
+	if payload.ErrorMessage != rawLog {
+		t.Errorf("error_message: expected fallback to the raw log tail %q, got %q", rawLog, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_SentinelMessageWithStderrPreamble guards against
+// regressing the fix from remediation commit 36b622c6 ("tolerate stderr
+// preamble around structured result"): real pod logs can carry a stderr
+// preamble before the JSON object, and trailing text after it, inside the
+// sentinel markers — not just the bare JSON pythonResultBlockLog emits. A
+// strict decode over the whole inter-marker body fails on that shape, so
+// sentinelErrMsg would silently stay empty and this feature would be a no-op
+// on exactly the real logs it exists to fix. The block's message must still
+// win.
+func TestHandleFailedPermanent_SentinelMessageWithStderrPreamble(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	podLog := "running node analytics.orders -> analytics.orders\n" +
+		validationresult.SentinelBegin + "\n" +
+		"Traceback (most recent call last):\n" +
+		"  File \"runner.py\", line 42, in <module>\n" +
+		`{"schema_version":1,"status":"error","message":"ConformError: column 'id' cannot be safely cast to INTEGER","failures":1,"unique_id":"analytics.orders"}` + "\n" +
+		"exit code 1\n" +
+		validationresult.SentinelEnd + "\n"
+	k8s := &fakeK8sClient{status: failedResult(), podLog: podLog}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-preamble",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the sentinel block's message %q despite the stderr preamble and trailing text, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedWithRetry_SentinelMessageAsErrorMessage verifies the
+// retry-path copy of the error_message precedence — the one that actually
+// runs on a retryable first failure (max_retries > 0) — also prefers the
+// sentinel block's message. Pins resolveErrorMessage's behavior at the
+// handleFailedWithRetry call site specifically, since it previously had no
+// coverage of its own (only the permanent-failure copy was tested).
+func TestHandleFailedWithRetry_SentinelMessageAsErrorMessage(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: failedResult(),
+		podLog: pythonResultBlockLog("error", "ReadError: unknown read 'orders'"),
+	}
+	handler := newHandler(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-retry-err",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ReadError: unknown read 'orders'"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the sentinel block's message %q on the retry path, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_DecoyStatusBearingPreambleIgnored guards the
+// schema_version + status-vocabulary guard in validationresult.Parse: because
+// the scanner tolerates arbitrary preamble text inside the sentinel markers,
+// an unrelated status-bearing JSON object in that preamble (e.g. a sidecar
+// diagnostic with no schema_version field) must not be mistaken for the
+// contract's result block. The real block's message must win.
+func TestHandleFailedPermanent_DecoyStatusBearingPreambleIgnored(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	podLog := "running node analytics.orders -> analytics.orders\n" +
+		validationresult.SentinelBegin + "\n" +
+		`{"status":"error","message":"sidecar: connection reset"}` + "\n" +
+		`{"schema_version":1,"status":"error","message":"ConformError: column 'id' cannot be safely cast to INTEGER","failures":1,"unique_id":"analytics.orders"}` + "\n" +
+		validationresult.SentinelEnd + "\n"
+	k8s := &fakeK8sClient{status: failedResult(), podLog: podLog}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-decoy-preamble",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the real contract block's message %q, got the decoy or something else: %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_DecoyWrongSchemaVersionIgnored proves schema_version
+// specifically is what discriminates a real contract block from a decoy, not
+// mere field presence: a decoy carrying a well-formed but wrong schema_version
+// must still be skipped in favor of the real (schema_version:1) block.
+func TestHandleFailedPermanent_DecoyWrongSchemaVersionIgnored(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	podLog := "running node analytics.orders -> analytics.orders\n" +
+		validationresult.SentinelBegin + "\n" +
+		`{"schema_version":2,"status":"error","message":"decoy: wrong schema version"}` + "\n" +
+		`{"schema_version":1,"status":"error","message":"ConformError: column 'id' cannot be safely cast to INTEGER","failures":1,"unique_id":"analytics.orders"}` + "\n" +
+		validationresult.SentinelEnd + "\n"
+	k8s := &fakeK8sClient{status: failedResult(), podLog: podLog}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-decoy-version",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the schema_version:1 block's message %q, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_EmptyFullLog_SentinelMessageFromTail guards the
+// GetPodLogs soft-fail seam: the full log and the tail are fetched
+// independently and each can fail on its own, so the full log can come back
+// empty while the tail — the pod's last output, which is exactly where the
+// sentinel block sits — still carries the complete block. error_message must
+// fall back to parsing the tail in that case rather than reporting the empty
+// (or marker-bearing) tail as-is.
+func TestHandleFailedPermanent_EmptyFullLog_SentinelMessageFromTail(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status:  failedResult(),
+		podLog:  "", // full log fetch soft-failed
+		tailLog: pythonResultBlockLog("error", "ConformError: column 'id' cannot be safely cast to INTEGER"),
+	}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-empty-fulllog",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the tail's sentinel block message %q, got %q", want, payload.ErrorMessage)
 	}
 }
 

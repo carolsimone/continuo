@@ -173,6 +173,43 @@ func TestClassifyFailure_StructuredBranchWinsOverLog(t *testing.T) {
 	}
 }
 
+// TestClassifyFailure_MalformedRunResultsFallsBackToLog confirms the
+// fail-safe path when run_results does not decode as the structured
+// contract (missing schema_version here — the same shape that used to
+// satisfy the old lenient parser but does not satisfy the strict one): the
+// parse error is logged and swallowed, structured stays nil, and
+// classification falls back to the text log rather than using the malformed
+// body's fields or failing the whole classification.
+func TestClassifyFailure_MalformedRunResultsFallsBackToLog(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	ev := failure.FailureEvidence{
+		Source:        failure.SourceValidation,
+		ReleaseID:     "r1",
+		NodeID:        "s.n",
+		DBTLogURI:     "s3://b/log",
+		RunResultsURI: "run-results/x.json",
+	}
+	reader := mapLogReader{byURI: map[string]string{
+		"s3://b/log":         "could not connect to database: connection refused",
+		"run-results/x.json": `{"status":"error","message":"decoy: not a real contract result"}`,
+	}}
+	deps := Deps{
+		NewUoW:    func() uow.UnitOfWork { return u },
+		LogReader: reader,
+		Clock:     fakeClock{},
+		Logger:    slog.Default(),
+	}
+	if err := ClassifyFailure(context.Background(), deps, ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.dec.saved) != 1 || u.dec.saved[0].Category != failure.CategoryInfraTransient {
+		t.Fatalf("expected text-log fallback classification (infra_transient), got %+v", u.dec.saved)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatalf("infra_transient is dropped, not healable → expected 0 triggers, got %d", len(u.ob.entries))
+	}
+}
+
 func TestClassifyFailure_InfraDropsNoTrigger(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n"}

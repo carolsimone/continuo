@@ -130,8 +130,14 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
    - If not found: logText = "" (→ unknown:log_unavailable).
    - If transient S3 error: return error (message stays in PEL, retried).
 2b. If run_results_uri is set: fetch + parse the structured validation result
-    (status/message/failures/unique_id). A transient S3 error returns (retried);
-    a parse failure logs and leaves structured=nil (text-log fallback).
+    (schema_version/status/message/failures/unique_id) via `pkg/validationresult`,
+    the shared Go implementation of this wire contract (also used by
+    k8s-controller). A candidate is accepted only when its schema_version
+    matches the contract and its status is one of success | error | fail |
+    skipped; anything else — no run_results, no matching JSON object, a wrong
+    schema_version, or an unsupported status — is treated the same as a parse
+    failure. A transient S3 error returns (retried); a parse failure logs and
+    leaves structured=nil (text-log fallback).
 2c. Source-path resolution by stage:
     - compile: call ExtractDbtFilePath(logText) to derive the offending
       project-relative source file path from the dbt error output (the log

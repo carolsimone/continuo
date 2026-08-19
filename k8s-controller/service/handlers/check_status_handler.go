@@ -42,27 +42,6 @@ var seedBuildLabelNamespace = uuid.MustParse("c7a3e1d9-5f2b-4e6c-8d0a-1b4f7c2e9a
 // between compile, seed-build, and validation events for the same release.
 var compileLabelNamespace = uuid.MustParse("e2b8d4f6-1a3c-5e7f-9b0d-2c4e6a8f0b2d")
 
-// SplitValidationResult removes the structured-result sentinel block from a
-// validation pod log and returns the cleaned log plus the inner single-line
-// JSON. The sentinel markers are the shared cross-language contract in
-// pkg/validationresult (the Python pod emits them; a guard test binds the two
-// sides). When no well-formed block is present (production jobs, old images,
-// truncated logs) it returns the log unchanged and an empty structured string —
-// the caller then degrades to the text-log-only path.
-func SplitValidationResult(log string) (cleanLog, structuredJSON string) {
-	bi := strings.Index(log, validationresult.SentinelBegin)
-	if bi < 0 {
-		return log, ""
-	}
-	ei := strings.Index(log, validationresult.SentinelEnd)
-	if ei < 0 || ei < bi {
-		return log, ""
-	}
-	inner := strings.TrimSpace(log[bi+len(validationresult.SentinelBegin) : ei])
-	clean := log[:bi] + log[ei+len(validationresult.SentinelEnd):]
-	return clean, strings.TrimSpace(inner)
-}
-
 // K8sStatusChecker defines interface for checking K8s job status
 type K8sStatusChecker interface {
 	GetJobStatus(ctx context.Context, namespace, jobName string) (*model.K8sPodResult, error)
@@ -228,7 +207,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 	// upload soft-fails to an empty key, so S3 being unavailable cannot turn a
 	// success into a failure. The log tail is discarded — a successful
 	// execution carries no error message.
-	executionID, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	executionID, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	// Row 1: task_status_updated. Stamp the attempt that ran (cmd.RetryCount)
 	// so the SUCCEEDED carries the same retry_count as that attempt's RUNNING;
@@ -277,7 +256,7 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -338,7 +317,7 @@ func (h *CheckStatusHandler) handleSeedBuildTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -402,7 +381,7 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, compileArtifactPath(cmd))
+	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, compileArtifactPath(cmd))
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -453,8 +432,10 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 // the pod emitted a structured block, that JSON is uploaded separately under
 // run-results/... and its key returned as runResultsURI. Validation pods and
 // python-model containers emit one; dbt containers do not.
-// Returns the log tail (for error_message), both S3 keys, and a pre-generated
-// execution ID. Each upload soft-fails independently to an empty key on error.
+// Returns the log tail and the sentinel block's message (for error_message —
+// empty when no block is present, the block fails to decode, or its status is
+// "success"), both S3 keys, and a pre-generated execution ID. Each upload
+// soft-fails independently to an empty key on error.
 //
 // All of this I/O runs under its own deadline, derived from — but shorter than —
 // the caller's handler budget. It is best-effort observability that precedes the
@@ -487,7 +468,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	ctx context.Context,
 	cmd command.CheckJobStatus,
 	artifactPath string,
-) (executionID uuid.UUID, logS3Key, runResultsURI, tail string) {
+) (executionID uuid.UUID, logS3Key, runResultsURI, tail, sentinelErrMsg string) {
 	executionID = uuid.New()
 
 	budget := h.config.LogIOTimeout
@@ -503,14 +484,37 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 			"job_name", cmd.JobName,
 			"error", err,
 		)
-		return executionID, "", "", ""
+		return executionID, "", "", "", ""
 	}
 
 	tail = logTail
 
 	// Separate the structured validation-result block (if any) from the text log.
-	// Production jobs never emit the block, so cleanLog == fullLog there.
-	cleanLog, structured := SplitValidationResult(fullLog)
+	// Validation pods and the python production harness emit the block; dbt
+	// production jobs do not, so cleanLog == fullLog for them.
+	cleanLog, structured := validationresult.Split(fullLog)
+
+	// GetPodLogs fetches the full log and the tail independently and each
+	// soft-fails on its own, so the full log can come back empty while the
+	// tail — the pod's last output, which is exactly where the sentinel block
+	// sits — still carries the complete block. This fallback is scoped to the
+	// error message only: cleanLog and the run-results upload below still use
+	// the full-log block exclusively, never the tail's.
+	sentinelJSON := structured
+	if sentinelJSON == "" {
+		_, sentinelJSON = validationresult.Split(tail)
+	}
+
+	// A non-success block's message is the real cause of the failure and is
+	// preferred over the log tail below. A "success" block belongs to a pod
+	// that completed its work and then crashed for an unrelated reason (e.g. a
+	// container-level failure); its message (e.g. "rows=42") describes the
+	// successful run, not the crash, so it must not become the error message.
+	if sentinelJSON != "" {
+		if r, err := validationresult.Parse([]byte(sentinelJSON)); err == nil && r.Status != "success" {
+			sentinelErrMsg = strings.TrimSpace(r.Message)
+		}
+	}
 
 	if cleanLog == "" {
 		h.logger.Warn("Pod log is empty, skipping S3 upload", "job_name", cmd.JobName)
@@ -542,7 +546,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 		}
 	}
 
-	return executionID, logS3Key, runResultsURI, tail
+	return executionID, logS3Key, runResultsURI, tail, sentinelErrMsg
 }
 
 // handleFailedPermanent handles permanently failed jobs (retry_count >= max_retries).
@@ -554,12 +558,8 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount
 
-	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
-
-	errorMsg := h.truncateErrorMessage(logTail)
-	if errorMsg == "" {
-		errorMsg = h.truncateErrorMessage(result.TerminationMsg)
-	}
+	executionID, logS3Key, runResultsURI, logTail, sentinelErrMsg := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	errorMsg := h.resolveErrorMessage(sentinelErrMsg, logTail, result.TerminationMsg)
 
 	// Row 1: task_status_updated (FAILED)
 	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", int32(newRetryCount)); err != nil {
@@ -606,12 +606,8 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
 
-	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
-
-	errorMsg := h.truncateErrorMessage(logTail)
-	if errorMsg == "" {
-		errorMsg = h.truncateErrorMessage(result.TerminationMsg)
-	}
+	executionID, logS3Key, runResultsURI, logTail, sentinelErrMsg := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	errorMsg := h.resolveErrorMessage(sentinelErrMsg, logTail, result.TerminationMsg)
 	newJobName := retryJobName(cmd.JobName, newRetryCount)
 
 	// Row 1: task_status_updated (FAILED). Stamp the attempt that just ran
@@ -912,6 +908,23 @@ func (h *CheckStatusHandler) writeNodeStatusUpdated(
 		Payload:       payload,
 		StreamName:    streams.NodeUpdatedV1,
 	})
+}
+
+// resolveErrorMessage applies the error_message precedence shared by
+// handleFailedPermanent and handleFailedWithRetry: the sentinel block's
+// message wins when present (it is the actual failure cause), else the raw
+// log tail, else the pod's K8s termination message. Each candidate is run
+// through truncateErrorMessage first, so the fallthrough decision is made on
+// the truncated form.
+func (h *CheckStatusHandler) resolveErrorMessage(sentinelErrMsg, tail, terminationMsg string) string {
+	errorMsg := h.truncateErrorMessage(sentinelErrMsg)
+	if errorMsg == "" {
+		errorMsg = h.truncateErrorMessage(tail)
+	}
+	if errorMsg == "" {
+		errorMsg = h.truncateErrorMessage(terminationMsg)
+	}
+	return errorMsg
 }
 
 // truncateErrorMessage truncates error messages to configured max length
