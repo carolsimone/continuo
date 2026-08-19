@@ -5,6 +5,7 @@ package packaging
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -20,6 +21,10 @@ import (
 // ran at all would each surface here as a missing field or a parse failure —
 // the same rejection manifest-controller would give the shadow artifact.
 func TestMerge_ProducesHashFoldedWireContract(t *testing.T) {
+	if _, err := exec.LookPath("continuo-runtime"); err != nil {
+		t.Skipf("continuo-runtime not on PATH (%v): this binary ships only inside the remediation-agent image, not on a bare host or CI runner. It is exercised in CI by the dedicated in-container step that runs this package's integration test inside the running remediation-agent container.", err)
+	}
+
 	repoRoot := t.TempDir()
 	contractDir := filepath.Join(repoRoot, "contracts")
 	scriptsDir := filepath.Join(repoRoot, "scripts")

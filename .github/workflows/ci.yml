@@ -228,6 +228,20 @@ jobs:
         # plus the -tags integration files that the old in-container path missed.
         run: make test-go
 
+      - name: Test remediation-agent/adapters/packaging (in-container)
+        # remediation-agent/adapters/packaging shells out to the continuo-runtime
+        # CLI, which is installed only inside the remediation-agent image
+        # (remediation-agent/Dockerfile.dev), never on the bare CI runner that the
+        # step above runs on. cli_packager_test.go skips itself there for exactly
+        # that reason, which would otherwise let this package's only integration
+        # test pass CI without ever calling the real CLI. Run it here instead,
+        # inside the remediation-agent container that "Wait for service
+        # containers" already confirmed is up, where continuo-runtime is on PATH
+        # and the Go toolchain + this PR's source are both baked into the image.
+        # Every other Go test stays on the runner; this is the one package whose
+        # dependency cannot exist there.
+        run: docker exec remediation-agent go test -tags integration -count=1 ./adapters/packaging/... -v
+
       - name: Test manifest-controller
         run: docker exec manifest-controller uv run pytest -v
 
