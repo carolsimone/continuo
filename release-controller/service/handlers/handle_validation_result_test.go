@@ -457,6 +457,42 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 	var stage string
 	require.NoError(t, json.Unmarshal(topLevel["stage"], &stage))
 	assert.Equal(t, "validation", stage)
+
+	var shadow bool
+	require.NoError(t, json.Unmarshal(topLevel["shadow"], &shadow))
+	assert.False(t, shadow, "a non-shadow release's validation_failed rejection must carry shadow:false")
+}
+
+// TestHandleValidationResult_Shadow_Rejected_CarriesShadowTrue verifies that a
+// shadow release's validation_failed rejection carries shadow:true on
+// release.rejected:v1. This is the case remediation-agent's fix-verification
+// loop hinges on: without this signal, a failed shadow release would be
+// indistinguishable from a normal rejection and remediation would trigger a
+// fresh heal attempt on the release meant to verify one, looping forever.
+func TestHandleValidationResult_Shadow_Rejected_CarriesShadowTrue(t *testing.T) {
+	deps, store := seedToValidatingShadow(t, "rShadowReject")
+	seedValidationNodes(t, deps, "rShadowReject", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/b.log"},
+	})
+
+	err := handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID:       "rShadowReject",
+		AggregateStatus: "failed",
+	})
+	require.NoError(t, err)
+
+	r, err := store.GetRelease("rShadowReject")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusRejected, r.Status())
+
+	entry := outboxEntries(store)[len(outboxEntries(store))-1]
+	assert.Equal(t, streams.ReleaseRejectedV1, entry.StreamName)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	assert.Equal(t, true, payload["shadow"],
+		"a shadow release's validation_failed rejection must carry shadow:true")
 }
 
 // seedToValidatingWithURIs is like seedToValidating but uses a two-node topology

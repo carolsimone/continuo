@@ -69,11 +69,12 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 		return fmt.Errorf("save release: %w", err)
 	}
 
-	payload, err := json.Marshal(map[string]string{
+	payload, err := json.Marshal(map[string]any{
 		"release_id":   in.ReleaseID,
 		"reason":       "parse_failed",
 		"error_class":  in.ErrorClass,
 		"error_detail": in.ErrorDetail,
+		"shadow":       r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -475,11 +476,12 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-	payload, err := json.Marshal(map[string]string{
+	payload, err := json.Marshal(map[string]any{
 		"release_id":   releaseID,
 		"reason":       "unbuildable_cross_service_upstream",
 		"error_class":  "validation_unsupported",
 		"error_detail": detail,
+		"shadow":       r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -620,6 +622,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 		"repo":            r.Repo(),
 		"commit_sha":      r.CommitSHA(),
 		"code_bundle_uri": r.CodeBundleURI(),
+		"shadow":          r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

@@ -116,6 +116,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		"commit_sha":       r.CommitSHA(),
 		"code_bundle_uri":  r.CodeBundleURI(),
 		"candidate_schema": CandidateSchemaFor(in.ReleaseID),
+		"shadow":           r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

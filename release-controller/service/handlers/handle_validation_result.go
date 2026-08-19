@@ -325,6 +325,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		"repo":             r.Repo(),
 		"commit_sha":       r.CommitSHA(),
 		"code_bundle_uri":  r.CodeBundleURI(),
+		"shadow":           r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

@@ -189,6 +189,65 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 
 	last := entries[2]
 	assert.Equal(t, streams.ReleaseRejectedV1, last.StreamName)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(last.Payload, &payload))
+	assert.Equal(t, false, payload["shadow"],
+		"a non-shadow release's parse_failed rejection must carry shadow:false")
+}
+
+// seedToParsingShadow mirrors seedToParsing but registers the release with
+// Shadow: true, so a rejection emitted from the parsing leg can be asserted
+// to carry shadow:true — the signal remediation uses to avoid re-triggering
+// itself on a failed fix-verification attempt.
+func seedToParsingShadow(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
+	t.Helper()
+	if len(imageTags) != 1 {
+		t.Fatal("seedToParsingShadow: imageTags must have exactly one entry {service: tag}")
+	}
+	var svc, tag string
+	for s, tg := range imageTags {
+		svc, tag = s, tg
+	}
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service:   svc,
+		ReleaseID: releaseID,
+		ImageTag:  tag,
+		Repo:      "acme/demo",
+		CommitSHA: "deadbeef",
+		Shadow:    true,
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: releaseID,
+		Status:    "ok",
+	}))
+	return deps, store
+}
+
+// TestHandleParsedManifest_Failed_Shadow_CarriesShadowTrue verifies that a
+// shadow release's parse_failed rejection carries shadow:true on
+// release.rejected:v1, so a consumer (remediation) can tell this failure came
+// from a shadow fix-verification attempt and must not re-trigger remediation
+// on it — re-triggering would loop.
+func TestHandleParsedManifest_Failed_Shadow_CarriesShadowTrue(t *testing.T) {
+	deps, store := seedToParsingShadow(t, "rShadow", map[string]string{"svc-a": "sha-a"})
+
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID:   "rShadow",
+		Status:      "failed",
+		ErrorClass:  "UnresolvedReference",
+		ErrorDetail: "ref('missing') unresolved in service_1.table_a",
+	})
+	require.NoError(t, err)
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	assert.Equal(t, true, payload["shadow"],
+		"a shadow release's parse_failed rejection must carry shadow:true")
 }
 
 // TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields asserts
@@ -444,10 +503,12 @@ func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 	}
 	require.NotNil(t, rejectedEntry, "release.rejected:v1 outbox entry must be created")
 
-	var payload map[string]string
+	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rejectedEntry.Payload, &payload))
 	assert.Equal(t, "unbuildable_cross_service_upstream", payload["reason"])
 	assert.Equal(t, "rA", payload["release_id"])
+	assert.Equal(t, false, payload["shadow"],
+		"a non-shadow release's unbuildable_cross_service_upstream rejection must carry shadow:false")
 }
 
 // TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode proves the guard
@@ -970,6 +1031,33 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 	assert.Equal(t, "DuplicatedTable", payload["error_class"])
 	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", payload["code_bundle_uri"],
 		"top-level code_bundle_uri must come from the release aggregate, set at parse time")
+	assert.Equal(t, false, payload["shadow"],
+		"a non-shadow release's duplicate_table rejection must carry shadow:false")
+}
+
+// TestHandleParsedManifest_DuplicateTable_Shadow_CarriesShadowTrue verifies
+// that a shadow release's duplicate_table rejection carries shadow:true on
+// release.rejected:v1, so remediation can tell this failure came from a
+// shadow fix-verification attempt and must not re-trigger remediation on it.
+func TestHandleParsedManifest_DuplicateTable_Shadow_CarriesShadowTrue(t *testing.T) {
+	deps, store := seedToParsingShadow(t, "rShadow", map[string]string{"marketing": "sha-m"})
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rShadow",
+		Status:    "ok",
+		Topology: release.Topology{
+			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
+		},
+	}))
+
+	entry := findEntry(t, store, streams.ReleaseRejectedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	assert.Equal(t, true, payload["shadow"],
+		"a shadow release's duplicate_table rejection must carry shadow:true")
 }
 
 // The rejection payload carries the claimant a fix should target and the
