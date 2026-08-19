@@ -100,6 +100,12 @@ func (r *fakeRepo) RecordPROutcome(_ context.Context, _ string, outcome proposal
 	return r.outcomeCASHit, nil
 }
 
+func (r *fakeRepo) ListVerifying(_ context.Context) ([]proposal.View, error) { return nil, nil }
+func (r *fakeRepo) MarkVerified(_ context.Context, _ string) (bool, error)   { return false, nil }
+func (r *fakeRepo) MarkVerifyFailed(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+
 // fakeUoW is a unit of work backed by the fakeRepo.
 type fakeUoW struct {
 	repo *fakeRepo

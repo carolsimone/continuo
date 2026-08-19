@@ -34,12 +34,14 @@ func NewProposalRepository(q Queryer) *ProposalRepository {
 }
 
 // CountAttempts returns the number of TERMINAL proposal attempts recorded for
-// the given (source, nodeID, errorSignature) triplet. In-flight 'generating'
-// rows are excluded so the in-progress attempt does not inflate the attempt cap
-// or shift the attempt number on a redelivery.
+// the given (source, nodeID, errorSignature) triplet. In-flight rows —
+// 'generating' (the model call has not resolved) and 'verifying' (a shadow
+// release is still validating a proposed fix) — are excluded so an attempt
+// that has not yet concluded neither inflates the attempt cap nor shifts the
+// attempt number on a redelivery.
 func (r *ProposalRepository) CountAttempts(ctx context.Context, source, nodeID, errorSignature string) (int, error) {
 	const query = `SELECT count(*) FROM proposal
-		WHERE source=$1 AND node_id=$2 AND error_signature=$3 AND status <> 'generating'`
+		WHERE source=$1 AND node_id=$2 AND error_signature=$3 AND status NOT IN ('generating','verifying')`
 	var count int
 	if err := r.q.GetContext(ctx, &count, query, source, nodeID, errorSignature); err != nil {
 		return 0, fmt.Errorf("count proposal attempts: %w", err)
@@ -78,13 +80,16 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, node_id, error_signature, attempt,
-			 status, confidence, rationale, proposed_sql_uri, diff_uri,
+			 status, shadow_release_id, trigger_payload,
+			 confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
 			 repo, commit_sha, file_path, file_edits)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		ON CONFLICT (release_id, source, node_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
+			shadow_release_id      = EXCLUDED.shadow_release_id,
+			trigger_payload        = EXCLUDED.trigger_payload,
 			confidence             = EXCLUDED.confidence,
 			rationale              = EXCLUDED.rationale,
 			proposed_sql_uri       = EXCLUDED.proposed_sql_uri,
@@ -104,7 +109,8 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, p.NodeID, p.ErrorSignature, p.Attempt,
-		p.Status, p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
+		p.Status, p.ShadowReleaseID, triggerPayloadOrDefault(p.TriggerPayload),
+		p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
 		p.Repo, p.CommitSHA, p.FilePath, edits,
@@ -112,6 +118,17 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 		return fmt.Errorf("insert proposal: %w", err)
 	}
 	return nil
+}
+
+// triggerPayloadOrDefault returns the raw trigger_payload bytes to write,
+// defaulting to an empty JSON object when the proposal carries none so the
+// column (NOT NULL) is never written as SQL NULL — the same defaulting
+// marshalFileEdits applies to the file_edits column.
+func triggerPayloadOrDefault(raw []byte) []byte {
+	if len(raw) == 0 {
+		return []byte("{}")
+	}
+	return raw
 }
 
 // proposalRow is the persistence DTO for a full proposal projection. The db
@@ -125,6 +142,9 @@ type proposalRow struct {
 	ErrorSignature      string     `db:"error_signature"`
 	Attempt             int        `db:"attempt"`
 	Status              string     `db:"status"`
+	ShadowReleaseID     string     `db:"shadow_release_id"`
+	VerifyError         string     `db:"verify_error"`
+	TriggerPayload      []byte     `db:"trigger_payload"`
 	Confidence          string     `db:"confidence"`
 	Rationale           string     `db:"rationale"`
 	ProposedSQLURI      string     `db:"proposed_sql_uri"`
@@ -197,6 +217,9 @@ func (row proposalRow) toView() proposal.View {
 		ErrorSignature:      row.ErrorSignature,
 		Attempt:             row.Attempt,
 		Status:              proposal.Status(row.Status),
+		ShadowReleaseID:     row.ShadowReleaseID,
+		VerifyError:         row.VerifyError,
+		TriggerPayload:      row.TriggerPayload,
 		Confidence:          proposal.Confidence(row.Confidence),
 		Rationale:           row.Rationale,
 		ProposedSQLURI:      row.ProposedSQLURI,
@@ -220,7 +243,8 @@ func (row proposalRow) toView() proposal.View {
 }
 
 const proposalColumns = `id, source, release_id, node_id, error_signature, attempt,
-		       status, confidence, rationale, proposed_sql_uri, diff_uri,
+		       status, shadow_release_id, verify_error, trigger_payload,
+		       confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, file_edits, model, created_at,
 		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at`
@@ -506,6 +530,65 @@ func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id string, out
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("record pr outcome: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// verifyingBatchLimit caps ListVerifying so a single stuck row can never
+// starve every other in-flight verification: the polling reconciler always
+// makes bounded progress on each tick.
+const verifyingBatchLimit = 20
+
+// ListVerifying returns proposals awaiting shadow-release verification
+// (status='verifying'), oldest first, capped at verifyingBatchLimit.
+func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View, error) {
+	q := `SELECT ` + proposalColumns + ` FROM proposal
+	      WHERE status = $1 ORDER BY created_at ASC LIMIT $2`
+	var rows []proposalRow
+	if err := r.q.SelectContext(ctx, &rows, q, proposal.StatusVerifying, verifyingBatchLimit); err != nil {
+		return nil, fmt.Errorf("list verifying proposals: %w", err)
+	}
+	views := make([]proposal.View, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, row.toView())
+	}
+	return views, nil
+}
+
+// MarkVerified finalizes a proposal whose shadow release validated the fix,
+// transitioning status 'verifying' -> 'proposed'. The WHERE status='verifying'
+// guard is the same compare-and-set contract as every other state transition
+// in this file: a row already finalized by a concurrent or repeated
+// reconciler pass leaves 0 rows affected rather than a blind overwrite. hit
+// reports whether the CAS fired.
+func (r *ProposalRepository) MarkVerified(ctx context.Context, id string) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal SET status=$2 WHERE id=$1 AND status=$3`,
+		id, proposal.StatusProposed, proposal.StatusVerifying)
+	if err != nil {
+		return false, fmt.Errorf("mark verified: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark verified: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// MarkVerifyFailed finalizes a proposal whose shadow release failed to
+// validate the fix, transitioning status 'verifying' -> 'failed' and
+// recording verifyErr so the next attempt can use it as evidence. The CAS
+// guard and hit semantics mirror MarkVerified.
+func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal SET status=$2, verify_error=$3 WHERE id=$1 AND status=$4`,
+		id, proposal.StatusFailed, verifyErr, proposal.StatusVerifying)
+	if err != nil {
+		return false, fmt.Errorf("mark verify failed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark verify failed: rows affected: %w", err)
 	}
 	return n > 0, nil
 }

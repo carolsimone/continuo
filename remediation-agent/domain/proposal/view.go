@@ -5,13 +5,24 @@ import "time"
 // View is a read-only projection of a proposal row, including all PR-lifecycle
 // columns. It is returned by ProposalRepository.Get and ProposalRepository.List.
 type View struct {
-	ID                  string
-	Source              string
-	ReleaseID           string
-	NodeID              string
-	ErrorSignature      string
-	Attempt             int
-	Status              Status
+	ID             string
+	Source         string
+	ReleaseID      string
+	NodeID         string
+	ErrorSignature string
+	Attempt        int
+	Status         Status
+	// ShadowReleaseID is the id of the shadow release posted to verify a
+	// 'verifying' attempt's fix; empty for every other status.
+	ShadowReleaseID string
+	// VerifyError is the shadow release's failure reason, recorded by
+	// MarkVerifyFailed; empty unless verification failed.
+	VerifyError string
+	// TriggerPayload is the raw remediation.requested:v1 payload this attempt
+	// was triggered by, stored when Status is (or was) 'verifying' so a
+	// reconciler can rebuild the trigger for a retry. Empty for every other
+	// status.
+	TriggerPayload      []byte
 	Confidence          Confidence
 	Rationale           string
 	ProposedSQLURI      string

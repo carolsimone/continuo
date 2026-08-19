@@ -13,10 +13,19 @@ const (
 	// the model for a healable failure but the attempt has not yet resolved. It is
 	// finalized to one of the terminal states below once the outcome is known.
 	StatusGenerating Status = "generating"
-	StatusProposed   Status = "proposed"
-	StatusSkipped    Status = "skipped"
-	StatusFailed     Status = "failed"
-	StatusEscalated  Status = "escalated"
+	// StatusVerifying is the in-flight state that follows StatusGenerating for a
+	// fix whose correctness cannot be judged synchronously: the agent has
+	// proposed a fix and posted a shadow release to run it through the full
+	// parse -> candidate-schema -> validation pipeline. The row carries the
+	// shadow release's id (ShadowReleaseID) and the raw trigger payload
+	// (TriggerPayload) so an asynchronous reconciler can poll the release and
+	// finalize the attempt to 'proposed' (the fix verified) or 'failed' (with
+	// the shadow's error recorded as evidence for the next attempt).
+	StatusVerifying Status = "verifying"
+	StatusProposed  Status = "proposed"
+	StatusSkipped   Status = "skipped"
+	StatusFailed    Status = "failed"
+	StatusEscalated Status = "escalated"
 )
 
 // FileEdit is one proposed change to a single file: its repository-relative
@@ -45,6 +54,15 @@ type Proposal struct {
 	ErrorSignature string
 	Attempt        int
 	Status         Status
+	// ShadowReleaseID is the id of the shadow release posted to verify this
+	// attempt's fix, set when Status is StatusVerifying. Empty for every
+	// other status.
+	ShadowReleaseID string
+	// TriggerPayload is the raw remediation.requested:v1 payload that drove
+	// this attempt, stored when Status is StatusVerifying so a later
+	// reconciler pass can rebuild the trigger and retry with the shadow
+	// release's error as new evidence. Empty for every other status.
+	TriggerPayload []byte
 	Confidence     Confidence
 	Rationale      string
 	ProposedSQLURI string

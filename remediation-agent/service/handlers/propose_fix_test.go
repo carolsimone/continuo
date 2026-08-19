@@ -246,6 +246,18 @@ func (r *fakeProposalRepo) RecordPROutcome(_ context.Context, _ string, _ propos
 	return false, nil
 }
 
+func (r *fakeProposalRepo) ListVerifying(_ context.Context) ([]proposal.View, error) {
+	return nil, nil
+}
+
+func (r *fakeProposalRepo) MarkVerified(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
+func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+
 // fakeOutbox satisfies outbox.Repository in memory. Create takes a pointer to
 // match the real pkg/outbox.Repository interface. The read-path and retry
 // methods are no-ops as they are not exercised by ProposeFix.

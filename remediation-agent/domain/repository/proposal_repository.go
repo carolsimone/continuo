@@ -67,9 +67,11 @@ type OpeningLister interface {
 // UnitOfWork, so methods take only ctx + domain types.
 type ProposalRepository interface {
 	// CountAttempts returns the number of TERMINAL proposal attempts recorded for
-	// the (source, nodeID, errorSignature) triplet. In-flight 'generating' rows
-	// are excluded so the in-progress attempt neither inflates the attempt cap nor
-	// double-counts on a redelivery.
+	// the (source, nodeID, errorSignature) triplet. In-flight rows — 'generating'
+	// (the model call has not resolved) and 'verifying' (a shadow release is
+	// still validating a proposed fix) — are excluded so an attempt that has not
+	// yet concluded neither inflates the attempt cap nor shifts the attempt
+	// number on a redelivery.
 	CountAttempts(ctx context.Context, source, nodeID, errorSignature string) (int, error)
 
 	// InsertGenerating persists an in-flight 'generating' row for the attempt just
@@ -150,4 +152,22 @@ type ProposalRepository interface {
 	// pr_closed_at. Returns true when the transition fired; false when the row is
 	// no longer in 'open' (already terminal or never opened) — an idempotent no-op.
 	RecordPROutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) (bool, error)
+
+	// ListVerifying returns proposals awaiting shadow-release verification
+	// (status='verifying'), oldest first, capped at 20 rows so the polling
+	// reconciler always makes bounded progress across every in-flight
+	// verification rather than being starved by one stuck row.
+	ListVerifying(ctx context.Context) ([]proposal.View, error)
+
+	// MarkVerified finalizes a proposal whose shadow release validated the
+	// fix, transitioning status 'verifying' -> 'proposed'. hit reports
+	// whether the CAS fired; false means the row was no longer 'verifying' —
+	// already finalized by a concurrent or repeated reconciler pass.
+	MarkVerified(ctx context.Context, id string) (hit bool, err error)
+
+	// MarkVerifyFailed finalizes a proposal whose shadow release failed to
+	// validate the fix, transitioning status 'verifying' -> 'failed' and
+	// recording verifyErr so the next attempt can use it as evidence. hit
+	// reports whether the CAS fired, with the same semantics as MarkVerified.
+	MarkVerifyFailed(ctx context.Context, id, verifyErr string) (hit bool, err error)
 }
