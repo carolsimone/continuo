@@ -174,6 +174,17 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		filepath.Join(root, filepath.FromSlash(located.ContractDir)),
 		filepath.Join(root, filepath.FromSlash(located.RepoRoot)),
 		in.Service, svc.SQLDialect)
+	// A contract the packaging tool read and refused is settled: the tool is
+	// deterministic on its input, and a redelivery rebuilds that same input from
+	// the cached model answer, so retrying would refuse it again until the
+	// stream dropped the message and left the attempt in flight for good. The
+	// attempt ends here instead, keeping the tool's complaint as the reason. Any
+	// other packaging failure is the tool never having answered, and is returned
+	// so the trigger is redelivered.
+	if errors.Is(err, ports.ErrContractRejected) {
+		return failPython(svc, in, fmt.Sprintf(
+			"the tool that packages a contract for release refused the model's answer, so no release could be built from it: %v", err))
+	}
 	if err != nil {
 		return Result{}, fmt.Errorf("package contract for %s: %w", in.NodeID, err)
 	}

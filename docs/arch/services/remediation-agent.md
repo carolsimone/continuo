@@ -595,6 +595,16 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
    rejected for a hash mismatch unrelated to the fix. --dialect comes from the
    install's configured warehouse engine (see WAREHOUSE_ENGINE below), so the
    contract is rendered under the same rules the pipeline validates it against.
+   A nonzero exit — the CLI having read the contract and refused it — is
+   deterministic and ends the attempt as proposal(status=failed), keeping the
+   CLI's stderr as the rationale. It cannot be retried: the tool answers the
+   same way every time, and a redelivery rebuilds the identical contract because
+   the model's answer is served from the trigger-keyed idempotency cache, so a
+   transient classification would loop until the stream's poison limit dropped
+   the message and left the attempt in 'generating' forever. Every other
+   packaging failure — a missing binary, a context deadline, a killed process —
+   is transient and the trigger is redelivered. The adapter draws the line
+   (`ports.ErrContractRejected`), so the fixer never string-matches stderr.
 11. Mint the shadow release id — shadow-<original_release_id>-<node_id>-a<n>,
     with every character outside [A-Za-z0-9._-] replaced by a dash. It is
     unique per attempt, legible in every log line and release listing, and

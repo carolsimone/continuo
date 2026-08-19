@@ -5,10 +5,12 @@ package packaging
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 )
@@ -70,7 +72,7 @@ func (p *CLIPackager) Merge(ctx context.Context, contractDir, repoRoot, service,
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("continuo-runtime merge %s: %w: %s", contractDir, err, stderr.String())
+		return nil, classifyRunError(ctx, contractDir, err, stderr.String())
 	}
 
 	merged, err := os.ReadFile(outPath) //nolint:gosec // G304: outPath is built from a temp dir this function just created, not external input.
@@ -78,4 +80,28 @@ func (p *CLIPackager) Merge(ctx context.Context, contractDir, repoRoot, service,
 		return nil, fmt.Errorf("read merged contract %s: %w", outPath, err)
 	}
 	return merged, nil
+}
+
+// classifyRunError decides whether a failed merge run is the CLI answering
+// "no" or the CLI never getting to answer, and returns an error the caller can
+// tell apart with errors.Is.
+//
+// A normal nonzero exit status is the CLI having read the contract and refused
+// it: deterministic on that input, so it is wrapped as ports.ErrContractRejected
+// and carries the CLI's stderr, which is both the explanation and the evidence
+// the next attempt is shown. Everything else is left plain and stays retryable:
+// a cancelled or expired context (which kills the subprocess and surfaces as
+// the same nonzero-exit shape, so it is checked first), a process killed by a
+// signal (no exit status of its own — ExitCode reports -1), and every failure
+// to start the binary at all.
+func classifyRunError(ctx context.Context, contractDir string, err error, stderr string) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("continuo-runtime merge %s: %w: %s", contractDir, ctxErr, stderr)
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
+		return fmt.Errorf("continuo-runtime merge %s: exit status %d: %s: %w",
+			contractDir, exitErr.ExitCode(), strings.TrimSpace(stderr), ports.ErrContractRejected)
+	}
+	return fmt.Errorf("continuo-runtime merge %s: %w: %s", contractDir, err, stderr)
 }

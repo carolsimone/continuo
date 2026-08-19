@@ -561,6 +561,32 @@ func TestPythonValidation_TransientFailuresRedeliver(t *testing.T) {
 	}
 }
 
+// TestPythonValidation_RejectedPackaging_Fails pins the outcome of the one
+// failure that looks transient and is not.
+//
+// When the model returns contract yaml the packaging CLI refuses, the CLI exits
+// nonzero every single time it is handed that same input — and a redelivery
+// rebuilds exactly that input, because the model's answer is served from the
+// idempotency cache keyed on the trigger. Returning the refusal as a transient
+// error therefore loops until the stream's poison limit drops the message,
+// leaving the attempt in 'generating' with nothing that will ever finish it.
+// It is recorded as a failed attempt instead, keeping the CLI's own complaint
+// as the rationale so an operator can read why.
+func TestPythonValidation_RejectedPackaging_Fails(t *testing.T) {
+	svc, arch, pkgr, rel, arts := pythonSvc(t, pythonRepoTree(t))
+	pkgr.err = fmt.Errorf("continuo-runtime merge: node analytics.py_daily_kpis: output_columns is required: %w",
+		ports.ErrContractRejected)
+
+	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.NoError(t, err, "a contract the packaging tool refuses is settled, not retryable")
+	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
+	require.Contains(t, r.Proposal.Rationale, "output_columns is required",
+		"the tool's own complaint is the evidence the next attempt is shown")
+	require.Empty(t, rel.submissions, "nothing was packaged, so nothing may be submitted")
+	require.Empty(t, arts.written, "a contract that could not be packaged writes no artifacts")
+	require.Equal(t, 1, arch.cleanups, "the checkout is released even when the attempt fails")
+}
+
 // TestPythonValidation_UnusableTrigger_Skips verifies that a trigger this lane
 // can never act on stops with the reason recorded instead of being redelivered
 // forever. A trigger naming no service has no artifact location and no release

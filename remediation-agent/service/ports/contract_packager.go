@@ -1,6 +1,26 @@
 package ports
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrContractRejected reports that the packaging tool ran, read the contract it
+// was given, and refused it. The distinction the sentinel carries is whether
+// retrying could ever produce a different answer.
+//
+// It could not. The tool is deterministic on its input, and the input is
+// rebuilt identically on a redelivery — the model's answer is served from the
+// trigger-keyed idempotency cache, so the same refused contract is reassembled
+// every time. Treating the refusal as transient therefore loops the trigger
+// until the stream's poison limit drops it, leaving the attempt in flight with
+// nothing that will ever finish it. A caller records a terminal failure
+// instead, keeping the tool's own complaint as the evidence.
+//
+// Everything else a packaging call can fail on — a missing binary, a context
+// deadline, a permission error — is left unwrapped, because a later attempt at
+// the same contract genuinely can succeed.
+var ErrContractRejected = errors.New("the packaging tool refused the contract")
 
 // ContractPackager packages a directory of python-node contract yaml files
 // into the merged, hash-folded wire contract that the team's release CI
