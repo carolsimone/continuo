@@ -118,7 +118,7 @@ The `ReleaseGateway` port (`adapters/releasehttp`) is the python lane's client o
 |---|---|
 | `POST /releases` | Submits a shadow verification release for a packaged contract fix. The body always carries `kind: "python"`, `bootstrap: false`, and `shadow: true` — a shadow submission never varies them, so none is a caller-supplied field — plus the shadow's own `release_id`, the failing node's `service`, the `image_tag` read back from the original failing release, and that release's `repo`/`commit_sha`. `202 Accepted` is success, including release-controller's idempotent-duplicate case where a row for this release id already exists, so a redelivered attempt resubmits harmlessly. |
 | `GET /releases/{shadow_id}` | Polls a submitted shadow release for its verdict. `validated` is a terminal pass; `rejected` is a terminal fail, and its per-node error text is read from each failing validation node's `run_results_uri` through the same S3 evidence reader the fixers use (falling back to the release-level `reject_reason`/`reject_detail` when that structured result is missing or unreadable). Every other status is non-terminal and the read is repeated on the next pass. |
-| `GET /releases/{original_id}` | Reads `image_tags[service]` from the ORIGINAL failing release before submitting. The trigger carries no image tag, and a shadow release needs one to be accepted; reusing the failing release's tag is safe precisely because a shadow release never promotes, so the tag never reaches the production pointer an image tag otherwise drives. An absent or empty tag for the service is an error and the attempt is retried. |
+| `GET /releases/{original_id}` | Read twice against the ORIGINAL failing release, for two different fields. Its verdict's per-node errors name every node that release rejected, which is how the fixer finds out whether another node it would package alongside the one it is fixing also failed — a fix that could never be verified is skipped before any model call. And `image_tags[service]` is read before submitting. The trigger carries no image tag, and a shadow release needs one to be accepted; reusing the failing release's tag is safe precisely because a shadow release never promotes, so the tag never reaches the production pointer an image tag otherwise drives. An absent or empty tag for the service is an error and the attempt is retried. |
 
 ## Data Flow
 
@@ -510,7 +510,24 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
    guess. The match yields the file's repo-relative path and verbatim text, the
    contract directory holding it, and that directory's parent as the service's
    application root.
-4. Assemble evidence. The failure text (the trigger's error_excerpt) and the
+4. Check whether a fix for this node can be verified at all. Read the ORIGINAL
+   failing release's verdict (ReleaseGateway.Verdict), whose NodeErrors name
+   every node that release rejected, and resolve each OTHER failing node id
+   against the same checkout with the same ContractLocator search. A node that
+   resolves to the SAME contract directory ends the attempt as
+   proposal(status=skipped), naming it in the rationale. The classifier emits
+   one trigger per failing node, but step 9 packages the whole directory, so
+   the shadow release re-runs every node declared in it: a second broken node
+   there would reject that release however correct the fix is, the rejection
+   would become the next attempt's evidence naming a node the prompt never
+   shows the model, and the whole attempt budget would be spent on full
+   validation releases that could not have passed — each holding the single
+   global release slot. A failing node that no contract yaml declares (a dbt
+   model), or one declared in another service's directory, is not packaged by
+   this fix and does not block it. A verdict that cannot be read is transient
+   and the trigger is redelivered, exactly as the image-tag read of the same
+   release in step 12 already is.
+5. Assemble evidence. The failure text (the trigger's error_excerpt) and the
    declaring file are the load-bearing pair; every other section degrades to
    its own absence rather than blocking the heal:
    - the full runner log at dbt_log_uri when present,
@@ -528,21 +545,21 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
      in-flight attempt's own row is excluded, and no row limit is applied
      because the attempt cap already bounds how many can exist.
    Every string in the prompt passes through the LogSanitizer seam.
-5. One forced propose_python_fix LLM tool call returning updated_files — a list
+6. One forced propose_python_fix LLM tool call returning updated_files — a list
    of {path, content} pairs, each the COMPLETE new content of a file — plus
    rationale and confidence. An empty list is proposal(status=failed).
-6. Refuse an unusable answer before anything is written to disk:
+7. Refuse an unusable answer before anything is written to disk:
    - a path outside the contract directory the model was shown (naming another
      service, traversing upwards, or absolute): proposal(status=failed);
    - the same path returned twice: proposal(status=failed), because applying
      the list leaves the LAST entry on disk — which is what gets packaged and
      verified — while the recorded edits describe an earlier one, so a human
      would approve content that was never the content validated.
-7. Apply the files to the checkout, reading each path's prior content first so
+8. Apply the files to the checkout, reading each path's prior content first so
    the recorded diffs describe the change against what the repository held.
    Only then package: running the packager before the answer is written would
    verify the contract that already failed.
-8. Package with ContractPackager.Merge — a subprocess call to
+9. Package with ContractPackager.Merge — a subprocess call to
    `continuo-runtime merge <contractDir> --service <service> --repo-root
    <appRoot> --dialect <dialect> --out <tmp>/contract.yaml`, the same command
    the team's own release CI runs after a merge. The hash fold verifies against
@@ -553,24 +570,31 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
    rejected for a hash mismatch unrelated to the fix. --dialect comes from the
    install's configured warehouse engine (see WAREHOUSE_ENGINE below), so the
    contract is rendered under the same rules the pipeline validates it against.
-9. Mint the shadow release id — shadow-<original_release_id>-<node_id>-a<n>,
-   with every character outside [A-Za-z0-9._-] replaced by a dash. It is unique
-   per attempt, legible in every log line and release listing, and stable
-   across a redelivery of the same attempt (release-controller's submission is
-   idempotent on it).
-10. Upload the merged contract to <service>/<shadow_id>/contract.yaml — the
+10. Mint the shadow release id — shadow-<original_release_id>-<node_id>-a<n>,
+    with every character outside [A-Za-z0-9._-] replaced by a dash. It is
+    unique per attempt, legible in every log line and release listing, and
+    stable across a redelivery of the same attempt (release-controller's
+    submission is idempotent on it). The id is capped at 52 bytes: the release
+    it names gets a candidate schema of "_candidate_" plus the id, and
+    PostgreSQL truncates an identifier past 63 bytes rather than rejecting it —
+    which would cut the attempt suffix and the node name, letting two attempts
+    share one schema and validate against each other's leftovers. Past the cap
+    the release-and-node middle is shortened and given an 8-hex digest of what
+    it held, so the prefix and attempt number stay whole and two nodes whose
+    names diverge only past the cut still get separate schemas.
+11. Upload the merged contract to <service>/<shadow_id>/contract.yaml — the
     canonical per-release key release-controller reads a python service's
     release artifact from — BEFORE submitting, because release-controller
     reads that object as soon as the submission is accepted.
-11. Read the ORIGINAL failing release's image tag for the service
+12. Read the ORIGINAL failing release's image tag for the service
     (ReleaseGateway.ImageTag), then submit the shadow release
     (ReleaseGateway.Submit) under the minted id.
-12. Write one audit artifact pair per edited file:
+13. Write one audit artifact pair per edited file:
       proposed-fix/<release_id>/<node_id>/attempt-<n>/edit-<i>.content
       proposed-fix/<release_id>/<node_id>/attempt-<n>/edit-<i>.diff
     Edits of one attempt share a directory and are numbered within it, so two
     edits can never write the same key.
-13. Return proposal(status=verifying) naming the shadow release, with the edits
+14. Return proposal(status=verifying) naming the shadow release, with the edits
     list, source_resolved=true (the edits name real files at a real commit,
     which is what a pull request needs — the shadow release decides whether
     they are right), and the single-file view (file_path/proposed_sql_uri/

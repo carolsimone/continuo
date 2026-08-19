@@ -95,6 +95,13 @@ type fakeReleases struct {
 	artifacts     *fakeArtifacts
 	artifactKey   func(releaseID string) string
 	submitSawKey  []bool
+	// verdict answers the fixer's read of the ORIGINAL failing release, whose
+	// NodeErrors name every node that release rejected. verdictCalls records
+	// the ids it was asked for, so a test can prove the original release is
+	// read and not the shadow.
+	verdict      ports.ShadowVerdict
+	verdictErr   error
+	verdictCalls []string
 }
 
 func (f *fakeReleases) Submit(_ context.Context, s ports.ShadowSubmission) error {
@@ -107,8 +114,9 @@ func (f *fakeReleases) Submit(_ context.Context, s ports.ShadowSubmission) error
 	return f.submitErr
 }
 
-func (f *fakeReleases) Verdict(context.Context, string) (ports.ShadowVerdict, error) {
-	return ports.ShadowVerdict{}, fmt.Errorf("Verdict must not be called by the fixer")
+func (f *fakeReleases) Verdict(_ context.Context, releaseID string) (ports.ShadowVerdict, error) {
+	f.verdictCalls = append(f.verdictCalls, releaseID)
+	return f.verdict, f.verdictErr
 }
 
 func (f *fakeReleases) ImageTag(_ context.Context, releaseID, service string) (string, error) {
@@ -678,4 +686,85 @@ func TestShadowReleaseID_BoundedForTheCandidateSchema(t *testing.T) {
 			"release-controller's submission is idempotent on this id, so a "+
 				"redelivered attempt must resubmit under the same one")
 	})
+}
+
+// TestPythonValidation_SiblingFailureInSameDirectory_Skips covers the case a
+// single-node view of the world cannot see.
+//
+// The fix is packaged from the WHOLE contract directory, but the classifier
+// emits one trigger per failing node. So when two nodes declared in one
+// directory both fail, each attempt's shadow release re-runs both and is
+// rejected by the one it did not fix — however correct the fix is. The
+// rejection is then recorded as the next attempt's evidence, naming a node the
+// prompt never shows the model, so every attempt ends the same way and the
+// per-failure budget is spent on full validation releases that could not have
+// passed, each holding the single global release slot. The attempt ends up
+// front instead, naming the node that makes it unverifiable.
+func TestPythonValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
+	root := pythonRepoTree(t)
+	svc, _, pkgr, rel, arts := pythonSvc(t, root)
+	llm := svc.LLM.(*fakeLLM)
+
+	// other.yml sits in the same contracts/ directory as the failing node's
+	// own declaring file, so packaging one packages both.
+	rel.verdict = ports.ShadowVerdict{Terminal: true, NodeErrors: map[string]string{
+		"analytics.py_daily_kpis": "column revenue_total does not exist",
+		"analytics.other":         "column country does not exist",
+	}}
+
+	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.NoError(t, err)
+
+	require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
+	require.Contains(t, r.Proposal.Rationale, "analytics.other",
+		"the rationale must name the node that makes this fix unverifiable")
+	require.Equal(t, []string{"rel-1"}, rel.verdictCalls,
+		"the sibling check reads the ORIGINAL failing release, not a shadow")
+	require.Equal(t, 0, llm.calls, "no model call is worth making for an unverifiable fix")
+	require.Empty(t, pkgr.calls)
+	require.Empty(t, rel.submissions, "no release slot is spent on a shadow that cannot pass")
+	require.Empty(t, arts.written)
+}
+
+// TestPythonValidation_FailureElsewhereDoesNotBlock is the control: a node that
+// also failed the release but is NOT declared in this contract directory —
+// another python service, or a dbt model that no contract yaml declares at all
+// — is not packaged by this fix and so cannot reject its shadow release. The
+// heal must proceed.
+func TestPythonValidation_FailureElsewhereDoesNotBlock(t *testing.T) {
+	root := pythonRepoTree(t)
+	otherDir := filepath.Join(root, "services", "service-two", "contracts")
+	require.NoError(t, os.MkdirAll(otherDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(otherDir, "z.yml"),
+		[]byte("nodes:\n  - schema: analytics\n    table: z\n"), 0o600))
+
+	svc, _, pkgr, rel, _ := pythonSvc(t, root)
+	rel.verdict = ports.ShadowVerdict{Terminal: true, NodeErrors: map[string]string{
+		"analytics.py_daily_kpis": "column revenue_total does not exist",
+		"analytics.z":             "declared in another service's contract directory",
+		"model.shop.orders":       "no contract yaml declares a dbt model",
+	}}
+
+	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusVerifying, r.Proposal.Status)
+	require.Len(t, pkgr.calls, 1)
+	require.Len(t, rel.submissions, 1)
+}
+
+// TestPythonValidation_UnreadableVerdictIsTransient pins that a release read
+// which fails is not answered by guessing. The sibling check decides whether a
+// shadow release can mean anything at all, so an unanswerable read ends the
+// call with an error — the driver redelivers — exactly as the image-tag read of
+// the same release already does.
+func TestPythonValidation_UnreadableVerdictIsTransient(t *testing.T) {
+	root := pythonRepoTree(t)
+	svc, _, pkgr, rel, _ := pythonSvc(t, root)
+	rel.verdictErr = fmt.Errorf("release-controller unreachable")
+
+	_, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "release-controller unreachable")
+	require.Empty(t, pkgr.calls)
+	require.Empty(t, rel.submissions)
 }

@@ -77,14 +77,32 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("locate contract for %s: %w", in.NodeID, err)
 	}
 
-	// Step 3 — evidence. The failure itself is required; every other section
+	// Step 3 — is a fix for this node verifiable at all? The fix is packaged
+	// from the whole contract directory, so the shadow release re-runs every
+	// node declared in it. Another node in that directory that also failed the
+	// original release therefore rejects the shadow however correct the fix is,
+	// and the attempt ends up front rather than spending a full validation
+	// release — and the single release slot — proving it.
+	sibling, err := siblingFailure(ctx, svc, in, located, root)
+	if err != nil {
+		return Result{}, err
+	}
+	if sibling != "" {
+		return skipPython(svc, in, fmt.Sprintf(
+			"%s also failed validation in release %s and is declared in the same contract directory (%s) as %s. "+
+				"A fix is packaged from that whole directory, so any shadow release verifying it would re-run both nodes "+
+				"and be rejected by %s. Fix both nodes together.",
+			sibling, in.ReleaseID, located.ContractDir, in.NodeID, sibling))
+	}
+
+	// Step 4 — evidence. The failure itself is required; every other section
 	// degrades to its own absence rather than blocking the heal.
 	ev, err := pythonEvidence(ctx, svc, in, located)
 	if err != nil {
 		return Result{}, err // transient read: the driver redelivers
 	}
 
-	// Step 4/5 — one model call returning complete files.
+	// Step 5 — one model call returning complete files.
 	res, err := svc.LLM.Propose(ctx, prompt.AssemblePythonContractFix(ev))
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
@@ -189,6 +207,68 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		SourceResolved: true,
 		Edits:          edits,
 	}}, nil
+}
+
+// siblingFailure names another node that failed validation in the same release
+// AND is declared in the same contract directory as the node being fixed, or ""
+// when there is none.
+//
+// It exists because two things disagree about scope. The classifier emits one
+// heal trigger per failing node, but a python fix is packaged from the whole
+// directory the declaring yaml lives in — so the release that verifies it runs
+// every node declared there. If a second one of those nodes is already broken,
+// no fix for the first can ever be validated: the shadow is rejected by the
+// node this attempt neither repaired nor was shown, that rejection becomes the
+// next attempt's evidence, and the same thing happens again until the attempt
+// cap is reached.
+//
+// The failing set is read from the ORIGINAL release's verdict, whose NodeErrors
+// are keyed by node id, and each other id is resolved against the same checkout
+// to see where it is declared. A node no contract yaml declares — a dbt model,
+// or a python node in another service — is not packaged by this fix and so
+// cannot reject its shadow release.
+//
+// A verdict that cannot be read ends the attempt with an error rather than a
+// guess, so the driver redelivers: this decides whether the shadow release can
+// mean anything at all, and it is the same release the image-tag read already
+// treats as required.
+func siblingFailure(ctx context.Context, svc Services, in Input, located ports.Located, root string) (string, error) {
+	verdict, err := svc.Releases.Verdict(ctx, in.ReleaseID)
+	if err != nil {
+		return "", fmt.Errorf("read verdict of release %s: %w", in.ReleaseID, err)
+	}
+	others := make([]string, 0, len(verdict.NodeErrors))
+	for nodeID := range verdict.NodeErrors {
+		if nodeID != in.NodeID {
+			others = append(others, nodeID)
+		}
+	}
+	// Sorted so a release with several siblings always names the same one, and
+	// a re-run of the same attempt records the same rationale.
+	sort.Strings(others)
+
+	for _, nodeID := range others {
+		schema, table, ok := splitNodeID(nodeID)
+		if !ok {
+			continue
+		}
+		other, lerr := svc.ContractLocator.Locate(root, schema, table)
+		if lerr != nil {
+			// Not declared anywhere, declared twice, or unsearchable: in none of
+			// those cases is this node known to share the directory being
+			// packaged, and uncertainty about someone else's node is not a
+			// reason to abandon a fix for this one.
+			if !errors.Is(lerr, ports.ErrNodeNotDeclared) {
+				svc.Logger.Warn("could not place another failing node; proceeding as if it is declared elsewhere",
+					"node", nodeID, "release", in.ReleaseID, "error", lerr)
+			}
+			continue
+		}
+		if other.ContractDir == located.ContractDir {
+			return nodeID, nil
+		}
+	}
+	return "", nil
 }
 
 // skipPython records a skipped attempt whose reason is kept as the proposal's
