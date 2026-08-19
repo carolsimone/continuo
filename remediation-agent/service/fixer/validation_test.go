@@ -9,6 +9,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
@@ -287,6 +289,10 @@ func TestValidation_SourceFromBundle_NoGitHubRead(t *testing.T) {
 	if src.readPath != "" {
 		t.Fatalf("Step 2 must not read GitHub when the bundle resolves the source, read %q", src.readPath)
 	}
+	require.Len(t, r.Proposal.Edits, 1)
+	require.Equal(t, r.Proposal.FilePath, r.Proposal.Edits[0].Path)
+	require.Equal(t, r.Proposal.ProposedSQLURI, r.Proposal.Edits[0].ContentURI)
+	require.Equal(t, r.Proposal.DiffURI, r.Proposal.Edits[0].DiffURI)
 }
 
 // TestValidation_BundleNotFound_FallsBackToGitHub verifies that a bundle miss
@@ -344,6 +350,7 @@ func TestValidation_BundleAndGitHubUnavailable_CandidateOnly(t *testing.T) {
 	if r.Proposal.SourceResolved {
 		t.Fatal("expected SourceResolved=false when both the bundle and github are unavailable")
 	}
+	require.Empty(t, r.Proposal.Edits, "a candidate-only proposal has no resolved repository file path to attach an edit to")
 }
 
 // TestValidation_BundleResolvedButLocationUnavailable_CandidateOnly verifies
@@ -368,6 +375,7 @@ func TestValidation_BundleResolvedButLocationUnavailable_CandidateOnly(t *testin
 		if r.Proposal.SourceResolved {
 			t.Fatal("expected SourceResolved=false when the node cannot be located, even though the bundle resolved a candidate source")
 		}
+		require.Empty(t, r.Proposal.Edits, "a candidate-only proposal has no resolved repository file path to attach an edit to")
 	})
 
 	t.Run("unmapped_service", func(t *testing.T) {
@@ -384,6 +392,7 @@ func TestValidation_BundleResolvedButLocationUnavailable_CandidateOnly(t *testin
 		if r.Proposal.SourceResolved {
 			t.Fatal("expected SourceResolved=false when the located service has no repo mapping, even though the bundle resolved a candidate source")
 		}
+		require.Empty(t, r.Proposal.Edits, "a candidate-only proposal has no resolved repository file path to attach an edit to")
 	})
 }
 

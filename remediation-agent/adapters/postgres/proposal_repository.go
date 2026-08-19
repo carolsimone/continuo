@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -80,8 +81,8 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			 status, confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
-			 repo, commit_sha, file_path)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			 repo, commit_sha, file_path, file_edits)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		ON CONFLICT (release_id, source, node_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
 			confidence             = EXCLUDED.confidence,
@@ -95,15 +96,19 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			created_at             = EXCLUDED.created_at,
 			repo                   = EXCLUDED.repo,
 			commit_sha             = EXCLUDED.commit_sha,
-			file_path              = EXCLUDED.file_path`
-	_, err := r.q.ExecContext(ctx, stmt,
+			file_path              = EXCLUDED.file_path,
+			file_edits             = EXCLUDED.file_edits`
+	edits, err := marshalFileEdits(p.Edits)
+	if err != nil {
+		return fmt.Errorf("marshal proposal file edits: %w", err)
+	}
+	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, p.NodeID, p.ErrorSignature, p.Attempt,
 		p.Status, p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
-		p.Repo, p.CommitSHA, p.FilePath,
-	)
-	if err != nil {
+		p.Repo, p.CommitSHA, p.FilePath, edits,
+	); err != nil {
 		return fmt.Errorf("insert proposal: %w", err)
 	}
 	return nil
@@ -130,6 +135,7 @@ type proposalRow struct {
 	Repo                string     `db:"repo"`
 	CommitSHA           string     `db:"commit_sha"`
 	FilePath            string     `db:"file_path"`
+	FileEdits           []byte     `db:"file_edits"`
 	Model               string     `db:"model"`
 	CreatedAt           time.Time  `db:"created_at"`
 	PrURL               string     `db:"pr_url"`
@@ -138,6 +144,48 @@ type proposalRow struct {
 	PrOpenedAt          *time.Time `db:"pr_opened_at"`
 	PrOpenedBy          string     `db:"pr_opened_by"`
 	PrClosedAt          *time.Time `db:"pr_closed_at"`
+}
+
+// fileEditRow is the persistence DTO for one element of the file_edits JSONB
+// column. The json tags — a storage concern — live here in the adapter so the
+// domain proposal.FileEdit carries no serialization annotations. The stored
+// shape is [{"path","content_uri","diff_uri"}, ...].
+type fileEditRow struct {
+	Path       string `json:"path"`
+	ContentURI string `json:"content_uri"`
+	DiffURI    string `json:"diff_uri"`
+}
+
+// marshalFileEdits encodes the domain edits as the file_edits column value.
+// A nil or empty slice encodes as an empty JSON array, so the column is never
+// written as SQL NULL.
+func marshalFileEdits(edits []proposal.FileEdit) ([]byte, error) {
+	rows := make([]fileEditRow, 0, len(edits))
+	for _, e := range edits {
+		rows = append(rows, fileEditRow{Path: e.Path, ContentURI: e.ContentURI, DiffURI: e.DiffURI})
+	}
+	return json.Marshal(rows)
+}
+
+// editsOrLegacy decodes the file_edits JSONB column into a []proposal.FileEdit.
+// A malformed blob is treated the same as an empty array rather than failing
+// the read: a proposal row must stay readable even if its file_edits value
+// were ever corrupted, since the single-file scalar columns still carry the
+// same information for a one-file proposal. When the decoded (or defaulted)
+// list is empty and filePath is non-empty, one edit is synthesized from those
+// scalar columns (filePath, contentURI, diffURI), which is how a row written
+// before the file_edits column existed keeps reading as a single file change.
+func editsOrLegacy(raw []byte, filePath, contentURI, diffURI string) []proposal.FileEdit {
+	var rows []fileEditRow
+	_ = json.Unmarshal(raw, &rows)
+	if len(rows) == 0 && filePath != "" {
+		return []proposal.FileEdit{{Path: filePath, ContentURI: contentURI, DiffURI: diffURI}}
+	}
+	edits := make([]proposal.FileEdit, 0, len(rows))
+	for _, r := range rows {
+		edits = append(edits, proposal.FileEdit{Path: r.Path, ContentURI: r.ContentURI, DiffURI: r.DiffURI})
+	}
+	return edits
 }
 
 func (row proposalRow) toView() proposal.View {
@@ -159,6 +207,7 @@ func (row proposalRow) toView() proposal.View {
 		Repo:                row.Repo,
 		CommitSHA:           row.CommitSHA,
 		FilePath:            row.FilePath,
+		Edits:               editsOrLegacy(row.FileEdits, row.FilePath, row.ProposedSQLURI, row.DiffURI),
 		Model:               row.Model,
 		CreatedAt:           row.CreatedAt,
 		PrURL:               row.PrURL,
@@ -173,7 +222,7 @@ func (row proposalRow) toView() proposal.View {
 const proposalColumns = `id, source, release_id, node_id, error_signature, attempt,
 		       status, confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
-		       repo, commit_sha, file_path, model, created_at,
+		       repo, commit_sha, file_path, file_edits, model, created_at,
 		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at`
 
 // claimRow is the persistence DTO for the BeginPR RETURNING projection.
@@ -184,6 +233,7 @@ type claimRow struct {
 	FilePath       string    `db:"file_path"`
 	ProposedSQLURI string    `db:"proposed_sql_uri"`
 	DiffURI        string    `db:"diff_uri"`
+	FileEdits      []byte    `db:"file_edits"`
 	ReleaseID      string    `db:"release_id"`
 	NodeID         string    `db:"node_id"`
 	Attempt        int       `db:"attempt"`
@@ -201,6 +251,7 @@ func (row claimRow) toClaim(branch string) proposal.PRClaim {
 		FilePath:       row.FilePath,
 		ProposedSQLURI: row.ProposedSQLURI,
 		DiffURI:        row.DiffURI,
+		Edits:          editsOrLegacy(row.FileEdits, row.FilePath, row.ProposedSQLURI, row.DiffURI),
 		ReleaseID:      row.ReleaseID,
 		NodeID:         row.NodeID,
 		Attempt:        row.Attempt,
@@ -284,6 +335,7 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, cla
 		  AND source_resolved
 		  AND pr_state IN ('', 'failed')
 		RETURNING id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
+		          file_edits,
 		          release_id, node_id, attempt, rationale, confidence, model,
 		          pr_claimed_at`
 	var row claimRow

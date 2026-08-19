@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
@@ -79,6 +81,10 @@ func TestCompile_OffendingSQL_ProposesToSQL(t *testing.T) {
 	if r.Proposal.Status != proposal.StatusProposed || r.Proposal.FilePath != "services/svc/models/x.sql" {
 		t.Fatalf("got status=%v file=%q", r.Proposal.Status, r.Proposal.FilePath)
 	}
+	require.Len(t, r.Proposal.Edits, 1)
+	require.Equal(t, r.Proposal.FilePath, r.Proposal.Edits[0].Path)
+	require.Equal(t, r.Proposal.ProposedSQLURI, r.Proposal.Edits[0].ContentURI)
+	require.Equal(t, r.Proposal.DiffURI, r.Proposal.Edits[0].DiffURI)
 }
 
 func TestCompile_TargetsCoLocatedYAML(t *testing.T) {

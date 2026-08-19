@@ -86,6 +86,10 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 			PrNumber:       42,
 			PrState:        "open",
 			PrOpenedBy:     "user1",
+			Edits: []proposal.FileEdit{
+				{Path: "models/foo.sql", ContentURI: "s3://bucket/foo.sql", DiffURI: "s3://bucket/foo.diff"},
+				{Path: "models/bar.sql", ContentURI: "s3://bucket/bar.sql", DiffURI: "s3://bucket/bar.diff"},
+			},
 		},
 	}
 
@@ -118,6 +122,14 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 	assert.Equal(t, "open", p.PrState)
 	assert.Equal(t, "user1", p.PrOpenedBy)
 	assert.Equal(t, "", p.PrOpenedAt, "nil pr_opened_at must produce empty string")
+
+	require.Len(t, p.Edits, 2, "both proposed file edits must be carried onto the wire")
+	assert.Equal(t, "models/foo.sql", p.Edits[0].Path)
+	assert.Equal(t, "s3://bucket/foo.sql", p.Edits[0].ContentUri)
+	assert.Equal(t, "s3://bucket/foo.diff", p.Edits[0].DiffUri)
+	assert.Equal(t, "models/bar.sql", p.Edits[1].Path)
+	assert.Equal(t, "s3://bucket/bar.sql", p.Edits[1].ContentUri)
+	assert.Equal(t, "s3://bucket/bar.diff", p.Edits[1].DiffUri)
 }
 
 func TestProposalsServer_ListProposals_InternalError(t *testing.T) {
@@ -138,6 +150,10 @@ func TestProposalsServer_GetProposal_HappyPath(t *testing.T) {
 			ID:        "p2",
 			ReleaseID: "rel-2",
 			CreatedAt: ts,
+			Edits: []proposal.FileEdit{
+				{Path: "models/a.sql", ContentURI: "s3://bucket/a.sql", DiffURI: "s3://bucket/a.diff"},
+				{Path: "models/b.sql", ContentURI: "s3://bucket/b.sql", DiffURI: "s3://bucket/b.diff"},
+			},
 		},
 	}
 	s := grpcadapter.NewProposalsServer(svc)
@@ -147,6 +163,14 @@ func TestProposalsServer_GetProposal_HappyPath(t *testing.T) {
 	assert.Equal(t, "p2", p.Id)
 	assert.Equal(t, "rel-2", p.ReleaseId)
 	assert.Equal(t, ts.Format(time.RFC3339), p.CreatedAt)
+
+	require.Len(t, p.Edits, 2, "both proposed file edits must be carried onto the wire")
+	assert.Equal(t, "models/a.sql", p.Edits[0].Path)
+	assert.Equal(t, "s3://bucket/a.sql", p.Edits[0].ContentUri)
+	assert.Equal(t, "s3://bucket/a.diff", p.Edits[0].DiffUri)
+	assert.Equal(t, "models/b.sql", p.Edits[1].Path)
+	assert.Equal(t, "s3://bucket/b.sql", p.Edits[1].ContentUri)
+	assert.Equal(t, "s3://bucket/b.diff", p.Edits[1].DiffUri)
 }
 
 func TestProposalsServer_GetProposal_NotFound(t *testing.T) {
@@ -186,6 +210,10 @@ func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 		Model:          "bar_model",
 		ClaimedAt:      claimedAt,
 		Branch:         "remediation/rel-3/node-3-attempt2",
+		Edits: []proposal.FileEdit{
+			{Path: "models/bar.sql", ContentURI: "s3://bucket/bar.sql", DiffURI: "s3://bucket/bar.diff"},
+			{Path: "models/baz.sql", ContentURI: "s3://bucket/baz.sql", DiffURI: "s3://bucket/baz.diff"},
+		},
 	}
 	svc := &fakeSvc{beginClaim: claim}
 	s := grpcadapter.NewProposalsServer(svc)
@@ -207,6 +235,14 @@ func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, "remediation/rel-3/node-3-attempt2", resp.Branch)
 	assert.Equal(t, claimedAt.Format(time.RFC3339), resp.ClaimedAt,
 		"the response must carry the claim's persisted ClaimedAt so FailPullRequest can CAS on it later")
+
+	require.Len(t, resp.Edits, 2, "both proposed file edits must be carried onto the wire")
+	assert.Equal(t, "models/bar.sql", resp.Edits[0].Path)
+	assert.Equal(t, "s3://bucket/bar.sql", resp.Edits[0].ContentUri)
+	assert.Equal(t, "s3://bucket/bar.diff", resp.Edits[0].DiffUri)
+	assert.Equal(t, "models/baz.sql", resp.Edits[1].Path)
+	assert.Equal(t, "s3://bucket/baz.sql", resp.Edits[1].ContentUri)
+	assert.Equal(t, "s3://bucket/baz.diff", resp.Edits[1].DiffUri)
 }
 
 func TestProposalsServer_BeginPullRequest_ConflictMapsToFailedPrecondition(t *testing.T) {

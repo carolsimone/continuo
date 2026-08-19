@@ -195,6 +195,14 @@ export type NodeDetailFrom =
   | { type: 'schedule'; name: string; mode: 'run' | 'latest' }
   | { type: 'nodes' };
 
+// One file a proposal changes. content_uri and diff_uri address S3 objects
+// holding the full corrected file and its unified diff.
+export interface FileEditDTO {
+  path: string;
+  content_uri: string;
+  diff_uri: string;
+}
+
 export interface ProposalDTO {
   id: string;
   source: string;
@@ -221,4 +229,8 @@ export interface ProposalDTO {
   pr_opened_at: string;
   pr_opened_by: string;
   pr_closed_at: string;
+  // Every file this proposal changes. Absent or empty on a proposal that has
+  // no real repository source to edit — a candidate-only fix — in which case
+  // the single-file diff_uri above still points at a previewable diff.
+  edits?: FileEditDTO[];
 }

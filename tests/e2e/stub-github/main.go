@@ -14,14 +14,34 @@
 //	POST /repos/{owner}/{repo}/git/refs
 //	    Creates a branch (stub). Returns 201 with the same deterministic SHA.
 //
+//	PATCH /repos/{owner}/{repo}/git/refs/heads/{branch}
+//	    Moves the branch to the posted sha. Returns 200 with the updated ref object.
+//
+//	POST /repos/{owner}/{repo}/git/blobs
+//	    Creates a blob from the posted content. Returns 201 with a sha derived
+//	    from that content, so two different files get two different shas.
+//
+//	GET  /repos/{owner}/{repo}/git/commits/{sha}
+//	    Returns the commit's sha and its tree's sha, so the PR creator can use
+//	    the tree as the base_tree for the tree it builds on top.
+//
+//	POST /repos/{owner}/{repo}/git/commits
+//	    Creates a commit from the posted message/tree/parents. Returns 201
+//	    with a sha derived from the request; the request is recorded and
+//	    retrievable via recordedCommitFor.
+//
+//	POST /repos/{owner}/{repo}/git/trees
+//	    Creates a tree from the posted base_tree/entries. Returns 201 with a
+//	    sha derived from the request; the request is recorded and retrievable
+//	    via recordedTreeFor.
+//
 //	GET  /repos/{owner}/{repo}/contents/{path}  (Accept contains "raw")
-//	    Returns the canned ftable_e dbt source — existing remediation-agent read path.
+//	    Returns the canned ftable_e dbt source — the remediation-agent's
+//	    single-file read path.
 //
-//	GET  /repos/{owner}/{repo}/contents/{path}  (JSON Accept, octokit getContent)
-//	    Returns 404 so the PR creator issues a create-without-sha.
-//
-//	PUT  /repos/{owner}/{repo}/contents/{path}
-//	    Creates or updates a file (stub). Returns 201 with stub commit SHA.
+//	GET  /repos/{owner}/{repo}/contents/{path}  (JSON Accept)
+//	    Returns 404 — the remediation-agent's directory-listing read path,
+//	    which treats a 404 as "nothing more to list".
 //
 //	POST /repos/{owner}/{repo}/pulls
 //	    Opens a PR (stub). Returns 201 with an auto-incrementing number and html_url.
@@ -43,6 +63,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -76,6 +98,23 @@ const (
 // stubClosedAt is the fixed terminal timestamp reported for closed stub PRs.
 const stubClosedAt = "2026-01-01T00:00:00Z"
 
+// stubBaseTreeSHA is the deterministic tree sha reported as the base commit's
+// tree by handleGitCommits' GET path, so the PR creator has a base_tree to
+// layer new blobs onto.
+const stubBaseTreeSHA = "basetreesha0000000000000000000000000000"
+
+// deterministicSHA derives a stable, git-sha-shaped hex string from parts, so
+// a given request body always produces the same sha and a different body
+// produces a different one, without relying on wall-clock time or a counter.
+func deterministicSHA(parts ...string) string {
+	h := sha256.New()
+	for _, p := range parts {
+		h.Write([]byte(p))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))[:40]
+}
+
 // prStates tracks each opened stub PR's lifecycle so the reconciler read path
 // observes merges/closes performed by tests, and so a branch lookup (GET
 // pulls?head=...) can find a PR a POST already created for that branch.
@@ -104,6 +143,64 @@ func resetPRs() {
 	defer prMu.Unlock()
 	prStates = map[int]*stubPRState{}
 	nextPRNumber = stubPRNumber
+}
+
+// treeEntry is one posted tree entry, in the shape octokit's createTree sends.
+type treeEntry struct {
+	Path string `json:"path"`
+	Mode string `json:"mode"`
+	Type string `json:"type"`
+	SHA  string `json:"sha"`
+}
+
+// stubTreeWrite is one POST git/trees call's recorded request, keyed by the
+// tree sha returned for it, so a test can look up which paths and base tree
+// a given commit's tree was built from.
+type stubTreeWrite struct {
+	BaseTree string
+	Entries  []treeEntry
+}
+
+// stubCommitWrite is one POST git/commits call's recorded request, keyed by
+// the commit sha returned for it.
+type stubCommitWrite struct {
+	Message string
+	Tree    string
+	Parents []string
+}
+
+// gitMu guards recordedTrees and recordedCommits, the write-side state for
+// POST git/trees and POST git/commits.
+var (
+	gitMu           sync.Mutex
+	recordedTrees   = map[string]stubTreeWrite{}
+	recordedCommits = map[string]stubCommitWrite{}
+)
+
+// resetGitWrites clears all recorded tree and commit writes (test helper).
+func resetGitWrites() {
+	gitMu.Lock()
+	defer gitMu.Unlock()
+	recordedTrees = map[string]stubTreeWrite{}
+	recordedCommits = map[string]stubCommitWrite{}
+}
+
+// recordedTreeFor returns the request recorded for a POST git/trees call
+// that returned sha, and whether one was recorded (test helper).
+func recordedTreeFor(sha string) (stubTreeWrite, bool) {
+	gitMu.Lock()
+	defer gitMu.Unlock()
+	w, ok := recordedTrees[sha]
+	return w, ok
+}
+
+// recordedCommitFor returns the request recorded for a POST git/commits call
+// that returned sha, and whether one was recorded (test helper).
+func recordedCommitFor(sha string) (stubCommitWrite, bool) {
+	gitMu.Lock()
+	defer gitMu.Unlock()
+	w, ok := recordedCommits[sha]
+	return w, ok
 }
 
 func main() {
@@ -149,6 +246,12 @@ func handleRepos(w http.ResponseWriter, r *http.Request) {
 		handleGitRef(w, r)
 	case rest == "git/refs" || strings.HasPrefix(rest, "git/refs"):
 		handleGitRefs(w, r)
+	case strings.HasPrefix(rest, "git/blobs"):
+		handleGitBlobs(w, r)
+	case strings.HasPrefix(rest, "git/commits"):
+		handleGitCommits(w, r)
+	case strings.HasPrefix(rest, "git/trees"):
+		handleGitTrees(w, r)
 	case strings.HasPrefix(rest, "contents/"):
 		handleContents(w, r)
 	case rest == "pulls" || strings.HasPrefix(rest, "pulls"):
@@ -182,67 +285,186 @@ func handleGitRef(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGitRefs responds to POST /repos/{owner}/{repo}/git/refs (create branch).
-// Returns 201 with the same deterministic SHA.
+// handleGitRefs routes /repos/{owner}/{repo}/git/refs[/heads/{branch}]:
+//
+//	POST  git/refs               -> creates a branch (stub). Returns 201 with
+//	                                 the same deterministic SHA.
+//	PATCH git/refs/heads/{branch} -> moves the branch to the posted sha.
+//	                                 Returns 200 with the updated ref object.
 func handleGitRefs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"ref": "refs/heads/" + stubBranch,
-		"object": map[string]string{
-			"sha":  stubBaseSHA,
-			"type": "commit",
-		},
-	})
-}
-
-// handleContents responds to GET and PUT /repos/{owner}/{repo}/contents/{path}.
-//
-// GET with Accept containing "raw" (the remediation-agent read path) returns
-// the canned ftable_e source as raw text. GET with a JSON Accept (octokit
-// getContent) returns 404 so the PR creator issues a create-without-sha.
-//
-// PUT (create/update file) returns 201 with a stub commit SHA.
-func handleContents(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodGet:
-		if strings.Contains(r.Header.Get("Accept"), "raw") {
-			// Remediation-agent raw read path — existing behavior preserved.
-			w.Header().Set("Content-Type", "application/vnd.github.raw")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(ftableESource))
-			return
-		}
-		// octokit getContent (JSON Accept): signal "file does not exist" so the
-		// PR creator performs a create without a blob SHA.
-		http.Error(w, "not found", http.StatusNotFound)
-
-	case http.MethodPut:
-		// Extract the path component after "contents/".
-		pathParts := strings.SplitN(r.URL.Path, "/contents/", 2)
-		filePath := ""
-		if len(pathParts) == 2 {
-			filePath = pathParts[1]
-		}
+	case http.MethodPost:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"content": map[string]string{
-				"name": "f",
-				"path": filePath,
+			"ref": "refs/heads/" + stubBranch,
+			"object": map[string]string{
+				"sha":  stubBaseSHA,
+				"type": "commit",
 			},
-			"commit": map[string]string{
-				"sha": stubCommitSHA,
+		})
+
+	case http.MethodPatch:
+		// Extract branch name from path: .../git/refs/heads/{branch}
+		parts := strings.SplitN(r.URL.Path, "/git/refs/heads/", 2)
+		branch := stubBranch
+		if len(parts) == 2 && parts[1] != "" {
+			branch = parts[1]
+		}
+		var body struct {
+			SHA   string `json:"sha"`
+			Force bool   `json:"force"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ref": "refs/heads/" + branch,
+			"object": map[string]string{
+				"sha":  body.SHA,
+				"type": "commit",
 			},
 		})
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleGitBlobs responds to POST /repos/{owner}/{repo}/git/blobs, creating a
+// blob for one file's content. The returned sha is derived from the posted
+// content, so the same content always yields the same sha and different
+// content yields different shas — enough for a test to tell two blobs apart
+// without any server-side counter or clock.
+func handleGitBlobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	sha := deterministicSHA("blob", body.Content)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{"sha": sha})
+}
+
+// handleGitCommits routes /repos/{owner}/{repo}/git/commits[/{sha}]:
+//
+//	GET  git/commits/{sha}  -> the commit's sha and its tree's sha (see
+//	                            handleGetCommit)
+//	POST git/commits         -> creates a new commit (see handleCreateCommit)
+func handleGitCommits(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		handleGetCommit(w, r)
+	case http.MethodPost:
+		handleCreateCommit(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleGetCommit responds to GET /repos/{owner}/{repo}/git/commits/{sha}
+// with the requested commit's sha and a deterministic tree sha, so the PR
+// creator can use it as the base_tree for the tree it builds on top.
+func handleGetCommit(w http.ResponseWriter, r *http.Request) {
+	parts := strings.SplitN(r.URL.Path, "/git/commits/", 2)
+	sha := stubBaseSHA
+	if len(parts) == 2 && parts[1] != "" {
+		sha = parts[1]
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"sha": sha,
+		"tree": map[string]string{
+			"sha": stubBaseTreeSHA,
+		},
+	})
+}
+
+// handleGitTrees responds to POST /repos/{owner}/{repo}/git/trees, building a
+// tree from the posted base_tree plus entries. The returned sha is derived
+// from the request so identical requests are idempotent, and the request is
+// recorded (retrievable via recordedTreeFor) so a test can assert which
+// paths and base tree a given tree was built from.
+func handleGitTrees(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		BaseTree string      `json:"base_tree"`
+		Tree     []treeEntry `json:"tree"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	parts := []string{"tree", body.BaseTree}
+	for _, e := range body.Tree {
+		parts = append(parts, e.Path, e.Mode, e.Type, e.SHA)
+	}
+	sha := deterministicSHA(parts...)
+
+	gitMu.Lock()
+	recordedTrees[sha] = stubTreeWrite{BaseTree: body.BaseTree, Entries: body.Tree}
+	gitMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{"sha": sha})
+}
+
+// handleCreateCommit responds to POST /repos/{owner}/{repo}/git/commits,
+// creating a commit from the posted message, tree and parents. The returned
+// sha is derived from the request so identical requests are idempotent, and
+// the request is recorded (retrievable via recordedCommitFor) so a test can
+// assert what a given commit carries.
+func handleCreateCommit(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Message string   `json:"message"`
+		Tree    string   `json:"tree"`
+		Parents []string `json:"parents"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	parts := append([]string{"commit", body.Message, body.Tree}, body.Parents...)
+	sha := deterministicSHA(parts...)
+
+	gitMu.Lock()
+	recordedCommits[sha] = stubCommitWrite{Message: body.Message, Tree: body.Tree, Parents: body.Parents}
+	gitMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{"sha": sha})
+}
+
+// handleContents responds to GET /repos/{owner}/{repo}/contents/{path}.
+//
+// GET with Accept containing "raw" (the remediation-agent single-file read
+// path) returns the canned ftable_e source as raw text. GET with a JSON
+// Accept (the remediation-agent directory-listing read path) returns 404,
+// which its caller treats as "nothing more to list" rather than an error.
+func handleContents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.Contains(r.Header.Get("Accept"), "raw") {
+		// Single-file raw read path — existing behavior preserved.
+		w.Header().Set("Content-Type", "application/vnd.github.raw")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(ftableESource))
+		return
+	}
+	// JSON-Accept directory listing: no such path in the stub.
+	http.Error(w, "not found", http.StatusNotFound)
 }
 
 // handlePulls routes /repos/{o}/{r}/pulls[...]:

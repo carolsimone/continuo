@@ -33,13 +33,19 @@ message Proposal {
   string status = 7;
   string confidence = 8;
   string rationale = 9;
+  // single-file view of the proposal: edits[0]'s content_uri when edits is
+  // non-empty, otherwise the candidate-only fix artifact
   string proposed_sql_uri = 10;
+  // single-file view of the proposal: edits[0]'s diff_uri when edits is
+  // non-empty, otherwise the diff of the candidate-only fix artifact
   string diff_uri = 11;
   string candidate_fix_sql_uri = 12;
   string candidate_fix_diff_uri = 13;
   bool source_resolved = 14;
   string repo = 15;
   string commit_sha = 16;
+  // single-file view of the proposal: edits[0]'s path when edits is
+  // non-empty, empty when the proposal carries only a candidate fix
   string file_path = 17;
   string model = 18;
   // created_at is an RFC3339-formatted timestamp string.
@@ -53,6 +59,7 @@ message Proposal {
   // pr_closed_at is an RFC3339-formatted timestamp string, empty until the PR
   // reaches a terminal outcome (pr_state 'merged' or 'rejected').
   string pr_closed_at = 25;
+  repeated FileEdit edits = 26;
 }
 
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
@@ -80,8 +87,14 @@ message BeginPullRequestResponse {
   string proposal_id = 1;
   string repo = 2;
   string commit_sha = 3;
+  // single-file view of the proposal: edits[0]'s path when edits is
+  // non-empty, empty when the proposal carries only a candidate fix
   string file_path = 4;
+  // single-file view of the proposal: edits[0]'s content_uri when edits is
+  // non-empty, otherwise the candidate-only fix artifact
   string proposed_sql_uri = 5;
+  // single-file view of the proposal: edits[0]'s diff_uri when edits is
+  // non-empty, otherwise the diff of the candidate-only fix artifact
   string diff_uri = 6;
   string release_id = 7;
   string node_id = 8;
@@ -96,6 +109,7 @@ message BeginPullRequestResponse {
   // so the repository's compare-and-set only releases this exact claim,
   // never a fresher one taken by someone else since.
   string claimed_at = 14;
+  repeated FileEdit edits = 15;
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
@@ -125,4 +139,12 @@ message FailPullRequestResponse {
   // already failed by another caller — by the time this call ran; that is
   // not an error.
   bool released = 1;
+}
+
+// One proposed file change. content_uri/diff_uri point at S3 objects
+// holding the full corrected file content and its unified diff.
+message FileEdit {
+  string path = 1;
+  string content_uri = 2;
+  string diff_uri = 3;
 }

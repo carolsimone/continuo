@@ -17,11 +17,12 @@ export interface CreatePRInput {
   baseSha?: string;
   /** Branch to create for the PR */
   headBranch: string;
-  /** Path of the file to create or update inside the repository */
-  filePath: string;
-  /** File content (raw string, encoded to base64 before upload) */
-  content: string;
-  /** Git commit message for the file upsert */
+  /**
+   * Every file the pull request changes, as repository-relative path plus the
+   * full replacement content. All of them land in a single commit.
+   */
+  files: Array<{ path: string; content: string }>;
+  /** Git commit message for the commit carrying the files */
   commitMessage: string;
   /** PR title */
   title: string;
@@ -43,22 +44,34 @@ export interface OctokitLike {
       data: { object: { sha: string } };
     }>;
     createRef(params: { owner: string; repo: string; ref: string; sha: string }): Promise<unknown>;
-  };
-  repos: {
-    getContent(params: {
+    getCommit(params: { owner: string; repo: string; commit_sha: string }): Promise<{
+      data: { tree: { sha: string } };
+    }>;
+    createBlob(params: {
       owner: string;
       repo: string;
-      path: string;
-      ref: string;
-    }): Promise<{ data: { sha: string } }>;
-    createOrUpdateFileContents(params: {
-      owner: string;
-      repo: string;
-      path: string;
-      message: string;
       content: string;
-      branch: string;
-      sha?: string;
+      encoding: string;
+    }): Promise<{ data: { sha: string } }>;
+    createTree(params: {
+      owner: string;
+      repo: string;
+      base_tree: string;
+      tree: Array<{ path: string; mode: '100644'; type: 'blob'; sha: string }>;
+    }): Promise<{ data: { sha: string } }>;
+    createCommit(params: {
+      owner: string;
+      repo: string;
+      message: string;
+      tree: string;
+      parents: string[];
+    }): Promise<{ data: { sha: string } }>;
+    updateRef(params: {
+      owner: string;
+      repo: string;
+      ref: string;
+      sha: string;
+      force: boolean;
     }): Promise<unknown>;
   };
   pulls: {
@@ -86,13 +99,22 @@ export interface OctokitLike {
  *   1. Resolve the commit to branch from — input.baseSha when set (the proposal's
  *      commit), otherwise the base branch HEAD via git.getRef.
  *   2. Create the head branch via git.createRef — on 422 (already exists) continue.
- *   3. Resolve the existing file sha on the head branch via repos.getContent — on 404 (new file) omit sha.
- *   4. Upsert the file via repos.createOrUpdateFileContents.
+ *   3. Write every input file as a blob, assemble them into one tree layered on
+ *      the base commit's tree, and commit that tree with the base commit as parent.
+ *   4. Point the head branch at the new commit via git.updateRef.
  *   5. Open the PR via pulls.create — on 422 (PR already exists) resolve the existing PR via pulls.list.
  */
 export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator {
   return {
     async create(input: CreatePRInput): Promise<{ url: string; number: number }> {
+      // A commit over no files produces a tree identical to its parent, which
+      // GitHub then refuses to open a pull request for — surfacing several
+      // steps later as an unexplained 422 with no PR to fall back to. Say what
+      // is actually wrong here instead.
+      if (input.files.length === 0) {
+        throw new Error('cannot open a pull request: no files to commit');
+      }
+
       const [owner, repoName] = input.repo.split('/');
 
       // Step 1: resolve the commit to branch from — the proposal's commit when
@@ -121,35 +143,68 @@ export function makePullRequestCreator(octokit: OctokitLike): PullRequestCreator
         // Branch already exists — continue
       }
 
-      // Step 3: get existing file sha on the head branch (404 = new file)
-      let existingFileSha: string | undefined;
-      try {
-        const contentData = await octokit.repos.getContent({
-          owner,
-          repo: repoName,
-          path: input.filePath,
-          ref: input.headBranch,
-        });
-        existingFileSha = contentData.data.sha;
-      } catch (err: unknown) {
-        const e = err as { status?: number };
-        if (e.status !== 404) throw err;
-        // File does not exist yet — no sha needed
-      }
-
-      // Step 4: upsert the file on the head branch
-      const upsertParams: Parameters<OctokitLike['repos']['createOrUpdateFileContents']>[0] = {
+      // Step 3: commit every file at once. Each file becomes a blob; the blobs
+      // are layered onto the base commit's tree so untouched paths are carried
+      // over unchanged, and the resulting tree is committed in one go. Writing
+      // the files individually would produce one commit per file, and a diff
+      // that is only correct once the last of them lands.
+      const baseCommit = await octokit.git.getCommit({
         owner,
         repo: repoName,
-        path: input.filePath,
-        message: input.commitMessage,
-        content: Buffer.from(input.content).toString('base64'),
-        branch: input.headBranch,
-      };
-      if (existingFileSha !== undefined) {
-        upsertParams.sha = existingFileSha;
+        commit_sha: baseSha,
+      });
+
+      const blobShas: string[] = [];
+      for (const file of input.files) {
+        const blob = await octokit.git.createBlob({
+          owner,
+          repo: repoName,
+          content: Buffer.from(file.content, 'utf8').toString('base64'),
+          encoding: 'base64',
+        });
+        blobShas.push(blob.data.sha);
       }
-      await octokit.repos.createOrUpdateFileContents(upsertParams);
+
+      // Every entry is written as a regular non-executable file. A tree entry
+      // states the mode outright rather than inheriting the path's existing
+      // one, so remediating a file that is executable in the repository drops
+      // its executable bit.
+      const tree = await octokit.git.createTree({
+        owner,
+        repo: repoName,
+        base_tree: baseCommit.data.tree.sha,
+        tree: input.files.map((file, i) => ({
+          path: file.path,
+          mode: '100644' as const,
+          type: 'blob' as const,
+          sha: blobShas[i],
+        })),
+      });
+
+      const commit = await octokit.git.createCommit({
+        owner,
+        repo: repoName,
+        message: input.commitMessage,
+        tree: tree.data.sha,
+        parents: [baseSha],
+      });
+
+      // Step 4: move the head branch onto the new commit. The branch name is
+      // scoped to this proposal attempt, so the only tip force can overwrite
+      // is one left by an earlier run of this same attempt. That is normally a
+      // discarded commit of the same proposal — but not always: if the earlier
+      // run opened the pull request and then failed to record it, the claim
+      // can be retried while the branch already carries a pull request someone
+      // may have pushed to. The reconciler's opening sweep records rather than
+      // releases a claim whose pull request exists, which keeps that window
+      // narrow rather than closing it.
+      await octokit.git.updateRef({
+        owner,
+        repo: repoName,
+        ref: `heads/${input.headBranch}`,
+        sha: commit.data.sha,
+        force: true,
+      });
 
       // Step 5: open the PR — on 422 (already exists) fetch and return the existing one
       try {

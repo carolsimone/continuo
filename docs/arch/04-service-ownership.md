@@ -162,7 +162,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Redis consumes | none (no stream consumption; session keys only) |
 | Redis produces | none (no stream production; session keys only) |
 | Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetNode`; `agent-runner`: `AgentChat.Chat` (bidirectional streaming, `/ws/chat` relay, operator-only, feature-flagged by `CHAT_BRIDGE_ENABLED`); `remediation-agent`: `ListProposals`, `GetProposal`, `BeginPullRequest`, `RecordPullRequest`, `FailPullRequest` |
-| External write | GitHub App API — create branch + commit file + open pull request on `continuo-dbt-demo` (operator-only, one repo, `contents:write` + `pull-requests:write`) |
+| External write | GitHub App API — create branch + one tree commit carrying every changed file + open pull request on `continuo-dbt-demo` (operator-only, one repo, `contents:write` + `pull-requests:write`) |
 
 ## `agent-runner`
 

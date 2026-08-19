@@ -1147,6 +1147,81 @@ func TestRecordPROutcome_CASAndListOpen(t *testing.T) {
 	require.Empty(t, open)
 }
 
+// TestProposalRepository_FileEditsRoundTripAndLegacySynthesis verifies that a
+// non-empty Edits slice round-trips through Get unchanged, and that a row
+// written with Edits=nil but non-empty legacy scalar columns (file_path,
+// proposed_sql_uri, diff_uri) reads back as a single synthesized FileEdit.
+func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	edits := []proposal.FileEdit{
+		{Path: "contracts/a.yml", ContentURI: "s3://b/1.content", DiffURI: "s3://b/1.diff"},
+		{Path: "scripts/a.py", ContentURI: "s3://b/2.content", DiffURI: "s3://b/2.diff"},
+	}
+	p := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-file-edits-1",
+		NodeID:         "model.p.multi_edit",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "rationale",
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+		Edits:          edits,
+	}
+	id := seedProposal(t, repo, db, p)
+
+	got, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, edits, got.Edits, "a non-empty Edits slice must round-trip unchanged")
+
+	// The stored JSONB must use the documented snake_case wire keys
+	// ("path", "content_uri", "diff_uri"), not the Go field names. A Go-level
+	// round-trip through the same struct on both write and read cannot catch
+	// a PascalCase regression, so this asserts the raw column contents
+	// directly: a wrong key name here means ->>'path' etc. return NULL.
+	var path, contentURI, diffURI string
+	require.NoError(t, db.GetContext(ctx, &path,
+		`SELECT file_edits->0->>'path' FROM proposal WHERE id=$1`, id))
+	require.NoError(t, db.GetContext(ctx, &contentURI,
+		`SELECT file_edits->0->>'content_uri' FROM proposal WHERE id=$1`, id))
+	require.NoError(t, db.GetContext(ctx, &diffURI,
+		`SELECT file_edits->0->>'diff_uri' FROM proposal WHERE id=$1`, id))
+	require.Equal(t, edits[0].Path, path, "stored JSON must use the snake_case key \"path\"")
+	require.Equal(t, edits[0].ContentURI, contentURI, "stored JSON must use the snake_case key \"content_uri\"")
+	require.Equal(t, edits[0].DiffURI, diffURI, "stored JSON must use the snake_case key \"diff_uri\"")
+
+	legacy := proposal.Proposal{
+		Source:         "validation",
+		ReleaseID:      "r-file-edits-1",
+		NodeID:         "analytics.legacy_node",
+		ErrorSignature: "sig",
+		Attempt:        1,
+		Status:         proposal.StatusProposed,
+		Confidence:     proposal.ConfidenceHigh,
+		Rationale:      "rationale",
+		Model:          "claude-3-5-sonnet",
+		CreatedAt:      time.Now().UTC(),
+		Edits:          nil, // simulates a pre-V12 writer
+		FilePath:       "models/x.sql",
+		ProposedSQLURI: "s3://b/x.sql",
+		DiffURI:        "s3://b/x.diff",
+	}
+	legacyID := seedProposal(t, repo, db, legacy)
+
+	got2, err := repo.Get(ctx, legacyID)
+	require.NoError(t, err)
+	require.Equal(t,
+		[]proposal.FileEdit{{Path: "models/x.sql", ContentURI: "s3://b/x.sql", DiffURI: "s3://b/x.diff"}},
+		got2.Edits,
+		"a row with an empty file_edits array must synthesize one edit from the legacy scalar columns",
+	)
+}
+
 // TestRecordPROutcome_RejectedAndNonOpenRows verifies the rejected transition
 // and that rows with an empty pr_state, or 'opening', or 'failed', are never
 // transitioned nor listed.
@@ -1194,4 +1269,47 @@ func TestRecordPROutcome_RejectedAndNonOpenRows(t *testing.T) {
 	v, err = repo.Get(ctx, b)
 	require.NoError(t, err)
 	require.Equal(t, "opening", v.PrState)
+}
+
+// TestBeginPR_ClaimCarriesFileEdits verifies the projection the pull-request
+// writer actually consumes: BeginPR's RETURNING clause must surface the
+// file_edits column on the claim, with every edit in the order it was
+// written. It also covers a row whose file_edits is empty but whose scalar
+// columns describe a single file — the shape a row written before the column
+// existed has — which must claim as one synthesized edit rather than none.
+func TestBeginPR_ClaimCarriesFileEdits(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	edits := []proposal.FileEdit{
+		{Path: "contracts/a.yml", ContentURI: "s3://b/1.content", DiffURI: "s3://b/1.diff"},
+		{Path: "scripts/a.py", ContentURI: "s3://b/2.content", DiffURI: "s3://b/2.diff"},
+	}
+	multiID := seedProposal(t, repo, db, proposal.Proposal{
+		Source: "validation", ReleaseID: "rel-claim-edits", NodeID: "model.p.multi",
+		ErrorSignature: "sig", Attempt: 1, Status: proposal.StatusProposed,
+		SourceResolved: true, Repo: "acme/dbt-repo", CommitSHA: "sha1",
+		CreatedAt: time.Now().UTC(), Edits: edits,
+	})
+
+	claim, err := repo.BeginPR(ctx, multiID, "remediation/rel-claim-edits/multi-attempt1", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, edits, claim.Edits, "every edit must reach the claim, in order")
+
+	legacyID := seedProposal(t, repo, db, proposal.Proposal{
+		Source: "validation", ReleaseID: "rel-claim-edits", NodeID: "model.p.single",
+		ErrorSignature: "sig", Attempt: 1, Status: proposal.StatusProposed,
+		SourceResolved: true, Repo: "acme/dbt-repo", CommitSHA: "sha1",
+		CreatedAt: time.Now().UTC(), Edits: nil,
+		FilePath: "models/x.sql", ProposedSQLURI: "s3://b/x.sql", DiffURI: "s3://b/x.diff",
+	})
+
+	legacyClaim, err := repo.BeginPR(ctx, legacyID, "remediation/rel-claim-edits/single-attempt1", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t,
+		[]proposal.FileEdit{{Path: "models/x.sql", ContentURI: "s3://b/x.sql", DiffURI: "s3://b/x.diff"}},
+		legacyClaim.Edits,
+		"a row with no file_edits must claim as one edit synthesized from the single-file columns",
+	)
 }

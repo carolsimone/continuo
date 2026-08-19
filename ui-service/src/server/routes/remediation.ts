@@ -140,18 +140,58 @@ export function createRemediationRouter(
     // opening sweep) since this request began.
     const claimedAt = claim.claimed_at;
 
-    // Fetch the proposed SQL content from S3.
-    let content: string;
+    // Every file the proposal changes, in the order the agent produced them.
+    // The list is empty when the claim came from a remediation-agent instance
+    // that predates it — the same rolling-upgrade skew safeFailPullRequest
+    // tolerates on claimed_at — so fall back to the claim's single-file
+    // fields, which describe exactly the one file such a peer proposes. This
+    // mirrors the synthesis the repository itself applies to a row stored
+    // before the edits list existed.
+    let edits: Array<{ path: string; content_uri: string; diff_uri: string }> = claim.edits ?? [];
+    // The Go read path (editsOrLegacy in remediation-agent's proposal
+    // repository) already guarantees every PRClaim carries a non-empty edits
+    // list, synthesizing one from the single-file fields when the row has
+    // none. So this branch is only reachable when talking to a
+    // remediation-agent build that predates the edits field entirely — not a
+    // routinely-exercised path against the current fleet.
+    if (edits.length === 0 && claim.file_path && claim.proposed_sql_uri) {
+      edits = [
+        {
+          path: claim.file_path,
+          content_uri: claim.proposed_sql_uri,
+          diff_uri: claim.diff_uri ?? '',
+        },
+      ];
+    }
+    // With neither a list nor a single-file description there is nothing to
+    // commit at all, and a pull request built from it would change no files.
+    // Release the claim and fail loudly rather than open one.
+    if (edits.length === 0) {
+      console.error(
+        '[remediation] proposal %s was claimed with no file edits and no single file to fall back to — refusing to open an empty pull request',
+        id,
+      );
+      await safeFailPullRequest(remediation, id, claimedAt);
+      return res.status(502).json({ error: 'proposal carries no file edits' });
+    }
+
+    // Fetch the proposed content of every edited file from S3.
+    let files: Array<{ path: string; content: string }>;
     try {
-      content = await getObject(normalizeKey(claim.proposed_sql_uri));
+      files = await Promise.all(
+        edits.map(async (edit) => ({
+          path: edit.path,
+          content: await getObject(normalizeKey(edit.content_uri)),
+        })),
+      );
     } catch (err) {
       console.error(
-        '[remediation] failed to fetch proposed SQL for proposal %s: %s',
+        '[remediation] failed to fetch proposed file content for proposal %s: %s',
         id,
         err instanceof Error ? err.message : String(err),
       );
       await safeFailPullRequest(remediation, id, claimedAt);
-      return res.status(502).json({ error: 'failed to fetch proposed SQL from S3' });
+      return res.status(502).json({ error: 'failed to fetch proposed file content from S3' });
     }
 
     // Build the PR title and body.
@@ -159,10 +199,12 @@ export function createRemediationRouter(
     const releaseId = claim.release_id ?? '';
     const title = `[remediation] fix ${nodeId} (release ${releaseId})`;
 
+    // A single inline preview keeps the body readable on a multi-file proposal;
+    // the rest of the diffs are one click away in the pull request itself.
     let diffBlock = '';
-    if (claim.diff_uri) {
+    if (edits[0].diff_uri) {
       try {
-        const diff = await getObject(normalizeKey(claim.diff_uri));
+        const diff = await getObject(normalizeKey(edits[0].diff_uri));
         diffBlock = `\n\n### Proposed diff\n\`\`\`diff\n${diff}\n\`\`\``;
       } catch (err) {
         // Diff is best-effort — omit on failure, but still log why so a
@@ -183,6 +225,9 @@ export function createRemediationRouter(
       claim.error_signature ? `**Error signature:** ${claim.error_signature}` : '',
       claim.model ? `**Model:** ${claim.model}` : '',
       claim.confidence !== undefined ? `**Confidence:** ${claim.confidence}` : '',
+      ``,
+      `### Files changed`,
+      ...files.map((file) => `- \`${file.path}\``),
       ``,
       claim.rationale ? `### Rationale\n${claim.rationale}` : '',
       diffBlock,
@@ -209,8 +254,7 @@ export function createRemediationRouter(
         // drifted on main since — rather than silently reverting that drift.
         baseSha: claim.commit_sha,
         headBranch: claim.branch,
-        filePath: claim.file_path,
-        content,
+        files,
         commitMessage,
         title,
         body,

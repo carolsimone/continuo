@@ -22,8 +22,13 @@ type View struct {
 	Repo                string
 	CommitSHA           string
 	FilePath            string
-	Model               string
-	CreatedAt           time.Time
+	// Edits is the list of proposed file changes for this attempt: either the
+	// value written for this row, or — when the row predates this field and
+	// carries an empty list — one edit synthesized from FilePath,
+	// ProposedSQLURI, and DiffURI.
+	Edits     []FileEdit
+	Model     string
+	CreatedAt time.Time
 	// PR-lifecycle columns.
 	PrURL      string
 	PrNumber   int
@@ -44,12 +49,15 @@ type PRClaim struct {
 	FilePath       string
 	ProposedSQLURI string
 	DiffURI        string
-	ReleaseID      string
-	NodeID         string
-	Attempt        int
-	Rationale      string
-	Confidence     Confidence
-	Model          string
+	// Edits is the list of proposed file changes for this attempt, with the
+	// same legacy-synthesis fallback as View.Edits.
+	Edits      []FileEdit
+	ReleaseID  string
+	NodeID     string
+	Attempt    int
+	Rationale  string
+	Confidence Confidence
+	Model      string
 	// ClaimedAt is the pr_claimed_at value BeginPR's CAS persisted for this
 	// claim, read back from the row rather than trusted from the caller's
 	// clock. The caller carries it forward and must present it back to

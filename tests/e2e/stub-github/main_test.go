@@ -294,3 +294,166 @@ func TestGetUnknownPullIs404(t *testing.T) {
 		t.Fatalf("want 404, got %d", rec.Code)
 	}
 }
+
+// TestHandleGitBlobs_Create verifies POST /repos/.../git/blobs returns 201
+// with a sha, and that the sha is a deterministic function of the posted
+// content: the same content always yields the same sha, and different
+// content yields a different one.
+func TestHandleGitBlobs_Create(t *testing.T) {
+	post := func(content string) (int, string) {
+		rec := httptest.NewRecorder()
+		body := fmt.Sprintf(`{"content":%q,"encoding":"base64"}`, content)
+		handleRepos(rec, httptest.NewRequest(http.MethodPost, "/repos/o/r/git/blobs", strings.NewReader(body)))
+		var resp struct {
+			SHA string `json:"sha"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		return rec.Code, resp.SHA
+	}
+
+	code1, sha1 := post("aGVsbG8=")
+	if code1 != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", code1)
+	}
+	if sha1 == "" {
+		t.Fatal("expected a non-empty sha")
+	}
+
+	code2, sha2 := post("aGVsbG8=")
+	if code2 != http.StatusCreated || sha2 != sha1 {
+		t.Fatalf("expected same content to yield the same sha: %q vs %q", sha1, sha2)
+	}
+
+	_, sha3 := post("d29ybGQ=")
+	if sha3 == sha1 {
+		t.Fatalf("expected different content to yield a different sha, both were %q", sha1)
+	}
+}
+
+// TestHandleGitCommits_Get verifies GET /repos/.../git/commits/{sha} returns
+// the requested commit's sha plus a tree.sha, since the PR creator reads
+// baseCommit.data.tree.sha to use as the new tree's base_tree.
+func TestHandleGitCommits_Get(t *testing.T) {
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/o/r/git/commits/"+stubBaseSHA, nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp struct {
+		SHA  string `json:"sha"`
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v, body: %q", err, rec.Body.String())
+	}
+	if resp.SHA != stubBaseSHA {
+		t.Errorf("expected sha %q, got %q", stubBaseSHA, resp.SHA)
+	}
+	if resp.Tree.SHA == "" {
+		t.Error("expected a non-empty tree.sha")
+	}
+}
+
+// TestHandleGitTrees_Create verifies POST /repos/.../git/trees returns 201
+// with a sha, and that the posted entries are recorded under that sha —
+// retrievable via recordedTreeFor — so a test can assert which paths were
+// committed, in which order, and onto which base tree.
+func TestHandleGitTrees_Create(t *testing.T) {
+	resetGitWrites()
+
+	reqBody := `{"base_tree":"basetree0","tree":[` +
+		`{"path":"models/a.sql","mode":"100644","type":"blob","sha":"shaA"},` +
+		`{"path":"models/b.sql","mode":"100644","type":"blob","sha":"shaB"}` +
+		`]}`
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPost, "/repos/o/r/git/trees", strings.NewReader(reqBody)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+	var resp struct {
+		SHA string `json:"sha"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v, body: %q", err, rec.Body.String())
+	}
+	if resp.SHA == "" {
+		t.Fatal("expected a non-empty tree sha")
+	}
+
+	recorded, ok := recordedTreeFor(resp.SHA)
+	if !ok {
+		t.Fatalf("expected tree %q to be recorded", resp.SHA)
+	}
+	if recorded.BaseTree != "basetree0" {
+		t.Errorf("expected base_tree %q, got %q", "basetree0", recorded.BaseTree)
+	}
+	if len(recorded.Entries) != 2 || recorded.Entries[0].Path != "models/a.sql" || recorded.Entries[1].Path != "models/b.sql" {
+		t.Fatalf("expected both paths recorded in order, got %+v", recorded.Entries)
+	}
+}
+
+// TestHandleGitCommits_Create verifies POST /repos/.../git/commits returns
+// 201 with a sha, and that the posted message/tree/parents are recorded
+// under that sha so a test can assert what a given commit carries. The same
+// git/commits path serves both GET and POST.
+func TestHandleGitCommits_Create(t *testing.T) {
+	resetGitWrites()
+
+	reqBody := `{"message":"fix ftable_e","tree":"treesha0","parents":["basesha0"]}`
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPost, "/repos/o/r/git/commits", strings.NewReader(reqBody)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+	var resp struct {
+		SHA string `json:"sha"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v, body: %q", err, rec.Body.String())
+	}
+	if resp.SHA == "" {
+		t.Fatal("expected a non-empty commit sha")
+	}
+
+	recorded, ok := recordedCommitFor(resp.SHA)
+	if !ok {
+		t.Fatalf("expected commit %q to be recorded", resp.SHA)
+	}
+	if recorded.Message != "fix ftable_e" || recorded.Tree != "treesha0" || len(recorded.Parents) != 1 || recorded.Parents[0] != "basesha0" {
+		t.Fatalf("unexpected recorded commit: %+v", recorded)
+	}
+}
+
+// TestHandleGitRefs_UpdatePatch verifies PATCH
+// /repos/.../git/refs/heads/{branch} returns 200 with the updated ref
+// object, moving the head branch onto a new commit sha. The same git/refs
+// path serves both POST (create) and PATCH (update).
+func TestHandleGitRefs_UpdatePatch(t *testing.T) {
+	reqBody := `{"sha":"newcommitsha0","force":true}`
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPatch, "/repos/o/r/git/refs/heads/stub", strings.NewReader(reqBody)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp struct {
+		Ref    string `json:"ref"`
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v, body: %q", err, rec.Body.String())
+	}
+	if resp.Ref != "refs/heads/stub" {
+		t.Errorf("expected ref %q, got %q", "refs/heads/stub", resp.Ref)
+	}
+	if resp.Object.SHA != "newcommitsha0" {
+		t.Errorf("expected updated sha %q, got %q", "newcommitsha0", resp.Object.SHA)
+	}
+}

@@ -232,25 +232,26 @@ func isLowConfidence(c string) bool {
 	return strings.EqualFold(strings.TrimSpace(c), "low")
 }
 
-// writeSourceArtifacts writes the corrected source and its unified diff (against
-// the original) as the attempt's source artifacts and returns their URIs. Both
-// singleShot (compile/seed) and the validation fixer's real-source step use it,
-// so the artifact key layout and content type live in one place.
-func writeSourceArtifacts(ctx context.Context, svc Services, in Input, original, corrected string) (sqlURI, diffURI string, err error) {
-	diff := proposal.ComputeUnifiedDiff(original, corrected, in.NodeID)
-	sqlURI, err = svc.Artifacts.Write(ctx,
+// writeSourceArtifacts writes the corrected source and its unified diff
+// (against the original) as the attempt's source artifacts and returns them as
+// a complete FileEdit naming filePath and both URIs. Both singleShot
+// (compile/seed) and the validation fixer's real-source step use it, so the
+// artifact key layout and content type live in one place.
+func writeSourceArtifacts(ctx context.Context, svc Services, in Input, filePath, original, corrected string) (proposal.FileEdit, error) {
+	diff := proposal.ComputeUnifiedDiff(original, corrected, filePath)
+	sqlURI, err := svc.Artifacts.Write(ctx,
 		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", in.ReleaseID, in.NodeID, in.Attempt),
 		corrected, "text/plain")
 	if err != nil {
-		return "", "", fmt.Errorf("write source sql: %w", err)
+		return proposal.FileEdit{}, fmt.Errorf("write source sql: %w", err)
 	}
-	diffURI, err = svc.Artifacts.Write(ctx,
+	diffURI, err := svc.Artifacts.Write(ctx,
 		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.diff", in.ReleaseID, in.NodeID, in.Attempt),
 		diff, "text/plain")
 	if err != nil {
-		return "", "", fmt.Errorf("write source diff: %w", err)
+		return proposal.FileEdit{}, fmt.Errorf("write source diff: %w", err)
 	}
-	return sqlURI, diffURI, nil
+	return proposal.FileEdit{Path: filePath, ContentURI: sqlURI, DiffURI: diffURI}, nil
 }
 
 // singleShot builds a Fixer whose flow is: gather source files → build one
@@ -289,7 +290,7 @@ func (s singleShot) Propose(ctx context.Context, svc Services, in Input) (Result
 	// Diff and artifacts are computed against the raw original (g.Files), not the
 	// sanitized copy sent to the LLM, because the fix is applied to the real file.
 	original := g.Files[out.TargetFile]
-	sqlURI, diffURI, err := writeSourceArtifacts(ctx, svc, in, original, out.CorrectedContent)
+	edit, err := writeSourceArtifacts(ctx, svc, in, out.TargetFile, original, out.CorrectedContent)
 	if err != nil {
 		return Result{}, err
 	}
@@ -298,13 +299,14 @@ func (s singleShot) Propose(ctx context.Context, svc Services, in Input) (Result
 			Status:         proposal.StatusProposed,
 			Confidence:     normalizeConfidence(out.Confidence),
 			Rationale:      out.Rationale,
-			ProposedSQLURI: sqlURI,
-			DiffURI:        diffURI,
+			ProposedSQLURI: edit.ContentURI,
+			DiffURI:        edit.DiffURI,
 			SourceResolved: true,
 			Model:          out.Model,
 			Repo:           in.Repo,
 			CommitSHA:      in.CommitSHA,
 			FilePath:       out.TargetFile,
+			Edits:          []proposal.FileEdit{edit},
 		},
 		SuspectedRoot: out.SuspectedRoot,
 	}, nil

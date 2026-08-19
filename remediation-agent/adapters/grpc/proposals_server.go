@@ -160,6 +160,24 @@ func toGRPCError(err error) error {
 	}
 }
 
+// editsToProto converts a slice of domain FileEdit values to the proto
+// representation. A nil or empty input produces a nil slice rather than a
+// list containing a zero-valued element.
+func editsToProto(edits []proposal.FileEdit) []*remediationv1.FileEdit {
+	if len(edits) == 0 {
+		return nil
+	}
+	out := make([]*remediationv1.FileEdit, 0, len(edits))
+	for _, e := range edits {
+		out = append(out, &remediationv1.FileEdit{
+			Path:       e.Path,
+			ContentUri: e.ContentURI,
+			DiffUri:    e.DiffURI,
+		})
+	}
+	return out
+}
+
 // viewToProto converts a domain proposal.View to the proto Proposal message.
 // Timestamps are formatted as RFC3339 strings; a nil PrOpenedAt produces an
 // empty string.
@@ -198,6 +216,7 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		PrOpenedAt:          prOpenedAt,
 		PrOpenedBy:          v.PrOpenedBy,
 		PrClosedAt:          prClosedAt,
+		Edits:               editsToProto(v.Edits),
 	}
 }
 
@@ -218,5 +237,6 @@ func claimToProto(c proposal.PRClaim) *remediationv1.BeginPullRequestResponse {
 		Model:          c.Model,
 		Branch:         c.Branch,
 		ClaimedAt:      c.ClaimedAt.Format(time.RFC3339),
+		Edits:          editsToProto(c.Edits),
 	}
 }

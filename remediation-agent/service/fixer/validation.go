@@ -185,18 +185,20 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	finalSQLURI, finalDiffURI := candSQLURI, candDiffURI
 	sourceResolved := false
 	var resolvedFilePath string
+	var edits []proposal.FileEdit
 
 	// Step 2 — real-source fix. Asks the LLM to apply the Step-1 diagnosis to
 	// the already-resolved candidate source. Degrades silently when the
 	// candidate source, the file path, the service mapping, or the LLM result
 	// is unavailable, or when the LLM did not improve the source.
 	if src, fullPath, ok := resolveValidationSource(ctx, svc, in, filePath, serviceName, candidateSource, res); ok {
-		srcSQLURI, srcDiffURI, err := writeSourceArtifacts(ctx, svc, in, src.original, src.corrected)
+		edit, err := writeSourceArtifacts(ctx, svc, in, fullPath, src.original, src.corrected)
 		if err != nil {
 			return Result{}, err
 		}
-		finalSQLURI, finalDiffURI, sourceResolved = srcSQLURI, srcDiffURI, true
+		finalSQLURI, finalDiffURI, sourceResolved = edit.ContentURI, edit.DiffURI, true
 		resolvedFilePath = fullPath
+		edits = []proposal.FileEdit{edit}
 	}
 
 	p := proposal.Proposal{
@@ -209,6 +211,7 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 		CandidateFixDiffURI: candDiffURI,
 		SourceResolved:      sourceResolved,
 		Model:               res.Model,
+		Edits:               edits,
 	}
 	// Populate source-location fields only when the real-source step succeeded.
 	if sourceResolved {
