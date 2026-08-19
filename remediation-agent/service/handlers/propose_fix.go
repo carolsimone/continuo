@@ -123,6 +123,10 @@ type Deps struct {
 	Versions         ports.VersionReader
 	Precedents       ports.PrecedentReader
 	CandidateSource  ports.CandidateSourceReader
+	// RepoArchive fetches a full repo checkout at a commit, for a fixer that
+	// needs to search across many files (e.g. locating a python node's
+	// declaring contract yaml) rather than read one file at a time.
+	RepoArchive ports.RepoArchive
 }
 
 // ProposeFix turns one healable failure trigger into a fix proposal. It counts

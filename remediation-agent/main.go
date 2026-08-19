@@ -173,10 +173,11 @@ func main() {
 		logger,
 	)
 
-	// One GitHub adapter instance serves both read-only ports: source reads for
-	// the fixers and PR-status reads for the outcome reconciler. A request
-	// deadline keeps a hung GitHub connection from stalling the callers that
-	// share this adapter — source reads and the PR reconciler.
+	// One GitHub adapter instance serves every read-only port backed by the
+	// GitHub API: source reads and repo-archive fetches for the fixers, and
+	// PR-status reads for the outcome reconciler. A request deadline keeps a
+	// hung GitHub connection from stalling the callers that share this
+	// adapter.
 	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
 
 	deps := handlers.Deps{
@@ -195,6 +196,7 @@ func main() {
 		Versions:         graphClient,
 		Precedents:       graphClient,
 		CandidateSource:  bundleReader,
+		RepoArchive:      gh,
 	}
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
