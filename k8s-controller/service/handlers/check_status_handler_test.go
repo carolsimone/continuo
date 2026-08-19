@@ -2086,9 +2086,9 @@ func TestHandleFailedWithRetry_SentinelMessageAsErrorMessage(t *testing.T) {
 }
 
 // TestHandleFailedPermanent_DecoyStatusBearingPreambleIgnored guards the
-// schema_version + status-vocabulary guard in parseSentinelResult: because the
-// scanner tolerates arbitrary preamble text inside the sentinel markers, an
-// unrelated status-bearing JSON object in that preamble (e.g. a sidecar
+// schema_version + status-vocabulary guard in validationresult.Parse: because
+// the scanner tolerates arbitrary preamble text inside the sentinel markers,
+// an unrelated status-bearing JSON object in that preamble (e.g. a sidecar
 // diagnostic with no schema_version field) must not be mistaken for the
 // contract's result block. The real block's message must win.
 func TestHandleFailedPermanent_DecoyStatusBearingPreambleIgnored(t *testing.T) {
