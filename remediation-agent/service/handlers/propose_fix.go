@@ -326,6 +326,11 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 		return nil
 	}
 
+	// Normalize the single-file scalars to edits[0] on the finalized aggregate,
+	// before it is either persisted or turned into the outbox payload below, so
+	// the stored row and the emitted event cannot disagree about which file was
+	// fixed.
+	p.NormalizeSingleFileView()
 	if err := u.ProposalRepo().Upsert(ctx, p); err != nil {
 		return fmt.Errorf("upsert proposal: %w", err)
 	}

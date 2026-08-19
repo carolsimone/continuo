@@ -1533,3 +1533,63 @@ func TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence(t *testing.T) {
 		}
 	})
 }
+
+// TestRecord_NormalizesScalarsInRowAndEvent verifies that record normalizes
+// a proposal's single-file scalar fields to agree with edits[0] before
+// either the persisted row or the remediation.proposed:v1 event is built,
+// so a proposal whose scalars disagree with its own edits list cannot
+// produce a stored row and an emitted event that disagree about which file
+// was fixed. The mismatched input is a shape only a hand-built value can
+// produce, never the fixer's own proposal-assembly code, but record must
+// not persist or emit it regardless.
+func TestRecord_NormalizesScalarsInRowAndEvent(t *testing.T) {
+	u := newFakeUoW()
+	d := deps(u, fakeEvidence{}, nil, &fakeArtifacts{})
+	tr := baseTrigger()
+
+	p := proposal.Proposal{
+		Status:     proposal.StatusProposed,
+		Confidence: proposal.ConfidenceHigh,
+		Rationale:  "rationale",
+		Model:      "m",
+		// Scalars deliberately disagree with edits[0].
+		FilePath:       "stale/path.sql",
+		ProposedSQLURI: "s3://stale/content",
+		DiffURI:        "s3://stale/diff",
+		Edits: []proposal.FileEdit{
+			{Path: "services/svc/models/orders_d.sql", ContentURI: "s3://real/content", DiffURI: "s3://real/diff"},
+		},
+	}
+
+	if err := record(context.Background(), d, tr, 1, p, true, true); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	got := u.pr.inserted[0]
+	if got.FilePath != "services/svc/models/orders_d.sql" {
+		t.Fatalf("row FilePath = %q, want edits[0].Path", got.FilePath)
+	}
+	if got.ProposedSQLURI != "s3://real/content" {
+		t.Fatalf("row ProposedSQLURI = %q, want edits[0].ContentURI", got.ProposedSQLURI)
+	}
+	if got.DiffURI != "s3://real/diff" {
+		t.Fatalf("row DiffURI = %q, want edits[0].DiffURI", got.DiffURI)
+	}
+
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox entry, got %d", len(u.ob.entries))
+	}
+	var payload event.RemediationProposed
+	if err := json.Unmarshal(u.ob.entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal event payload: %v", err)
+	}
+	if payload.ProposedSQLURI != "s3://real/content" {
+		t.Fatalf("event ProposedSQLURI = %q, want edits[0].ContentURI", payload.ProposedSQLURI)
+	}
+	if payload.DiffURI != "s3://real/diff" {
+		t.Fatalf("event DiffURI = %q, want edits[0].DiffURI", payload.DiffURI)
+	}
+}

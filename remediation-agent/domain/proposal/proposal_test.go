@@ -52,3 +52,31 @@ func TestNormalizeSingleFileView_EmptyEditsLeavesScalarsAlone(t *testing.T) {
 		t.Fatalf("DiffURI = %q, want unchanged candidate URI", p.DiffURI)
 	}
 }
+
+// TestNormalizeSingleFileView_EmptyFirstEditPathLeavesScalarsAlone verifies
+// that a non-empty Edits list whose first entry carries an empty Path does
+// not blank an otherwise-correct FilePath: nothing validates a FileEdit
+// before it reaches this method, so overwriting from a blank Path would make
+// the proposal worse, not more consistent.
+func TestNormalizeSingleFileView_EmptyFirstEditPathLeavesScalarsAlone(t *testing.T) {
+	p := Proposal{
+		FilePath:       "services/service-3/models/orders_d.sql",
+		ProposedSQLURI: "s3://real/content",
+		DiffURI:        "s3://real/diff",
+		Edits: []FileEdit{
+			{Path: "", ContentURI: "s3://real/content", DiffURI: "s3://real/diff"},
+		},
+	}
+
+	p.NormalizeSingleFileView()
+
+	if p.FilePath != "services/service-3/models/orders_d.sql" {
+		t.Fatalf("FilePath = %q, want unchanged (edits[0].Path is empty)", p.FilePath)
+	}
+	if p.ProposedSQLURI != "s3://real/content" {
+		t.Fatalf("ProposedSQLURI = %q, want unchanged", p.ProposedSQLURI)
+	}
+	if p.DiffURI != "s3://real/diff" {
+		t.Fatalf("DiffURI = %q, want unchanged", p.DiffURI)
+	}
+}

@@ -73,12 +73,8 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 // (release_id, source, node_id, attempt): when an in-flight generating row
 // exists (the common healable path) it is finalized in place via
 // ON CONFLICT … DO UPDATE; otherwise the row is plain-inserted (instant paths —
-// e.g. attempt-cap escalation — that never marked generating). Before writing,
-// it normalizes the single-file scalar columns to agree with edits[0], so no
-// row can be persisted with scalars naming a different file or artifact than
-// the first edit.
+// e.g. attempt-cap escalation — that never marked generating).
 func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) error {
-	p.NormalizeSingleFileView()
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, node_id, error_signature, attempt,

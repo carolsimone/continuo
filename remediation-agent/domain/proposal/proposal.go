@@ -67,10 +67,11 @@ type Proposal struct {
 	// FilePath is the repository-relative path of the dbt model source file
 	// (e.g. "services/service-3/models/orders_d.sql"). Empty when not resolved.
 	FilePath string
-	// Edits is the list of proposed file changes for this attempt. A row
-	// written before this field existed has an empty list; readers fall back
-	// to the single-file scalar fields above (FilePath, ProposedSQLURI,
-	// DiffURI) to synthesize one edit.
+	// Edits is the list of proposed file changes for this attempt. An empty
+	// list means the proposal is described only by the single-file scalar
+	// fields above (FilePath, ProposedSQLURI, DiffURI); a non-empty list is
+	// the proposal's full multi-file description, of which those scalar
+	// fields are the single-file view (edits[0]).
 	Edits     []FileEdit
 	Model     string
 	CreatedAt time.Time
@@ -79,15 +80,21 @@ type Proposal struct {
 // NormalizeSingleFileView enforces that FilePath, ProposedSQLURI, and DiffURI
 // are the single-file view of the proposal: edits[0] when Edits is
 // non-empty, otherwise the candidate-only fix artifact already held in those
-// fields. When Edits is non-empty it overwrites the three scalars with
-// Edits[0]'s Path, ContentURI, and DiffURI, so they cannot name a different
-// file or artifact than the first edit. When Edits is empty it leaves the
-// scalars untouched, since they are then the only record of the fix.
+// fields. When Edits is non-empty and its first entry names a path, it
+// overwrites the three scalars with Edits[0]'s Path, ContentURI, and
+// DiffURI, so they cannot name a different file or artifact than the first
+// edit. When Edits is empty, or its first entry's Path is empty (nothing
+// validates a FileEdit before it reaches here), it leaves the scalars
+// untouched rather than overwriting a possibly-correct value with a blank
+// one.
 func (p *Proposal) NormalizeSingleFileView() {
 	if len(p.Edits) == 0 {
 		return
 	}
 	first := p.Edits[0]
+	if first.Path == "" {
+		return
+	}
 	p.FilePath = first.Path
 	p.ProposedSQLURI = first.ContentURI
 	p.DiffURI = first.DiffURI

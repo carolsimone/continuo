@@ -1222,48 +1222,6 @@ func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
 	)
 }
 
-// TestUpsert_NormalizesScalarsToFirstEdit verifies that Upsert makes the
-// single-file scalar columns agree with edits[0], even when the Proposal
-// value passed in carries scalars that name a different file or artifact —
-// a shape only a hand-built value can produce, never the fixer's own
-// proposal-assembly code, but one Upsert must not persist regardless.
-func TestUpsert_NormalizesScalarsToFirstEdit(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	repo := NewProposalRepository(db)
-
-	p := proposal.Proposal{
-		Source:         "validation",
-		ReleaseID:      "r-normalize-1",
-		NodeID:         "model.p.normalize",
-		ErrorSignature: "sig",
-		Attempt:        1,
-		Status:         proposal.StatusProposed,
-		Confidence:     proposal.ConfidenceHigh,
-		Rationale:      "rationale",
-		Model:          "claude-3-5-sonnet",
-		CreatedAt:      time.Now().UTC(),
-		// Scalars deliberately disagree with edits[0].
-		FilePath:       "stale/path.sql",
-		ProposedSQLURI: "s3://stale/content",
-		DiffURI:        "s3://stale/diff",
-		Edits: []proposal.FileEdit{
-			{Path: "services/service-3/models/orders_d.sql", ContentURI: "s3://real/content", DiffURI: "s3://real/diff"},
-			{Path: "services/service-3/models/other.sql", ContentURI: "s3://other/content", DiffURI: "s3://other/diff"},
-		},
-	}
-	id := seedProposal(t, repo, db, p)
-
-	got, err := repo.Get(ctx, id)
-	require.NoError(t, err)
-	require.Equal(t, "services/service-3/models/orders_d.sql", got.FilePath,
-		"FilePath must be overwritten to agree with edits[0].Path")
-	require.Equal(t, "s3://real/content", got.ProposedSQLURI,
-		"ProposedSQLURI must be overwritten to agree with edits[0].ContentURI")
-	require.Equal(t, "s3://real/diff", got.DiffURI,
-		"DiffURI must be overwritten to agree with edits[0].DiffURI")
-}
-
 // TestRecordPROutcome_RejectedAndNonOpenRows verifies the rejected transition
 // and that rows with an empty pr_state, or 'opening', or 'failed', are never
 // transitioned nor listed.
