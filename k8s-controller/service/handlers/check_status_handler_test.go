@@ -2031,6 +2031,73 @@ func TestHandleFailedPermanent_SuccessBlockDoesNotOverrideTail(t *testing.T) {
 	}
 }
 
+// TestHandleFailedPermanent_SentinelMessageWithStderrPreamble guards against
+// regressing the fix from remediation commit 36b622c6 ("tolerate stderr
+// preamble around structured result"): real pod logs can carry a stderr
+// preamble before the JSON object, and trailing text after it, inside the
+// sentinel markers — not just the bare JSON pythonResultBlockLog emits. A
+// strict decode over the whole inter-marker body fails on that shape, so
+// sentinelErrMsg would silently stay empty and this feature would be a no-op
+// on exactly the real logs it exists to fix. The block's message must still
+// win.
+func TestHandleFailedPermanent_SentinelMessageWithStderrPreamble(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	podLog := "running node analytics.orders -> analytics.orders\n" +
+		validationresult.SentinelBegin + "\n" +
+		"Traceback (most recent call last):\n" +
+		"  File \"runner.py\", line 42, in <module>\n" +
+		`{"schema_version":1,"status":"error","message":"ConformError: column 'id' cannot be safely cast to INTEGER","failures":1,"unique_id":"analytics.orders"}` + "\n" +
+		"exit code 1\n" +
+		validationresult.SentinelEnd + "\n"
+	k8s := &fakeK8sClient{status: failedResult(), podLog: podLog}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-preamble",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the sentinel block's message %q despite the stderr preamble and trailing text, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedWithRetry_SentinelMessageAsErrorMessage verifies the
+// retry-path copy of the error_message precedence — the one that actually
+// runs on a retryable first failure (max_retries > 0) — also prefers the
+// sentinel block's message. Pins resolveErrorMessage's behavior at the
+// handleFailedWithRetry call site specifically, since it previously had no
+// coverage of its own (only the permanent-failure copy was tested).
+func TestHandleFailedWithRetry_SentinelMessageAsErrorMessage(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: failedResult(),
+		podLog: pythonResultBlockLog("error", "ReadError: unknown read 'orders'"),
+	}
+	handler := newHandler(k8s, noopCancelledRepo(), 3)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-retry-err",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 3,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ReadError: unknown read 'orders'"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the sentinel block's message %q on the retry path, got %q", want, payload.ErrorMessage)
+	}
+}
+
 // succeededResult returns a terminal Succeeded pod result.
 func succeededResult() *model.K8sPodResult {
 	now := time.Now()

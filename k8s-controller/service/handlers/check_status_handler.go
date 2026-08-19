@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -449,15 +450,38 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 }
 
 // sentinelResult is the subset of the structured validation-result contract
-// fetchAndUploadLogs needs to prefer its message over the raw log tail. It
-// mirrors remediation/domain/failure.StructuredResult field-for-field rather
-// than importing it: k8s-controller must not depend on another service's
-// internal packages.
+// fetchAndUploadLogs reads. The block carries more fields (failures,
+// unique_id); only status and message are consumed here, so this mirrors just
+// those two rather than the full contract in
+// remediation/domain/failure.StructuredResult.
 type sentinelResult struct {
-	Status   string `json:"status"`
-	Message  string `json:"message"`
-	Failures int    `json:"failures"`
-	UniqueID string `json:"unique_id"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// parseSentinelResult decodes the JSON object inside a structured
+// validation-result block (the string SplitValidationResult already isolated
+// between the sentinel markers). Real pod logs can carry a stderr preamble
+// before the JSON object, and/or trailing text after it, inside those markers
+// — the same condition remediation/domain/failure.ParseStructuredResult was
+// fixed to tolerate — so this scans for the object rather than unmarshalling
+// the whole body: try each '{' in turn, decode a single JSON value from there
+// (ignoring anything after it), and accept the first candidate that carries a
+// non-empty status. ok is false when no such object is found.
+func parseSentinelResult(raw string) (sr sentinelResult, ok bool) {
+	body := []byte(raw)
+	for start := bytes.IndexByte(body, '{'); start >= 0; {
+		var candidate sentinelResult
+		if err := json.NewDecoder(bytes.NewReader(body[start:])).Decode(&candidate); err == nil && candidate.Status != "" {
+			return candidate, true
+		}
+		next := bytes.IndexByte(body[start+1:], '{')
+		if next < 0 {
+			break
+		}
+		start += next + 1
+	}
+	return sentinelResult{}, false
 }
 
 // fetchAndUploadLogs fetches pod logs and uploads them to S3. The text log (with
@@ -533,8 +557,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	// container-level failure); its message (e.g. "rows=42") describes the
 	// successful run, not the crash, so it must not become the error message.
 	if structured != "" {
-		var sr sentinelResult
-		if err := json.Unmarshal([]byte(structured), &sr); err == nil && sr.Status != "success" {
+		if sr, ok := parseSentinelResult(structured); ok && sr.Status != "success" {
 			sentinelErrMsg = strings.TrimSpace(sr.Message)
 		}
 	}
@@ -582,17 +605,7 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 	newRetryCount := retryCount
 
 	executionID, logS3Key, runResultsURI, logTail, sentinelErrMsg := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
-
-	// The sentinel block's message is the actual failure cause — prefer it over
-	// the log tail, which for a python node is marker noise around it. Fall
-	// back to the raw tail, then to the pod's K8s termination message.
-	errorMsg := h.truncateErrorMessage(sentinelErrMsg)
-	if errorMsg == "" {
-		errorMsg = h.truncateErrorMessage(logTail)
-	}
-	if errorMsg == "" {
-		errorMsg = h.truncateErrorMessage(result.TerminationMsg)
-	}
+	errorMsg := h.resolveErrorMessage(sentinelErrMsg, logTail, result.TerminationMsg)
 
 	// Row 1: task_status_updated (FAILED)
 	if err := h.writeTaskStatusUpdated(ctx, repo, cmd.TaskID, cmd.ScheduleID, "FAILED", int32(newRetryCount)); err != nil {
@@ -640,17 +653,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	newRetryCount := retryCount + 1
 
 	executionID, logS3Key, runResultsURI, logTail, sentinelErrMsg := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
-
-	// The sentinel block's message is the actual failure cause — prefer it over
-	// the log tail, which for a python node is marker noise around it. Fall
-	// back to the raw tail, then to the pod's K8s termination message.
-	errorMsg := h.truncateErrorMessage(sentinelErrMsg)
-	if errorMsg == "" {
-		errorMsg = h.truncateErrorMessage(logTail)
-	}
-	if errorMsg == "" {
-		errorMsg = h.truncateErrorMessage(result.TerminationMsg)
-	}
+	errorMsg := h.resolveErrorMessage(sentinelErrMsg, logTail, result.TerminationMsg)
 	newJobName := retryJobName(cmd.JobName, newRetryCount)
 
 	// Row 1: task_status_updated (FAILED). Stamp the attempt that just ran
@@ -951,6 +954,23 @@ func (h *CheckStatusHandler) writeNodeStatusUpdated(
 		Payload:       payload,
 		StreamName:    streams.NodeUpdatedV1,
 	})
+}
+
+// resolveErrorMessage applies the error_message precedence shared by
+// handleFailedPermanent and handleFailedWithRetry: the sentinel block's
+// message wins when present (it is the actual failure cause), else the raw
+// log tail, else the pod's K8s termination message. Each candidate is run
+// through truncateErrorMessage first, so the fallthrough decision is made on
+// the truncated form.
+func (h *CheckStatusHandler) resolveErrorMessage(sentinelErrMsg, tail, terminationMsg string) string {
+	errorMsg := h.truncateErrorMessage(sentinelErrMsg)
+	if errorMsg == "" {
+		errorMsg = h.truncateErrorMessage(tail)
+	}
+	if errorMsg == "" {
+		errorMsg = h.truncateErrorMessage(terminationMsg)
+	}
+	return errorMsg
 }
 
 // truncateErrorMessage truncates error messages to configured max length
