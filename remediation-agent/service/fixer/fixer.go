@@ -238,7 +238,7 @@ func isLowConfidence(c string) bool {
 // (compile/seed) and the validation fixer's real-source step use it, so the
 // artifact key layout and content type live in one place.
 func writeSourceArtifacts(ctx context.Context, svc Services, in Input, filePath, original, corrected string) (proposal.FileEdit, error) {
-	diff := proposal.ComputeUnifiedDiff(original, corrected, in.NodeID)
+	diff := proposal.ComputeUnifiedDiff(original, corrected, filePath)
 	sqlURI, err := svc.Artifacts.Write(ctx,
 		fmt.Sprintf("proposed-fix/%s/%s/attempt-%d.source.sql", in.ReleaseID, in.NodeID, in.Attempt),
 		corrected, "text/plain")

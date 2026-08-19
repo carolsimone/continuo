@@ -49,6 +49,24 @@ func TestWriteEditArtifacts_KeysAreEditScoped(t *testing.T) {
 	require.Equal(t, "new", w.written["proposed-fix/r/n/attempt-2/edit-1.content"], "edit-1's content must survive writing edit-2 of the same attempt")
 }
 
+// TestWriteSourceArtifacts_DiffHeaderNamesTheEditedFile verifies that the
+// diff written for the single-shot fixers' source edit is labelled with the
+// repository path being edited, not the node id, so the stored diff can
+// actually be applied against the file it claims to change.
+func TestWriteSourceArtifacts_DiffHeaderNamesTheEditedFile(t *testing.T) {
+	w := &fakeArtifacts{}
+	svc := Services{Artifacts: w, Logger: testLogger()}
+	in := Input{ReleaseID: "r", NodeID: "svc.model.node_a", Attempt: 3}
+
+	_, err := writeSourceArtifacts(context.Background(), svc, in, "services/service-3/models/node_a.sql", "old", "new")
+	require.NoError(t, err)
+
+	diff := w.written["proposed-fix/r/svc.model.node_a/attempt-3.source.diff"]
+	require.Contains(t, diff, "--- a/services/service-3/models/node_a.sql")
+	require.Contains(t, diff, "+++ b/services/service-3/models/node_a.sql")
+	require.NotContains(t, diff, "svc.model.node_a", "the diff header must name the edited path, not the node id")
+}
+
 func TestNormalizeConfidence(t *testing.T) {
 	cases := map[string]proposal.Confidence{
 		"low": proposal.ConfidenceLow, "high": proposal.ConfidenceHigh,
