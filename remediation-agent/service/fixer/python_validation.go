@@ -89,15 +89,30 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("llm propose: %w", err)
 	}
 	if len(res.Files) == 0 {
-		svc.Logger.Info("python contract fix: model returned no files; recording a failed attempt", "node", in.NodeID)
-		return Result{Proposal: proposal.Proposal{Status: proposal.StatusFailed}}, nil
+		return failPython(svc, in, "the model returned no files to change")
 	}
+	// Every path must be inside the contract directory the model was shown, and
+	// no file may appear twice. A repeated path has no single answer: applying
+	// the list leaves the LAST entry on disk — which is what gets packaged and
+	// what the shadow release verifies — while the recorded edits, and the
+	// proposal's single-file view built from the first of them, would describe
+	// an earlier entry. A human would then approve content that was never the
+	// content validated. Paths are compared in cleaned form so two spellings of
+	// one file are recognised as the same file.
+	seen := make(map[string]struct{}, len(res.Files))
 	for _, f := range res.Files {
 		if !withinDir(located.ContractDir, f.Path) {
-			svc.Logger.Warn("python contract fix: model returned a file outside the contract directory; refusing the answer",
-				"node", in.NodeID, "path", f.Path, "contract_dir", located.ContractDir)
-			return Result{Proposal: proposal.Proposal{Status: proposal.StatusFailed}}, nil
+			return failPython(svc, in, fmt.Sprintf(
+				"the model proposed a change to %q, which is outside the contract directory %q that declares this node",
+				f.Path, located.ContractDir))
 		}
+		key := path.Clean(filepath.ToSlash(f.Path))
+		if _, dup := seen[key]; dup {
+			return failPython(svc, in, fmt.Sprintf(
+				"the model returned %q more than once, so the content to record could not be told apart from the content to apply",
+				f.Path))
+		}
+		seen[key] = struct{}{}
 	}
 
 	// Step 6 — apply, then package. The order is the whole point: packaging the
@@ -181,6 +196,15 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 func skipPython(svc Services, in Input, reason string) (Result, error) {
 	svc.Logger.Info("python contract fix skipped", "node", in.NodeID, "reason", reason)
 	return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped, Rationale: reason}}, nil
+}
+
+// failPython records a failed attempt — one where a fix was attempted and the
+// model's answer could not be used — keeping the reason as the rationale for
+// the same purpose skipPython does: a recorded outcome an operator can read is
+// never left as a log line beside an unexplained row.
+func failPython(svc Services, in Input, reason string) (Result, error) {
+	svc.Logger.Warn("python contract fix failed", "node", in.NodeID, "reason", reason)
+	return Result{Proposal: proposal.Proposal{Status: proposal.StatusFailed, Rationale: reason}}, nil
 }
 
 // splitNodeID reads the schema and table out of a node id. A python node's

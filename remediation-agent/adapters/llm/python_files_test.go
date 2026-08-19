@@ -114,24 +114,43 @@ func TestAnthropic_BuildRequestRendersArrayItems(t *testing.T) {
 	require.ElementsMatch(t, []any{"path", "content"}, items["required"])
 }
 
-// TestAnthropic_ReadsTheForcedToolByName verifies that the adapter matches the
-// tool_use block against the tool the request itself forced, not a hardcoded
-// name. Every fixer forces exactly one tool, so a response naming that tool
-// must always parse — a fixer whose tool is not called propose_fix would
-// otherwise be told its answer was missing.
-func TestAnthropic_ReadsTheForcedToolByName(t *testing.T) {
+// anthropicWrongToolResponse is a tool_use block for a DIFFERENT tool than the
+// one the request forced — the shape a stale or confused response takes.
+const anthropicWrongToolResponse = `{
+  "content": [
+    {
+      "type": "tool_use",
+      "name": "propose_fix",
+      "input": {
+        "proposed_sql": "SELECT 1",
+        "rationale": "not the answer that was asked for",
+        "confidence": "high"
+      }
+    }
+  ]
+}`
+
+// TestAnthropic_RejectsAnswerNamingADifferentTool verifies that the adapter
+// matches the tool_use block against the tool THIS request forced, rather than
+// taking whatever tool_use block comes first. The distinction is the whole
+// point of reading the name off the request: a block for another tool carries
+// another schema, so accepting it would silently hand the caller a result whose
+// fields belong to a different answer — an empty file list for a multi-file
+// fix, which the caller can only read as "the model proposed nothing".
+func TestAnthropic_RejectsAnswerNamingADifferentTool(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(anthropicPythonFixResponse))
+		_, _ = w.Write([]byte(anthropicWrongToolResponse))
 	}))
 	defer srv.Close()
 
 	provider, err := llm.NewProvider("anthropic", "k", "claude-test", srv.URL, srv.Client())
 	require.NoError(t, err)
 
-	res, err := provider.Propose(context.Background(), pythonFixProposeRequest())
-	require.NoError(t, err)
-	require.Equal(t, "high", res.Confidence)
+	_, err = provider.Propose(context.Background(), pythonFixProposeRequest())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "propose_python_fix",
+		"the error must name the tool that was forced and not found")
 }
 
 // openaiPythonFixResponse is a recorded chat-completions response whose

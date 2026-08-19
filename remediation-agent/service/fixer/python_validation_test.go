@@ -339,6 +339,8 @@ func TestPythonValidation_PathOutsideContractDir_Fails(t *testing.T) {
 			r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 			require.NoError(t, err)
 			require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
+			require.Contains(t, r.Proposal.Rationale, badPath,
+				"a failed attempt must record why, naming the path that was refused")
 			require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
 			require.Empty(t, rel.submissions)
 
@@ -361,6 +363,8 @@ func TestPythonValidation_NoFiles_Fails(t *testing.T) {
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
 	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
+	require.NotEmpty(t, r.Proposal.Rationale,
+		"an operator must see why the attempt failed, not an unexplained failed row")
 	require.Empty(t, pkgr.calls)
 	require.Empty(t, rel.submissions)
 }
@@ -572,4 +576,37 @@ func TestPythonValidation_UnusableTrigger_Skips(t *testing.T) {
 		require.NotEmpty(t, r.Proposal.Rationale)
 		require.Empty(t, rel.submissions)
 	})
+}
+
+// TestPythonValidation_DuplicatePath_Fails verifies that an answer naming the
+// same file twice is refused. Applying it would leave the last entry's content
+// on disk — which is what gets packaged and what the shadow release actually
+// verifies — while the recorded edits, and the proposal's own single-file view
+// built from edits[0], would describe the first entry instead. A human would
+// then approve a change that was never the one validated, which is precisely
+// what verifying the real bytes is meant to rule out.
+func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
+	root := pythonRepoTree(t)
+	svc, _, pkgr, rel, arts := pythonSvc(t, root)
+	const target = "services/service-py/contracts/py_daily_kpis.yml"
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
+		Files: []ports.ProposedFile{
+			{Path: target, Content: "nodes: []\n"},
+			{Path: target, Content: correctedYAML},
+		},
+		Confidence: "high",
+	}}}
+
+	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
+	require.Contains(t, r.Proposal.Rationale, target)
+	require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
+	require.Empty(t, rel.submissions)
+	require.Empty(t, arts.written, "a refused answer writes no artifacts")
+
+	// The checkout is untouched, so a later attempt starts from the real source.
+	b, rerr := os.ReadFile(filepath.Join(root, "services", "service-py", "contracts", "py_daily_kpis.yml")) //nolint:gosec // G304: a path under the test's own temp tree
+	require.NoError(t, rerr)
+	require.Equal(t, declaringYAML, string(b))
 }
