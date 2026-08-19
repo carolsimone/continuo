@@ -186,7 +186,9 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 		// way a normal pass is, just with a zero-node validation.
 		d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
 		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
-		d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
+		if !r.IsShadow() {
+			d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
+		}
 		return nil
 	}
 
@@ -364,7 +366,9 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release
 	// no-validation promote path's zero-node validation span).
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
 	d.Telemetry.ReleaseValidationCompleted(ctx, releaseID, true, 0, 0, 0)
-	d.Telemetry.ReleasePromoted(ctx, releaseID, len(topo))
+	if !r.IsShadow() {
+		d.Telemetry.ReleasePromoted(ctx, releaseID, len(topo))
+	}
 	return nil
 }
 

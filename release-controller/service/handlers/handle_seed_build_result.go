@@ -200,7 +200,9 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 		}
 		d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, 0)
 		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
-		d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
+		if !r.IsShadow() {
+			d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
+		}
 		return nil
 	}
 

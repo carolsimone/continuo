@@ -115,6 +115,17 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 // Begin/Commit and any telemetry. The release must already hold its candidate
 // topology (i.e. be in Validating).
 func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, now time.Time) error {
+	// A shadow release runs the same parse+validation pipeline as a normal
+	// release but must never reach production: it exists only to verify a
+	// proposed fix. Stop at Validated instead of touching current_prod,
+	// service_prod, or emitting release.promoted:v1.
+	if r.IsShadow() {
+		if err := r.TransitionToValidated(now); err != nil {
+			return err
+		}
+		return u.ReleaseRepo().Save(ctx, r)
+	}
+
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
@@ -225,7 +236,9 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(r.ValidationNodeIDs()), 0, 0)
-	d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(r.CandidateTopology()))
+	if !r.IsShadow() {
+		d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(r.CandidateTopology()))
+	}
 	return nil
 }
 
