@@ -17,14 +17,28 @@ import (
 // release CI runs after a merge to main (continuo-dbt-demo's release.yml) —
 // so a proposed fix's contract yaml is packaged and hash-folded by the same
 // tool that packages every promoted release, never a reimplementation of it.
-type CLIPackager struct{}
+type CLIPackager struct {
+	binPath string
+}
 
 var _ ports.ContractPackager = (*CLIPackager)(nil)
 
-// NewCLIPackager builds a CLIPackager. It has no dependencies: the
-// continuo-runtime binary it shells out to is resolved from PATH.
-func NewCLIPackager() *CLIPackager {
-	return &CLIPackager{}
+// runtimeBinary is the CLI this packager shells out to. It is installed in the
+// remediation-agent image; nothing else provides it.
+const runtimeBinary = "continuo-runtime"
+
+// NewCLIPackager resolves runtimeBinary on PATH and fails if it is absent, so
+// an image built without it refuses to start. Resolving it here rather than at
+// call time is what turns a mis-built image into one boot failure naming the
+// missing binary, instead of every python remediation trigger failing, never
+// acking, and redelivering without end. Merge then runs the resolved path, so
+// the binary that was checked is the binary that runs.
+func NewCLIPackager() (*CLIPackager, error) {
+	binPath, err := exec.LookPath(runtimeBinary)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s (installed in the remediation-agent image; a python-node fix cannot be packaged without it): %w", runtimeBinary, err)
+	}
+	return &CLIPackager{binPath: binPath}, nil
 }
 
 // Merge runs:
@@ -43,11 +57,11 @@ func (p *CLIPackager) Merge(ctx context.Context, contractDir, repoRoot, service,
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	outPath := filepath.Join(tmpDir, "contract.yaml")
-	// G204: exec.CommandContext runs continuo-runtime directly (no shell), so
-	// none of contractDir/service/repoRoot/dialect can be interpreted as
-	// shell metacharacters. They land as literal argv entries under a fixed,
-	// hardcoded flag set the caller cannot alter.
-	cmd := exec.CommandContext(ctx, "continuo-runtime", "merge", contractDir, //nolint:gosec // G204: direct execve, no shell, hardcoded flags.
+	// G204: exec.CommandContext runs the path resolved at construction directly
+	// (no shell), so none of contractDir/service/repoRoot/dialect can be
+	// interpreted as shell metacharacters. They land as literal argv entries
+	// under a fixed, hardcoded flag set the caller cannot alter.
+	cmd := exec.CommandContext(ctx, p.binPath, "merge", contractDir, //nolint:gosec // G204: direct execve, no shell, hardcoded flags.
 		"--service", service,
 		"--repo-root", repoRoot,
 		"--dialect", dialect,

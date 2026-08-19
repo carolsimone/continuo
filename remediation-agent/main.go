@@ -191,6 +191,15 @@ func main() {
 	releaseGateway := releasehttp.NewGateway(cfg.ReleaseControllerURL, store,
 		&http.Client{Timeout: 30 * time.Second})
 
+	// The packager is resolved here rather than at first use: an image built
+	// without the CLI cannot package any python fix, and failing at boot names
+	// that once, instead of failing every remediation trigger forever.
+	packager, err := packaging.NewCLIPackager()
+	if err != nil {
+		logger.Error("contract packager unavailable", "error", err)
+		os.Exit(1)
+	}
+
 	// The proposal repository is bound to the DB rather than to a transaction:
 	// the gRPC read path, the reconciler, and the fixers' prior-attempt reads
 	// all use it outside any unit of work.
@@ -214,7 +223,7 @@ func main() {
 		CandidateSource:  bundleReader,
 		RepoArchive:      gh,
 		ContractLocator:  repofs.NewLocator(logger),
-		Packager:         packaging.NewCLIPackager(),
+		Packager:         packager,
 		Releases:         releaseGateway,
 		PriorAttempts:    proposalRepo,
 		SQLDialect:       cfg.SQLDialect,

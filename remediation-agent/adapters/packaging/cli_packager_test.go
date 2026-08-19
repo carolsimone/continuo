@@ -68,7 +68,10 @@ def run(ctx):
 		t.Fatalf("write probe.yml: %v", err)
 	}
 
-	p := NewCLIPackager()
+	p, err := NewCLIPackager()
+	if err != nil {
+		t.Fatalf("NewCLIPackager: %v", err)
+	}
 	out, err := p.Merge(context.Background(), contractDir, repoRoot, "py-probe-test", "postgres")
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
