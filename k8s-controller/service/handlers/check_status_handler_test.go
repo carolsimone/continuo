@@ -1950,6 +1950,87 @@ func TestHandleFailedPermanent_NoResultBlockOmitsRunResultsURI(t *testing.T) {
 	}
 }
 
+// TestHandleFailedPermanent_SentinelMessageAsErrorMessage verifies a permanently
+// failed python node's error_message is the sentinel block's decoded message,
+// not the noisy log tail around it — the real cause ("ConformError: ...") wins
+// over marker text and truncated stack chatter.
+func TestHandleFailedPermanent_SentinelMessageAsErrorMessage(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{
+		status: failedResult(),
+		podLog: pythonResultBlockLog("error", "ConformError: column 'id' cannot be safely cast to INTEGER"),
+	}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-failed",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "ConformError: column 'id' cannot be safely cast to INTEGER"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected the sentinel block's message %q, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_NoSentinelBlock_ErrorMessageIsRawTail pins the dbt
+// case: a pod log with no sentinel block must keep reporting the raw log tail
+// byte-for-byte, unaffected by the new sentinel-message precedence.
+func TestHandleFailedPermanent_NoSentinelBlock_ErrorMessageIsRawTail(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	k8s := &fakeK8sClient{status: failedResult(), podLog: "Database Error in model orders\n"}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-dbt-failed",
+		ServiceName: "service-1", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	want := "Database Error in model orders\n"
+	if payload.ErrorMessage != want {
+		t.Errorf("error_message: expected raw log tail %q unchanged, got %q", want, payload.ErrorMessage)
+	}
+}
+
+// TestHandleFailedPermanent_SuccessBlockDoesNotOverrideTail guards a pod that
+// ran successfully and then crashed (e.g. a container-level failure after the
+// dbt/python step completed): its sentinel block reports status:"success", and
+// that block's message must never become the error_message — a post-success
+// crash must not surface "rows=42" as its cause.
+func TestHandleFailedPermanent_SuccessBlockDoesNotOverrideTail(t *testing.T) {
+	outbox := &fakeOutboxRepo{}
+	rawLog := pythonResultBlockLog("success", "rows=42")
+	k8s := &fakeK8sClient{status: failedResult(), podLog: rawLog}
+	handler := newHandler(k8s, noopCancelledRepo(), 0)
+
+	cmd := command.CheckJobStatus{
+		TaskID: uuid.New(), ScheduleID: uuid.New(), JobName: "job-py-crash-after-success",
+		ServiceName: "svc-py", SchemaName: "analytics", TableName: "orders",
+		RetryCount: 0, MaxRetries: 0,
+	}
+	if err := handler.Handle(context.Background(), newFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	payload := decodeExecutionPayload(t, outbox.entries)
+	if payload.ErrorMessage == "rows=42" {
+		t.Fatal("a success-status sentinel block's message must not become the error_message")
+	}
+	if payload.ErrorMessage != rawLog {
+		t.Errorf("error_message: expected fallback to the raw log tail %q, got %q", rawLog, payload.ErrorMessage)
+	}
+}
+
 // succeededResult returns a terminal Succeeded pod result.
 func succeededResult() *model.K8sPodResult {
 	now := time.Now()

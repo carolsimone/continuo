@@ -228,7 +228,7 @@ func (h *CheckStatusHandler) handleSucceeded(ctx context.Context, u uow.UnitOfWo
 	// upload soft-fails to an empty key, so S3 being unavailable cannot turn a
 	// success into a failure. The log tail is discarded — a successful
 	// execution carries no error message.
-	executionID, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	executionID, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	// Row 1: task_status_updated. Stamp the attempt that ran (cmd.RetryCount)
 	// so the SUCCEEDED carries the same retry_count as that attempt's RUNNING;
@@ -277,7 +277,7 @@ func (h *CheckStatusHandler) handleValidationTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -338,7 +338,7 @@ func (h *CheckStatusHandler) handleSeedBuildTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -402,7 +402,7 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 		return h.handleRunning(ctx, u, cmd) // not terminal yet; re-poll
 	}
 
-	_, logS3Key, runResultsURI, _ := h.fetchAndUploadLogs(ctx, cmd, compileArtifactPath(cmd))
+	_, logS3Key, runResultsURI, _, _ := h.fetchAndUploadLogs(ctx, cmd, compileArtifactPath(cmd))
 
 	outcome := "failed"
 	if result.Status == model.JobStatusSucceeded {
@@ -448,13 +448,27 @@ func (h *CheckStatusHandler) handleCompileTerminal(
 	return nil
 }
 
+// sentinelResult is the subset of the structured validation-result contract
+// fetchAndUploadLogs needs to prefer its message over the raw log tail. It
+// mirrors remediation/domain/failure.StructuredResult field-for-field rather
+// than importing it: k8s-controller must not depend on another service's
+// internal packages.
+type sentinelResult struct {
+	Status   string `json:"status"`
+	Message  string `json:"message"`
+	Failures int    `json:"failures"`
+	UniqueID string `json:"unique_id"`
+}
+
 // fetchAndUploadLogs fetches pod logs and uploads them to S3. The text log (with
 // any structured-result sentinel block stripped) is uploaded under logs/...; when
 // the pod emitted a structured block, that JSON is uploaded separately under
 // run-results/... and its key returned as runResultsURI. Validation pods and
 // python-model containers emit one; dbt containers do not.
-// Returns the log tail (for error_message), both S3 keys, and a pre-generated
-// execution ID. Each upload soft-fails independently to an empty key on error.
+// Returns the log tail and the sentinel block's message (for error_message —
+// empty when no block is present, the block fails to decode, or its status is
+// "success"), both S3 keys, and a pre-generated execution ID. Each upload
+// soft-fails independently to an empty key on error.
 //
 // All of this I/O runs under its own deadline, derived from — but shorter than —
 // the caller's handler budget. It is best-effort observability that precedes the
@@ -487,7 +501,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 	ctx context.Context,
 	cmd command.CheckJobStatus,
 	artifactPath string,
-) (executionID uuid.UUID, logS3Key, runResultsURI, tail string) {
+) (executionID uuid.UUID, logS3Key, runResultsURI, tail, sentinelErrMsg string) {
 	executionID = uuid.New()
 
 	budget := h.config.LogIOTimeout
@@ -503,14 +517,27 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 			"job_name", cmd.JobName,
 			"error", err,
 		)
-		return executionID, "", "", ""
+		return executionID, "", "", "", ""
 	}
 
 	tail = logTail
 
 	// Separate the structured validation-result block (if any) from the text log.
-	// Production jobs never emit the block, so cleanLog == fullLog there.
+	// Validation pods and the python production harness emit the block; dbt
+	// production jobs do not, so cleanLog == fullLog for them.
 	cleanLog, structured := SplitValidationResult(fullLog)
+
+	// A non-success block's message is the real cause of the failure and is
+	// preferred over the log tail below. A "success" block belongs to a pod
+	// that completed its work and then crashed for an unrelated reason (e.g. a
+	// container-level failure); its message (e.g. "rows=42") describes the
+	// successful run, not the crash, so it must not become the error message.
+	if structured != "" {
+		var sr sentinelResult
+		if err := json.Unmarshal([]byte(structured), &sr); err == nil && sr.Status != "success" {
+			sentinelErrMsg = strings.TrimSpace(sr.Message)
+		}
+	}
 
 	if cleanLog == "" {
 		h.logger.Warn("Pod log is empty, skipping S3 upload", "job_name", cmd.JobName)
@@ -542,7 +569,7 @@ func (h *CheckStatusHandler) fetchAndUploadLogs(
 		}
 	}
 
-	return executionID, logS3Key, runResultsURI, tail
+	return executionID, logS3Key, runResultsURI, tail, sentinelErrMsg
 }
 
 // handleFailedPermanent handles permanently failed jobs (retry_count >= max_retries).
@@ -554,9 +581,15 @@ func (h *CheckStatusHandler) handleFailedPermanent(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount
 
-	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	executionID, logS3Key, runResultsURI, logTail, sentinelErrMsg := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
-	errorMsg := h.truncateErrorMessage(logTail)
+	// The sentinel block's message is the actual failure cause — prefer it over
+	// the log tail, which for a python node is marker noise around it. Fall
+	// back to the raw tail, then to the pod's K8s termination message.
+	errorMsg := h.truncateErrorMessage(sentinelErrMsg)
+	if errorMsg == "" {
+		errorMsg = h.truncateErrorMessage(logTail)
+	}
 	if errorMsg == "" {
 		errorMsg = h.truncateErrorMessage(result.TerminationMsg)
 	}
@@ -606,9 +639,15 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	repo := u.OutboxRepo()
 	newRetryCount := retryCount + 1
 
-	executionID, logS3Key, runResultsURI, logTail := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
+	executionID, logS3Key, runResultsURI, logTail, sentinelErrMsg := h.fetchAndUploadLogs(ctx, cmd, nodeArtifactPath(cmd))
 
-	errorMsg := h.truncateErrorMessage(logTail)
+	// The sentinel block's message is the actual failure cause — prefer it over
+	// the log tail, which for a python node is marker noise around it. Fall
+	// back to the raw tail, then to the pod's K8s termination message.
+	errorMsg := h.truncateErrorMessage(sentinelErrMsg)
+	if errorMsg == "" {
+		errorMsg = h.truncateErrorMessage(logTail)
+	}
 	if errorMsg == "" {
 		errorMsg = h.truncateErrorMessage(result.TerminationMsg)
 	}

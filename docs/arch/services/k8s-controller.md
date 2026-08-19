@@ -89,7 +89,7 @@ The Kubernetes `readinessProbe` points at `/ready` and the `livenessProbe` at
 |---|---|
 | `check.k8s:v1` | Job still running; the `check_delayed` outbox row enqueues a delay-queue ticket, which the promoter moves onto this stream once due (see Delay queue) |
 | `retry.task:v1` | Job failed, retryable; `executor-controller` will re-deploy |
-| `task.failed:v1` | Job failed permanently; currently has no in-repo consumer |
+| `task.failed:v1` | Job status Unknown (treated as a permanent failure); currently has no in-repo consumer |
 | `task.status.updated:v1` | Job running (first observation) and terminal (SUCCEEDED/FAILED); consumed by `state` to update task status. k8s-controller is the sole producer of the running/terminal pod lifecycle. |
 | `task.execution.recorded:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `state` to persist execution record |
 | `node.updated:v1` | Job terminal (SUCCEEDED or FAILED); consumed by `orchestrator` for topology projection |
@@ -131,7 +131,7 @@ The Kubernetes `readinessProbe` points at `/ready` and the `livenessProbe` at
 |---|---|
 | **Running** | The first time an attempt is observed running (`running_announced=false`), announce `task.status.updated:v1` (RUNNING) stamped with the running attempt — suppressed for candidate-mode Jobs (`mode=validation`, `mode=seed_build`, `mode=compile`). Always write a `check_delayed` outbox entry → enqueue a delay-queue ticket with `check_after` and `running_announced=true` (the promoter later moves it to `check.k8s:v1`), so RUNNING is announced exactly once per attempt. k8s-controller is the sole producer of the running/terminal pod lifecycle. |
 | **Failed, retryable** (`retry_count < max_retries`) | Fetch+upload logs (soft-fail) → entry A: publish `task.status.updated:v1` (FAILED) stamping the attempt that ran; entry B: publish `retry.task:v1` for the next attempt (`retry_count + 1`) |
-| **Failed, permanent** (`retry_count >= max_retries`) | Fetch+upload logs (soft-fail) → entry A: publish `task.status.updated:v1` (FAILED) + `task.execution.recorded:v1`; entry B: publish `task.failed:v1` + `node.updated:v1` FAILED |
+| **Failed, permanent** (`retry_count >= max_retries`) | Fetch+upload logs (soft-fail) → publish `task.status.updated:v1` (FAILED) + `task.execution.recorded:v1` + `node.updated:v1` FAILED |
 | **Succeeded** | Entry A: publish `task.status.updated:v1` (SUCCEEDED) + `task.execution.recorded:v1`; entry B: publish `node.updated:v1` SUCCEEDED |
 | **NotFound** (K8s API returns 404) | Mapped to `JobStatusFailed`; flows through the same Failed path as above (retryable or permanent) |
 
@@ -188,7 +188,7 @@ Each completed row's `aggregate_id` is a deterministic UUIDv5 over an immutable 
 
 - Full pod log uploaded on any failure (retryable or permanent)
 - S3 upload is **soft-fail**: if upload fails, a warning is logged but processing continues with empty log key
-- Error message stored in `task.execution.recorded:v1` payload is taken from log tail; falls back to K8s termination message
+- Error message stored in `task.execution.recorded:v1` payload prefers the structured result block's `message` (when the pod printed one and its `status` is not `success`); falls back to the log tail, then to the K8s termination message
 - `ErrorMessageMaxLen` config truncates the stored error message
 
 ## Redis Payload Reference
