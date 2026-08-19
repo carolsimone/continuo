@@ -455,6 +455,7 @@ services:
       - localstack
       - stub-llm
       - stub-github
+      - release-controller
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -486,6 +487,8 @@ services:
       # with. Mirrors the chart's validation.engine; the local stack runs
       # Postgres, same as manifest-controller's WAREHOUSE_ENGINE.
       - WAREHOUSE_ENGINE=postgres
+      - RELEASE_CONTROLLER_URL=http://release-controller:8088
+      - SHADOW_VERIFY_TIMEOUT=${SHADOW_VERIFY_TIMEOUT:-20m}
     volumes:
       - ./remediation-agent/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
     ports:

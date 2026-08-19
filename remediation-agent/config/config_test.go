@@ -187,3 +187,47 @@ func TestLoad_SQLDialectRejectsUnsupportedEngine(t *testing.T) {
 	require.NotEmpty(t, missing, "an unsupported WAREHOUSE_ENGINE must fail startup")
 	assert.Contains(t, strings.Join(missing, " "), "duckdb")
 }
+
+// TestLoad_ReleaseGatewayDefaults verifies that an install which never set
+// RELEASE_CONTROLLER_URL or SHADOW_VERIFY_TIMEOUT gets the documented
+// defaults: the release-controller's in-cluster service address, and a 20
+// minute cap on how long a shadow verification is polled for.
+func TestLoad_ReleaseGatewayDefaults(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("RELEASE_CONTROLLER_URL", "")
+	t.Setenv("SHADOW_VERIFY_TIMEOUT", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "http://release-controller:8088", cfg.ReleaseControllerURL)
+	assert.Equal(t, 20*time.Minute, cfg.ShadowVerifyTimeout)
+}
+
+// TestLoad_ReleaseGatewayOverrides verifies both env vars override their
+// defaults.
+func TestLoad_ReleaseGatewayOverrides(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("RELEASE_CONTROLLER_URL", "http://release-controller.other:9000")
+	t.Setenv("SHADOW_VERIFY_TIMEOUT", "5m")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "http://release-controller.other:9000", cfg.ReleaseControllerURL)
+	assert.Equal(t, 5*time.Minute, cfg.ShadowVerifyTimeout)
+}
+
+// TestLoad_ShadowVerifyTimeoutNonPositiveFallsBackToDefault verifies a zero
+// or negative timeout is clamped back to the default rather than producing a
+// poll loop with no cap (0) or one that never runs (negative).
+func TestLoad_ShadowVerifyTimeoutNonPositiveFallsBackToDefault(t *testing.T) {
+	for _, val := range []string{"0s", "-1s"} {
+		t.Run(val, func(t *testing.T) {
+			setBaseEnv(t)
+			t.Setenv("SHADOW_VERIFY_TIMEOUT", val)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			require.Empty(t, v.Missing())
+			assert.Equal(t, 20*time.Minute, cfg.ShadowVerifyTimeout)
+		})
+	}
+}

@@ -67,6 +67,17 @@ type Config struct {
 	// reads for its own parser dialect, so both services agree on which
 	// engines they can honour.
 	SQLDialect string
+
+	// ReleaseControllerURL is release-controller's HTTP root, used by the
+	// ReleaseGateway adapter to submit shadow verification releases and poll
+	// their verdicts.
+	ReleaseControllerURL string
+
+	// ShadowVerifyTimeout bounds how long the python fixer polls a shadow
+	// release for a terminal verdict before giving up and treating the
+	// attempt as failed. Non-positive values fall back to the default so a
+	// misconfigured timeout can never produce an unbounded poll loop.
+	ShadowVerifyTimeout time.Duration
 }
 
 // serviceReposFile is the on-disk structure of config/service_repos.yaml.
@@ -88,6 +99,16 @@ const defaultPRPollInterval = time.Minute
 // comfortably exceeds the seconds-scale S3-fetch-then-create-PR round trip a
 // healthy claim completes in, so the sweep never races an in-flight creation.
 const defaultPROpeningGracePeriod = 10 * time.Minute
+
+// defaultReleaseControllerURL is release-controller's in-cluster service
+// address, matching the same default ui-service already uses to reach it.
+const defaultReleaseControllerURL = "http://release-controller:8088"
+
+// defaultShadowVerifyTimeout bounds how long a shadow release is polled for a
+// terminal verdict. It comfortably exceeds the compile+parse+validate
+// pipeline a healthy shadow release completes in, while still failing an
+// attempt whose shadow release wedges rather than polling forever.
+const defaultShadowVerifyTimeout = 20 * time.Minute
 
 // engineDialects maps WAREHOUSE_ENGINE (the chart's validation.engine value,
 // published to every service on the shared ConfigMap) to the sqlglot dialect
@@ -154,6 +175,8 @@ func Load(v *pkgconfig.Validator) Config {
 		MaxAttempts:          pkgconfig.EnvIntOrDefault("REMEDIATION_AGENT_MAX_ATTEMPTS", 3),
 		OrchestratorAddr:     pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
 		ServiceRepoMapPath:   pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
+		ReleaseControllerURL: pkgconfig.EnvOrDefault("RELEASE_CONTROLLER_URL", defaultReleaseControllerURL),
+		ShadowVerifyTimeout:  pkgconfig.EnvDurationOrDefault("SHADOW_VERIFY_TIMEOUT", defaultShadowVerifyTimeout),
 	}
 	cfg.SQLDialect = resolveSQLDialect(v)
 	switch cfg.LLMProvider {
@@ -179,6 +202,9 @@ func Load(v *pkgconfig.Validator) Config {
 	}
 	if cfg.PROpeningGracePeriod <= 0 {
 		cfg.PROpeningGracePeriod = defaultPROpeningGracePeriod
+	}
+	if cfg.ShadowVerifyTimeout <= 0 {
+		cfg.ShadowVerifyTimeout = defaultShadowVerifyTimeout
 	}
 	cfg.ServiceRepoPaths = loadServiceRepos(cfg.ServiceRepoMapPath)
 	return cfg
