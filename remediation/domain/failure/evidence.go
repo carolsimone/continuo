@@ -36,13 +36,6 @@ const (
 	DecisionDrop Decision = "drop"
 )
 
-// Healable reports whether a category warrants a remediation trigger. Only
-// confidently-infrastructure failures are dropped; everything else — including
-// the catch-all unknown bucket — flows to the agent (under-drop policy).
-func (c Category) Healable() bool {
-	return c != CategoryInfraTransient
-}
-
 // FailureEvidence is the event-agnostic input to the classifier. Ingress
 // adapters translate a source event (e.g. release.rejected:v1) into this
 // value object; the classifier never sees the originating event.

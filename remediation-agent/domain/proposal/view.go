@@ -12,16 +12,19 @@ type View struct {
 	ErrorSignature string
 	Attempt        int
 	Status         Status
-	// ShadowReleaseID is the id of the shadow release posted to verify a
-	// 'verifying' attempt's fix; empty for every other status.
+	// ShadowReleaseID is the id of the shadow release posted to verify this
+	// attempt's fix, written when Status is (or was) 'verifying'. It is kept
+	// when the attempt is finalized, so a resolved row still names the release
+	// that judged it. Empty for an attempt that never entered verification.
 	ShadowReleaseID string
 	// VerifyError is the shadow release's failure reason, recorded by
 	// MarkVerifyFailed; empty unless verification failed.
 	VerifyError string
 	// TriggerPayload is the raw remediation.requested:v1 payload this attempt
-	// was triggered by, stored when Status is (or was) 'verifying' so a
-	// reconciler can rebuild the trigger for a retry. Empty for every other
-	// status.
+	// was triggered by, written when Status is (or was) 'verifying' so a
+	// reconciler can rebuild the trigger for a retry. It is kept when the
+	// attempt is finalized — the reconciler reads it from a row it has already
+	// moved to 'failed'. Empty for an attempt that never entered verification.
 	TriggerPayload      []byte
 	Confidence          Confidence
 	Rationale           string

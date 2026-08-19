@@ -179,7 +179,7 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
 4. Open transaction:
    a. Upsert classification_decision (source, release_id, node_id).
       - If already exists (redelivery): inserted=false → skip enqueue, commit, done.
-   b. If inserted && category.Healable() && not shadow:
+   b. If inserted && decision == emit:
       - Build RemediationRequested payload: pointer-first (the full log stays
         behind dbt_log_uri, the failing code behind code_bundle_uri), carrying
         the classifier's reason and capped error_excerpt inline.

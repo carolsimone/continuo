@@ -121,9 +121,12 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	// service_prod, or emitting release.promoted:v1.
 	if r.IsShadow() {
 		if err := r.TransitionToValidated(now); err != nil {
-			return err
+			return fmt.Errorf("transition shadow release %s to validated: %w", releaseID, err)
 		}
-		return u.ReleaseRepo().Save(ctx, r)
+		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+			return fmt.Errorf("save validated shadow release %s: %w", releaseID, err)
+		}
+		return nil
 	}
 
 	cp, err := u.CurrentProdRepo().Get(ctx)

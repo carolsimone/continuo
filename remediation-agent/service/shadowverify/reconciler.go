@@ -85,8 +85,11 @@ type Deps struct {
 }
 
 // Reconciler drives every proposal awaiting shadow verification to a terminal
-// outcome. Rows are handled best-effort: one row that cannot be resolved is
-// logged and skipped so it never blocks the rest, and is retried next pass.
+// outcome. Rows are handled best-effort and sequentially: one row that cannot
+// be resolved is logged and skipped, so no row's failure ends the pass, and it
+// is retried next pass. Slowness is not isolated the same way — a rejected row
+// runs the next attempt's whole fix pipeline, model call included, inline in
+// the pass — so one slow retry delays every row behind it until the next tick.
 type Reconciler struct {
 	lister   VerifyingLister
 	releases ports.ReleaseGateway
