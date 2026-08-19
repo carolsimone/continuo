@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -149,5 +150,51 @@ func TestLocate_IgnoresNonYAMLFiles(t *testing.T) {
 	_, err := Locate(root, "analytics", "py_daily_kpis")
 	if !errors.Is(err, ErrNodeNotDeclared) {
 		t.Fatalf("err = %v, want ErrNodeNotDeclared", err)
+	}
+}
+
+// TestLocate_MatchesDeclaredCaseInsensitively verifies that a node whose
+// contract declares a capitalized schema or table is still found. The two
+// sides genuinely disagree in case: a node's identity key across the system is
+// lowercased, so a caller derives the schema and table it searches for from a
+// lowercased id, while the contract file keeps whatever case its author wrote
+// (the declared spelling is what renders into SQL and DDL downstream). Matching
+// exactly would report a declared node as undeclared for every team that
+// capitalizes a name.
+func TestLocate_MatchesDeclaredCaseInsensitively(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "services/service-py/contracts/orders.yml",
+		"nodes:\n  - schema: Analytics\n    table: Orders\n    script: scripts/orders.py\n")
+
+	got, err := Locate(root, "analytics", "orders")
+	if err != nil {
+		t.Fatalf("Locate: %v", err)
+	}
+	if got.YAMLPath != "services/service-py/contracts/orders.yml" {
+		t.Errorf("YAMLPath = %q", got.YAMLPath)
+	}
+	if got.ContractDir != "services/service-py/contracts" {
+		t.Errorf("ContractDir = %q", got.ContractDir)
+	}
+	if got.RepoRoot != "services/service-py" {
+		t.Errorf("RepoRoot = %q", got.RepoRoot)
+	}
+	if !strings.Contains(got.YAMLText, "schema: Analytics") {
+		t.Errorf("YAMLText must be the file verbatim, with the author's case intact: %q", got.YAMLText)
+	}
+}
+
+// TestLocate_CaseVariantsAreOneAmbiguity verifies that two files whose
+// declarations differ only in case are reported as ambiguous rather than one
+// of them being picked. They name the same physical relation and the same
+// node identity, so a fix written into either could be the wrong one.
+func TestLocate_CaseVariantsAreOneAmbiguity(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "contracts/a.yml", "nodes:\n  - schema: Analytics\n    table: Orders\n")
+	writeFile(t, root, "contracts/b.yml", "nodes:\n  - schema: analytics\n    table: orders\n")
+
+	_, err := Locate(root, "analytics", "orders")
+	if !errors.Is(err, ErrAmbiguousDeclaration) {
+		t.Fatalf("Locate error = %v, want ErrAmbiguousDeclaration", err)
 	}
 }

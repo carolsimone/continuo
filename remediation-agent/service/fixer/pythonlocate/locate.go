@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -73,12 +74,23 @@ type match struct {
 
 // Locate walks rootDir for every *.yml/*.yaml file, parses each as a
 // contractDoc, and returns the location of the file whose "nodes:" list
-// contains an entry whose schema and table match exactly.
+// contains an entry matching schema and table.
+//
+// The match folds case on both sides. A node's identity across this system is
+// its lowercased "<schema>.<table>", so a caller derives the schema and table
+// it searches for from an already-lowercased id, while the contract file keeps
+// whatever case its author wrote — the declared spelling is what renders into
+// SQL and DDL, so nothing normalizes it in the repository. Comparing the two
+// verbatim would report a declared node as undeclared for every team that
+// capitalizes a name. Only the comparison folds: the returned paths and text
+// are exactly what is on disk.
 //
 // Zero matching files returns ErrNodeNotDeclared. More than one matching file
-// returns ErrAmbiguousDeclaration. A file over maxContractYAMLBytes, or one
-// that fails to parse as yaml, is skipped (logged) rather than treated as a
-// search error — one malformed or oversized file elsewhere in the tree must
+// returns ErrAmbiguousDeclaration — including two files whose declarations
+// differ only in case, which name one relation and one node identity, so
+// neither may be picked over the other. A file over maxContractYAMLBytes, or
+// one that fails to parse as yaml, is skipped (logged) rather than treated as
+// a search error — one malformed or oversized file elsewhere in the tree must
 // not prevent finding the real match.
 func Locate(rootDir, schema, table string) (Located, error) {
 	var matches []match
@@ -119,7 +131,7 @@ func Locate(rootDir, schema, table string) (Located, error) {
 		}
 
 		for _, n := range doc.Nodes {
-			if n.Schema == schema && n.Table == table {
+			if strings.EqualFold(n.Schema, schema) && strings.EqualFold(n.Table, table) {
 				rel, relErr := filepath.Rel(rootDir, path)
 				if relErr != nil {
 					return fmt.Errorf("relativize %q: %w", path, relErr)
