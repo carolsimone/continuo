@@ -16,9 +16,18 @@ const STATUS_ORDER: Record<string, number> = {
   failed: 0, running: 1, pending: 2, skipped: 3, succeeded: 4, cancelled: 5,
 };
 
-function sortTasks(tasks: Task[]): Task[] {
+function completedAtMs(task: Task, execByTaskId: Map<string, TaskExecution>): number {
+  const completedAt = execByTaskId.get(task.task_id)?.completed_at;
+  return completedAt ? new Date(completedAt).getTime() : 0;
+}
+
+// Ties within a status bucket (e.g. all succeeded) break by completed_at
+// descending — most recently finished first. Tasks with no completed_at
+// (pending/running) tie at 0 and keep their incoming order.
+function sortTasks(tasks: Task[], execByTaskId: Map<string, TaskExecution>): Task[] {
   return [...tasks].sort((a, b) =>
-    (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5)
+    (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5) ||
+    completedAtMs(b, execByTaskId) - completedAtMs(a, execByTaskId)
   );
 }
 
@@ -42,7 +51,7 @@ interface ServiceGroup {
 }
 
 // Groups sort most-severe-first (same precedence as node rows), ties by name.
-function groupTasksByService(tasks: Task[]): ServiceGroup[] {
+function groupTasksByService(tasks: Task[], execByTaskId: Map<string, TaskExecution>): ServiceGroup[] {
   const byService = new Map<string, Task[]>();
   tasks.forEach((task) => {
     const bucket = byService.get(task.service_name);
@@ -54,7 +63,7 @@ function groupTasksByService(tasks: Task[]): ServiceGroup[] {
     .map(([service, groupTasks]) => ({
       service,
       status: rollupStatus(groupTasks.map((t) => t.status)),
-      tasks: sortTasks(groupTasks),
+      tasks: sortTasks(groupTasks, execByTaskId),
     }))
     .sort((a, b) =>
       (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5) ||
@@ -99,7 +108,7 @@ export default function NodesPanel({
     return <p style={{ padding: 16, color: '#94a3b8', fontSize: 12, textAlign: 'center', margin: 0 }}>No tasks yet.</p>;
   }
 
-  const groups = groupTasksByService(tasks);
+  const groups = groupTasksByService(tasks, execByTaskId);
 
   return (
     <table className="nodes-table">
@@ -110,6 +119,7 @@ export default function NodesPanel({
           <th>Attempt</th>
           <th>Error</th>
           <th>Started</th>
+          <th>Completed</th>
           <th>Logs</th>
         </tr>
       </thead>
@@ -132,7 +142,7 @@ export default function NodesPanel({
                   }
                 }}
               >
-                <td colSpan={6}>
+                <td colSpan={7}>
                   <div className="nodes-group-header">
                     <span className="nodes-group-chevron">{isExpanded ? '▾' : '▸'}</span>
                     <span
@@ -193,6 +203,11 @@ export default function NodesPanel({
                     <td>
                       {exec?.started_at
                         ? <span className="nodes-ts">{new Date(exec.started_at).toLocaleTimeString()}</span>
+                        : <span className="nodes-ts nodes-ts--dim">—</span>}
+                    </td>
+                    <td>
+                      {exec?.completed_at
+                        ? <span className="nodes-ts">{new Date(exec.completed_at).toLocaleTimeString()}</span>
                         : <span className="nodes-ts nodes-ts--dim">—</span>}
                     </td>
                     <td>
