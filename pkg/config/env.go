@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -47,6 +48,30 @@ func (v *Validator) Missing() []string {
 // complete set of problems in one fail-fast pass.
 func (v *Validator) Add(name string) {
 	v.missing = append(v.missing, name)
+}
+
+// DurationOrDefault reads an OPTIONAL Go duration env var (e.g. "15s",
+// "1m30s"), returning fallback when it is unset or empty.
+//
+// A value that is set but does not parse is recorded as a validation failure
+// naming the key, so start-up fails rather than the service running a default
+// the operator never asked for. That distinction is the whole point of this
+// helper over EnvDurationOrDefault: an install declares such a value once, in
+// its chart values, and a typo there otherwise produces a system that looks
+// configured — the key greps cleanly — while every process runs the author's
+// default. The fallback is still returned so the caller holds a usable value
+// while it finishes collecting the rest of the configuration problems.
+func (v *Validator) DurationOrDefault(key string, fallback time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		v.Add(fmt.Sprintf("%s (invalid duration %q: expected a Go duration such as 15s, 1m30s, or 20m)", key, raw))
+		return fallback
+	}
+	return d
 }
 
 // env reads a string environment variable with a fallback default (Tier 2 vars).

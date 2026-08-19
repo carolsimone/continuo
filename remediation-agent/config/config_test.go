@@ -270,3 +270,49 @@ func TestLoad_ShadowVerifyPollIntervalNonPositiveFallsBackToDefault(t *testing.T
 		})
 	}
 }
+
+// TestLoad_MalformedDurationFailsStartup pins the fail-closed rule for every
+// duration an operator can override.
+//
+// Each of these keys reaches the service from the chart's values, and a value
+// the service cannot read is an operator who asked for one behaviour and would
+// have got a different one with nothing anywhere saying so: the install looks
+// configured, the key greps cleanly in values.yaml, and the process runs the
+// author's default. Start-up fails naming the key instead.
+func TestLoad_MalformedDurationFailsStartup(t *testing.T) {
+	for _, key := range []string{
+		"LLM_CACHE_TTL",
+		"REMEDIATION_PR_POLL_INTERVAL",
+		"REMEDIATION_PR_OPENING_GRACE_PERIOD",
+		"SHADOW_VERIFY_TIMEOUT",
+		"SHADOW_VERIFY_POLL_INTERVAL",
+	} {
+		t.Run(key, func(t *testing.T) {
+			setBaseEnv(t)
+			t.Setenv(key, "20 minutes") // not a Go duration
+			v := &pkgconfig.Validator{}
+			Load(v)
+
+			missing := v.Missing()
+			require.Len(t, missing, 1, "a value the service cannot honour must stop start-up")
+			assert.Contains(t, missing[0], key,
+				"the boot log must name the key the operator has to correct")
+		})
+	}
+}
+
+// TestLoad_UnsetDurationIsNotAMisconfiguration is the control: every one of
+// those keys stays optional. An install that never set them boots on the
+// documented defaults.
+func TestLoad_UnsetDurationIsNotAMisconfiguration(t *testing.T) {
+	setBaseEnv(t)
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+
+	require.Empty(t, v.Missing())
+	assert.Equal(t, time.Hour, cfg.LLMCacheTTL)
+	assert.Equal(t, time.Minute, cfg.PRPollInterval)
+	assert.Equal(t, 10*time.Minute, cfg.PROpeningGracePeriod)
+	assert.Equal(t, 20*time.Minute, cfg.ShadowVerifyTimeout)
+	assert.Equal(t, 15*time.Second, cfg.ShadowVerifyPollInterval)
+}

@@ -29,8 +29,9 @@ type Config struct {
 	// or outbox re-emit, seconds to minutes), so a short TTL both covers that and
 	// bounds memory: the shared Redis runs noeviction and co-hosts the event
 	// streams and OIDC sessions, so the cache must self-bound via its TTL rather
-	// than rely on eviction. Defaults to 1h; a non-positive value falls back to
-	// that default so a misconfigured TTL can never disable expiry.
+	// than rely on eviction. Defaults to 1h when unset; a non-positive value
+	// falls back to that default so a misconfigured TTL can never disable
+	// expiry, while a value that is not a Go duration at all fails start-up.
 	LLMCacheTTL time.Duration
 
 	GitHubToken   string // personal access token for GitHub API calls; empty = unauthenticated
@@ -38,13 +39,15 @@ type Config struct {
 
 	// PRPollInterval is how often the PR-outcome reconciler polls GitHub for
 	// proposals with an open PR. Non-positive values fall back to the default
-	// so a misconfigured interval can never produce a hot loop.
+	// so a misconfigured interval can never produce a hot loop; a value that is
+	// not a Go duration at all fails start-up.
 	PRPollInterval time.Duration
 
 	// PROpeningGracePeriod bounds how long a proposal can sit claimed for PR
 	// creation (pr_state='opening') with no matching pull request on GitHub
 	// before the reconciler's opening sweep releases it back to 'failed' for
-	// retry. Non-positive values fall back to the default.
+	// retry. Non-positive values fall back to the default; a value that is not
+	// a Go duration at all fails start-up.
 	PROpeningGracePeriod time.Duration
 
 	HTTPPort         string
@@ -78,12 +81,16 @@ type Config struct {
 	// failed. It is measured from when that release left the release queue and
 	// started running, so a backlog never spends it; when no verdict can be
 	// read at all, it is measured from when the attempt was recorded instead.
+	// Non-positive values fall back to the default so a misconfiguration can
+	// never leave a proposal waiting indefinitely; a value that is not a Go
+	// duration at all fails start-up.
 	ShadowVerifyTimeout time.Duration
 
 	// ShadowVerifyPollInterval is how often the shadow-verify reconciler reads
 	// the shadow release of every proposal awaiting a verdict. Non-positive
 	// values fall back to the default so a misconfigured interval can never
-	// produce a hot loop.
+	// produce a hot loop; a value that is not a Go duration at all fails
+	// start-up.
 	ShadowVerifyPollInterval time.Duration
 }
 
@@ -159,8 +166,15 @@ func resolveSQLDialect(v *pkgconfig.Validator) string {
 	return dialect
 }
 
-// Load reads configuration from env vars, recording missing/invalid required
-// values on v so main can fail fast with a complete list.
+// Load reads configuration from env vars, recording missing/invalid values on v
+// so main can fail fast with a complete list.
+//
+// Every optional duration goes through v.DurationOrDefault rather than a silent
+// fallback: an unset key runs the documented default, but a key set to
+// something that is not a Go duration stops start-up naming that key. Those
+// values are declared once in an install's chart values, and a typo there
+// otherwise leaves a system that looks configured while the process runs the
+// author's default.
 func Load(v *pkgconfig.Validator) Config {
 	cfg := Config{
 		Postgres: pkgconfig.PostgresConfig{
@@ -177,19 +191,19 @@ func Load(v *pkgconfig.Validator) Config {
 		LLMAPIKey:            pkgconfig.EnvOrDefault("LLM_API_KEY", ""),
 		LLMModel:             v.Require("LLM_MODEL"),
 		LLMBaseURL:           pkgconfig.EnvOrDefault("LLM_BASE_URL", ""),
-		LLMCacheTTL:          pkgconfig.EnvDurationOrDefault("LLM_CACHE_TTL", defaultLLMCacheTTL),
+		LLMCacheTTL:          v.DurationOrDefault("LLM_CACHE_TTL", defaultLLMCacheTTL),
 		GitHubToken:          pkgconfig.EnvOrDefault("GITHUB_TOKEN", ""),
 		GitHubBaseURL:        pkgconfig.EnvOrDefault("GITHUB_BASE_URL", "https://api.github.com"),
-		PRPollInterval:       pkgconfig.EnvDurationOrDefault("REMEDIATION_PR_POLL_INTERVAL", defaultPRPollInterval),
-		PROpeningGracePeriod: pkgconfig.EnvDurationOrDefault("REMEDIATION_PR_OPENING_GRACE_PERIOD", defaultPROpeningGracePeriod),
+		PRPollInterval:       v.DurationOrDefault("REMEDIATION_PR_POLL_INTERVAL", defaultPRPollInterval),
+		PROpeningGracePeriod: v.DurationOrDefault("REMEDIATION_PR_OPENING_GRACE_PERIOD", defaultPROpeningGracePeriod),
 		HTTPPort:             pkgconfig.EnvOrDefault("REMEDIATION_AGENT_HTTP_PORT", "8092"),
 		GRPCPort:             pkgconfig.EnvOrDefault("REMEDIATION_AGENT_GRPC_PORT", "50054"),
 		MaxAttempts:          pkgconfig.EnvIntOrDefault("REMEDIATION_AGENT_MAX_ATTEMPTS", 3),
 		OrchestratorAddr:     pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
 		ServiceRepoMapPath:   pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
 		ReleaseControllerURL: pkgconfig.EnvOrDefault("RELEASE_CONTROLLER_URL", defaultReleaseControllerURL),
-		ShadowVerifyTimeout:  pkgconfig.EnvDurationOrDefault("SHADOW_VERIFY_TIMEOUT", defaultShadowVerifyTimeout),
-		ShadowVerifyPollInterval: pkgconfig.EnvDurationOrDefault(
+		ShadowVerifyTimeout:  v.DurationOrDefault("SHADOW_VERIFY_TIMEOUT", defaultShadowVerifyTimeout),
+		ShadowVerifyPollInterval: v.DurationOrDefault(
 			"SHADOW_VERIFY_POLL_INTERVAL", defaultShadowVerifyPollInterval),
 	}
 	cfg.SQLDialect = resolveSQLDialect(v)
