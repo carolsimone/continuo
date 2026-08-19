@@ -2,6 +2,15 @@ FROM continuo-base:latest
 
 WORKDIR /app
 
+# Packaging toolchain: continuo-python-runtime declares requires-python
+# >= 3.14, and this base image's python3 (3.13, no pip) can't satisfy that
+# with a plain pip install. uv manages its own CPython 3.14 instead, so
+# `continuo-runtime` (the CLI the ContractPackager adapter shells out to)
+# is a standalone executable independent of the base image's own python3.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ~/.local/bin/uv tool install --python 3.14 continuo-python-runtime==0.2.0
+ENV PATH="/root/.local/bin:${PATH}"
+
 # Layer 1: Workspace stub. All go.mod / go.sum files are copied so
 # `go mod download` can satisfy every dependency cited by go.work, but
 # only the modules this image builds against (pkg, orchestrator,

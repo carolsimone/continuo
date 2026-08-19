@@ -36,10 +36,19 @@ WORKDIR /app/remediation-agent
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/remediation-agent .
 
-# Runtime stage
-FROM alpine:latest
+# Runtime stage. Debian slim, not alpine: the packaging toolchain below pulls
+# in pyarrow, which ships manylinux wheels only — alpine's musl libc would
+# force a source build. continuo-python-runtime declares requires-python
+# >= 3.14, which python:3.14-slim satisfies.
+FROM python:3.14-slim
 
-RUN apk --no-cache add ca-certificates tzdata
+# ca-certificates/tzdata carry over from the alpine stage this replaces.
+# continuo-python-runtime provides the continuo-runtime CLI the
+# ContractPackager adapter shells out to, so a proposed python-node fix is
+# packaged by the same tool that packages every promoted release.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir continuo-python-runtime==0.2.0
 
 # Explicit COPY allowlist — only the service binary; new builder artifacts
 # are absent from the runtime image unless added here.

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,4 +142,48 @@ func TestLoad_ServiceRepoMapPath_MissingFile(t *testing.T) {
 	require.Empty(t, v.Missing())
 	assert.NotNil(t, cfg.ServiceRepoPaths)
 	assert.Empty(t, cfg.ServiceRepoPaths)
+}
+
+// TestLoad_SQLDialectDefaultsToPostgres verifies that an install which never
+// set WAREHOUSE_ENGINE (the same ConfigMap key manifest-controller reads for
+// its own parser dialect) keeps packaging against postgres.
+func TestLoad_SQLDialectDefaultsToPostgres(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("WAREHOUSE_ENGINE", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "postgres", cfg.SQLDialect)
+}
+
+// TestLoad_SQLDialectMapsSupportedEngines verifies every engine the chart's
+// validation.engine allows maps to a continuo-runtime --dialect value.
+func TestLoad_SQLDialectMapsSupportedEngines(t *testing.T) {
+	for _, tc := range []struct{ engine, dialect string }{
+		{"postgres", "postgres"},
+		{"trino", "trino"},
+	} {
+		t.Run(tc.engine, func(t *testing.T) {
+			setBaseEnv(t)
+			t.Setenv("WAREHOUSE_ENGINE", tc.engine)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			require.Empty(t, v.Missing())
+			assert.Equal(t, tc.dialect, cfg.SQLDialect)
+		})
+	}
+}
+
+// TestLoad_SQLDialectRejectsUnsupportedEngine verifies that an engine with no
+// dialect mapping fails startup instead of silently packaging under the
+// wrong dialect. Falling back to postgres would render SQL a non-postgres
+// warehouse rejects, and further from the cause than a boot-time failure.
+func TestLoad_SQLDialectRejectsUnsupportedEngine(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("WAREHOUSE_ENGINE", "duckdb")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	missing := v.Missing()
+	require.NotEmpty(t, missing, "an unsupported WAREHOUSE_ENGINE must fail startup")
+	assert.Contains(t, strings.Join(missing, " "), "duckdb")
 }

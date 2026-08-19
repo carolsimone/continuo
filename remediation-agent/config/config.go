@@ -1,9 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
@@ -56,6 +59,14 @@ type Config struct {
 	// ServiceRepoPaths maps a dbt service_name to its project root within the
 	// source repo. Loaded from ServiceRepoMapPath at startup.
 	ServiceRepoPaths map[string]string
+
+	// SQLDialect is the sqlglot dialect name the ContractPackager adapter
+	// passes to continuo-runtime's --dialect flag when packaging a proposed
+	// python-node fix. Resolved from WAREHOUSE_ENGINE at startup (see
+	// engineDialects) — the same shared-ConfigMap key manifest-controller
+	// reads for its own parser dialect, so both services agree on which
+	// engines they can honour.
+	SQLDialect string
 }
 
 // serviceReposFile is the on-disk structure of config/service_repos.yaml.
@@ -77,6 +88,43 @@ const defaultPRPollInterval = time.Minute
 // comfortably exceeds the seconds-scale S3-fetch-then-create-PR round trip a
 // healthy claim completes in, so the sweep never races an in-flight creation.
 const defaultPROpeningGracePeriod = 10 * time.Minute
+
+// engineDialects maps WAREHOUSE_ENGINE (the chart's validation.engine value,
+// published to every service on the shared ConfigMap) to the sqlglot dialect
+// name continuo-runtime renders SQL with. Mirrors manifest-controller's
+// _ENGINE_DIALECTS exactly: the two services must agree on which engines
+// they can honour, so a release manifest-controller accepts is never
+// packaged here under a dialect manifest-controller never validated it
+// against.
+var engineDialects = map[string]string{
+	"postgres": "postgres",
+	"trino":    "trino",
+}
+
+// resolveSQLDialect reads WAREHOUSE_ENGINE and returns the sqlglot dialect
+// name for it, defaulting an unset value to postgres (the engine an install
+// that never chose one runs). Records a validation failure on v and returns
+// "" for an engine with no dialect mapping, so a warehouse this service
+// cannot honour fails startup rather than packaging under postgres's rules
+// and having the wrong SQL reach a different warehouse.
+func resolveSQLDialect(v *pkgconfig.Validator) string {
+	engine := pkgconfig.EnvOrDefault("WAREHOUSE_ENGINE", "")
+	if engine == "" {
+		engine = "postgres"
+	}
+	dialect, ok := engineDialects[engine]
+	if !ok {
+		supported := make([]string, 0, len(engineDialects))
+		for e := range engineDialects {
+			supported = append(supported, e)
+		}
+		sort.Strings(supported)
+		v.Add(fmt.Sprintf("WAREHOUSE_ENGINE (unsupported %q: expected one of %s)",
+			engine, strings.Join(supported, ", ")))
+		return ""
+	}
+	return dialect
+}
 
 // Load reads configuration from env vars, recording missing/invalid required
 // values on v so main can fail fast with a complete list.
@@ -107,6 +155,7 @@ func Load(v *pkgconfig.Validator) Config {
 		OrchestratorAddr:     pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
 		ServiceRepoMapPath:   pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
 	}
+	cfg.SQLDialect = resolveSQLDialect(v)
 	switch cfg.LLMProvider {
 	case "anthropic", "openai":
 		// valid, no additional requirements
