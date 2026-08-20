@@ -35,6 +35,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// consumerHeartbeatStale is the liveness heartbeat budget: how long a
+// consumer's read loop may go without completing an iteration before /livez
+// reports it wedged. Must comfortably exceed the longest handler invocation so
+// a legitimately in-flight message never reads as a wedged loop (mirrors
+// executor-controller/main.go).
+const consumerHeartbeatStale = 3 * time.Minute
+
 func main() {
 	// Setup structured logger
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -65,9 +72,14 @@ func main() {
 	// runConsumer starts a tracked stream consumer. Its goroutine is tracked by
 	// the lifecycle WaitGroup so shutdown drains in-flight handler invocations
 	// before infra is closed. A non-nil return (a genuine exit rather than a
-	// clean ctx-cancel stop) flips readiness so the unhealthy pod is restarted.
+	// clean ctx-cancel stop) flips both readiness and liveness so the unhealthy
+	// pod is restarted; a worker heartbeat probe also catches a consumer whose
+	// read loop has gone wedged without exiting.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
 		liveReg.RegisterWorker(name)
+		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
+			return consumer.Healthy(consumerHeartbeatStale)
+		})
 		lifecycleManager.Go(func() {
 			err := consumer.Start(ctx)
 			liveReg.WorkerExited(name, err)

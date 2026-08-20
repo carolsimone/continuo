@@ -10,14 +10,20 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
 
-// HealthServer provides HTTP liveness and readiness endpoints.
+// HealthServer provides HTTP liveness and readiness endpoints with
+// deliberately different semantics, both backed by the liveness registry:
 //
-//   - /health is a liveness probe: it returns 200 as long as the process is
-//     running and able to serve HTTP.
-//   - /ready is a readiness probe backed by the liveness registry: it returns
-//     503 when any registered consumer has exited with an error or any cached
-//     dependency probe fails, so Kubernetes stops routing traffic to a pod
-//     whose background workers or backing stores are unhealthy.
+//   - /ready (readiness) returns 503 when any registered worker has exited
+//     with an error, any consumer's read-loop heartbeat has gone stale, OR any
+//     external dependency probe (Redis/Postgres) fails. A dependency outage
+//     pulls the pod out of Service endpoints so no traffic is routed to it.
+//   - /livez (liveness) returns 503 ONLY for worker/heartbeat failures — never
+//     for a dependency outage. Restarting a pod whose backing store is briefly
+//     down just turns a recoverable outage into CrashLoopBackOff; the
+//     consumers are already retrying through it. A dead/wedged consumer
+//     goroutine, though, SHOULD restart the pod, and does.
+//   - /health is a plain process-up probe (always 200); retained for manual
+//     use.
 type HealthServer struct {
 	server   *http.Server
 	logger   *slog.Logger
@@ -53,6 +59,8 @@ func NewHealthServer(port int, registry *liveness.Registry, logger *slog.Logger)
 			logger.Warn("Failed to write readiness response", "error", err)
 		}
 	})
+
+	mux.HandleFunc("/livez", liveness.Handler("liveness", registry.LivenessCheck, logger))
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
