@@ -119,6 +119,15 @@ record "tests/e2e/provision-k8s-test-env.sh (kind load)" "${prov_refs[1]:-}"
 record "tests/e2e/k8s/executor-controller-deployment.yaml" \
   "$(extract_all_refs "${REPO_ROOT}/tests/e2e/k8s/executor-controller-deployment.yaml" | head -1)"
 
+# The python-node e2e fixture builds FROM the same merged runtime image the
+# validation Jobs run — one image serves both roles. It is a hand-maintained
+# pin like the rest, and it is the one that decides which base the python-node
+# path is actually exercised against: left behind, the e2e proves the harness
+# works on an older base while every other location moved on, and this guard
+# would still pass.
+record "tests/e2e/fixtures/py-probe/Dockerfile (FROM)" \
+  "$(extract_all_refs "${REPO_ROOT}/tests/e2e/fixtures/py-probe/Dockerfile" | head -1)"
+
 record "docker-compose.yml" \
   "$(extract_all_refs "${REPO_ROOT}/docker-compose.yml" | head -1)"
 

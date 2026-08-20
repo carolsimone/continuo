@@ -26,9 +26,16 @@ refused permanently, because `:latest` would make the code that actually ran
 unidentifiable from the release that promoted it.
 
 Build your image `FROM` the engine-matched runtime base
-(`ghcr.io/carolsimone/continuo-python-runtime:<version>-<engine>`), which sets
+(`ghcr.io/carolsimone/continuo-python-runtime-<engine>:<version>`), which sets
 the entrypoint, the contract directory, and the import root. One image serves
 all of the service's nodes — the harness selects the right one at run time.
+The engine is part of the image **name**, not the tag, so the tag position
+stays free for an immutable `<version>@sha256:<digest>` pin.
+
+The base is dual-role: the same image serves the blue/green validation Jobs
+(which the executor runs with an explicit `validation-op` command) and your
+domain image (which uses the base's default command, the node harness). You
+never set a command yourself.
 
 ## What your container must do
 
@@ -63,17 +70,22 @@ contract files and scripts travel inside the image itself.
 
 The Job's container drops every Linux capability and forbids privilege
 escalation, but it sets no uid — the user is left to your image, exactly as it
-is for dbt images. The runtime base declares no non-root user, so **declare one
-yourself**:
+is for dbt images. The runtime base already declares `USER 65532:65532`, so a
+plain image that only copies files inherits an unprivileged uid and needs no
+`USER` line of its own. The harness reads only the contracts and scripts baked
+into the image and writes solely to the warehouse, so that uid needs no
+ownership changes. The e2e fixture in this repository
+(`tests/e2e/fixtures/py-probe/Dockerfile`) is the worked example.
+
+Because the base runs as non-root, a `RUN` step that installs packages cannot
+write to site-packages. Switch to root for the install and switch back, so the
+image still ends on the uid the executor expects:
 
 ```dockerfile
+USER root
+RUN pip install --no-cache-dir polars==1.34.0
 USER 65532:65532
 ```
-
-The harness only reads the contracts and scripts baked into the image and
-writes solely to the warehouse, so an unprivileged uid needs no ownership
-changes. The e2e fixture in this repository
-(`tests/e2e/fixtures/py-probe/Dockerfile`) does this and is the worked example.
 
 ## Which operations reach your image
 

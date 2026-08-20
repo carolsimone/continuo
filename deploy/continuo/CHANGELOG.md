@@ -26,16 +26,38 @@ shipped in those.
   keys, so no schema change is required; an unmodified existing values file
   already gets these defaults via the chart's own `env` defaults.
 
-### Changed
+### Breaking
 - The validation image is renamed to `continuo-python-runtime-<engine>` (it ships
   from the merged `continuo-python-runtime` repository, which now carries both the
   python-node runtime and the validation runner); the default
-  `validation.imageTag` becomes `v0.3.0`. MINOR — no values key is added, renamed
-  or removed, and an existing `imageTag` override keeps working against the new
-  name. The engine stays part of the image name, so a `"vX.Y.Z@sha256:<digest>"`
-  override still composes a valid immutable ref. Operators who mirror images into
-  a private registry must mirror the new name; the old
+  `validation.imageTag` becomes `v0.3.0`.
+
+  **BREAKING for any install that pins `validation.imageTag`.** No values key is
+  added, renamed or removed, but the key's meaning moves to a different image
+  repository, and `validation.imageTag` is composed into the ref verbatim. An
+  existing values file that keeps the previous default `imageTag: "v0.4.0"` now
+  renders `continuo-python-runtime-<engine>:v0.4.0` — a manifest that does not
+  exist, so every validation Job fails with `ErrImagePull`. A digest pin is worse:
+  `"v0.4.0@sha256:<digest>"` names a digest from the retired
+  `continuo-validation-<engine>` repository, which is meaningless against the new
+  one. Only an install that never set `imageTag` upgrades cleanly, because it
+  picks up the new `v0.3.0` default.
+
+  **Upgrade guidance.** Before upgrading, either remove your
+  `validation.imageTag` override entirely (recommended — you then track the
+  chart's default), or set it to a tag that exists in the new repository:
+
+  ```yaml
+  validation:
+    imageTag: "v0.3.0"                      # or "v0.3.0@sha256:<digest>" to pin immutably
+  ```
+
+  Re-resolve any digest against `ghcr.io/carolsimone/continuo-python-runtime-<engine>`;
+  digests are repository-scoped and do not carry over. Operators who mirror
+  images into a private registry must mirror the new name. The old
   `continuo-validation-<engine>` images are no longer referenced by the chart.
+  The engine remains part of the image name rather than the tag, so the
+  `"vX.Y.Z@sha256:<digest>"` override form still composes a valid immutable ref.
 - `remediation-agent` now refuses to start when one of its optional duration
   settings — `LLM_CACHE_TTL`, `REMEDIATION_PR_POLL_INTERVAL`,
   `REMEDIATION_PR_OPENING_GRACE_PERIOD`, `SHADOW_VERIFY_TIMEOUT`,

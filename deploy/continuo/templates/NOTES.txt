@@ -13,6 +13,18 @@ UPGRADE NOTES
   "Changed"/"Added" entry may still need a new value set to enable a feature.
   If this upgrade already failed, re-run with --dry-run to see the exact
   rendering/validation error before retrying for real.
+{{- if .Values.validation.imageTag }}
+
+  BREAKING — validation.imageTag is set on this release, and the validation
+  image now ships from a DIFFERENT repository. Validation runs the merged
+  {{ include "continuo.validation.image" . }}
+  image; your pinned tag is composed into that new repository verbatim, so a
+  tag or digest carried over from the retired continuo-validation-<engine>
+  repository resolves to nothing and every validation Job fails ErrImagePull.
+  Either drop the override to track the chart default, or re-pin against
+  ghcr.io/carolsimone/continuo-python-runtime-{{ .Values.validation.engine | default "postgres" }}
+  (digests are repository-scoped and do not carry over).
+{{- end }}
 
   orchestrator now reads object storage to record node code-version history, so
   it needs S3 to be reachable and authenticated. The chart supplies the
