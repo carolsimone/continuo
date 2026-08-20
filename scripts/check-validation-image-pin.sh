@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Fails if the pinned continuo-validation-<engine> image ref has drifted
+# Fails if the pinned continuo-python-runtime-<engine> image ref has drifted
 # between any of the places that hard-code it.
 #
-# The validation image now ships from its own repository
-# (github.com/carolsimone/continuo-validation) on its own release train, so
+# The validation image ships from its own repository
+# (github.com/carolsimone/continuo-python-runtime) on its own release train, so
 # its version is a plain string, not something `go.mod`/`package.json`
 # resolve for us. That string is hand-maintained in every location that
 # side-loads or references it: the Makefile, the local/e2e cluster bootstrap
@@ -44,7 +44,7 @@ set -uo pipefail
 REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CHART_DIR="${REPO_ROOT}/deploy/continuo"
 
-# Matches the full ref: ghcr.io/carolsimone/continuo-validation-postgres:vX.Y.Z,
+# Matches the full ref: ghcr.io/carolsimone/continuo-python-runtime-postgres:vX.Y.Z,
 # optionally followed by an `@...` digest suffix. Deliberately permissive
 # about the digest's *shape* (any algorithm-name-and-value-like text after
 # the `@`, not just a well-formed `@sha256:<64 hex>`) so a malformed digest
@@ -53,7 +53,7 @@ CHART_DIR="${REPO_ROOT}/deploy/continuo"
 # it, and reports a bad digest as a named error instead of quietly
 # truncating it (and comparing the mangled, digest-less ref equal to
 # everything else).
-REF_RE='ghcr\.io/carolsimone/continuo-validation-postgres:[A-Za-z0-9._-]+(@[A-Za-z0-9:_-]+)?'
+REF_RE='ghcr\.io/carolsimone/continuo-python-runtime-postgres:[A-Za-z0-9._-]+(@[A-Za-z0-9:_-]+)?'
 
 # A ref's optional digest suffix, if present, must be exactly this shape.
 DIGEST_SUFFIX_RE='@sha256:[0-9a-f]{64}$'
@@ -180,7 +180,7 @@ for ref in "${refs[@]}"; do
 done
 
 if [ "$fail" -ne 0 ]; then
-  echo "VALIDATION IMAGE PIN DRIFT — these locations disagree on the continuo-validation image ref:" >&2
+  echo "VALIDATION IMAGE PIN DRIFT — these locations disagree on the continuo-python-runtime image ref:" >&2
   for i in "${!refs[@]}"; do
     echo "  ${refs[$i]}  <-  ${names[$i]}" >&2
   done

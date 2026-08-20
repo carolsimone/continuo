@@ -11,7 +11,7 @@ assert(){ if eval "$2"; then echo "ok - $1"; else echo "NOT OK - $1"; fail=1; fi
 # chart's full value surface.
 write_fixture() {
   local dir="$1" tag="$2"
-  local ref="ghcr.io/carolsimone/continuo-validation-postgres:${tag}"
+  local ref="ghcr.io/carolsimone/continuo-python-runtime-postgres:${tag}"
 
   mkdir -p "$dir/scripts" "$dir/tests/e2e" "$dir/tests/e2e/k8s" \
     "$dir/executor-controller/adapters/k8s" \
@@ -59,7 +59,7 @@ kind: ConfigMap
 metadata:
   name: fixture
 data:
-  VALIDATION_IMAGE: 'ghcr.io/carolsimone/continuo-validation-postgres:{{ .Values.validation.imageTag | default "${tag}" }}'
+  VALIDATION_IMAGE: 'ghcr.io/carolsimone/continuo-python-runtime-postgres:{{ .Values.validation.imageTag | default "${tag}" }}'
 EOF
 }
 

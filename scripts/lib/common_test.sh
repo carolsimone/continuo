@@ -21,7 +21,7 @@ wait_for_http_host "http://127.0.0.1:1/nope" 1 0; assert "http fails fast for cl
 # make an empty archive" or "succeed but the archive load still fails" and
 # assert the fallback kicks in for both. $DOCKER_SAVE_ARGS and
 # $KIND_LOAD_DOCKERIMAGE_CALLED capture what was actually invoked.
-tmp_archives(){ ls "${TMPDIR:-/tmp}"/continuo-validation-image.* 2>/dev/null; }
+tmp_archives(){ ls "${TMPDIR:-/tmp}"/continuo-pulled-image.* 2>/dev/null; }
 # Runs a command with its output captured into $out, without the
 # command-substitution subshell `out="$(cmd)"` would create — a subshell
 # would run the docker/kind stubs below in a forked shell, so their global

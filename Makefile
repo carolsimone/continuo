@@ -6,7 +6,7 @@ DOCKER_COMPOSE := $(shell docker compose version > /dev/null 2>&1 && echo "docke
 # scripts/check-validation-image-pin.sh reads the literal off this assignment
 # and asserts it agrees with every other pinned location, so keep the complete
 # ghcr ref on this line (a bare version string would be invisible to it).
-VALIDATION_IMAGE_POSTGRES := ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0
+VALIDATION_IMAGE_POSTGRES := ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.3.0
 
 # Build base image (run once or when base changes)
 .PHONY: build-base

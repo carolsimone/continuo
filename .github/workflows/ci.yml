@@ -149,7 +149,7 @@ jobs:
         # claims another workflow's tag family, which would run the product
         # release pipeline on a tag that has no release images behind it.
         # check-validation-image-pin: fail fast if the hand-maintained
-        # continuo-validation image tag has drifted between the Makefile,
+        # continuo-python-runtime image tag has drifted between the Makefile,
         # setup/e2e scripts, docker-compose, the executor-controller Go test
         # fixtures, and the chart's own rendered default.
         # check-validation-image-sideload: fail fast if either kind-provisioning

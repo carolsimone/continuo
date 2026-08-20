@@ -128,7 +128,7 @@ spec:
             - name: VALIDATION_IMAGE_PULL_POLICY
               value: "IfNotPresent"
             - name: VALIDATION_IMAGE
-              value: "ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0"
+              value: "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.3.0"
             # Names the Secret (created by provision-k8s-test-env.sh) whose keys the
             # validation pod receives via envFrom as its warehouse connection.
             - name: VALIDATION_WAREHOUSE_SECRET
@@ -146,7 +146,7 @@ spec:
             - name: DBT_COMMANDS_CONFIG_PATH
               value: "/etc/continuo/dbt-commands.yaml"
             # S3 access for the validation Job: the executor forwards these into
-            # each validation pod so validation_runner.py can fetch the candidate
+            # each validation pod so the validation runner can fetch the candidate
             # SQL from CANDIDATE_SQL_URI. The endpoint points at LocalStack via the
             # docker bridge so the in-kind Job can reach it.
             - name: S3_ENDPOINT_URL

@@ -39,10 +39,12 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 
 {{/* The validation image for the SRE-selected engine. Engine name maps to
-     the external continuo-validation-<engine> image; validation.imageTag pins its
-     version independently of the chart appVersion — validation releases from
-     its own repository. The $supported list is the set of engines with a
-     published library + image.
+     the external continuo-python-runtime-<engine> image, released from
+     github.com/carolsimone/continuo-python-runtime; validation.imageTag pins its
+     version independently of the chart appVersion — that image releases from
+     its own repository. The engine is part of the image NAME so the tag
+     position stays free for an @sha256:<digest> immutable pin. The $supported
+     list is the set of engines with a published library + image.
 
      validation.imageTag is optional in the schema (not `required`): an
      existing release upgraded without merging the new chart defaults (e.g.
@@ -67,21 +69,21 @@ app.kubernetes.io/name: {{ .service }}
 {{- $eng := .Values.validation.engine | default "postgres" -}}
 {{- $supported := list "postgres" "trino" -}}
 {{- if not (has $eng $supported) -}}
-{{- fail (printf "validation.engine=%q is not available: only %s have a published continuo-validation image today. Adding an engine means publishing its continuo-validation-<engine> library + image; it ALSO means you (the operator) must supply that engine's own warehouse connection (set validation.createWarehouseSecret=false and provide a Secret with THAT engine's keys — e.g. the trino library reads TRINO_*, not POSTGRES_*) and configure your dbt team images with that engine's dbt profile. See the validation: block in values.yaml." $eng (join ", " $supported)) -}}
+{{- fail (printf "validation.engine=%q is not available: only %s have a published continuo-python-runtime image today. Adding an engine means publishing its continuo-python-runtime-<engine> library + image; it ALSO means you (the operator) must supply that engine's own warehouse connection (set validation.createWarehouseSecret=false and provide a Secret with THAT engine's keys — e.g. the trino library reads TRINO_*, not POSTGRES_*) and configure your dbt team images with that engine's dbt profile. See the validation: block in values.yaml." $eng (join ", " $supported)) -}}
 {{- end -}}
 {{- $tag := "" -}}
 {{- if hasKey .Values.validation "imageTag" -}}
 {{- $tag = .Values.validation.imageTag -}}
 {{- if not $tag -}}
-{{- fail "validation.imageTag is set to an empty string; unset the key entirely to use the chart's default continuo-validation-<engine> image tag, or set a real value (\"vX.Y.Z\" or \"vX.Y.Z@sha256:<digest>\")" -}}
+{{- fail "validation.imageTag is set to an empty string; unset the key entirely to use the chart's default continuo-python-runtime-<engine> image tag, or set a real value (\"vX.Y.Z\" or \"vX.Y.Z@sha256:<digest>\")" -}}
 {{- end -}}
 {{- else -}}
-{{- $tag = "v0.4.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
+{{- $tag = "v0.3.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
 {{- end -}}
 {{- if .Values.global.imageRegistry -}}
-{{- printf "%s/%s/continuo-validation-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}
+{{- printf "%s/%s/continuo-python-runtime-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}
 {{- else -}}
-{{- printf "%s/continuo-validation-%s:%s" .Values.global.imageRepositoryPrefix $eng $tag -}}
+{{- printf "%s/continuo-python-runtime-%s:%s" .Values.global.imageRepositoryPrefix $eng $tag -}}
 {{- end -}}
 {{- end -}}
 

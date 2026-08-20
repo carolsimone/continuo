@@ -27,6 +27,15 @@ shipped in those.
   already gets these defaults via the chart's own `env` defaults.
 
 ### Changed
+- The validation image is renamed to `continuo-python-runtime-<engine>` (it ships
+  from the merged `continuo-python-runtime` repository, which now carries both the
+  python-node runtime and the validation runner); the default
+  `validation.imageTag` becomes `v0.3.0`. MINOR — no values key is added, renamed
+  or removed, and an existing `imageTag` override keeps working against the new
+  name. The engine stays part of the image name, so a `"vX.Y.Z@sha256:<digest>"`
+  override still composes a valid immutable ref. Operators who mirror images into
+  a private registry must mirror the new name; the old
+  `continuo-validation-<engine>` images are no longer referenced by the chart.
 - `remediation-agent` now refuses to start when one of its optional duration
   settings — `LLM_CACHE_TTL`, `REMEDIATION_PR_POLL_INTERVAL`,
   `REMEDIATION_PR_OPENING_GRACE_PERIOD`, `SHADOW_VERIFY_TIMEOUT`,

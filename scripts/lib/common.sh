@@ -72,7 +72,7 @@ kind_load_pulled_image(){
   # fixed, collidable name) if anything follows it — unlike GNU mktemp,
   # which accepts a suffix. No file extension is needed for docker/kind to
   # read the archive, so there is nothing to put after it.
-  archive="$(mktemp "${TMPDIR:-/tmp}/continuo-validation-image.XXXXXX")" || {
+  archive="$(mktemp "${TMPDIR:-/tmp}/continuo-pulled-image.XXXXXX")" || {
     log_error "kind_load_pulled_image: failed to create a temp file for ${ref}"; return 1; }
 
   if docker save --platform "$platform" "$ref" -o "$archive" && [ -s "$archive" ]; then
