@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
