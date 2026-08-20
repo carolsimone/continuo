@@ -9,19 +9,22 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
 
-// Server wraps the HTTP server exposing liveness (/health) and readiness
-// (/ready) probes.
+// Server wraps the HTTP server exposing a process-up probe (/health),
+// readiness (/ready), and liveness (/livez) endpoints.
 type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
 }
 
-// NewServer creates a new HTTP server. Readiness is answered from the supplied
-// liveness registry.
+// NewServer creates a new HTTP server. Readiness and liveness are answered
+// from the supplied liveness registry: /ready also fails on a dependency
+// outage (stops traffic), /livez fails only on a dead or wedged worker
+// (restarts the pod).
 func NewServer(port string, registry *liveness.Registry, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", HealthHandler)
 	mux.HandleFunc("/ready", NewReadinessHandler(registry))
+	mux.HandleFunc("/livez", NewLivenessHandler(registry))
 
 	return &Server{
 		httpServer: &http.Server{

@@ -59,3 +59,35 @@ func TestLivenessAlwaysHealthy(t *testing.T) {
 		t.Fatalf("expected 200 from liveness, got %d", rec.Code)
 	}
 }
+
+// TestLivenessHandler_WorkerExitFlipsLivez is the liveness-flip regression: a
+// consumer returning an error must drive /livez to 503, the same as /ready.
+func TestLivenessHandler_WorkerExitFlipsLivez(t *testing.T) {
+	reg := liveness.NewRegistry()
+	reg.RegisterWorker("consumer_a")
+	reg.WorkerExited("consumer_a", errors.New("boom"))
+	handler := NewLivenessHandler(reg)
+
+	rec := httptest.NewRecorder()
+	handler(rec, httptest.NewRequest(http.MethodGet, "/livez", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("livez after worker exit = %d, want 503", rec.Code)
+	}
+}
+
+// TestLivenessHandler_DependencyFailureDoesNotFlipLivez asserts the split
+// between the two probes: a dependency outage must stop traffic (readiness)
+// without restarting a pod whose consumers are already retrying through it.
+func TestLivenessHandler_DependencyFailureDoesNotFlipLivez(t *testing.T) {
+	reg := liveness.NewRegistry()
+	reg.AddDependencyProbe("redis", 0, func(context.Context) error { return errors.New("down") })
+	handler := NewLivenessHandler(reg)
+
+	rec := httptest.NewRecorder()
+	handler(rec, httptest.NewRequest(http.MethodGet, "/livez", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("livez during dependency outage = %d, want 200 (deps must not restart the pod)", rec.Code)
+	}
+}
