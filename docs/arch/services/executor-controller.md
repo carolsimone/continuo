@@ -88,6 +88,23 @@ The Kubernetes `readinessProbe` points at `/ready` and the `livenessProbe` at
 `/livez` (`deploy/continuo/values.yaml`: `readinessPath: /ready`,
 `livenessPath: /livez`).
 
+### Graceful shutdown
+
+On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence bounded by
+`SHUTDOWN_GRACE` (default 15s): (1) stop intake by cancelling the root context so
+the stream consumers, outbox processor, and deploy dispatcher return after the
+in-flight message or batch; (2) drain — wait on a WaitGroup for those tracked
+goroutines to return, capped at the grace period; (3) close infra — run the
+registered shutdown handlers (health HTTP server, Postgres, Redis) against a
+fresh live context derived from `context.Background()`, never the
+just-cancelled root context. `main` blocks on the lifecycle completion
+channel, so there is no fixed sleep. The cancelled-schedules TTL sweeper and
+the health server itself are not tracked goroutines: the sweeper's ticker
+loop returns instantly on cancellation with no in-flight work to drain, and
+the health server blocks in `ListenAndServe` until its own shutdown handler
+calls `Shutdown` in step 3, so tracking it would deadlock the drain against
+the very step that stops it.
+
 ## Outbound Interfaces
 
 ### Redis producers (via outbox)

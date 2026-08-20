@@ -1,8 +1,15 @@
 package config
 
 import (
+	"time"
+
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
+
+// defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
+// drain plus the infra-close handlers. It is a safe default so no required env
+// var is introduced; override with SHUTDOWN_GRACE (e.g. "30s").
+const defaultShutdownGrace = 15 * time.Second
 
 // Config holds all configuration for the executor-controller service.
 type Config struct {
@@ -20,6 +27,9 @@ type Config struct {
 	K8sNamespace string
 	// Max concurrent K8s Jobs the deploy dispatcher keeps in flight.
 	MaxConcurrentJobs int
+
+	// ShutdownGrace bounds the graceful-shutdown drain + infra teardown.
+	ShutdownGrace time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -42,6 +52,8 @@ func Load(v *pkgconfig.Validator) Config {
 		HTTPPort:          envInt("HTTP_PORT", 8084),
 		K8sNamespace:      v.Require("K8S_NAMESPACE"),
 		MaxConcurrentJobs: envInt("MAX_CONCURRENT_JOBS", 50),
+
+		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 	}
 }
 

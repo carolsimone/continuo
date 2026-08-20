@@ -16,11 +16,11 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/config"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
-	"github.com/carolsimone/continuo/executor-controller/internal/lifecycle"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -79,7 +79,7 @@ func main() {
 
 	// Initialize lifecycle manager
 	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
-	lifecycleManager.SetupSignalHandlers(ctx, cancel)
+	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
 
 	// Health registry feeding /ready (readiness) and /livez (liveness) — deploy
 	// config points the two Kubernetes probes at those DIFFERENT paths (see
@@ -101,13 +101,13 @@ func main() {
 		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
 			return consumer.Healthy(heartbeatStale)
 		})
-		go func() {
+		lifecycleManager.Go(func() {
 			err := consumer.Start(ctx)
 			liveReg.WorkerExited(name, err)
 			if err != nil {
 				logger.Error("Consumer exited", "consumer", name, "error", err)
 			}
-		}()
+		})
 	}
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
 		startConsumer(name, consumer, consumerHandlerTimeout, consumerHeartbeatStale)
@@ -337,7 +337,7 @@ func main() {
 	)
 
 	liveReg.RegisterWorker("outbox_processor")
-	go func() {
+	lifecycleManager.Go(func() {
 		err := outboxProcessor.Run(ctx)
 		if errors.Is(err, context.Canceled) {
 			err = nil
@@ -346,7 +346,7 @@ func main() {
 		if err != nil {
 			logger.Error("Outbox processor exited", "error", err)
 		}
-	}()
+	})
 
 	k8sDeployer := k8s.NewDeployer(k8sClient, cfg.K8sNamespace)
 	deployDispatcher := deployer.NewDispatcher(
@@ -362,7 +362,7 @@ func main() {
 	)
 
 	liveReg.RegisterWorker("deploy_dispatcher")
-	go func() {
+	lifecycleManager.Go(func() {
 		err := deployDispatcher.Run(ctx)
 		if errors.Is(err, context.Canceled) {
 			err = nil
@@ -371,7 +371,7 @@ func main() {
 		if err != nil {
 			logger.Error("Deploy dispatcher exited", "error", err)
 		}
-	}()
+	})
 
 	// ========================================================================
 	// CANCELLED SCHEDULES TTL SWEEPER
@@ -434,9 +434,9 @@ func main() {
 	runSchemaOpConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
 	runSchemaOpConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
 
-	// Block until shutdown is requested. Each consumer's Start returns
-	// when ctx is cancelled.
-	<-ctx.Done()
+	// Block until the full shutdown sequence has completed: intake stopped,
+	// tracked goroutines drained, and infra-close handlers run.
+	<-lifecycleManager.Done()
 
 	logger.Info("Executor-controller service stopped")
 }
