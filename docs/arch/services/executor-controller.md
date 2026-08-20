@@ -90,16 +90,19 @@ The Kubernetes `readinessProbe` points at `/ready` and the `livenessProbe` at
 
 ### Graceful shutdown
 
-On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence bounded by
-`SHUTDOWN_GRACE` (default 15s): (1) stop intake by cancelling the root context so
-the stream consumers, outbox processor, and deploy dispatcher stop reading new
-work and unwind their in-flight handler or batch — the handler's next database
-call fails against the cancelled context, its transaction rolls back, and the
-message is left un-ACKed for redelivery; (2) drain — wait on a WaitGroup for
-those tracked goroutines to return, capped at the grace period; (3) close
-infra — run the registered shutdown handlers (health HTTP server, Redis,
-Postgres) against a fresh live context derived from `context.Background()`, never the
-just-cancelled root context. `main` blocks on the lifecycle completion
+On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence whose total
+duration is bounded by `SHUTDOWN_GRACE` (default 15s): (1) stop intake by
+cancelling the root context so the stream consumers, outbox processor, and
+deploy dispatcher stop reading new work and unwind their in-flight handler or
+batch — the handler's next database call fails against the cancelled
+context, its transaction rolls back, and the message is left un-ACKed for
+redelivery; (2) drain — wait on a WaitGroup for those tracked goroutines to
+return, capped at half the grace period; (3) close infra — run the
+registered shutdown handlers (health HTTP server, Redis, Postgres) against a
+fresh live context, sharing a single deadline with step 2 so infra teardown
+always retains at least the other half of the budget, derived from
+`context.Background()`, never the just-cancelled root context. `main` blocks
+on the lifecycle completion
 channel, so there is no fixed sleep. The cancelled-schedules TTL sweeper and
 the health server itself are not tracked goroutines: the sweeper's ticker
 loop returns instantly on cancellation with no in-flight work to drain, and

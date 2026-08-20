@@ -51,18 +51,19 @@ The process exits before any connection is attempted, so missing-config failures
 
 `state`, `orchestrator`, `executor-controller`, `k8s-controller`, and `agent-runner` drive process shutdown through the shared `pkg/lifecycle.ApplicationLifecycle`. `release-controller`, `remediation`, and `remediation-agent` are not on it; each installs `signal.Notify` directly in its own `main` instead.
 
-On SIGTERM/SIGINT, `ApplicationLifecycle` runs an ordered sequence bounded by `SHUTDOWN_GRACE` (default 15s; `agent-runner` defaults to 10s):
+On SIGTERM/SIGINT, `ApplicationLifecycle` runs an ordered sequence whose total duration is bounded by `SHUTDOWN_GRACE` (default 15s; `agent-runner` defaults to 10s):
 
 1. **Stop intake** — cancel the root context so consumers and background loops stop reading new work.
-2. **Drain** — wait on a `WaitGroup` for goroutines tracked via `ApplicationLifecycle.Go(...)` to return, bounded by the grace period.
-3. **Close infra** — run the registered shutdown handlers, in LIFO order, against a fresh context derived from `context.Background()`, never the just-cancelled root context.
+2. **Drain** — wait on a `WaitGroup` for goroutines tracked via `ApplicationLifecycle.Go(...)` to return, bounded by half the grace period.
+3. **Close infra** — run the registered shutdown handlers, in LIFO order, against a fresh context derived from `context.Background()`, never the just-cancelled root context. This context shares a single deadline with step 2 (set to `SHUTDOWN_GRACE` from the moment `Shutdown` starts), so infra teardown always retains at least the other half of the budget, live, even when the drain used its entire share.
 
 `Done()` then closes and `main` blocks on it instead of on `<-ctx.Done()`, so there is no fixed sleep.
 
-Two properties of this sequence matter beyond the mechanics:
+Three properties of this sequence matter beyond the mechanics:
 
 - **Step 1 aborts in-flight work; it does not complete it.** The root context is threaded straight into the handler, so cancellation makes the in-flight handler's next database call fail, its transaction roll back, and the message stay un-ACKed for redelivery. The drain in step 2 waits for tracked goroutines to unwind, not for their work to finish — correctness comes from at-least-once redelivery plus dedup, not from finishing the message before shutdown.
-- **A server whose only stopper is a shutdown handler must never be tracked with `Go(...)`.** Such a server blocks in its start call until the handler registered via `RegisterShutdownHandler` calls `Shutdown`, and that handler only runs in step 3, after the drain. Tracking the server's start call in `Go(...)` would make `wg.Wait()` wait on a goroutine that cannot return before the wait itself completes, so every shutdown would burn the full grace period. The AST guard `TestLifecycleGoNeverWrapsAServerStart` in `pkg/streams/lifecycle_wiring_test.go` detects a blocking-server method (`Start`/`Serve`/`ListenAndServe`/`ListenAndServeTLS`/`Run`) called on a stoppable receiver inside an inline `func(){}` literal passed to `Go(...)`, in every service `main.go` that registers at least one shutdown handler.
+- **`Go(...)` refuses to start new tracked work once shutdown has begun.** It checks the shutdown flag and adds to the `WaitGroup` under the same mutex `Shutdown` uses to set that flag, so every `Add` either happens-before the drain's `Wait` or is refused outright — never racing it. A caller still holding a reference to `ApplicationLifecycle` during teardown gets a logged warning instead of a goroutine that escapes the drain or a `WaitGroup` misuse panic.
+- **A server whose only stopper is a shutdown handler must never be tracked with `Go(...)`.** Such a server blocks in its start call until the handler registered via `RegisterShutdownHandler` calls `Shutdown`, and that handler only runs in step 3, after the drain. Tracking the server's start call in `Go(...)` would make `wg.Wait()` wait on a goroutine that cannot return before the wait itself completes, so every shutdown would burn the full drain budget. The AST guard `TestLifecycleGoNeverWrapsAServerStart` in `pkg/streams/lifecycle_wiring_test.go` detects a blocking-server method (`Start`/`Serve`/`ListenAndServe`/`ListenAndServeTLS`/`Run`) called on a stoppable receiver inside an inline `func(){}` literal passed to `Go(...)`, in every service `main.go` that registers at least one shutdown handler.
 
 ## Bootstrap Migration Image
 

@@ -83,16 +83,18 @@ The Kubernetes `readinessProbe` points at `/ready` and the `livenessProbe` at
 
 ### Graceful shutdown
 
-On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence bounded by
-`SHUTDOWN_GRACE` (default 15s): (1) stop intake by cancelling the root context
-so the stream consumers (`node_deployed`, `check_k8s`, `schedule_cancelled`),
-the outbox processor, the delay-queue promoter, and the stuck-entry resolver
-stop reading new work and unwind their in-flight handler or batch — the
-handler's next database call fails against the cancelled context, its
-transaction rolls back, and the message is left un-ACKed for redelivery;
-(2) drain — wait on a WaitGroup for those tracked goroutines to return,
-capped at the grace period; (3) close infra — run the registered shutdown
-handlers (health HTTP server, Postgres, Redis) against a fresh live context
+On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence whose total
+duration is bounded by `SHUTDOWN_GRACE` (default 15s): (1) stop intake by
+cancelling the root context so the stream consumers (`node_deployed`,
+`check_k8s`, `schedule_cancelled`), the outbox processor, the delay-queue
+promoter, and the stuck-entry resolver stop reading new work and unwind
+their in-flight handler or batch — the handler's next database call fails
+against the cancelled context, its transaction rolls back, and the message
+is left un-ACKed for redelivery; (2) drain — wait on a WaitGroup for those
+tracked goroutines to return, capped at half the grace period; (3) close
+infra — run the registered shutdown handlers (health HTTP server, Postgres,
+Redis) against a fresh live context, sharing a single deadline with step 2
+so infra teardown always retains at least the other half of the budget,
 derived from
 `context.Background()`, never the just-cancelled root context. `main` blocks
 on the lifecycle completion channel, so there is no fixed sleep. The
