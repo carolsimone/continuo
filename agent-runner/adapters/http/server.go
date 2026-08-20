@@ -21,9 +21,9 @@ type Server struct {
 // NewServer creates a new HTTP health server. Readiness and liveness are
 // answered from the supplied liveness registry; /health returns 200 as long
 // as the process can serve HTTP. agent-runner runs no stream consumers, so
-// both /ready and /livez track only what the registry has been given
-// (currently nothing) — the routes exist so the deploy chart's two probes
-// stay uniform across services.
+// /ready additionally checks a Postgres dependency probe, while /livez has no
+// workers or heartbeats registered and is a constant 200 — the route exists
+// so the deploy chart's two probes stay uniform across services.
 func NewServer(port int, registry *liveness.Registry, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -61,14 +61,14 @@ type healthResponse struct {
 	Service string `json:"service"`
 }
 
-// readinessResponse is the JSON body for /ready.
+// readinessResponse is the JSON body for /ready and /livez.
 type readinessResponse struct {
 	Status    string   `json:"status"`
 	Service   string   `json:"service"`
 	Unhealthy []string `json:"unhealthy,omitempty"`
 }
 
-// healthHandler handles liveness check requests. It returns 200 as long as the
+// healthHandler handles the process-up check. It returns 200 as long as the
 // process is running and able to serve HTTP.
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
