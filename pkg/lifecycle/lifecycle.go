@@ -23,10 +23,15 @@ type ShutdownHandler func(ctx context.Context) error
 //     its message is left un-ACKed for redelivery, while a non-transactional
 //     worker (the outbox processor, a ticker loop) simply returns;
 //  2. drain in-flight — wait on the tracked WaitGroup for those goroutines to
-//     return, bounded by the shutdown grace period;
+//     return, bounded by half the shutdown grace period;
 //  3. close infra — run the registered shutdown handlers (HTTP/gRPC servers
 //     and database or cache connections) against a LIVE context derived from
 //     context.Background(), never the root context that was just cancelled.
+//
+// Steps 2 and 3 share a single deadline set to the grace period, so the
+// whole sequence is bounded by grace, not 2x grace: the drain is capped at
+// half the budget, which guarantees infra teardown always retains at least
+// the other half, live, even when the drain used its entire share.
 type ApplicationLifecycle struct {
 	shutdownHandlers []ShutdownHandler
 	logger           *slog.Logger
@@ -60,8 +65,22 @@ func (al *ApplicationLifecycle) RegisterShutdownHandler(handler ShutdownHandler)
 
 // Go runs fn in a tracked goroutine. The shutdown sequence waits for every
 // tracked goroutine to return (within the grace period) before closing infra.
+//
+// Go refuses to start once shutdown has begun. sync.WaitGroup requires that
+// any Add with a positive delta happen-before the Wait it is meant to be
+// counted by; without this guard a Go call racing a concurrent Shutdown can
+// violate that contract — either panicking ("WaitGroup misuse: Add called
+// concurrently with Wait") or starting a goroutine that escapes the drain
+// entirely and keeps running while shutdown handlers close infra under it.
 func (al *ApplicationLifecycle) Go(fn func()) {
+	al.mu.Lock()
+	if al.shuttingDown {
+		al.mu.Unlock()
+		al.logger.Warn("Not starting tracked goroutine: shutdown already in progress")
+		return
+	}
 	al.wg.Add(1)
+	al.mu.Unlock()
 	go func() {
 		defer al.wg.Done()
 		fn()
@@ -75,7 +94,8 @@ func (al *ApplicationLifecycle) Done() <-chan struct{} {
 
 // SetupSignalHandlers installs SIGTERM/SIGINT handlers that drive the ordered
 // graceful shutdown. cancel cancels the root context (intake stop); grace bounds
-// both the in-flight drain and the infra-close handlers.
+// the whole sequence — the in-flight drain (capped at half of grace) and the
+// infra-close handlers together.
 func (al *ApplicationLifecycle) SetupSignalHandlers(cancel context.CancelFunc, grace time.Duration) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
@@ -88,8 +108,9 @@ func (al *ApplicationLifecycle) SetupSignalHandlers(cancel context.CancelFunc, g
 }
 
 // Shutdown performs the ordered graceful shutdown: stop intake, drain in-flight
-// goroutines, then close infra against a live context. It is idempotent; the
-// first caller runs the sequence and closes Done().
+// goroutines, then close infra against a live context. The whole sequence is
+// bounded by grace. It is idempotent; the first caller runs the sequence and
+// closes Done().
 func (al *ApplicationLifecycle) Shutdown(cancel context.CancelFunc, grace time.Duration) {
 	al.mu.Lock()
 	if al.shuttingDown {
@@ -101,6 +122,10 @@ func (al *ApplicationLifecycle) Shutdown(cancel context.CancelFunc, grace time.D
 
 	al.logger.Info("Starting graceful shutdown")
 
+	// The whole sequence — drain plus infra teardown — shares one deadline
+	// so total shutdown time is bounded by grace, not 2x grace.
+	deadline := time.Now().Add(grace)
+
 	// 1. Stop intake: cancel the root context so background jobs stop reading
 	//    new work. The in-flight unit is aborted, not completed — a message
 	//    handler's next database call fails, its transaction rolls back, and
@@ -109,12 +134,16 @@ func (al *ApplicationLifecycle) Shutdown(cancel context.CancelFunc, grace time.D
 	//    simply returns.
 	cancel()
 
-	// 2. Drain in-flight goroutines, bounded by the grace period.
-	al.drain(grace)
+	// 2. Drain in-flight goroutines. Capped at half the budget so infra
+	//    teardown is never starved: handlers that close HTTP servers and
+	//    connection pools must still get a live context with time left on
+	//    it, even if the drain used its entire share.
+	al.drain(grace / 2)
 
-	// 3. Close infra against a LIVE context so HTTP draining and connection
-	//    teardown actually run instead of returning instantly on a dead ctx.
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), grace)
+	// 3. Close infra against a LIVE context, sharing the same deadline set
+	//    above, so HTTP draining and connection teardown actually run
+	//    instead of returning instantly on a dead ctx.
+	shutdownCtx, cancelShutdown := context.WithDeadline(context.Background(), deadline)
 	defer cancelShutdown()
 	for i := len(al.shutdownHandlers) - 1; i >= 0; i-- {
 		if err := al.shutdownHandlers[i](shutdownCtx); err != nil {
