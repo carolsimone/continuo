@@ -36,9 +36,9 @@ var blockingServerMethods = map[string]bool{
 // the shutdown-handler step (shutdown handlers run in step 3, close infra,
 // strictly after step 2's drain). Tracking such a call in Go(...) makes
 // wg.Wait() wait on a goroutine that cannot finish before the wait itself
-// finishes, so every shutdown burns the full SHUTDOWN_GRACE timeout and logs
-// a drain-timeout warning — with no functional test failing, since the
-// process still shuts down eventually.
+// finishes, so every shutdown burns the full drain budget (half of
+// SHUTDOWN_GRACE) and logs a drain-timeout warning — with no functional test
+// failing, since the process still shuts down eventually.
 //
 // Detecting the actual invariant (registered as a shutdown target), rather
 // than matching known variable-name substrings like "healthServer", also

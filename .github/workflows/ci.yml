@@ -107,8 +107,19 @@ jobs:
         # wiring, handler→adapter import rules, deploy-time migration
         # provisioning) that need no running infrastructure. Run them first so
         # they fail fast, before the slow docker/kind setup below.
+        #
+        # pkg/lifecycle also runs a second time under -race: its Go(...) and
+        # RegisterShutdownHandler(...) guards against a concurrent Shutdown
+        # are mutex-ordered invariants (every WaitGroup.Add, and every append
+        # to the handler slice, must happen-before the read Shutdown takes
+        # under the same lock) — a plain pass/fail run exercises the same
+        # code paths but cannot observe an ordering violation; only the race
+        # detector can. Scoped to lifecycle rather than the whole module,
+        # since that is where the concurrency lives.
         working-directory: pkg
-        run: go test ./...
+        run: |
+          go test ./...
+          go test -race ./lifecycle/...
 
       - name: Test the e2e stub LLM
         # tests/e2e/stub-llm is a Go module of its own (the image it builds

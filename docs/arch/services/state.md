@@ -257,16 +257,21 @@ a dead or wedged consumer restarts the pod regardless of dependency health.
 
 ### Graceful shutdown
 
-On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence bounded by
-`SHUTDOWN_GRACE` (default 15s): (1) stop intake by cancelling the root context so
-consumers and the outbox processor stop reading new work and unwind their
-in-flight handler — the handler's next database call fails against the
-cancelled context, its transaction rolls back, and the message is left
-un-ACKed for redelivery; (2) drain — wait on a WaitGroup for those tracked
-goroutines to return, capped at the grace period; (3) close infra — run the
-registered shutdown handlers (gRPC/HTTP
-servers, cron scheduler, Postgres, Redis) against a fresh live context derived
-from `context.Background()`, never the just-cancelled root context. `main` blocks
+On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence whose total
+duration is bounded by `SHUTDOWN_GRACE` (default 15s) for handlers that honor
+their context — a `Close()`-style handler that ignores `ctx` is not itself
+bounded by it: (1) stop intake by cancelling the root context so consumers
+and the outbox processor stop reading new work and unwind their in-flight
+handler — the handler's next database call fails against the cancelled
+context, its transaction rolls back, and the message is left un-ACKed for
+redelivery; (2) drain — wait on a WaitGroup for those tracked goroutines to
+return, capped at half the grace period; (3) close infra — run the
+registered shutdown handlers (gRPC/HTTP servers, cron scheduler, Postgres,
+Redis) against a fresh live context with its own deadline fixed at the
+moment `Shutdown` starts, while step 2 is capped independently at half the
+grace budget; together they leave infra teardown at least the other half of
+the budget, live, derived from `context.Background()`, never the
+just-cancelled root context. `main` blocks
 on the lifecycle completion channel, so there is no fixed sleep.
 
 **TriggerRerun preconditions (enforced atomically):**

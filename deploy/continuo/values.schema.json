@@ -68,7 +68,12 @@
         "teamImagePrefix": {"type": "string"},
         "stateGrpcAddr": {"type": "string"},
         "orchestratorGrpcAddr": {"type": "string"},
-        "agentRunnerGrpcAddr": {"type": "string"}
+        "agentRunnerGrpcAddr": {"type": "string"},
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 20,
+          "description": "Pod-level SIGTERM-to-SIGKILL window. Floored at 20s: the largest SHUTDOWN_GRACE default in the code is 15s (pkg/lifecycle's own drain+teardown budget), so anything at or below that leaves zero headroom for the kubelet to deliver SIGTERM and for the process to actually exit before the grace period expires, guaranteeing a mid-teardown SIGKILL. 20s leaves 5s of genuine headroom above that default; raise SHUTDOWN_GRACE and this value together if a service needs a longer budget."
+        }
       }
     },
 
