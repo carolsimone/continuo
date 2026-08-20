@@ -8,13 +8,27 @@ import (
 	"testing"
 )
 
+// blockingServerMethods is the set of method names treated as a
+// blocking-server entrypoint: a call that does not return until the server
+// is told to stop. Start is the convention used by this repo's own health
+// server; Serve, ListenAndServe, and ListenAndServeTLS are the stdlib/gRPC
+// equivalents; Run covers the same shape under a different name.
+var blockingServerMethods = map[string]bool{
+	"Start":             true,
+	"Serve":             true,
+	"ListenAndServe":    true,
+	"ListenAndServeTLS": true,
+	"Run":               true,
+}
+
 // TestLifecycleGoNeverWrapsAServerStart discovers every service's main.go by
 // globbing one level under the repo root (state/main.go, agent-runner/main.go,
 // ...) rather than reading from a maintained list, so a new service is
 // covered the day it lands. For each file it fails if a tracked goroutine —
-// a call to Go(...) with method name "Go", any receiver — invokes Start on a
-// variable that is ALSO closed by a RegisterShutdownHandler(...) closure
-// elsewhere in the same file.
+// a call to Go(...) with method name "Go", any receiver — invokes a
+// blocking-server method (see blockingServerMethods) on a variable that is
+// ALSO closed by a RegisterShutdownHandler(...) closure elsewhere in the
+// same file.
 //
 // That combination is the deadlock this guard exists to prevent: a server
 // whose Start blocks until its own registered shutdown handler calls
@@ -75,7 +89,7 @@ func TestLifecycleGoNeverWrapsAServerStart(t *testing.T) {
 						return true
 					}
 					innerSel, ok := innerCall.Fun.(*ast.SelectorExpr)
-					if !ok || innerSel.Sel.Name != "Start" {
+					if !ok || !blockingServerMethods[innerSel.Sel.Name] {
 						return true
 					}
 					owner := ownerName(innerSel.X)
@@ -83,13 +97,13 @@ func TestLifecycleGoNeverWrapsAServerStart(t *testing.T) {
 						return true
 					}
 					t.Errorf(
-						"%s:%d: %s.Start() is wrapped in a lifecycleManager.Go(...) tracked goroutine, "+
+						"%s:%d: %s.%s() is wrapped in a lifecycleManager.Go(...) tracked goroutine, "+
 							"but %s is also closed by a RegisterShutdownHandler(...) in this file — its "+
-							"Start blocks until that handler runs in step 3 (close infra), which happens "+
+							"%s blocks until that handler runs in step 3 (close infra), which happens "+
 							"after step 2's drain already returned, so wg.Wait() would block on a goroutine "+
 							"that can never finish before the wait itself finishes; run it as an untracked "+
 							"`go func() { ... }()` instead",
-						path, fset.Position(innerCall.Pos()).Line, owner, owner,
+						path, fset.Position(innerCall.Pos()).Line, owner, innerSel.Sel.Name, owner, innerSel.Sel.Name,
 					)
 					return true
 				})
@@ -99,11 +113,16 @@ func TestLifecycleGoNeverWrapsAServerStart(t *testing.T) {
 	}
 }
 
-// registeredShutdownIdents returns the set of identifier names referenced
-// anywhere inside every RegisterShutdownHandler(...) closure body in f. This
+// registeredShutdownIdents returns the set of receiver names that a method
+// is called on anywhere inside every RegisterShutdownHandler(...) closure
+// body in f — e.g. healthServer in healthServer.Shutdown(ctx), or
+// healthServer in the nested-field form s.healthServer.Shutdown(ctx). This
 // is the "stoppable" set for the file: a variable named here is closed only
-// in step 3 (close infra), after the drain, so its Start must never be
-// tracked by Go(...) in the same file.
+// in step 3 (close infra), after the drain, so its blocking-server call
+// must never be tracked by Go(...) in the same file. Only call receivers are
+// collected, not every identifier in the closure — a naive identifier sweep
+// would also catch method names, parameters, and locals that happen to
+// share a name with an unrelated blocking-server call elsewhere in the file.
 func registeredShutdownIdents(f *ast.File) map[string]bool {
 	idents := map[string]bool{}
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -121,8 +140,16 @@ func registeredShutdownIdents(f *ast.File) map[string]bool {
 				continue
 			}
 			ast.Inspect(lit.Body, func(inner ast.Node) bool {
-				if id, ok := inner.(*ast.Ident); ok {
-					idents[id.Name] = true
+				innerCall, ok := inner.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				innerSel, ok := innerCall.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				if owner := ownerName(innerSel.X); owner != "" {
+					idents[owner] = true
 				}
 				return true
 			})
