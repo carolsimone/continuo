@@ -311,10 +311,12 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 
 // buildValidationPodSpec constructs the PodSpec for a validation node job.
 //
-// Validation runs the external continuo-validation-<engine> image (PostgreSQL and
+// Validation runs the external continuo-python-runtime-<engine> image (PostgreSQL and
 // Trino today) that bakes one engine adapter — never the per-service team image. The
 // SRE selects the engine at deploy time (Helm/compose) via VALIDATION_IMAGE; the
-// executor runs it verbatim. The warehouse connection is not injected inline: the operator-owned
+// executor runs it with an explicit command (ValidationCommand), because the image's
+// default command runs the python-node harness rather than the validation runner.
+// The warehouse connection is not injected inline: the operator-owned
 // Secret named by VALIDATION_WAREHOUSE_SECRET is attached to the container via
 // envFrom, so the warehouse credentials are owned by the operator and separate from
 // the executor's own DB. The dbt-running team containers attach this same Secret —
@@ -328,13 +330,13 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 // CANDIDATE_SPEC_URI + S3 credentials instead: the runner fetches the published
 // JSON validation spec (declared reads + output columns), not compiled SQL.
 func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
-	// VALIDATION_IMAGE names the engine's continuo-validation-<engine> image; the SRE
+	// VALIDATION_IMAGE names the engine's continuo-python-runtime-<engine> image; the SRE
 	// chooses the engine at deploy time (Helm/compose). The executor bakes in no
 	// engine — a hardcoded default would silently force one — so an unset image
 	// fails the node permanently with an actionable reason.
 	image := os.Getenv("VALIDATION_IMAGE")
 	if image == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: VALIDATION_IMAGE not configured (set it to the matching continuo-validation-<engine> image) for node %s",
+		return corev1.PodSpec{}, fmt.Errorf("%w: VALIDATION_IMAGE not configured (set it to the matching continuo-python-runtime-<engine> image) for node %s",
 			events.ErrPermanent, p.NodeID)
 	}
 
@@ -441,14 +443,15 @@ const (
 )
 
 // buildSchemaOpPodSpec constructs the PodSpec for a candidate-schema lifecycle Job. It
-// runs the same engine image as validation (VALIDATION_IMAGE) with the operator's
-// warehouse Secret attached via envFrom, invoking the harness ensure_schema/drop_schema
-// op on DBT_TARGET_SCHEMA — a single short-lived container that runs one DDL statement
-// through the engine adapter and exits. No S3, no candidate SQL, no table.
+// runs the same engine image as validation (VALIDATION_IMAGE) under the same explicit
+// validation command, with the operator's warehouse Secret attached via envFrom,
+// invoking the ensure_schema/drop_schema op on DBT_TARGET_SCHEMA — a single
+// short-lived container that runs one DDL statement through the engine adapter and
+// exits. No S3, no candidate SQL, no table.
 func buildSchemaOpPodSpec(op, candidateSchema string) (corev1.PodSpec, error) {
 	image := os.Getenv("VALIDATION_IMAGE")
 	if image == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: VALIDATION_IMAGE not configured (set it to the matching continuo-validation-<engine> image) for schema op %s",
+		return corev1.PodSpec{}, fmt.Errorf("%w: VALIDATION_IMAGE not configured (set it to the matching continuo-python-runtime-<engine> image) for schema op %s",
 			events.ErrPermanent, op)
 	}
 	whFrom, err := warehouseSecretEnvFrom("schema op " + op)
@@ -459,7 +462,10 @@ func buildSchemaOpPodSpec(op, candidateSchema string) (corev1.PodSpec, error) {
 		Name:            "schema-op",
 		Image:           image,
 		ImagePullPolicy: validationImagePullPolicy(),
-		// Command unset: run the image's default entrypoint (python /validation_runner.py).
+		// The image's default command runs the python-node harness, so the
+		// validation entrypoint is selected explicitly here — the same one every
+		// validation pod runs.
+		Command: validationmodel.ValidationCommand("", ""),
 		Env: []corev1.EnvVar{
 			{Name: "DBT_TARGET_SCHEMA", Value: candidateSchema},
 			{Name: "VALIDATION_OP", Value: op},
@@ -666,11 +672,11 @@ func baseContainerSecurityContext() *corev1.SecurityContext {
 }
 
 // continuoImageSecurityContext extends the base hardening with a forced
-// non-root user for containers running the continuo-validation-<engine> and
+// non-root user for containers running the continuo-python-runtime-<engine> and
 // s3-sidecar images. uid 65532 is a cross-repo contract, not a locally
 // observed fact: the s3-sidecar image is built in this repository, but
-// continuo-validation-<engine> is built and released from
-// github.com/carolsimone/continuo-validation, so this uid tracks that
+// continuo-python-runtime-<engine> is built and released from
+// github.com/carolsimone/continuo-python-runtime, so this uid tracks that
 // repository's `useradd --uid` and changes there require a coordinated
 // change here.
 func continuoImageSecurityContext() *corev1.SecurityContext {
