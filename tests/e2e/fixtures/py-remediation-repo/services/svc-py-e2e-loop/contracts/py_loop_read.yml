@@ -5,11 +5,14 @@ nodes:
   # node beside the node under repair would sink the other scenario's shadow
   # release.
   #
-  # This node's read names public.loop_wrong_name, which is what the canned
-  # model in tests/e2e/stub-llm keys on to answer the first attempt with a fix
-  # that is still wrong (public.still_wrong_name) and the second — the one that
-  # is shown the first attempt's shadow error — with the binding relation
-  # public.right_name.
+  # The node is repaired over two attempts: the canned model in
+  # tests/e2e/stub-llm answers a first attempt with a read that still cannot
+  # bind, and answers a retry — one whose prompt carries what the rejected
+  # attempt changed and why it was rejected — with a read that binds.
+  #
+  # Nothing in this file decides which of those two answers comes back. The
+  # stub reads only the sections the prompt assembler writes AROUND this file,
+  # so no comment here can change what a test observes.
   - schema: e2e_schema
     table: py_loop_read
     owner: e2e

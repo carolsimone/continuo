@@ -232,13 +232,14 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 //
 // The canned model answers the first attempt with a read that still cannot
 // bind, and answers a retry with the binding one — recognising a retry by the
-// still-broken relation name appearing anywhere in the request. That name can
-// reach the prompt only through the first attempt's recorded verification error
-// or the diff it applied: the repository checkout is pristine on every attempt,
-// so the contract file never carries it. Attempt 2 reaching 'proposed' is
-// therefore proof that the failed attempt's evidence was assembled AND shown,
-// not merely that an attempt row existed; a retry whose prompt lost that
-// evidence gets the answer that already failed, and this test never goes green.
+// prompt's earlier-attempts section BOTH existing AND naming the relation the
+// rejected attempt declared, read from the part of the prompt that is not the
+// contract file itself. That relation name reaches the prompt only through the
+// first attempt's recorded verification error or the diff it applied. Attempt 2
+// reaching 'proposed' is therefore proof that the failed attempt's evidence was
+// assembled AND shown, not merely that an attempt row existed; a retry whose
+// prompt lost that evidence gets the answer that already failed, and this test
+// never goes green.
 //
 // It also proves the loop cannot eat itself: the rejected shadow release is
 // recorded as a dropped classification and produces no remediation trigger.

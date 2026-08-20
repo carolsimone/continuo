@@ -110,6 +110,21 @@ jobs:
         working-directory: pkg
         run: go test ./...
 
+      - name: Test the e2e stub LLM
+        # tests/e2e/stub-llm is a Go module of its own (the image it builds
+        # carries nothing but the standard library), so no other Go gate reaches
+        # it: `make test-go` covers the eight services and the step above covers
+        # pkg. Its tests pin the canned answers the remediation e2e scenarios
+        # read as a model's behaviour, driven through the real contract fixtures
+        # on disk — a fixture drifting away from what the stub assumes about it
+        # otherwise shows up only as an e2e that waits out its whole budget.
+        # GOWORK=off because the module sits under a go.work member (tests/e2e)
+        # but is not one itself, so workspace resolution would refuse it.
+        working-directory: tests/e2e/stub-llm
+        env:
+          GOWORK: "off"
+        run: go test ./...
+
       - name: Lint Go services
         # Static analysis (golangci-lint v2) over the modules enrolled in
         # scripts/lint-ci-modules.txt. Runs early and needs no docker/kind/e2e

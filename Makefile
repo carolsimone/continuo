@@ -196,6 +196,11 @@ test-manifest:
 	$(DOCKER_COMPOSE) up -d manifest-controller
 	docker exec manifest-controller uv run pytest -v
 
+# Fast, infra-free gates. Includes the two Go modules no other test target
+# reaches: pkg (the cross-cutting static guards) and tests/e2e/stub-llm (the
+# canned model the remediation e2e scenarios read as an LLM's answers, whose
+# tests run against the real contract fixtures on disk). GOWORK=off because
+# stub-llm sits under a go.work member but is a module of its own.
 .PHONY: guards
 guards:
 	bash scripts/check-ci-alignment.sh
@@ -204,6 +209,7 @@ guards:
 	bash scripts/check-validation-image-pin.sh
 	bash scripts/check-validation-image-sideload.sh
 	cd pkg && go test ./...
+	cd tests/e2e/stub-llm && GOWORK=off go test ./...
 	diff state/proto/state/v1/state.proto ui-service/proto/state.proto
 	diff remediation-agent/proto/remediation/v1/remediation.proto ui-service/proto/remediation/v1/remediation.proto
 

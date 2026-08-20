@@ -285,6 +285,46 @@ func contractYAML(userContent string) string {
 	return rest[:end]
 }
 
+// priorAttemptsHeading opens the section prompt.AssemblePythonContractFix
+// renders for the earlier attempts at the same failure. The section exists only
+// when an earlier attempt was recorded, so the heading is what tells a retry
+// apart from a first attempt.
+const priorAttemptsHeading = "Previous fix attempts for this node"
+
+// promptAroundContract returns the request with the contract file it showed cut
+// out of it: what the prompt assembler wrote AROUND that file — the failure, the
+// runner log, the upstream and precedent sections, the earlier attempts — and
+// nothing the team's repository itself holds.
+//
+// Every decision the stub makes about the request as a whole is read from this
+// rather than from the raw request, so no contract fixture can decide which
+// answer comes back. A comment inside a fixture naming one of the relations
+// below would otherwise flip the answer, and would do so on the FIRST attempt —
+// handing back the fix that is supposed to arrive only on a retry, and making a
+// test that drives the retry loop pass its first shadow release instead.
+func promptAroundContract(userContent, contract string) string {
+	if contract == "" {
+		return userContent
+	}
+	return strings.Replace(userContent, contract, "", 1)
+}
+
+// isRetryShownTheRejectedRead reports whether this request is a retry that was
+// actually shown what the earlier attempt did: the prompt carries the
+// prior-attempts section, and that section names the relation the earlier
+// attempt declared.
+//
+// Both halves are required, and both are read from around the contract file.
+// The heading alone would answer a retry correctly even when the evidence the
+// retry is supposed to learn from went missing, which is the one thing the
+// e2e test driving this loop exists to prove. The relation name alone is a
+// weaker guard than it looks: it is satisfied by that name appearing anywhere,
+// including in text the stub was never meant to read.
+func isRetryShownTheRejectedRead(userContent, contract string) bool {
+	around := promptAroundContract(userContent, contract)
+	return strings.Contains(around, priorAttemptsHeading) && strings.Contains(around, stillBrokenRead)
+}
+
 // writeProposePythonFixResponse returns a deterministic, non-streaming answer
 // for the python-node contract fixer: the contract file the prompt showed,
 // with the relation in its declared read rewritten.
@@ -296,15 +336,12 @@ func contractYAML(userContent string) string {
 //     release verifying it is rejected and its error becomes the next
 //     attempt's evidence;
 //   - the loop fixture on a retry gets bindingRead, so the second shadow
-//     release validates. A retry is recognised by stillBrokenRead appearing
-//     ANYWHERE in the request, which is a strictly stronger signal than the
-//     prior-attempts heading: that heading is rendered for any earlier attempt
-//     row, even one carrying no error, whereas this relation name reaches the
-//     prompt only through the previous attempt's recorded verification error or
-//     the diff it applied. The repository checkout is pristine on every
-//     attempt, so the contract file itself never contains it. A retry whose
-//     prompt lost that evidence therefore keeps getting the answer that already
-//     failed, and the e2e test driving it never goes green;
+//     release validates. A retry is recognised by isRetryShownTheRejectedRead:
+//     the prompt's prior-attempts section exists AND it names the relation the
+//     earlier attempt declared, which reaches the prompt only through that
+//     attempt's recorded verification error or the diff it applied. A retry
+//     whose prompt lost that evidence therefore keeps getting the answer that
+//     already failed, and the e2e test driving it never goes green;
 //   - every other fixture gets bindingRead immediately.
 //
 // A prompt with no contract file in it yields an empty updated_files list,
@@ -320,7 +357,7 @@ func writeProposePythonFixResponse(w http.ResponseWriter, userContent string) {
 		switch {
 		case strings.Contains(original, loopBrokenRead):
 			replacement := stillBrokenRead
-			if strings.Contains(userContent, stillBrokenRead) {
+			if isRetryShownTheRejectedRead(userContent, original) {
 				replacement = bindingRead
 			}
 			fixed = strings.ReplaceAll(original, loopBrokenRead, replacement)
