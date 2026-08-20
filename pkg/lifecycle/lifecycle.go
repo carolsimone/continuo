@@ -15,9 +15,13 @@ type ShutdownHandler func(ctx context.Context) error
 
 // ApplicationLifecycle manages application startup and graceful shutdown.
 //
-// Shutdown proceeds in a defined order so in-flight work is not truncated:
+// Shutdown proceeds in a defined order so infra is closed only after
+// in-flight goroutines have unwound:
 //  1. stop intake — cancel the root context so background jobs stop reading
-//     new work and return after the current unit of work;
+//     new work; the in-flight unit is aborted, not completed — a message
+//     handler's next database call fails, its transaction rolls back, and
+//     its message is left un-ACKed for redelivery, while a non-transactional
+//     worker (the outbox processor, a ticker loop) simply returns;
 //  2. drain in-flight — wait on the tracked WaitGroup for those goroutines to
 //     return, bounded by the shutdown grace period;
 //  3. close infra — run the registered shutdown handlers (HTTP/gRPC servers
@@ -98,7 +102,11 @@ func (al *ApplicationLifecycle) Shutdown(cancel context.CancelFunc, grace time.D
 	al.logger.Info("Starting graceful shutdown")
 
 	// 1. Stop intake: cancel the root context so background jobs stop reading
-	//    and return after the current unit of work.
+	//    new work. The in-flight unit is aborted, not completed — a message
+	//    handler's next database call fails, its transaction rolls back, and
+	//    its message is left un-ACKed for redelivery, while a
+	//    non-transactional worker (the outbox processor, a ticker loop)
+	//    simply returns.
 	cancel()
 
 	// 2. Drain in-flight goroutines, bounded by the grace period.
