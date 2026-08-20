@@ -23,7 +23,7 @@ func TestSentinelMarkersMatchWireContract(t *testing.T) {
 }
 
 // TestSchemaVersionMatchesWireContract pins SchemaVersion to its current wire
-// value (1, matching continuo_validation_contract/result.py's SCHEMA_VERSION
+// value (1, matching continuo_engine_contract/result.py's SCHEMA_VERSION
 // as of this writing). Nothing generates one side from the other, so this
 // only catches a local edit to the constant — it cannot detect the contract
 // itself bumping its schema_version, which would need a corresponding change

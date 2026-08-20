@@ -10,7 +10,7 @@ import (
 // Result is the structured validation-result contract's JSON body, decoded
 // from between the sentinel markers. The validation pod and the python
 // production harness both emit it via
-// continuo_validation_contract/result.py's result_block(); k8s-controller
+// continuo_engine_contract/result.py's result_block(); k8s-controller
 // uploads it as run_results_uri and prefers its message as a failed task's
 // error_message, and remediation reads it back to classify the failure.
 // status uses dbt's RunStatus vocabulary.
@@ -23,7 +23,7 @@ type Result struct {
 }
 
 // supportedRunStatuses is the structured-result contract's status
-// vocabulary — dbt's RunStatus, per continuo_validation_contract/result.py's
+// vocabulary — dbt's RunStatus, per continuo_engine_contract/result.py's
 // docstring. Parse accepts a candidate only when its status is one of these.
 var supportedRunStatuses = map[string]bool{
 	"success": true,

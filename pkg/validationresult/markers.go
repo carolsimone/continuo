@@ -14,7 +14,7 @@ const (
 )
 
 // SchemaVersion is the structured-result JSON contract's schema_version field,
-// emitted by every call to continuo_validation_contract/result.py's
+// emitted by every call to continuo_engine_contract/result.py's
 // result_block() (its SCHEMA_VERSION constant). k8s-controller checks a
 // candidate's schema_version against this before trusting it as the contract's
 // result block, rather than an unrelated status-bearing JSON object that
