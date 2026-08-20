@@ -149,7 +149,15 @@ FLYWAY_JOBS := flyway-state flyway-executor flyway-orchestrator flyway-k8s flywa
 .PHONY: test-deps-up
 test-deps-up:
 	$(DOCKER_COMPOSE) up -d postgres neo4j redis
-	@for f in $(FLYWAY_JOBS); do $(DOCKER_COMPOSE) up $$f; done
+	@# Each migration job is removed before it is started. `compose up <job>`
+	@# attaches to an existing container and waits for it to exit, so a job left
+	@# Running by an interrupted earlier invocation makes this loop block until
+	@# the caller's own timeout fires, with no output naming the cause.
+	@# Recreating gives every run a container that is guaranteed to terminate.
+	@for f in $(FLYWAY_JOBS); do \
+	  $(DOCKER_COMPOSE) rm -fsv $$f >/dev/null 2>&1 || true; \
+	  $(DOCKER_COMPOSE) up $$f || exit 1; \
+	done
 
 .PHONY: test-deps-down
 test-deps-down:
