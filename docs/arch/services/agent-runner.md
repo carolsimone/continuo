@@ -75,13 +75,16 @@ any consumers. Kubernetes points `readinessProbe` at `/ready` and
 
 On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence whose total
 duration is bounded by `SHUTDOWN_GRACE` (default 10s — the other four
-`pkg/lifecycle` services default to 15s): (1) stop intake by cancelling the
-root context; (2) drain — wait on a WaitGroup for goroutines tracked via
-`ApplicationLifecycle.Go(...)` to return, capped at half the grace period;
-(3) close infra — run the registered shutdown handlers (gRPC server, health
-HTTP server, Postgres, and the Redis client when `REDIS_ADDR` is set) in
-LIFO order against a fresh live context, sharing a single deadline with step
-2 so infra teardown always retains at least the other half of the budget,
+`pkg/lifecycle` services default to 15s) for handlers that honor their
+context — a `Close()`-style handler that ignores `ctx` is not itself bounded
+by it: (1) stop intake by cancelling the root context; (2) drain — wait on a
+WaitGroup for goroutines tracked via `ApplicationLifecycle.Go(...)` to
+return, capped at half the grace period; (3) close infra — run the
+registered shutdown handlers (gRPC server, health HTTP server, Postgres, and
+the Redis client when `REDIS_ADDR` is set) in LIFO order against a fresh
+live context with its own deadline fixed at the moment `Shutdown` starts,
+while step 2 is capped independently at half the grace budget; together
+they leave infra teardown at least the other half of the budget, live,
 derived from `context.Background()`, never the just-cancelled root context.
 `main` blocks on the lifecycle completion channel, so there is no fixed
 sleep.
