@@ -52,11 +52,11 @@ func TestReadinessReturns503WhenProbeFails(t *testing.T) {
 	}
 }
 
-func TestLivenessAlwaysHealthy(t *testing.T) {
+func TestHealthAlwaysReturns200(t *testing.T) {
 	rec := httptest.NewRecorder()
 	HealthHandler(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 from liveness, got %d", rec.Code)
+		t.Fatalf("expected 200 from health, got %d", rec.Code)
 	}
 }
 

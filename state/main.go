@@ -32,10 +32,17 @@ import (
 
 // consumerHeartbeatStale is the liveness heartbeat budget: how long a
 // consumer's read loop may go without completing an iteration before /livez
-// reports it wedged. Must comfortably exceed the longest handler invocation so
-// a legitimately in-flight message never reads as a wedged loop (mirrors
-// executor-controller/main.go).
+// reports it wedged. These consumers set no handler timeout, so nothing
+// enforces this budget against the slowest handler — it is an empirical
+// margin, not an enforced relationship, and must stay comfortably above the
+// slowest handler invocation observed in practice.
 const consumerHeartbeatStale = 3 * time.Minute
+
+// outboxHeartbeatStale is the liveness budget for the outbox processor's Run
+// loop. The poll tick is 500ms, so 60s is comfortably above it: a wedged (not
+// exited) processor trips within a minute, while an idle-but-live one never
+// does.
+const outboxHeartbeatStale = 60 * time.Second
 
 func main() {
 	// Setup structured logger
@@ -149,6 +156,9 @@ func main() {
 		pkgoutbox.ProcessorConfig{Tick: 500 * time.Millisecond, BatchSize: 100},
 	)
 	liveReg.RegisterWorker("outbox_processor")
+	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
+		return outboxProc.Healthy(outboxHeartbeatStale)
+	})
 	lifecycleManager.Go(func() {
 		err := outboxProc.Run(ctx)
 		if errors.Is(err, context.Canceled) {

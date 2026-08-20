@@ -14,7 +14,7 @@ type HealthResponse struct {
 	Service string `json:"service"`
 }
 
-// HealthHandler handles liveness check requests. It returns 200 as long as the
+// HealthHandler handles the process-up check. It returns 200 as long as the
 // process is running and able to serve HTTP.
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
