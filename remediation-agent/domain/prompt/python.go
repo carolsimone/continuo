@@ -57,6 +57,7 @@ A python node is declared in a contract yaml file: an entry under "nodes:" namin
 
 Rules:
 - Change ONLY what validation checks: the node's declared reads (including their SQL), its output_columns, and its config. Never touch its schema, table, script path, owner, schedule, or criticality — those identify the node, and changing one makes it a different node rather than a fixed one.
+- Keep every read the node declares. Correcting a read's SQL is a fix, and adding a read is allowed, but deleting a read or renaming its key is not: the script still performs that read, and you cannot change the script. A contract that no longer declares it passes validation while the node stays broken.
 - A contract file may declare several nodes. Leave every node other than the failing one byte-for-byte unchanged.
 - Return the COMPLETE new content of every file you change, never a diff and never a fragment. A file you do not change must not appear in your answer at all.
 - Fix the contract to match what the node genuinely produces; do not weaken a declared column type or drop a column merely to make the check pass, unless the evidence shows the declaration itself is what is wrong.

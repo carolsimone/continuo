@@ -561,20 +561,28 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
    verify the contract that already failed.
 9. Check that the node survived its own repair, before anything is packaged.
    A shadow release can only reject what the packaged contract still declares,
-   so an answer that DELETED or RENAMED the failing node leaves the release
-   nothing to fail on: it validates, and the edit that removed a broken node is
-   recorded as a proven fix and offered to a human. Two checks close that:
+   so an answer that DELETED or RENAMED the failing node — or DELETED the read
+   that could not bind — leaves the release nothing to fail on: it validates,
+   and the edit that removed the broken thing is recorded as a proven fix and
+   offered to a human. Two checks close that:
    - Every node the answer's own files declared BEFORE it was applied must
      still be declared after, with its identity fields — schema, table, script,
-     owner, schedule, criticality — unchanged (ContractInspector.Identities,
-     read on both sides of each returned *.yml/*.yaml file). A missing or
-     mutated entry is proposal(status=failed) naming the node and the fields
-     that moved. Both sides are compared as a whole rather than file by file,
-     so moving an entry between two of the answer's own files — which packages
-     identically — is not read as deleting it. A node the answer ADDS is not
-     refused: it is packaged, so the shadow release judges it honestly. A
-     returned file that no longer parses as yaml is proposal(status=failed)
-     too, since "declares nothing" and "cannot be read" must not be confused.
+     owner, schedule, criticality — unchanged, and with every read name it
+     declared still declared (ContractInspector.Declarations, read on both
+     sides of each returned *.yml/*.yaml file). A missing or mutated entry is
+     proposal(status=failed) naming the node and the fields that moved; an
+     entry that lost a read name is proposal(status=failed) naming the read.
+     Read names are compared verbatim, so renaming one is dropping it: the
+     name is how the node's script asks for that read, and this fix never
+     edits the script. Both sides are compared as a whole rather than file by
+     file, so moving an entry between two of the answer's own files — which
+     packages identically — is not read as deleting it. What the answer ADDS is
+     not refused — a new node, a new read, or a rewritten read's SQL is
+     packaged, so the shadow release judges it honestly; only subtraction is
+     refused, because it leaves the release less to judge than the failure it
+     was asked to repair. A returned file that no longer parses as yaml is
+     proposal(status=failed) too, since "declares nothing" and "cannot be
+     read" must not be confused.
    - The declaring-file search is re-run over the patched checkout
      (ContractLocator.Locate): the node must still be declared by exactly one
      file, still inside the contract directory being packaged. This covers what
@@ -794,7 +802,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Duplicate-table fixer (single-file rename, no dbt log, shares `singleFileInterpret` with compile) | `remediation-agent/service/fixer/duplicate_table.go` |
 | Validation fixer, dbt node (two-step candidate + real-source flow, best-effort upstream-diff gather) | `remediation-agent/service/fixer/validation.go` |
 | Validation fixer, python node (repo checkout, contract repair, packaging, shadow submission) | `remediation-agent/service/fixer/python_validation.go` |
-| Contract-yaml search across a repository checkout, and the node-identity read a proposed edit is checked against (`ContractLocator` + `ContractInspector`) | `remediation-agent/adapters/repofs/contract_locator.go` |
+| Contract-yaml search across a repository checkout, and the node-declaration read (identity fields + declared read names) a proposed edit is checked against (`ContractLocator` + `ContractInspector`) | `remediation-agent/adapters/repofs/contract_locator.go` |
 | Shadow-verify reconciler loop (verdict polling, CAS finalization, next-attempt start) | `remediation-agent/service/shadowverify/reconciler.go` |
 | PR lifecycle application service (claim/record/fail/fail-stuck-claim/record-outcome + outbox) | `remediation-agent/service/proposals/service.go` |
 | PR-outcome reconciler loop, incl. permission-gap degraded signal and the opening sweep (recover-or-fail stuck `pr_state='opening'` claims, CAS-guarded fail, cursor-paginated rotation) | `remediation-agent/service/proposals/reconciler.go` |

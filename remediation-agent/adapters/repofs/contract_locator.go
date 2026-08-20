@@ -46,9 +46,10 @@ type contractDoc struct {
 }
 
 // contractNode is one entry of that list, narrowed to the fields that identify
-// the node. The search matches on schema and table; the remaining fields are
-// read so a caller can tell an entry that was repaired apart from one that was
-// re-identified.
+// the node plus the reads it declares. The search matches on schema and table;
+// the remaining identity fields are read so a caller can tell an entry that was
+// repaired apart from one that was re-identified, and the reads so it can tell
+// a repaired read apart from a deleted one.
 type contractNode struct {
 	Schema      string `yaml:"schema"`
 	Table       string `yaml:"table"`
@@ -56,6 +57,27 @@ type contractNode struct {
 	Owner       string `yaml:"owner"`
 	Schedule    string `yaml:"schedule"`
 	Criticality string `yaml:"criticality"`
+	// Reads is the entry's "reads:" mapping kept as a raw node, because only its
+	// keys are needed and its values are whatever the author wrote. Decoding it
+	// into a typed map would make one entry with an unexpected value shape fail
+	// the whole document, which every caller here reads as "this file declares
+	// nothing" — skipping it in the contract search and excusing it from every
+	// comparison made across an edit.
+	Reads yaml.Node `yaml:"reads"`
+}
+
+// readKeys returns the names an entry gives the relations it reads, in
+// declaration order. A "reads:" that is absent, empty, or not a mapping yields
+// none: there is no key in it to preserve.
+func readKeys(n yaml.Node) []string {
+	if n.Kind != yaml.MappingNode {
+		return nil
+	}
+	out := make([]string, 0, len(n.Content)/2)
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		out = append(out, n.Content[i].Value)
+	}
+	return out
 }
 
 // match pairs a candidate file's repo-relative path with the content already
@@ -157,8 +179,9 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 	}
 }
 
-// Identities parses yamlText as a contract document and returns the identity of
-// every node under its "nodes:" list, in declaration order.
+// Declarations parses yamlText as a contract document and returns every node
+// under its "nodes:" list, in declaration order: the fields that identify it and
+// the keys of the reads it declares.
 //
 // A document that parses but declares no nodes yields an empty result and no
 // error: a yaml file holding something else entirely is a normal member of a
@@ -166,20 +189,23 @@ func (l *Locator) Locate(rootDir, schema, table string) (ports.Located, error) {
 // valid yaml returns an error, because a caller comparing declarations across
 // an edit cannot tell "declares nothing" apart from "could not be read" and
 // must not treat the second as the first.
-func (l *Locator) Identities(yamlText string) ([]ports.NodeIdentity, error) {
+func (l *Locator) Declarations(yamlText string) ([]ports.NodeDeclaration, error) {
 	var doc contractDoc
 	if err := yaml.Unmarshal([]byte(yamlText), &doc); err != nil {
 		return nil, fmt.Errorf("parse contract document: %w", err)
 	}
-	out := make([]ports.NodeIdentity, 0, len(doc.Nodes))
+	out := make([]ports.NodeDeclaration, 0, len(doc.Nodes))
 	for _, n := range doc.Nodes {
-		out = append(out, ports.NodeIdentity{
-			Schema:      n.Schema,
-			Table:       n.Table,
-			Script:      n.Script,
-			Owner:       n.Owner,
-			Schedule:    n.Schedule,
-			Criticality: n.Criticality,
+		out = append(out, ports.NodeDeclaration{
+			Identity: ports.NodeIdentity{
+				Schema:      n.Schema,
+				Table:       n.Table,
+				Script:      n.Script,
+				Owner:       n.Owner,
+				Schedule:    n.Schedule,
+				Criticality: n.Criticality,
+			},
+			ReadKeys: readKeys(n.Reads),
 		})
 	}
 	return out, nil

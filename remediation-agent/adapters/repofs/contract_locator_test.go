@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -209,12 +210,13 @@ func TestLocate_CaseVariantsAreOneAmbiguity(t *testing.T) {
 	}
 }
 
-// TestIdentities_ReadsEveryDeclaredNodesIdentityFields verifies that Identities
-// returns the identity fields of every node a document declares, in declaration
-// order. The caller compares these across an edit to decide whether an answer
-// repaired a node or replaced it, so a field this adapter silently drops would
-// be a field an answer could silently change.
-func TestIdentities_ReadsEveryDeclaredNodesIdentityFields(t *testing.T) {
+// TestDeclarations_ReadsEveryDeclaredNodesIdentityAndReads verifies that
+// Declarations returns the identity fields and the read names of every node a
+// document declares, in declaration order. The caller compares these across an
+// edit to decide whether an answer repaired a node or quietly took something
+// away from it, so a field this adapter silently drops would be a field an
+// answer could silently change.
+func TestDeclarations_ReadsEveryDeclaredNodesIdentityAndReads(t *testing.T) {
 	const doc = `nodes:
   - schema: analytics
     table: py_daily_kpis
@@ -222,62 +224,99 @@ func TestIdentities_ReadsEveryDeclaredNodesIdentityFields(t *testing.T) {
     schedule: daily
     criticality: SECONDARY
     script: scripts/py_daily_kpis.py
+    reads:
+      orders: select id from analytics.orders
+      customers: select id from analytics.customers
     output_columns:
       - name: revenue
   - schema: analytics
     table: py_weekly_kpis
     script: scripts/py_weekly_kpis.py
 `
-	got, err := newLocator().Identities(doc)
+	got, err := newLocator().Declarations(doc)
 	if err != nil {
-		t.Fatalf("Identities: %v", err)
+		t.Fatalf("Declarations: %v", err)
 	}
-	want := []ports.NodeIdentity{
+	want := []ports.NodeDeclaration{
 		{
-			Schema: "analytics", Table: "py_daily_kpis", Script: "scripts/py_daily_kpis.py",
-			Owner: "data-platform", Schedule: "daily", Criticality: "SECONDARY",
+			Identity: ports.NodeIdentity{
+				Schema: "analytics", Table: "py_daily_kpis", Script: "scripts/py_daily_kpis.py",
+				Owner: "data-platform", Schedule: "daily", Criticality: "SECONDARY",
+			},
+			ReadKeys: []string{"orders", "customers"},
 		},
-		{Schema: "analytics", Table: "py_weekly_kpis", Script: "scripts/py_weekly_kpis.py"},
+		{Identity: ports.NodeIdentity{Schema: "analytics", Table: "py_weekly_kpis", Script: "scripts/py_weekly_kpis.py"}},
 	}
 	if len(got) != len(want) {
-		t.Fatalf("Identities returned %d entries, want %d: %+v", len(got), len(want), got)
+		t.Fatalf("Declarations returned %d entries, want %d: %+v", len(got), len(want), got)
 	}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("entry %d = %+v, want %+v", i, got[i], want[i])
+		if got[i].Identity != want[i].Identity {
+			t.Errorf("entry %d identity = %+v, want %+v", i, got[i].Identity, want[i].Identity)
+		}
+		if !slices.Equal(got[i].ReadKeys, want[i].ReadKeys) {
+			t.Errorf("entry %d read keys = %v, want %v", i, got[i].ReadKeys, want[i].ReadKeys)
 		}
 	}
 }
 
-// TestIdentities_DocumentDeclaringNoNodesIsNotAnError verifies that a yaml file
-// holding something other than a contract yields no identities and no error: a
-// contract directory legitimately holds such files, and they declare nothing to
-// preserve across an edit.
-func TestIdentities_DocumentDeclaringNoNodesIsNotAnError(t *testing.T) {
+// TestDeclarations_UnexpectedReadsShapeStillDeclaresTheNode verifies that a
+// "reads:" holding something other than a name -> SQL mapping costs the read
+// names and nothing else. Failing the whole document instead would read as
+// "this file declares nothing", which excuses every node in it from the
+// comparison made across an edit — the opposite of what an odd-looking file
+// should cause.
+func TestDeclarations_UnexpectedReadsShapeStillDeclaresTheNode(t *testing.T) {
+	const doc = `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    reads:
+      - select id from analytics.orders
+`
+	got, err := newLocator().Declarations(doc)
+	if err != nil {
+		t.Fatalf("Declarations: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Declarations returned %d entries, want 1: %+v", len(got), got)
+	}
+	if got[0].Identity.Table != "py_daily_kpis" {
+		t.Errorf("entry identity = %+v, want the node it declares", got[0].Identity)
+	}
+	if len(got[0].ReadKeys) != 0 {
+		t.Errorf("read keys = %v, want none — a sequence carries no names to preserve", got[0].ReadKeys)
+	}
+}
+
+// TestDeclarations_DocumentDeclaringNoNodesIsNotAnError verifies that a yaml
+// file holding something other than a contract yields no declarations and no
+// error: a contract directory legitimately holds such files, and they declare
+// nothing to preserve across an edit.
+func TestDeclarations_DocumentDeclaringNoNodesIsNotAnError(t *testing.T) {
 	for name, doc := range map[string]string{
 		"empty":            "",
 		"unrelated object": "version: 2\nmodels:\n  - name: orders\n",
 		"empty nodes list": "nodes: []\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := newLocator().Identities(doc)
+			got, err := newLocator().Declarations(doc)
 			if err != nil {
-				t.Fatalf("Identities: %v", err)
+				t.Fatalf("Declarations: %v", err)
 			}
 			if len(got) != 0 {
-				t.Errorf("Identities returned %+v, want no entries", got)
+				t.Errorf("Declarations returned %+v, want no entries", got)
 			}
 		})
 	}
 }
 
-// TestIdentities_UnparseableTextIsAnError verifies that text which is not yaml
+// TestDeclarations_UnparseableTextIsAnError verifies that text which is not yaml
 // at all is reported rather than read as "declares nothing". The caller uses
 // the empty result to mean "this file protects no node", so silently returning
 // it for an unreadable document would let a broken answer erase a declaration
 // and be recorded as having changed nothing.
-func TestIdentities_UnparseableTextIsAnError(t *testing.T) {
-	if _, err := newLocator().Identities("nodes:\n\t- schema: analytics\n"); err == nil {
-		t.Fatal("Identities accepted text that is not valid yaml; an unreadable document must not read as an empty one")
+func TestDeclarations_UnparseableTextIsAnError(t *testing.T) {
+	if _, err := newLocator().Declarations("nodes:\n\t- schema: analytics\n"); err == nil {
+		t.Fatal("Declarations accepted text that is not valid yaml; an unreadable document must not read as an empty one")
 	}
 }

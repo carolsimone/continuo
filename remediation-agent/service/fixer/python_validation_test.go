@@ -143,6 +143,8 @@ const declaringYAML = `nodes:
   - schema: analytics
     table: py_daily_kpis
     script: scripts/py_daily_kpis.py
+    reads:
+      orders: select id from analytics.orders
     output_columns:
       - name: revenue
 `
@@ -151,8 +153,19 @@ const correctedYAML = `nodes:
   - schema: analytics
     table: py_daily_kpis
     script: scripts/py_daily_kpis.py
+    reads:
+      orders: select id from analytics.orders
     output_columns:
       - name: revenue_total
+`
+
+// siblingYAML is the second node declared in the same contract directory: not
+// the node under repair, but packaged and re-validated alongside it.
+const siblingYAML = `nodes:
+  - schema: analytics
+    table: other
+    reads:
+      customers: select id from analytics.customers
 `
 
 // pythonRepoTree writes a repository checkout holding one python service whose
@@ -166,7 +179,7 @@ func pythonRepoTree(t *testing.T) string {
 		require.NoError(t, os.WriteFile(full, []byte(content), 0o600))
 	}
 	write("services/service-py/contracts/py_daily_kpis.yml", declaringYAML)
-	write("services/service-py/contracts/other.yml", "nodes:\n  - schema: analytics\n    table: other\n")
+	write("services/service-py/contracts/other.yml", siblingYAML)
 	write("services/service-py/scripts/py_daily_kpis.py", "print('hi')\n")
 	return root
 }
@@ -256,7 +269,7 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 	// What the packager saw on disk is the model's answer, not the failing
 	// tree: packaging the unpatched checkout would verify nothing.
 	require.Equal(t, correctedYAML, call.sawOnDisk["py_daily_kpis.yml"])
-	require.Equal(t, "nodes:\n  - schema: analytics\n    table: other\n", call.sawOnDisk["other.yml"],
+	require.Equal(t, siblingYAML, call.sawOnDisk["other.yml"],
 		"a file the model did not return must be left exactly as the repository holds it")
 
 	// The merged document is uploaded under the shadow release's own key.
@@ -754,6 +767,115 @@ func TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails(t *testing.T) 
 	require.Contains(t, r.Proposal.Rationale, "analytics.py_daily_kpis")
 	require.Empty(t, pkgr.calls)
 	require.Empty(t, rel.submissions)
+}
+
+// TestPythonValidation_AnswerThatDropsADeclaredRead_Fails covers the cheapest
+// way to make a shadow release pass without repairing anything.
+//
+// The validation runner bind-checks the reads a contract declares, one by one.
+// Delete the read that could not bind and there is nothing left to check: the
+// release validates, the answer is recorded as a proven fix, and a human is
+// offered a pull request that deletes the declaration of a read the node's
+// script still performs — which this lane cannot see, because it edits the
+// contract yaml and never the script. The verdict would be true of what was
+// verified and false of what was proposed.
+//
+// So a read the entry declared before the answer must still be declared after
+// it. Correcting a read's SQL, or adding another one, stays open: both leave
+// the runner something to check and are how a contract is genuinely repaired.
+func TestPythonValidation_AnswerThatDropsADeclaredRead_Fails(t *testing.T) {
+	const target = "services/service-py/contracts/py_daily_kpis.yml"
+	const sibling = "services/service-py/contracts/other.yml"
+
+	refused := map[string]struct {
+		files []ports.ProposedFile
+		want  string
+	}{
+		"the failing node's reads are removed entirely": {
+			files: []ports.ProposedFile{{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    script: scripts/py_daily_kpis.py
+    output_columns:
+      - name: revenue_total
+`}},
+			want: "orders",
+		},
+		"the failing node's read is renamed": {
+			files: []ports.ProposedFile{{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    script: scripts/py_daily_kpis.py
+    reads:
+      orders_v2: select id from analytics.orders
+    output_columns:
+      - name: revenue_total
+`}},
+			want: "orders",
+		},
+		"a sibling in the same directory loses its read": {
+			files: []ports.ProposedFile{
+				{Path: target, Content: correctedYAML},
+				{Path: sibling, Content: "nodes:\n  - schema: analytics\n    table: other\n"},
+			},
+			want: "customers",
+		},
+	}
+
+	for name, tc := range refused {
+		t.Run(name, func(t *testing.T) {
+			root := pythonRepoTree(t)
+			svc, _, pkgr, rel, arts := pythonSvc(t, root)
+			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: tc.files, Confidence: "high"}}}
+
+			r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+			require.NoError(t, err)
+			require.Equal(t, proposal.StatusFailed, r.Proposal.Status,
+				"an answer that deletes a declared read must never be verified as a fix")
+			require.Contains(t, r.Proposal.Rationale, tc.want,
+				"a failed attempt must name the read the answer dropped")
+			require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
+			require.Empty(t, rel.submissions, "no release slot is spent proving a deletion")
+			require.Empty(t, arts.written, "a refused answer writes no artifacts")
+		})
+	}
+
+	allowed := map[string][]ports.ProposedFile{
+		"the read's SQL is corrected": {{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    script: scripts/py_daily_kpis.py
+    reads:
+      orders: select id from analytics.orders_v2
+    output_columns:
+      - name: revenue_total
+`}},
+		"another read is added beside it": {{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    script: scripts/py_daily_kpis.py
+    reads:
+      orders: select id from analytics.orders
+      customers: select id from analytics.customers
+    output_columns:
+      - name: revenue_total
+`}},
+	}
+
+	for name, files := range allowed {
+		t.Run(name, func(t *testing.T) {
+			root := pythonRepoTree(t)
+			svc, _, pkgr, rel, _ := pythonSvc(t, root)
+			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: files, Confidence: "high"}}}
+
+			r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+			require.NoError(t, err)
+			require.Equal(t, proposal.StatusVerifying, r.Proposal.Status,
+				"a fix that keeps every declared read must reach a shadow release")
+			require.Len(t, pkgr.calls, 1)
+			require.Len(t, rel.submissions, 1)
+		})
+	}
 }
 
 // TestShadowReleaseID_BoundedForTheCandidateSchema pins the length rule the

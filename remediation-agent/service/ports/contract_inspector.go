@@ -22,18 +22,34 @@ type NodeIdentity struct {
 	Criticality string
 }
 
+// NodeDeclaration is one entry of a contract document's "nodes:" list: which
+// node the entry is, and the names it gives the upstream relations it reads.
+//
+// The two are kept apart because an edit is judged differently against each.
+// Identity may not change at all. ReadKeys may gain names and the SQL behind
+// any of them may be rewritten — that is most of what repairing a contract
+// means — but a name that was there must still be there: validation checks only
+// the reads a contract still declares, and the node's script, which this system
+// does not edit, still performs the one that was dropped.
+type NodeDeclaration struct {
+	Identity NodeIdentity
+	// ReadKeys are the keys of the entry's "reads:" mapping, in declaration
+	// order. An entry declaring no reads has none.
+	ReadKeys []string
+}
+
 // ContractInspector reads the node declarations out of one contract yaml
 // document's text, without reference to any repository layout.
 //
 // It exists so the application layer can compare what a document declared
 // before an edit with what it declares after one, and refuse an edit that
-// removed, renamed, or re-identified a node — while the yaml deserialization
-// itself stays in an adapter.
+// removed, renamed, or re-identified a node, or that dropped one of the reads
+// an entry declared — while the yaml deserialization itself stays in an adapter.
 type ContractInspector interface {
-	// Identities parses yamlText as a contract document and returns the
-	// identity of every node under its "nodes:" list, in declaration order. A
-	// document with no such list yields no identities and no error, since a
-	// yaml file that declares nothing is not an error to a caller comparing
-	// declarations. Text that is not valid yaml at all returns an error.
-	Identities(yamlText string) ([]NodeIdentity, error)
+	// Declarations parses yamlText as a contract document and returns every
+	// node under its "nodes:" list, in declaration order. A document with no
+	// such list yields no declarations and no error, since a yaml file that
+	// declares nothing is not an error to a caller comparing declarations. Text
+	// that is not valid yaml at all returns an error.
+	Declarations(yamlText string) ([]NodeDeclaration, error)
 }

@@ -144,12 +144,12 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 
 	// Step 7 — the node under repair must have survived its own repair. A
 	// shadow release can only reject what the packaged contract still declares,
-	// so an answer that deleted or renamed the failing node leaves the release
-	// nothing to fail on: it validates, and the edit that removed a broken node
-	// is recorded as a proven fix and offered to a human. The same holds for a
-	// sibling declared beside it, whose identity this attempt was never asked to
-	// touch.
-	if reason := identityBreach(svc, res.Files, originals); reason != "" {
+	// so an answer that deleted or renamed the failing node — or deleted the
+	// read that could not bind — leaves the release nothing to fail on: it
+	// validates, and the edit that removed the broken thing is recorded as a
+	// proven fix and offered to a human. The same holds for a sibling declared
+	// beside it, which this attempt was never asked to touch at all.
+	if reason := declarationBreach(svc, res.Files, originals); reason != "" {
 		return failPython(svc, in, reason)
 	}
 	// The before/after comparison above sees only the files the answer returned.
@@ -249,7 +249,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 	}}, nil
 }
 
-// identityBreach compares the node declarations the answer's own files held
+// declarationBreach compares the node declarations the answer's own files held
 // before it was applied with the ones they hold after, and returns the reason
 // to refuse the answer — or "" when every declaration survived intact.
 //
@@ -259,12 +259,15 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 // an entry between two of the answer's own files — which packages identically —
 // is not mistaken for deleting it from one.
 //
-// A node the answer ADDS is not refused here. It is declared in the packaged
-// directory, so the shadow release runs it and judges it like any other node,
-// which is an honest verdict rather than a false one.
-func identityBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
-	before := map[string]ports.NodeIdentity{}
-	after := map[string]ports.NodeIdentity{}
+// A node the answer ADDS is not refused here, and neither is a read it adds or
+// rewrites. Each is declared in the packaged directory, so the shadow release
+// runs and bind-checks it like any other, which is an honest verdict rather than
+// a false one. What is refused is subtraction: a node or a read that was there
+// and no longer is leaves the release less to judge than the failure it was
+// asked to repair.
+func declarationBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
+	before := map[string]ports.NodeDeclaration{}
+	after := map[string]ports.NodeDeclaration{}
 
 	for _, f := range files {
 		if !isContractYAMLPath(f.Path) {
@@ -273,17 +276,17 @@ func identityBreach(svc Services, files []ports.ProposedFile, originals map[stri
 		// A prior content that does not parse declared nothing this answer can
 		// be held to: the contract search skips such a file too, so the node it
 		// might have named was never the node under repair.
-		if ids, err := svc.ContractInspector.Identities(originals[f.Path]); err == nil {
-			for _, id := range ids {
-				before[identityKey(id)] = id
+		if decls, err := svc.ContractInspector.Declarations(originals[f.Path]); err == nil {
+			for _, d := range decls {
+				before[identityKey(d.Identity)] = d
 			}
 		}
-		ids, err := svc.ContractInspector.Identities(f.Content)
+		decls, err := svc.ContractInspector.Declarations(f.Content)
 		if err != nil {
 			return fmt.Sprintf("the model returned %q, which is not a readable contract file: %v", f.Path, err)
 		}
-		for _, id := range ids {
-			after[identityKey(id)] = id
+		for _, d := range decls {
+			after[identityKey(d.Identity)] = d
 		}
 	}
 
@@ -303,13 +306,50 @@ func identityBreach(svc Services, files []ports.ProposedFile, originals map[stri
 				"the model's answer no longer declares %s. A fix corrects what a node declares; removing or renaming "+
 					"the node itself would leave the release nothing to validate, so the change could never be proven correct", k)
 		}
-		if now != was {
+		if now.Identity != was.Identity {
 			return fmt.Sprintf(
 				"the model's answer changed the fields that identify %s (%s). Those fields say which node the entry is, "+
-					"so changing one makes it a different node rather than a repaired one", k, identityDelta(was, now))
+					"so changing one makes it a different node rather than a repaired one", k, identityDelta(was.Identity, now.Identity))
+		}
+		if dropped := droppedReads(was.ReadKeys, now.ReadKeys); len(dropped) > 0 {
+			return fmt.Sprintf(
+				"the model's answer no longer declares the read %s of %s. Validation bind-checks the reads a contract still "+
+					"declares, so deleting one hides the failure instead of repairing it: the node's script — which this fix "+
+					"does not change — still performs that read, and no release would catch it again. A read may be corrected "+
+					"or replaced, never dropped", strings.Join(quoteAll(dropped), ", "), k)
 		}
 	}
 	return ""
+}
+
+// droppedReads returns the read names present before an edit and absent after
+// it, sorted, so an answer that deletes several always names them in the same
+// order. Names are compared verbatim: a read's name is how the node's script
+// asks for it, so a re-spelling is a rename, and a rename drops the name the
+// script uses.
+func droppedReads(was, now []string) []string {
+	kept := make(map[string]struct{}, len(now))
+	for _, k := range now {
+		kept[k] = struct{}{}
+	}
+	var gone []string
+	for _, k := range was {
+		if _, ok := kept[k]; !ok {
+			gone = append(gone, k)
+		}
+	}
+	sort.Strings(gone)
+	return gone
+}
+
+// quoteAll wraps each value in quotes so a rationale naming several reads reads
+// as a list of names rather than as running text.
+func quoteAll(vs []string) []string {
+	out := make([]string, len(vs))
+	for i, v := range vs {
+		out[i] = fmt.Sprintf("%q", v)
+	}
+	return out
 }
 
 // identityKey is the node id a contract entry declares — "<schema>.<table>",
