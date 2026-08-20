@@ -59,6 +59,7 @@ Rules:
 - This applies to production code, integration tests, unit-test fixtures, and adapter bindings (`message_processing.stream_name` values must come from the constant, not a local `const fooStreamName = "foo:v1"`).
 - The AST wiring detector in `pkg/streams/wiring_test.go` rejects hardcoded versioned-stream literals in service `main.go` files; new occurrences in handlers, bindings, or tests should be removed for the same reason.
 - Adding a new stream or group means editing `pkg/streams/contract.yaml`, regenerating (`go generate ./pkg/streams/...`), and committing the regenerated files. CI's `go generate && git diff --exit-code` check enforces freshness.
+- The AST guard `TestLifecycleGoNeverWrapsAServerStart` in `pkg/streams/lifecycle_wiring_test.go` discovers every service's `main.go` by glob and fails if a blocking-server method (`Start`/`Serve`/`ListenAndServe`/`ListenAndServeTLS`/`Run`) is called, inside a `lifecycleManager.Go(...)` tracked goroutine, on a receiver that is also stopped by a `RegisterShutdownHandler(...)` closure in the same file — that combination deadlocks the drain step of graceful shutdown, since the server can only return after the shutdown handler that follows the drain runs.
 
 # Install-level configuration must reach the code
 A property of the operator's environment — warehouse engine, region, auth mode, timezone, an external component's version — is declared once in `deploy/continuo/values.yaml` and must travel from there to every process that acts on it. Two halves of the same bug, both of which have shipped here:

@@ -85,7 +85,7 @@ func main() {
 	// config points the two Kubernetes probes at those DIFFERENT paths (see
 	// deploy/continuo/values.yaml). Worker registrations and consumer heartbeats
 	// feed both checks (a dead/wedged consumer restarts the pod); dependency
-	// probes (Redis/Postgres/dbt-warehouse) feed readiness ONLY (a backing-store
+	// probes (Redis/Postgres) feed readiness ONLY (a backing-store
 	// outage stops traffic but must not restart a pod whose consumers are already
 	// retrying).
 	liveReg := liveness.NewRegistry()
