@@ -16,10 +16,10 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/k8s-controller/adapters/s3"
 	"github.com/carolsimone/continuo/k8s-controller/config"
-	"github.com/carolsimone/continuo/k8s-controller/internal/lifecycle"
 	"github.com/carolsimone/continuo/k8s-controller/service/handlers"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
@@ -69,7 +69,7 @@ func main() {
 
 	// Step 3: Initialize lifecycle manager for graceful shutdown
 	lifecycleManager := lifecycle.NewApplicationLifecycle(logger)
-	lifecycleManager.SetupSignalHandlers(ctx, cancel)
+	lifecycleManager.SetupSignalHandlers(cancel, cfg.ShutdownGrace)
 
 	// Health registry feeding /ready (readiness) and /livez (liveness) — deploy
 	// config points the two Kubernetes probes at those DIFFERENT paths (see
@@ -204,7 +204,7 @@ func main() {
 	)
 
 	liveReg.RegisterWorker("outbox_processor")
-	go func() {
+	lifecycleManager.Go(func() {
 		logger.Info("Starting outbox processor")
 		err := outboxProc.Run(ctx)
 		if errors.Is(err, context.Canceled) {
@@ -214,7 +214,7 @@ func main() {
 		if err != nil {
 			logger.Error("Outbox processor stopped with error", "error", err)
 		}
-	}()
+	})
 
 	logger.Info("Outbox processor started")
 
@@ -224,7 +224,7 @@ func main() {
 	// nothing — the ZSET is durable and the next tick promotes the backlog.
 	promoter := delayqueue.NewPromoter(redisClient, logger)
 	liveReg.RegisterWorker("delayqueue_promoter")
-	go func() {
+	lifecycleManager.Go(func() {
 		logger.Info("Starting delay-queue promoter")
 		err := promoter.Run(ctx, time.Second)
 		if errors.Is(err, context.Canceled) {
@@ -234,7 +234,7 @@ func main() {
 		if err != nil {
 			logger.Error("Delay-queue promoter stopped with error", "error", err)
 		}
-	}()
+	})
 
 	logger.Info("Delay-queue promoter started")
 
@@ -255,7 +255,7 @@ func main() {
 	)
 
 	liveReg.RegisterWorker("stuck_entry_resolver")
-	go func() {
+	lifecycleManager.Go(func() {
 		logger.Info("Starting stuck entry resolver")
 		err := stuckEntryResolver.Run(ctx)
 		if errors.Is(err, context.Canceled) {
@@ -265,7 +265,7 @@ func main() {
 		if err != nil {
 			logger.Error("Stuck entry resolver stopped with error", "error", err)
 		}
-	}()
+	})
 
 	logger.Info("Stuck entry resolver started",
 		"check_interval", resolverConfig.CheckIntervalSeconds,
@@ -298,13 +298,13 @@ func main() {
 		logger,
 	)
 	runConsumer("schedule_cancelled", scheduleCancelledConsumer)
-	go func() {
+	lifecycleManager.Go(func() {
 		err := scheduleCancelledConsumer.Start(ctx)
 		liveReg.WorkerExited("schedule_cancelled", err)
 		if err != nil {
 			logger.Error("Schedule cancelled consumer error", "error", err)
 		}
-	}()
+	})
 
 	go func() {
 		ticker := time.NewTicker(time.Duration(cfg.CancelledSchedulesSweepIntervalMin) * time.Minute)
@@ -324,26 +324,32 @@ func main() {
 		}
 	}()
 
-	// Step 17: Start Redis consumers.
-	// The deployed consumer runs in the background; the check consumer runs as the main blocking loop.
+	// Step 17: Start Redis consumers as tracked goroutines. A consumer that
+	// exits with an error surfaces through the liveness registry (WorkerExited)
+	// rather than terminating the process; the liveness probe restarts the pod.
 	runConsumer("node_deployed", deployedConsumer)
-	go func() {
+	lifecycleManager.Go(func() {
 		logger.Info("Starting deployed consumer")
 		err := deployedConsumer.Start(ctx)
 		liveReg.WorkerExited("node_deployed", err)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("Deployed consumer stopped with error", "error", err)
 		}
-	}()
+	})
 
 	runConsumer("check_k8s", checkConsumer)
-	logger.Info("Starting check consumer (main loop)")
-	err = checkConsumer.Start(ctx)
-	liveReg.WorkerExited("check_k8s", err)
-	if err != nil && !errors.Is(err, context.Canceled) {
-		logger.Error("Check consumer stopped with error", "error", err)
-		os.Exit(1)
-	}
+	lifecycleManager.Go(func() {
+		logger.Info("Starting check consumer")
+		err := checkConsumer.Start(ctx)
+		liveReg.WorkerExited("check_k8s", err)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Check consumer stopped with error", "error", err)
+		}
+	})
+
+	// Block until the full shutdown sequence has completed: intake stopped,
+	// tracked goroutines drained, and infra-close handlers run.
+	<-lifecycleManager.Done()
 
 	logger.Info("k8s-controller service stopped")
 }

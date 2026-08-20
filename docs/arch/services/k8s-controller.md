@@ -81,6 +81,34 @@ The Kubernetes `readinessProbe` points at `/ready` and the `livenessProbe` at
 `/livez` (`deploy/continuo/values.yaml`: `readinessPath: /ready`,
 `livenessPath: /livez`).
 
+### Graceful shutdown
+
+On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence bounded by
+`SHUTDOWN_GRACE` (default 15s): (1) stop intake by cancelling the root context
+so the stream consumers (`node_deployed`, `check_k8s`, `schedule_cancelled`),
+the outbox processor, the delay-queue promoter, and the stuck-entry resolver
+return after their in-flight message or batch; (2) drain — wait on a
+WaitGroup for those tracked goroutines to return, capped at the grace period;
+(3) close infra — run the registered shutdown handlers (health HTTP server,
+Postgres, Redis) against a fresh live context derived from
+`context.Background()`, never the just-cancelled root context. `main` blocks
+on the lifecycle completion channel, so there is no fixed sleep. The
+cancelled-schedules TTL sweeper and the health server itself are not tracked
+goroutines: the sweeper's ticker loop returns instantly on cancellation with
+no in-flight work to drain, and the health server blocks in `ListenAndServe`
+until its own shutdown handler calls `Shutdown` in step 3, so tracking it
+would deadlock the drain against the very step that stops it.
+
+The `check_k8s` consumer runs as a tracked goroutine like every other
+consumer rather than as the process's main blocking loop: a permanent
+bootstrap or read-loop error calls `WorkerExited("check_k8s", err)`, which
+flips `/livez` to 503, and Kubernetes restarts the pod through the liveness
+probe rather than the process exiting itself. This trades an immediate exit
+for a bounded restart delay (up to `periodSeconds` × `failureThreshold` on
+the liveness probe) in exchange for every consumer failure going through the
+same graceful-shutdown sequence — Postgres and Redis connections close and
+the health server drains instead of being dropped mid-flight.
+
 ## Outbound Interfaces
 
 ### Redis producers (via outbox)
