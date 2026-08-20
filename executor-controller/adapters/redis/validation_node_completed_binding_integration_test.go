@@ -30,7 +30,7 @@ import (
 func buildNodeCompletedBinding(db *sqlx.DB) func(ctx context.Context, msg goredis.XMessage) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, logger)
+		return postgres.NewPostgresUnitOfWork(db, logger)
 	}
 	handler := handlers.NewValidationNodeCompletedHandler(logger)
 	return executorredis.NewValidationNodeCompletedBinding(uowFactory, handler, logger)

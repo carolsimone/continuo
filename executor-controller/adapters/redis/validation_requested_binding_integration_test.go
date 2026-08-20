@@ -41,7 +41,7 @@ func (r *recordingSchemaCreator) EnsureCandidateSchema(_ context.Context, schema
 func buildValidationBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) error, *recordingSchemaCreator) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, logger)
+		return postgres.NewPostgresUnitOfWork(db, logger)
 	}
 	handler := handlers.NewValidationRequestedHandler(logger)
 	creator := &recordingSchemaCreator{}

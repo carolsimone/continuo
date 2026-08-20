@@ -90,7 +90,7 @@ func setupPostgres(t *testing.T) (*sqlx.DB, func()) {
 func buildBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) error, *slog.Logger) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, logger)
+		return postgres.NewPostgresUnitOfWork(db, logger)
 	}
 	handler := handlers.NewQueryModelHandler(logger)
 	return executorredis.NewQueryModelBinding(uowFactory, handler, logger), logger

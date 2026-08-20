@@ -86,7 +86,7 @@ func (noopSchemaCreator) EnsureCandidateSchema(context.Context, string) error { 
 // binding over the live *sqlx.DB.
 func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XMessage) error {
 	logger := pipelineLogger()
-	uowFactory := func() uow.UnitOfWork { return uow.NewPostgresUnitOfWork(db, logger) }
+	uowFactory := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) }
 	return executorredis.NewValidationRequestedBinding(
 		uowFactory, handlers.NewValidationRequestedHandler(logger), noopSchemaCreator{}, logger)
 }
@@ -95,7 +95,7 @@ func newValidationRequestedBinding(db *sqlx.DB) func(context.Context, goredis.XM
 // binding over the live *sqlx.DB.
 func newNodeCompletedBinding(db *sqlx.DB) func(context.Context, goredis.XMessage) error {
 	logger := pipelineLogger()
-	uowFactory := func() uow.UnitOfWork { return uow.NewPostgresUnitOfWork(db, logger) }
+	uowFactory := func() uow.UnitOfWork { return postgres.NewPostgresUnitOfWork(db, logger) }
 	return executorredis.NewValidationNodeCompletedBinding(
 		uowFactory, handlers.NewValidationNodeCompletedHandler(logger), logger)
 }

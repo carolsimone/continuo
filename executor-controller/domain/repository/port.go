@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
+	"github.com/google/uuid"
 )
 
 // DeploymentRepository persists and loads Deployment aggregates from the
@@ -71,4 +72,13 @@ type ValidationAggregateRepository interface {
 	// emitted that leg). Keying on mode lets the same release emit both
 	// seed.build.completed:v1 and validation.result:v1 (kind=complete).
 	ClaimEmission(ctx context.Context, releaseID string, mode model.Mode, now time.Time) (bool, error)
+}
+
+// CancelledSchedulesRepository tracks schedule IDs whose deploys should be
+// dropped on receipt. Implementations operate against the cancelled_schedules
+// table (id, schedule_id UNIQUE, cancelled_at).
+type CancelledSchedulesRepository interface {
+	Insert(ctx context.Context, scheduleID uuid.UUID) error
+	Exists(ctx context.Context, scheduleID uuid.UUID) (bool, error)
+	DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error)
 }

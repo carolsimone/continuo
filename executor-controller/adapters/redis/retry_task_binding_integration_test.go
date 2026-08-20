@@ -47,7 +47,7 @@ func retryTaskXMessage(t *testing.T, msgID string, taskID, scheduleID uuid.UUID)
 func buildRetryBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) error, *slog.Logger) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, logger)
+		return postgres.NewPostgresUnitOfWork(db, logger)
 	}
 	handler := handlers.NewRetryTaskHandler(logger)
 	return executorredis.NewRetryTaskBinding(uowFactory, handler, logger), logger
