@@ -45,11 +45,11 @@ func newAnthropic(baseURL, apiKey, model string, client *http.Client) *anthropic
 
 // anthropicRequest is the JSON body sent to POST /v1/messages.
 type anthropicRequest struct {
-	Model     string              `json:"model"`
-	MaxTokens int                 `json:"max_tokens"`
-	System    string              `json:"system,omitempty"`
-	Messages  []anthropicMessage  `json:"messages"`
-	Tools     []anthropicTool     `json:"tools"`
+	Model      string              `json:"model"`
+	MaxTokens  int                 `json:"max_tokens"`
+	System     string              `json:"system,omitempty"`
+	Messages   []anthropicMessage  `json:"messages"`
+	Tools      []anthropicTool     `json:"tools"`
 	ToolChoice anthropicToolChoice `json:"tool_choice"`
 }
 
@@ -61,22 +61,9 @@ type anthropicMessage struct {
 
 // anthropicTool is a tool definition in the Anthropic API format.
 type anthropicTool struct {
-	Name        string              `json:"name"`
-	Description string              `json:"description"`
-	InputSchema anthropicInputSchema `json:"input_schema"`
-}
-
-// anthropicInputSchema is the JSON Schema object describing the tool's parameters.
-type anthropicInputSchema struct {
-	Type       string                          `json:"type"`
-	Properties map[string]anthropicParamProp   `json:"properties"`
-	Required   []string                        `json:"required"`
-}
-
-// anthropicParamProp is a single parameter definition within the input schema.
-type anthropicParamProp struct {
-	Type        string `json:"type"`
-	Description string `json:"description,omitempty"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	InputSchema objectSchema `json:"input_schema"`
 }
 
 // anthropicToolChoice forces the model to call a specific tool.
@@ -92,19 +79,28 @@ type anthropicResponse struct {
 
 // anthropicContentBlock is one element of the response content array.
 type anthropicContentBlock struct {
-	Type  string                `json:"type"`
-	Name  string                `json:"name,omitempty"`
-	Input anthropicToolInput    `json:"input,omitempty"`
+	Type  string             `json:"type"`
+	Name  string             `json:"name,omitempty"`
+	Input anthropicToolInput `json:"input,omitempty"`
 }
 
-// anthropicToolInput holds the structured fields returned by the propose_fix tool.
+// anthropicToolInput holds the structured fields returned by a fix tool.
+// Which of them a given response fills depends on the tool the request forced;
+// UpdatedFiles carries a multi-file answer, the other fields a single-file one.
 type anthropicToolInput struct {
-	ProposedSQL            string `json:"proposed_sql"`
-	ProposedContent        string `json:"proposed_content"`
-	TargetFile             string `json:"target_file"`
-	Rationale              string `json:"rationale"`
-	Confidence             string `json:"confidence"`
-	SuspectedRootCauseNode string `json:"suspected_root_cause_node"`
+	ProposedSQL            string                 `json:"proposed_sql"`
+	ProposedContent        string                 `json:"proposed_content"`
+	TargetFile             string                 `json:"target_file"`
+	UpdatedFiles           []anthropicUpdatedFile `json:"updated_files"`
+	Rationale              string                 `json:"rationale"`
+	Confidence             string                 `json:"confidence"`
+	SuspectedRootCauseNode string                 `json:"suspected_root_cause_node"`
+}
+
+// anthropicUpdatedFile is one entry of a multi-file answer's updated_files array.
+type anthropicUpdatedFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 // Propose sends a single-shot, tool-forced request to the Anthropic Messages API and
@@ -134,23 +130,11 @@ func (p *anthropicProvider) Propose(ctx context.Context, req ports.ProposeReques
 		return ports.ProposeResult{}, fmt.Errorf("anthropic: %d: %s", resp.StatusCode, strings.TrimSpace(string(limitedBody)))
 	}
 
-	return p.parseResponse(resp.Body)
+	return p.parseResponse(resp.Body, req.ToolName)
 }
 
 // buildRequest marshals the ProposeRequest into the Anthropic wire format.
 func (p *anthropicProvider) buildRequest(req ports.ProposeRequest) ([]byte, error) {
-	props := make(map[string]anthropicParamProp, len(req.ToolParams))
-	required := make([]string, 0, len(req.ToolParams))
-	for _, param := range req.ToolParams {
-		props[param.Name] = anthropicParamProp{
-			Type:        param.Type,
-			Description: param.Description,
-		}
-		if param.Required {
-			required = append(required, param.Name)
-		}
-	}
-
 	wireReq := anthropicRequest{
 		Model:     p.model,
 		MaxTokens: 16000,
@@ -162,11 +146,7 @@ func (p *anthropicProvider) buildRequest(req ports.ProposeRequest) ([]byte, erro
 			{
 				Name:        req.ToolName,
 				Description: req.ToolDescription,
-				InputSchema: anthropicInputSchema{
-					Type:       "object",
-					Properties: props,
-					Required:   required,
-				},
+				InputSchema: buildToolSchema(req.ToolParams),
 			},
 		},
 		ToolChoice: anthropicToolChoice{
@@ -178,19 +158,22 @@ func (p *anthropicProvider) buildRequest(req ports.ProposeRequest) ([]byte, erro
 	return json.Marshal(wireReq)
 }
 
-// parseResponse reads the Anthropic response body and extracts the propose_fix tool input.
-func (p *anthropicProvider) parseResponse(r io.Reader) (ports.ProposeResult, error) {
+// parseResponse reads the Anthropic response body and extracts the input of
+// the tool_use block for toolName — the tool this request itself forced, so
+// every fixer's differently-named tool parses through the same path.
+func (p *anthropicProvider) parseResponse(r io.Reader, toolName string) (ports.ProposeResult, error) {
 	var resp anthropicResponse
 	if err := json.NewDecoder(r).Decode(&resp); err != nil {
 		return ports.ProposeResult{}, fmt.Errorf("anthropic: decode response: %w", err)
 	}
 
 	for _, block := range resp.Content {
-		if block.Type == "tool_use" && block.Name == "propose_fix" {
+		if block.Type == "tool_use" && block.Name == toolName {
 			return ports.ProposeResult{
 				ProposedSQL:            block.Input.ProposedSQL,
 				ProposedContent:        block.Input.ProposedContent,
 				TargetFile:             block.Input.TargetFile,
+				Files:                  anthropicFiles(block.Input.UpdatedFiles),
 				Rationale:              block.Input.Rationale,
 				Confidence:             block.Input.Confidence,
 				SuspectedRootCauseNode: block.Input.SuspectedRootCauseNode,
@@ -199,5 +182,18 @@ func (p *anthropicProvider) parseResponse(r io.Reader) (ports.ProposeResult, err
 		}
 	}
 
-	return ports.ProposeResult{}, fmt.Errorf("anthropic: propose_fix tool_use block not found in response")
+	return ports.ProposeResult{}, fmt.Errorf("anthropic: %s tool_use block not found in response", toolName)
+}
+
+// anthropicFiles converts the wire form of a multi-file answer to the
+// provider-agnostic one.
+func anthropicFiles(in []anthropicUpdatedFile) []ports.ProposedFile {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ports.ProposedFile, 0, len(in))
+	for _, f := range in {
+		out = append(out, ports.ProposedFile{Path: f.Path, Content: f.Content})
+	}
+	return out
 }

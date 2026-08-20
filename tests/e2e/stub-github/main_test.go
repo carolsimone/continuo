@@ -1,10 +1,15 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -455,5 +460,82 @@ func TestHandleGitRefs_UpdatePatch(t *testing.T) {
 	}
 	if resp.Object.SHA != "newcommitsha0" {
 		t.Errorf("expected updated sha %q, got %q", "newcommitsha0", resp.Object.SHA)
+	}
+}
+
+// TestHandleTarball_ServesFixtureUnderSingleTopDirectory verifies the shape the
+// remediation-agent's archive reader depends on: a gzipped tar whose every
+// entry sits under exactly one top-level directory named "{repo}-{ref}". The
+// reader strips that one leading segment, so an archive without it would
+// extract a directory level too high and no contract file would be found.
+func TestHandleTarball_ServesFixtureUnderSingleTopDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "services", "svc", "contracts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "services", "svc", "contracts", "n.yml"),
+		[]byte("nodes: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := repoFixtureDir
+	repoFixtureDir = root
+	defer func() { repoFixtureDir = prev }()
+
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/owner/my-repo/tarball/deadbeef", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/gzip" {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+
+	gz, err := gzip.NewReader(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("open gzip stream: %v", err)
+	}
+	tr := tar.NewReader(gz)
+	var names []string
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+		names = append(names, hdr.Name)
+	}
+	if len(names) == 0 {
+		t.Fatal("archive is empty")
+	}
+	const top = "my-repo-deadbeef/"
+	for _, n := range names {
+		if !strings.HasPrefix(n, top) {
+			t.Errorf("entry %q is not under the single top-level directory %q", n, top)
+		}
+	}
+	want := top + "services/svc/contracts/n.yml"
+	found := false
+	for _, n := range names {
+		if n == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected entry %q, got %v", want, names)
+	}
+}
+
+// TestHandleTarball_NoFixtureIs404 verifies that a stub with no repository
+// fixture reports the repository as absent, which the archive reader maps to a
+// permanent "not available" skip rather than a retry loop.
+func TestHandleTarball_NoFixtureIs404(t *testing.T) {
+	prev := repoFixtureDir
+	repoFixtureDir = ""
+	defer func() { repoFixtureDir = prev }()
+
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet, "/repos/owner/my-repo/tarball/deadbeef", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }

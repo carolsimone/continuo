@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { ReleaseListItem, ReleasesListResponse, CurrentProd } from './types';
 import { firstInFlight, releasePillClass, reasonLabel } from './release-helpers';
 
-const STATUS_FILTERS = ['', 'promoted', 'rejected', 'superseded', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
+const STATUS_FILTERS = ['', 'promoted', 'validated', 'rejected', 'superseded', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
 
 export default function ReleasesPanel() {
   const navigate = useNavigate();
@@ -116,6 +116,9 @@ export default function ReleasesPanel() {
                     >
                       {r.release_id}
                     </Link>
+                    {r.shadow && (
+                      <>{' '}<span className="pill-sm pill-sm--verification">verification</span></>
+                    )}
                   </td>
                   <td>
                     <span className={`pill-sm ${releasePillClass(r.status).replace('pill--', 'pill-sm--')}`}>

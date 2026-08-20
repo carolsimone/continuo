@@ -3,7 +3,7 @@ import { firstInFlight, IN_FLIGHT_STATUSES, releasePillClass, reasonLabel } from
 import { ReleaseListItem } from '../../src/client/types';
 
 const mk = (id: string, status: string): ReleaseListItem => ({
-  release_id: id, status, created_at: '', resolved_at: null, node_count: 0, bootstrap: false,
+  release_id: id, status, created_at: '', resolved_at: null, node_count: 0, bootstrap: false, shadow: false,
 });
 
 describe('firstInFlight', () => {
@@ -33,6 +33,11 @@ describe('releasePillClass', () => {
     expect(releasePillClass('seed_building')).toBe('pill--running');
     expect(releasePillClass('received')).toBe('pill--pending');
     expect(releasePillClass('superseded')).toBe('pill--cancelled');
+  });
+
+  it('maps validated (a shadow release that passed verification) to succeeded, not the pending fallback', () => {
+    expect(releasePillClass('validated')).not.toBe('pill--pending');
+    expect(releasePillClass('validated')).toBe('pill--succeeded');
   });
 
   it('maps per-node validation statuses (ok / failed) to pill variants', () => {

@@ -2,7 +2,9 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidator_Require_present(t *testing.T) {
@@ -118,4 +120,54 @@ func TestEnvBoolOrDefault(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidatorDurationOrDefault pins the difference between a value an
+// operator never set and one they set wrongly.
+//
+// An unset key is a service running its own default, which is the intended
+// shape of every optional duration. A key set to something that is not a Go
+// duration is an operator who asked for a specific behaviour and would silently
+// get a different one: the install looks configured, and nothing anywhere says
+// otherwise. That is a start-up failure naming the key, not a fallback.
+func TestValidatorDurationOrDefault(t *testing.T) {
+	const key = "TEST_DURATION_VAR"
+
+	t.Run("unset uses the fallback and reports nothing", func(t *testing.T) {
+		os.Unsetenv(key)
+		v := &Validator{}
+		if got := v.DurationOrDefault(key, time.Minute); got != time.Minute {
+			t.Errorf("DurationOrDefault = %v, want the fallback %v", got, time.Minute)
+		}
+		if len(v.Missing()) != 0 {
+			t.Errorf("Missing() = %v, want empty: an unset optional key is not a misconfiguration", v.Missing())
+		}
+	})
+
+	t.Run("a valid duration is used", func(t *testing.T) {
+		t.Setenv(key, "90s")
+		v := &Validator{}
+		if got := v.DurationOrDefault(key, time.Minute); got != 90*time.Second {
+			t.Errorf("DurationOrDefault = %v, want 90s", got)
+		}
+		if len(v.Missing()) != 0 {
+			t.Errorf("Missing() = %v, want empty", v.Missing())
+		}
+	})
+
+	t.Run("an unparseable value fails start-up and names the key", func(t *testing.T) {
+		t.Setenv(key, "20 minutes")
+		v := &Validator{}
+		got := v.DurationOrDefault(key, time.Minute)
+		if got != time.Minute {
+			t.Errorf("DurationOrDefault = %v, want the fallback so the caller holds a usable value while start-up fails", got)
+		}
+		missing := v.Missing()
+		if len(missing) != 1 {
+			t.Fatalf("Missing() = %v, want exactly one recorded failure", missing)
+		}
+		if !strings.Contains(missing[0], key) {
+			t.Errorf("Missing()[0] = %q, want it to name %q so the boot log says which key is wrong", missing[0], key)
+		}
+	})
 }

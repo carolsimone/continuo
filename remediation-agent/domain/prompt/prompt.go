@@ -45,11 +45,18 @@ type Evidence struct {
 	Precedents      []Precedent
 }
 
+// ToolParam is one parameter of the forced tool's JSON-Schema object.
 type ToolParam struct {
 	Name        string
 	Type        string
 	Description string
 	Required    bool
+	// Items describes one element of an array parameter: the properties of
+	// the object each element is, all of them required. It is set only when
+	// Type is "array"; the provider adapters render it as the parameter's
+	// JSON-Schema "items" subschema, so the model is told the shape of an
+	// element rather than left to infer it from the description.
+	Items []ToolParam
 }
 
 type ProposeRequest struct {
@@ -275,22 +282,7 @@ func Assemble(ev Evidence) ProposeRequest {
 	if ev.OwnChangeDiff != "" {
 		fmt.Fprintf(&u, "What this release changed in the failing model (last promoted -> candidate):\n```diff\n%s\n```\n\n", ev.OwnChangeDiff)
 	}
-	if len(ev.UpstreamChanges) > 0 {
-		u.WriteString("Recent upstream changes, most recent first (each ancestor's code and resolved-config diff):\n")
-		for _, c := range ev.UpstreamChanges {
-			fmt.Fprintf(&u, "Upstream %s (depth=%d):\n", c.NodeID, c.Depth)
-			if c.CodeDiff != "" {
-				fmt.Fprintf(&u, "```diff\n%s\n```\n", c.CodeDiff)
-			}
-			if c.ConfigDiff != "" {
-				fmt.Fprintf(&u, "Config change:\n```diff\n%s\n```\n", c.ConfigDiff)
-			}
-			if c.Truncated {
-				u.WriteString("(diff truncated)\n")
-			}
-		}
-		u.WriteString("\n")
-	}
+	renderUpstreamChanges(&u, ev.UpstreamChanges)
 	renderPrecedents(&u, ev.Precedents)
 	u.WriteString("Propose a corrected version of the failed model's SQL.")
 

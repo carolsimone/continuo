@@ -141,6 +141,68 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	}
 }
 
+func TestClassifyFailure_ShadowRecordsDropAndEmitsNothing(t *testing.T) {
+	// A shadow release's rejection must still produce an audit row (so the drop
+	// is never invisible), but must never enqueue a remediation trigger — a
+	// failed fix attempt triggering a remediation of itself would loop forever.
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	ev := failure.FailureEvidence{
+		Source:    failure.SourceValidation,
+		ReleaseID: "r1",
+		NodeID:    "s.n",
+		DBTLogURI: "s3://b/k",
+		Shadow:    true,
+	}
+	err := ClassifyFailure(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.dec.saved) != 1 {
+		t.Fatalf("expected 1 decision recorded, got %d", len(u.dec.saved))
+	}
+	d := u.dec.saved[0]
+	if d.Decision != failure.DecisionDrop {
+		t.Fatalf("decision = %q, want drop", d.Decision)
+	}
+	if d.Reason != "shadow_verification" {
+		t.Fatalf("reason = %q, want shadow_verification", d.Reason)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatalf("shadow rejection must not emit a trigger, got %d", len(u.ob.entries))
+	}
+}
+
+func TestClassifyFailure_NonShadowStillEmits(t *testing.T) {
+	// Control: with Shadow=false, behavior must stay byte-identical to the
+	// pre-shadow classifier — same decision, same reason, and the healable
+	// category still emits exactly one trigger.
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	ev := failure.FailureEvidence{
+		Source:    failure.SourceValidation,
+		ReleaseID: "r1",
+		NodeID:    "s.n",
+		DBTLogURI: "s3://b/k",
+		Shadow:    false,
+	}
+	err := ClassifyFailure(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.dec.saved) != 1 {
+		t.Fatalf("expected 1 decision recorded, got %d", len(u.dec.saved))
+	}
+	d := u.dec.saved[0]
+	if d.Decision != failure.DecisionEmit {
+		t.Fatalf("decision = %q, want emit", d.Decision)
+	}
+	if d.Reason != "logic:missing_object" {
+		t.Fatalf("reason = %q, want logic:missing_object", d.Reason)
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("non-shadow healable failure must emit exactly 1 trigger, got %d", len(u.ob.entries))
+	}
+}
+
 func TestClassifyFailure_StructuredBranchWinsOverLog(t *testing.T) {
 	// The text log alone would classify infra (drop, no trigger); the structured
 	// run_results says status=fail (a test), which is healable and must emit.

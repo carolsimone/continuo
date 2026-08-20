@@ -20,6 +20,13 @@ var (
 	// ErrNotSourceResolved is returned by BeginPR when the proposal has not
 	// completed source resolution (source_resolved=false), so a PR cannot be opened.
 	ErrNotSourceResolved = errors.New("proposal source not resolved")
+	// ErrNotProposed is returned by BeginPR when the attempt has not reached
+	// 'proposed'. A fix still being generated, still being verified by a shadow
+	// release, or already rejected by one is not a fix anyone may open a pull
+	// request for, and status is the only thing that says so: a python contract
+	// fix carries source_resolved=true from the moment it is submitted for
+	// verification, and a shadow rejection changes nothing but the status.
+	ErrNotProposed = errors.New("proposal is not in the proposed state")
 )
 
 // ProposalFilter constrains the rows returned by ProposalRepository.List.
@@ -27,7 +34,22 @@ var (
 type ProposalFilter struct {
 	Status  string
 	PRState string
-	Limit   int
+	// ReleaseID, Source, and NodeID together address the attempts recorded
+	// for one failing node in one release — the slice a fixer reads to show
+	// the model what earlier attempts tried and why they were rejected.
+	ReleaseID string
+	Source    string
+	NodeID    string
+	Limit     int
+}
+
+// AttemptLister is the repository slice a fixer reads while assembling
+// evidence: the attempts already recorded for the failing node it is fixing.
+// It is a narrower view of the List method ProposalRepository already
+// declares, so a consumer that only needs this one slice does not have to
+// depend on the full repository.
+type AttemptLister interface {
+	List(ctx context.Context, filter ProposalFilter) ([]proposal.View, error)
 }
 
 // OpeningCursor is the keyset position for paginating stuck 'opening' claims
@@ -67,9 +89,11 @@ type OpeningLister interface {
 // UnitOfWork, so methods take only ctx + domain types.
 type ProposalRepository interface {
 	// CountAttempts returns the number of TERMINAL proposal attempts recorded for
-	// the (source, nodeID, errorSignature) triplet. In-flight 'generating' rows
-	// are excluded so the in-progress attempt neither inflates the attempt cap nor
-	// double-counts on a redelivery.
+	// the (source, nodeID, errorSignature) triplet. In-flight rows — 'generating'
+	// (the model call has not resolved) and 'verifying' (a shadow release is
+	// still validating a proposed fix) — are excluded so an attempt that has not
+	// yet concluded neither inflates the attempt cap nor shifts the attempt
+	// number on a redelivery.
 	CountAttempts(ctx context.Context, source, nodeID, errorSignature string) (int, error)
 
 	// InsertGenerating persists an in-flight 'generating' row for the attempt just
@@ -77,6 +101,24 @@ type ProposalRepository interface {
 	// same attempt collides on (release_id, source, node_id, attempt) and is a
 	// no-op, so at most one generating row exists per attempt.
 	InsertGenerating(ctx context.Context, p proposal.Proposal) error
+
+	// FailGenerating finalizes the in-flight 'generating' row recorded for the
+	// (releaseID, source, nodeID, errorSignature) attempt, transitioning it to
+	// 'failed' with reason as its rationale, and returns how many rows it moved.
+	//
+	// It exists for the one writer that starts an attempt with nothing behind it
+	// to redeliver. A trigger consumed from the stream is redelivered when the
+	// driver errors, and the redelivery reuses the in-flight row the driver had
+	// already committed. The shadow-verification reconciler starts an attempt
+	// from a release's verdict instead, so when the driver errors there the row
+	// stays in flight with nothing that will ever finish it — and every reader,
+	// the release page included, keeps reporting a fix as still being generated.
+	//
+	// releaseID scopes the write to the attempt that actually failed. The same
+	// node failing the same way under two releases at once shares a source, node
+	// id and error signature, so without it this would fail an unrelated
+	// release's in-flight attempt and spend one of that release's attempts.
+	FailGenerating(ctx context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error)
 
 	// Upsert records the terminal outcome of an attempt on the natural key
 	// (release_id, source, node_id, attempt): it finalizes the in-flight
@@ -98,8 +140,13 @@ type ProposalRepository interface {
 	// claimedAt. It returns the data needed to open the PR, including the
 	// claimed ClaimedAt read back from the row — the caller carries this value
 	// forward and hands it to FailStuckOpeningPR if it later needs to release
-	// this exact claim. Returns ErrNotSourceResolved if source_resolved=false,
-	// ErrPRConflict if already claimed, ErrNotFound if the id is unknown.
+	// this exact claim. Claiming requires status='proposed' as well as
+	// source_resolved, and the compare-and-set carries both conditions, so a
+	// fix still being generated or verified — or one a shadow release already
+	// rejected — can never be turned into a pull request. Returns
+	// ErrNotSourceResolved if source_resolved=false, ErrNotProposed if the
+	// attempt has not reached 'proposed', ErrPRConflict if already claimed,
+	// ErrNotFound if the id is unknown.
 	BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error)
 
 	// RecordPR atomically transitions pr_state 'opening' -> 'open', writing
@@ -150,4 +197,22 @@ type ProposalRepository interface {
 	// pr_closed_at. Returns true when the transition fired; false when the row is
 	// no longer in 'open' (already terminal or never opened) — an idempotent no-op.
 	RecordPROutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) (bool, error)
+
+	// ListVerifying returns proposals awaiting shadow-release verification
+	// (status='verifying'), oldest first, capped at 20 rows so the polling
+	// reconciler always makes bounded progress across every in-flight
+	// verification rather than being starved by one stuck row.
+	ListVerifying(ctx context.Context) ([]proposal.View, error)
+
+	// MarkVerified finalizes a proposal whose shadow release validated the
+	// fix, transitioning status 'verifying' -> 'proposed'. hit reports
+	// whether the CAS fired; false means the row was no longer 'verifying' —
+	// already finalized by a concurrent or repeated reconciler pass.
+	MarkVerified(ctx context.Context, id string) (hit bool, err error)
+
+	// MarkVerifyFailed finalizes a proposal whose shadow release failed to
+	// validate the fix, transitioning status 'verifying' -> 'failed' and
+	// recording verifyErr so the next attempt can use it as evidence. hit
+	// reports whether the CAS fired, with the same semantics as MarkVerified.
+	MarkVerifyFailed(ctx context.Context, id, verifyErr string) (hit bool, err error)
 }

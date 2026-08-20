@@ -455,6 +455,7 @@ services:
       - localstack
       - stub-llm
       - stub-github
+      - release-controller
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -482,6 +483,13 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - GITHUB_BASE_URL=${GITHUB_BASE_URL:-http://stub-github:9200}
       - SERVICE_REPO_MAP_PATH=/etc/continuo/service_repos.yaml
+      # sqlglot dialect continuo-runtime packages python-node fix proposals
+      # with. Mirrors the chart's validation.engine; the local stack runs
+      # Postgres, same as manifest-controller's WAREHOUSE_ENGINE.
+      - WAREHOUSE_ENGINE=postgres
+      - RELEASE_CONTROLLER_URL=http://release-controller:8088
+      - SHADOW_VERIFY_TIMEOUT=${SHADOW_VERIFY_TIMEOUT:-20m}
+      - SHADOW_VERIFY_POLL_INTERVAL=${SHADOW_VERIFY_POLL_INTERVAL:-5s}
     volumes:
       - ./remediation-agent/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
     ports:
@@ -505,6 +513,14 @@ services:
     build:
       context: ./tests/e2e/stub-github
     container_name: stub-github
+    environment:
+      # The working tree stub-github serves from GET /repos/{o}/{r}/tarball/{ref}.
+      # remediation-agent fetches a whole repository checkout there when it
+      # repairs a python node, whose declaring contract yaml has no recorded
+      # path and so has to be searched for across the tree.
+      - REPO_FIXTURE_DIR=/fixtures/repo
+    volumes:
+      - ./tests/e2e/fixtures/py-remediation-repo:/fixtures/repo:ro
     ports:
       - "9200:9200"
     networks:

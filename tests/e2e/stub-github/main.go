@@ -43,6 +43,12 @@
 //	    Returns 404 — the remediation-agent's directory-listing read path,
 //	    which treats a 404 as "nothing more to list".
 //
+//	GET  /repos/{owner}/{repo}/tarball/{ref}
+//	    Returns a gzipped tar of the working tree at REPO_FIXTURE_DIR, nested
+//	    under a single "{repo}-{ref}/" directory the way GitHub's archive
+//	    endpoint does — the remediation-agent's whole-repository read path.
+//	    404 when no fixture directory is configured or it cannot be read.
+//
 //	POST /repos/{owner}/{repo}/pulls
 //	    Opens a PR (stub). Returns 201 with an auto-incrementing number and html_url.
 //
@@ -63,18 +69,30 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// repoFixtureDir is the directory this stub serves as the working tree of
+// every repository it is asked for a tarball of. Docker Compose bind-mounts
+// the e2e fixture repository there. Empty (the default) means no repository
+// exists as far as this stub is concerned, and the tarball route answers 404.
+var repoFixtureDir = os.Getenv("REPO_FIXTURE_DIR")
 
 // ftableESource is the canned dbt model source for ftable_e as it exists in
 // version control. It uses {{ ref(...) }} macros (real source) rather than the
@@ -254,6 +272,8 @@ func handleRepos(w http.ResponseWriter, r *http.Request) {
 		handleGitTrees(w, r)
 	case strings.HasPrefix(rest, "contents/"):
 		handleContents(w, r)
+	case strings.HasPrefix(rest, "tarball/"):
+		handleTarball(w, r)
 	case rest == "pulls" || strings.HasPrefix(rest, "pulls"):
 		handlePulls(w, r)
 	default:
@@ -465,6 +485,108 @@ func handleContents(w http.ResponseWriter, r *http.Request) {
 	}
 	// JSON-Accept directory listing: no such path in the stub.
 	http.Error(w, "not found", http.StatusNotFound)
+}
+
+// handleTarball responds to GET /repos/{owner}/{repo}/tarball/{ref} with a
+// gzipped tar of the working tree at repoFixtureDir, for every owner, repo,
+// and ref alike — the stub holds one repository, not a history.
+//
+// Every entry is nested under a single top-level directory named
+// "{repo}-{ref}", which is the shape GitHub's archive endpoint returns and
+// which the reader on the other side relies on: it strips exactly one leading
+// path segment from each entry, so a flat archive would extract one directory
+// level too high.
+//
+// A stub with no fixture directory configured answers 404, which the reader
+// maps to "repository not available" — a clean, permanent skip rather than a
+// hang or a half-written archive.
+func handleTarball(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Path shape: /repos/{owner}/{repo}/tarball/{ref}. The ref keeps any
+	// slashes it carries (refs/heads/main), so it is taken as the remainder.
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/repos/"), "/", 4)
+	if len(parts) < 4 || parts[3] == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	repo, ref := parts[1], strings.ReplaceAll(parts[3], "/", "-")
+
+	if repoFixtureDir == "" {
+		http.Error(w, "no repository fixture configured", http.StatusNotFound)
+		return
+	}
+	if _, err := os.Stat(repoFixtureDir); err != nil {
+		log.Printf("stub-github: repository fixture %q unreadable: %v", repoFixtureDir, err)
+		http.Error(w, "no repository fixture configured", http.StatusNotFound)
+		return
+	}
+
+	// The archive is assembled in memory before a single byte is written, so a
+	// walk that fails part-way answers 500 rather than a truncated gzip stream
+	// the reader would report as a corrupt archive.
+	body, err := tarballOf(repoFixtureDir, fmt.Sprintf("%s-%s/", repo, ref))
+	if err != nil {
+		log.Printf("stub-github: build tarball for %s@%s: %v", repo, ref, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/gzip")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// tarballOf walks root and returns a gzipped tar of every directory and
+// regular file under it, each entry named prefix + its root-relative path.
+// Irregular entries (symlinks, sockets, devices) are skipped: the reader on
+// the other side refuses to recreate them anyway.
+func tarballOf(root, prefix string) ([]byte, error) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil // the root itself; prefix already stands in for it
+		}
+		name := prefix + filepath.ToSlash(rel)
+		if d.IsDir() {
+			return tw.WriteHeader(&tar.Header{Name: name + "/", Typeflag: tar.TypeDir, Mode: 0o755})
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		content, err := os.ReadFile(path) //nolint:gosec // path comes from WalkDir over repoFixtureDir, the operator-configured fixture root, not from the request.
+		if err != nil {
+			return err
+		}
+		if err := tw.WriteHeader(&tar.Header{
+			Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(content)),
+		}); err != nil {
+			return err
+		}
+		_, err = tw.Write(content)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // handlePulls routes /repos/{o}/{r}/pulls[...]:

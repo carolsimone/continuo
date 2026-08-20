@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,4 +142,177 @@ func TestLoad_ServiceRepoMapPath_MissingFile(t *testing.T) {
 	require.Empty(t, v.Missing())
 	assert.NotNil(t, cfg.ServiceRepoPaths)
 	assert.Empty(t, cfg.ServiceRepoPaths)
+}
+
+// TestLoad_SQLDialectDefaultsToPostgres verifies that an install which never
+// set WAREHOUSE_ENGINE (the same ConfigMap key manifest-controller reads for
+// its own parser dialect) keeps packaging against postgres.
+func TestLoad_SQLDialectDefaultsToPostgres(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("WAREHOUSE_ENGINE", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "postgres", cfg.SQLDialect)
+}
+
+// TestLoad_SQLDialectMapsSupportedEngines verifies every engine the chart's
+// validation.engine allows maps to a continuo-runtime --dialect value.
+func TestLoad_SQLDialectMapsSupportedEngines(t *testing.T) {
+	for _, tc := range []struct{ engine, dialect string }{
+		{"postgres", "postgres"},
+		{"trino", "trino"},
+	} {
+		t.Run(tc.engine, func(t *testing.T) {
+			setBaseEnv(t)
+			t.Setenv("WAREHOUSE_ENGINE", tc.engine)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			require.Empty(t, v.Missing())
+			assert.Equal(t, tc.dialect, cfg.SQLDialect)
+		})
+	}
+}
+
+// TestLoad_SQLDialectRejectsUnsupportedEngine verifies that an engine with no
+// dialect mapping fails startup instead of silently packaging under the
+// wrong dialect. Falling back to postgres would render SQL a non-postgres
+// warehouse rejects, and further from the cause than a boot-time failure.
+func TestLoad_SQLDialectRejectsUnsupportedEngine(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("WAREHOUSE_ENGINE", "duckdb")
+	v := &pkgconfig.Validator{}
+	Load(v)
+	missing := v.Missing()
+	require.NotEmpty(t, missing, "an unsupported WAREHOUSE_ENGINE must fail startup")
+	assert.Contains(t, strings.Join(missing, " "), "duckdb")
+}
+
+// TestLoad_ReleaseGatewayDefaults verifies that an install which never set
+// RELEASE_CONTROLLER_URL or SHADOW_VERIFY_TIMEOUT gets the documented
+// defaults: the release-controller's in-cluster service address, and a 20
+// minute cap on how long a shadow verification is polled for.
+func TestLoad_ReleaseGatewayDefaults(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("RELEASE_CONTROLLER_URL", "")
+	t.Setenv("SHADOW_VERIFY_TIMEOUT", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "http://release-controller:8088", cfg.ReleaseControllerURL)
+	assert.Equal(t, 20*time.Minute, cfg.ShadowVerifyTimeout)
+}
+
+// TestLoad_ReleaseGatewayOverrides verifies both env vars override their
+// defaults.
+func TestLoad_ReleaseGatewayOverrides(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("RELEASE_CONTROLLER_URL", "http://release-controller.other:9000")
+	t.Setenv("SHADOW_VERIFY_TIMEOUT", "5m")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, "http://release-controller.other:9000", cfg.ReleaseControllerURL)
+	assert.Equal(t, 5*time.Minute, cfg.ShadowVerifyTimeout)
+}
+
+// TestLoad_ShadowVerifyTimeoutNonPositiveFallsBackToDefault verifies a zero
+// or negative timeout is clamped back to the default rather than producing a
+// poll loop with no cap (0) or one that never runs (negative).
+func TestLoad_ShadowVerifyTimeoutNonPositiveFallsBackToDefault(t *testing.T) {
+	for _, val := range []string{"0s", "-1s"} {
+		t.Run(val, func(t *testing.T) {
+			setBaseEnv(t)
+			t.Setenv("SHADOW_VERIFY_TIMEOUT", val)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			require.Empty(t, v.Missing())
+			assert.Equal(t, 20*time.Minute, cfg.ShadowVerifyTimeout)
+		})
+	}
+}
+
+// TestLoad_ShadowVerifyPollIntervalDefault verifies an install that never set
+// SHADOW_VERIFY_POLL_INTERVAL gets the documented 15 second cadence for the
+// loop that reads each waiting attempt's shadow release.
+func TestLoad_ShadowVerifyPollIntervalDefault(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("SHADOW_VERIFY_POLL_INTERVAL", "")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, 15*time.Second, cfg.ShadowVerifyPollInterval)
+}
+
+// TestLoad_ShadowVerifyPollIntervalOverride verifies the env var overrides the
+// default cadence.
+func TestLoad_ShadowVerifyPollIntervalOverride(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("SHADOW_VERIFY_POLL_INTERVAL", "5s")
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+	require.Empty(t, v.Missing())
+	assert.Equal(t, 5*time.Second, cfg.ShadowVerifyPollInterval)
+}
+
+// TestLoad_ShadowVerifyPollIntervalNonPositiveFallsBackToDefault verifies a
+// zero or negative interval is clamped back to the default rather than
+// producing a hot loop (0 panics a ticker) or one that never runs.
+func TestLoad_ShadowVerifyPollIntervalNonPositiveFallsBackToDefault(t *testing.T) {
+	for _, val := range []string{"0s", "-1s"} {
+		t.Run(val, func(t *testing.T) {
+			setBaseEnv(t)
+			t.Setenv("SHADOW_VERIFY_POLL_INTERVAL", val)
+			v := &pkgconfig.Validator{}
+			cfg := Load(v)
+			require.Empty(t, v.Missing())
+			assert.Equal(t, 15*time.Second, cfg.ShadowVerifyPollInterval)
+		})
+	}
+}
+
+// TestLoad_MalformedDurationFailsStartup pins the fail-closed rule for every
+// duration an operator can override.
+//
+// Each of these keys reaches the service from the chart's values, and a value
+// the service cannot read is an operator who asked for one behaviour and would
+// have got a different one with nothing anywhere saying so: the install looks
+// configured, the key greps cleanly in values.yaml, and the process runs the
+// author's default. Start-up fails naming the key instead.
+func TestLoad_MalformedDurationFailsStartup(t *testing.T) {
+	for _, key := range []string{
+		"LLM_CACHE_TTL",
+		"REMEDIATION_PR_POLL_INTERVAL",
+		"REMEDIATION_PR_OPENING_GRACE_PERIOD",
+		"SHADOW_VERIFY_TIMEOUT",
+		"SHADOW_VERIFY_POLL_INTERVAL",
+	} {
+		t.Run(key, func(t *testing.T) {
+			setBaseEnv(t)
+			t.Setenv(key, "20 minutes") // not a Go duration
+			v := &pkgconfig.Validator{}
+			Load(v)
+
+			missing := v.Missing()
+			require.Len(t, missing, 1, "a value the service cannot honour must stop start-up")
+			assert.Contains(t, missing[0], key,
+				"the boot log must name the key the operator has to correct")
+		})
+	}
+}
+
+// TestLoad_UnsetDurationIsNotAMisconfiguration is the control: every one of
+// those keys stays optional. An install that never set them boots on the
+// documented defaults.
+func TestLoad_UnsetDurationIsNotAMisconfiguration(t *testing.T) {
+	setBaseEnv(t)
+	v := &pkgconfig.Validator{}
+	cfg := Load(v)
+
+	require.Empty(t, v.Missing())
+	assert.Equal(t, time.Hour, cfg.LLMCacheTTL)
+	assert.Equal(t, time.Minute, cfg.PRPollInterval)
+	assert.Equal(t, 10*time.Minute, cfg.PROpeningGracePeriod)
+	assert.Equal(t, 20*time.Minute, cfg.ShadowVerifyTimeout)
+	assert.Equal(t, 15*time.Second, cfg.ShadowVerifyPollInterval)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
@@ -87,7 +88,7 @@ func TestPropose_MissCallsProviderThenPuts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != sampleResult() {
+	if !reflect.DeepEqual(got, sampleResult()) {
 		t.Fatalf("result mismatch: got %+v", got)
 	}
 	if provider.calls != 1 {
@@ -115,7 +116,7 @@ func TestPropose_HitSkipsProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != cached {
+	if !reflect.DeepEqual(got, cached) {
 		t.Fatalf("expected cached result, got %+v", got)
 	}
 	if provider.calls != 0 {
@@ -138,7 +139,7 @@ func TestPropose_GetErrorFallsThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get error must not surface, got: %v", err)
 	}
-	if got != sampleResult() {
+	if !reflect.DeepEqual(got, sampleResult()) {
 		t.Fatalf("result mismatch: got %+v", got)
 	}
 	if provider.calls != 1 {
@@ -157,7 +158,7 @@ func TestPropose_PutErrorReturnsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Put error must not surface, got: %v", err)
 	}
-	if got != sampleResult() {
+	if !reflect.DeepEqual(got, sampleResult()) {
 		t.Fatalf("result mismatch: got %+v", got)
 	}
 	if provider.calls != 1 {
@@ -193,7 +194,7 @@ func TestPropose_NoIdempotencyKeyBypassesCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != sampleResult() {
+	if !reflect.DeepEqual(got, sampleResult()) {
 		t.Fatalf("result mismatch: got %+v", got)
 	}
 	if provider.calls != 1 {

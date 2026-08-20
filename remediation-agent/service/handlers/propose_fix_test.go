@@ -209,6 +209,21 @@ func (r *fakeProposalRepo) InsertGenerating(_ context.Context, p proposal.Propos
 	return nil
 }
 
+func (r *fakeProposalRepo) FailGenerating(_ context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error) {
+	n := 0
+	for i := range r.generating {
+		g := &r.generating[i]
+		if g.Status != proposal.StatusGenerating || g.ReleaseID != releaseID ||
+			g.Source != source || g.NodeID != nodeID || g.ErrorSignature != errorSignature {
+			continue
+		}
+		g.Status = proposal.StatusFailed
+		g.Rationale = reason
+		n++
+	}
+	return n, nil
+}
+
 func (r *fakeProposalRepo) Upsert(_ context.Context, p proposal.Proposal) error {
 	r.inserted = append(r.inserted, p)
 	return nil
@@ -243,6 +258,18 @@ func (r *fakeProposalRepo) ListStuckOpening(_ context.Context, _ int, _ *reposit
 }
 
 func (r *fakeProposalRepo) RecordPROutcome(_ context.Context, _ string, _ proposal.PROutcome, _ time.Time) (bool, error) {
+	return false, nil
+}
+
+func (r *fakeProposalRepo) ListVerifying(_ context.Context) ([]proposal.View, error) {
+	return nil, nil
+}
+
+func (r *fakeProposalRepo) MarkVerified(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
+func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, _, _ string) (bool, error) {
 	return false, nil
 }
 

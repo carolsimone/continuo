@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation-agent/domain/event"
 	"github.com/carolsimone/continuo/remediation-agent/domain/proposal"
+	"github.com/carolsimone/continuo/remediation-agent/domain/repository"
 	"github.com/carolsimone/continuo/remediation-agent/service/fixer"
 	"github.com/carolsimone/continuo/remediation-agent/service/llmcache"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
@@ -39,7 +40,10 @@ type Trigger struct {
 	// Reason is the classifier's finer-grained reason within Category; with
 	// Category it forms the fallback precedent-lookup key when the exact
 	// signature has no recorded matches.
-	Reason               string
+	Reason string
+	// ErrorExcerpt is the classifier's key error line for this failure (capped
+	// at 4 KiB).
+	ErrorExcerpt         string
 	DBTLogURI            string
 	CandidateArtifactURI string
 	// CodeBundleURI locates the release's code-bundle document, which carries
@@ -61,9 +65,10 @@ type Trigger struct {
 	Service string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed,
 	// dbt-snapshot, or python-model), set on validation and duplicate-relation
-	// failures so the validation and duplicate-table Fixers can each skip a
-	// python node — whose source is not a single readable file — without a
-	// topology lookup of their own.
+	// failures. It selects the Fixer for a validation failure — a python node,
+	// whose source is not a single readable file, is fixed in the contract yaml
+	// declaring it — and lets the duplicate-table Fixer skip a python node
+	// without a topology lookup of its own.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID), set on a duplicate-relation
@@ -120,6 +125,29 @@ type Deps struct {
 	Versions         ports.VersionReader
 	Precedents       ports.PrecedentReader
 	CandidateSource  ports.CandidateSourceReader
+	// RepoArchive fetches a full repo checkout at a commit, for a fixer that
+	// needs to search across many files (e.g. locating a python node's
+	// declaring contract yaml) rather than read one file at a time.
+	RepoArchive ports.RepoArchive
+	// ContractLocator finds which contract yaml in that checkout declares a
+	// given python node.
+	ContractLocator ports.ContractLocator
+	// ContractInspector reads the node declarations out of a contract yaml
+	// document, so a proposed edit can be checked against the declarations the
+	// repository already held.
+	ContractInspector ports.ContractInspector
+	// Packager merges a directory of python-node contract yaml files into the
+	// wire contract a release is submitted with.
+	Packager ports.ContractPackager
+	// Releases submits shadow verification releases and reads a release's
+	// image tag.
+	Releases ports.ReleaseGateway
+	// PriorAttempts reads the attempts already recorded for a failing node, so
+	// a fixer can show the model what earlier attempts tried.
+	PriorAttempts repository.AttemptLister
+	// SQLDialect is the sqlglot dialect the operator's warehouse engine
+	// speaks, used when packaging a proposed contract fix.
+	SQLDialect string
 }
 
 // ProposeFix turns one healable failure trigger into a fix proposal. It counts
@@ -157,7 +185,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		}, false, false)
 	}
 
-	fx, err := fixer.For(t.Source)
+	fx, err := fixer.For(t.Source, t.NodeType)
 	if err != nil {
 		return err // unknown error class: surfaced loudly, not silently skipped
 	}
@@ -174,6 +202,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		ErrorSignature:       t.ErrorSignature,
 		Category:             t.Category,
 		Reason:               t.Reason,
+		ErrorExcerpt:         t.ErrorExcerpt,
 		Repo:                 t.Repo,
 		CommitSHA:            t.CommitSHA,
 		FilePath:             t.FilePath,
@@ -192,6 +221,10 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		Logger: deps.Logger, ServiceRepoPaths: deps.ServiceRepoPaths,
 		Locator: deps.Locator, Upstream: deps.Upstream, Versions: deps.Versions,
 		Precedents: deps.Precedents, CandidateSource: deps.CandidateSource,
+		Archive: deps.RepoArchive, ContractLocator: deps.ContractLocator,
+		ContractInspector: deps.ContractInspector,
+		Packager:          deps.Packager, Releases: deps.Releases,
+		PriorAttempts: deps.PriorAttempts, SQLDialect: deps.SQLDialect,
 	}
 
 	// Mark this attempt in-flight in its own committed transaction, right before
@@ -302,6 +335,13 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	p.ErrorSignature = t.ErrorSignature
 	p.Attempt = attempt
 	p.CreatedAt = deps.Clock.Now()
+	// An attempt whose fix is being verified by a shadow release stores the
+	// trigger that produced it, so the reconciler resolving that release can
+	// rebuild the trigger and retry with the shadow's error as new evidence.
+	// Every other status resolves within this call and needs nothing to replay.
+	if p.Status == proposal.StatusVerifying {
+		p.TriggerPayload = t.RawPayload
+	}
 
 	u := deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -339,7 +379,7 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 		if len(suspectedRoot) > 0 {
 			root = suspectedRoot[0]
 		}
-		if err := enqueue(ctx, u, deps, t, p, root, sourceResolved, msgProcID); err != nil {
+		if err := Enqueue(ctx, u, deps.Clock, p, root, sourceResolved, msgProcID); err != nil {
 			return err
 		}
 	}
@@ -352,19 +392,25 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	return nil
 }
 
-// enqueue builds the deterministic remediation.proposed:v1 outbox entry and
-// creates it on the repository bound to the caller's transaction.
-// sourceResolved indicates whether the real-source Step-2 fix succeeded.
-// msgProcID is the message_processing row UUID for the inbound trigger;
-// it is stored on the outbox entry for provenance.
-func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p proposal.Proposal, suspectedRoot string, sourceResolved bool, msgProcID uuid.UUID) error {
-	eventID := event.RemediationEventID(t.ReleaseID, t.NodeID, p.Attempt)
+// Enqueue builds the deterministic remediation.proposed:v1 outbox entry for a
+// proposal that is ready for human review, and creates it on the repository
+// bound to the caller's transaction. Two writers announce a fix and both go
+// through here, so the event they emit cannot drift apart: the driver, for a
+// fix judged as it was produced, and the shadow-verification reconciler, for
+// one a release proved afterwards. p carries the whole announcement, including
+// the failure it addresses (source, release, node, error signature).
+// sourceResolved indicates whether the fix rewrote real version-controlled
+// source. msgProcID is the message_processing row UUID of the inbound trigger
+// behind the write, stored on the outbox entry for provenance; uuid.Nil for a
+// write no inbound message drove.
+func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposal.Proposal, suspectedRoot string, sourceResolved bool, msgProcID uuid.UUID) error {
+	eventID := event.RemediationEventID(p.ReleaseID, p.NodeID, p.Attempt)
 	payload := event.RemediationProposed{
 		EventID:                eventID.String(),
-		Source:                 t.Source,
-		ReleaseID:              t.ReleaseID,
-		NodeID:                 t.NodeID,
-		ErrorSignature:         t.ErrorSignature,
+		Source:                 p.Source,
+		ReleaseID:              p.ReleaseID,
+		NodeID:                 p.NodeID,
+		ErrorSignature:         p.ErrorSignature,
 		ProposedSQLURI:         p.ProposedSQLURI,
 		DiffURI:                p.DiffURI,
 		Rationale:              p.Rationale,
@@ -373,17 +419,17 @@ func enqueue(ctx context.Context, u uow.UnitOfWork, deps Deps, t Trigger, p prop
 		Model:                  p.Model,
 		Attempt:                p.Attempt,
 		SourceResolved:         sourceResolved,
-		ProposedAt:             deps.Clock.Now().Format(time.RFC3339),
+		ProposedAt:             clock.Now().Format(time.RFC3339),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal proposed event: %w", err)
 	}
-	now := deps.Clock.Now()
+	now := clock.Now()
 	entry := &outbox.Entry{
 		ID:            uuid.NewSHA1(uuid.NameSpaceOID, []byte(eventID.String())),
 		AggregateType: "remediation_agent",
-		AggregateID:   event.AggregateIDForRelease(t.ReleaseID),
+		AggregateID:   event.AggregateIDForRelease(p.ReleaseID),
 		EventType:     event.EventType,
 		Payload:       body,
 		StreamName:    streams.RemediationProposedV1,

@@ -116,6 +116,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		"commit_sha":       r.CommitSHA(),
 		"code_bundle_uri":  r.CodeBundleURI(),
 		"candidate_schema": CandidateSchemaFor(in.ReleaseID),
+		"shadow":           r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -200,7 +201,9 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 		}
 		d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, 0)
 		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
-		d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
+		if !r.IsShadow() {
+			d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
+		}
 		return nil
 	}
 

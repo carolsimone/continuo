@@ -86,7 +86,7 @@ e2e-setup:  ## Provision K8s test environment for E2E testing
 .PHONY: e2e-test
 e2e-test: e2e-setup  ## Run E2E tests (assumes docker-compose up and e2e-start-services already done)
 	@echo "Running E2E tests..."
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 40m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 .PHONY: e2e-cleanup
@@ -135,7 +135,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Pulling validation runner (postgres) image (required for e2e-setup)..."
 	@docker pull $(VALIDATION_IMAGE_POSTGRES)
 	@$(MAKE) e2e-setup
-	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 40m /app/tests/e2e/...
+	@docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	@$(MAKE) e2e-cleanup
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
@@ -149,7 +149,15 @@ FLYWAY_JOBS := flyway-state flyway-executor flyway-orchestrator flyway-k8s flywa
 .PHONY: test-deps-up
 test-deps-up:
 	$(DOCKER_COMPOSE) up -d postgres neo4j redis
-	@for f in $(FLYWAY_JOBS); do $(DOCKER_COMPOSE) up $$f; done
+	@# Each migration job is removed before it is started. `compose up <job>`
+	@# attaches to an existing container and waits for it to exit, so a job left
+	@# Running by an interrupted earlier invocation makes this loop block until
+	@# the caller's own timeout fires, with no output naming the cause.
+	@# Recreating gives every run a container that is guaranteed to terminate.
+	@for f in $(FLYWAY_JOBS); do \
+	  $(DOCKER_COMPOSE) rm -fsv $$f >/dev/null 2>&1 || true; \
+	  $(DOCKER_COMPOSE) up $$f || exit 1; \
+	done
 
 .PHONY: test-deps-down
 test-deps-down:
@@ -196,6 +204,11 @@ test-manifest:
 	$(DOCKER_COMPOSE) up -d manifest-controller
 	docker exec manifest-controller uv run pytest -v
 
+# Fast, infra-free gates. Includes the two Go modules no other test target
+# reaches: pkg (the cross-cutting static guards) and tests/e2e/stub-llm (the
+# canned model the remediation e2e scenarios read as an LLM's answers, whose
+# tests run against the real contract fixtures on disk). GOWORK=off because
+# stub-llm sits under a go.work member but is a module of its own.
 .PHONY: guards
 guards:
 	bash scripts/check-ci-alignment.sh
@@ -204,6 +217,7 @@ guards:
 	bash scripts/check-validation-image-pin.sh
 	bash scripts/check-validation-image-sideload.sh
 	cd pkg && go test ./...
+	cd tests/e2e/stub-llm && GOWORK=off go test ./...
 	diff state/proto/state/v1/state.proto ui-service/proto/state.proto
 	diff remediation-agent/proto/remediation/v1/remediation.proto ui-service/proto/remediation/v1/remediation.proto
 
@@ -217,7 +231,7 @@ e2e:
 	$(DOCKER_COMPOSE) up -d ui
 	bash -c 'source scripts/lib/common.sh && wait_for_http_host http://localhost:8090/api/schedulers'
 	bash tests/e2e/deploy-k8s-controllers.sh
-	docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 40m /app/tests/e2e/...
+	docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -count=1 -timeout 100m /app/tests/e2e/...
 	bash tests/e2e/cleanup-k8s-controllers.sh
 
 # Reproduce the whole pipeline locally (the "will CI pass?" gate).

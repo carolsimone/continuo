@@ -17,6 +17,7 @@ export function firstInFlight(items: ReleaseListItem[]): ReleaseListItem | null 
 export function releasePillClass(status: string): string {
   switch (status) {
     case 'promoted':   return 'pill--succeeded';
+    case 'validated':  return 'pill--succeeded';
     case 'ok':         return 'pill--succeeded';
     case 'rejected':   return 'pill--failed';
     case 'validating':

@@ -60,6 +60,16 @@ message Proposal {
   // reaches a terminal outcome (pr_state 'merged' or 'rejected').
   string pr_closed_at = 25;
   repeated FileEdit edits = 26;
+  // shadow_release_id names the release that ran this attempt's fix through
+  // the whole validation pipeline to decide whether it holds. It is set while
+  // the attempt is 'verifying' and stays set on the 'proposed' or 'failed' row
+  // that attempt became, so a reader can always reach the release that decided
+  // it. Empty on an attempt judged without one.
+  string shadow_release_id = 27;
+  // verify_error is why that release rejected the fix — the reason a python
+  // contract attempt reached 'failed', and the evidence the next attempt is
+  // shown. Empty unless verification failed.
+  string verify_error = 28;
 }
 
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.

@@ -12,7 +12,30 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `remediation-agent.env.RELEASE_CONTROLLER_URL` (default
+  `http://release-controller:8088`), `remediation-agent.env.SHADOW_VERIFY_TIMEOUT`
+  (default `"20m"`) and `remediation-agent.env.SHADOW_VERIFY_POLL_INTERVAL`
+  (default `"15s"`) — release-controller's HTTP address, how long a python-node
+  fix proposal waits for its shadow verification release to reach a verdict
+  before the attempt is recorded as failed, and how often the remediation-agent
+  reads those releases. The timeout is spent only while the shadow release is
+  actually running: time it spends queued behind another release does not count
+  against it. All three sit in the same free-form `env` map as the
+  existing `REMEDIATION_PR_POLL_INTERVAL`/`REMEDIATION_PR_OPENING_GRACE_PERIOD`
+  keys, so no schema change is required; an unmodified existing values file
+  already gets these defaults via the chart's own `env` defaults.
+
 ### Changed
+- `remediation-agent` now refuses to start when one of its optional duration
+  settings — `LLM_CACHE_TTL`, `REMEDIATION_PR_POLL_INTERVAL`,
+  `REMEDIATION_PR_OPENING_GRACE_PERIOD`, `SHADOW_VERIFY_TIMEOUT`,
+  `SHADOW_VERIFY_POLL_INTERVAL` — is set to something that is not a Go duration
+  (e.g. `"20 minutes"`), naming the offending key in the boot log. Previously
+  such a value was silently replaced by the default, so an install looked
+  configured while every process ran the built-in value. Leaving a key unset is
+  unchanged and still runs its documented default, so an unmodified values file
+  is unaffected.
 - The `orchestrator` service now requires object storage to be reachable at
   start-up: it reads each release's code-bundle document to record node
   code-version history in the graph. Endpoint, bucket and region already reach

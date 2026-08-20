@@ -124,11 +124,12 @@ export interface TopologyListResponse {
 
 export interface ReleaseListItem {
   release_id: string;
-  status: string; // received|compiling|parsing|seed_building|validating|promoted|rejected|superseded
+  status: string; // received|compiling|parsing|seed_building|validating|promoted|validated|rejected|superseded
   created_at: string;
   resolved_at: string | null;
   node_count: number;
   bootstrap: boolean;
+  shadow: boolean;
   reject_reason?: string;
 }
 
@@ -167,8 +168,8 @@ export interface ReleaseDetail {
   failing_nodes: string[] | null;
   per_node_results: NodeValidationResult[] | null;
   image_tags: Record<string, string>;
-  manifests_uri: string;
   bootstrap: boolean;
+  shadow: boolean;
 }
 
 export interface NodeSummary {
@@ -210,6 +211,11 @@ export interface ProposalDTO {
   node_id: string;
   error_signature: string;
   attempt: number;
+  // Lifecycle of one fix attempt. Two are in flight and carry no reviewable
+  // fix yet: 'generating' while the fix is being produced, and 'verifying'
+  // while a shadow release runs the produced fix through the full validation
+  // pipeline. The rest are terminal: 'proposed' (a fix ready for review),
+  // 'skipped', 'failed', 'escalated'.
   status: string;
   confidence: string;
   rationale: string;
@@ -229,6 +235,15 @@ export interface ProposalDTO {
   pr_opened_at: string;
   pr_opened_by: string;
   pr_closed_at: string;
+  // shadow_release_id names the release that ran this attempt's fix through
+  // the whole validation pipeline to decide whether it holds. Set while the
+  // attempt is 'verifying' and still set on the 'proposed' or 'failed' row it
+  // became, so the release that decided an attempt is always reachable from
+  // it. Empty on an attempt judged without one.
+  shadow_release_id: string;
+  // verify_error is why that release rejected the fix — the reason a python
+  // contract attempt reached 'failed'. Empty unless verification failed.
+  verify_error: string;
   // Every file this proposal changes. Absent or empty on a proposal that has
   // no real repository source to edit — a candidate-only fix — in which case
   // the single-file diff_uri above still points at a previewable diff.

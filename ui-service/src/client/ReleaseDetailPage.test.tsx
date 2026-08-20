@@ -14,10 +14,14 @@ const node = (o: Partial<NodeValidationResult> & { stage: string; node_id: strin
   status: 'failed', ...o,
 });
 
-const makeRelease = (perNode: NodeValidationResult[], reject_reason = 'compile_failed'): ReleaseDetail => ({
+const makeRelease = (
+  perNode: NodeValidationResult[],
+  reject_reason = 'compile_failed',
+  shadow = false,
+): ReleaseDetail => ({
   release_id: 'rel-1', status: 'rejected', transitions: [], validation_node_ids: null,
   reject_reason, failing_nodes: null, per_node_results: perNode, image_tags: {},
-  manifests_uri: '', bootstrap: false,
+  bootstrap: false, shadow,
 });
 
 const proposal = (o: Partial<ProposalDTO> & { source: string; node_id: string }): ProposalDTO => ({
@@ -87,6 +91,24 @@ describe('ReleaseDetailPage — stage sections', () => {
   });
 });
 
+describe('ReleaseDetailPage — shadow verification header', () => {
+  it('labels a shadow release as a fix verification run in the header', async () => {
+    renderPage(makeRelease(
+      [node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })],
+      'compile_failed',
+      true,
+    ));
+    await screen.findByText('models/x.sql');
+    expect(screen.getByText('fix verification run')).toBeInTheDocument();
+  });
+
+  it('does not label a non-shadow release', async () => {
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
+    await screen.findByText('models/x.sql');
+    expect(screen.queryByText('fix verification run')).toBeNull();
+  });
+});
+
 describe('ReleaseDetailPage — FIX cell is status-aware', () => {
   it('shows a disabled "Generating fix…" chip while a proposal is in flight', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc', status: 'generating' })]);
@@ -117,6 +139,39 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     expect(screen.queryByText(/Generating fix/)).toBeNull();
   });
 
+  it('shows a disabled "Verifying fix…" chip while a shadow release is judging the fix', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'validation', node_id: 'svc', status: 'verifying' })]);
+    renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
+    await screen.findByText('contracts/svc.yaml');
+    const chip = await screen.findByText(/Verifying fix/);
+    expect(chip).toHaveAttribute('aria-disabled', 'true');
+    // Not a link, and not the earlier phase's chip: verification follows generation.
+    expect(screen.queryByText(/Proposed fix available/)).toBeNull();
+    expect(screen.queryByText(/Generating fix/)).toBeNull();
+  });
+
+  it('prefers the proposed link over a verifying chip when both exist for a node', async () => {
+    mockFetchProposals.mockResolvedValue([
+      proposal({ source: 'validation', node_id: 'svc', attempt: 1, status: 'verifying' }),
+      proposal({ source: 'validation', node_id: 'svc', attempt: 2, status: 'proposed' }),
+    ]);
+    renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
+    await screen.findByText('contracts/svc.yaml');
+    await waitFor(() => expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument());
+    expect(screen.queryByText(/Verifying fix/)).toBeNull();
+  });
+
+  it('prefers the verifying chip over a generating chip when both exist for a node', async () => {
+    mockFetchProposals.mockResolvedValue([
+      proposal({ source: 'validation', node_id: 'svc', attempt: 1, status: 'generating' }),
+      proposal({ source: 'validation', node_id: 'svc', attempt: 2, status: 'verifying' }),
+    ]);
+    renderPage(makeRelease([node({ stage: 'validation', node_id: 'svc', file_path: 'contracts/svc.yaml' })]));
+    await screen.findByText('contracts/svc.yaml');
+    await waitFor(() => expect(screen.getByText(/Verifying fix/)).toBeInTheDocument());
+    expect(screen.queryByText(/Generating fix/)).toBeNull();
+  });
+
   it('renders nothing in the FIX cell for a skipped proposal', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'svc', status: 'skipped' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'svc', file_path: 'models/x.sql' })]));
@@ -142,7 +197,7 @@ describe('ReleaseDetailPage — live polling while non-terminal', () => {
     try {
       const base = {
         release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
-        failing_nodes: null, image_tags: {}, manifests_uri: '', bootstrap: false,
+        failing_nodes: null, image_tags: {}, bootstrap: false, shadow: false,
       };
       const responses: ReleaseDetail[] = [
         { ...base, status: 'validating', per_node_results: [node({ stage: 'validation', node_id: 'a', status: 'ok' })] },
@@ -195,6 +250,48 @@ describe('ReleaseDetailPage — live polling while non-terminal', () => {
       vi.useRealTimers();
     }
   });
+
+  it('stops polling once a shadow release reaches the validated terminal status', async () => {
+    vi.useFakeTimers();
+    try {
+      const base = {
+        release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
+        failing_nodes: null, image_tags: {}, bootstrap: false, shadow: true,
+      };
+      const responses: ReleaseDetail[] = [
+        { ...base, status: 'validating', per_node_results: [node({ stage: 'validation', node_id: 'a', status: 'ok' })] },
+        { ...base, status: 'validated', per_node_results: [node({ stage: 'validation', node_id: 'a', status: 'ok' })] },
+      ];
+      let i = 0;
+      global.fetch = vi.fn(() => Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(responses[Math.min(i++, responses.length - 1)]),
+      })) as unknown as typeof fetch;
+
+      render(
+        <MemoryRouter initialEntries={['/releases/rel-1']}>
+          <Routes><Route path="/releases/:id" element={<ReleaseDetailPage />} /></Routes>
+        </MemoryRouter>,
+      );
+
+      // Flush the initial fetch (no timer advance needed — it fires on mount).
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByText('validating')).toBeInTheDocument();
+
+      // This tick returns the validated terminal status; polling must stop —
+      // otherwise a finished shadow release would be polled forever.
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText('validated')).toBeInTheDocument();
+      const callsAtTerminal = (global.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAtTerminal).toBe(2);
+
+      // No further fetches are scheduled once terminal.
+      await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+      expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAtTerminal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('ReleaseDetailPage — resilient polling on transient errors', () => {
@@ -203,7 +300,7 @@ describe('ReleaseDetailPage — resilient polling on transient errors', () => {
     try {
       const base = {
         release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
-        failing_nodes: null, image_tags: {}, manifests_uri: '', bootstrap: false,
+        failing_nodes: null, image_tags: {}, bootstrap: false, shadow: false,
       };
       const good1: ReleaseDetail = {
         ...base, status: 'validating',
@@ -282,8 +379,8 @@ describe('ReleaseDetailPage — reject detail', () => {
       failing_nodes: ['analytics.orders'],
       per_node_results: null,
       image_tags: {},
-      manifests_uri: '',
       bootstrap: false,
+      shadow: false,
     });
 
     expect(await screen.findByText(/finance \(models\/orders\.sql\)/)).toBeInTheDocument();
@@ -305,8 +402,8 @@ describe('ReleaseDetailPage — reject detail', () => {
       failing_nodes: null,
       per_node_results: null,
       image_tags: {},
-      manifests_uri: '',
       bootstrap: false,
+      shadow: false,
     });
 
     await screen.findByText(/validation/i);
@@ -322,7 +419,7 @@ describe('ReleaseDetailPage — proposal polling gated on rejected', () => {
     try {
       const base = {
         release_id: 'rel-1', transitions: [], validation_node_ids: null, reject_reason: '',
-        failing_nodes: null, image_tags: {}, manifests_uri: '', bootstrap: false,
+        failing_nodes: null, image_tags: {}, bootstrap: false, shadow: false,
       };
       const validatingWithFailure: ReleaseDetail = {
         ...base, status: 'validating',

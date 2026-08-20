@@ -314,6 +314,10 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 	var candidateSchema string
 	require.NoError(t, json.Unmarshal(topLevel["candidate_schema"], &candidateSchema))
 	assert.Equal(t, "_candidate_rel_seed_uniform", candidateSchema)
+
+	var shadow bool
+	require.NoError(t, json.Unmarshal(topLevel["shadow"], &shadow))
+	assert.False(t, shadow, "a non-shadow release's seed_build rejection must carry shadow:false")
 }
 
 // TestHandleSeedBuildResult_OKThenValidationCompletePromotes proves the

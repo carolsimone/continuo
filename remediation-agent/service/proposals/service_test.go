@@ -58,6 +58,9 @@ type fakeRepo struct {
 
 func (r *fakeRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error)  { return 0, nil }
 func (r *fakeRepo) InsertGenerating(_ context.Context, _ proposal.Proposal) error { return nil }
+func (r *fakeRepo) FailGenerating(_ context.Context, _, _, _, _, _ string) (int, error) {
+	return 0, nil
+}
 func (r *fakeRepo) Upsert(_ context.Context, _ proposal.Proposal) error           { return nil }
 func (r *fakeRepo) Get(_ context.Context, _ string) (proposal.View, error) {
 	return r.view, nil
@@ -98,6 +101,12 @@ func (r *fakeRepo) RecordPROutcome(_ context.Context, _ string, outcome proposal
 	r.lastOutcome = outcome
 	r.lastClosedAt = closedAt
 	return r.outcomeCASHit, nil
+}
+
+func (r *fakeRepo) ListVerifying(_ context.Context) ([]proposal.View, error) { return nil, nil }
+func (r *fakeRepo) MarkVerified(_ context.Context, _ string) (bool, error)   { return false, nil }
+func (r *fakeRepo) MarkVerifyFailed(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
 }
 
 // fakeUoW is a unit of work backed by the fakeRepo.

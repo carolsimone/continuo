@@ -21,6 +21,7 @@ func getReleaseResponse(rel *release.Release) map[string]any {
 		"per_node_results":    rel.PerNodeResults(),
 		"image_tags":          rel.ImageTags(),
 		"bootstrap":           rel.IsBootstrap(),
+		"shadow":              rel.IsShadow(),
 		"repo":                rel.Repo(),
 		"commit_sha":          rel.CommitSHA(),
 	}

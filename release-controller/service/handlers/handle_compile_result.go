@@ -133,6 +133,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			"repo":            r.Repo(),
 			"commit_sha":      r.CommitSHA(),
 			"code_bundle_uri": r.CodeBundleURI(),
+			"shadow":          r.IsShadow(),
 		})
 		if err != nil {
 			return fmt.Errorf("marshal payload: %w", err)

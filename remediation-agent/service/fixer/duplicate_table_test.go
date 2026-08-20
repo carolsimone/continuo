@@ -186,7 +186,7 @@ func TestDuplicateTable_SkipsWhenTheTargetIsInAnotherTeamsRepo(t *testing.T) {
 }
 
 func TestFor_ResolvesTheDuplicateTableClass(t *testing.T) {
-	fx, err := For("duplicate_table")
+	fx, err := For("duplicate_table", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,8 +20,11 @@ import (
 	ragithub "github.com/carolsimone/continuo/remediation-agent/adapters/github"
 	grpcadapter "github.com/carolsimone/continuo/remediation-agent/adapters/grpc"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/llm"
+	"github.com/carolsimone/continuo/remediation-agent/adapters/packaging"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/postgres"
 	rredis "github.com/carolsimone/continuo/remediation-agent/adapters/redis"
+	"github.com/carolsimone/continuo/remediation-agent/adapters/releasehttp"
+	"github.com/carolsimone/continuo/remediation-agent/adapters/repofs"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/s3"
 	"github.com/carolsimone/continuo/remediation-agent/adapters/sanitizer"
 	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
@@ -30,6 +33,7 @@ import (
 	"github.com/carolsimone/continuo/remediation-agent/service/llmcache"
 	"github.com/carolsimone/continuo/remediation-agent/service/ports"
 	"github.com/carolsimone/continuo/remediation-agent/service/proposals"
+	"github.com/carolsimone/continuo/remediation-agent/service/shadowverify"
 	"github.com/carolsimone/continuo/remediation-agent/service/uow"
 )
 
@@ -173,11 +177,34 @@ func main() {
 		logger,
 	)
 
-	// One GitHub adapter instance serves both read-only ports: source reads for
-	// the fixers and PR-status reads for the outcome reconciler. A request
-	// deadline keeps a hung GitHub connection from stalling the callers that
-	// share this adapter — source reads and the PR reconciler.
+	// One GitHub adapter instance serves every read-only port backed by the
+	// GitHub API: source reads and repo-archive fetches for the fixers, and
+	// PR-status reads for the outcome reconciler. A request deadline keeps a
+	// hung GitHub connection from stalling the callers that share this
+	// adapter.
 	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
+
+	// Shadow verification: a proposed python-node fix is packaged by the same
+	// continuo-runtime CLI the team's release CI runs, then submitted to
+	// release-controller as a release that runs the full validation pipeline
+	// but stops before promoting.
+	releaseGateway := releasehttp.NewGateway(cfg.ReleaseControllerURL, store,
+		&http.Client{Timeout: 30 * time.Second})
+
+	// The packager is resolved here rather than at first use: an image built
+	// without the CLI cannot package any python fix, and failing at boot names
+	// that once, instead of failing every remediation trigger forever.
+	packager, err := packaging.NewCLIPackager()
+	if err != nil {
+		logger.Error("contract packager unavailable", "error", err)
+		os.Exit(1)
+	}
+
+	// The proposal repository is bound to the DB rather than to a transaction:
+	// the gRPC read path, the reconciler, and the fixers' prior-attempt reads
+	// all use it outside any unit of work.
+	proposalRepo := postgres.NewProposalRepository(db)
+	contracts := repofs.NewLocator(logger)
 
 	deps := handlers.Deps{
 		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
@@ -195,6 +222,15 @@ func main() {
 		Versions:         graphClient,
 		Precedents:       graphClient,
 		CandidateSource:  bundleReader,
+		RepoArchive:      gh,
+		ContractLocator:  contracts,
+		// The same adapter answers both: locating the file that declares a node
+		// and reading the declarations a file holds are one yaml shape.
+		ContractInspector: contracts,
+		Packager:          packager,
+		Releases:         releaseGateway,
+		PriorAttempts:    proposalRepo,
+		SQLDialect:       cfg.SQLDialect,
 	}
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
@@ -221,7 +257,6 @@ func main() {
 	// Start the RemediationProposals gRPC server. The proposal service uses a
 	// DB-bound (non-transactional) repository for reads and the UoW factory for
 	// write operations, matching the consumer's wiring above.
-	proposalRepo := postgres.NewProposalRepository(db)
 	proposalSvc := proposals.New(proposals.Deps{
 		Repo:   proposalRepo,
 		NewUoW: func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
@@ -258,6 +293,27 @@ func main() {
 		OpeningGracePeriod: cfg.PROpeningGracePeriod,
 	})
 	go reconciler.Run(ctx)
+
+	// Resolve proposals whose fix is being judged by a shadow release: read
+	// each waiting attempt's release, finalize the ones it validated so an
+	// operator can review them, and record why the rest failed before starting
+	// the next attempt. The decoder and the fix proposer are the same ones the
+	// remediation.requested consumer uses, so a retried attempt runs through
+	// exactly the code path the original trigger did.
+	shadowReconciler := shadowverify.New(shadowverify.Deps{
+		Lister:   proposalRepo,
+		Releases: releaseGateway,
+		NewUoW:   func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		Decode:   rredis.TriggerFromPayload,
+		Propose: func(ctx context.Context, t handlers.Trigger) error {
+			return handlers.ProposeFix(ctx, deps, t)
+		},
+		Clock:    ports.SystemClock{},
+		Logger:   logger,
+		Interval: cfg.ShadowVerifyPollInterval,
+		Timeout:  cfg.ShadowVerifyTimeout,
+	})
+	go shadowReconciler.Run(ctx)
 
 	logger.Info("remediation-agent started", "http_port", cfg.HTTPPort, "grpc_port", cfg.GRPCPort)
 	<-ctx.Done()

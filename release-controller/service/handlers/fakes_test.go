@@ -25,6 +25,22 @@ func (f *fakeClock) Now() time.Time { return f.t }
 
 var _ ports.Clock = (*fakeClock)(nil)
 
+// --- spyTelemetry ---
+
+// spyTelemetry embeds NoOpTelemetry and records ReleasePromoted calls so
+// tests can assert the promoted span does not fire on a route that must not
+// promote (e.g. a shadow release stopping at Validated).
+type spyTelemetry struct {
+	ports.NoOpTelemetry
+	releasePromotedCalls int
+}
+
+func (s *spyTelemetry) ReleasePromoted(_ context.Context, _ string, _ int) {
+	s.releasePromotedCalls++
+}
+
+var _ ports.Telemetry = (*spyTelemetry)(nil)
+
 // --- fakeStore ---
 
 // fakeStore is the shared in-memory state backing every fakeUoW produced by
@@ -32,12 +48,13 @@ var _ ports.Clock = (*fakeClock)(nil)
 // and write through the same data, so handler tests can inspect accumulated
 // state after multiple handler calls — each of which obtains its own UoW.
 type fakeStore struct {
-	mu          sync.Mutex
-	releases    map[string]*release.Release
-	order       []string // insertion order, oldest first; drives NextQueuedRelease FIFO
-	cp          *release.CurrentProd
-	serviceProd map[string]*release.ServiceProd
-	entries     []*pkgoutbox.Entry
+	mu            sync.Mutex
+	releases      map[string]*release.Release
+	order         []string // insertion order, oldest first; drives NextQueuedRelease FIFO
+	cp            *release.CurrentProd
+	cpUpsertCalls int
+	serviceProd   map[string]*release.ServiceProd
+	entries       []*pkgoutbox.Entry
 }
 
 func newFakeStore() *fakeStore {
@@ -93,6 +110,17 @@ func (s *fakeStore) GetServiceProd(serviceName string) *release.ServiceProd {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.serviceProd[serviceName]
+}
+
+// CurrentProdUpsertCalls returns how many times CurrentProdRepo.Upsert has
+// been called against this store, across every UoW instance backed by it.
+// Used by tests to assert that a route which must never promote (e.g. a
+// shadow release) never touches current_prod, rather than only inferring it
+// from the stored value.
+func (s *fakeStore) CurrentProdUpsertCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cpUpsertCalls
 }
 
 // OutboxEntries returns a snapshot of all outbox entries written so far.
@@ -202,6 +230,7 @@ func (f *fakeCurrentProdRepo) Upsert(_ context.Context, cp *release.CurrentProd)
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	f.store.cp = cp
+	f.store.cpUpsertCalls++
 	return nil
 }
 

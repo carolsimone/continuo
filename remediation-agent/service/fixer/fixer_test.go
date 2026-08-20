@@ -11,14 +11,14 @@ import (
 
 func TestFor_KnownSources(t *testing.T) {
 	for _, src := range []string{"compile", "seed_build", "validation"} {
-		if _, err := For(src); err != nil {
+		if _, err := For(src, ""); err != nil {
 			t.Fatalf("For(%q): unexpected error %v", src, err)
 		}
 	}
 }
 
 func TestFor_UnknownSource(t *testing.T) {
-	if _, err := For("nonsense"); err == nil {
+	if _, err := For("nonsense", ""); err == nil {
 		t.Fatal("For(nonsense): want error, got nil")
 	}
 }

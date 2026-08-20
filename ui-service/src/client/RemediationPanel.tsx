@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import { ProposalDTO } from './types';
 import { fetchProposals } from './remediation-api';
 import { useCurrentUser } from './auth/AuthContext';
@@ -41,6 +42,23 @@ function DiffView({ uri }: { uri: string }) {
 
 function sourceLabel(resolved: boolean): string {
   return resolved ? 'yes' : 'no';
+}
+
+// statusChip renders a proposal's status. 'verifying' is the one status whose
+// raw word does not say what is happening — the fix is written and a shadow
+// release is running it through the full validation pipeline to decide whether
+// it holds — so it reads as that wait, in the same non-actionable busy chip the
+// release page shows for an in-flight fix. Every other status is already a
+// plain statement of where the attempt ended.
+function statusChip(status: string) {
+  if (status === 'verifying') {
+    return (
+      <span className="btn btn--secondary is-disabled" aria-disabled="true" aria-busy="true">
+        Verifying fix…
+      </span>
+    );
+  }
+  return <>{status}</>;
 }
 
 // prStateBadge renders terminal PR outcomes as colored chips; non-terminal
@@ -88,6 +106,29 @@ function ProposalDetailCard({
         <p className="detail-card__rationale">
           {proposal.rationale}
         </p>
+
+        {/* Why the release rejected this fix. It is the whole reason a fix
+            verified by a release reached 'failed', so a card that omitted it
+            would leave the operator with the word alone. */}
+        {proposal.verify_error && (
+          <div className="info-strip info-strip--error detail-card__row">
+            <span className="info-strip__icon">⚠</span>
+            Verification failed: {proposal.verify_error}
+          </div>
+        )}
+
+        {/* The release that judged this fix. Without the link it is named on a
+            different screen with nothing connecting the two. */}
+        {proposal.shadow_release_id && (
+          <div className="detail-card__row">
+            <Link
+              to={`/releases/${proposal.shadow_release_id}`}
+              className="btn btn--secondary"
+            >
+              verification release {proposal.shadow_release_id} →
+            </Link>
+          </div>
+        )}
 
         {proposal.edits && proposal.edits.length > 0
           ? proposal.edits.map((edit) => (
@@ -233,7 +274,7 @@ export default function RemediationPanel() {
                       <td>{p.release_id}</td>
                       <td>{p.confidence}</td>
                       <td>{sourceLabel(p.source_resolved)}</td>
-                      <td>{p.status}{p.pr_state ? <> · {prStateBadge(p.pr_state)}</> : null}</td>
+                      <td>{statusChip(p.status)}{p.pr_state ? <> · {prStateBadge(p.pr_state)}</> : null}</td>
                     </tr>
                     {showCard && (
                       <tr

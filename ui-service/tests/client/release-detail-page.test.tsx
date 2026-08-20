@@ -198,6 +198,37 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     expect(proposalCallCount(fetchMock)).toBe(capped); // capped, no more polling
   });
 
+  it('keeps polling past the cap while a shadow release is still verifying a fix', async () => {
+    // Backend verification runs a whole release — parse, candidate schema,
+    // validation — behind a global release queue, so it routinely outlasts the
+    // three-minute cap that exists for failures which will never be healed. A
+    // node whose fix is 'verifying' is not one of those: a verdict IS coming,
+    // and stopping early leaves the page stuck on "Verifying fix…" with the
+    // proposal link only a manual reload away.
+    vi.useFakeTimers();
+    const proposals = { current: [{ ...PROPOSAL_G, status: 'verifying' }] };
+    const fetchMock = mockFetch(DETAIL_FAILED, proposals);
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderDetail();
+    await flush();
+    await act(async () => { await vi.advanceTimersByTimeAsync(190000); }); // past the 180s cap
+    const atCap = proposalCallCount(fetchMock);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(proposalCallCount(fetchMock)).toBeGreaterThan(atCap); // still polling
+
+    // The verdict lands: the link appears without a reload, and polling stops.
+    proposals.current = [PROPOSAL_G];
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    await flush();
+    expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
+    const settled = proposalCallCount(fetchMock);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(proposalCallCount(fetchMock)).toBe(settled);
+  });
+
   it('does not poll when the release has no failed nodes', async () => {
     vi.useFakeTimers();
     const proposals = { current: [] as any[] };

@@ -8,6 +8,12 @@ import "context"
 // and the caller must not send it to the LLM.
 const RuntimeDbt = "dbt"
 
+// RuntimePython is the CandidateSource.Runtime value for a python node. Its
+// RawCode is the node's normalized contract entry as canonical JSON — the
+// control plane's view of what the node declares, which is exactly what a
+// contract fix has to correct, and is never model source text.
+const RuntimePython = "python"
+
 // CandidateSource is one node's source as the release's code bundle records
 // it. For a dbt node (Runtime == RuntimeDbt) RawCode is the model file text;
 // for a python node it is the normalized contract entry as canonical JSON.

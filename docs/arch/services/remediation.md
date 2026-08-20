@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`remediation` is the triage gate for failed dbt nodes in the blue/green validation pipeline. It consumes `release.rejected:v1`, fetches the dbt execution log from S3 for each failing node, and deterministically sorts the failure into a category. Every classification decision — whether the outcome is to emit a trigger or to drop the failure — is recorded in Postgres so that no dropped failure is invisible. For each healable failure, the service enqueues a `remediation.requested:v1` trigger so a downstream agent can investigate and propose a fix.
+`remediation` is the triage gate for failed nodes in the blue/green validation pipeline. It consumes `release.rejected:v1`, fetches the execution log from S3 for each failing node, and deterministically sorts the failure into a category. Every classification decision — whether the outcome is to emit a trigger or to drop the failure — is recorded in Postgres so that no dropped failure is invisible. For each healable failure, the service enqueues a `remediation.requested:v1` trigger so a downstream agent can investigate and propose a fix. Rejections of shadow verification releases are the one class routed on something other than the failure itself: they are recorded and then dropped, because they report on a fix the agent is already waiting for rather than on a change anyone shipped.
 
 **Runtime**: Go service. HTTP `/healthz` on port 8090. Depends on Postgres (`continuo_remediation`), Redis, and S3.
 
@@ -12,7 +12,7 @@ Postgres database `continuo_remediation`. Tables:
 
 | Table | Purpose |
 |---|---|
-| `classification_decision` | One row per classified node per stage. Records `source` (`validation`, `compile`, `seed_build`, or `duplicate_table`), `release_id`, `node_id`, `category`, `error_signature`, `decision` (`emit` or `drop`), `reason` (matched rule, e.g. `infra:connection_refused`), `dbt_log_uri`, and `created_at`. Natural key `(source, release_id, node_id)` gives idempotency: a redelivered rejection neither re-records nor re-emits. |
+| `classification_decision` | One row per classified node per stage. Records `source` (`validation`, `compile`, `seed_build`, or `duplicate_table`), `release_id`, `node_id`, `category`, `error_signature`, `decision` (`emit` or `drop`), `reason` (matched rule, e.g. `infra:connection_refused`, or `shadow_verification` for a rejected fix-verification release), `dbt_log_uri`, and `created_at`. Natural key `(source, release_id, node_id)` gives idempotency: a redelivered rejection neither re-records nor re-emits. |
 | `remediation_outbox` | Transactional outbox; one row per `remediation.requested:v1` trigger, drained by the outbox publisher. |
 | `message_processing` | FK target of `remediation_outbox.message_processing_id` (canonical outbox table shape). Not used for inbound consumer dedup; inbound idempotency is enforced by the `classification_decision` natural key `(source, release_id, node_id)`. |
 
@@ -50,7 +50,7 @@ The Kubernetes `readinessProbe` points at `/healthz` and the `livenessProbe` at
 
 | Stream | Consumed by | Emitted when |
 |---|---|---|
-| `remediation.requested:v1` | `remediation-agent` (group `remediation-agent-remediation-requested`) | A classified node is healable (`category != infra_transient`) and has not been seen before (first insertion in `classification_decision`). |
+| `remediation.requested:v1` | `remediation-agent` (group `remediation-agent-remediation-requested`) | A classified node is healable (`category != infra_transient`), the rejected release is not a shadow verification, and the node has not been seen before (first insertion in `classification_decision`). |
 
 All events are written to the outbox inside the same transaction as the `classification_decision` insert and published with a deterministic `event_id` for consumer-side dedup.
 
@@ -68,6 +68,8 @@ The domain classifier (`remediation/domain/failure/classify.go`) applies a fixed
 | `unknown` | `emit` | Everything else — including the ambiguous resource/permission class (statement timeout, permission denied, deadlock, generic out-of-memory) and an unreachable log (`unknown:log_unavailable`). |
 
 **Under-drop policy**: only the four confidently infrastructure signal families are dropped. All ambiguous cases, including signals that might be infra-related but could also be a model problem, fall through to `unknown` and are emitted. Uncertainty flows to the agent; only confident infra is silenced.
+
+**Shadow verifications are dropped regardless of category.** A rejection whose payload carries `shadow: true` came from a release `remediation-agent` posted to verify a fix proposal, not from a change anyone shipped. Its decision is recorded with the category and signature the rules produced — so the row still says truthfully what failed — but overridden to `decision=drop`, `reason=shadow_verification`, and nothing is emitted. The agent learns that verdict by polling the release it submitted; routing it back through the classifier as well would remediate a failed fix attempt with another fix attempt and never terminate.
 
 A log that cannot be fetched from S3 (URI not found) is treated as an empty log and classified `unknown:log_unavailable` with `decision=emit`.
 
@@ -157,9 +159,11 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
       file_path, and service from the candidate topology (NodeType,
       OriginalFilePath and ServiceName on release.Node), decoded by the same
       release_rejected_binding fields as seed_build's and forwarded onto the
-      trigger. node_type is what lets the agent skip a python node before any
-      read — a python node's candidate artifact is a JSON validation spec, so
-      the agent's empty-artifact skip never fires for it. file_path/service give
+      trigger. node_type is what lets the agent pick the right lane before any
+      read: a python node's validation failure is repaired in the contract yaml
+      declaring it, not in a SQL file, and its candidate artifact is a JSON
+      validation spec, so the agent's empty-artifact skip never fires for it.
+      file_path/service give
       the agent the path THIS candidate declares, which `GetNodeLocation` cannot:
       a rejected release is never promoted, so the promoted topology it serves
       holds nothing for a newly-added node and the previous release's path for a
@@ -169,10 +173,19 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
    → test; status=error → message through the infra/logic rules. Falls back to the
    text-log Classify path when structured is nil or carries no message. Excerpt is
    the key error line the signature was derived from, capped at 4 KiB.
+3a. Shadow override: when the rejected release carries shadow=true, the decision
+   recorded in step 4a becomes decision=drop, reason=shadow_verification,
+   regardless of what the rules concluded. The category and error signature are
+   still the rules' own, so the row remains a truthful record of what the failure
+   was — only the routing changes. A shadow release verifies a fix proposal and
+   never promotes, so its rejection means the proposed fix did not work;
+   emitting a trigger for it would hand a failed fix attempt back as a fresh
+   failure to heal, and the loop would never end. The decision is still written,
+   because no drop in this service is invisible.
 4. Open transaction:
    a. Upsert classification_decision (source, release_id, node_id).
       - If already exists (redelivery): inserted=false → skip enqueue, commit, done.
-   b. If inserted && category.Healable():
+   b. If inserted && decision == emit:
       - Build RemediationRequested payload: pointer-first (the full log stays
         behind dbt_log_uri, the failing code behind code_bundle_uri), carrying
         the classifier's reason and capped error_excerpt inline.
@@ -205,7 +218,7 @@ The trigger is pointer-first: the full log stays behind `dbt_log_uri` and the fa
 | `candidate_artifact_uri` | S3 URI of the node's candidate artifact — rewritten SQL for a dbt node, a validation spec for a python node (candidate-schema form; omitted for seeds and compile failures). |
 | `file_path` | Project-relative source file path. Non-empty for compile failures (extracted from the dbt log) and for seed_build, validation, and duplicate_table failures (threaded from `per_node[].file_path`, which release-controller stamps from the candidate topology's `OriginalFilePath`; for duplicate_table it is the rename target's file). When present, the agent bypasses the `GetNodeLocation` (orchestrator) lookup — which is required for correctness, not just economy: that lookup serves the promoted topology, and a rejected release is never promoted. |
 | `service` | Owning dbt service name for the failing node. Non-empty for seed_build, validation, and duplicate_table failures (threaded from `per_node[].service`, stamped from the candidate topology's `ServiceName`; for duplicate_table it is the rename target's service). Empty for compile, where NodeID is the service. |
-| `node_type` | The failing node's kind (`dbt-model`, `dbt-seed`, `dbt-snapshot`, or `python-model`), threaded from `per_node[].node_type`. Non-empty for validation and duplicate_table failures. Lets each fixer skip a python node without a topology lookup of its own: the validation fixer because a python node's candidate artifact is a validation spec and its bundle entry a contract entry, neither of them model source; the duplicate-table fixer because a python node's relation is declared in the service's contract.yaml, not in `file_path`. Empty for compile and seed_build. |
+| `node_type` | The failing node's kind (`dbt-model`, `dbt-seed`, `dbt-snapshot`, or `python-model`), threaded from `per_node[].node_type`. Non-empty for validation and duplicate_table failures. It is what lets the agent decide a python node's handling without a topology lookup of its own: a validation failure routes to the python contract fixer, which repairs the yaml declaring the node and verifies the repair with a shadow release, while the duplicate-table fixer skips a python node outright because its relation is declared in the service's contract.yaml, not in `file_path`. Empty for compile and seed_build. |
 | `other_service` | Duplicate_table only: the competing claimant's service name — the node that also produces the contested relation (`relation_id`). Empty for every other source. |
 | `other_file_path` | Duplicate_table only: the competing claimant's file path. Carried alongside `other_service` because two nodes in the *same* service can collide, where the service name alone identifies nothing. Empty for every other source. |
 | `repo` | GitHub owner/name from the originating release. |

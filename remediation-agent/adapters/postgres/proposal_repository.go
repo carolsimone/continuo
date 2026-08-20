@@ -34,12 +34,14 @@ func NewProposalRepository(q Queryer) *ProposalRepository {
 }
 
 // CountAttempts returns the number of TERMINAL proposal attempts recorded for
-// the given (source, nodeID, errorSignature) triplet. In-flight 'generating'
-// rows are excluded so the in-progress attempt does not inflate the attempt cap
-// or shift the attempt number on a redelivery.
+// the given (source, nodeID, errorSignature) triplet. In-flight rows —
+// 'generating' (the model call has not resolved) and 'verifying' (a shadow
+// release is still validating a proposed fix) — are excluded so an attempt
+// that has not yet concluded neither inflates the attempt cap nor shifts the
+// attempt number on a redelivery.
 func (r *ProposalRepository) CountAttempts(ctx context.Context, source, nodeID, errorSignature string) (int, error) {
 	const query = `SELECT count(*) FROM proposal
-		WHERE source=$1 AND node_id=$2 AND error_signature=$3 AND status <> 'generating'`
+		WHERE source=$1 AND node_id=$2 AND error_signature=$3 AND status NOT IN ('generating','verifying')`
 	var count int
 	if err := r.q.GetContext(ctx, &count, query, source, nodeID, errorSignature); err != nil {
 		return 0, fmt.Errorf("count proposal attempts: %w", err)
@@ -69,6 +71,37 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 	return nil
 }
 
+// FailGenerating finalizes the in-flight 'generating' row of the
+// (release_id, source, node_id, error_signature) attempt, recording reason as
+// the rationale, and returns how many rows moved.
+//
+// The release is part of the match, not a detail: the same node failing the
+// same way in two releases at once is ordinary, and both rows carry the same
+// source, node id and error signature. Without the release the update would
+// reach into another release's in-flight attempt, marking it failed and — since
+// the driver counts terminal rows — spending one of the attempts that release
+// was allowed on a failure that happened elsewhere. Within one release only one
+// attempt per (source, node) can be generating at a time, so this matches at
+// most one row.
+//
+// The status filter is what makes it safe to run at any time: a row that has
+// already reached a terminal state is left exactly as it is.
+func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal SET status=$6, rationale=$5
+		  WHERE release_id=$1 AND source=$2 AND node_id=$3 AND error_signature=$4 AND status=$7`,
+		releaseID, source, nodeID, errorSignature, reason,
+		proposal.StatusFailed, proposal.StatusGenerating)
+	if err != nil {
+		return 0, fmt.Errorf("fail generating proposals: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("fail generating proposals: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
 // Upsert records the terminal outcome of a proposal attempt on the natural key
 // (release_id, source, node_id, attempt): when an in-flight generating row
 // exists (the common healable path) it is finalized in place via
@@ -78,13 +111,16 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, node_id, error_signature, attempt,
-			 status, confidence, rationale, proposed_sql_uri, diff_uri,
+			 status, shadow_release_id, trigger_payload,
+			 confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
 			 repo, commit_sha, file_path, file_edits)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		ON CONFLICT (release_id, source, node_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
+			shadow_release_id      = EXCLUDED.shadow_release_id,
+			trigger_payload        = EXCLUDED.trigger_payload,
 			confidence             = EXCLUDED.confidence,
 			rationale              = EXCLUDED.rationale,
 			proposed_sql_uri       = EXCLUDED.proposed_sql_uri,
@@ -104,7 +140,8 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, p.NodeID, p.ErrorSignature, p.Attempt,
-		p.Status, p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
+		p.Status, p.ShadowReleaseID, triggerPayloadOrDefault(p.TriggerPayload),
+		p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
 		p.Repo, p.CommitSHA, p.FilePath, edits,
@@ -112,6 +149,17 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 		return fmt.Errorf("insert proposal: %w", err)
 	}
 	return nil
+}
+
+// triggerPayloadOrDefault returns the raw trigger_payload bytes to write,
+// defaulting to an empty JSON object when the proposal carries none so the
+// column (NOT NULL) is never written as SQL NULL — the same defaulting
+// marshalFileEdits applies to the file_edits column.
+func triggerPayloadOrDefault(raw []byte) []byte {
+	if len(raw) == 0 {
+		return []byte("{}")
+	}
+	return raw
 }
 
 // proposalRow is the persistence DTO for a full proposal projection. The db
@@ -125,6 +173,9 @@ type proposalRow struct {
 	ErrorSignature      string     `db:"error_signature"`
 	Attempt             int        `db:"attempt"`
 	Status              string     `db:"status"`
+	ShadowReleaseID     string     `db:"shadow_release_id"`
+	VerifyError         string     `db:"verify_error"`
+	TriggerPayload      []byte     `db:"trigger_payload"`
 	Confidence          string     `db:"confidence"`
 	Rationale           string     `db:"rationale"`
 	ProposedSQLURI      string     `db:"proposed_sql_uri"`
@@ -197,6 +248,9 @@ func (row proposalRow) toView() proposal.View {
 		ErrorSignature:      row.ErrorSignature,
 		Attempt:             row.Attempt,
 		Status:              proposal.Status(row.Status),
+		ShadowReleaseID:     row.ShadowReleaseID,
+		VerifyError:         row.VerifyError,
+		TriggerPayload:      row.TriggerPayload,
 		Confidence:          proposal.Confidence(row.Confidence),
 		Rationale:           row.Rationale,
 		ProposedSQLURI:      row.ProposedSQLURI,
@@ -220,7 +274,8 @@ func (row proposalRow) toView() proposal.View {
 }
 
 const proposalColumns = `id, source, release_id, node_id, error_signature, attempt,
-		       status, confidence, rationale, proposed_sql_uri, diff_uri,
+		       status, shadow_release_id, verify_error, trigger_payload,
+		       confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, file_edits, model, created_at,
 		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at`
@@ -281,7 +336,7 @@ func (r *ProposalRepository) Get(ctx context.Context, id string) (proposal.View,
 // Empty filter fields are treated as "no constraint". Limit=0 means no limit.
 func (r *ProposalRepository) List(ctx context.Context, filter repository.ProposalFilter) ([]proposal.View, error) {
 	q := `SELECT ` + proposalColumns + ` FROM proposal WHERE 1=1`
-	args := make([]any, 0, 3)
+	args := make([]any, 0, 6)
 
 	if filter.Status != "" {
 		args = append(args, filter.Status)
@@ -290,6 +345,18 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	if filter.PRState != "" {
 		args = append(args, filter.PRState)
 		q += fmt.Sprintf(" AND pr_state = $%d", len(args))
+	}
+	if filter.ReleaseID != "" {
+		args = append(args, filter.ReleaseID)
+		q += fmt.Sprintf(" AND release_id = $%d", len(args))
+	}
+	if filter.Source != "" {
+		args = append(args, filter.Source)
+		q += fmt.Sprintf(" AND source = $%d", len(args))
+	}
+	if filter.NodeID != "" {
+		args = append(args, filter.NodeID)
+		q += fmt.Sprintf(" AND node_id = $%d", len(args))
 	}
 	q += " ORDER BY created_at DESC"
 	if filter.Limit > 0 {
@@ -314,32 +381,49 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 // ErrPRConflict. The RETURNING clause reads pr_claimed_at back from the row
 // rather than trusting the claimedAt argument verbatim, so the returned
 // PRClaim.ClaimedAt is always the value actually persisted — the one a later
-// FailStuckOpeningPR call must CAS against. Returns ErrNotSourceResolved when
-// source_resolved=false, ErrNotFound when the id is unknown.
+// FailStuckOpeningPR call must CAS against.
+//
+// The claim requires status='proposed' as well as source_resolved, and the CAS
+// itself carries that condition rather than only the lookup above it: a python
+// contract fix is written as 'verifying' with source_resolved=true the moment
+// its shadow release is submitted, and a shadow rejection changes nothing but
+// the status — so without it a caller could open a pull request for a fix still
+// being judged, or for one already judged wrong.
+//
+// Returns ErrNotSourceResolved when source_resolved=false, ErrNotProposed when
+// the attempt has not reached 'proposed', ErrNotFound when the id is unknown.
 func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
-	// Distinguish "not source-resolved" from "already claimed" for a precise error.
-	var sr bool
-	if err := r.q.GetContext(ctx, &sr, `SELECT source_resolved FROM proposal WHERE id=$1`, id); err != nil {
+	// Read both preconditions first so each returns its own error rather than
+	// collapsing into the CAS's "already claimed".
+	var pre struct {
+		SourceResolved bool   `db:"source_resolved"`
+		Status         string `db:"status"`
+	}
+	if err := r.q.GetContext(ctx, &pre, `SELECT source_resolved, status FROM proposal WHERE id=$1`, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrNotFound
 		}
 		return proposal.PRClaim{}, fmt.Errorf("begin pr lookup: %w", err)
 	}
-	if !sr {
+	if !pre.SourceResolved {
 		return proposal.PRClaim{}, repository.ErrNotSourceResolved
+	}
+	if proposal.Status(pre.Status) != proposal.StatusProposed {
+		return proposal.PRClaim{}, repository.ErrNotProposed
 	}
 
 	const stmt = `
 		UPDATE proposal SET pr_state = 'opening', pr_claimed_at = $2
 		WHERE id = $1
 		  AND source_resolved
+		  AND status = $3
 		  AND pr_state IN ('', 'failed')
 		RETURNING id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
 		          file_edits,
 		          release_id, node_id, attempt, rationale, confidence, model,
 		          pr_claimed_at`
 	var row claimRow
-	if err := r.q.GetContext(ctx, &row, stmt, id, claimedAt); err != nil {
+	if err := r.q.GetContext(ctx, &row, stmt, id, claimedAt, proposal.StatusProposed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrPRConflict
 		}
@@ -460,7 +544,7 @@ func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cu
 	}
 	q := `SELECT id, repo, release_id, node_id, attempt, pr_claimed_at, created_at
 	      FROM proposal WHERE pr_state = 'opening'`
-	args := make([]any, 0, 3)
+	args := make([]any, 0, 6)
 	if cursor != nil {
 		args = append(args, cursor.CreatedAt, cursor.ID)
 		q += fmt.Sprintf(" AND (created_at, id) > ($%d, $%d)", len(args)-1, len(args))
@@ -506,6 +590,65 @@ func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id string, out
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("record pr outcome: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// verifyingBatchLimit caps ListVerifying so a single stuck row can never
+// starve every other in-flight verification: the polling reconciler always
+// makes bounded progress on each tick.
+const verifyingBatchLimit = 20
+
+// ListVerifying returns proposals awaiting shadow-release verification
+// (status='verifying'), oldest first, capped at verifyingBatchLimit.
+func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View, error) {
+	q := `SELECT ` + proposalColumns + ` FROM proposal
+	      WHERE status = $1 ORDER BY created_at ASC LIMIT $2`
+	var rows []proposalRow
+	if err := r.q.SelectContext(ctx, &rows, q, proposal.StatusVerifying, verifyingBatchLimit); err != nil {
+		return nil, fmt.Errorf("list verifying proposals: %w", err)
+	}
+	views := make([]proposal.View, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, row.toView())
+	}
+	return views, nil
+}
+
+// MarkVerified finalizes a proposal whose shadow release validated the fix,
+// transitioning status 'verifying' -> 'proposed'. The WHERE status='verifying'
+// guard is the same compare-and-set contract as every other state transition
+// in this file: a row already finalized by a concurrent or repeated
+// reconciler pass leaves 0 rows affected rather than a blind overwrite. hit
+// reports whether the CAS fired.
+func (r *ProposalRepository) MarkVerified(ctx context.Context, id string) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal SET status=$2 WHERE id=$1 AND status=$3`,
+		id, proposal.StatusProposed, proposal.StatusVerifying)
+	if err != nil {
+		return false, fmt.Errorf("mark verified: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark verified: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// MarkVerifyFailed finalizes a proposal whose shadow release failed to
+// validate the fix, transitioning status 'verifying' -> 'failed' and
+// recording verifyErr so the next attempt can use it as evidence. The CAS
+// guard and hit semantics mirror MarkVerified.
+func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string) (bool, error) {
+	res, err := r.q.ExecContext(ctx,
+		`UPDATE proposal SET status=$2, verify_error=$3 WHERE id=$1 AND status=$4`,
+		id, proposal.StatusFailed, verifyErr, proposal.StatusVerifying)
+	if err != nil {
+		return false, fmt.Errorf("mark verify failed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark verify failed: rows affected: %w", err)
 	}
 	return n > 0, nil
 }

@@ -326,4 +326,8 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 	require.Len(t, perNode, 1)
 	assert.Equal(t, "failed", perNode[0].Status)
 	assert.Equal(t, "s3://c.log", perNode[0].DBTLogURI)
+
+	var shadow bool
+	require.NoError(t, json.Unmarshal(topLevel["shadow"], &shadow))
+	assert.False(t, shadow, "a non-shadow release's compile rejection must carry shadow:false")
 }

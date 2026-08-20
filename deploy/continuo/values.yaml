@@ -600,6 +600,12 @@ services:
       REMEDIATION_PR_POLL_INTERVAL: "60s"
       REMEDIATION_PR_OPENING_GRACE_PERIOD: "10m"
       SERVICE_REPO_MAP_PATH: /etc/continuo/service_repos.yaml
+      RELEASE_CONTROLLER_URL: http://release-controller:8088
+      # How long a python-node fix proposal waits for its shadow verification
+      # release to reach a verdict. Counted from when that release leaves the
+      # release queue and starts running, so a backlog never spends it.
+      SHADOW_VERIFY_TIMEOUT: "20m"
+      SHADOW_VERIFY_POLL_INTERVAL: "15s"
     volumeMounts:
       - {name: service-repos, mountPath: /etc/continuo, readOnly: true}
     volumes:

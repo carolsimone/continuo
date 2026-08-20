@@ -31,8 +31,9 @@ type Deps struct {
 
 // ClassifyFailure triages one failed node: it gathers whatever evidence the
 // source needs, classifies it deterministically, and in a single transaction
-// records the decision (always — emit and drop alike) and, for a healable and
-// newly-recorded node, enqueues a remediation.requested trigger. Idempotency is
+// records the decision (always — emit and drop alike) and, for a newly-recorded
+// node the classifier decided to emit, enqueues a remediation.requested
+// trigger; it decides nothing the classifier has not. Idempotency is
 // enforced by the decision repository's natural key, so a redelivered
 // rejection neither double-records nor double-emits.
 func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence) error {
@@ -62,7 +63,14 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 		return fmt.Errorf("upsert decision: %w", err)
 	}
 
-	if inserted && c.Category.Healable() {
+	// The classifier's Decision is the single gate on emitting: it is drop for
+	// an infrastructure failure, and drop for any rejection from a shadow
+	// release — one posted to verify a fix proposal, whose rejection must never
+	// trigger a remediation of the failed fix. The decision is recorded either
+	// way, so a drop is never invisible; only a newly-recorded emit enqueues,
+	// so a redelivered rejection never double-emits.
+	emitted := inserted && c.Decision == failure.DecisionEmit
+	if emitted {
 		if err := enqueueTrigger(ctx, u, deps, ev, c); err != nil {
 			return err
 		}
@@ -74,7 +82,7 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 	deps.Logger.Info("classified failure",
 		"node", ev.NodeID, "release", ev.ReleaseID,
 		"category", c.Category, "decision", c.Decision, "reason", c.Reason,
-		"emitted", inserted && c.Category.Healable())
+		"shadow", ev.Shadow, "emitted", emitted)
 	return nil
 }
 

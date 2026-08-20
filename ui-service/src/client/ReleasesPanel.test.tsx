@@ -6,7 +6,7 @@ import ReleasesPanel from './ReleasesPanel';
 import { ReleaseListItem } from './types';
 
 const item = (o: Partial<ReleaseListItem> & { release_id: string; status: string }): ReleaseListItem => ({
-  created_at: '2026-07-02T10:00:00Z', resolved_at: null, node_count: 0, bootstrap: false, ...o,
+  created_at: '2026-07-02T10:00:00Z', resolved_at: null, node_count: 0, bootstrap: false, shadow: false, ...o,
 });
 
 function mockFetch(releases: ReleaseListItem[]) {
@@ -58,5 +58,30 @@ describe('ReleasesPanel — reason column', () => {
     await waitFor(() => expect(screen.getByText('rel-4')).toBeInTheDocument());
     const headers = Array.from(document.querySelectorAll('thead th')).map(th => th.textContent);
     expect(headers).toEqual(['Release', 'Status', 'Reason', 'When', 'Nodes']);
+  });
+});
+
+describe('ReleasesPanel — shadow verification label', () => {
+  it('renders a verification pill next to the release id for a shadow release', async () => {
+    mockFetch([item({ release_id: 'rel-5', status: 'validated', shadow: true })]);
+    render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
+    await screen.findByText('rel-5');
+    expect(screen.getByText('verification')).toBeInTheDocument();
+  });
+
+  it('does not render a verification pill for a non-shadow release', async () => {
+    mockFetch([item({ release_id: 'rel-6', status: 'promoted', shadow: false })]);
+    render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
+    await screen.findByText('rel-6');
+    expect(screen.queryByText('verification')).toBeNull();
+  });
+
+  it('includes validated in the status filter, so shadow verification runs can be filtered to', async () => {
+    mockFetch([]);
+    render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
+    await waitFor(() => expect(document.querySelector('#release-status-filter')).toBeInTheDocument());
+    const options = Array.from(document.querySelectorAll('#release-status-filter option'))
+      .map(o => (o as HTMLOptionElement).value);
+    expect(options).toContain('validated');
   });
 });

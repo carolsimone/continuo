@@ -99,6 +99,23 @@ func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
 		"service field must be decoded so proposeFromSource can skip the NodeLocator lookup")
 }
 
+// TestTriggerFromRequested_DecodesErrorExcerpt verifies that a
+// remediation.requested:v1 payload's error_excerpt field decodes onto
+// trigger.ErrorExcerpt, so downstream fixers have the failure text without an
+// extra evidence fetch.
+func TestTriggerFromRequested_DecodesErrorExcerpt(t *testing.T) {
+	raw := []byte(`{"source":"validation","release_id":"rel-1","node_id":"analytics.orders",` +
+		`"error_signature":"sig-1","category":"sql_error",` +
+		`"error_excerpt":"column \"x\" does not exist"}`)
+	tr, err := triggerFromRequested(goredis.XMessage{ID: "1-1"}, raw)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if tr.ErrorExcerpt != `column "x" does not exist` {
+		t.Fatalf("ErrorExcerpt = %q", tr.ErrorExcerpt)
+	}
+}
+
 func TestTriggerFromRequested_DecodesReasonAndBundleURI(t *testing.T) {
 	raw := []byte(`{"source":"validation","release_id":"rel-1","node_id":"analytics.orders",` +
 		`"error_signature":"sig-1","category":"sql_error","reason":"missing_column",` +
@@ -113,4 +130,26 @@ func TestTriggerFromRequested_DecodesReasonAndBundleURI(t *testing.T) {
 	if tr.CodeBundleURI != "s3://continuo/code-bundles/rel-1/bundle.json" {
 		t.Fatalf("CodeBundleURI = %q", tr.CodeBundleURI)
 	}
+}
+
+// TestTriggerFromPayload_LeavesTheDedupIdentityToTheCaller pins the split
+// between the payload and the message that delivered it: decoding the payload
+// alone yields every trigger field but no dedup identity, so a caller
+// replaying stored bytes — the shadow-verify reconciler starting the attempt
+// that follows a failed verification — supplies an identity of its own rather
+// than inheriting the identity of the message the first attempt consumed.
+func TestTriggerFromPayload_LeavesTheDedupIdentityToTheCaller(t *testing.T) {
+	raw, err := json.Marshal(requestedPayloadFixture)
+	require.NoError(t, err)
+
+	trigger, err := TriggerFromPayload(raw)
+	require.NoError(t, err)
+
+	require.Equal(t, "validation", trigger.Source)
+	require.Equal(t, "rel-456", trigger.ReleaseID)
+	require.Equal(t, "orders.model.orders_daily", trigger.NodeID)
+	require.Equal(t, "dbt-model", trigger.NodeType)
+	require.Equal(t, raw, trigger.RawPayload)
+	require.Empty(t, trigger.MessageID)
+	require.Nil(t, trigger.OutboxEntryID)
 }

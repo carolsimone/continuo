@@ -19,10 +19,19 @@
 //     corrected real model source (using {{ ref(...) }} macros), otherwise the
 //     Step-1 candidate-SQL fix (compiled SQL, no macros).
 //
-//  2. tool-result mode: when the last message role is "tool", respond with a
+//  2. propose_python_fix mode: when the request body contains a tool named
+//     "propose_python_fix", the server returns a NON-STREAMING response whose
+//     tool call carries an updated_files array — the multi-file answer the
+//     python-node contract fixer expects. The reply is derived from the prompt
+//     rather than canned: the stub reads back the contract file it was shown
+//     and returns it with the unbindable relation in its declared read
+//     replaced, which is what a model asked to fix that failure would do. See
+//     writeProposePythonFixResponse for which replacement each case gets.
+//
+//  3. tool-result mode: when the last message role is "tool", respond with a
 //     final streaming text chunk ("DONE: ok" or "DONE: error"), finish_reason="stop".
 //
-//  3. user-message mode: take the last word of the user text as the schedule name.
+//  4. user-message mode: take the last word of the user text as the schedule name.
 //     If the text contains "trigger" emit a tool_call for "schedule_trigger", else
 //     "schedule_status". finish_reason="tool_calls". Both are SSE streaming.
 //
@@ -51,8 +60,8 @@ func main() {
 // requestPayload is the subset of the OpenAI chat completions request body
 // that the stub needs to inspect.
 type requestPayload struct {
-	Messages []message    `json:"messages"`
-	Tools    []toolDef    `json:"tools"`
+	Messages []message `json:"messages"`
+	Tools    []toolDef `json:"tools"`
 }
 
 // message is one entry in the messages array.
@@ -100,6 +109,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// stream:false and parses choices[0].message.tool_calls[0].function.
 	// Branch on the user-content marker to distinguish Step-1 (candidate SQL)
 	// from Step-2 (real source fix via stub-github).
+	// propose_python_fix mode: the python-node contract fixer forces its own
+	// tool, whose answer is a list of complete files rather than a single
+	// content string. Checked before propose_fix because the two are distinct
+	// tools with incompatible answer shapes.
+	if hasTool(req.Tools, "propose_python_fix") {
+		writeProposePythonFixResponse(w, lastUserContent(req.Messages))
+		return
+	}
+
 	if hasTool(req.Tools, "propose_fix") {
 		userContent := lastUserContent(req.Messages)
 		writeProposeFixResponse(w, userContent, proposeFixParams(req.Tools))
@@ -219,6 +237,149 @@ select *
 from {{ ref('table_b') }}
 join {{ ref('table_c') }} using (id)`
 
+// Relation names the python-node contract fixtures declare and the stub
+// rewrites between. Only bindingRead names a relation the e2e test actually
+// creates in the warehouse; a contract left pointing at any of the others
+// fails the validation Job's bind check.
+//
+// loopBrokenRead deliberately shares no substring with badReadBrokenRead, so
+// the two fixtures can be told apart by a plain Contains check.
+const (
+	badReadBrokenRead = "public.wrong_name"
+	loopBrokenRead    = "public.loop_wrong_name"
+	stillBrokenRead   = "public.still_wrong_name"
+	bindingRead       = "public.right_name"
+)
+
+// contractFilePath returns the repository path of the contract file the prompt
+// shows, read back from the "Contract file <path> that declares it:" line
+// prompt.AssemblePythonContractFix renders. Returning the path from the prompt
+// rather than a canned constant keeps the answer valid for whichever fixture
+// is being repaired. Returns "" when the prompt shows no contract file.
+func contractFilePath(userContent string) string {
+	const prefix = "Contract file "
+	const suffix = " that declares it:"
+	for _, line := range strings.Split(userContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, prefix) && strings.HasSuffix(trimmed, suffix) {
+			return strings.TrimSuffix(strings.TrimPrefix(trimmed, prefix), suffix)
+		}
+	}
+	return ""
+}
+
+// contractYAML returns the verbatim contract file the prompt shows, taken from
+// the one ```yaml fenced block prompt.AssemblePythonContractFix renders.
+// Returns "" when the prompt carries no such block.
+func contractYAML(userContent string) string {
+	const open = "```yaml\n"
+	start := strings.Index(userContent, open)
+	if start < 0 {
+		return ""
+	}
+	rest := userContent[start+len(open):]
+	end := strings.Index(rest, "\n```")
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// priorAttemptsHeading opens the section prompt.AssemblePythonContractFix
+// renders for the earlier attempts at the same failure. The section exists only
+// when an earlier attempt was recorded, so the heading is what tells a retry
+// apart from a first attempt.
+const priorAttemptsHeading = "Previous fix attempts for this node"
+
+// promptAroundContract returns the request with the contract file it showed cut
+// out of it: what the prompt assembler wrote AROUND that file — the failure, the
+// runner log, the upstream and precedent sections, the earlier attempts — and
+// nothing the team's repository itself holds.
+//
+// Every decision the stub makes about the request as a whole is read from this
+// rather than from the raw request, so no contract fixture can decide which
+// answer comes back. A comment inside a fixture naming one of the relations
+// below would otherwise flip the answer, and would do so on the FIRST attempt —
+// handing back the fix that is supposed to arrive only on a retry, and making a
+// test that drives the retry loop pass its first shadow release instead.
+func promptAroundContract(userContent, contract string) string {
+	if contract == "" {
+		return userContent
+	}
+	return strings.Replace(userContent, contract, "", 1)
+}
+
+// isRetryShownTheRejectedRead reports whether this request is a retry that was
+// actually shown what the earlier attempt did: the prompt carries the
+// prior-attempts section, and that section names the relation the earlier
+// attempt declared.
+//
+// Both halves are required, and both are read from around the contract file.
+// The heading alone would answer a retry correctly even when the evidence the
+// retry is supposed to learn from went missing, which is the one thing the
+// e2e test driving this loop exists to prove. The relation name alone is a
+// weaker guard than it looks: it is satisfied by that name appearing anywhere,
+// including in text the stub was never meant to read.
+func isRetryShownTheRejectedRead(userContent, contract string) bool {
+	around := promptAroundContract(userContent, contract)
+	return strings.Contains(around, priorAttemptsHeading) && strings.Contains(around, stillBrokenRead)
+}
+
+// writeProposePythonFixResponse returns a deterministic, non-streaming answer
+// for the python-node contract fixer: the contract file the prompt showed,
+// with the relation in its declared read rewritten.
+//
+// Which rewrite depends on the fixture, so one stub drives both e2e scenarios:
+//
+//   - the loop fixture (loopBrokenRead) on a FIRST attempt gets
+//     stillBrokenRead — a relation that does not exist either, so the shadow
+//     release verifying it is rejected and its error becomes the next
+//     attempt's evidence;
+//   - the loop fixture on a retry gets bindingRead, so the second shadow
+//     release validates. A retry is recognised by isRetryShownTheRejectedRead:
+//     the prompt's prior-attempts section exists AND it names the relation the
+//     earlier attempt declared, which reaches the prompt only through that
+//     attempt's recorded verification error or the diff it applied. A retry
+//     whose prompt lost that evidence therefore keeps getting the answer that
+//     already failed, and the e2e test driving it never goes green;
+//   - every other fixture gets bindingRead immediately.
+//
+// A prompt with no contract file in it yields an empty updated_files list,
+// which the fixer records as a failed attempt — a legible failure rather than
+// a malformed file written onto a checkout.
+func writeProposePythonFixResponse(w http.ResponseWriter, userContent string) {
+	path := contractFilePath(userContent)
+	original := contractYAML(userContent)
+
+	var files []map[string]string
+	if path != "" && original != "" {
+		var fixed string
+		switch {
+		case strings.Contains(original, loopBrokenRead):
+			replacement := stillBrokenRead
+			if isRetryShownTheRejectedRead(userContent, original) {
+				replacement = bindingRead
+			}
+			fixed = strings.ReplaceAll(original, loopBrokenRead, replacement)
+		default:
+			fixed = strings.ReplaceAll(original, badReadBrokenRead, bindingRead)
+		}
+		files = []map[string]string{{"path": path, "content": fixed}}
+	}
+
+	args, err := json.Marshal(map[string]any{
+		"updated_files": files,
+		"rationale":     "pointed the declared read at a relation that exists",
+		"confidence":    "high",
+	})
+	if err != nil {
+		log.Printf("stub-llm: marshal propose_python_fix arguments: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeToolCallCompletion(w, "propose_python_fix", string(args))
+}
+
 // lastUserContent scans messages in reverse to find the most recent user-role
 // message and returns its string content. Returns "" if none is found.
 func lastUserContent(messages []message) string {
@@ -276,6 +437,16 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 		}
 	}
 	args, _ := json.Marshal(toolArgs)
+	writeToolCallCompletion(w, "propose_fix", string(args))
+}
+
+// writeToolCallCompletion writes a non-streaming chat-completions response
+// whose single choice forces one tool call with the given name and
+// JSON-encoded arguments — the shape the remediation-agent openai adapter
+// parses (choices[0].message.tool_calls[0].function). Every forced-tool answer
+// this stub gives goes through here, so the envelope cannot drift between
+// them.
+func writeToolCallCompletion(w http.ResponseWriter, toolName, argsJSON string) {
 	resp := map[string]any{
 		"choices": []map[string]any{
 			{
@@ -286,8 +457,8 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 							"id":   "call_stub_propose_001",
 							"type": "function",
 							"function": map[string]any{
-								"name":      "propose_fix",
-								"arguments": string(args),
+								"name":      toolName,
+								"arguments": argsJSON,
 							},
 						},
 					},
@@ -298,7 +469,7 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 	}
 	body, err := json.Marshal(resp)
 	if err != nil {
-		log.Printf("stub-llm: marshal propose_fix response: %v", err)
+		log.Printf("stub-llm: marshal %s response: %v", toolName, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

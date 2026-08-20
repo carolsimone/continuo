@@ -17,6 +17,7 @@ type releaseListItem struct {
 	ResolvedAt   *string `json:"resolved_at"`
 	NodeCount    int     `json:"node_count"`
 	Bootstrap    bool    `json:"bootstrap"`
+	Shadow       bool    `json:"shadow"`
 	RejectReason string  `json:"reject_reason,omitempty"`
 }
 
@@ -67,6 +68,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 			ResolvedAt:   resolved,
 			NodeCount:    len(rel.CandidateTopology()),
 			Bootstrap:    rel.IsBootstrap(),
+			Shadow:       rel.IsShadow(),
 			RejectReason: rel.RejectReason(),
 		})
 	}
@@ -85,7 +87,7 @@ func resolvedAt(rel *release.Release) *time.Time {
 	ts := rel.Transitions()
 	for i := len(ts) - 1; i >= 0; i-- {
 		switch ts[i].To {
-		case release.StatusPromoted, release.StatusRejected, release.StatusSuperseded:
+		case release.StatusPromoted, release.StatusRejected, release.StatusSuperseded, release.StatusValidated:
 			at := ts[i].At
 			return &at
 		}
