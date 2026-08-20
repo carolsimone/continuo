@@ -73,6 +73,7 @@ kubectl rollout status deployment/k8s-controller -n default --timeout=120s || {
 
 log_info "Rollouts complete (no terminating pods, all new pods Ready)"
 
-# rollout status passing implies the readinessProbe (which hits /health) has
-# succeeded for every new pod and no old pods remain.
+# rollout status passing implies the readinessProbe (which hits /ready, so
+# Postgres and Redis are reachable too) has succeeded for every new pod and
+# no old pods remain.
 log_info "Controllers verified healthy via readinessProbe (kubectl rollout status passed)"
