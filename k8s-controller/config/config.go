@@ -1,8 +1,15 @@
 package config
 
 import (
+	"time"
+
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 )
+
+// defaultShutdownGrace bounds the graceful-shutdown sequence: the in-flight
+// drain plus the infra-close handlers. It is a safe default so no required env
+// var is introduced; override with SHUTDOWN_GRACE (e.g. "30s").
+const defaultShutdownGrace = 15 * time.Second
 
 // ResolverConfig holds stuck-entry resolver tuning parameters.
 type ResolverConfig struct {
@@ -36,6 +43,9 @@ type Config struct {
 	// Schedule cancellation
 	CancelledSchedulesTTLHours         int
 	CancelledSchedulesSweepIntervalMin int
+
+	// ShutdownGrace bounds the graceful-shutdown drain + infra teardown.
+	ShutdownGrace time.Duration
 }
 
 // Load reads configuration from environment variables.
@@ -62,6 +72,8 @@ func Load(v *pkgconfig.Validator) Config {
 
 		CancelledSchedulesTTLHours:         envInt("CANCELLED_SCHEDULES_TTL_HOURS", 24),
 		CancelledSchedulesSweepIntervalMin: envInt("CANCELLED_SCHEDULES_SWEEP_INTERVAL_MINUTES", 60),
+
+		ShutdownGrace: pkgconfig.EnvDurationOrDefault("SHUTDOWN_GRACE", defaultShutdownGrace),
 	}
 }
 

@@ -71,6 +71,33 @@ Go service answers the same probe contract, not because agent-runner guards
 any consumers. Kubernetes points `readinessProbe` at `/ready` and
 `livenessProbe` at `/livez`.
 
+### Graceful shutdown
+
+On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence bounded by
+`SHUTDOWN_GRACE` (default 10s — the other four `pkg/lifecycle` services default
+to 15s): (1) stop intake by cancelling the root context; (2) drain — wait on
+a WaitGroup for goroutines tracked via `ApplicationLifecycle.Go(...)` to
+return, capped at the grace period; (3) close infra — run the registered
+shutdown handlers (gRPC server, health HTTP server, Postgres, and the Redis
+client when `REDIS_ADDR` is set) in LIFO order against a fresh live context
+derived from `context.Background()`, never the just-cancelled root context.
+`main` blocks on the lifecycle completion channel, so there is no fixed
+sleep.
+
+agent-runner makes zero `Go(...)` calls — it runs no Redis stream consumers
+or other tracked background loops, only the gRPC and health servers, each
+started as a plain untracked `go func() { ... }()` and stopped from its own
+`RegisterShutdownHandler`. Step 2's drain is therefore a no-op here: the
+WaitGroup it waits on is never incremented, so it returns immediately
+regardless of the grace period.
+
+The gRPC shutdown handler also does not use the context step 3 gives it.
+`grpcSrv.GracefulStop()` is unbounded on its own, so the handler races it
+against `time.After(cfg.ShutdownGrace)` in a `select`, falling back to
+`grpcSrv.Stop()` (hard cutoff of in-flight streams) if the grace period
+elapses first — the injected `ctx` argument is ignored in favor of that
+independent timer.
+
 ### ClientEvent types (inbound stream)
 
 | Type | Payload | Meaning |

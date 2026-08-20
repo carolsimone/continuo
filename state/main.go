@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
+	"github.com/carolsimone/continuo/pkg/lifecycle"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgmessageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -22,7 +23,6 @@ import (
 	"github.com/carolsimone/continuo/state/database"
 	grpcserver "github.com/carolsimone/continuo/state/internal/grpc"
 	"github.com/carolsimone/continuo/state/internal/grpc/handlers"
-	"github.com/carolsimone/continuo/state/internal/lifecycle"
 	"github.com/carolsimone/continuo/state/internal/scheduler"
 	svchandlers "github.com/carolsimone/continuo/state/service/handlers"
 	ports "github.com/carolsimone/continuo/state/service/ports"
