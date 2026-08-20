@@ -43,6 +43,12 @@ spec:
       labels:
         {{- include "continuo.selectorLabels" (dict "root" $ "service" $svc.name) | nindent 8 }}
     spec:
+      # Bounds how long the kubelet waits after SIGTERM before SIGKILLing the
+      # container. Must stay comfortably above the app's own SHUTDOWN_GRACE
+      # (pkg/lifecycle's env-configured shutdown budget, default 15s / 10s for
+      # agent-runner): if this is tighter than SHUTDOWN_GRACE, Kubernetes can
+      # SIGKILL mid-teardown before the app's own bounded sequence finishes.
+      terminationGracePeriodSeconds: {{ $.Values.global.terminationGracePeriodSeconds }}
       {{- if and $svc.rbac $svc.rbac.enabled }}
       serviceAccountName: {{ $svc.name }}
       {{- end }}

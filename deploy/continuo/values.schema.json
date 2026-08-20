@@ -68,7 +68,8 @@
         "teamImagePrefix": {"type": "string"},
         "stateGrpcAddr": {"type": "string"},
         "orchestratorGrpcAddr": {"type": "string"},
-        "agentRunnerGrpcAddr": {"type": "string"}
+        "agentRunnerGrpcAddr": {"type": "string"},
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 1}
       }
     },
 

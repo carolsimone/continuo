@@ -13,6 +13,14 @@ shipped in those.
 ## [Unreleased]
 
 ### Added
+- `global.terminationGracePeriodSeconds` (default `30`) — sets every service
+  Deployment's `terminationGracePeriodSeconds` explicitly instead of relying
+  on Kubernetes' implicit 30s default. Each service bounds its own graceful
+  shutdown sequence via the `SHUTDOWN_GRACE` env var (default 15s, 10s for
+  `agent-runner`); the pod-level value must stay comfortably above whatever
+  `SHUTDOWN_GRACE` is configured to, or Kubernetes can SIGKILL the container
+  mid-teardown. The default of `30` matches today's implicit behavior, so an
+  unmodified existing values file renders the same Deployment as before.
 - `remediation-agent.env.RELEASE_CONTROLLER_URL` (default
   `http://release-controller:8088`), `remediation-agent.env.SHADOW_VERIFY_TIMEOUT`
   (default `"20m"`) and `remediation-agent.env.SHADOW_VERIFY_POLL_INTERVAL`
