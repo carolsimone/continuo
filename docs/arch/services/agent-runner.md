@@ -60,7 +60,16 @@ The retention job runs on a configurable interval and deletes threads whose `upd
 
 #### Health
 
-Port 8091: HTTP health endpoints `/health` (liveness) and `/ready` (readiness); Kubernetes liveness/readiness probes target these paths.
+Port 8091 serves three HTTP health endpoints, backed by the same liveness
+registry the other Go services use: `/health` (process-up probe, always 200),
+`/ready` (readiness), and `/livez` (liveness). agent-runner registers only a
+Postgres dependency probe with the registry — it runs zero Redis stream
+consumers, so there are no worker or heartbeat probes to register. `/ready`
+still 503s on a Postgres outage; `/livez` has no consumer heartbeats to
+report and stays 200 regardless of Postgres health. The route exists so every
+Go service answers the same probe contract, not because agent-runner guards
+any consumers. Kubernetes points `readinessProbe` at `/ready` and
+`livenessProbe` at `/livez`.
 
 ### ClientEvent types (inbound stream)
 
