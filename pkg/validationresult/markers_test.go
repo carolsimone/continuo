@@ -5,9 +5,10 @@ import (
 )
 
 // TestSentinelMarkersMatchWireContract guards the cross-repo structured-result
-// contract. The validation pod (the external continuo-validation-contract package,
-// continuo_validation_contract/result.py) prints the result block framed by these
-// sentinel markers, and the Go side splits the pod log on the constants in this
+// contract. The validation pod (the external continuo-engine-contract package,
+// continuo_engine_contract/result.py, published from
+// github.com/carolsimone/continuo-python-runtime) prints the result block framed by
+// these sentinel markers, and the Go side splits the pod log on the constants in this
 // package. Nothing generates one side from the other, so a drift would silently
 // empty run_results_uri and degrade remediation to the text-log path with no error
 // surfaced. The marker strings are the fixed wire contract; this test pins the Go
