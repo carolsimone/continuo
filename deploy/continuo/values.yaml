@@ -391,10 +391,10 @@ services:
     httpPort: 8091
     grpcPort: 50053
     # Readiness and liveness point at DIFFERENT paths with different semantics
-    # (see adapters/http/server.go): /ready = workers + heartbeats + dependency
-    # probes (a Redis/Postgres outage stops traffic); /livez = workers +
-    # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
-    # are already retrying, but a dead/wedged consumer must).
+    # (see adapters/http/server.go): /ready covers the Postgres dependency
+    # probe (an outage stops traffic); agent-runner runs no consumers or
+    # workers, so /livez has nothing registered today and is a constant 200 —
+    # the route exists so every service exposes the same probe contract.
     readinessPath: /ready
     livenessPath: /livez
     secretEnv:

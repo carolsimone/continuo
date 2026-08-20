@@ -65,9 +65,16 @@ shipped in those.
   excluding dependency probes, so a transient Redis/Postgres outage no longer
   restarts a pod whose consumers are already retrying. `agent-runner` runs no
   stream consumers, so this change gives it no new restart behavior — it now
-  answers `/livez` so every Go service exposes the same probe contract.
-  Readiness (`readinessPath: /ready`) is unchanged for all three. Implies a
-  MINOR version bump.
+  answers `/livez` so every Go service exposes the same liveness probe
+  contract. Readiness (`readinessPath: /ready`) is unchanged for all three,
+  and is not uniform across the chart: `state`, `orchestrator`,
+  `executor-controller`, `k8s-controller`, and `agent-runner` use `/ready`,
+  while `release-controller`, `remediation`, and `remediation-agent` use
+  `/healthz`. `services` is a list and Helm replaces lists wholesale, so an
+  operator who overrides it in their own values file keeps their old entries
+  as-is on upgrade; they must add `livenessPath: /livez` to their own service
+  entries themselves, or those pods keep probing the always-200 `/health`.
+  Implies a MINOR version bump.
 
 ## [0.2.0] - 2026-08-10
 
