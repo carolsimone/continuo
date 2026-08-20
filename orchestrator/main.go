@@ -35,6 +35,20 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// consumerHeartbeatStale is the liveness heartbeat budget: how long a
+// consumer's read loop may go without completing an iteration before /livez
+// reports it wedged. These consumers set no handler timeout, so nothing
+// enforces this budget against the slowest handler — it is an empirical
+// margin, not an enforced relationship, and must stay comfortably above the
+// slowest handler invocation observed in practice.
+const consumerHeartbeatStale = 3 * time.Minute
+
+// outboxHeartbeatStale is the liveness budget for the outbox processor's Run
+// loop. The poll tick is 1s, so 60s is comfortably above it: a wedged (not
+// exited) processor trips within a minute, while an idle-but-live one never
+// does.
+const outboxHeartbeatStale = 60 * time.Second
+
 func main() {
 	// Setup structured logger
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -65,9 +79,14 @@ func main() {
 	// runConsumer starts a tracked stream consumer. Its goroutine is tracked by
 	// the lifecycle WaitGroup so shutdown drains in-flight handler invocations
 	// before infra is closed. A non-nil return (a genuine exit rather than a
-	// clean ctx-cancel stop) flips readiness so the unhealthy pod is restarted.
+	// clean ctx-cancel stop) flips both readiness and liveness so the unhealthy
+	// pod is restarted; a worker heartbeat probe also catches a consumer whose
+	// read loop has gone wedged without exiting.
 	runConsumer := func(name string, consumer *pkgredis.StreamConsumer) {
 		liveReg.RegisterWorker(name)
+		liveReg.AddWorkerProbe(name+"_heartbeat", 10*time.Second, func(context.Context) error {
+			return consumer.Healthy(consumerHeartbeatStale)
+		})
 		lifecycleManager.Go(func() {
 			err := consumer.Start(ctx)
 			liveReg.WorkerExited(name, err)
@@ -198,6 +217,9 @@ func main() {
 		pkgoutbox.ProcessorConfig{Tick: time.Second, BatchSize: 100},
 	)
 	liveReg.RegisterWorker("outbox_processor")
+	liveReg.AddWorkerProbe("outbox_processor_heartbeat", 10*time.Second, func(context.Context) error {
+		return outboxProc.Healthy(outboxHeartbeatStale)
+	})
 	lifecycleManager.Go(func() {
 		err := outboxProc.Run(ctx)
 		if errors.Is(err, context.Canceled) {

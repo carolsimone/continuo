@@ -280,14 +280,31 @@ Each consumer is wired as a `parser → handler` binding under `adapters/redis/`
 
 ### HTTP (port 8087)
 
-- `GET /health` — liveness probe; returns 200 while the process can serve HTTP.
+- `GET /health` — process-up probe; returns 200 while the process can serve HTTP.
 - `GET /ready` — readiness probe backed by a liveness registry. Returns 200 only
   when every registered background worker (each Redis stream consumer plus the
   outbox processor) is live and the cached dependency probes pass —
   Redis/Postgres (5s TTL); otherwise 503. A consumer goroutine that returns a
   non-nil error (a genuine exit, distinct from the clean `nil` return on
   context cancel) marks itself unhealthy in the registry, flipping `/ready` to
-  503 so Kubernetes stops routing to the degraded pod and restarts it.
+  503 so Kubernetes stops routing to the degraded pod.
+- `GET /livez` — liveness probe backed by the same registry. Returns 200 only
+  when every registered worker is live and its heartbeat is fresh; it
+  deliberately excludes the dependency probes `/ready` checks, so a transient
+  Redis/Postgres outage does not restart a pod whose consumers are already
+  retrying against it. A 503 from `/livez` is what actually restarts the pod.
+  Each Redis stream consumer registers both a worker (flips on a genuine,
+  non-nil exit) and a heartbeat probe — `Healthy(3 * time.Minute)`, cached
+  with a 10s TTL — so a consumer whose read loop is wedged but has not exited
+  also trips liveness. The outbox processor registers both as well — a worker
+  plus an `outbox_processor_heartbeat` probe, `Healthy(60 * time.Second)`
+  against a 1s poll tick — so a wedged outbox loop trips liveness within a
+  minute, while an idle-but-live one never does.
+
+Kubernetes points `readinessProbe` at `/ready` and `livenessProbe` at
+`/livez`: readiness stops traffic on a dependency outage or a dead consumer
+without restarting the pod, while liveness restarts the pod only for a dead
+or wedged worker, regardless of dependency health.
 
 ### Graceful shutdown
 

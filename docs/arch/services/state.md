@@ -225,17 +225,35 @@ The `internal/grpc/handlers/synthesise_derived_run.go` helper backs both `RerunH
 
 | Route | Method | Description |
 |---|---|---|
-| `/health` | GET | Liveness probe; 200 while the process can serve HTTP |
+| `/health` | GET | Process-up probe; always 200 while the process can serve HTTP |
 | `/ready` | GET | Readiness probe backed by the liveness registry |
+| `/livez` | GET | Liveness probe backed by the liveness registry |
 
 Port 8082 serves health checks only; trigger commands run over gRPC on 50051.
+Kubernetes points `readinessProbe` at `/ready` and `livenessProbe` at `/livez`.
 
 `/ready` returns 200 only when every registered background worker (each Redis
 stream consumer plus the outbox processor) is live and the cached dependency
 probes pass — Redis/Postgres (5s TTL); otherwise 503. A consumer goroutine that
 returns a non-nil error (a genuine exit, distinct from the clean `nil` return on
 context cancel) marks itself unhealthy in the registry, flipping `/ready` to 503
-so Kubernetes stops routing to the degraded pod and restarts it.
+so Kubernetes stops routing to the degraded pod.
+
+`/livez` returns 200 only when every registered worker is live and its
+heartbeat is fresh — it deliberately excludes the dependency probes `/ready`
+checks, so a transient Redis/Postgres outage does not restart a pod whose
+consumers are already retrying against it. A 503 from `/livez` is what
+actually restarts the pod. Each Redis stream consumer registers both a worker
+(flips on a genuine, non-nil exit) and a heartbeat probe — `Healthy(3 *
+time.Minute)`, cached with a 10s TTL — so a consumer whose read loop is
+wedged but has not exited also trips liveness. The outbox processor registers
+both as well — a worker plus an `outbox_processor_heartbeat` probe,
+`Healthy(60 * time.Second)` against a 500ms poll tick — so a wedged outbox
+loop trips liveness within a minute, while an idle-but-live one never does.
+
+Readiness and liveness are therefore a deliberate split: a dependency outage
+stops traffic without restarting the pod (its consumers keep retrying), while
+a dead or wedged consumer restarts the pod regardless of dependency health.
 
 ### Graceful shutdown
 

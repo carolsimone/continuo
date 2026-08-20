@@ -11,20 +11,24 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 )
 
-// Server wraps the HTTP server exposing liveness (/health) and readiness
-// (/ready) probes.
+// Server wraps the HTTP server exposing a process-up probe (/health),
+// readiness (/ready), and liveness (/livez) endpoints.
 type Server struct {
 	httpServer *http.Server
 	logger     *slog.Logger
 }
 
-// NewServer creates a new HTTP health server. Readiness is answered from the
-// supplied liveness registry; /health returns 200 as long as the process can
-// serve HTTP.
+// NewServer creates a new HTTP health server. Readiness and liveness are
+// answered from the supplied liveness registry; /health returns 200 as long
+// as the process can serve HTTP. agent-runner runs no stream consumers, so
+// /ready additionally checks a Postgres dependency probe, while /livez has no
+// workers or heartbeats registered and is a constant 200 — the route exists
+// so the deploy chart's two probes stay uniform across services.
 func NewServer(port int, registry *liveness.Registry, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/ready", newReadinessHandler(registry))
+	mux.HandleFunc("/livez", newLivenessHandler(registry))
 
 	return &Server{
 		httpServer: &http.Server{
@@ -57,14 +61,14 @@ type healthResponse struct {
 	Service string `json:"service"`
 }
 
-// readinessResponse is the JSON body for /ready.
+// readinessResponse is the JSON body for /ready and /livez.
 type readinessResponse struct {
 	Status    string   `json:"status"`
 	Service   string   `json:"service"`
 	Unhealthy []string `json:"unhealthy,omitempty"`
 }
 
-// healthHandler handles liveness check requests. It returns 200 as long as the
+// healthHandler handles the process-up check. It returns 200 as long as the
 // process is running and able to serve HTTP.
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -91,5 +95,30 @@ func newReadinessHandler(registry *liveness.Registry) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(readinessResponse{Status: "not_ready", Service: "agent-runner", Unhealthy: names}) //nolint:errcheck
+	}
+}
+
+// newLivenessHandler returns a liveness handler backed by the liveness
+// registry. It responds 503 only when a registered worker has exited with an
+// error or a worker heartbeat has gone stale — never for a dependency-probe
+// failure, since a dependency outage must stop traffic (readiness) rather
+// than restart a pod whose workers are already retrying through it. Reuses
+// readinessResponse: the payload shape (status/service/unhealthy) is shared
+// with /ready, only the status values and the source check differ.
+func newLivenessHandler(registry *liveness.Registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		failures := registry.LivenessCheck(r.Context())
+		if len(failures) == 0 {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(readinessResponse{Status: "live", Service: "agent-runner"}) //nolint:errcheck
+			return
+		}
+		names := make([]string, 0, len(failures))
+		for _, f := range failures {
+			names = append(names, f.Name)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(readinessResponse{Status: "not_live", Service: "agent-runner", Unhealthy: names}) //nolint:errcheck
 	}
 }
