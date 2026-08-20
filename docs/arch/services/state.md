@@ -259,9 +259,12 @@ a dead or wedged consumer restarts the pod regardless of dependency health.
 
 On SIGTERM/SIGINT the lifecycle manager runs an ordered sequence bounded by
 `SHUTDOWN_GRACE` (default 15s): (1) stop intake by cancelling the root context so
-consumers and the outbox processor return after the in-flight message; (2) drain
-— wait on a WaitGroup for those tracked goroutines to return, capped at the
-grace period; (3) close infra — run the registered shutdown handlers (gRPC/HTTP
+consumers and the outbox processor stop reading new work and unwind their
+in-flight handler — the handler's next database call fails against the
+cancelled context, its transaction rolls back, and the message is left
+un-ACKed for redelivery; (2) drain — wait on a WaitGroup for those tracked
+goroutines to return, capped at the grace period; (3) close infra — run the
+registered shutdown handlers (gRPC/HTTP
 servers, cron scheduler, Postgres, Redis) against a fresh live context derived
 from `context.Background()`, never the just-cancelled root context. `main` blocks
 on the lifecycle completion channel, so there is no fixed sleep.
