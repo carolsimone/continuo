@@ -35,8 +35,10 @@ global:
   # every Deployment. Each service also bounds its own graceful-shutdown
   # sequence via the SHUTDOWN_GRACE env var (pkg/lifecycle; default 15s, 10s
   # for agent-runner) — keep this comfortably above the largest SHUTDOWN_GRACE
-  # in use, or a slow shutdown gets SIGKILLed mid-teardown. 30s matches
-  # Kubernetes' implicit default, so leaving this unset changes nothing.
+  # in use, or a slow shutdown gets SIGKILLed mid-teardown. The schema floors
+  # this at 20s (5s of headroom above the 15s default) for exactly that
+  # reason. 30s matches Kubernetes' implicit default, so leaving this unset
+  # changes nothing.
   terminationGracePeriodSeconds: 30
 
 # ---------------------------------------------------------------------------

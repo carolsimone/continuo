@@ -83,6 +83,28 @@ shipped in those.
   as-is on upgrade; they must add `livenessPath: /livez` to their own service
   entries themselves, or those pods keep probing the always-200 `/health`.
   Implies a MINOR version bump.
+- `global.terminationGracePeriodSeconds`'s schema `minimum` is now `20`,
+  raised from `1`. A value at or below the largest `SHUTDOWN_GRACE` default
+  in the code (15s) guarantees the kubelet SIGKILLs the container
+  mid-teardown before its own graceful-shutdown sequence can finish; 20s
+  leaves 5s of genuine headroom above that default. The chart's own default
+  of `30` is unaffected. An existing values file that already sets this key
+  to `20` or above is unaffected; one that set it below `20` now fails
+  `helm lint`/install and must raise the value. Implies a MINOR version
+  bump (a previously-valid low value is no longer accepted, but no existing
+  *default* installation is affected).
+- `pkg/lifecycle`'s in-flight drain step is capped at half of
+  `SHUTDOWN_GRACE`, not the full value — fixed in the previous release
+  alongside `global.terminationGracePeriodSeconds`'s introduction, but not
+  called out here at the time. `state`, `orchestrator`,
+  `executor-controller`, and `k8s-controller` therefore drain in-flight work
+  for up to 7.5s (half of their 15s default), not 15s. An operator who had
+  raised `SHUTDOWN_GRACE` specifically to widen the in-flight drain window
+  now gets half of what they set for that half, though the *total* shutdown
+  sequence (drain plus infra teardown) stays bounded by the same
+  `SHUTDOWN_GRACE` value as before. All tracked goroutines in every service
+  unwind well within 7.5s on cancellation, so this is not expected to change
+  observed shutdown behavior for a default install.
 
 ## [0.2.0] - 2026-08-10
 
