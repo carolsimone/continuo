@@ -336,7 +336,13 @@ services:
     replicas: 1
     httpPort: 8082
     grpcPort: 50051
+    # Readiness and liveness point at DIFFERENT paths with different semantics
+    # (see adapters/http/health.go): /ready = workers + heartbeats + dependency
+    # probes (a Redis/Postgres outage stops traffic); /livez = workers +
+    # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
+    # are already retrying, but a dead/wedged consumer must).
     readinessPath: /ready
+    livenessPath: /livez
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: REDIS_PASSWORD, ref: redis}
@@ -358,7 +364,13 @@ services:
     replicas: 1
     httpPort: 8087
     grpcPort: 50052
+    # Readiness and liveness point at DIFFERENT paths with different semantics
+    # (see adapters/http/health.go): /ready = workers + heartbeats + dependency
+    # probes (a Redis/Postgres outage stops traffic); /livez = workers +
+    # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
+    # are already retrying, but a dead/wedged consumer must).
     readinessPath: /ready
+    livenessPath: /livez
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: NEO4J_PASSWORD, ref: neo4j}
@@ -378,7 +390,13 @@ services:
     replicas: 1
     httpPort: 8091
     grpcPort: 50053
+    # Readiness and liveness point at DIFFERENT paths with different semantics
+    # (see adapters/http/health.go): /ready = workers + heartbeats + dependency
+    # probes (a Redis/Postgres outage stops traffic); /livez = workers +
+    # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
+    # are already retrying, but a dead/wedged consumer must).
     readinessPath: /ready
+    livenessPath: /livez
     secretEnv:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: LLM_API_KEY, ref: llm}

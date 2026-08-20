@@ -58,6 +58,13 @@ shipped in those.
   be one shared checkout. Comments only — the file's keys, the ConfigMap it
   populates, and the values contract are unchanged, so an existing
   `values.yaml` or override needs no edit.
+- `state`, `orchestrator`, and `agent-runner` now set `livenessPath: /livez`
+  instead of falling back to the always-200 `/health`, so a dead or wedged
+  Redis stream consumer restarts the pod. `/livez` reports workers and
+  heartbeats only, deliberately excluding dependency probes, so a transient
+  Redis/Postgres outage no longer restarts a pod whose consumers are already
+  retrying. Readiness (`readinessPath: /ready`) is unchanged. Implies a MINOR
+  version bump.
 
 ## [0.2.0] - 2026-08-10
 
