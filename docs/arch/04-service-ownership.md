@@ -47,6 +47,23 @@ if missing := v.Missing(); len(missing) > 0 {
 
 The process exits before any connection is attempted, so missing-config failures are immediately visible in `docker logs` or pod logs rather than surfacing as obscure connection errors.
 
+## Graceful Shutdown Convention
+
+`state`, `orchestrator`, `executor-controller`, `k8s-controller`, and `agent-runner` drive process shutdown through the shared `pkg/lifecycle.ApplicationLifecycle`. `release-controller`, `remediation`, and `remediation-agent` are not on it; each installs `signal.Notify` directly in its own `main` instead.
+
+On SIGTERM/SIGINT, `ApplicationLifecycle` runs an ordered sequence bounded by `SHUTDOWN_GRACE` (default 15s; `agent-runner` defaults to 10s):
+
+1. **Stop intake** — cancel the root context so consumers and background loops stop reading new work.
+2. **Drain** — wait on a `WaitGroup` for goroutines tracked via `ApplicationLifecycle.Go(...)` to return, bounded by the grace period.
+3. **Close infra** — run the registered shutdown handlers, in LIFO order, against a fresh context derived from `context.Background()`, never the just-cancelled root context.
+
+`Done()` then closes and `main` blocks on it instead of on `<-ctx.Done()`, so there is no fixed sleep.
+
+Two properties of this sequence matter beyond the mechanics:
+
+- **Step 1 aborts in-flight work; it does not complete it.** The root context is threaded straight into the handler, so cancellation makes the in-flight handler's next database call fail, its transaction roll back, and the message stay un-ACKed for redelivery. The drain in step 2 waits for tracked goroutines to unwind, not for their work to finish — correctness comes from at-least-once redelivery plus dedup, not from finishing the message before shutdown.
+- **A server whose only stopper is a shutdown handler must never be tracked with `Go(...)`.** Such a server blocks in its start call until the handler registered via `RegisterShutdownHandler` calls `Shutdown`, and that handler only runs in step 3, after the drain. Tracking the server's start call in `Go(...)` would make `wg.Wait()` wait on a goroutine that cannot return before the wait itself completes, so every shutdown would burn the full grace period. The AST guard `TestLifecycleGoNeverWrapsAServerStart` in `pkg/streams/lifecycle_wiring_test.go` enforces this across every service's `main.go`.
+
 ## Bootstrap Migration Image
 
 The dedicated Flyway image artifact runs as the `pre-upgrade` Helm hook for `continuo-app` and both provisions and migrates the per-service Postgres databases. For each service in `{state, executor, orchestrator, k8s, release}` it idempotently creates `continuo_<service>` if it does not already exist, then applies the SQL files under `db/migration/<service>` against that database. `db/migrate-all.sh` holds this database list as a single source of truth driving both the create step and the migrate step, so they cannot drift.
