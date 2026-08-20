@@ -466,6 +466,81 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 	assert.Equal(t, "rA", cp.ReleaseID(), "current prod advanced to this release")
 }
 
+// A shadow release exists only to find out whether a proposed fix survives the
+// real pipeline, and its terminal "validated" status is what a human is shown
+// as proof before being asked to merge that fix. A candidate whose nodes all
+// match prod has nothing to validate, so the trivial pass a normal release
+// takes there would end a shadow release in "validated" having run no
+// validation at all — reporting an unverified fix as verified. The shadow is
+// rejected instead, which is the outcome the shadow-verify reconciler already
+// treats as a failed attempt.
+//
+// The second subtest is the control: the same empty validation set on a
+// non-shadow release must still promote directly, since emitting an empty
+// validation request would block the release queue forever.
+func TestHandleParsedManifest_OK_NothingToValidate_ShadowIsRejected(t *testing.T) {
+	unchangedTopo := func() release.Topology {
+		return release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
+			{UniqueID: "b", ServiceName: "svc-a", ContentHash: "h_b", UpstreamUniqueIDs: []string{"a"}},
+		}
+	}
+
+	t.Run("shadow release is rejected instead of reported verified", func(t *testing.T) {
+		deps, store := seedToParsingShadow(t, "rShadow", map[string]string{"svc-a": "sha-a"})
+		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
+
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rShadow",
+			Status:    "ok",
+			Topology:  unchangedTopo(),
+		}))
+
+		r, err := store.GetRelease("rShadow")
+		require.NoError(t, err)
+		assert.Equal(t, release.StatusRejected, r.Status(),
+			"a shadow release that validated nothing must not end in a status that means the fix is verified")
+		assert.Equal(t, "nothing_to_validate", r.RejectReason())
+		assert.NotEmpty(t, r.RejectDetail(), "the rejection must explain itself to an operator")
+
+		for _, e := range outboxEntries(store) {
+			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
+			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a shadow release never promotes")
+		}
+
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleaseRejectedV1).Payload, &payload))
+		assert.Equal(t, "rShadow", payload["release_id"])
+		assert.Equal(t, "nothing_to_validate", payload["reason"])
+		assert.NotEmpty(t, payload["error_detail"])
+		assert.Equal(t, true, payload["shadow"],
+			"the rejection must carry shadow:true so remediation does not classify a failed fix attempt")
+
+		assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
+			"a rejected shadow release must not advance current prod")
+	})
+
+	t.Run("non-shadow release with the same empty validation set still promotes", func(t *testing.T) {
+		deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
+
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rA",
+			Status:    "ok",
+			Topology:  unchangedTopo(),
+		}))
+
+		r, err := store.GetRelease("rA")
+		require.NoError(t, err)
+		assert.Equal(t, release.StatusPromoted, r.Status(),
+			"the empty-set trivial pass must be unchanged for a normal release")
+
+		entries := outboxEntries(store)
+		assert.Equal(t, streams.ReleasePromotedV1, entries[len(entries)-1].StreamName, "promotes directly")
+		assert.Equal(t, "rA", store.GetCurrentProd().ReleaseID(), "current prod advanced to this release")
+	})
+}
+
 // TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream verifies that a
 // candidate where a changed node references an upstream that is absent from the
 // candidate topology entirely is rejected early with reason
