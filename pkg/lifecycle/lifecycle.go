@@ -13,6 +13,12 @@ import (
 // ShutdownHandler is a function that performs cleanup on shutdown.
 type ShutdownHandler func(ctx context.Context) error
 
+// defaultGrace substitutes for a non-positive grace passed to Shutdown. A
+// zero or negative grace would otherwise yield a deadline already in the
+// past, handing shutdown handlers a context that is already done — the exact
+// dead-context failure this package exists to prevent.
+const defaultGrace = 15 * time.Second
+
 // ApplicationLifecycle manages application startup and graceful shutdown.
 //
 // Shutdown proceeds in a defined order so infra is closed only after
@@ -28,10 +34,11 @@ type ShutdownHandler func(ctx context.Context) error
 //     and database or cache connections) against a LIVE context derived from
 //     context.Background(), never the root context that was just cancelled.
 //
-// Steps 2 and 3 share a single deadline set to the grace period, so the
-// whole sequence is bounded by grace, not 2x grace: the drain is capped at
-// half the budget, which guarantees infra teardown always retains at least
-// the other half, live, even when the drain used its entire share.
+// Step 3's context runs to a deadline fixed at Shutdown entry, while step 2
+// is capped independently at half the grace budget; together they keep the
+// total sequence within grace, not 2x grace — for handlers that honor their
+// context. A Close()-style handler that ignores ctx is not itself bounded by
+// this deadline.
 type ApplicationLifecycle struct {
 	shutdownHandlers []ShutdownHandler
 	logger           *slog.Logger
@@ -57,9 +64,22 @@ func NewApplicationLifecycle(logger *slog.Logger) *ApplicationLifecycle {
 
 // RegisterShutdownHandler registers a handler to be called on shutdown.
 // Handlers are called in reverse order (LIFO).
+//
+// RegisterShutdownHandler refuses to register once shutdown has begun.
+// Shutdown snapshots the handler slice under al.mu and never reads the field
+// again afterward, so a handler registered after that snapshot would never
+// run; refusing it loudly is preferable to a caller believing cleanup is
+// wired up when it silently is not. This is symmetric with Go's refusal of
+// late tracked-goroutine starts, and for the same underlying reason: both
+// guard a field Shutdown reads under al.mu against an unsynchronized
+// concurrent write.
 func (al *ApplicationLifecycle) RegisterShutdownHandler(handler ShutdownHandler) {
 	al.mu.Lock()
 	defer al.mu.Unlock()
+	if al.shuttingDown {
+		al.logger.Warn("Not registering shutdown handler: shutdown already in progress")
+		return
+	}
 	al.shutdownHandlers = append(al.shutdownHandlers, handler)
 }
 
@@ -112,18 +132,33 @@ func (al *ApplicationLifecycle) SetupSignalHandlers(cancel context.CancelFunc, g
 // bounded by grace. It is idempotent; the first caller runs the sequence and
 // closes Done().
 func (al *ApplicationLifecycle) Shutdown(cancel context.CancelFunc, grace time.Duration) {
+	if grace <= 0 {
+		al.logger.Warn("Non-positive shutdown grace, substituting default", "grace", grace.String(), "default", defaultGrace.String())
+		grace = defaultGrace
+	}
+
 	al.mu.Lock()
 	if al.shuttingDown {
 		al.mu.Unlock()
 		return
 	}
 	al.shuttingDown = true
+	// Snapshot the handler slice under the same lock that guards the
+	// shuttingDown flag and RegisterShutdownHandler's append, so every append
+	// either happens-before this snapshot or is refused by
+	// RegisterShutdownHandler outright — never racing this read. Iterating
+	// al.shutdownHandlers directly here (as opposed to this snapshot) would
+	// be an unsynchronized read racing that synchronized write.
+	handlers := make([]ShutdownHandler, len(al.shutdownHandlers))
+	copy(handlers, al.shutdownHandlers)
 	al.mu.Unlock()
 
 	al.logger.Info("Starting graceful shutdown")
 
-	// The whole sequence — drain plus infra teardown — shares one deadline
-	// so total shutdown time is bounded by grace, not 2x grace.
+	// deadline bounds step 3 (infra teardown, below); step 2 (drain) is capped
+	// independently at half of grace via time.After. Together — for handlers
+	// that honor their context — they keep the total sequence within grace,
+	// not 2x grace.
 	deadline := time.Now().Add(grace)
 
 	// 1. Stop intake: cancel the root context so background jobs stop reading
@@ -145,8 +180,8 @@ func (al *ApplicationLifecycle) Shutdown(cancel context.CancelFunc, grace time.D
 	//    instead of returning instantly on a dead ctx.
 	shutdownCtx, cancelShutdown := context.WithDeadline(context.Background(), deadline)
 	defer cancelShutdown()
-	for i := len(al.shutdownHandlers) - 1; i >= 0; i-- {
-		if err := al.shutdownHandlers[i](shutdownCtx); err != nil {
+	for i := len(handlers) - 1; i >= 0; i-- {
+		if err := handlers[i](shutdownCtx); err != nil {
 			al.logger.Error("Error in shutdown handler", "error", err, "index", i)
 		}
 	}

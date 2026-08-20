@@ -202,6 +202,95 @@ func TestShutdownStaysWithinGraceBudgetWhenGoroutineHangs(t *testing.T) {
 	}
 }
 
+// TestRegisterShutdownHandlerAfterShutdownIsRefused verifies that
+// RegisterShutdownHandler called once shutdown has begun does not append to
+// the handler slice and the handler never runs — symmetric with
+// TestGoAfterShutdownIsRefused. Registering into a list Shutdown has already
+// snapshotted (or will never read again) is worse than failing loudly: the
+// caller would believe cleanup is wired up when it silently is not.
+func TestRegisterShutdownHandlerAfterShutdownIsRefused(t *testing.T) {
+	al := NewApplicationLifecycle(quietLogger())
+	_, cancel := context.WithCancel(context.Background())
+	al.Shutdown(cancel, time.Second)
+
+	var ran atomic.Bool
+	al.RegisterShutdownHandler(func(context.Context) error {
+		ran.Store(true)
+		return nil
+	})
+
+	if ran.Load() {
+		t.Fatal("handler registered after shutdown ran")
+	}
+	al.mu.Lock()
+	n := len(al.shutdownHandlers)
+	al.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("handler registered after shutdown was appended: len=%d", n)
+	}
+}
+
+// TestConcurrentRegisterShutdownHandlerAndShutdownDoesNotRace drives
+// RegisterShutdownHandler and Shutdown concurrently. Shutdown must read
+// al.shutdownHandlers only under al.mu — a concurrent unsynchronized read
+// racing RegisterShutdownHandler's synchronized append is a data race on the
+// slice header (len/cap/ptr), which the race detector catches even though it
+// rarely panics or misbehaves visibly. This test only has teeth under
+// `-race -count=20`.
+func TestConcurrentRegisterShutdownHandlerAndShutdownDoesNotRace(t *testing.T) {
+	al := NewApplicationLifecycle(quietLogger())
+	_, cancel := context.WithCancel(context.Background())
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			al.RegisterShutdownHandler(func(context.Context) error {
+				return nil
+			})
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		al.Shutdown(cancel, 200*time.Millisecond)
+	}()
+
+	wg.Wait()
+
+	select {
+	case <-al.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("Done() was not closed after concurrent RegisterShutdownHandler/Shutdown")
+	}
+}
+
+// TestShutdownClampsNonPositiveGrace verifies that a zero or negative grace
+// does not yield a deadline already in the past — the exact dead-context
+// failure this package exists to prevent. Shutdown must substitute a sane
+// default instead of handing shutdown handlers a context that is already
+// done.
+func TestShutdownClampsNonPositiveGrace(t *testing.T) {
+	al := NewApplicationLifecycle(quietLogger())
+
+	var sawLiveContext atomic.Bool
+	al.RegisterShutdownHandler(func(ctx context.Context) error {
+		if ctx.Err() == nil {
+			sawLiveContext.Store(true)
+		}
+		return nil
+	})
+
+	_, cancel := context.WithCancel(context.Background())
+	al.Shutdown(cancel, 0)
+
+	if !sawLiveContext.Load() {
+		t.Fatal("non-positive grace was not clamped: shutdown handler received an already-dead context")
+	}
+}
+
 // TestTeardownGetsLiveContextWhenDrainTimesOut guards the starvation failure
 // mode: when the drain step consumes its whole share of the budget, the
 // shutdown handlers must still receive a live context with time left on it,
@@ -218,27 +307,27 @@ func TestTeardownGetsLiveContextWhenDrainTimesOut(t *testing.T) {
 		<-release
 	})
 
-	var sawCancelled bool
-	var sawDeadline bool
-	var sawRemaining time.Duration
+	var sawCancelled atomic.Bool
+	var sawDeadline atomic.Bool
+	var sawRemaining atomic.Int64
 	al.RegisterShutdownHandler(func(c context.Context) error {
-		sawCancelled = c.Err() != nil
+		sawCancelled.Store(c.Err() != nil)
 		if dl, ok := c.Deadline(); ok {
-			sawDeadline = true
-			sawRemaining = time.Until(dl)
+			sawDeadline.Store(true)
+			sawRemaining.Store(int64(time.Until(dl)))
 		}
 		return nil
 	})
 
 	al.Shutdown(cancel, 300*time.Millisecond)
 
-	if sawCancelled {
+	if sawCancelled.Load() {
 		t.Fatal("shutdown handler received an already-cancelled context after the drain timed out")
 	}
-	if !sawDeadline {
+	if !sawDeadline.Load() {
 		t.Fatal("shutdown handler context had no deadline")
 	}
-	if sawRemaining <= 0 {
-		t.Fatalf("shutdown handler context deadline had already passed: remaining=%s", sawRemaining)
+	if remaining := time.Duration(sawRemaining.Load()); remaining <= 0 {
+		t.Fatalf("shutdown handler context deadline had already passed: remaining=%s", remaining)
 	}
 }
