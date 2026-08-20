@@ -107,7 +107,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
 	// 6. Assert release.rejected:v1 carries run_results_uri for the failing node.
-	//    validation_runner.py emits a structured result block (status=error,
+	//    the validation runner emits a structured result block (status=error,
 	//    message "...does not exist") which k8s-controller uploads to S3; the URI
 	//    threads through the validation.result:v1 terminal (kind=complete) →
 	//    release.rejected:v1. Its presence

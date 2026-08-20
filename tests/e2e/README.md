@@ -212,7 +212,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 
 ## Blue/Green Release Tests
 
-`release_promote_test.go` drives the dbt blue/green release pipeline end-to-end via the production entry point — `POST /releases`, the exact request CI's `deploy.yml` issues. Validation runs **real `continuo-validation-<engine>` K8s Jobs in kind** (no dbt in the validation path — see the executor-controller doc's `CreateValidationJob`), exercising the full event chain:
+`release_promote_test.go` drives the dbt blue/green release pipeline end-to-end via the production entry point — `POST /releases`, the exact request CI's `deploy.yml` issues. Validation runs **real `continuo-python-runtime-<engine>` K8s Jobs in kind** (no dbt in the validation path — see the executor-controller doc's `CreateValidationJob`), exercising the full event chain:
 
 ```
 POST /releases → release.requested:v1 → manifest-controller candidate parse
@@ -230,7 +230,7 @@ POST /releases → release.requested:v1 → manifest-controller candidate parse
 | `TestE2E_ReleasePromote_GatedCrossServiceUpstream` | A clean **cross-service** chain (`xprobe_down`@service-2 → `xprobe_up`@service-3) validates self-contained — the changed node and its cross-service upstream are both built empty in the candidate schema. |
 | `TestE2E_ReleasePromote_BootstrapSkipsValidation` | `bootstrap:true` promotes directly, skipping validation, and seeds `current_prod`. |
 
-These tests read the dbt manifests that `setup.sh` uploads to LocalStack S3 and use the content-addressed image tags loaded into kind, so they need no setup beyond the standard blank-state harness. Compile and seed-build run real dbt, and each validation job runs a real `continuo-validation-<engine>` Job — allow up to ~10 minutes per test, and expect a cold kind run to be slower than a warm one.
+These tests read the dbt manifests that `setup.sh` uploads to LocalStack S3 and use the content-addressed image tags loaded into kind, so they need no setup beyond the standard blank-state harness. Compile and seed-build run real dbt, and each validation job runs a real `continuo-python-runtime-<engine>` Job — allow up to ~10 minutes per test, and expect a cold kind run to be slower than a warm one.
 
 Run only the blue/green tests:
 

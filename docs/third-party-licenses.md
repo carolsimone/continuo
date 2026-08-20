@@ -60,11 +60,11 @@ npm exec --yes -- license-checker@25.0.1 --production --summary
 ## Python
 
 `manifest-controller` is the only Python 3.12 service in this repository, managed
-with uv. The validation stack (the `continuo-validation-<engine>` images the Helm
-chart pulls) is built and released from the separate `continuo-validation`
-repository, so its Python dependencies — including `continuo-validation-contract`,
-the PyPI-published engine-adapter contract — are covered by that repository's own
-third-party licenses, not this document.
+with uv. The python-node runtime and validation stack (the
+`continuo-python-runtime-<engine>` images the Helm chart pulls) is built and
+released from the separate `continuo-python-runtime` repository, so its Python
+dependencies — including the PyPI-published engine-adapter contract — are covered
+by that repository's own third-party licenses, not this document.
 
 | Package | License | Used by |
 | --- | --- | --- |
