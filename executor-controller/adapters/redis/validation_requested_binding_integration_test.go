@@ -10,6 +10,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
@@ -41,7 +42,7 @@ func (r *recordingSchemaCreator) EnsureCandidateSchema(_ context.Context, schema
 func buildValidationBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMessage) error, *recordingSchemaCreator) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(db, logger)
+		return postgres.NewPostgresUnitOfWork(db, logger)
 	}
 	handler := handlers.NewValidationRequestedHandler(logger)
 	creator := &recordingSchemaCreator{}

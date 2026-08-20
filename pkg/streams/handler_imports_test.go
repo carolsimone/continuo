@@ -30,6 +30,16 @@ var handlerDirs = []string{
 	"agent-runner/service/retention",
 	"remediation/service/handlers",
 	"remediation-agent/service",
+	// Every service's Unit-of-Work port. The interface is application
+	// vocabulary; the concrete *UnitOfWork that satisfies it belongs in
+	// adapters/postgres, so this package must not reach back into an adapter.
+	"executor-controller/service/uow",
+	"k8s-controller/service/uow",
+	"orchestrator/service/uow",
+	"release-controller/service/uow",
+	"remediation/service/uow",
+	"remediation-agent/service/uow",
+	"state/service/uow",
 }
 
 // forbiddenAppImports are import-path fragments the application layer must not

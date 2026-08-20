@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
@@ -19,7 +18,7 @@ type FakeUnitOfWork struct {
 	Outbox              pkgoutbox.Repository
 	Deployments         repository.DeploymentRepository
 	ValidationAggregate repository.ValidationAggregateRepository
-	Cancelled           postgres.CancelledSchedulesRepository
+	Cancelled           repository.CancelledSchedulesRepository
 	MessageProcessing   messageprocessing.Repository
 
 	BeginCalled    int
@@ -34,7 +33,7 @@ func (f *FakeUnitOfWork) DeploymentsRepo() repository.DeploymentRepository { ret
 func (f *FakeUnitOfWork) ValidationAggregateRepo() repository.ValidationAggregateRepository {
 	return f.ValidationAggregate
 }
-func (f *FakeUnitOfWork) CancelledSchedulesRepo() postgres.CancelledSchedulesRepository {
+func (f *FakeUnitOfWork) CancelledSchedulesRepo() repository.CancelledSchedulesRepository {
 	return f.Cancelled
 }
 func (f *FakeUnitOfWork) MessageProcessingRepo() messageprocessing.Repository {

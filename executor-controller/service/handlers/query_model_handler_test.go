@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/executor-controller/domain/events"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
@@ -32,7 +31,7 @@ func (r *stubCancelledRepo) DeleteExpired(_ context.Context, _ time.Duration) (i
 	return 0, nil
 }
 
-func newFakeUoW(depl repository.DeploymentRepository, cancelled postgres.CancelledSchedulesRepository) *uow.FakeUnitOfWork {
+func newFakeUoW(depl repository.DeploymentRepository, cancelled repository.CancelledSchedulesRepository) *uow.FakeUnitOfWork {
 	return &uow.FakeUnitOfWork{Deployments: depl, Cancelled: cancelled}
 }
 

@@ -202,7 +202,7 @@ func main() {
 	// uowFactory returns a fresh PostgresUnitOfWork per inbound message so
 	// concurrent handlers never share transaction state.
 	uowFactory := func() uow.UnitOfWork {
-		return uow.NewPostgresUnitOfWork(pgDB, logger)
+		return postgres.NewPostgresUnitOfWork(pgDB, logger)
 	}
 
 	queryHandler := handlers.NewQueryModelHandler(logger)

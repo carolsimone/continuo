@@ -5,17 +5,9 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/carolsimone/continuo/executor-controller/domain/repository"
 	"github.com/google/uuid"
 )
-
-// CancelledSchedulesRepository tracks schedule IDs whose deploys should be
-// dropped on receipt. Implementations operate against the cancelled_schedules
-// table (id, schedule_id UNIQUE, cancelled_at).
-type CancelledSchedulesRepository interface {
-	Insert(ctx context.Context, scheduleID uuid.UUID) error
-	Exists(ctx context.Context, scheduleID uuid.UUID) (bool, error)
-	DeleteExpired(ctx context.Context, ttl time.Duration) (int64, error)
-}
 
 // cancelledExecutor is the read/write subset of sqlx.DB / sqlx.Tx that
 // CancelledSchedulesRepository needs. Same shape as
@@ -29,12 +21,14 @@ type cancelledSchedulesRepository struct {
 	executor cancelledExecutor
 }
 
-// NewCancelledSchedulesRepository creates a CancelledSchedulesRepository
-// against any sqlx executor (*sqlx.DB for autocommit, *sqlx.Tx for
-// transaction-scoped work).
-func NewCancelledSchedulesRepository(executor cancelledExecutor) CancelledSchedulesRepository {
+// NewCancelledSchedulesRepository creates a
+// repository.CancelledSchedulesRepository against any sqlx executor (*sqlx.DB
+// for autocommit, *sqlx.Tx for transaction-scoped work).
+func NewCancelledSchedulesRepository(executor cancelledExecutor) repository.CancelledSchedulesRepository {
 	return &cancelledSchedulesRepository{executor: executor}
 }
+
+var _ repository.CancelledSchedulesRepository = (*cancelledSchedulesRepository)(nil)
 
 func (r *cancelledSchedulesRepository) Insert(ctx context.Context, id uuid.UUID) error {
 	_, err := r.executor.ExecContext(ctx,
