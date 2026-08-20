@@ -245,10 +245,10 @@ checks, so a transient Redis/Postgres outage does not restart a pod whose
 consumers are already retrying against it. A 503 from `/livez` is what
 actually restarts the pod. Each Redis stream consumer registers both a worker
 (flips on a genuine, non-nil exit) and a heartbeat probe — `Healthy(3 *
-time.Minute)`, checked every 10s — so a consumer whose read loop is wedged but
-has not exited also trips liveness. The outbox processor registers a worker
-only, no heartbeat probe: it is a ticker loop, not a stream consumer, so a
-wedged tick is not distinguished from a merely-idle one.
+time.Minute)`, cached with a 10s TTL — so a consumer whose read loop is
+wedged but has not exited also trips liveness. The outbox processor registers
+a worker only; no heartbeat probe is wired for it, so a wedged outbox tick is
+not currently caught by liveness.
 
 Readiness and liveness are therefore a deliberate split: a dependency outage
 stops traffic without restarting the pod (its consumers keep retrying), while

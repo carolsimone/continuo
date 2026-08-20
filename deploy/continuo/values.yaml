@@ -337,7 +337,7 @@ services:
     httpPort: 8082
     grpcPort: 50051
     # Readiness and liveness point at DIFFERENT paths with different semantics
-    # (see adapters/http/health.go): /ready = workers + heartbeats + dependency
+    # (see adapters/http/server.go): /ready = workers + heartbeats + dependency
     # probes (a Redis/Postgres outage stops traffic); /livez = workers +
     # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
     # are already retrying, but a dead/wedged consumer must).
@@ -391,7 +391,7 @@ services:
     httpPort: 8091
     grpcPort: 50053
     # Readiness and liveness point at DIFFERENT paths with different semantics
-    # (see adapters/http/health.go): /ready = workers + heartbeats + dependency
+    # (see adapters/http/server.go): /ready = workers + heartbeats + dependency
     # probes (a Redis/Postgres outage stops traffic); /livez = workers +
     # heartbeats ONLY (a dependency outage must NOT restart a pod whose consumers
     # are already retrying, but a dead/wedged consumer must).

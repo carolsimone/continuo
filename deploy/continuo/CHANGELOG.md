@@ -59,12 +59,15 @@ shipped in those.
   populates, and the values contract are unchanged, so an existing
   `values.yaml` or override needs no edit.
 - `state`, `orchestrator`, and `agent-runner` now set `livenessPath: /livez`
-  instead of falling back to the always-200 `/health`, so a dead or wedged
-  Redis stream consumer restarts the pod. `/livez` reports workers and
-  heartbeats only, deliberately excluding dependency probes, so a transient
-  Redis/Postgres outage no longer restarts a pod whose consumers are already
-  retrying. Readiness (`readinessPath: /ready`) is unchanged. Implies a MINOR
-  version bump.
+  instead of falling back to the always-200 `/health`. For `state` and
+  `orchestrator` this means a dead or wedged Redis stream consumer restarts
+  the pod, since `/livez` reports workers and heartbeats only, deliberately
+  excluding dependency probes, so a transient Redis/Postgres outage no longer
+  restarts a pod whose consumers are already retrying. `agent-runner` runs no
+  stream consumers, so this change gives it no new restart behavior — it now
+  answers `/livez` so every Go service exposes the same probe contract.
+  Readiness (`readinessPath: /ready`) is unchanged for all three. Implies a
+  MINOR version bump.
 
 ## [0.2.0] - 2026-08-10
 
