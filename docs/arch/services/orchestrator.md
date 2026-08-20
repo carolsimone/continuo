@@ -296,9 +296,10 @@ Each consumer is wired as a `parser → handler` binding under `adapters/redis/`
   Each Redis stream consumer registers both a worker (flips on a genuine,
   non-nil exit) and a heartbeat probe — `Healthy(3 * time.Minute)`, cached
   with a 10s TTL — so a consumer whose read loop is wedged but has not exited
-  also trips liveness. The outbox processor registers a worker only; no
-  heartbeat probe is wired for it, so a wedged outbox tick is not currently
-  caught by liveness.
+  also trips liveness. The outbox processor registers both as well — a worker
+  plus an `outbox_processor_heartbeat` probe, `Healthy(60 * time.Second)`
+  against a 1s poll tick — so a wedged outbox loop trips liveness within a
+  minute, while an idle-but-live one never does.
 
 Kubernetes points `readinessProbe` at `/ready` and `livenessProbe` at
 `/livez`: readiness stops traffic on a dependency outage or a dead consumer

@@ -247,8 +247,9 @@ actually restarts the pod. Each Redis stream consumer registers both a worker
 (flips on a genuine, non-nil exit) and a heartbeat probe — `Healthy(3 *
 time.Minute)`, cached with a 10s TTL — so a consumer whose read loop is
 wedged but has not exited also trips liveness. The outbox processor registers
-a worker only; no heartbeat probe is wired for it, so a wedged outbox tick is
-not currently caught by liveness.
+both as well — a worker plus an `outbox_processor_heartbeat` probe,
+`Healthy(60 * time.Second)` against a 500ms poll tick — so a wedged outbox
+loop trips liveness within a minute, while an idle-but-live one never does.
 
 Readiness and liveness are therefore a deliberate split: a dependency outage
 stops traffic without restarting the pod (its consumers keep retrying), while

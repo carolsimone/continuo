@@ -235,8 +235,10 @@ func main() {
 		}
 	}()
 
-	// HTTP health server: /health is the liveness probe; /ready is backed by
-	// the liveness registry so traffic stops when Postgres is unreachable.
+	// HTTP health server: /health is a plain process-up probe. /ready is backed
+	// by the liveness registry so traffic stops when Postgres is unreachable;
+	// /livez is the liveness probe and has no workers or heartbeats registered
+	// here, so it stays 200.
 	healthServer := agenthttp.NewServer(cfg.HealthPort, liveReg, logger)
 
 	lifecycleManager.RegisterShutdownHandler(func(ctx context.Context) error {
