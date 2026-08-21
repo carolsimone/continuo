@@ -204,17 +204,48 @@ test-manifest:
 	$(DOCKER_COMPOSE) up -d manifest-controller
 	docker exec manifest-controller uv run pytest -v
 
-# Fast, infra-free gates. Includes the two Go modules no other test target
-# reaches: pkg (the cross-cutting static guards) and tests/e2e/stub-llm (the
-# canned model the remediation e2e scenarios read as an LLM's answers, whose
-# tests run against the real contract fixtures on disk). GOWORK=off because
-# stub-llm sits under a go.work member but is a module of its own. pkg/lifecycle
-# also runs a second time under -race: its concurrency invariants (Go/Shutdown,
+# Fast, infra-free gates. CI runs this target verbatim (a single `make guards`
+# step), so a gate added here reaches CI automatically; check-ci-alignment.sh
+# fails CI if the workflow ever re-inlines one of these lines instead.
+#
+# The check scripts:
+# - check-ci-alignment: ci.yml must call shared scripts / Make targets, never
+#   re-implement build/run/wait logic (or these guards) inline.
+# - check-docker-state-isolation: a workflow job must not share ~/.docker
+#   (builder pointer, registry credentials) with jobs running concurrently on
+#   the other runner agent.
+# - check-kubeconfig-export: setup.sh must not reach a kubectl call without
+#   exporting the kind cluster's kubeconfig. Only `kind create cluster` writes
+#   that context, so an export left inside the create-only branch strands the
+#   reuse path — a runner holding a cluster whose context is gone then fails
+#   minutes later with a connection-refused far from the cause.
+# - check-release-tag-trigger: release.yml's tag glob must not claim another
+#   workflow's tag family, which would run the product release pipeline on a
+#   tag that has no release images behind it.
+# - check-validation-image-pin: the hand-maintained continuo-python-runtime
+#   image tag must not drift between the Makefile, setup/e2e scripts,
+#   docker-compose, the executor-controller Go test fixtures, and the chart's
+#   rendered default.
+# - check-validation-image-sideload: the kind-provisioning scripts must not
+#   side-load the pulled validation image with a bare `kind load docker-image`,
+#   which fails on a containerd-backed image store.
+#
+# The tests cover the two Go modules no other test target reaches: pkg (the
+# cross-cutting static guards) and tests/e2e/stub-llm (the canned model the
+# remediation e2e scenarios read as an LLM's answers, whose tests run against
+# the real contract fixtures on disk). GOWORK=off because stub-llm sits under
+# a go.work member but is a module of its own. pkg/lifecycle also runs a second
+# time under -race: its concurrency invariants (Go/Shutdown,
 # RegisterShutdownHandler/Shutdown racing on the shared handler slice) are only
 # checked by the race detector, not by a plain pass/fail test run.
+#
+# The proto diffs pin ui-service's vendored copies to the canonical contracts:
+# @grpc/proto-loader reads those copies at boot, so drift silently drops
+# fields on the wire instead of failing any build.
 .PHONY: guards
 guards:
 	bash scripts/check-ci-alignment.sh
+	bash scripts/check-docker-state-isolation.sh
 	bash scripts/check-kubeconfig-export.sh
 	bash scripts/check-release-tag-trigger.sh
 	bash scripts/check-validation-image-pin.sh
