@@ -95,15 +95,45 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 			sibling, in.ReleaseID, located.ContractDir, in.NodeID, sibling))
 	}
 
-	// Step 4 — evidence. The failure itself is required; every other section
-	// degrades to its own absence rather than blocking the heal.
+	// Steps 4-10 — evidence, model call, apply, guard, package, submit, and
+	// audit artifacts are identical in shape to every contract-fix lane that
+	// ends in a shadow release; only what evidence is assembled, what prompt it
+	// becomes, and what "the fix preserved the node's declaration" means are
+	// specific to a python node, so those three are passed in as the seams.
+	return proposeContractFixViaShadow(ctx, svc, in, schema, table, root, located,
+		buildPythonProposeRequest, declarationBreach)
+}
+
+// buildPythonProposeRequest assembles the python-specific evidence (the
+// failing script's log, contract entry, upstream diffs, precedent, and prior
+// attempts) and turns it into the one LLM call's request.
+func buildPythonProposeRequest(ctx context.Context, svc Services, in Input, located ports.Located) (prompt.ProposeRequest, error) {
 	ev, err := pythonEvidence(ctx, svc, in, located)
 	if err != nil {
-		return Result{}, err // transient read: the driver redelivers
+		return prompt.ProposeRequest{}, err // transient read: the driver redelivers
 	}
+	return prompt.AssemblePythonContractFix(ev), nil
+}
 
-	// Step 5 — one model call returning complete files.
-	res, err := svc.LLM.Propose(ctx, prompt.AssemblePythonContractFix(ev))
+// proposeContractFixViaShadow carries the orchestration shared by every
+// contract-fix lane that verifies its answer with a shadow release: one model
+// call, applying and guarding the answer, packaging and submitting it as a
+// shadow release, and writing the audit artifacts. buildRequest assembles the
+// lane's evidence into the LLM request; a returned error is transient (the
+// driver redelivers). checkDeclarations is the post-apply guard: it returns ""
+// when the answer preserved what the fix is required not to change, or the
+// reason to fail the attempt otherwise.
+func proposeContractFixViaShadow(
+	ctx context.Context, svc Services, in Input, schema, table, root string, located ports.Located,
+	buildRequest func(ctx context.Context, svc Services, in Input, located ports.Located) (prompt.ProposeRequest, error),
+	checkDeclarations func(svc Services, files []ports.ProposedFile, originals map[string]string) string,
+) (Result, error) {
+	// Step 4 — evidence and the one model call.
+	req, err := buildRequest(ctx, svc, in, located)
+	if err != nil {
+		return Result{}, err
+	}
+	res, err := svc.LLM.Propose(ctx, req)
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
 	}
@@ -134,7 +164,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		seen[key] = struct{}{}
 	}
 
-	// Step 6 — apply, then package. The order is the whole point: packaging the
+	// Step 5 — apply, then package. The order is the whole point: packaging the
 	// checkout before the answer is written to it would produce, and verify,
 	// the contract that already failed.
 	originals, err := applyFiles(root, res.Files)
@@ -142,14 +172,14 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, err
 	}
 
-	// Step 7 — the node under repair must have survived its own repair. A
+	// Step 6 — the node under repair must have survived its own repair. A
 	// shadow release can only reject what the packaged contract still declares,
 	// so an answer that deleted or renamed the failing node — or deleted the
 	// read that could not bind — leaves the release nothing to fail on: it
 	// validates, and the edit that removed the broken thing is recorded as a
 	// proven fix and offered to a human. The same holds for a sibling declared
 	// beside it, which this attempt was never asked to touch at all.
-	if reason := declarationBreach(svc, res.Files, originals); reason != "" {
+	if reason := checkDeclarations(svc, res.Files, originals); reason != "" {
 		return failPython(svc, in, reason)
 	}
 	// The before/after comparison above sees only the files the answer returned.
@@ -189,7 +219,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("package contract for %s: %w", in.NodeID, err)
 	}
 
-	// Step 8 — the merged contract goes to the per-release artifact location
+	// Step 7 — the merged contract goes to the per-release artifact location
 	// release-controller reads a python service's release payload from, under
 	// the shadow release's own id.
 	shadowID := shadowReleaseID(in)
@@ -198,7 +228,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("write shadow contract: %w", err)
 	}
 
-	// Step 9 — submit. The image tag is read from the ORIGINAL failing release
+	// Step 8 — submit. The image tag is read from the ORIGINAL failing release
 	// (the trigger carries none, and the shadow runs the same image); the
 	// submission itself runs under the shadow's own id. This happens after the
 	// upload because release-controller reads that object as soon as the
@@ -217,7 +247,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("submit shadow release %s: %w", shadowID, err)
 	}
 
-	// Step 10 — one audit artifact pair per edited file, diffed against what the
+	// Step 9 — one audit artifact pair per edited file, diffed against what the
 	// repository held before the answer was applied.
 	edits := make([]proposal.FileEdit, 0, len(res.Files))
 	for i, f := range res.Files {
