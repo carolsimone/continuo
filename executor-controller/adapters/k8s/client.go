@@ -152,13 +152,13 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		return nil
 	}
 
-	// Step 2: Build Job spec. Python-model nodes run the domain repository's own
-	// image under the runtime harness's environment; every other node type runs
-	// the team's dbt image under a resolved dbt command. The Job metadata below
-	// is shared, so both kinds route through k8s-controller's production
-	// lifecycle identically.
+	// Step 2: Build Job spec. Python-family nodes (python-model, python-csv) run
+	// the domain repository's own image under the runtime harness's
+	// environment; every other node type runs the team's dbt image under a
+	// resolved dbt command. The Job metadata below is shared, so both kinds
+	// route through k8s-controller's production lifecycle identically.
 	var podSpec corev1.PodSpec
-	if params.NodeType == pkg_model.NodeTypePythonModel {
+	if params.NodeType.IsPython() {
 		podSpec, err = buildPythonPodSpec(params)
 	} else {
 		podSpec, err = buildPodSpec(params,
@@ -181,7 +181,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 	}
 	// The runtime label distinguishes python pods for operators without
 	// changing the app selector that CountActive uses for the concurrency cap.
-	if params.NodeType == pkg_model.NodeTypePythonModel {
+	if params.NodeType.IsPython() {
 		jobLabels["runtime"] = "python"
 	}
 	// Only legacy promote-seed work still supplies a mode here; current jobs get
@@ -1287,30 +1287,55 @@ func pythonImageHasExplicitTag(ref string) bool {
 // reads.
 //
 // None of the dbt Job's pod plumbing applies: no parse-cache hydrate
-// initContainer, no shared volume, and no S3 credentials, which a domain image
-// never receives — its contract files travel inside the image itself.
+// initContainer and no shared volume. A domain image never receives S3
+// credentials — its contract files travel inside the image itself — except a
+// python-csv node, whose harness fetches its own source and so gets the same
+// four S3 credential env vars the validation pods use.
 func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 	switch p.Operation {
 	case pkg_model.OperationRun, pkg_model.OperationBuild:
 		// build materializes and tests in one step; a python node declares no
 		// tests, so it reduces to the same dispatch as run.
 	default:
-		return corev1.PodSpec{}, fmt.Errorf("%w: operation %q is not supported for python-model node %s.%s",
+		return corev1.PodSpec{}, fmt.Errorf("%w: operation %q is not supported for python node %s.%s",
 			events.ErrPermanent, p.Operation, p.SchemaName, p.TableName)
 	}
 
 	if p.ImageTag == "" {
-		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for python-model node %s.%s",
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag missing from job params for python node %s.%s",
 			events.ErrPermanent, p.SchemaName, p.TableName)
 	}
 	if !pythonImageHasExplicitTag(p.ImageTag) {
-		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag %q for python-model node %s.%s carries no explicit tag or digest",
+		return corev1.PodSpec{}, fmt.Errorf("%w: image_tag %q for python node %s.%s carries no explicit tag or digest",
 			events.ErrPermanent, p.ImageTag, p.SchemaName, p.TableName)
 	}
 
 	whFrom, err := warehouseSecretEnvFrom("python job " + p.JobName)
 	if err != nil {
 		return corev1.PodSpec{}, err
+	}
+
+	env := []corev1.EnvVar{
+		// NODE_ID is built from SchemaName/TableName, not p.NodeID (the
+		// lowercase-normalized unique_id used elsewhere in this file), and
+		// must stay that way: continuo-python-runtime's select_node matches
+		// these trailing segments case-sensitively against the schema/table
+		// declared in the image's baked contract.yaml. Switching this to
+		// p.NodeID would silently fail to select the node for any contract
+		// that declares mixed- or upper-case names, breaking every
+		// production python Job for that node.
+		{Name: "NODE_ID", Value: p.SchemaName + "." + p.TableName},
+		{Name: "TABLE_NAME", Value: p.TableName},
+		{Name: "TARGET_SCHEMA", Value: p.SchemaName},
+	}
+	// A csv node's harness fetches its source itself, so — a narrow,
+	// deliberate exception to "a domain image never receives S3
+	// credentials" — the S3 Secret env is attached for every python-csv
+	// node regardless of the uri scheme: the executor knows only the node
+	// type, and parsing the contract's uri here would leak contract
+	// knowledge across the boundary.
+	if p.NodeType == pkg_model.NodeTypePythonCsv {
+		env = append(env, s3CredEnvVars()...)
 	}
 
 	return corev1.PodSpec{
@@ -1321,19 +1346,7 @@ func buildPythonPodSpec(p JobParams) (corev1.PodSpec, error) {
 				Name:            "python-job",
 				Image:           p.ImageTag,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Env: []corev1.EnvVar{
-					// NODE_ID is built from SchemaName/TableName, not p.NodeID (the
-					// lowercase-normalized unique_id used elsewhere in this file), and
-					// must stay that way: continuo-python-runtime's select_node matches
-					// these trailing segments case-sensitively against the schema/table
-					// declared in the image's baked contract.yaml. Switching this to
-					// p.NodeID would silently fail to select the node for any contract
-					// that declares mixed- or upper-case names, breaking every
-					// production python Job for that node.
-					{Name: "NODE_ID", Value: p.SchemaName + "." + p.TableName},
-					{Name: "TABLE_NAME", Value: p.TableName},
-					{Name: "TARGET_SCHEMA", Value: p.SchemaName},
-				},
+				Env:             env,
 				EnvFrom:         whFrom,
 				SecurityContext: baseContainerSecurityContext(),
 			},
