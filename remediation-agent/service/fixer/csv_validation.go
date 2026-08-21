@@ -2,7 +2,6 @@ package fixer
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/carolsimone/continuo/remediation-agent/domain/prompt"
@@ -36,50 +35,25 @@ const csvReadKey = "csv"
 // Locating the failing node's contract file, verifying no sibling in the same
 // directory also failed (so the shadow release this fix ends in can actually
 // pass), and everything from the model call through submitting and recording
-// the shadow release is identical in shape to the python-model lane, so those
-// steps are shared: this type differs from pythonValidationFixer only in what
+// the shadow release is not merely similar in shape to the python-model
+// lane's — it is the same code, shared through locateContractForFix and
+// proposeContractFixViaShadow. This type differs from pythonValidationFixer
+// only in the two seams passed into proposeContractFixViaShadow: what
 // evidence it shows the model (buildCsvProposeRequest) and what "the fix
 // preserved the node's declaration" means for a contract-only node
 // (csvDeclarationBreach).
 type csvValidationFixer struct{}
 
 func (csvValidationFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
-	schema, table, ok := splitNodeID(in.NodeID)
-	if !ok {
-		return skipPython(svc, in, fmt.Sprintf(
-			"node id %q does not name a schema and a table, so the contract file declaring it cannot be found", in.NodeID))
+	schema, table, root, located, cleanup, skip, err := locateContractForFix(ctx, svc, in)
+	if cleanup != nil {
+		defer cleanup()
 	}
-	if in.Service == "" {
-		return skipPython(svc, in, "the trigger names no service, so the fix has no release to be verified under")
-	}
-
-	root, cleanup, err := svc.Archive.Fetch(ctx, in.Repo, in.CommitSHA)
-	if errors.Is(err, ports.ErrSourceNotFound) {
-		return skipPython(svc, in, fmt.Sprintf("repository %s at commit %s is not available", in.Repo, in.CommitSHA))
-	}
-	if err != nil {
-		return Result{}, fmt.Errorf("fetch repo %s@%s: %w", in.Repo, in.CommitSHA, err)
-	}
-	defer cleanup()
-
-	located, err := svc.ContractLocator.Locate(root, schema, table)
-	if errors.Is(err, ports.ErrNodeNotDeclared) || errors.Is(err, ports.ErrAmbiguousDeclaration) {
-		return skipPython(svc, in, err.Error())
-	}
-	if err != nil {
-		return Result{}, fmt.Errorf("locate contract for %s: %w", in.NodeID, err)
-	}
-
-	sibling, err := siblingFailure(ctx, svc, in, located, root)
 	if err != nil {
 		return Result{}, err
 	}
-	if sibling != "" {
-		return skipPython(svc, in, fmt.Sprintf(
-			"%s also failed validation in release %s and is declared in the same contract directory (%s) as %s. "+
-				"A fix is packaged from that whole directory, so any shadow release verifying it would re-run both nodes "+
-				"and be rejected by %s. Fix both nodes together.",
-			sibling, in.ReleaseID, located.ContractDir, in.NodeID, sibling))
+	if skip != nil {
+		return *skip, nil
 	}
 
 	return proposeContractFixViaShadow(ctx, svc, in, schema, table, root, located,
@@ -109,16 +83,22 @@ func buildCsvProposeRequest(ctx context.Context, svc Services, in Input, located
 // enforces for a python-model fix, because it holds regardless of what a fix
 // is otherwise allowed to touch.
 //
-// What differs is the read check. A python-model node's script may perform
-// any number of reads under any names, so that guard refuses dropping ANY of
-// them. A python-csv node has exactly one read, always named "csv", naming the
-// file the runtime loads — and that is the one thing whose VALUE this fix is
-// expected to change (a stale uri is a legitimate repair). So this guard does
-// not apply the blanket "no read may be dropped" rule at all; it enforces only
-// that the "csv" key itself survives, for every node (in the answer's own
-// files) that had one before the edit. A node that never declared a "csv" read
-// is not this lane's concern and is left to whatever else, if anything, judges
-// it.
+// What differs from declarationBreach is the read rule applied to the FAILING
+// python-csv node itself: it has exactly one read, always named "csv", naming
+// the file the runtime loads — and that read's VALUE (the uri) is the one
+// thing this fix is expected to be allowed to change (a stale uri is a
+// legitimate repair). So for a node that declared a "csv" key before the
+// edit, only that key's continued presence is enforced, with a message that
+// names the csv read specifically, instead of refusing every dropped read.
+//
+// That relaxation is scoped to the "csv" key alone, on purpose: the fix is
+// packaged from the whole contract directory, the same as a python-model fix,
+// so any sibling node in that directory — most commonly a python-model node,
+// whose script this fix never touches and whose reads it therefore may never
+// subtract — is still held to the blanket "no read may be dropped" rule via
+// droppedReadBreach, the same rule declarationBreach applies to every node it
+// checks. A node with no "csv" key never reaches the csv-specific branch at
+// all, so it falls straight through to that shared rule.
 func csvDeclarationBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
 	before, after, breach := buildDeclarationMaps(svc, files, originals)
 	if breach != "" {
@@ -129,15 +109,19 @@ func csvDeclarationBreach(svc Services, files []ports.ProposedFile, originals ma
 	}
 	for _, k := range sortedDeclarationKeys(before) {
 		was, now := before[k], after[k]
-		if !hasReadKey(was.ReadKeys, csvReadKey) {
-			continue
-		}
-		if !hasReadKey(now.ReadKeys, csvReadKey) {
+		if hasReadKey(was.ReadKeys, csvReadKey) && !hasReadKey(now.ReadKeys, csvReadKey) {
 			return fmt.Sprintf(
 				"the model's answer no longer declares the %q read of %s. A python-csv node's single read names the "+
 					"file its runtime loads; that read's uri may be corrected, but the %q key itself may never be "+
 					"removed or renamed, or the node would have nothing left for the runtime to read the file from",
 				csvReadKey, k, csvReadKey)
+		}
+		// Whatever the "csv" check above did not already refuse — a sibling
+		// that never declared a "csv" read, or the csv node's own read of it
+		// surviving — is still held to the blanket rule: a read present before
+		// the edit and absent after it is a breach, whoever's read it is.
+		if breach := droppedReadBreach(k, was, now); breach != "" {
+			return breach
 		}
 	}
 	return ""

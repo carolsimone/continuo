@@ -13,7 +13,16 @@ type NodeIdentity struct {
 	Schema string
 	Table  string
 	// Script is the repository path of the program that produces the relation.
+	// Empty for a contract-only node kind (e.g. python-csv), which has none.
 	Script string
+	// Kind is the node's declared "kind" (e.g. python-model, python-csv). It
+	// says which rules a fix may rely on — a python-model node's script must
+	// keep performing every read its contract declares, while a python-csv
+	// node has no script at all — so a fix that silently flips it changes
+	// which of those rule sets governs the node without changing anything a
+	// human reviewing the diff would necessarily notice. Comparing it as
+	// identity refuses that regardless of which lane produced the answer.
+	Kind string
 	// Owner, Schedule, and Criticality are the operational fields a run is
 	// scheduled and escalated by; they belong to whoever owns the node, not to
 	// whatever is being repaired in it.

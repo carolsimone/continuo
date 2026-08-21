@@ -44,10 +44,15 @@ const csvCorrectedYAML = `nodes:
 `
 
 // csvSiblingYAML is the second node declared in the same contract directory:
-// not the node under repair, but packaged and re-validated alongside it.
+// a python-model node, not the csv node under repair, but packaged and
+// re-validated alongside it. It carries kind and script explicitly so a test
+// that edits it while preserving its identity can do so without those fields
+// appearing to change from their zero value.
 const csvSiblingYAML = `nodes:
   - schema: analytics
     table: other
+    kind: python-model
+    script: scripts/other.py
     reads:
       customers: select id from analytics.customers
 `
@@ -158,8 +163,41 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 	// python-model script rules, and its own tool name.
 	require.Len(t, llm.requests, 1)
 	require.Contains(t, llm.requests[0].System, "python-csv")
-	require.Contains(t, llm.requests[0].System, "csv")
+	require.NotContains(t, llm.requests[0].System, "propose_python_fix")
+	require.NotContains(t, llm.requests[0].System, "the script still performs that read",
+		"a python-csv node has no script, so the python-model lane's read-preservation rationale must not leak into this prompt")
 	require.Equal(t, "propose_csv_fix", llm.requests[0].ToolName)
+}
+
+// TestCsvValidation_AnswerCorrectsTheCsvURI_Verifies covers the second
+// sanctioned repair: when the evidence shows the declared uri itself is
+// stale (rather than output_columns being wrong), the fix corrects the "csv"
+// read's VALUE instead. The key survives, so the guard passes and the fix
+// reaches a shadow release exactly as an output_columns-only fix does.
+func TestCsvValidation_AnswerCorrectsTheCsvURI_Verifies(t *testing.T) {
+	root := csvRepoTree(t)
+	svc, _, pkgr, rel, _ := csvSvc(t, root)
+	const target = "services/service-csv/contracts/py_csv_orders.yml"
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
+		Files: []ports.ProposedFile{{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_csv_orders
+    kind: python-csv
+    reads:
+      csv: s3://exports/orders/2026-08-01/orders.csv
+    output_columns:
+      - name: order_id
+      - name: customer_id
+`}},
+		Confidence: "high",
+	}}}
+
+	r, err := csvValidationFixer{}.Propose(context.Background(), svc, csvInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusVerifying, r.Proposal.Status,
+		"correcting the csv read's uri is a sanctioned repair and must reach a shadow release")
+	require.Len(t, pkgr.calls, 1)
+	require.Len(t, rel.submissions, 1)
 }
 
 // TestCsvValidation_AnswerDeletesTheCsvRead_Fails covers the cheapest way to
@@ -210,6 +248,82 @@ func TestCsvValidation_AnswerDeletesTheCsvRead_Fails(t *testing.T) {
 			require.Empty(t, arts.written, "a refused answer writes no artifacts")
 		})
 	}
+}
+
+// TestCsvValidation_SiblingReadDropped_Fails covers what the csv lane's
+// relaxed read rule must NOT protect: a python-model SIBLING declared in the
+// same contract directory whose read the answer deletes. The csv lane only
+// relaxes the rule for the failing node's own "csv" key — a python-model
+// sibling's script is never edited by this fix, so its reads are still held
+// to the blanket "no read may be dropped" rule declarationBreach applies for
+// the python-model lane. Before the fix for IMPORTANT-1 this case slipped
+// through: the guard's per-node loop `continue`d past any node without a
+// "csv" key, examining nothing else about it at all.
+func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
+	root := csvRepoTree(t)
+	svc, _, pkgr, rel, arts := csvSvc(t, root)
+	const sibling = "services/service-csv/contracts/other.yml"
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
+		Files: []ports.ProposedFile{
+			{Path: "services/service-csv/contracts/py_csv_orders.yml", Content: csvCorrectedYAML},
+			// Same identity as csvSiblingYAML (schema, table, kind, script) but
+			// its "customers" read is gone.
+			{Path: sibling, Content: `nodes:
+  - schema: analytics
+    table: other
+    kind: python-model
+    script: scripts/other.py
+`},
+		},
+		Confidence: "high",
+	}}}
+
+	r, err := csvValidationFixer{}.Propose(context.Background(), svc, csvInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusFailed, r.Proposal.Status,
+		"deleting a sibling's read must be refused even though the failing csv node's own fix is otherwise correct")
+	require.Contains(t, r.Proposal.Rationale, "customers",
+		"a failed attempt must name the read the answer dropped")
+	require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
+	require.Empty(t, rel.submissions, "no release slot is spent proving a deletion")
+	require.Empty(t, arts.written)
+}
+
+// TestCsvValidation_AnswerChangesKind_Fails verifies that an answer which
+// flips the failing node's declared kind — the field that says which set of
+// fix rules govern it, script-preserving for python-model or
+// csv-read-preserving for python-csv — is refused as an identity change, the
+// same as renaming its table would be. Kind is compared as part of
+// NodeIdentity (ports.NodeIdentity), so this also protects the python-model
+// lane from the opposite flip: an answer that quietly turns a python-model
+// node into a python-csv one.
+func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
+	root := csvRepoTree(t)
+	svc, _, pkgr, rel, arts := csvSvc(t, root)
+	const target = "services/service-csv/contracts/py_csv_orders.yml"
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
+		Files: []ports.ProposedFile{{Path: target, Content: `nodes:
+  - schema: analytics
+    table: py_csv_orders
+    kind: python-model
+    reads:
+      csv: s3://exports/orders/orders.csv
+    output_columns:
+      - name: order_id
+      - name: cust_id
+`}},
+		Confidence: "high",
+	}}}
+
+	r, err := csvValidationFixer{}.Propose(context.Background(), svc, csvInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusFailed, r.Proposal.Status,
+		"an answer that flips the node's kind must never be verified as a fix")
+	require.Contains(t, r.Proposal.Rationale, "kind")
+	require.Contains(t, r.Proposal.Rationale, "analytics.py_csv_orders")
+	require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
+	require.Empty(t, rel.submissions, "no release slot is spent proving a mislabeled node")
+	require.Empty(t, arts.written)
 }
 
 // TestCsvValidation_AnswerThatChangesNodeIdentity_Fails verifies that an
@@ -281,4 +395,68 @@ func TestCsvValidation_NodeNotDeclared_Skips(t *testing.T) {
 	require.Empty(t, pkgr.calls)
 	require.Empty(t, rel.submissions)
 	require.Equal(t, 1, arch.cleanups)
+}
+
+// TestCsvValidation_UnusableTrigger_Skips mirrors the python-model lane's
+// equivalent (TestPythonValidation_UnusableTrigger_Skips): a trigger this
+// lane can never act on stops with the reason recorded instead of being
+// redelivered forever. Both cases exercise locateContractForFix, the helper
+// now shared by both python lanes.
+func TestCsvValidation_UnusableTrigger_Skips(t *testing.T) {
+	t.Run("no service", func(t *testing.T) {
+		svc, arch, _, rel, _ := csvSvc(t, csvRepoTree(t))
+		in := csvInput()
+		in.Service = ""
+
+		r, err := csvValidationFixer{}.Propose(context.Background(), svc, in)
+		require.NoError(t, err)
+		require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
+		require.Contains(t, r.Proposal.Rationale, "service")
+		require.Equal(t, 0, arch.calls)
+		require.Empty(t, rel.submissions)
+	})
+
+	t.Run("repository or commit gone", func(t *testing.T) {
+		svc, arch, _, rel, _ := csvSvc(t, csvRepoTree(t))
+		arch.err = ports.ErrSourceNotFound
+
+		r, err := csvValidationFixer{}.Propose(context.Background(), svc, csvInput())
+		require.NoError(t, err)
+		require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
+		require.NotEmpty(t, r.Proposal.Rationale)
+		require.Empty(t, rel.submissions)
+		require.Equal(t, 1, arch.calls, "the fetch was attempted once even though it failed")
+	})
+}
+
+// TestCsvValidation_SiblingFailureInSameDirectory_Skips verifies that a
+// second node failing validation in the same contract directory as the
+// failing csv node stops the attempt before any model call — the same
+// unverifiable-fix guard the python-model lane already enforces
+// (TestPythonValidation_SiblingFailureInSameDirectory_Skips), now reached
+// through the shared locateContractForFix helper.
+func TestCsvValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
+	root := csvRepoTree(t)
+	svc, _, pkgr, rel, arts := csvSvc(t, root)
+	llm := svc.LLM.(*fakeLLM)
+
+	// other.yml sits in the same contracts/ directory as the failing node's
+	// own declaring file, so packaging one packages both.
+	rel.verdict = ports.ShadowVerdict{Terminal: true, NodeErrors: map[string]string{
+		"analytics.py_csv_orders": "csv header missing declared column(s): ['customer_id']",
+		"analytics.other":         "column country does not exist",
+	}}
+
+	r, err := csvValidationFixer{}.Propose(context.Background(), svc, csvInput())
+	require.NoError(t, err)
+
+	require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
+	require.Contains(t, r.Proposal.Rationale, "analytics.other",
+		"the rationale must name the node that makes this fix unverifiable")
+	require.Equal(t, []string{"rel-2"}, rel.verdictCalls,
+		"the sibling check reads the ORIGINAL failing release, not a shadow")
+	require.Equal(t, 0, llm.calls, "no model call is worth making for an unverifiable fix")
+	require.Empty(t, pkgr.calls)
+	require.Empty(t, rel.submissions, "no release slot is spent on a shadow that cannot pass")
+	require.Empty(t, arts.written)
 }

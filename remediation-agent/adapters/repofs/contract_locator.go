@@ -54,6 +54,7 @@ type contractNode struct {
 	Schema      string `yaml:"schema"`
 	Table       string `yaml:"table"`
 	Script      string `yaml:"script"`
+	Kind        string `yaml:"kind"`
 	Owner       string `yaml:"owner"`
 	Schedule    string `yaml:"schedule"`
 	Criticality string `yaml:"criticality"`
@@ -201,6 +202,7 @@ func (l *Locator) Declarations(yamlText string) ([]ports.NodeDeclaration, error)
 				Schema:      n.Schema,
 				Table:       n.Table,
 				Script:      n.Script,
+				Kind:        n.Kind,
 				Owner:       n.Owner,
 				Schedule:    n.Schedule,
 				Criticality: n.Criticality,
