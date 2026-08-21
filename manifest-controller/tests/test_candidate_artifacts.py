@@ -122,6 +122,46 @@ def test_python_builder_preserves_read_order():
     assert [r.split()[1] for r in reads] == ["1", "2", "3"]
 
 
+def test_python_builder_includes_csv_source_for_csv_nodes():
+    """A csv node's spec carries csv_source so the runner knows to
+    range-fetch the header rather than run a SELECT."""
+    uploader = MagicMock()
+    uploader.upload.return_value = "s3://continuo/candidate-sql/rel-1/candidate_test_schema.orders_csv.json"
+    node = ManifestNode(
+        table_name="orders_csv", schema_name="test_schema", service_name="service-py",
+        owner="team-py", schedule_name="daily", criticality="SECONDARY",
+        dependency_sqls=[],
+        output_columns=[{"name": "order_id", "type": "INTEGER", "nullable": False}],
+        node_type=NodeType.PYTHON_CSV, runtime=Runtime.PYTHON,
+        csv_source="s3://drops/orders.csv",
+    )
+
+    PythonSpecArtifactBuilder(uploader).build(node, _ctx())
+
+    spec = uploader.upload.call_args.kwargs["spec"]
+    assert spec["reads"] == []
+    assert spec["csv_source"] == "s3://drops/orders.csv"
+
+
+def test_python_builder_omits_csv_source_for_model_nodes():
+    """A model node's spec must stay byte-identical to before csv_source
+    existed: no csv_source key at all when the node has none."""
+    uploader = MagicMock()
+    uploader.upload.return_value = "s3://x"
+    node = ManifestNode(
+        table_name="py_metrics", schema_name="test_schema", service_name="service-py",
+        owner="team-py", schedule_name="daily", criticality="SECONDARY",
+        dependency_sqls=["select 1"],
+        output_columns=[{"name": "a", "type": "INTEGER", "nullable": True}],
+        node_type=NodeType.PYTHON_MODEL, runtime=Runtime.PYTHON,
+    )
+
+    PythonSpecArtifactBuilder(uploader).build(node, _ctx())
+
+    spec = uploader.upload.call_args.kwargs["spec"]
+    assert "csv_source" not in spec
+
+
 def test_python_builder_leaves_a_self_reference_on_the_production_schema():
     """check_binds runs BEFORE build_empty_from_columns in the same Job, so a
     self-reference redirected to the candidate schema would bind against a table

@@ -7,7 +7,8 @@ fold (content_hash); the fold is recomputed here and a mismatch rejects the
 artifact. Any malformed entry rejects the WHOLE artifact: the producing CI
 validates before upload, so a bad entry here means a broken pipeline, and a
 silently dropped node would retire it from production on promote. Schema
-evolution goes through contract_version — an unknown field is an error.
+evolution goes through contract_version — incompatible schema changes require
+a contract_version bump, so an unknown field is an error.
 """
 import json
 import logging
@@ -30,9 +31,11 @@ _REQUIRED_ENTRY_KEYS = {
     "reads", "output_columns",
     "source_hash", "shared_code_hash", "config_hash", "content_hash",
 }
-_OPTIONAL_ENTRY_KEYS = {"description", "extra_columns", "config"}
+_OPTIONAL_ENTRY_KEYS = {"description", "extra_columns", "config", "kind"}
 _COLUMN_REQUIRED_KEYS = {"name", "type"}
 _COLUMN_ALLOWED_KEYS = {"name", "type", "nullable"}
+KINDS = {"python-model", "python-csv"}
+_CSV_URI_PREFIXES = ("s3://", "https://")
 
 
 def _fail(detail: str) -> None:
@@ -95,9 +98,20 @@ def _parse_entry(
     if unknown:
         _fail(
             f"{label}: unknown fields {sorted(unknown, key=str)}"
-            " — schema changes require a contract_version bump"
+            " — incompatible schema changes require a contract_version bump"
         )
-    missing = _REQUIRED_ENTRY_KEYS - set(entry)
+
+    kind = entry.get("kind", "python-model")
+    if not isinstance(kind, str) or kind not in KINDS:
+        _fail(f"{label}: kind must be one of {sorted(KINDS)}, got {kind!r}")
+
+    if kind == "python-csv":
+        if "script" in entry:
+            _fail(f"{label}: 'script' is forbidden for kind python-csv")
+        required = _REQUIRED_ENTRY_KEYS - {"script"}
+    else:
+        required = _REQUIRED_ENTRY_KEYS
+    missing = required - set(entry)
     if missing:
         _fail(f"{label}: missing required fields {sorted(missing)}")
 
@@ -105,7 +119,7 @@ def _parse_entry(
     table = _non_empty_str(entry["table"], f"{label}: table")
     owner = _non_empty_str(entry["owner"], f"{label}: owner")
     schedule = _non_empty_str(entry["schedule"], f"{label}: schedule")
-    script = _non_empty_str(entry["script"], f"{label}: script")
+    script = _non_empty_str(entry["script"], f"{label}: script") if kind != "python-csv" else ""
 
     criticality = entry["criticality"]
     if not isinstance(criticality, str) or criticality not in CRITICALITIES:
@@ -130,6 +144,17 @@ def _parse_entry(
         _fail(f"{label}: description must be a string")
 
     reads = _parse_reads(entry["reads"], label)
+    if kind == "python-csv":
+        if set(reads) != {"csv"}:
+            _fail(f"{label}: a python-csv node's reads must be exactly {{csv: <uri>}}")
+        csv_source = reads["csv"]
+        if not csv_source.startswith(_CSV_URI_PREFIXES):
+            _fail(
+                f"{label}: reads['csv'] must be an s3:// or https:// uri,"
+                f" got {csv_source!r}"
+            )
+    else:
+        csv_source = ""
     columns = _parse_columns(entry["output_columns"], label)
 
     source_hash = _non_empty_str(entry["source_hash"], f"{label}: source_hash")
@@ -158,18 +183,23 @@ def _parse_entry(
         "owner": owner,
         "schedule": schedule,
         "criticality": criticality,
-        "script": script,
+        "kind": kind,
         "description": description,
         "extra_columns": extra_columns,
         "reads": dict(reads),
         "output_columns": columns,
         "config": config,
     }
+    if kind != "python-csv":
+        raw_entry["script"] = script
 
     try:
         raw_code = json.dumps(raw_entry, sort_keys=True, indent=2)
     except (TypeError, ValueError):
         _fail(f"{label}: config is not JSON-serializable")
+
+    node_type = NodeType.PYTHON_CSV if kind == "python-csv" else NodeType.PYTHON_MODEL
+    dependency_sqls = [] if kind == "python-csv" else [reads[name] for name in sorted(reads)]
 
     return ManifestNode(
         table_name=table,
@@ -181,9 +211,9 @@ def _parse_entry(
         owner=owner,
         schedule_name=schedule,
         criticality=criticality,
-        dependency_sqls=[reads[name] for name in sorted(reads)],
+        dependency_sqls=dependency_sqls,
         candidate_sql="",
-        node_type=NodeType.PYTHON_MODEL,
+        node_type=node_type,
         content_hash=content_hash,
         manifest_version=manifest_version,
         image_tag=image_tag,
@@ -196,6 +226,7 @@ def _parse_entry(
         code_unit_ids=[],
         output_columns=columns,
         runtime=Runtime.PYTHON,
+        csv_source=csv_source,
     )
 
 

@@ -8,6 +8,7 @@ class NodeType(StrEnum):
     DBT_SEED = "dbt-seed"
     DBT_SNAPSHOT = "dbt-snapshot"
     PYTHON_MODEL = "python-model"
+    PYTHON_CSV = "python-csv"
 
 
 class Runtime(StrEnum):
@@ -99,6 +100,8 @@ class ManifestNode:
     # dbt node's alias when it overrides one, else "" (see resolved_relation_id,
     # which falls back to table_name). A python node has no alias concept, so
     # its parser sets this to its declared table_name directly.
+    csv_source: str = ""  # the csv uri for python-csv nodes; empty otherwise —
+    # NOT schema-rewritten, it is a file location, not a warehouse reference.
 
     @property
     def unique_id(self) -> str:
