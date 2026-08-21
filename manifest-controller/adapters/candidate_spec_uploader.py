@@ -3,7 +3,7 @@
 The spec is what the validation Job fetches in place of compiled SQL: the
 node's declared reads (rewritten to the candidate schema) to bind-check, plus
 the output columns and physical-layout config to create the empty table from.
-Its shape is the published continuo-validation-runner's contract.
+Its shape is the published continuo-python-runtime image's validation contract.
 
 Serialized with sorted keys so equal content always produces identical bytes.
 """

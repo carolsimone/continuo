@@ -56,8 +56,9 @@ const (
 	NodeTypeDbtSeed     NodeType = "dbt-seed"
 	NodeTypeDbtSnapshot NodeType = "dbt-snapshot"
 	// NodeTypePythonModel is a Continuo-native python node (contract.yaml +
-	// user image). Validation routes it to build_from_columns; runtime
-	// dispatch is not implemented yet and fails closed in the executor.
+	// user image). Validation routes it to build_from_columns; the executor
+	// runs the node's own image (built FROM continuo-python-runtime-<engine>)
+	// via buildPythonPodSpec.
 	NodeTypePythonModel NodeType = "python-model"
 )
 

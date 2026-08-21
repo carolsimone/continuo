@@ -152,4 +152,4 @@ no owned datastore, no gRPC/HTTP surface, and a small, fixed set of behaviors,
 so they change far less often than the services above:
 
 - [dbt/](dbt/README.md) — runs one dbt model/test/build per Job invocation
-- [continuo-validation](https://github.com/carolsimone/continuo-validation) — external repo publishing the `continuo-validation-<engine>` images; runs one blue/green validation op per Job invocation
+- [continuo-python-runtime](https://github.com/carolsimone/continuo-python-runtime) — external repo publishing the `continuo-python-runtime-<engine>` images; the same image runs a python node's own code and, invoked as `continuo-runtime validation-op`, one blue/green validation op per Job invocation

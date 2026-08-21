@@ -24,7 +24,7 @@ import (
 // individually. Tests exercising the missing-image / missing-secret paths override
 // them with t.Setenv.
 func TestMain(m *testing.M) {
-	os.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0")
+	os.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.3.0")
 	os.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	os.Exit(m.Run())
 }
@@ -97,8 +97,8 @@ func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testin
 
 	main := spec.Containers[0]
 	assert.Equal(t, "dbt-job", main.Name)
-	assert.Equal(t, "ghcr.io/carolsimone/continuo-validation-postgres:v0.4.0", main.Image)
-	assert.Equal(t, []string{"python", "/validation_runner.py"}, main.Command)
+	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.3.0", main.Image)
+	assert.Equal(t, []string{"continuo-runtime", "validation-op"}, main.Command)
 	// The main container fetches its own SQL: it carries the URI + S3 creds.
 	assert.Equal(t, p.CandidateArtifactURI, envByName(spec, "CANDIDATE_SQL_URI"))
 	assert.Equal(t, "http://minio:9000", envByName(spec, "S3_ENDPOINT_URL"))
@@ -118,7 +118,7 @@ func TestCreateValidationJob_BuildsExpectedCommand_DbtSeed(t *testing.T) {
 	job := fetchJob(t, c, p.Namespace, p.JobName)
 	require.Len(t, job.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t,
-		[]string{"python", "/validation_runner.py"},
+		[]string{"continuo-runtime", "validation-op"},
 		job.Spec.Template.Spec.Containers[0].Command)
 }
 
@@ -226,7 +226,7 @@ func envMap(env []corev1.EnvVar) map[string]string {
 // fetching the published JSON validation spec — and never CANDIDATE_SQL_URI,
 // which belongs exclusively to build_from_sql.
 func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
-	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/continuo-validation-postgres:test")
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/continuo-python-runtime-postgres:test")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
 	p := ValidationJobParams{
@@ -252,7 +252,7 @@ func TestBuildValidationPodSpec_BuildFromColumns_SetsSpecURI(t *testing.T) {
 // CandidateArtifactURI can never succeed, so it fails permanently with an
 // actionable reason instead of launching a pod that can only error.
 func TestBuildValidationPodSpec_BuildFromColumns_EmptyURIFailsPermanently(t *testing.T) {
-	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/continuo-validation-postgres:test")
+	t.Setenv("VALIDATION_IMAGE", "ghcr.io/x/continuo-python-runtime-postgres:test")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	p := ValidationJobParams{JobName: "vj", NodeID: "n1", NodeType: pkg_model.NodeTypePythonModel,
 		ValidationOp: "build_from_columns", Namespace: "ns"}

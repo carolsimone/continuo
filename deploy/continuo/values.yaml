@@ -245,7 +245,7 @@ validation:
   # │  partial change silently validates against the wrong warehouse or breaks:    │
   # │                                                                              │
   # │  1. `engine:` → set to your engine. Requires a published                     │
-  # │     continuo-validation-<engine> image (`postgres` and `trino`               │
+  # │     continuo-python-runtime-<engine> image (`postgres` and `trino`           │
   # │     exist today).                                                            │
   # │  2. `createWarehouseSecret:` → MUST be `false`. The auto-created Secret only  │
   # │     emits POSTGRES_* keys. Every engine library reads DIFFERENT connection   │
@@ -262,7 +262,7 @@ validation:
   # │     engine's dbt adapter — that is your dbt setup, not a value here.         │
   # └────────────────────────────────────────────────────────────────────────────┘
   #
-  # `engine` resolves to the slim continuo-validation-<engine> image the executor
+  # `engine` resolves to the continuo-python-runtime-<engine> image the executor
   # runs; `postgres` and `trino` are published today. The candidate-schema
   # create/teardown is NOT postgres-specific — it runs inside the engine image via the
   # adapter — so the only barrier to a new engine is publishing its library/image and
@@ -276,11 +276,13 @@ validation:
   # so the engine here must be the engine your warehouse actually is —
   # manifest-controller refuses to start on an engine it has no dialect for.
   engine: postgres
-  # Tag of the continuo-validation-<engine> image. Validation ships from its own
-  # repository (github.com/carolsimone/continuo-validation) on its own release
-  # train, so this is pinned independently of the chart's appVersion/global.imageTag.
-  # A plain tag is mutable: continuo-validation's publish workflow re-pushes
-  # both `:vX.Y.Z` and `:latest` on every tag, so re-running a tag moves it
+  # Tag of the continuo-python-runtime-<engine> image. That image ships from its
+  # own repository (github.com/carolsimone/continuo-python-runtime) on its own
+  # release train, so this is pinned independently of the chart's
+  # appVersion/global.imageTag. The engine is part of the image NAME, not the tag,
+  # which keeps the tag position free for a digest. A plain tag is mutable:
+  # continuo-python-runtime's publish workflow re-pushes both `:vX.Y.Z` and
+  # `:latest` on every tag, so re-running a tag moves it
   # under existing installs. For an immutable pin, set
   # "vX.Y.Z@sha256:<digest>" — the value is appended verbatim after the tag
   # position in the composed image ref, producing a valid repo:tag@digest.
@@ -288,7 +290,7 @@ validation:
   # merging new chart defaults) falls back to a literal in _helpers.tpl's
   # `continuo.validation.image` that must be kept equal to the default below —
   # scripts/check-validation-image-pin.sh guards the two staying in sync.
-  imageTag: "v0.4.0"
+  imageTag: "v0.3.0"
   # POSTGRES-ONLY. When true (default) the chart builds the warehouse Secret from the
   # Postgres it configures (bundled or externalDatabase), emitting the keys the POSTGRES
   # runner reads: POSTGRES_HOST/PORT/DB/USER/PASSWORD. This is postgres-shaped and cannot

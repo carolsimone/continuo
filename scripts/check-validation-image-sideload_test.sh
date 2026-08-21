@@ -4,7 +4,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; G="${HERE}/check-validatio
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT; fail=0
 assert(){ if eval "$2"; then echo "ok - $1"; else echo "NOT OK - $1"; fail=1; fi; }
 
-REF="ghcr.io/carolsimone/continuo-validation-postgres:v0.2.0"
+REF="ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.2.0"
 
 write_fixture() {
   # %b (not %s) so a literal \n embedded in $setup_line/$prov_line becomes a

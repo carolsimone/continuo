@@ -11,7 +11,7 @@ assert(){ if eval "$2"; then echo "ok - $1"; else echo "NOT OK - $1"; fail=1; fi
 # chart's full value surface.
 write_fixture() {
   local dir="$1" tag="$2"
-  local ref="ghcr.io/carolsimone/continuo-validation-postgres:${tag}"
+  local ref="ghcr.io/carolsimone/continuo-python-runtime-postgres:${tag}"
 
   mkdir -p "$dir/scripts" "$dir/tests/e2e" "$dir/tests/e2e/k8s" \
     "$dir/executor-controller/adapters/k8s" \
@@ -27,6 +27,10 @@ write_fixture() {
 
   printf -- '- name: VALIDATION_IMAGE\n  value: "%s"\n' "$ref" \
     > "$dir/tests/e2e/k8s/executor-controller-deployment.yaml"
+
+  mkdir -p "$dir/tests/e2e/fixtures/py-probe"
+  printf 'FROM %s\nCOPY contracts/ /app/contracts/\n' "$ref" \
+    > "$dir/tests/e2e/fixtures/py-probe/Dockerfile"
 
   printf 'services:\n  executor-controller:\n    environment:\n      - VALIDATION_IMAGE=%s\n' "$ref" \
     > "$dir/docker-compose.yml"
@@ -59,7 +63,7 @@ kind: ConfigMap
 metadata:
   name: fixture
 data:
-  VALIDATION_IMAGE: 'ghcr.io/carolsimone/continuo-validation-postgres:{{ .Values.validation.imageTag | default "${tag}" }}'
+  VALIDATION_IMAGE: 'ghcr.io/carolsimone/continuo-python-runtime-postgres:{{ .Values.validation.imageTag | default "${tag}" }}'
 EOF
 }
 
@@ -76,6 +80,25 @@ out="$(bash "$G" "$tmp/drift" 2>&1)"; rc=$?
 assert "Makefile drift is caught" "[ $rc -ne 0 ]"
 assert "Makefile drift names the offending location" "[[ \"\$out\" == *Makefile* ]]"
 assert "Makefile drift is a DRIFT report, not a missing-ref report" "[[ \"\$out\" == *'PIN DRIFT'* ]]"
+
+# --- the python-node e2e fixture drifts ------------------------------------
+# The case this location exists for: a runtime release moves every other pin
+# and leaves the fixture behind, so the python-node e2e keeps proving the
+# harness against the OLD base while CI stays green.
+write_fixture "$tmp/fixture-drift" "v0.2.0"
+sed -i.bak 's/v0.2.0/v0.3.0/' "$tmp/fixture-drift/tests/e2e/fixtures/py-probe/Dockerfile"
+rm -f "$tmp/fixture-drift/tests/e2e/fixtures/py-probe/Dockerfile.bak"
+out="$(bash "$G" "$tmp/fixture-drift" 2>&1)"; rc=$?
+assert "py-probe fixture drift is caught" "[ $rc -ne 0 ]"
+assert "py-probe fixture drift names the offending location" "[[ \"\$out\" == *'py-probe/Dockerfile'* ]]"
+assert "py-probe fixture drift is a DRIFT report" "[[ \"\$out\" == *'PIN DRIFT'* ]]"
+
+# --- the python-node e2e fixture stops pinning entirely --------------------
+write_fixture "$tmp/fixture-missing" "v0.2.0"
+printf 'FROM scratch\n' > "$tmp/fixture-missing/tests/e2e/fixtures/py-probe/Dockerfile"
+out="$(bash "$G" "$tmp/fixture-missing" 2>&1)"; rc=$?
+assert "py-probe fixture losing its pin is caught" "[ $rc -ne 0 ]"
+assert "py-probe missing pin names the location" "[[ \"\$out\" == *'py-probe/Dockerfile'* ]]"
 
 # --- the chart's rendered default drifts, not the literal pins ------------
 write_fixture "$tmp/chart-drift" "v0.2.0"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fails if anything in the repo side-loads the pulled continuo-validation
+# Fails if anything in the repo side-loads the pulled continuo-python-runtime
 # image with a bare `kind load docker-image` instead of the platform-scoped
 # route, and separately fails if either kind-provisioning script stops
 # calling that route at all.
@@ -35,8 +35,8 @@ set -uo pipefail
 
 REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-# Matches the full ref: ghcr.io/carolsimone/continuo-validation-postgres:vX.Y.Z
-REF_RE='ghcr\.io/carolsimone/continuo-validation-postgres:[A-Za-z0-9._-]+'
+# Matches the full ref: ghcr.io/carolsimone/continuo-python-runtime-postgres:vX.Y.Z
+REF_RE='ghcr\.io/carolsimone/continuo-python-runtime-postgres:[A-Za-z0-9._-]+'
 
 # `.*` between the subcommand and the ref tolerates flags in either position
 # — `kind load docker-image <ref> --name x` and `kind load docker-image
