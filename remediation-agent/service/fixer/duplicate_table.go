@@ -54,7 +54,7 @@ func (duplicateTableFixer) Propose(ctx context.Context, svc Services, in Input) 
 }
 
 func duplicateTableGather(ctx context.Context, svc Services, in Input) (Gathered, bool, error) {
-	if in.NodeType == string(pkg_model.NodeTypePythonModel) {
+	if pkg_model.NodeType(in.NodeType).IsPython() {
 		svc.Logger.Info("duplicate-table fix: target claimant is a python node; skipping — "+
 			"its relation is declared in the service's contract.yaml, whose repository path this "+
 			"system does not carry, so the named file cannot contain the fix",

@@ -437,7 +437,7 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 // cloned empty from its production schema regardless of kind.
 func validationOpFor(n release.Node, changedClosureSet map[string]bool) (op, prodSchema string) {
 	if changedClosureSet[n.UniqueID] {
-		if n.NodeType == string(pkg_model.NodeTypePythonModel) {
+		if pkg_model.NodeType(n.NodeType).IsPython() {
 			return "build_from_columns", ""
 		}
 		return "build_from_sql", ""

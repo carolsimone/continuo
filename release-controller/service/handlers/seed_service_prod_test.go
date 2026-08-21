@@ -159,6 +159,31 @@ func TestSeedServiceProd_DerivesManifestKindPerService(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPython, sp2.ManifestKind())
 }
 
+func TestSeedServiceProd_CsvServiceClassifiedPython(t *testing.T) {
+	now := time.Unix(1_000_000, 0).UTC()
+
+	// service-1 has only python-csv nodes: it must classify as python, same
+	// as a service made only of python-model nodes.
+	cp := buildCurrentProd("rel-1",
+		release.Node{UniqueID: "n1", ServiceName: "service-1", ImageTag: "t1", NodeType: "python-csv"},
+	)
+	existingKeys := map[string]string{
+		"service-1": "s3://bucket/service-1/contract.yaml",
+	}
+
+	store := newFakeStore()
+	repo := &fakeServiceProdRepo{store: store}
+
+	n, err := handlers.SeedServiceProd(context.Background(), cp, existingKeys, repo, now)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	sp, err := repo.Get(context.Background(), "service-1")
+	require.NoError(t, err)
+	require.NotNil(t, sp)
+	assert.Equal(t, release.ManifestKindPython, sp.ManifestKind())
+}
+
 func TestSeedServiceProd_MixedKindServiceErrorsAndWritesNothing(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 

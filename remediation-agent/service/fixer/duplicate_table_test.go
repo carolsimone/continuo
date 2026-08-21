@@ -102,6 +102,44 @@ func TestDuplicateTable_PythonTarget_NeverCallsLLMOrPrecedents(t *testing.T) {
 	}
 }
 
+// TestDuplicateTable_PythonCsvTarget_NeverCallsLLMOrPrecedents mirrors
+// TestDuplicateTable_PythonTarget_NeverCallsLLMOrPrecedents for the
+// python-csv node kind: a csv node is part of the python family (IsPython),
+// so its relation is likewise declared in the service's contract.yaml rather
+// than the file named by FilePath, and it must be skipped the same way.
+func TestDuplicateTable_PythonCsvTarget_NeverCallsLLMOrPrecedents(t *testing.T) {
+	fs := &fakeSourceMap{files: map[string]string{"services/marketing/data/orders.csv": "id,name\n1,a"}}
+	llm := &fakeLLM{}
+	precedents := &fakePrecedents{}
+	svc := Services{
+		Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
+		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+		ServiceRepoPaths: map[string]string{"marketing": "services/marketing", "finance": "services/finance"},
+		Precedents:       precedents,
+	}
+	in := Input{
+		Source: "duplicate_table", ReleaseID: "rel-1", NodeID: "analytics.orders",
+		Repo: "owner/repo", CommitSHA: "abc123", Service: "marketing", FilePath: "data/orders.csv",
+		NodeType: "python-csv", OtherService: "finance", Attempt: 1,
+	}
+	r, err := duplicateTableFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if got := fs.readPaths(); len(got) != 0 {
+		t.Fatalf("readPaths = %v, want no read for a python-csv target", got)
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call for a python-csv target, got %d", llm.calls)
+	}
+	if precedents.calls != 0 {
+		t.Fatalf("expected no precedent lookup for a python-csv target, got %d", precedents.calls)
+	}
+}
+
 // TestDuplicateTable_SkipsASeedTarget proves the fixer never reads or prompts
 // for a dbt-seed claimant: a seed's relation name comes from its CSV filename
 // or project config, never from the CSV's own contents, so the file named by

@@ -50,7 +50,7 @@ func SeedServiceProd(
 		if e.imageTag == "" && node.ImageTag != "" {
 			e.imageTag = node.ImageTag
 		}
-		if node.NodeType == string(pkg_model.NodeTypePythonModel) {
+		if pkg_model.NodeType(node.NodeType).IsPython() {
 			e.hasPython = true
 		} else {
 			e.hasDbt = true

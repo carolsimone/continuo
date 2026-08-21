@@ -922,23 +922,29 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	assert.Equal(t, "sha-a", sp.ImageTag())
 }
 
-// TestHandleParsedManifest_AssignsPerNodeValidationOp asserts the four
-// dbt/python x changed/unchanged quadrants:
+// TestHandleParsedManifest_AssignsPerNodeValidationOp asserts the six
+// dbt/python-model/python-csv x changed/unchanged quadrants:
 //   - a changed dbt-model gets build_from_sql (prod_schema empty);
 //   - a changed python-model gets build_from_columns (prod_schema empty) —
 //     it has no compiled SQL to rewrite, only a JSON validation spec of
 //     declared reads + output columns;
-//   - an unchanged upstream, dbt or python, is never built from a candidate
-//     artifact: it gets clone_from_prod with prod_schema = its schema_name.
+//   - a changed python-csv gets build_from_columns too — it is part of the
+//     python family (IsPython), so it is classified the same as
+//     python-model here;
+//   - an unchanged upstream, dbt, python-model, or python-csv, is never
+//     built from a candidate artifact: it gets clone_from_prod with
+//     prod_schema = its schema_name.
 func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	deps, store := seedToParsing(t, "rel-op-1", map[string]string{"shop": "sha-shop"})
 
-	// prod has upstreams "model.core.dim" and "python.core.stats" (both
-	// unchanged); candidate adds changed "model.shop.orders" and
-	// "python.shop.enrich", each depending on its respective upstream.
+	// prod has upstreams "model.core.dim", "python.core.stats", and
+	// "csv.core.rates" (all unchanged); candidate adds changed
+	// "model.shop.orders", "python.shop.enrich", and "csv.shop.fx", each
+	// depending on its respective upstream.
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
 		{UniqueID: "model.core.dim", ServiceName: "shop", NodeType: "dbt-model", SchemaName: "analytics", TableName: "dim", ContentHash: "hash-dim-OLD"},
 		{UniqueID: "python.core.stats", ServiceName: "shop", NodeType: "python-model", SchemaName: "analytics", TableName: "stats", ContentHash: "hash-stats-OLD"},
+		{UniqueID: "csv.core.rates", ServiceName: "shop", NodeType: "python-csv", SchemaName: "analytics", TableName: "rates", ContentHash: "hash-rates-OLD"},
 	}, time.Unix(50, 0).UTC()))
 
 	topo := release.Topology{
@@ -948,6 +954,9 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 		{UniqueID: "python.core.stats", ServiceName: "shop", NodeType: "python-model", SchemaName: "analytics", TableName: "stats", ContentHash: "hash-stats-OLD"},
 		{UniqueID: "python.shop.enrich", ServiceName: "shop", NodeType: "python-model", SchemaName: "shop", TableName: "enrich", ContentHash: "hash-enrich-NEW",
 			UpstreamUniqueIDs: []string{"python.core.stats"}},
+		{UniqueID: "csv.core.rates", ServiceName: "shop", NodeType: "python-csv", SchemaName: "analytics", TableName: "rates", ContentHash: "hash-rates-OLD"},
+		{UniqueID: "csv.shop.fx", ServiceName: "shop", NodeType: "python-csv", SchemaName: "shop", TableName: "fx", ContentHash: "hash-fx-NEW",
+			UpstreamUniqueIDs: []string{"csv.core.rates"}},
 	}
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -966,13 +975,21 @@ func TestHandleParsedManifest_AssignsPerNodeValidationOp(t *testing.T) {
 	assert.Equal(t, "clone_from_prod", byID["model.core.dim"]["validation_op"])
 	assert.Equal(t, "analytics", byID["model.core.dim"]["prod_schema"])
 
-	// python changed.
+	// python-model changed.
 	assert.Equal(t, "build_from_columns", byID["python.shop.enrich"]["validation_op"])
 	assert.Equal(t, "", byID["python.shop.enrich"]["prod_schema"])
 
-	// python unchanged.
+	// python-model unchanged.
 	assert.Equal(t, "clone_from_prod", byID["python.core.stats"]["validation_op"])
 	assert.Equal(t, "analytics", byID["python.core.stats"]["prod_schema"])
+
+	// python-csv changed.
+	assert.Equal(t, "build_from_columns", byID["csv.shop.fx"]["validation_op"])
+	assert.Equal(t, "", byID["csv.shop.fx"]["prod_schema"])
+
+	// python-csv unchanged.
+	assert.Equal(t, "clone_from_prod", byID["csv.core.rates"]["validation_op"])
+	assert.Equal(t, "analytics", byID["csv.core.rates"]["prod_schema"])
 }
 
 // decodeValidationRequestedNodes finds the validation.requested:v1 outbox entry
