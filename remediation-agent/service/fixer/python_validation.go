@@ -296,16 +296,46 @@ func proposeContractFixViaShadow(
 // and no longer is leaves the release less to judge than the failure it was
 // asked to repair.
 func declarationBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
-	before := map[string]ports.NodeDeclaration{}
-	after := map[string]ports.NodeDeclaration{}
+	before, after, breach := buildDeclarationMaps(svc, files, originals)
+	if breach != "" {
+		return breach
+	}
+	if breach := identityBreach(before, after); breach != "" {
+		return breach
+	}
+	for _, k := range sortedDeclarationKeys(before) {
+		was, now := before[k], after[k]
+		if dropped := droppedReads(was.ReadKeys, now.ReadKeys); len(dropped) > 0 {
+			return fmt.Sprintf(
+				"the model's answer no longer declares the read %s of %s. Validation bind-checks the reads a contract still "+
+					"declares, so deleting one hides the failure instead of repairing it: the node's script — which this fix "+
+					"does not change — still performs that read, and no release would catch it again. A read may be corrected "+
+					"or replaced, never dropped", strings.Join(quoteAll(dropped), ", "), k)
+		}
+	}
+	return ""
+}
+
+// buildDeclarationMaps parses every contract yaml file in an answer, before
+// and after the edit, into declarations keyed by identityKey. It is the part
+// every contract-fix lane's post-apply guard shares, whatever it then checks
+// those declarations for: the python-model guard follows it with the
+// blanket-read check above, and the python-csv guard follows it with a
+// narrower one scoped to the single "csv" read.
+//
+// A prior content that does not parse declared nothing this answer can be
+// held to: the contract search skips such a file too, so the node it might
+// have named was never the node under repair. The model's OWN new content
+// failing to parse, in contrast, is the answer's fault and ends the check with
+// that reason.
+func buildDeclarationMaps(svc Services, files []ports.ProposedFile, originals map[string]string) (before, after map[string]ports.NodeDeclaration, breach string) {
+	before = map[string]ports.NodeDeclaration{}
+	after = map[string]ports.NodeDeclaration{}
 
 	for _, f := range files {
 		if !isContractYAMLPath(f.Path) {
 			continue
 		}
-		// A prior content that does not parse declared nothing this answer can
-		// be held to: the contract search skips such a file too, so the node it
-		// might have named was never the node under repair.
 		if decls, err := svc.ContractInspector.Declarations(originals[f.Path]); err == nil {
 			for _, d := range decls {
 				before[identityKey(d.Identity)] = d
@@ -313,22 +343,25 @@ func declarationBreach(svc Services, files []ports.ProposedFile, originals map[s
 		}
 		decls, err := svc.ContractInspector.Declarations(f.Content)
 		if err != nil {
-			return fmt.Sprintf("the model returned %q, which is not a readable contract file: %v", f.Path, err)
+			return nil, nil, fmt.Sprintf("the model returned %q, which is not a readable contract file: %v", f.Path, err)
 		}
 		for _, d := range decls {
 			after[identityKey(d.Identity)] = d
 		}
 	}
+	return before, after, ""
+}
 
-	// Sorted so an answer that moves several nodes always names the same one,
-	// and a re-run of the same attempt records the same rationale.
-	keys := make([]string, 0, len(before))
-	for k := range before {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
+// identityBreach reports whether any node the answer's own files declared
+// before the edit is no longer declared afterwards, or is declared under a
+// changed identity (schema, table, script, owner, schedule, or criticality).
+// Both are refused regardless of what a lane's fix is otherwise allowed to
+// touch: a fix corrects what a node declares, never which node is declared.
+//
+// Sorted so an answer that moves several nodes always names the same one, and
+// a re-run of the same attempt records the same rationale.
+func identityBreach(before, after map[string]ports.NodeDeclaration) string {
+	for _, k := range sortedDeclarationKeys(before) {
 		was := before[k]
 		now, still := after[k]
 		if !still {
@@ -341,15 +374,20 @@ func declarationBreach(svc Services, files []ports.ProposedFile, originals map[s
 				"the model's answer changed the fields that identify %s (%s). Those fields say which node the entry is, "+
 					"so changing one makes it a different node rather than a repaired one", k, identityDelta(was.Identity, now.Identity))
 		}
-		if dropped := droppedReads(was.ReadKeys, now.ReadKeys); len(dropped) > 0 {
-			return fmt.Sprintf(
-				"the model's answer no longer declares the read %s of %s. Validation bind-checks the reads a contract still "+
-					"declares, so deleting one hides the failure instead of repairing it: the node's script — which this fix "+
-					"does not change — still performs that read, and no release would catch it again. A read may be corrected "+
-					"or replaced, never dropped", strings.Join(quoteAll(dropped), ", "), k)
-		}
 	}
 	return ""
+}
+
+// sortedDeclarationKeys returns a declaration map's identity keys, sorted, so
+// every caller that walks "before" in order reports the same node first for
+// the same answer.
+func sortedDeclarationKeys(m map[string]ports.NodeDeclaration) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // droppedReads returns the read names present before an edit and absent after

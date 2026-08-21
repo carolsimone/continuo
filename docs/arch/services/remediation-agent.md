@@ -132,9 +132,10 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
    candidate_artifact_uri, code_bundle_uri, file_path, service, node_type,
    other_service, other_file_path, repo, commit_sha.
    node_type is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
-   python-model), set on duplicate_table and validation triggers. It selects
-   the Fixer for a validation trigger — a python node goes to the python
-   contract fixer — and the duplicate-table fixer skips a python node on it.
+   python-model, python-csv), set on duplicate_table and validation triggers.
+   It selects the Fixer for a validation trigger — a python-model node goes to
+   the python contract fixer, a python-csv node to its own dedicated contract
+   fixer — and the duplicate-table fixer skips either python kind on it.
    error_excerpt is the classifier's key error line for this failure, capped at
    4 KiB; it is the python contract fixer's primary evidence, since a python
    validation failure's message is the engine's own text rather than a dbt log
@@ -173,12 +174,13 @@ The driver in `service/handlers/propose_fix.go` runs for every trigger regardles
 
 3. Resolve the Fixer via fixer.For(source, node_type): compileFixer, seedFixer,
    duplicateTableFixer, or — for a validation trigger — validationFixer for a dbt
-   node and pythonValidationFixer when node_type is python-model. node_type
-   selects a lane only for validation failures, where the two node kinds need
-   entirely different fixes; every other class ignores it and refuses a python
-   node in its own way. An unrecognized source is a programming error — the
-   classifier only ever emits the four known values — and is returned loudly,
-   not swallowed.
+   node, pythonValidationFixer when node_type is python-model, and
+   csvValidationFixer when node_type is python-csv. node_type selects a lane
+   only for validation failures, where the three node kinds need entirely
+   different fixes; every other class ignores it and refuses either python
+   node kind in its own way. An unrecognized source is a programming error —
+   the classifier only ever emits the four known values — and is returned
+   loudly, not swallowed.
 
 3a. markGenerating(attempt): in its own committed transaction, insert an in-flight
     proposal(status=generating) row for this attempt (idempotent — ON CONFLICT on
@@ -643,6 +645,15 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
     they are right), and the single-file view (file_path/proposed_sql_uri/
     diff_uri) normalized from the first edit.
 ```
+
+### CSV validation fixer — same shadow-release lane, a contract-only node
+
+`csvValidationFixer` (`service/fixer/csv_validation.go`) handles a validation rejection whose failing node is a python-csv node. A python-csv node has no script at all: it is an entry in a contract yaml naming its schema and table, a single `csv` read whose value is the uri of the file the runtime loads, and the `output_columns` it promises that file to carry. Validation fetches the file's header line and rejects the node when a declared output column is missing from it. The CSV file is the source of truth, so the fix corrects the contract to match it — rename or drop a mis-declared `output_columns` entry, or, only when the evidence shows the uri itself is stale, correct the `csv:` uri.
+
+Steps 1–4 (split node id, fetch the repo, locate the declaring yaml, check no sibling in the same contract directory also failed) and steps 6–15 (one forced LLM tool call, refuse an unusable answer, apply then package, mint and submit the shadow release, write audit artifacts, return `proposal(status=verifying)`) are identical in shape to the python-model lane above and run through the same shared helper, `proposeContractFixViaShadow`; the two lanes differ only in what evidence step 5 shows the model and what step 9's post-apply guard checks:
+
+- **Step 5 (evidence)** reuses the python lane's evidence assembly (`pythonEvidence`) verbatim — a csv node runs on the same python-runtime image and its code-bundle entry is read the same way — and maps the result into `CsvEvidence`, which mirrors `PythonEvidence` field for field. Only the prompt built from it differs: `propose_csv_fix` (vs. `propose_python_fix`), telling the model the file is the source of truth, that there is no script to preserve, and that the single `csv` read may have its uri corrected but never be deleted or renamed.
+- **Step 9 (post-apply guard)** shares its identity check with the python lane — every node the answer's own files declared before the edit must still be declared, with schema, table, script, owner, schedule, and criticality unchanged (`identityBreach`, factored out of the python lane's guard as `buildDeclarationMaps` + `identityBreach` so both lanes enforce it identically). What differs is the *read* rule: a python-model node's script may perform any number of reads, so that guard refuses dropping any of them; a python-csv node has exactly one, always named `csv`, and correcting its value is the expected fix. So `csvDeclarationBreach` does not apply the blanket "no read may be dropped" rule at all — it checks only that the `csv` key itself still exists, for every node that had one before the edit. Deleting or renaming it is `proposal(status=failed)` naming the read; rewriting its uri, or editing `output_columns`, passes through to the shadow release, which is what actually judges whether the fix is right.
 
 ### Shadow-verify reconciler
 

@@ -217,20 +217,20 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 			},
 			Rationale: "declared the column the script produces", Confidence: "high", Model: "test-model",
 		}}},
-		Evidence:        fakeEvidence{data: map[string]string{"s3://log": "runner log body"}},
-		Sanitizer:       fakeSanitizer{},
-		Artifacts:       arts,
-		Logger:          testLogger(),
-		Upstream:        &fakeUpstream{},
-		Precedents:      &fakePrecedents{},
-		CandidateSource: &fakeCandidateSource{src: ports.CandidateSource{RawCode: `{"output_columns":[]}`, Runtime: "python"}},
-		Archive:         arch,
+		Evidence:          fakeEvidence{data: map[string]string{"s3://log": "runner log body"}},
+		Sanitizer:         fakeSanitizer{},
+		Artifacts:         arts,
+		Logger:            testLogger(),
+		Upstream:          &fakeUpstream{},
+		Precedents:        &fakePrecedents{},
+		CandidateSource:   &fakeCandidateSource{src: ports.CandidateSource{RawCode: `{"output_columns":[]}`, Runtime: "python"}},
+		Archive:           arch,
 		ContractLocator:   locator,
 		ContractInspector: locator,
 		Packager:          pkgr,
-		Releases:        rel,
-		PriorAttempts:   &fakeAttempts{},
-		SQLDialect:      "postgres",
+		Releases:          rel,
+		PriorAttempts:     &fakeAttempts{},
+		SQLDialect:        "postgres",
 	}
 	return svc, arch, pkgr, rel, arts
 }
@@ -515,14 +515,18 @@ func TestWriteEditArtifacts_TwoEditsOfOneAttemptDoNotCollide(t *testing.T) {
 	require.Equal(t, "contracts/b.yml", second.Path)
 }
 
-// TestFor_ValidationDispatchesOnNodeType verifies that a python node's
-// validation failure reaches the python lane while every dbt shape — including
-// a trigger carrying no node type at all — keeps reaching today's validation
-// fixer.
+// TestFor_ValidationDispatchesOnNodeType verifies that a python-model node's
+// validation failure reaches the python lane, a python-csv node's reaches its
+// own dedicated lane, and every dbt shape — including a trigger carrying no
+// node type at all — keeps reaching today's validation fixer.
 func TestFor_ValidationDispatchesOnNodeType(t *testing.T) {
 	py, err := For("validation", "python-model")
 	require.NoError(t, err)
 	require.IsType(t, pythonValidationFixer{}, py)
+
+	csv, err := For("validation", "python-csv")
+	require.NoError(t, err)
+	require.IsType(t, csvValidationFixer{}, csv)
 
 	for _, nodeType := range []string{"dbt-model", "dbt-seed", "dbt-snapshot", ""} {
 		f, ferr := For("validation", nodeType)

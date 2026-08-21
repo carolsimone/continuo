@@ -157,12 +157,16 @@ type Fixer interface {
 // unknown source is a programming error (the classifier produces only the four
 // known values).
 //
-// nodeType selects a lane only for validation failures, where the two node
+// nodeType selects a lane only for validation failures, where the three node
 // kinds need entirely different fixes: a dbt model is corrected in its SQL
-// file, while a python node is corrected in the contract yaml that declares it
-// and verified by a shadow release. Every other error class ignores nodeType —
-// those classes have no python fix to offer, and each already refuses a python
-// node in its own way.
+// file; a python-model node is corrected in the contract yaml that declares
+// it, preserving whatever reads its script performs, and verified by a shadow
+// release; a python-csv node has no script at all, so its fix corrects the
+// contract to match the csv file that is its source of truth — a narrower set
+// of rules and a narrower post-apply guard than a python-model node's, hence
+// its own lane rather than a shared one. Every other error class ignores
+// nodeType — those classes have no python fix to offer, and each already
+// refuses a python node in its own way.
 func For(source, nodeType string) (Fixer, error) {
 	switch source {
 	case sourceCompile:
@@ -170,10 +174,14 @@ func For(source, nodeType string) (Fixer, error) {
 	case sourceSeed:
 		return seedFixer{}, nil
 	case sourceValidation:
-		if nodeType == string(pkg_model.NodeTypePythonModel) {
+		switch nodeType {
+		case string(pkg_model.NodeTypePythonCsv):
+			return csvValidationFixer{}, nil
+		case string(pkg_model.NodeTypePythonModel):
 			return pythonValidationFixer{}, nil
+		default:
+			return validationFixer{}, nil
 		}
-		return validationFixer{}, nil
 	case sourceDuplicateTable:
 		return duplicateTableFixer{}, nil
 	default:
