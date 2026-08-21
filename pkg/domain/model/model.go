@@ -60,13 +60,33 @@ const (
 	// runs the node's own image (built FROM continuo-python-runtime-<engine>)
 	// via buildPythonPodSpec.
 	NodeTypePythonModel NodeType = "python-model"
+	// NodeTypePythonCsv is a contract-only python node: no script — the
+	// runtime's csv loader materializes the declared table from the csv uri
+	// in the contract. Validation routes it to build_from_columns with a
+	// header check; the executor runs it like python-model plus S3
+	// credentials for the source fetch.
+	NodeTypePythonCsv NodeType = "python-csv"
 )
+
+// AllNodeTypes enumerates every declared NodeType. The exhaustiveness guard
+// test pins its length; family-branching call sites use IsPython, never a
+// direct equality against one python kind.
+var AllNodeTypes = []NodeType{
+	NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot,
+	NodeTypePythonModel, NodeTypePythonCsv,
+}
+
+// IsPython reports whether this node type runs on the python runtime image
+// rather than the dbt toolchain.
+func (t NodeType) IsPython() bool {
+	return t == NodeTypePythonModel || t == NodeTypePythonCsv
+}
 
 // ParseNodeType converts a raw string to NodeType.
 // Returns an error for empty or unrecognised values.
 func ParseNodeType(s string) (NodeType, error) {
 	switch NodeType(s) {
-	case NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot, NodeTypePythonModel:
+	case NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot, NodeTypePythonModel, NodeTypePythonCsv:
 		return NodeType(s), nil
 	default:
 		return "", fmt.Errorf("unknown node_type %q", s)
