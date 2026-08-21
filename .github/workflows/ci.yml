@@ -102,39 +102,16 @@ jobs:
         with:
           go-version-file: go.work
 
-      - name: Run pkg static guards
-        # The pkg module holds cross-cutting static guards (stream/group-name
-        # wiring, handler→adapter import rules, deploy-time migration
-        # provisioning) that need no running infrastructure. Run them first so
-        # they fail fast, before the slow docker/kind setup below.
-        #
-        # pkg/lifecycle also runs a second time under -race: its Go(...) and
-        # RegisterShutdownHandler(...) guards against a concurrent Shutdown
-        # are mutex-ordered invariants (every WaitGroup.Add, and every append
-        # to the handler slice, must happen-before the read Shutdown takes
-        # under the same lock) — a plain pass/fail run exercises the same
-        # code paths but cannot observe an ordering violation; only the race
-        # detector can. Scoped to lifecycle rather than the whole module,
-        # since that is where the concurrency lives.
-        working-directory: pkg
-        run: |
-          go test ./...
-          go test -race ./lifecycle/...
-
-      - name: Test the e2e stub LLM
-        # tests/e2e/stub-llm is a Go module of its own (the image it builds
-        # carries nothing but the standard library), so no other Go gate reaches
-        # it: `make test-go` covers the eight services and the step above covers
-        # pkg. Its tests pin the canned answers the remediation e2e scenarios
-        # read as a model's behaviour, driven through the real contract fixtures
-        # on disk — a fixture drifting away from what the stub assumes about it
-        # otherwise shows up only as an e2e that waits out its whole budget.
-        # GOWORK=off because the module sits under a go.work member (tests/e2e)
-        # but is not one itself, so workspace resolution would refuse it.
-        working-directory: tests/e2e/stub-llm
-        env:
-          GOWORK: "off"
-        run: go test ./...
+      - name: Run guards
+        # The single copy of the fast, infra-free gates lives in the Makefile's
+        # `guards` target (static check scripts, the pkg and stub-llm test
+        # modules no other gate reaches, the ui-service proto sync diffs) —
+        # see its comment block for what each gate protects. CI calls the
+        # target verbatim so a gate added there reaches CI automatically;
+        # check-ci-alignment.sh fails this step if the workflow re-inlines
+        # any of them. Runs first so they fail fast, before the slow
+        # docker/kind setup below.
+        run: make guards
 
       - name: Lint Go services
         # Static analysis (golangci-lint v2) over the modules enrolled in
@@ -142,37 +119,6 @@ jobs:
         # infra, so it fails fast before the slow setup. All install/run logic
         # lives in scripts/lint-go.sh to keep CI and local dev on one primitive.
         run: bash scripts/lint-go.sh --ci
-
-      - name: Run guards
-        # check-ci-alignment: fail fast if ci.yml contains inline build/run/wait
-        # logic that should live in shared scripts. Keeps CI and local dev on the
-        # same primitives.
-        # check-docker-state-isolation: fail fast if a workflow job would share
-        # ~/.docker (builder pointer, registry credentials) with jobs running
-        # concurrently on the other runner agent.
-        # check-kubeconfig-export: fail fast if setup.sh can reach a kubectl call
-        # without exporting the kind cluster's kubeconfig. Only `kind create
-        # cluster` writes that context, so an export left inside the create-only
-        # branch strands the reuse path — a runner holding a cluster whose
-        # context is gone then fails minutes later with a connection-refused
-        # against localhost:8080, far from the branch that caused it.
-        # check-release-tag-trigger: fail fast if release.yml's tag glob also
-        # claims another workflow's tag family, which would run the product
-        # release pipeline on a tag that has no release images behind it.
-        # check-validation-image-pin: fail fast if the hand-maintained
-        # continuo-python-runtime image tag has drifted between the Makefile,
-        # setup/e2e scripts, docker-compose, the executor-controller Go test
-        # fixtures, and the chart's own rendered default.
-        # check-validation-image-sideload: fail fast if either kind-provisioning
-        # script side-loads the pulled validation image with a bare `kind load
-        # docker-image`, which fails on a containerd-backed image store.
-        run: |
-          bash scripts/check-ci-alignment.sh
-          bash scripts/check-docker-state-isolation.sh
-          bash scripts/check-kubeconfig-export.sh
-          bash scripts/check-release-tag-trigger.sh
-          bash scripts/check-validation-image-pin.sh
-          bash scripts/check-validation-image-sideload.sh
 
       - name: Detect Dockerfile.base changes
         id: basefilter
@@ -294,12 +240,6 @@ jobs:
             -e S3_BUCKET=continuo \
             dbt-compile-and-load \
             uv run --with pytest pytest tests/ -v -m integration
-
-      - name: Verify ui-service proto is in sync with canonical
-        # Drift in ui-service/proto/state.proto silently drops fields on the
-        # wire — @grpc/proto-loader reads this copy at boot, so any divergence
-        # from state/proto/state/v1/state.proto must fail loudly here.
-        run: diff state/proto/state/v1/state.proto ui-service/proto/state.proto
 
       - name: Set up Node
         # ui-service vitest runs directly on the runner. GitHub-hosted preinstalls
