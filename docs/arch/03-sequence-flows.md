@@ -77,7 +77,7 @@ sequenceDiagram
   R->>EC: consume query.model:v1
   EC->>EC: write executor_outbox (node_deployed)
   EC->>R: publish node.deployed:v1
-  Note over KC: node.deployed:v1 → poll loop;<br/>k8s announces RUNNING once when the Job is first observed running
+  Note over KC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once when the Job is first observed running
 ```
 
 ## 3. Retry and Terminal Failure Path
@@ -113,7 +113,7 @@ sequenceDiagram
     R->>EC: consume retry.task:v1
     Note over EC: write executor_deployments (pending)<br/>deployer.Dispatcher — CreateQueryJob<br/>write executor_outbox row (node_deployed)
     EC->>R: publish node.deployed:v1
-    Note over KC: node.deployed:v1 → poll loop;<br/>k8s announces RUNNING once at the retry's attempt number
+    Note over KC: node.deployed:v1 → poll loop<br/>k8s announces RUNNING once at the retry's attempt number
   else retries exhausted
     KC->>KC: write k8s_outbox(task_failed + node_status_updated)
     KC->>ST: UpdateTask(status=failed)
@@ -329,7 +329,7 @@ sequenceDiagram
   R->>OR: consume trigger.single_node_run:v1
   Note over OR: HandleSingleNodeRunHandler.Handle (1 tx)<br/>dedup on message_processing<br/>Neo4j: Snapshot(SingleNode{Target, MetadataSource, SourceRunID?}, Operation)<br/>  latest mode → selector reads :TopologyRoot + :Table for metadata, new :Run inherits from :TopologyRoot<br/>  stale mode  → selector reads source :Run's EXECUTES edge, new :Run inherits topology_generation + service_metadata from source :Run
   alt ErrTargetNotFound (node absent in Neo4j) or ErrNoTests (operation=test and the node's test_count is a known zero or unset)
-    OR->>R: publish run.entries.dispatch_failed:v1 (reason=target_not_found or reason=no_tests; synthesised run will be marked terminal-failed or terminal-skipped respectively)
+    OR->>R: publish run.entries.dispatch_failed:v1 (reason=target_not_found or reason=no_tests — synthesised run will be marked terminal-failed or terminal-skipped respectively)
     R->>ST: consume run.entries.dispatch_failed:v1
     Note over ST: RunEntriesDispatchFailedHandler.Handle (1 tx)<br/>row-lock scheduler_tracker, MarkDispatchTerminal → status='skipped' (reason=no_tests) or status='failed' (reason=target_not_found)<br/>state_outbox INSERT for run.finalized:v1
   else node found (and, for operation=test, test_count > 0)
@@ -436,7 +436,7 @@ sequenceDiagram
     alt reason is parse_rehearsal_failed or artifact_upload_failed
       Note over RM: continuo-internal failure, not a model defect — no FailureEvidence built,<br/>no classification_decision row, no remediation.requested:v1 (excluded before classification)
     else reason is compile_failed
-      Note over RM: stage="compile" → SourceCompile; ExtractDbtFilePath(log) → file_path<br/>classify + emit remediation.requested:v1 with file_path (no candidate SQL)
+      Note over RM: stage="compile" → SourceCompile — ExtractDbtFilePath(log) → file_path<br/>classify + emit remediation.requested:v1 with file_path (no candidate SQL)
     end
   else compile ok
     Note over RC: TransitionFromCompiling → Parsing, re-assemble manifest set
@@ -446,7 +446,7 @@ sequenceDiagram
   Note over MC,RC: Phase 2 — candidate parse
   R->>MC: consume release.requested:v1
   MC->>S3: download each manifest named in manifest_keys (explicit key list)
-  Note over MC: each manifest_keys entry's kind (dbt manifest / python contract) selects the parser;<br/>both produce the same ManifestNode shape, so every later step is kind-blind<br/>parse dbt model/seed/snapshot nodes, or a python contract's declared nodes<br/>content_hash = sha256(source_hash|shared_code_hash|config_hash) fold<br/>(source_hash: dbt checksum w/ sha256 fallback, or the python script's own hash;<br/>shared_code_hash: transitive macro checksums for dbt, "" for python; config_hash: resolved config minus meta/docs/description/grants/tags for dbt, the canonical contract entry for python)<br/>resolve upstreams via sqlglot (qualified refs only; dbt compiled SQL or python declared reads)<br/>dbt: rewrite compiled SQL to _candidate_{release} schema refs via sqlglot, upload → S3 candidate-sql/{release_id}/candidate_{unique_id}.sql<br/>python: rewrite each declared read to _candidate_{release} schema refs via sqlglot, upload {reads, output_columns, config} → S3 candidate-sql/{release_id}/candidate_{unique_id}.json<br/>(upload failure is fatal for either kind, error_class=CandidateArtifactUploadFailed; dbt seeds → empty candidate_artifact_uri)<br/>build one code-bundle document (contract_version 1) → S3 code-bundles/{release_id}/bundle.json<br/>(upload failure is fatal, error_class=CodeBundleUploadFailed; runs only after every node's candidate artifact has uploaded)
+  Note over MC: each manifest_keys entry's kind (dbt manifest / python contract) selects the parser<br/>both produce the same ManifestNode shape, so every later step is kind-blind<br/>parse dbt model/seed/snapshot nodes, or a python contract's declared nodes<br/>content_hash = sha256(source_hash|shared_code_hash|config_hash) fold<br/>(source_hash: dbt checksum w/ sha256 fallback, or the python script's own hash<br/>shared_code_hash: transitive macro checksums for dbt, "" for python — config_hash: resolved config minus meta/docs/description/grants/tags for dbt, the canonical contract entry for python)<br/>resolve upstreams via sqlglot (qualified refs only — dbt compiled SQL or python declared reads)<br/>dbt: rewrite compiled SQL to _candidate_{release} schema refs via sqlglot, upload → S3 candidate-sql/{release_id}/candidate_{unique_id}.sql<br/>python: rewrite each declared read to _candidate_{release} schema refs via sqlglot, upload {reads, output_columns, config} → S3 candidate-sql/{release_id}/candidate_{unique_id}.json<br/>(upload failure is fatal for either kind, error_class=CandidateArtifactUploadFailed — dbt seeds → empty candidate_artifact_uri)<br/>build one code-bundle document (contract_version 1) → S3 code-bundles/{release_id}/bundle.json<br/>(upload failure is fatal, error_class=CodeBundleUploadFailed — runs only after every node's candidate artifact has uploaded)
   alt manifest malformed / unqualified table ref / candidate-SQL or code-bundle upload failure
     MC->>R: publish manifest.loaded.candidate:v1 {status=failed, error_class}
     R->>RC: consume manifest.loaded.candidate:v1 (failed)
@@ -459,7 +459,7 @@ sequenceDiagram
 
   Note over RC: Phase 3 — change detection + gate
   alt DuplicateClaims(topology) non-empty
-    Note over RC: two independent checks run unconditionally and merge into one result —<br/>a RELATION collision: two or more nodes write the same physical relation, grouped by<br/>resolved_relation_id (a dbt node's alias, when it has one, else its declared name; falls<br/>back to unique_id when a node carries no resolved_relation_id), so two differently-named<br/>nodes that alias to the same table still collide — the second write would silently overwrite<br/>the first the moment either lands in current_prod;<br/>an IDENTITY collision: two or more nodes share a unique_id without all resolving to the<br/>same relation — every downstream lookup keyed on unique_id (the code bundle, the candidate<br/>artifact store, NodeRegistry, the orchestrator's :Table MERGE) sees only one of them,<br/>silently erasing the other from the graph, the code bundle, and the artifact store, whether<br/>or not their relations also collide;<br/>checked above every path that can promote — bootstrap below, nothing-to-validate below,<br/>the seed-build leg's own promotion, and the post-validation promotion<br/>Reject(reason=duplicate_table, stage-less, error_class=DuplicatedTable)<br/>per_node carries a rename target/competitor pair only for a two-claimant RELATION collision;<br/>an identity collision, or a three-or-more-way relation collision, is named in<br/>error_detail/failing_nodes but gets no per_node entry<br/>also stamps code_bundle_uri (parse already succeeded by this point)
+    Note over RC: two independent checks run unconditionally and merge into one result —<br/>a RELATION collision: two or more nodes write the same physical relation, grouped by<br/>resolved_relation_id (a dbt node's alias, when it has one, else its declared name — falls<br/>back to unique_id when a node carries no resolved_relation_id), so two differently-named<br/>nodes that alias to the same table still collide — the second write would silently overwrite<br/>the first the moment either lands in current_prod<br/>an IDENTITY collision: two or more nodes share a unique_id without all resolving to the<br/>same relation — every downstream lookup keyed on unique_id (the code bundle, the candidate<br/>artifact store, NodeRegistry, the orchestrator's :Table MERGE) sees only one of them,<br/>silently erasing the other from the graph, the code bundle, and the artifact store, whether<br/>or not their relations also collide<br/>checked above every path that can promote — bootstrap below, nothing-to-validate below,<br/>the seed-build leg's own promotion, and the post-validation promotion<br/>Reject(reason=duplicate_table, stage-less, error_class=DuplicatedTable)<br/>per_node carries a rename target/competitor pair only for a two-claimant RELATION collision<br/>an identity collision, or a three-or-more-way relation collision, is named in<br/>error_detail/failing_nodes but gets no per_node entry<br/>also stamps code_bundle_uri (parse already succeeded by this point)
     RC->>R: publish release.rejected:v1
   else shadow:true AND nothing to validate (in-set empty)
     Note over RC: a shadow release measures a proposed fix by validating it, so validating<br/>nothing measures nothing — it must not reach the terminal "validated" a<br/>reviewer reads as proof<br/>Reject(reason=nothing_to_validate, stage-less, no per_node)<br/>the remediation classifier derives no evidence from it (no per_node), and the<br/>shadow-verify reconciler reads the rejected status as a failed fix attempt
@@ -483,7 +483,7 @@ sequenceDiagram
         Note over RC: RecordStageResults("seed_build") + Reject(seed_build_failed)<br/>emit release.rejected:v1 {release_id, stage="seed_build", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri}], repo, commit_sha,<br/>code_bundle_uri, candidate_schema}
         RC->>R: publish release.rejected:v1
         R->>RM: consume release.rejected:v1
-        Note over RM: stage="seed_build" → SourceSeed; ExtractDbtFilePath(log) → file_path<br/>classify + emit remediation.requested:v1 with file_path (no candidate SQL)
+        Note over RM: stage="seed_build" → SourceSeed — ExtractDbtFilePath(log) → file_path<br/>classify + emit remediation.requested:v1 with file_path (no candidate SQL)
       else seed_build ok
         Note over RC: TransitionFromSeedBuilding → Validating
         RC->>R: publish validation.requested:v1<br/>{candidate_schema=_candidate_{id}, per node:<br/>node_type, image_tag, candidate_artifact_uri, upstream_node_ids}
@@ -510,11 +510,11 @@ sequenceDiagram
     R->>RC: consume kind=node → upsert per_node_results (read model)
   end
   Note over EC: per-release advisory lock + emission sentinel (exactly-once):<br/>when no node remains pending/blocked/deployed → build decision
-  EC->>R: publish validation.result:v1 kind=complete (emitted last; decision reads aggregate_status, order-independent)<br/>{kind:"complete", release_id, aggregate_status, candidate_schema} (decision only — no per-node array)
+  EC->>R: publish validation.result:v1 kind=complete (emitted last — decision reads aggregate_status, order-independent)<br/>{kind:"complete", release_id, aggregate_status, candidate_schema} (decision only — no per-node array)
 
   Note over RC: Phase 5 — promote or reject
   R->>RC: consume kind=complete
-  Note over RC: load release FOR UPDATE; read stored per_node_results (stage="validation")<br/>in-order delivery ⇒ store already complete; a permanently-dropped node falls back to aggregate_status
+  Note over RC: load release FOR UPDATE — read stored per_node_results (stage="validation")<br/>in-order delivery ⇒ store already complete — a permanently-dropped node falls back to aggregate_status
   alt every stored node ok and aggregate_status=ok
     Note over RC: current_prod ← candidate topology<br/>upsert changed service's service_prod pointer, transition Promoted
     RC->>R: publish release.promoted:v1 {..., code_bundle_uri, bootstrap}
@@ -522,7 +522,7 @@ sequenceDiagram
     Note over RC: Reject(validation_failed) using stored per-node results<br/>emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri,candidate_artifact_uri,<br/>node_type,file_path,service}], repo, commit_sha,<br/>code_bundle_uri}
     RC->>R: publish release.rejected:v1
     R->>RM: consume release.rejected:v1
-    Note over RM: stage="validation" → SourceValidation; node_type/file_path/service carried directly from the payload<br/>classify + emit remediation.requested:v1 (forwarded verbatim; the agent falls back to orchestrator GetNodeLocation only when file_path is absent)
+    Note over RM: stage="validation" → SourceValidation — node_type/file_path/service carried directly from the payload<br/>classify + emit remediation.requested:v1 (forwarded verbatim — the agent falls back to orchestrator GetNodeLocation only when file_path is absent)
   end
   Note over RC: advance FIFO queue
 
@@ -531,7 +531,7 @@ sequenceDiagram
   Note over OR: PromoteRelease (Neo4j, 1 tx) — retire-then-orphan-cleanup:<br/>idempotent if :Meta current_release already = release_id<br/>retire :Table not in release (keep :Run-[:EXECUTES] history)<br/>MERGE release nodes (node_type, image_tag, schedule_name), active=true<br/>rebuild :DEPENDS_ON, DETACH DELETE orphaned retired nodes<br/>MERGE :Meta current_release = release_id
   OR->>OR: IncrementGeneration (topology_state, separate tx)<br/>SetServiceMetadata on :TopologyRoot
   R->>OR: consume release.promoted:v1 (orchestrator-release-promoted-versions group)
-  Note over OR: GET code_bundle_uri → code-bundles/{release_id}/bundle.json<br/>(absent → retry via PEL; undecodable → ErrPermanent, ACK-drop)<br/>per bundle node, compare content_hash vs the node's :CURRENT :NodeVersion<br/>(graph-authoritative — the event's changed flags only set healed provenance)<br/>differs → MERGE :NodeVersion (+ :USES_CODE to the exact :CodeUnitVersions),<br/>move :CURRENT under a promoted_at guard<br/>same statement: forward-link [:RESOLVED_BY] every still-open :Rejection of the<br/>node to the version that just became :CURRENT<br/>node with no :Table yet → retry until the topology swap above lands
+  Note over OR: GET code_bundle_uri → code-bundles/{release_id}/bundle.json<br/>(absent → retry via PEL — undecodable → ErrPermanent, ACK-drop)<br/>per bundle node, compare content_hash vs the node's :CURRENT :NodeVersion<br/>(graph-authoritative — the event's changed flags only set healed provenance)<br/>differs → MERGE :NodeVersion (+ :USES_CODE to the exact :CodeUnitVersions),<br/>move :CURRENT under a promoted_at guard<br/>same statement: forward-link [:RESOLVED_BY] every still-open :Rejection of the<br/>node to the version that just became :CURRENT<br/>node with no :Table yet → retry until the topology swap above lands
   OR->>R: publish schedules.loaded:v1 {schedule_names, service_metadata, topology_generation}
   R->>ST: consume schedules.loaded:v1
   Note over ST: ScheduleCatalogHandler — Reconcile schedule_catalog (empty-list guard)
@@ -539,7 +539,7 @@ sequenceDiagram
   Note over EC: teardown — schedule a one-shot engine-image drop_schema Job<br/>(executor holds no warehouse connection) to drop _candidate_{release}
 
   Note over ST,EC: Phase 7 — build the release's changed seeds into prod
-  Note over OR: in the SAME tx as the swap above: filter topology to<br/>Changed && node_type=dbt-seed; emit nothing when none changed
+  Note over OR: in the SAME tx as the swap above: filter topology to<br/>Changed && node_type=dbt-seed — emit nothing when none changed
   OR->>R: publish release.seeds.pending:v1 {release_id, nodes[] with pinned node_type + image_tag}
   R->>ST: consume release.seeds.pending:v1
   Note over ST: PromotedSeedsHandler — create a RUNNING run, kind=promote_seed,<br/>id derived from release_id (deterministic, so a redelivered<br/>event maps to the same run rather than rebuilding seeds)
@@ -587,7 +587,7 @@ sequenceDiagram
 
   Note over RA: attempt n — fixer.For(validation, python-model) → python contract fixer
   RA->>GH: GET /repos/{repo}/tarball/{commit_sha}
-  Note over RA: extract; search every *.yml for the entry declaring <schema>.<table><br/>0 matches or >1 match → skipped, reason recorded
+  Note over RA: extract — search every *.yml for the entry declaring <schema>.<table><br/>0 matches or >1 match → skipped, reason recorded
   RA->>S3: GetObject code bundle (contract entry), runner log, prior attempts' diffs
   RA->>LLM: propose_python_fix (failure text, contract entry, declaring yaml,<br/>upstream diffs, precedent, EVERY earlier attempt + its shadow error)
   LLM-->>RA: updated_files[{path, content}]
@@ -637,7 +637,7 @@ sequenceDiagram
 
   OP->>UI: POST /api/remediation/proposals/:id/pull-request (operator role required)
   UI->>RA: BeginPullRequest(id)
-  Note over RA: CAS: pr_state '' or 'failed' → 'opening' (atomic, guarded on source_resolved=true AND status='proposed')<br/>Stamps pr_claimed_at; RETURNING reads it back into the response<br/>Returns repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, claimed_at, edits<br/>edits is one {path, content_uri, diff_uri} per changed file (or a one-element synthesis of the legacy scalar fields for a pre-migration row)<br/>Returns FAILED_PRECONDITION + existing pr_url if already opening/open<br/>Returns FAILED_PRECONDITION if source_resolved=false<br/>Returns FAILED_PRECONDITION if status is not 'proposed' (still generating, awaiting a shadow verdict, or rejected by one)
+  Note over RA: CAS: pr_state '' or 'failed' → 'opening' (atomic, guarded on source_resolved=true AND status='proposed')<br/>Stamps pr_claimed_at — RETURNING reads it back into the response<br/>Returns repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, claimed_at, edits<br/>edits is one {path, content_uri, diff_uri} per changed file (or a one-element synthesis of the legacy scalar fields for a pre-migration row)<br/>Returns FAILED_PRECONDITION + existing pr_url if already opening/open<br/>Returns FAILED_PRECONDITION if source_resolved=false<br/>Returns FAILED_PRECONDITION if status is not 'proposed' (still generating, awaiting a shadow verdict, or rejected by one)
 
   alt already opening or open
     RA-->>UI: FAILED_PRECONDITION { pr_url }
@@ -669,7 +669,7 @@ sequenceDiagram
         end
 
         UI->>GH: mint installation token (App JWT → /installations/:id/access_tokens)
-        Note over UI: base sha = commit_sha (a granted claim's source_resolved=true guard means it is always present);<br/>the GET .../refs/heads/main fallback that pull-request-creator.ts also supports is never reached here
+        Note over UI: base sha = commit_sha (a granted claim's source_resolved=true guard means it is always present)<br/>the GET .../refs/heads/main fallback that pull-request-creator.ts also supports is never reached here
         UI->>GH: POST /repos/{repo}/git/refs (branch_name off commit_sha)
         Note over GH: deterministic branch: remediation/<release_id>/<node>-attempt<n><br/>422 "Reference already exists" treated as idempotent
         UI->>GH: GET /repos/{repo}/git/commits/{commit_sha} → base tree SHA
@@ -717,13 +717,13 @@ sequenceDiagram
       RA->>GH: GET /repos/{repo}/pulls/{number}
       alt PR still open
         GH-->>RA: state=open
-        Note over RA: leave row untouched; retried next pass
+        Note over RA: leave row untouched — retried next pass
       else PR closed
         GH-->>RA: state=closed, merged=<bool>, closed_at
         Note over RA: outcome = merged if merged=true else rejected
         RA->>PG: RecordOutcome(id, outcome, closed_at) -- 1 tx:<br/>CAS pr_state 'open' -> outcome<br/>INSERT remediation_agent_outbox (remediation.pr_closed:v1, pointer-only)
         alt CAS hit (row was still 'open')
-          Note over PG: pr_state=outcome, pr_closed_at=closed_at; outbox row committed
+          Note over PG: pr_state=outcome, pr_closed_at=closed_at — outbox row committed
         else CAS miss (row already left 'open')
           Note over PG: no-op -- nothing written, no event emitted
         end
@@ -762,7 +762,7 @@ sequenceDiagram
       else PR not found
         GH-->>RA: []
         alt pr_claimed_at is NULL
-          Note over RA: unmeasurable claim age (the proposal_stamp_pr_claimed_at trigger did not run -- schema corruption or a manual edit); leave untouched
+          Note over RA: unmeasurable claim age (the proposal_stamp_pr_claimed_at trigger did not run -- schema corruption or a manual edit) — leave untouched
         else now - pr_claimed_at > REMEDIATION_PR_OPENING_GRACE_PERIOD
           RA->>PG: FailStuckOpeningPR(id, observed_pr_claimed_at) -- CAS:<br/>pr_state 'opening' -> 'failed', pr_claimed_at=NULL<br/>WHERE pr_state='opening' AND pr_claimed_at=observed_pr_claimed_at
           alt CAS hit
@@ -773,7 +773,7 @@ sequenceDiagram
             Note over RA: leave the fresh claim untouched -- never overwrite a claim this pass did not observe
           end
         else within the grace period
-          Note over RA: leave row untouched; retried next pass
+          Note over RA: leave row untouched — retried next pass
         end
       end
     end
