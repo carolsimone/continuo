@@ -290,7 +290,7 @@ validation:
   # merging new chart defaults) falls back to a literal in _helpers.tpl's
   # `continuo.validation.image` that must be kept equal to the default below —
   # scripts/check-validation-image-pin.sh guards the two staying in sync.
-  imageTag: "v0.3.0"
+  imageTag: "v0.4.0"
   # POSTGRES-ONLY. When true (default) the chart builds the warehouse Secret from the
   # Postgres it configures (bundled or externalDatabase), emitting the keys the POSTGRES
   # runner reads: POSTGRES_HOST/PORT/DB/USER/PASSWORD. This is postgres-shaped and cannot

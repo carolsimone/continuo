@@ -137,6 +137,17 @@ shipped in those.
   unwind well within 7.5s on cancellation, so this is not expected to change
   observed shutdown behavior for a default install.
 
+### Changed
+- Bumped the default `validation.imageTag` (and its `_helpers.tpl` fallback)
+  from `v0.3.0` to `v0.4.0`. The runner at that release adds python-csv node
+  support. No values key changes shape, so an unmodified existing values file
+  keeps working and simply picks up the new default on upgrade. **Installs
+  pinning `validation.imageTag`** must re-pin to `v0.4.0` (or drop the
+  override to track the chart's default) before upgrading, the same way as
+  any other `continuo-python-runtime-<engine>` tag bump — an unmirrored or
+  stale pin otherwise renders healthy at install and only fails later, at the
+  next release promotion, as a validation-pod `ErrImagePull`.
+
 ## [0.2.0] - 2026-08-10
 
 ### Added
