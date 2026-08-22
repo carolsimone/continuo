@@ -266,11 +266,22 @@ describe('nodes router', () => {
   });
 
   it('GET /meta resolves a python-csv node source URI from its current version', async () => {
+    // A python-csv version's raw_code is the normalized contract entry as
+    // JSON (the node has no script); the CSV location is its reads.csv field.
     mockGetNode.mockImplementation((_req, cb) =>
       cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
     );
     mockGetNodeVersions.mockImplementation((_req, cb) =>
-      cb(null, { versions: [{ raw_code: 's3://bucket/vendor/orders.csv' }] }),
+      cb(null, {
+        versions: [{
+          raw_code: JSON.stringify({
+            schema: 'schema', table: 'tbl', kind: 'python-csv',
+            extra_columns: 'raise',
+            reads: { csv: 's3://bucket/vendor/orders.csv' },
+            output_columns: [],
+          }),
+        }],
+      }),
     );
     const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
     expect(res.status).toBe(200);
@@ -280,6 +291,43 @@ describe('nodes router', () => {
       { unique_id: 'schema.tbl', current_only: true, include_code: true },
       expect.any(Function),
     );
+  });
+
+  it('GET /meta lowercases the version lookup key for a node declared with uppercase spelling', async () => {
+    // unique_id is canonically lowercase ("<schema>.<table>") while GetNode
+    // works on the declared spelling; a preserved-case key would NOT_FOUND.
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb(null, { versions: [{ raw_code: JSON.stringify({ reads: { csv: 'https://x/y.csv' } }) }] }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/Analytics/Vendor_Feed/meta');
+    expect(res.status).toBe(200);
+    expect(res.body.source_uri).toBe('https://x/y.csv');
+    expect(mockGetNodeVersions).toHaveBeenCalledWith(
+      { unique_id: 'analytics.vendor_feed', current_only: true, include_code: true },
+      expect.any(Function),
+    );
+  });
+
+  it('GET /meta returns an empty source_uri when raw_code is not contract JSON or lacks reads.csv', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb(null, { versions: [{ raw_code: 'not json at all' }] }),
+    );
+    const bad = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(bad.status).toBe(200);
+    expect(bad.body.source_uri).toBe('');
+
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb(null, { versions: [{ raw_code: JSON.stringify({ reads: {} }) }] }),
+    );
+    const missing = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(missing.status).toBe(200);
+    expect(missing.body.source_uri).toBe('');
   });
 
   it('GET /meta degrades to an empty source_uri when the version lookup fails', async () => {

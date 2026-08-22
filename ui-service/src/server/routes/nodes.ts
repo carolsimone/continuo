@@ -5,6 +5,19 @@ import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
 import { parseOperation, parseNodeOperation } from './operation';
 
+// A python-csv version's raw_code is the node's normalized contract entry
+// serialized as JSON (the node has no script); the CSV location is its
+// reads.csv field. Anything unparseable or missing yields "".
+function csvSourceUri(rawCode: unknown): string {
+  if (typeof rawCode !== 'string' || rawCode === '') return '';
+  try {
+    const uri = JSON.parse(rawCode)?.reads?.csv;
+    return typeof uri === 'string' ? uri : '';
+  } catch {
+    return '';
+  }
+}
+
 export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
@@ -140,12 +153,15 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
 
         graphClient.getNodeVersions(
           {
-            unique_id:    `${req.params.schema}.${req.params.table}`,
+            // unique_id is canonically lowercase ("<schema>.<table>") while
+            // the route params carry the declared spelling, which GetNode
+            // accepts but the exact-match version lookup does not.
+            unique_id:    `${req.params.schema}.${req.params.table}`.toLowerCase(),
             current_only: true,
             include_code: true,
           },
           (verr: any, vres: any) => {
-            const sourceUri = verr ? '' : String(vres?.versions?.[0]?.raw_code ?? '');
+            const sourceUri = verr ? '' : csvSourceUri(vres?.versions?.[0]?.raw_code);
             res.json({ ...meta, source_uri: sourceUri });
           },
         );
