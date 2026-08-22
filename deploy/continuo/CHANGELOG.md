@@ -161,6 +161,12 @@ shipped in those.
   `validation.imageTag` (or that already pins `v0.4.0` or later) is
   unaffected. Re-pin to `v0.4.0` or later, or drop the override, before
   upgrading.
+- Renamed service `agent-runner` to `agent-chat`; its database
+  `continuo_agent` is now `continuo_agent_chat` (renamed in place on
+  upgrade — see NOTES). Image is now `continuo-agent-chat`. The
+  `global.agentRunnerGrpcAddr` values key is renamed to
+  `global.agentChatGrpcAddr`; any install overriding it must rename the
+  key before upgrading.
 
 ### Changed
 - Bumped the default `validation.imageTag` (and its `_helpers.tpl` fallback)

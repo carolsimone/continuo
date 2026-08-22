@@ -29,12 +29,12 @@ global:
 
   stateGrpcAddr: state:50051
   orchestratorGrpcAddr: orchestrator:50052
-  agentRunnerGrpcAddr: agent-runner:50053
+  agentChatGrpcAddr: agent-chat:50053
 
   # Pod-level shutdown budget (kubectl/kubelet SIGTERM-to-SIGKILL window) for
   # every Deployment. Each service also bounds its own graceful-shutdown
   # sequence via the SHUTDOWN_GRACE env var (pkg/lifecycle; default 15s, 10s
-  # for agent-runner) — keep this comfortably above the largest SHUTDOWN_GRACE
+  # for agent-chat) — keep this comfortably above the largest SHUTDOWN_GRACE
   # in use, or a slow shutdown gets SIGKILLed mid-teardown. The schema floors
   # this at 20s (5s of headroom above the 15s default) for exactly that
   # reason. 30s matches Kubernetes' implicit default, so leaving this unset
@@ -212,7 +212,7 @@ auth:
   roleMapping: ""
 
 llm:
-  # Optional. Empty apiKey: agent-runner/remediation-agent boot and serve, but
+  # Optional. Empty apiKey: agent-chat/remediation-agent boot and serve, but
   # LLM calls fail until it is set.
   provider: anthropic
   model: claude-haiku-4-5
@@ -397,14 +397,14 @@ services:
       GRPC_PORT: "50052"
       HTTP_PORT: "8087"
 
-  - name: agent-runner
+  - name: agent-chat
     enabled: true
     replicas: 1
     httpPort: 8091
     grpcPort: 50053
     # Readiness and liveness point at DIFFERENT paths with different semantics
     # (see adapters/http/server.go): /ready covers the Postgres dependency
-    # probe (an outage stops traffic); agent-runner runs no consumers or
+    # probe (an outage stops traffic); agent-chat runs no consumers or
     # workers, so /livez has nothing registered today and is a constant 200 —
     # the route exists so every service exposes the same probe contract.
     readinessPath: /ready
@@ -413,10 +413,10 @@ services:
       - {name: POSTGRES_PASSWORD, ref: postgres}
       - {name: LLM_API_KEY, ref: llm}
       # Enables the shared (global) rate limiter; required before scaling
-      # agent-runner past replicas: 1.
+      # agent-chat past replicas: 1.
       - {name: REDIS_PASSWORD, ref: redis}
     env:
-      POSTGRES_DB: continuo_agent
+      POSTGRES_DB: continuo_agent_chat
       HEALTH_PORT: "8091"
       GRPC_PORT: "50053"
       CONTINUO_STATE_ADDR: state:50051

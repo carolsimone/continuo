@@ -26,8 +26,8 @@ var handlerDirs = []string{
 	"executor-controller/service/deployer",
 	"executor-controller/service/validation",
 	"release-controller/service/handlers",
-	"agent-runner/service/chat",
-	"agent-runner/service/retention",
+	"agent-chat/service/chat",
+	"agent-chat/service/retention",
 	"remediation/service/handlers",
 	"remediation-agent/service",
 	// Every service's Unit-of-Work port. The interface is application

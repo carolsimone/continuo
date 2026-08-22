@@ -14,7 +14,7 @@ updates:
   # also standalone modules and so are invisible to a workspace-wide update.
   - package-ecosystem: gomod
     directories:
-      - /agent-runner
+      - /agent-chat
       - /cli
       - /executor-controller
       - /k8s-controller

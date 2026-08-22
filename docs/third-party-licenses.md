@@ -14,7 +14,7 @@ Generated 2026-07-29. Regenerate with the commands in each section below.
 
 108 unique third-party modules across the ten Go modules (`state`, `orchestrator`,
 `executor-controller`, `k8s-controller`, `release-controller`, `remediation`,
-`remediation-agent`, `agent-runner`, `pkg`, `cli`).
+`remediation-agent`, `agent-chat`, `pkg`, `cli`).
 
 | License | Modules |
 | --- | --- |
@@ -29,7 +29,7 @@ No copyleft dependencies.
 ```bash
 go install github.com/google/go-licenses@latest
 for m in state orchestrator executor-controller k8s-controller release-controller \
-         remediation remediation-agent agent-runner pkg cli; do
+         remediation remediation-agent agent-chat pkg cli; do
   (cd "$m" && go-licenses csv ./... 2>/dev/null)
 done
 ```

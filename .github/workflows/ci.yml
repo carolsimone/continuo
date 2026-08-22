@@ -188,7 +188,7 @@ jobs:
         run: |
           source scripts/lib/common.sh
           for c in state orchestrator executor-controller k8s-controller \
-                   manifest-controller release-controller remediation remediation-agent agent-runner; do
+                   manifest-controller release-controller remediation remediation-agent agent-chat; do
             wait_for_container_running "$c"
           done
 

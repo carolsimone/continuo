@@ -9,7 +9,7 @@ This is a monorepo with multiple microservices.
 * `release-controller` — manages blue/green candidate-release lifecycle; tracks the `current_prod` pointer and drives promotion/rejection.
 * `remediation` — failure classifier; triages validation rejections and emits heal triggers for fixable failures.
 * `remediation-agent` — LLM fix-proposer; receives heal triggers, reads the failing node's source from GitHub (read-only) for compile/seed_build/duplicate_table failures, and for validation failures reads it primarily from the release's code bundle in S3 (falling back to GitHub only on a permanent bundle miss); also reads narrow graph context (source location, upstream diffs, current version, failure precedent) from orchestrator; proposes a fix PR for human approval.
-* `agent-runner` — chat and agent gRPC backend; hosts the conversational LLM interface used by the UI.
+* `agent-chat` — chat and agent gRPC backend; hosts the conversational LLM interface used by the UI.
 
 ## Python service (1)
 * `manifest-controller` — Python 3.12/uv service (not Go); consumes `release.requested:v1` Redis Stream events, batch-loads the release's dbt manifest.json files, resolves cross-service upstream deps via sqlglot, and publishes the resolved candidate topology to `manifest.loaded.candidate:v1` for release-controller (which promotes it into the orchestrator's Neo4j topology via `release.promoted:v1`). Run tests with `docker exec manifest-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.

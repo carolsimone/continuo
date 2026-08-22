@@ -39,7 +39,7 @@ body:
         - release-controller
         - remediation
         - remediation-agent
-        - agent-runner
+        - agent-chat
         - manifest-controller
         - ui
         - cli

@@ -147,7 +147,7 @@ describe('chat gRPC relay (operator session)', () => {
     const ws = new WebSocket(`${url}?threadId=missing`);
     await connected(ws);
     const got = nextMessage(ws);
-    const notFound: any = new Error('open session: agent-runner: not found');
+    const notFound: any = new Error('open session: agent-chat: not found');
     notFound.code = grpcStatus.NOT_FOUND;
     stream.emit('error', notFound);
     const err = await got;

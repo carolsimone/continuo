@@ -50,15 +50,15 @@ docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv 
 sleep 3
 log_info "manifest-controller started"
 
-log_info "Starting agent-runner..."
-docker exec -d agent-runner bash -c "cd /app/agent-runner && go run . > /tmp/agent-runner.log 2>&1"
-log_info "Waiting for agent-runner to compile and start (this may take 20-30 seconds)..."
+log_info "Starting agent-chat..."
+docker exec -d agent-chat bash -c "cd /app/agent-chat && go run . > /tmp/agent-chat.log 2>&1"
+log_info "Waiting for agent-chat to compile and start (this may take 20-30 seconds)..."
 sleep 20
-check_health "agent-runner" 8091 || exit 1
+check_health "agent-chat" 8091 || exit 1
 # Also wait for the gRPC listener (50053): the chat e2e dials it through the
 # ui relay, and /health (always 200) can come up before the port binds.
-log_info "Waiting for agent-runner gRPC port 50053..."
-wait_for_tcp_port agent-runner 50053
+log_info "Waiting for agent-chat gRPC port 50053..."
+wait_for_tcp_port agent-chat 50053
 
 log_info "Compiling and uploading dbt manifests..."
 docker exec dbt-compile-and-load \
