@@ -15,8 +15,8 @@ docs/superpowers/
 .git/
 .gitignore
 
-# Node artifacts. ui-service installs deps inside the build.
-ui-service/node_modules/
+# Node artifacts. ui installs deps inside the build.
+ui/node_modules/
 **/node_modules/
 **/.next/
 **/dist/

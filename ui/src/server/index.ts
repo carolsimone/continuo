@@ -93,6 +93,6 @@ main().catch((err) => {
   // can carry the config that produced them (OIDC client secret, session
   // keys) in extra properties, which must not reach the logs.
   const detail = err instanceof Error ? (err.stack ?? `${err.name}: ${err.message}`) : 'unknown error';
-  console.error('ui-service failed to start:', detail);
+  console.error('ui failed to start:', detail);
   process.exit(1);
 });

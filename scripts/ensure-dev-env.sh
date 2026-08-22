@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Creates the developer-local .env that docker compose reads, if it is missing.
 #
-# Only one variable needs generating rather than defaulting. ui-service builds its
+# Only one variable needs generating rather than defaulting. ui builds its
 # Create-PR client with octokit's createAppAuth, whose constructor rejects a
 # private key that is not a syntactically valid PEM. An empty or fake string
 # therefore leaves prCreator undefined and the Create-PR route reports itself as
@@ -36,13 +36,13 @@ trap 'rm -f "${tmp_key}"' EXIT
 
 openssl genrsa -out "${tmp_key}" 2048 2>/dev/null
 
-# ui-service reads this as a single-line value and expands the escapes itself
+# ui reads this as a single-line value and expands the escapes itself
 # (index.ts: .replace(/\\n/g, '\n')), so collapse the PEM to one line to match.
 key_one_line="$(awk '{printf "%s\\n", $0}' "${tmp_key}")"
 
 {
   echo ""
-  echo "# Throwaway RSA key so ui-service can construct its GitHub App client"
+  echo "# Throwaway RSA key so ui can construct its GitHub App client"
   echo "# against the local stub. Authenticates nothing; regenerate freely."
   echo "GITHUB_APP_PRIVATE_KEY=${key_one_line}"
 } >> .env
