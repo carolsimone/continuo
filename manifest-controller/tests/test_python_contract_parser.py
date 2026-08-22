@@ -363,6 +363,57 @@ def test_csv_entry_reads_value_must_be_a_valid_uri(tmp_path):
         parse_python_contract(write_contract(tmp_path, entry), "v1")
 
 
+def test_csv_uri_http_scheme_rejected(tmp_path):
+    """http:// (not https://) is rejected — the pinned runner's
+    parse_csv_uri only ever recognizes s3:// and https://."""
+    entry = make_csv_entry(reads={"csv": "http://example.com/orders.csv"})
+    with pytest.raises(MalformedContractError, match="csv"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_uri_s3_without_key_rejected(tmp_path):
+    """s3://bucket with no object key: the runtime's parse_csv_uri does
+    ``uri[5:].partition('/')`` and rejects an empty key the same way it
+    rejects an empty bucket, so this must fail here too rather than only
+    surfacing once the validation Job actually runs."""
+    entry = make_csv_entry(reads={"csv": "s3://bucket"})
+    with pytest.raises(MalformedContractError, match="bucket or key"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_uri_s3_without_bucket_rejected(tmp_path):
+    """s3:///key (empty bucket, non-empty key) is the other half of the same
+    partition — bucket is empty even though a key is present."""
+    entry = make_csv_entry(reads={"csv": "s3:///key"})
+    with pytest.raises(MalformedContractError, match="bucket or key"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_uri_https_without_host_rejected(tmp_path):
+    """https:// with nothing after the scheme: the runtime's parse_csv_uri
+    partitions on the first "/" and rejects an empty host."""
+    entry = make_csv_entry(reads={"csv": "https://"})
+    with pytest.raises(MalformedContractError, match="host"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_uri_https_with_host_and_no_path_accepted(tmp_path):
+    """https://<host> with no trailing path is a valid uri — only an empty
+    host is rejected, not an absent path."""
+    entry = make_csv_entry(reads={"csv": "https://example.com"})
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    (node,) = nodes
+    assert node.csv_source == "https://example.com"
+
+
+def test_csv_uri_s3_with_bucket_and_key_accepted(tmp_path):
+    """The valid shape this whole grammar exists to keep accepting."""
+    entry = make_csv_entry(reads={"csv": "s3://bucket/path/to/orders.csv"})
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    (node,) = nodes
+    assert node.csv_source == "s3://bucket/path/to/orders.csv"
+
+
 def test_unknown_kind_rejected(tmp_path):
     entry = make_csv_entry(kind="python-parquet")
     with pytest.raises(MalformedContractError, match="kind"):

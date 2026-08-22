@@ -35,11 +35,38 @@ _OPTIONAL_ENTRY_KEYS = {"description", "extra_columns", "config", "kind"}
 _COLUMN_REQUIRED_KEYS = {"name", "type"}
 _COLUMN_ALLOWED_KEYS = {"name", "type", "nullable"}
 KINDS = {"python-model", "python-csv"}
-_CSV_URI_PREFIXES = ("s3://", "https://")
 
 
 def _fail(detail: str) -> None:
     raise MalformedContractError(detail)
+
+
+def _validate_csv_uri(uri: str, label: str) -> None:
+    """Mirrors continuo_python_runtime.csv_source.parse_csv_uri's grammar
+    exactly, so a contract this loader accepts is one the pinned runner's
+    validation header-fetch can actually parse. A prefix-only check would
+    accept shapes the runner rejects (a bucket-less ``s3://bucket`` with no
+    object key, a host-less ``https://``), letting manifest-controller wave
+    a malformed csv contract through a release that only fails once the
+    validation Job actually runs. Accepts exactly ``s3://bucket/key`` (both
+    non-empty) or ``https://<non-empty-host>[/...]``; every other shape —
+    including ``http://`` — is rejected here, at parse time.
+    """
+    if uri.startswith("s3://"):
+        bucket, _, key = uri[len("s3://"):].partition("/")
+        if bucket and key:
+            return
+        _fail(f"{label}: invalid s3 csv uri (missing bucket or key): {uri!r}")
+    elif uri.startswith("https://"):
+        host, _, _ = uri[len("https://"):].partition("/")
+        if host:
+            return
+        _fail(f"{label}: invalid https csv uri (missing host): {uri!r}")
+    else:
+        _fail(
+            f"{label}: reads['csv'] must be an s3://bucket/key or"
+            f" https://<host>/... uri, got {uri!r}"
+        )
 
 
 def _non_empty_str(value, label: str) -> str:
@@ -148,11 +175,7 @@ def _parse_entry(
         if set(reads) != {"csv"}:
             _fail(f"{label}: a python-csv node's reads must be exactly {{csv: <uri>}}")
         csv_source = reads["csv"]
-        if not csv_source.startswith(_CSV_URI_PREFIXES):
-            _fail(
-                f"{label}: reads['csv'] must be an s3:// or https:// uri,"
-                f" got {csv_source!r}"
-            )
+        _validate_csv_uri(csv_source, label)
     else:
         csv_source = ""
     columns = _parse_columns(entry["output_columns"], label)
