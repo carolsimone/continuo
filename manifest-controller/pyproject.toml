@@ -3,11 +3,11 @@ name = "manifest-controller"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "sqlglot>=30.14.0",
+    "sqlglot>=30.17.0",
     "redis>=8.1.0",
     "grpcio>=1.62.0",
     "protobuf>=7.35.1",
-    "boto3>=1.43.62",
+    "boto3>=1.43.74",
     "PyYAML>=6.0",
 ]
 
