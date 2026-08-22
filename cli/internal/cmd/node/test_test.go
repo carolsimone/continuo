@@ -57,12 +57,12 @@ func TestTestNode_SuccessEmitsJSON(t *testing.T) {
 
 func TestTestNode_ForwardsActorFromConfig(t *testing.T) {
 	fake := &fakeNodeState{testResp: &statev1.TriggerSingleNodeRunResponse{RunId: "run_9"}}
-	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "agent-runner-llm"}
+	cfg := &config.Config{Timeout: 2 * time.Second, Actor: "agent-chat-llm"}
 
 	_, _, exit := runTest(t, fake, cfg, []string{"finance", "analytics", "orders"})
 
 	assert.Equal(t, 0, exit)
-	assert.Equal(t, "agent-runner-llm", fake.gotTestActor)
+	assert.Equal(t, "agent-chat-llm", fake.gotTestActor)
 }
 
 func TestTestNode_EmptyActorWhenUnset(t *testing.T) {

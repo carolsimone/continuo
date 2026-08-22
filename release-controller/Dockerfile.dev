@@ -14,7 +14,7 @@ COPY remediation/go.mod remediation/go.sum ./remediation/
 COPY remediation-agent/go.mod remediation-agent/go.sum ./remediation-agent/
 
 RUN go work edit -dropuse=./state \
-    && go work edit -dropuse=./agent-runner \
+    && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./orchestrator \
     && go work edit -dropuse=./executor-controller \
     && go work edit -dropuse=./k8s-controller \
