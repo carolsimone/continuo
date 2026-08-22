@@ -1,13 +1,13 @@
-# agent-runner
+# agent-chat
 
 ## Purpose
 
-`agent-runner` is a cluster-internal Go service that runs a provider-agnostic LLM (Large Language Model) tool-use loop on behalf of authenticated operators. It exposes a single gRPC service, `AgentChat`, with a bidirectional streaming `Chat` RPC. Browsers never connect to it directly; `ui` relays each operator's `/ws/chat` WebSocket connection onto one `AgentChat.Chat` stream.
+`agent-chat` is a cluster-internal Go service that runs a provider-agnostic LLM (Large Language Model) tool-use loop on behalf of authenticated operators. It exposes a single gRPC service, `AgentChat`, with a bidirectional streaming `Chat` RPC. Browsers never connect to it directly; `ui` relays each operator's `/ws/chat` WebSocket connection onto one `AgentChat.Chat` stream.
 
 It provides:
 - a persistent conversation interface: each operator message drives one turn of the LLM tool-use loop
 - tool execution via the bundled `continuo` CLI binary (read-only tools run immediately; mutating tools require explicit operator confirmation before execution)
-- conversation persistence: threads, messages, and pending tool confirmations are stored in the `continuo_agent` Postgres database
+- conversation persistence: threads, messages, and pending tool confirmations are stored in the `continuo_agent_chat` Postgres database
 - a background retention job that deletes threads idle past a configurable period and optionally archives each thread to S3 before deletion
 
 **Runtime**: Go (port 50053 gRPC, port 8091 health). Cluster-internal — not exposed outside the service mesh.
@@ -22,13 +22,13 @@ The LLM provider is operator-configured per deployment. Three provider types are
 | `openai` | OpenAI API (`LLM_API_KEY`, `LLM_MODEL`) |
 | `openai-compatible` | Any OpenAI-compatible endpoint (`LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`) |
 
-All provider communication is outbound HTTPS. agent-runner participates in no Redis Streams. It opens a single Redis connection only when `REDIS_ADDR` is set, used exclusively for the shared per-user rate limiter (see Scaling).
+All provider communication is outbound HTTPS. agent-chat participates in no Redis Streams. It opens a single Redis connection only when `REDIS_ADDR` is set, used exclusively for the shared per-user rate limiter (see Scaling).
 
 ## Tool Execution
 
-At boot, agent-runner runs `continuo describe` and builds its tool catalog from the output. Every tool the LLM may call is derived from the CLI's self-description; adding a CLI command makes it available to the agent without changes to agent-runner.
+At boot, agent-chat runs `continuo describe` and builds its tool catalog from the output. Every tool the LLM may call is derived from the CLI's self-description; adding a CLI command makes it available to the agent without changes to agent-chat.
 
-When the LLM requests a tool call, agent-runner:
+When the LLM requests a tool call, agent-chat:
 
 1. Validates the tool name against the catalog (unknown tools are rejected).
 2. Validates the arguments against the per-command schema (malformed or injected flags are rejected).
@@ -36,11 +36,11 @@ When the LLM requests a tool call, agent-runner:
 4. For read-only tools: spawns the `continuo` binary via direct argv exec (no shell) and streams the result back.
 5. For mutating tools: persists a `pending_actions` row in Postgres, emits a `confirm_request` event to the client, and waits. Execution only proceeds on an explicit `confirm_response` with `approved: true`; `approved: false` discards the action.
 
-The `continuo` CLI subprocess reaches `state` (port 50051) and `orchestrator` (port 50052) over their public gRPC interfaces. agent-runner holds no direct connections to those services and imports none of their internals.
+The `continuo` CLI subprocess reaches `state` (port 50051) and `orchestrator` (port 50052) over their public gRPC interfaces. agent-chat holds no direct connections to those services and imports none of their internals.
 
 ## Owned Storage
 
-Postgres database `continuo_agent`:
+Postgres database `continuo_agent_chat`:
 
 | Table | Contents |
 |---|---|
@@ -62,12 +62,12 @@ The retention job runs on a configurable interval and deletes threads whose `upd
 
 Port 8091 serves three HTTP health endpoints, backed by the same liveness
 registry the other Go services use: `/health` (process-up probe, always 200),
-`/ready` (readiness), and `/livez` (liveness). agent-runner registers only a
+`/ready` (readiness), and `/livez` (liveness). agent-chat registers only a
 Postgres dependency probe with the registry — it runs zero Redis stream
 consumers, so there are no worker or heartbeat probes to register. `/ready`
 still 503s on a Postgres outage; `/livez` has no consumer heartbeats to
 report and stays 200 regardless of Postgres health. The route exists so every
-Go service answers the same probe contract, not because agent-runner guards
+Go service answers the same probe contract, not because agent-chat guards
 any consumers. Kubernetes points `readinessProbe` at `/ready` and
 `livenessProbe` at `/livez`.
 
@@ -89,7 +89,7 @@ derived from `context.Background()`, never the just-cancelled root context.
 `main` blocks on the lifecycle completion channel, so there is no fixed
 sleep.
 
-agent-runner makes zero `Go(...)` calls — it runs no Redis stream consumers
+agent-chat makes zero `Go(...)` calls — it runs no Redis stream consumers
 or other tracked background loops, only the gRPC and health servers, each
 started as a plain untracked `go func() { ... }()` and stopped from its own
 `RegisterShutdownHandler`. Step 2's drain is therefore a no-op here: the
@@ -137,7 +137,7 @@ independent timer.
 
 ### `continuo` CLI subprocess (tool execution)
 
-The `continuo` binary is bundled in the agent-runner container image. It is invoked via direct argv exec (no shell) for each tool call. The subprocess inherits `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` from agent-runner's environment. Per tool call, agent-runner also stamps `CONTINUO_ACTOR=<user_id>` from the authenticated chat operator (the `user_id` from the `Open` event) into the subprocess environment, so a mutating CLI command attributes its action to that operator. Every mutating tool is gated behind an explicit human confirmation before it runs, so the stamped identity is the operator who approved the action. When no operator identity is present, `CONTINUO_ACTOR` is left unset and `state` records its `system` sentinel.
+The `continuo` binary is bundled in the agent-chat container image. It is invoked via direct argv exec (no shell) for each tool call. The subprocess inherits `CONTINUO_STATE_ADDR` and `CONTINUO_ORCHESTRATOR_ADDR` from agent-chat's environment. Per tool call, agent-chat also stamps `CONTINUO_ACTOR=<user_id>` from the authenticated chat operator (the `user_id` from the `Open` event) into the subprocess environment, so a mutating CLI command attributes its action to that operator. Every mutating tool is gated behind an explicit human confirmation before it runs, so the stamped identity is the operator who approved the action. When no operator identity is present, `CONTINUO_ACTOR` is left unset and `state` records its `system` sentinel.
 
 Because the discovered tool menu is derived from `continuo describe`, it includes a mutating `schedule_cancel` tool whose `reason` is a required positional argument (the LLM must supply a non-empty reason). Its cancelling identity, like every other mutating tool, is the confirming operator carried via `CONTINUO_ACTOR`, not anything the LLM passes.
 
@@ -160,7 +160,7 @@ Because the discovered tool menu is derived from `continuo describe`, it include
 | `LLM_API_KEY` | optional | API key for the LLM provider. When unset, the service still boots and serves gRPC; chat sessions fail at LLM-call time until a key is supplied (a startup warning is logged). |
 | `LLM_MODEL` | required | Model identifier (e.g. `claude-opus-4-5`, `gpt-4o`) |
 | `LLM_BASE_URL` | required (`openai-compatible`) | Base URL for the OpenAI-compatible endpoint |
-| `POSTGRES_DSN` | required | Connection string for `continuo_agent` |
+| `POSTGRES_DSN` | required | Connection string for `continuo_agent_chat` |
 | `GRPC_PORT` | `50053` | gRPC listen port |
 | `HEALTH_PORT` | `8091` | HTTP health listen port |
 | `CONTINUO_STATE_ADDR` | required | gRPC address of the `state` service (forwarded to CLI subprocess) |
@@ -174,12 +174,12 @@ Because the discovered tool menu is derived from `continuo describe`, it include
 
 ## Scaling
 
-agent-runner runs at `replicas: 1` by default. Two guards bound its load:
+agent-chat runs at `replicas: 1` by default. Two guards bound its load:
 
 - **Per-user rate limit.** Each user is capped at `CHAT_RATE_LIMIT_PER_MINUTE` messages per rolling minute. The limiter has two implementations behind one port: an in-memory sliding window (process-local) and a Redis-backed sliding window (global). When `REDIS_ADDR` is set the Redis limiter is used so the per-user limit is enforced across all replicas; when unset the in-memory limiter applies and the limit is per-process. A transient Redis failure fails open (the message is allowed and the error logged) so a limiter outage cannot block legitimate users.
 - **Concurrent-session cap.** Each instance serves at most `CHAT_MAX_CONCURRENT_SESSIONS` live `Chat` streams (each holds a goroutine and an upstream provider stream open). Connections beyond the cap are rejected with gRPC `ResourceExhausted`; the slot is released when a stream ends.
 
-Before scaling agent-runner past one replica, set `REDIS_ADDR`/`REDIS_PASSWORD` so the rate limit stays global.
+Before scaling agent-chat past one replica, set `REDIS_ADDR`/`REDIS_PASSWORD` so the rate limit stays global.
 
 ## Dependencies
 
@@ -188,15 +188,15 @@ Before scaling agent-runner past one replica, set `REDIS_ADDR`/`REDIS_PASSWORD` 
 | `state` | Via `continuo` CLI subprocess over public gRPC (port 50051) |
 | `orchestrator` | Via `continuo` CLI subprocess over public gRPC (port 50052) |
 | LLM provider | HTTPS egress |
-| `continuo_agent` Postgres | Direct connection via `POSTGRES_DSN` |
+| `continuo_agent_chat` Postgres | Direct connection via `POSTGRES_DSN` |
 | Redis | Direct connection via `REDIS_ADDR` (optional; shared rate limiter only) |
 | S3 | AWS SDK `PutObject` (optional, retention-job only) |
 
-agent-runner holds no direct gRPC stubs for `state` or `orchestrator` and imports none of their source packages. All system reads happen through the `continuo` CLI subprocess, which uses only those services' public interfaces.
+agent-chat holds no direct gRPC stubs for `state` or `orchestrator` and imports none of their source packages. All system reads happen through the `continuo` CLI subprocess, which uses only those services' public interfaces.
 
 ## Reliability Notes
 
 - The gRPC `AgentChat.Chat` stream is held open for the duration of a WebSocket connection. If the stream is interrupted, `ui` reconnects and the client resumes the thread; on reconnect the agent replays the stored message history.
-- A pending tool confirmation can be resumed across a reconnect, but is never executed off a stale confirmation. When the stream drops while awaiting approval, the `pending_actions` row is left `pending` (not expired) and the tool call is persisted without a result. On thread resume, if a still-`pending` action whose `ConfirmTTL` window has not passed exists, agent-runner re-emits its `confirm_request`; an approval arriving outside an in-flight turn then runs the tool, persists the result, and continues the turn, while a denial records the refusal. The mutating tool still runs only on a fresh, live, explicit approval — the resume just re-offers the confirmation instead of forcing the user to re-ask. An in-session interrupt (as opposed to a disconnect) still resolves the action as `expired`, and once the `ConfirmTTL` window passes a disconnected action is no longer resumable.
+- A pending tool confirmation can be resumed across a reconnect, but is never executed off a stale confirmation. When the stream drops while awaiting approval, the `pending_actions` row is left `pending` (not expired) and the tool call is persisted without a result. On thread resume, if a still-`pending` action whose `ConfirmTTL` window has not passed exists, agent-chat re-emits its `confirm_request`; an approval arriving outside an in-flight turn then runs the tool, persists the result, and continues the turn, while a denial records the refusal. The mutating tool still runs only on a fresh, live, explicit approval — the resume just re-offers the confirmation instead of forcing the user to re-ask. An in-session interrupt (as opposed to a disconnect) still resolves the action as `expired`, and once the `ConfirmTTL` window passes a disconnected action is no longer resumable.
 - Missing `LLM_PROVIDER`, `LLM_MODEL`, `POSTGRES_DSN`, `CONTINUO_STATE_ADDR`, or `CONTINUO_ORCHESTRATOR_ADDR` cause the process to exit before accepting any traffic (`pkg/config.Validator`). `LLM_API_KEY` is deliberately exempt: an empty key logs a startup warning and degrades chat (LLM calls fail) rather than crashing the process, so a missing key cannot crashloop the pod and time out a deploy.
 - LLM provider errors are returned to the client as `error` ServerEvents; they do not crash the stream.

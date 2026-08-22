@@ -18,7 +18,7 @@ It provides:
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`, carrying the caller's chosen run/test/build `operation`
 - per-node topology metadata: proxies `GET /api/nodes/:service/:schema/:table/meta` to the `GetNode` gRPC method on `orchestrator`, used to decide whether a node's single-node `test` operation is meaningful; for a `python-csv` node the handler additionally calls `GetNodeVersions` (`current_only`, `include_code`) and returns the `reads.csv` field of the current version's `raw_code` — the contract entry serialized as JSON — as `source_uri`, the CSV file the node loads
 - a **Remediation** tab (5th dashboard tab): lists fix proposals from `remediation-agent` with diff, rationale, confidence, and source lineage; `operator` users can click **Create PR** to open a GitHub pull request committing every file the proposal changes in a single commit; `viewer` users see the surface read-only. ui holds the GitHub App write credential, reads each changed file's corrected content from S3, and records the PR result back to remediation-agent over gRPC. Each proposal's `pr_state` is rendered as a colored chip once it reaches a terminal outcome — `merged` or `rejected` — mirrored from GitHub by remediation-agent's PR-outcome reconciler; non-terminal `pr_state` values render as plain text. The release detail page carries a lightweight back-link to any associated proposal.
-- a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): an operator-only WebSocket (WS) endpoint that relays browser messages over a bidirectional gRPC stream to `agent-runner`, which runs the LLM (Large Language Model) tool-use loop; the WebSocket upgrade is operator-only and the endpoint is gated off by default
+- a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): an operator-only WebSocket (WS) endpoint that relays browser messages over a bidirectional gRPC stream to `agent-chat`, which runs the LLM (Large Language Model) tool-use loop; the WebSocket upgrade is operator-only and the endpoint is gated off by default
 
 Every mutation proxied to `state` (trigger, cancel, rerun, rebase, single-node run) forwards the authenticated user's id as the `x-continuo-user-id` gRPC metadata header so `state` and `orchestrator` record the initiating user for full provenance. The header key and the `userMetadata(req)` helper live in `src/server/grpc-client.ts`; the key value matches `pkg/identity.MetadataKey` on the Go side. An unauthenticated request records the `system` sentinel.
 
@@ -130,22 +130,22 @@ Operator setup, including configuring an identity provider and a no-domain Googl
 
 The endpoint upgrade is authenticated: only a session with the `operator` role may open `/ws/chat`; anything else is rejected with HTTP 401 before the WebSocket is established (audited as `ws_denied`). Browser upgrade requests whose `Origin` header does not match the deployment origin (derived from `AUTH_PUBLIC_URL`) are rejected with HTTP 403 before authentication is attempted, preventing cross-site WebSocket hijacking. Requests with no `Origin` header (non-browser clients) are not subject to this check. The origin check is skipped in `dev` mode.
 
-Each incoming WebSocket connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-runner` (`AGENT_RUNNER_GRPC_ADDR`, default `localhost:50053`). `ui` forwards the authenticated `user_id` in the first `Open` event written to the gRPC stream (carrying `user_id` and the optional `thread_id` query parameter). The browser-to-ui leg is WebSocket (JSON frames); the ui-to-agent-runner leg is gRPC bidi streaming. `ui` performs no LLM calls and holds no agent state; it is a transport relay.
+Each incoming WebSocket connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-chat` (`AGENT_CHAT_GRPC_ADDR`, default `localhost:50053`). `ui` forwards the authenticated `user_id` in the first `Open` event written to the gRPC stream (carrying `user_id` and the optional `thread_id` query parameter). The browser-to-ui leg is WebSocket (JSON frames); the ui-to-agent-chat leg is gRPC bidi streaming. `ui` performs no LLM calls and holds no agent state; it is a transport relay.
 
 ### Message contract
 
-**Client → server messages** (JSON over WebSocket, relayed as `ClientEvent` proto to agent-runner):
+**Client → server messages** (JSON over WebSocket, relayed as `ClientEvent` proto to agent-chat):
 
 | `type` | Payload | Meaning |
 |---|---|---|
-| `user_message` | `{ "text": string }` | User turn forwarded to the agent loop in agent-runner |
+| `user_message` | `{ "text": string }` | User turn forwarded to the agent loop in agent-chat |
 | `new_chat` | `{}` | Start a fresh conversation thread |
 | `confirm_response` | `{ "actionId": string, "approved": boolean }` | Approve (`true`) or deny (`false`) a pending mutating tool call |
 | `interrupt` | `{}` | Cancel the in-flight turn |
 
 Incoming frames are validated before use: anything that is not valid JSON, or that decodes to a non-object (e.g. `null`, a number, an array), is dropped silently.
 
-**Server → client messages** (JSON over WebSocket, translated from `ServerEvent` proto from agent-runner):
+**Server → client messages** (JSON over WebSocket, translated from `ServerEvent` proto from agent-chat):
 
 | `type` | Payload | Meaning |
 |---|---|---|
@@ -159,7 +159,7 @@ Incoming frames are validated before use: anything that is not valid JSON, or th
 
 ### Scope and constraints
 
-`ui` is a pure transport relay for chat. All agent logic, tool execution, LLM calls, confirmation gating, and conversation persistence are owned by `agent-runner`. `ui` introduces no new storage, no Redis Streams, and no direct connections to `state`, `orchestrator`, or LLM providers as a result of the chat relay.
+`ui` is a pure transport relay for chat. All agent logic, tool execution, LLM calls, confirmation gating, and conversation persistence are owned by `agent-chat`. `ui` introduces no new storage, no Redis Streams, and no direct connections to `state`, `orchestrator`, or LLM providers as a result of the chat relay.
 
 ## Owned Storage
 
@@ -255,7 +255,7 @@ The Create PR route requires the GitHub App to be provisioned (`GITHUB_APP_ID`, 
 
 | Route | Protocol | Description |
 |---|---|---|
-| `/ws/chat` | WebSocket | Chat relay. Attached only when `CHAT_BRIDGE_ENABLED=true`; absent by default. Browser upgrades whose `Origin` does not match `AUTH_PUBLIC_URL`'s origin are rejected with HTTP 403 before authentication. The upgrade is additionally operator-only — unauthenticated or non-operator upgrades are rejected with HTTP 401. Each connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-runner`. See "Chat Relay" section for the full message contract. |
+| `/ws/chat` | WebSocket | Chat relay. Attached only when `CHAT_BRIDGE_ENABLED=true`; absent by default. Browser upgrades whose `Origin` does not match `AUTH_PUBLIC_URL`'s origin are rejected with HTTP 403 before authentication. The upgrade is additionally operator-only — unauthenticated or non-operator upgrades are rejected with HTTP 401. Each connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-chat`. See "Chat Relay" section for the full message contract. |
 
 #### Frontend
 
@@ -288,7 +288,7 @@ In production mode, `dist/` (built React SPA) is served as static files; all unm
 | `GetNode` | `GET /api/nodes/:service/:schema/:table/meta` |
 | `GetNodeVersions` | `GET /api/nodes/:service/:schema/:table/meta` (python-csv nodes only, `current_only` + `include_code`, to surface the CSV `source_uri`) |
 
-### gRPC to `agent-runner` (`AGENT_RUNNER_GRPC_ADDR`, default `localhost:50053`)
+### gRPC to `agent-chat` (`AGENT_CHAT_GRPC_ADDR`, default `localhost:50053`)
 
 | Method | Trigger |
 |---|---|
@@ -352,7 +352,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 HTTP(S) to the IdP: issuer discovery at boot (retried with backoff; the process exits if discovery never succeeds) and the token-endpoint exchange during `/auth/callback`. IdP downtime after boot blocks only new logins; active sessions keep working.
 
-Beyond the session keyspace above, `ui` reaches backends through gRPC (`state`, `orchestrator`, `agent-runner`), HTTP (`release-controller`, the IdP), and S3 (log proxy); it neither produces nor consumes Redis Streams.
+Beyond the session keyspace above, `ui` reaches backends through gRPC (`state`, `orchestrator`, `agent-chat`), HTTP (`release-controller`, the IdP), and S3 (log proxy); it neither produces nor consumes Redis Streams.
 
 ## What It Reads
 

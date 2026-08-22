@@ -281,7 +281,7 @@ that silently lacks the refs. Endpoint, bucket and region reach every pod throug
 the shared ConfigMap and need no per-service wiring.
 */}}
 {{- define "continuo.s3.credentialServices" -}}
-["orchestrator","manifest-controller","k8s-controller","executor-controller","release-controller","remediation","remediation-agent","ui","agent-runner"]
+["orchestrator","manifest-controller","k8s-controller","executor-controller","release-controller","remediation","remediation-agent","ui","agent-chat"]
 {{- end -}}
 
 {{- define "continuo.auth.issuerUrl" -}}

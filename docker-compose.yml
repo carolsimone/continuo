@@ -639,7 +639,7 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
       - AUTH_MODE=dev
-      - AGENT_RUNNER_GRPC_ADDR=agent-chat:50053
+      - AGENT_CHAT_GRPC_ADDR=agent-chat:50053
       - CHAT_BRIDGE_ENABLED=true
       - REMEDIATION_GRPC_ADDR=remediation-agent:50054
       - GITHUB_APP_ID=1

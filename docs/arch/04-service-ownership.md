@@ -49,9 +49,9 @@ The process exits before any connection is attempted, so missing-config failures
 
 ## Graceful Shutdown Convention
 
-`state`, `orchestrator`, `executor-controller`, `k8s-controller`, and `agent-runner` drive process shutdown through the shared `pkg/lifecycle.ApplicationLifecycle`. `release-controller`, `remediation`, and `remediation-agent` are not on it; each installs `signal.Notify` directly in its own `main` instead.
+`state`, `orchestrator`, `executor-controller`, `k8s-controller`, and `agent-chat` drive process shutdown through the shared `pkg/lifecycle.ApplicationLifecycle`. `release-controller`, `remediation`, and `remediation-agent` are not on it; each installs `signal.Notify` directly in its own `main` instead.
 
-On SIGTERM/SIGINT, `ApplicationLifecycle` runs an ordered sequence whose total duration is bounded by `SHUTDOWN_GRACE` (default 15s; `agent-runner` defaults to 10s) for handlers that honor their context — a `Close()`-style handler that ignores `ctx` is not itself bounded by it:
+On SIGTERM/SIGINT, `ApplicationLifecycle` runs an ordered sequence whose total duration is bounded by `SHUTDOWN_GRACE` (default 15s; `agent-chat` defaults to 10s) for handlers that honor their context — a `Close()`-style handler that ignores `ctx` is not itself bounded by it:
 
 1. **Stop intake** — cancel the root context so consumers and background loops stop reading new work.
 2. **Drain** — wait on a `WaitGroup` for goroutines tracked via `ApplicationLifecycle.Go(...)` to return, bounded by half the grace period.
@@ -181,14 +181,14 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | gRPC server methods owned | none |
 | Redis consumes | none (no stream consumption; session keys only) |
 | Redis produces | none (no stream production; session keys only) |
-| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetNode`; `agent-runner`: `AgentChat.Chat` (bidirectional streaming, `/ws/chat` relay, operator-only, feature-flagged by `CHAT_BRIDGE_ENABLED`); `remediation-agent`: `ListProposals`, `GetProposal`, `BeginPullRequest`, `RecordPullRequest`, `FailPullRequest` |
+| Outbound gRPC calls | `state`: `ListAllSchedules`, `ListTasks`, `GetScheduler`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule`; `orchestrator`: `GetScheduleGraph`, `ListRuns`, `GetRunGraph`, `GetNode`; `agent-chat`: `AgentChat.Chat` (bidirectional streaming, `/ws/chat` relay, operator-only, feature-flagged by `CHAT_BRIDGE_ENABLED`); `remediation-agent`: `ListProposals`, `GetProposal`, `BeginPullRequest`, `RecordPullRequest`, `FailPullRequest` |
 | External write | GitHub App API — create branch + one tree commit carrying every changed file + open pull request on `continuo-dbt-demo` (operator-only, one repo, `contents:write` + `pull-requests:write`) |
 
-## `agent-runner`
+## `agent-chat`
 
 | Category | Owned / used surface |
 |---|---|
-| Durable state | Postgres `continuo_agent`: `threads` (conversation metadata per user), `messages` (full turn history per thread), `pending_actions` (tool calls awaiting human confirmation before execution) |
+| Durable state | Postgres `continuo_agent_chat`: `threads` (conversation metadata per user), `messages` (full turn history per thread), `pending_actions` (tool calls awaiting human confirmation before execution) |
 | gRPC server methods owned | `AgentChat.Chat` (bidirectional streaming; port 50053, cluster-internal) |
 | Redis consumes | none |
 | Redis produces | none |
@@ -196,11 +196,11 @@ Provisioning databases inside the job — rather than relying solely on the Post
 
 ### Invariants
 
-- **Tool catalog from CLI self-description.** At boot, agent-runner runs `continuo describe` and builds its tool catalog from the output. Adding a CLI command makes it available to the agent automatically without changes to agent-runner.
+- **Tool catalog from CLI self-description.** At boot, agent-chat runs `continuo describe` and builds its tool catalog from the output. Adding a CLI command makes it available to the agent automatically without changes to agent-chat.
 - **Direct argv exec, no shell.** CLI tools are executed by spawning the `continuo` binary directly via OS exec (no shell interposition). Arguments are validated against the catalog (membership check, schema check, no flag injection) before the process is created.
 - **Read-only tools run immediately; mutating tools require confirmation.** The agent loop emits a `confirm_request` event to the client and persists a `PendingAction` row in Postgres before any tool annotated as mutating executes. Execution only proceeds on an explicit `approve` message from the client. No mutation can occur without a round-trip human approval.
-- **No direct gRPC connections to backend services.** agent-runner never imports or holds connections to `state`, `orchestrator`, or any other service internals. All system reads happen through the `continuo` CLI subprocess, which uses the services' public gRPC interfaces.
-- **Conversation persistence and retention.** Threads and messages are persisted in `continuo_agent`; a background retention job deletes threads idle past `RETENTION_DAYS`. When `RETENTION_ARCHIVE_S3=true`, each thread is written to S3 as a JSON archive before deletion.
+- **No direct gRPC connections to backend services.** agent-chat never imports or holds connections to `state`, `orchestrator`, or any other service internals. All system reads happen through the `continuo` CLI subprocess, which uses the services' public gRPC interfaces.
+- **Conversation persistence and retention.** Threads and messages are persisted in `continuo_agent_chat`; a background retention job deletes threads idle past `RETENTION_DAYS`. When `RETENTION_ARCHIVE_S3=true`, each thread is written to S3 as a JSON archive before deletion.
 
 ## `continuo CLI`
 

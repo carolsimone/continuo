@@ -16,7 +16,7 @@ import { buildAuth } from './auth';
 const PORT = parseInt(process.env.PORT || '8090', 10);
 const STATE_GRPC_ADDR = process.env.STATE_GRPC_ADDR || 'localhost:50051';
 const ORCHESTRATOR_GRPC_ADDR = process.env.ORCHESTRATOR_GRPC_ADDR || 'localhost:50052';
-const AGENT_RUNNER_GRPC_ADDR = process.env.AGENT_RUNNER_GRPC_ADDR || 'localhost:50053';
+const AGENT_CHAT_GRPC_ADDR = process.env.AGENT_CHAT_GRPC_ADDR || 'localhost:50053';
 const REMEDIATION_GRPC_ADDR = process.env.REMEDIATION_GRPC_ADDR || 'localhost:50054';
 const CONFIG_FILE = process.env.CONFIG_FILE;
 const RELEASE_CONTROLLER_URL = process.env.RELEASE_CONTROLLER_URL || 'http://release-controller:8088';
@@ -77,7 +77,7 @@ async function main() {
   const server = http.createServer(app);
   if (CHAT_BRIDGE_ENABLED) {
     attachChatWebSocket(server, {
-      agentClient: createAgentClient(AGENT_RUNNER_GRPC_ADDR),
+      agentClient: createAgentClient(AGENT_CHAT_GRPC_ADDR),
       authenticate: auth.authenticateWs,
       allowedOrigin: auth.publicOrigin,
     });
