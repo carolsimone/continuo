@@ -106,7 +106,7 @@ def _parse_entry(
         _fail(f"{label}: kind must be one of {sorted(KINDS)}, got {kind!r}")
 
     if kind == "python-csv":
-        if "script" in entry:
+        if entry.get("script"):
             _fail(f"{label}: 'script' is forbidden for kind python-csv")
         required = _REQUIRED_ENTRY_KEYS - {"script"}
     else:

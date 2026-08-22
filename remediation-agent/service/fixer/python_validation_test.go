@@ -748,6 +748,40 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 	}
 }
 
+// TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies covers the
+// companion case to the kind-flip check above: declaringYAML, like every
+// legacy contract, omits "kind:" entirely, and both the runtime parsers and
+// this locator default an absent kind to "python-model". An answer that
+// writes that default explicitly is a no-op normalization, not an identity
+// change, and must reach verification exactly like any other accepted fix —
+// the locator defaulting absent Kind is what keeps this from reading as
+// kind "" -> "python-model" and being refused by identityBreach.
+func TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies(t *testing.T) {
+	root := pythonRepoTree(t)
+	svc, _, pkgr, rel, _ := pythonSvc(t, root)
+	const answerWithExplicitKind = `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    kind: python-model
+    script: scripts/py_daily_kpis.py
+    reads:
+      orders: select id from analytics.orders
+    output_columns:
+      - name: revenue_total
+`
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
+		Files:     []ports.ProposedFile{{Path: "services/service-py/contracts/py_daily_kpis.yml", Content: answerWithExplicitKind}},
+		Rationale: "declared the column the script produces", Confidence: "high", Model: "test-model",
+	}}}
+
+	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusVerifying, r.Proposal.Status,
+		"writing the same default kind explicitly must verify like any other accepted fix")
+	require.Len(t, pkgr.calls, 1)
+	require.Len(t, rel.submissions, 1)
+}
+
 // TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails covers the
 // variant the before/after comparison of the answer's own files cannot see: the
 // declaring file is left alone and the node is declared a SECOND time in a new

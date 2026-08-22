@@ -146,7 +146,12 @@ shipped in those.
   override to track the chart's default) before upgrading, the same way as
   any other `continuo-python-runtime-<engine>` tag bump — an unmirrored or
   stale pin otherwise renders healthy at install and only fails later, at the
-  next release promotion, as a validation-pod `ErrImagePull`.
+  next release promotion, as a validation-pod `ErrImagePull`. A pin to an
+  older tag that is still pullable is the worse case: `v0.3.0` has no
+  `csv_source` support, so a python-csv node's header check silently never
+  runs and the release promotes green with an unvalidated csv node. Re-pin to
+  `v0.4.0` or later, or drop the override, rather than leaving an old but
+  still-resolvable tag in place.
 
 ## [0.2.0] - 2026-08-10
 

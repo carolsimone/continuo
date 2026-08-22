@@ -74,14 +74,16 @@ var pyCsvFixtureData []byte
 // could validate one contract while the pod executed another.
 //
 // A scripted node's source_hash is the real sha256 of its script file, so
-// editing a script genuinely re-fingerprints its node. A python-csv node has
-// no script — mirroring what a domain repository's CI computes for one (see
-// manifest-controller/tests/test_python_contract_parser.py's make_csv_entry),
-// its source_hash is the sha256 of its declared csv uri instead, so editing
-// the uri re-fingerprints the node. shared_code_hash is empty for every node
-// (nothing here imports in-repo code). manifest-controller recomputes only
-// the fold, not config_hash, so any deterministic config_hash value is
-// accepted as long as the fold matches.
+// editing a script genuinely re-fingerprints its node. A python-csv node runs
+// no script, but the shipped merge tool's node_entry() still emits
+// "script": node.script unconditionally, so its wire entry carries an empty
+// string rather than an absent key — mirroring what a domain repository's CI
+// computes for one (see manifest-controller/tests/test_python_contract_parser.py's
+// make_csv_entry), its source_hash is the sha256 of its declared csv uri
+// instead, so editing the uri re-fingerprints the node. shared_code_hash is
+// empty for every node (nothing here imports in-repo code). manifest-controller
+// recomputes only the fold, not config_hash, so any deterministic config_hash
+// value is accepted as long as the fold matches.
 func pythonContractYAML(t *testing.T) string {
 	t.Helper()
 
@@ -106,6 +108,11 @@ func pythonContractYAML(t *testing.T) string {
 			csvURI, _ := reads["csv"].(string)
 			require.NotEmpty(t, csvURI, "python-csv fixture node is missing reads.csv")
 			sourceHash = sha256Hex(csvURI)
+			// The shipped merge tool's node_entry() emits "script": node.script
+			// unconditionally, so every real csv wire entry carries an empty
+			// string, never an absent key. Match that shape here so this test
+			// exercises the document manifest-controller actually receives.
+			node["script"] = ""
 		}
 
 		entryJSON, err := json.Marshal(node)

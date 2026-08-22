@@ -256,9 +256,9 @@ func TestCsvValidation_AnswerDeletesTheCsvRead_Fails(t *testing.T) {
 // relaxes the rule for the failing node's own "csv" key — a python-model
 // sibling's script is never edited by this fix, so its reads are still held
 // to the blanket "no read may be dropped" rule declarationBreach applies for
-// the python-model lane. Before the fix for IMPORTANT-1 this case slipped
-// through: the guard's per-node loop `continue`d past any node without a
-// "csv" key, examining nothing else about it at all.
+// the python-model lane. The guard's per-node loop must examine every node in
+// the answer, not only the ones carrying a "csv" key, or a sibling's dropped
+// read would go unnoticed.
 func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
 	root := csvRepoTree(t)
 	svc, _, pkgr, rel, arts := csvSvc(t, root)

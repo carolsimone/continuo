@@ -54,12 +54,16 @@ def make_entry(remove=(), **overrides):
 def make_csv_entry(remove=(), **overrides):
     """A valid python-csv wire entry; overrides mutate it, remove drops keys.
 
-    A csv node has no script and its sole read is {"csv": <uri>}. Its hash
-    parts mirror what the runtime's merge computes for a csv node: source_hash
-    over the uri bytes, shared_code_hash empty (no in-repo imports), and an
-    opaque config_hash — MC verifies only that content_hash equals the fold of
-    these three parts, never recomputing config_hash from the entry itself, so
-    the fixture does not need to reproduce the runtime's canonical_entry.
+    A csv node has no script and its sole read is {"csv": <uri>}. The
+    "script": "" key mirrors the wire-exact shape: the runtime's merge tool
+    (merge.py node_entry()) emits "script": node.script unconditionally, so
+    every real csv entry MC receives carries an empty-string script, never an
+    absent one. Its hash parts mirror what the runtime's merge computes for a
+    csv node: source_hash over the uri bytes, shared_code_hash empty (no
+    in-repo imports), and an opaque config_hash — MC verifies only that
+    content_hash equals the fold of these three parts, never recomputing
+    config_hash from the entry itself, so the fixture does not need to
+    reproduce the runtime's canonical_entry.
     """
     uri = "s3://drops/orders.csv"
     entry = {
@@ -69,6 +73,7 @@ def make_csv_entry(remove=(), **overrides):
         "schedule": "daily",
         "criticality": "SECONDARY",
         "kind": "python-csv",
+        "script": "",
         "reads": {"csv": uri},
         "output_columns": [{"name": "order_id", "type": "INTEGER", "nullable": False}],
         "source_hash": hashlib.sha256(uri.encode()).hexdigest(),

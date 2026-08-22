@@ -83,22 +83,23 @@ func buildCsvProposeRequest(ctx context.Context, svc Services, in Input, located
 // enforces for a python-model fix, because it holds regardless of what a fix
 // is otherwise allowed to touch.
 //
-// What differs from declarationBreach is the read rule applied to the FAILING
-// python-csv node itself: it has exactly one read, always named "csv", naming
-// the file the runtime loads — and that read's VALUE (the uri) is the one
-// thing this fix is expected to be allowed to change (a stale uri is a
-// legitimate repair). So for a node that declared a "csv" key before the
-// edit, only that key's continued presence is enforced, with a message that
-// names the csv read specifically, instead of refusing every dropped read.
+// What differs from declarationBreach is the extra, csv-specific message
+// applied to a node that declared a "csv" read before the edit: dropping that
+// key gets a rationale naming the csv read by name, because it is the file
+// the runtime loads — and that read's VALUE (the uri) is the one thing this
+// fix is expected to be allowed to change (a stale uri is a legitimate
+// repair). That message does not replace the blanket rule; it fires first,
+// as a more specific error for the same condition.
 //
-// That relaxation is scoped to the "csv" key alone, on purpose: the fix is
-// packaged from the whole contract directory, the same as a python-model fix,
-// so any sibling node in that directory — most commonly a python-model node,
-// whose script this fix never touches and whose reads it therefore may never
-// subtract — is still held to the blanket "no read may be dropped" rule via
-// droppedReadBreach, the same rule declarationBreach applies to every node it
-// checks. A node with no "csv" key never reaches the csv-specific branch at
-// all, so it falls straight through to that shared rule.
+// Every node, csv or not, is still held to the blanket "no read may be
+// dropped" rule via droppedReadBreach — the same rule declarationBreach
+// applies to every node it checks — run unconditionally after the csv-key
+// check. For the failing python-csv node itself, which declares exactly one
+// read, the two checks catch the identical breach; the csv-specific message
+// only gets to say so first. The blanket rule is what protects any sibling in
+// the same contract directory — most commonly a python-model node, whose
+// script this fix never touches and whose reads it therefore may never
+// subtract.
 func csvDeclarationBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
 	before, after, breach := buildDeclarationMaps(svc, files, originals)
 	if breach != "" {
