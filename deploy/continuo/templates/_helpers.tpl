@@ -64,7 +64,18 @@ app.kubernetes.io/name: {{ .service }}
 
      scripts/check-validation-image-pin.sh renders this template with
      validation.imageTag unset to assert CONTINUO_VALIDATION_DEFAULT_TAG
-     below stays in sync with values.yaml's default — keep them equal. */}}
+     below stays in sync with values.yaml's default — keep them equal.
+
+     An explicit validation.imageTag override also gets a capability gate,
+     the same fail-closed treatment as validation.engine above: v0.1.x-v0.3.x
+     are known runner releases that predate python-csv support (added in
+     v0.4.0) — that runner ignores the "kind"/"csv_source" contract fields
+     manifest-controller already emits for a python-csv node and reports
+     success without checking the file's header, so a csv node with a
+     mismatched header would promote unvalidated. A tag that isn't even
+     shaped like "vX.Y.Z" (optionally "@sha256:<digest>") can't be compared
+     against that known-bad range at all, so it fails closed the same way
+     rather than rendering a chart that may silently skip csv validation. */}}
 {{- define "continuo.validation.image" -}}
 {{- $eng := .Values.validation.engine | default "postgres" -}}
 {{- $supported := list "postgres" "trino" -}}
@@ -76,6 +87,13 @@ app.kubernetes.io/name: {{ .service }}
 {{- $tag = .Values.validation.imageTag -}}
 {{- if not $tag -}}
 {{- fail "validation.imageTag is set to an empty string; unset the key entirely to use the chart's default continuo-python-runtime-<engine> image tag, or set a real value (\"vX.Y.Z\" or \"vX.Y.Z@sha256:<digest>\")" -}}
+{{- end -}}
+{{- $bareTag := regexReplaceAll "@.*$" $tag "" -}}
+{{- if not (regexMatch "^v[0-9]+\\.[0-9]+\\.[0-9]+$" $bareTag) -}}
+{{- fail (printf "validation.imageTag=%q is not shaped like a released continuo-python-runtime tag (\"vX.Y.Z\" or \"vX.Y.Z@sha256:<digest>\"); the chart cannot tell whether an unparseable tag predates python-csv validation support (added in v0.4.0), so it refuses to render rather than risk silently skipping the csv header check. Re-pin to a real vX.Y.Z tag." $tag) -}}
+{{- end -}}
+{{- if regexMatch "^v0\\.[1-3]\\." $bareTag -}}
+{{- fail (printf "validation.imageTag=%q predates python-csv validation support (added in v0.4.0): manifest-controller already accepts \"kind: python-csv\" nodes and emits csv_source, but this runner ignores that field and reports success without checking the file's header, so a csv node with a mismatched header would promote unvalidated. Re-pin validation.imageTag to \"v0.4.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
 {{- else -}}
 {{- $tag = "v0.4.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}

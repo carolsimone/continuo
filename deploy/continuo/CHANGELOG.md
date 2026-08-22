@@ -136,6 +136,23 @@ shipped in those.
   `SHUTDOWN_GRACE` value as before. All tracked goroutines in every service
   unwind well within 7.5s on cancellation, so this is not expected to change
   observed shutdown behavior for a default install.
+- `validation.imageTag`, when set explicitly, is now checked against the tag
+  ranges known to predate python-csv validation support: `_helpers.tpl`'s
+  `continuo.validation.image` fails the render (rather than only warning here)
+  when the tag matches `v0.1.x`-`v0.3.x`, or when it isn't shaped like a
+  released tag (`"vX.Y.Z"` or `"vX.Y.Z@sha256:<digest>"`) at all — an
+  unparseable tag can't be checked against that known-bad range, so it fails
+  closed the same way. **BREAKING only for an install that explicitly pins
+  `validation.imageTag` to one of those tags** (or to something unparseable):
+  it previously rendered and installed, silently running a validation runner
+  that ignores a python-csv node's `csv_source` contract field and reports
+  success without checking the file's header, letting a mismatched-header csv
+  promote unvalidated; it now fails `helm template`/`helm install`/`helm
+  upgrade` outright, naming the tag and the required floor. No values key is
+  added, renamed or removed, and an install that has never overridden
+  `validation.imageTag` (or that already pins `v0.4.0` or later) is
+  unaffected. Re-pin to `v0.4.0` or later, or drop the override, before
+  upgrading.
 
 ### Changed
 - Bumped the default `validation.imageTag` (and its `_helpers.tpl` fallback)
@@ -147,11 +164,8 @@ shipped in those.
   any other `continuo-python-runtime-<engine>` tag bump — an unmirrored or
   stale pin otherwise renders healthy at install and only fails later, at the
   next release promotion, as a validation-pod `ErrImagePull`. A pin to an
-  older tag that is still pullable is the worse case: `v0.3.0` has no
-  `csv_source` support, so a python-csv node's header check silently never
-  runs and the release promotes green with an unvalidated csv node. Re-pin to
-  `v0.4.0` or later, or drop the override, rather than leaving an old but
-  still-resolvable tag in place.
+  older tag is now caught at render time rather than left as a warning here:
+  see the `validation.imageTag` capability gate under Breaking below.
 
 ## [0.2.0] - 2026-08-10
 
