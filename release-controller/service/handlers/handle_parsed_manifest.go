@@ -596,7 +596,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // node with an alias override).
 //
 // node_type carries the target claimant's kind (dbt-model, dbt-seed,
-// dbt-snapshot, or python-model) so remediation can tell, without a topology
+// dbt-snapshot, python-model, or python-csv) so remediation can tell, without a topology
 // lookup of its own, whether the target's source is a single file this
 // system can read. A python node's relation is declared in the service's
 // contract.yaml, whose repository path this system does not carry — only

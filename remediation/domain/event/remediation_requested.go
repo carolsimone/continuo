@@ -60,7 +60,7 @@ type RemediationRequested struct {
 	// lookup.
 	Service string `json:"service,omitempty"`
 	// NodeType is the failing node's kind (dbt-model, dbt-seed,
-	// dbt-snapshot, or python-model), set on validation and duplicate-relation
+	// dbt-snapshot, python-model, or python-csv), set on validation and duplicate-relation
 	// failures so the agent can decide how to handle the node without a
 	// topology lookup of its own. A python node's source is not a single
 	// readable file — it is an entry in a contract yaml this system carries no

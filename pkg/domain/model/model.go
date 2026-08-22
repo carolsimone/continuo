@@ -48,7 +48,7 @@ const (
 )
 
 // NodeType represents the resource type for a graph node (dbt-model/seed/snapshot,
-// or python-model).
+// or python-model/python-csv).
 type NodeType string
 
 const (
@@ -77,7 +77,8 @@ var AllNodeTypes = []NodeType{
 }
 
 // IsPython reports whether this node type runs on the python runtime image
-// rather than the dbt toolchain.
+// rather than the dbt toolchain — python-model and python-csv, the
+// contract-declared nodes.
 func (t NodeType) IsPython() bool {
 	return t == NodeTypePythonModel || t == NodeTypePythonCsv
 }

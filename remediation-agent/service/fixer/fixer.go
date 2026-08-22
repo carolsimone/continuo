@@ -54,7 +54,8 @@ type Input struct {
 	FilePath     string
 	Service      string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
-	// or python-model), set on validation and duplicate-relation failures. It
+	// python-model, or python-csv), set on validation and duplicate-relation
+	// failures. It
 	// selects which Fixer runs for a validation failure (see For), and every
 	// Fixer that can be reached by a python node also checks it before reading
 	// anything: the duplicate-table Fixer's target relation is declared in the
