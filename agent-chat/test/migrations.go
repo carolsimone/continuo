@@ -17,16 +17,16 @@ import (
 // both inside the service container (source mounted at /app) and on a
 // developer machine running `go test` from any working directory.
 func ApplyMigrations(db *sql.DB) error {
-	dir, err := agentRunnerMigrationDir()
+	dir, err := agentChatMigrationDir()
 	if err != nil {
 		return err
 	}
 	return testmigrations.Apply(db, dir)
 }
 
-// agentRunnerMigrationDir returns the absolute path to db/migration/agent/
+// agentChatMigrationDir returns the absolute path to db/migration/agent/
 // as a sibling of agent-chat/ at the repo root.
-func agentRunnerMigrationDir() (string, error) {
+func agentChatMigrationDir() (string, error) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("runtime.Caller failed — cannot locate agent-chat/test/migrations.go")
