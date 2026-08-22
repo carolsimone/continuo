@@ -3,12 +3,15 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './node-helpers';
+import NodeTypeIcon from './NodeTypeIcon';
 import RunSourcePickerDialog from './RunSourcePickerDialog';
 
 interface NodeMetaResponse {
   node_type?: string;
   test_count?: number;
   test_count_known?: boolean;
+  // The CSV file a python-csv node loads; absent on every other node type.
+  source_uri?: string;
 }
 
 function formatTime(iso: string | null): string {
@@ -92,6 +95,8 @@ export default function NodeDetailPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [operation, setOperation] = useState<'run' | 'test' | 'build'>(initialOperation);
   const [testCount, setTestCount] = useState<{ count: number; known: boolean } | null>(null);
+  const [nodeType, setNodeType] = useState('');
+  const [sourceUri, setSourceUri] = useState('');
   const genRef = useRef(0);
 
   const parts = (fqn ?? '').split('.');
@@ -120,10 +125,18 @@ export default function NodeDetailPage() {
     if (!service || !schema || !table) return;
     fetch(`/api/nodes/${encodeURIComponent(service)}/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/meta`)
       .then(r => (r.ok ? r.json() : null))
-      .then((m: NodeMetaResponse | null) => setTestCount(m && typeof m.test_count === 'number'
-        ? { count: m.test_count, known: Boolean(m.test_count_known) }
-        : null))
-      .catch(() => setTestCount(null));
+      .then((m: NodeMetaResponse | null) => {
+        setTestCount(m && typeof m.test_count === 'number'
+          ? { count: m.test_count, known: Boolean(m.test_count_known) }
+          : null);
+        setNodeType(m?.node_type ?? '');
+        setSourceUri(m?.source_uri ?? '');
+      })
+      .catch(() => {
+        setTestCount(null);
+        setNodeType('');
+        setSourceUri('');
+      });
   }, [service, schema, table]);
 
   // latestHasNoTests reflects the LATEST topology's test_count only. It gates the
@@ -196,7 +209,18 @@ export default function NodeDetailPage() {
         <button className="detail-back-link" onClick={() => navigate(backPath)}>
           {backLabel}
         </button>
-        <div className="detail-scheduler-name">{fqn}</div>
+        <div className="detail-title-block">
+          <div className="detail-scheduler-name detail-node-title">
+            <NodeTypeIcon nodeType={nodeType} size={15} />
+            {fqn}
+            {nodeType && (
+              <span className="info-strip info-strip--neutral info-strip--inline">{nodeType}</span>
+            )}
+          </div>
+          {nodeType === 'python-csv' && sourceUri && (
+            <div className="detail-node-source">source: {sourceUri}</div>
+          )}
+        </div>
       </header>
 
       <div className="page-action-row">

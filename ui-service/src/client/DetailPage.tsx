@@ -15,6 +15,7 @@ import { buildServiceColors, listServices, serviceOfNode } from './service-helpe
 import { fetchAllPages } from './fetch-all-pages';
 import { getDriftState, getDriftBadge } from './drift-helpers';
 import DAGPanel from './DAGPanel';
+import NodeTypeIcon from './NodeTypeIcon';
 import NodesPanel from './NodesPanel';
 import PastRunsPanel from './PastRunsPanel';
 import RerunFailedModal, { RerunFailedMode } from './RerunFailedModal';
@@ -493,6 +494,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     ? new Set(activeGraph.edges.filter((e) => e.to_node_id === selectedNodeId).map((e) => e.from_node_id))
     : new Set<string>();
 
+  const selectedNodeType = selectedNodeId && activeGraph
+    ? activeGraph.nodes.find((n) => n.node_id === selectedNodeId)?.node_type ?? ''
+    : '';
+
   const legendChildIds = selectedNodeId && activeGraph
     ? new Set(activeGraph.edges.filter((e) => e.from_node_id === selectedNodeId).map((e) => e.to_node_id))
     : new Set<string>();
@@ -670,7 +675,10 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
                 </ReactFlowProvider>
                 {selectedNodeId && !selectedRunId && lastRunId && (
                   <div className="dag-focus-legend">
-                    <div className="dag-focus-legend-title">{selectedNodeId.split('.').pop()}</div>
+                    <div className="dag-focus-legend-title">
+                      <NodeTypeIcon nodeType={selectedNodeType} size={12} />
+                      {selectedNodeId.split('.').pop()}
+                    </div>
                     <div className="dag-focus-legend-row">
                       <div className="dag-focus-dot dag-focus-dot--selected" /> Selected
                     </div>

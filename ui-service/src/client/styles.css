@@ -381,6 +381,9 @@ body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 .dag-focus-legend-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 9.5px;
   font-weight: 700;
   color: #475569;
@@ -414,6 +417,28 @@ body {
   align-items: center;
   gap: 7px;
   padding: 2px 4px;
+}
+
+/* Node label on the graph canvas: family icon + table name. */
+.dag-node-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.dag-node-label > svg,
+.dag-node-label > .node-type-csv { flex-shrink: 0; }
+
+/* python-csv mark: the Python logo with a table badge overlaid at its
+   bottom-right corner. The white plate keeps the badge legible on any
+   status fill. */
+.node-type-csv { position: relative; display: inline-flex; }
+.node-type-csv-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -3px;
+  background: #fff;
+  border-radius: 2px;
 }
 .dag-service-vertex-dot {
   width: 10px;
@@ -520,6 +545,13 @@ body {
 /* Secondary line under a table cell's primary value (e.g. the offending
    source file under a compile/seed node id). */
 .nodes-node-subpath { font-size: 11.5px; color: #6b7280; margin-top: 2px;
+                      font-family: 'SF Mono', 'Fira Mono', monospace; }
+
+/* Node detail header: family icon + fqn + type chip on the identity row,
+   with the CSV source line stacked underneath on python-csv nodes. */
+.detail-title-block { flex: 1; display: flex; flex-direction: column; }
+.detail-node-title { display: flex; align-items: center; gap: 8px; }
+.detail-node-source { font-size: 11.5px; color: #6b7280; margin-top: 2px;
                       font-family: 'SF Mono', 'Fira Mono', monospace; }
 /* Muted per-row qualifier cell (e.g. the failed stage on a rejected release).
    Present only on some rows; absent values use .nodes-dash, never a coloured

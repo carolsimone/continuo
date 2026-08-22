@@ -9,6 +9,7 @@ const mockTriggerSingleNodeRun = vi.fn();
 const mockListNodes = vi.fn();
 const mockListNodeNames = vi.fn();
 const mockGetNode = vi.fn();
+const mockGetNodeVersions = vi.fn();
 
 const mockStateClient = {
   listNodeRuns: mockListNodeRuns,
@@ -17,7 +18,7 @@ const mockStateClient = {
   listNodeNames: mockListNodeNames,
 };
 
-const mockGraphClient = { getNode: mockGetNode };
+const mockGraphClient = { getNode: mockGetNode, getNodeVersions: mockGetNodeVersions };
 
 function makeApp() {
   const app = express();
@@ -33,6 +34,7 @@ describe('nodes router', () => {
     mockListNodes.mockReset();
     mockListNodeNames.mockReset();
     mockGetNode.mockReset();
+    mockGetNodeVersions.mockReset();
   });
 
   it('GET /:svc/:schema/:table/runs returns parsed rows', async () => {
@@ -251,6 +253,57 @@ describe('nodes router', () => {
       { service_name: 'svc', schema_name: 'schema', table_name: 'tbl' },
       expect.any(Function),
     );
+  });
+
+  it('GET /meta does not look up versions for a non-csv node', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'dbt-model', test_count: 2, test_count_known: true }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('source_uri');
+    expect(mockGetNodeVersions).not.toHaveBeenCalled();
+  });
+
+  it('GET /meta resolves a python-csv node source URI from its current version', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb(null, { versions: [{ raw_code: 's3://bucket/vendor/orders.csv' }] }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body.node_type).toBe('python-csv');
+    expect(res.body.source_uri).toBe('s3://bucket/vendor/orders.csv');
+    expect(mockGetNodeVersions).toHaveBeenCalledWith(
+      { unique_id: 'schema.tbl', current_only: true, include_code: true },
+      expect.any(Function),
+    );
+  });
+
+  it('GET /meta degrades to an empty source_uri when the version lookup fails', async () => {
+    // The meta endpoint's primary job is gating the test trigger; a broken
+    // version lookup must not take the whole node page down with it.
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb({ code: grpc.status.UNAVAILABLE, message: 'down' }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body.source_uri).toBe('');
+  });
+
+  it('GET /meta returns an empty source_uri for a csv node with no current version', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) => cb(null, { versions: [] }));
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body.source_uri).toBe('');
   });
 
   it('GET /meta maps gRPC NOT_FOUND to 404', async () => {

@@ -15,6 +15,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import * as dagre from 'dagre';
 import { GraphEdge, GraphNode, Task } from './types';
+import NodeTypeIcon from './NodeTypeIcon';
 import { resolveNodeStatus, taskNodeId } from './detail-page-helpers';
 import {
   DisplayEdge,
@@ -253,7 +254,14 @@ function buildLayout(
     return {
       id: n.node_id,
       position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
-      data: { label: n.node_id.split('.').pop() ?? n.node_id },
+      data: {
+        label: (
+          <div className="dag-node-label">
+            <NodeTypeIcon nodeType={n.node_type} />
+            <span>{n.node_id.split('.').pop() ?? n.node_id}</span>
+          </div>
+        ),
+      },
       style: nodeStyle(status, isExternal, role, accent),
     };
   });

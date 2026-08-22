@@ -117,7 +117,11 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
   });
 
   // GET /:service/:schema/:table/meta — per-node topology metadata (test_count)
-  // used by the UI to gate single-node "test" on a zero-test node.
+  // used by the UI to gate single-node "test" on a zero-test node. For a
+  // python-csv node the response also carries source_uri: the CSV file the
+  // node loads, recorded as the current version's raw_code (a csv node has no
+  // script). The lookup is best-effort — the test gate must keep working even
+  // when the version query fails — so errors degrade to an empty source_uri.
   router.get('/:service/:schema/:table/meta', (req, res) => {
     graphClient.getNode(
       {
@@ -127,11 +131,24 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
       },
       (err: any, response: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
-        res.json({
+        const meta = {
           node_type:        response.node_type || '',
           test_count:       Number(response.test_count ?? 0),
           test_count_known: Boolean(response.test_count_known),
-        });
+        };
+        if (meta.node_type !== 'python-csv') return res.json(meta);
+
+        graphClient.getNodeVersions(
+          {
+            unique_id:    `${req.params.schema}.${req.params.table}`,
+            current_only: true,
+            include_code: true,
+          },
+          (verr: any, vres: any) => {
+            const sourceUri = verr ? '' : String(vres?.versions?.[0]?.raw_code ?? '');
+            res.json({ ...meta, source_uri: sourceUri });
+          },
+        );
       },
     );
   });
