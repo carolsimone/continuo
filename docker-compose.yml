@@ -63,9 +63,9 @@ services:
 
   flyway-agent-chat:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_agent -user=continuo_svc -password=continuo -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_agent_chat -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
-      - ./db/migration/agent:/flyway/sql
+      - ./db/migration/agent_chat:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -539,7 +539,7 @@ services:
       - stub-llm
       - redis
     environment:
-      - POSTGRES_DB=continuo_agent
+      - POSTGRES_DB=continuo_agent_chat
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
       - POSTGRES_HOST=postgres

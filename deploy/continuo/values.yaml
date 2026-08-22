@@ -416,7 +416,7 @@ services:
       # agent-runner past replicas: 1.
       - {name: REDIS_PASSWORD, ref: redis}
     env:
-      POSTGRES_DB: continuo_agent
+      POSTGRES_DB: continuo_agent_chat
       HEALTH_PORT: "8091"
       GRPC_PORT: "50053"
       CONTINUO_STATE_ADDR: state:50051

@@ -11,7 +11,7 @@ import (
 func setBaseEnv(t *testing.T) {
 	t.Setenv("POSTGRES_HOST", "localhost")
 	t.Setenv("POSTGRES_PORT", "5432")
-	t.Setenv("POSTGRES_DB", "continuo_agent")
+	t.Setenv("POSTGRES_DB", "continuo_agent_chat")
 	t.Setenv("POSTGRES_USER", "u")
 	t.Setenv("POSTGRES_PASSWORD", "p")
 	t.Setenv("LLM_PROVIDER", "anthropic")

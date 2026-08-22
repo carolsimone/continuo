@@ -46,10 +46,10 @@ RUN cd /cli && CGO_ENABLED=0 go build -o /usr/local/bin/continuo ./cmd/continuo
 COPY pkg/ ./pkg/
 COPY agent-chat/ ./agent-chat/
 
-# agent-chat/test loads db/migration/agent/V*.sql at test runtime
+# agent-chat/test loads db/migration/agent_chat/V*.sql at test runtime
 # so the in-container integration tests apply the same Flyway DDL as
 # production.
-COPY db/migration/agent/ ./db/migration/agent/
+COPY db/migration/agent_chat/ ./db/migration/agent_chat/
 
 WORKDIR /app/agent-chat
 
