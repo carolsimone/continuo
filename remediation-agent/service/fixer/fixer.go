@@ -55,14 +55,14 @@ type Input struct {
 	Service      string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
 	// python-model, or python-csv), set on validation and duplicate-relation
-	// failures. It
-	// selects which Fixer runs for a validation failure (see For), and every
-	// Fixer that can be reached by a python node also checks it before reading
-	// anything: the duplicate-table Fixer's target relation is declared in the
-	// service's contract.yaml, whose repository path this system does not
-	// carry, so the file named by FilePath cannot contain the fix, and the dbt
-	// validation Fixer's candidate artifact is a JSON validation spec rather
-	// than SQL, so no source fix can be built from what it carries.
+	// failures. It selects which Fixer runs for a validation failure (see
+	// For), and every Fixer that can be reached by a python node also checks
+	// it before reading anything: the duplicate-table Fixer's target relation
+	// is declared in the service's contract.yaml, whose repository path this
+	// system does not carry, so the file named by FilePath cannot contain the
+	// fix, and the dbt validation Fixer's candidate artifact is a JSON
+	// validation spec rather than SQL, so no source fix can be built from
+	// what it carries.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID). Set on a duplicate-relation

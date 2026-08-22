@@ -60,13 +60,14 @@ type RemediationRequested struct {
 	// lookup.
 	Service string `json:"service,omitempty"`
 	// NodeType is the failing node's kind (dbt-model, dbt-seed,
-	// dbt-snapshot, python-model, or python-csv), set on validation and duplicate-relation
-	// failures so the agent can decide how to handle the node without a
-	// topology lookup of its own. A python node's source is not a single
-	// readable file — it is an entry in a contract yaml this system carries no
-	// path for — so a validation failure on one is routed to a fixer that
-	// searches the repository for that yaml and verifies its repair by running
-	// it, while a duplicate-relation failure on one is skipped outright.
+	// dbt-snapshot, python-model, or python-csv), set on validation and
+	// duplicate-relation failures so the agent can decide how to handle the
+	// node without a topology lookup of its own. A python node's source is
+	// not a single readable file — it is an entry in a contract yaml this
+	// system carries no path for — so a validation failure on one is routed
+	// to a fixer that searches the repository for that yaml and verifies
+	// its repair by running it, while a duplicate-relation failure on one
+	// is skipped outright.
 	NodeType string `json:"node_type,omitempty"`
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID). Set on duplicate-relation
