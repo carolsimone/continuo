@@ -85,13 +85,19 @@ class PythonSpecArtifactBuilder(CandidateArtifactBuilder):
             )
             for sql in node.dependency_sqls
         ]
+        spec = {
+            "reads": reads,
+            "output_columns": node.output_columns,
+            "config": node.config,
+        }
+        if node.csv_source:
+            # Not schema-rewritten: the uri is a file location, not a
+            # warehouse reference. The runner range-fetches its header and
+            # checks it against output_columns before building the table.
+            spec["csv_source"] = node.csv_source
         uri = self._uploader.upload(
             release_id=ctx.release_id,
             unique_id=node.unique_id,
-            spec={
-                "reads": reads,
-                "output_columns": node.output_columns,
-                "config": node.config,
-            },
+            spec=spec,
         )
         return {"candidate_artifact_uri": uri}

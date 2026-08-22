@@ -217,20 +217,20 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 			},
 			Rationale: "declared the column the script produces", Confidence: "high", Model: "test-model",
 		}}},
-		Evidence:        fakeEvidence{data: map[string]string{"s3://log": "runner log body"}},
-		Sanitizer:       fakeSanitizer{},
-		Artifacts:       arts,
-		Logger:          testLogger(),
-		Upstream:        &fakeUpstream{},
-		Precedents:      &fakePrecedents{},
-		CandidateSource: &fakeCandidateSource{src: ports.CandidateSource{RawCode: `{"output_columns":[]}`, Runtime: "python"}},
-		Archive:         arch,
+		Evidence:          fakeEvidence{data: map[string]string{"s3://log": "runner log body"}},
+		Sanitizer:         fakeSanitizer{},
+		Artifacts:         arts,
+		Logger:            testLogger(),
+		Upstream:          &fakeUpstream{},
+		Precedents:        &fakePrecedents{},
+		CandidateSource:   &fakeCandidateSource{src: ports.CandidateSource{RawCode: `{"output_columns":[]}`, Runtime: "python"}},
+		Archive:           arch,
 		ContractLocator:   locator,
 		ContractInspector: locator,
 		Packager:          pkgr,
-		Releases:        rel,
-		PriorAttempts:   &fakeAttempts{},
-		SQLDialect:      "postgres",
+		Releases:          rel,
+		PriorAttempts:     &fakeAttempts{},
+		SQLDialect:        "postgres",
 	}
 	return svc, arch, pkgr, rel, arts
 }
@@ -515,14 +515,18 @@ func TestWriteEditArtifacts_TwoEditsOfOneAttemptDoNotCollide(t *testing.T) {
 	require.Equal(t, "contracts/b.yml", second.Path)
 }
 
-// TestFor_ValidationDispatchesOnNodeType verifies that a python node's
-// validation failure reaches the python lane while every dbt shape — including
-// a trigger carrying no node type at all — keeps reaching today's validation
-// fixer.
+// TestFor_ValidationDispatchesOnNodeType verifies that a python-model node's
+// validation failure reaches the python lane, a python-csv node's reaches its
+// own dedicated lane, and every dbt shape — including a trigger carrying no
+// node type at all — keeps reaching today's validation fixer.
 func TestFor_ValidationDispatchesOnNodeType(t *testing.T) {
 	py, err := For("validation", "python-model")
 	require.NoError(t, err)
 	require.IsType(t, pythonValidationFixer{}, py)
+
+	csv, err := For("validation", "python-csv")
+	require.NoError(t, err)
+	require.IsType(t, csvValidationFixer{}, csv)
 
 	for _, nodeType := range []string{"dbt-model", "dbt-seed", "dbt-snapshot", ""} {
 		f, ferr := For("validation", nodeType)
@@ -742,6 +746,40 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 			require.Empty(t, arts.written, "a refused answer writes no artifacts")
 		})
 	}
+}
+
+// TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies covers the
+// companion case to the kind-flip check above: declaringYAML, like every
+// legacy contract, omits "kind:" entirely, and both the runtime parsers and
+// this locator default an absent kind to "python-model". An answer that
+// writes that default explicitly is a no-op normalization, not an identity
+// change, and must reach verification exactly like any other accepted fix —
+// the locator defaulting absent Kind is what keeps this from reading as
+// kind "" -> "python-model" and being refused by identityBreach.
+func TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies(t *testing.T) {
+	root := pythonRepoTree(t)
+	svc, _, pkgr, rel, _ := pythonSvc(t, root)
+	const answerWithExplicitKind = `nodes:
+  - schema: analytics
+    table: py_daily_kpis
+    kind: python-model
+    script: scripts/py_daily_kpis.py
+    reads:
+      orders: select id from analytics.orders
+    output_columns:
+      - name: revenue_total
+`
+	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
+		Files:     []ports.ProposedFile{{Path: "services/service-py/contracts/py_daily_kpis.yml", Content: answerWithExplicitKind}},
+		Rationale: "declared the column the script produces", Confidence: "high", Model: "test-model",
+	}}}
+
+	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusVerifying, r.Proposal.Status,
+		"writing the same default kind explicitly must verify like any other accepted fix")
+	require.Len(t, pkgr.calls, 1)
+	require.Len(t, rel.submissions, 1)
 }
 
 // TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails covers the

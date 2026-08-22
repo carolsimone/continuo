@@ -28,57 +28,96 @@ const (
 	pyE2EService       = "svc-py-e2e"
 	pyProbeUniqueID    = "e2e_schema.py_probe"
 	pyBadShapeUniqueID = "e2e_schema.py_bad_shape"
+	pyCsvUniqueID      = "e2e_schema.py_csv"
 
 	// pyFixtureImage is the domain image scripts/setup.sh builds and side-loads
 	// into kind. The release posts it as image_tag and the executor runs it
 	// verbatim, so this string must match setup.sh's PY_FIXTURE_IMAGE.
 	pyFixtureImage = "continuo-e2e-py-probe:latest"
+
+	// pyCsvSourceKey is the S3 key the py_csv node's contract points at
+	// (s3://<e2eS3Bucket>/pyCsvSourceKey). Seeded from pyCsvFixtureData before
+	// the release posts, so both the validation runner's header-only fetch and
+	// the run harness's full fetch resolve against real content.
+	pyCsvSourceKey = "fixtures/orders.csv"
 )
 
-// The fixture's authored contract and scripts are embedded from the same files
-// the fixture image's Dockerfile COPYs, so the artifact this test uploads and
-// the artifact the container runs cannot drift. Embedding rather than reading
-// from disk also frees the test from assuming where the repository is mounted.
+// The fixture's authored contracts and scripts are embedded from the same
+// files the fixture image's Dockerfile COPYs, so the artifact this test
+// uploads and the artifact the container runs cannot drift. Embedding rather
+// than reading from disk also frees the test from assuming where the
+// repository is mounted.
 //
 //go:embed fixtures/py-probe/contracts/py_probe.yml
 var pyFixtureContract []byte
 
+//go:embed fixtures/py-probe/contracts/py_csv.yml
+var pyCsvFixtureContract []byte
+
 //go:embed fixtures/py-probe/scripts
 var pyFixtureScripts embed.FS
 
+// pyCsvFixtureData is the csv object the py_csv node's contract names — it is
+// never baked into the fixture image (only contracts/ and scripts/ are), so
+// the test itself seeds it into S3 before posting the release.
+//
+//go:embed fixtures/py-probe/data/orders.csv
+var pyCsvFixtureData []byte
+
 // pythonContractYAML renders the merged contract_version-1 wire artifact for the
-// python e2e service from the fixture image's own authored contract file,
+// python e2e service from the fixture image's own authored contract files,
 // adding the per-node hash fields a domain repository's CI would compute.
 //
-// Deriving it from the same file the image bakes is what keeps the shape
+// Deriving it from the same files the image bakes is what keeps the shape
 // validation checks and the shape the container actually runs identical;
 // duplicating the node definitions here would let the two drift, so a release
 // could validate one contract while the pod executed another.
 //
-// source_hash is the real sha256 of each node's script file, so editing a
-// script genuinely re-fingerprints its node. shared_code_hash is empty (the
-// scripts import nothing in-repo). manifest-controller recomputes only the
-// fold, not config_hash, so any deterministic config_hash value is accepted as
-// long as the fold matches.
+// A scripted node's source_hash is the real sha256 of its script file, so
+// editing a script genuinely re-fingerprints its node. A python-csv node runs
+// no script, but the shipped merge tool's node_entry() still emits
+// "script": node.script unconditionally, so its wire entry carries an empty
+// string rather than an absent key — mirroring what a domain repository's CI
+// computes for one (see manifest-controller/tests/test_python_contract_parser.py's
+// make_csv_entry), its source_hash is the sha256 of its declared csv uri
+// instead, so editing the uri re-fingerprints the node. shared_code_hash is
+// empty for every node (nothing here imports in-repo code). manifest-controller
+// recomputes only the fold, not config_hash, so any deterministic config_hash
+// value is accepted as long as the fold matches.
 func pythonContractYAML(t *testing.T) string {
 	t.Helper()
 
-	var doc struct {
-		Nodes []map[string]any `yaml:"nodes"`
+	var nodes []map[string]any
+	for _, raw := range [][]byte{pyFixtureContract, pyCsvFixtureContract} {
+		var doc struct {
+			Nodes []map[string]any `yaml:"nodes"`
+		}
+		require.NoError(t, yaml.Unmarshal(raw, &doc), "parse fixture contract")
+		require.NotEmpty(t, doc.Nodes, "fixture contract declares no nodes")
+		nodes = append(nodes, doc.Nodes...)
 	}
-	require.NoError(t, yaml.Unmarshal(pyFixtureContract, &doc), "parse fixture contract")
-	require.NotEmpty(t, doc.Nodes, "fixture contract declares no nodes")
 
-	for _, node := range doc.Nodes {
-		scriptPath, _ := node["script"].(string)
-		require.NotEmpty(t, scriptPath, "fixture node is missing a script path")
-		script, err := fs.ReadFile(pyFixtureScripts, path.Join("fixtures/py-probe", scriptPath))
-		require.NoError(t, err, "read fixture script %s", scriptPath)
+	for _, node := range nodes {
+		var sourceHash string
+		if scriptPath, _ := node["script"].(string); scriptPath != "" {
+			script, err := fs.ReadFile(pyFixtureScripts, path.Join("fixtures/py-probe", scriptPath))
+			require.NoError(t, err, "read fixture script %s", scriptPath)
+			sourceHash = sha256Hex(string(script))
+		} else {
+			reads, _ := node["reads"].(map[string]any)
+			csvURI, _ := reads["csv"].(string)
+			require.NotEmpty(t, csvURI, "python-csv fixture node is missing reads.csv")
+			sourceHash = sha256Hex(csvURI)
+			// The shipped merge tool's node_entry() emits "script": node.script
+			// unconditionally, so every real csv wire entry carries an empty
+			// string, never an absent key. Match that shape here so this test
+			// exercises the document manifest-controller actually receives.
+			node["script"] = ""
+		}
 
 		entryJSON, err := json.Marshal(node)
 		require.NoError(t, err)
 
-		sourceHash := sha256Hex(string(script))
 		configHash := sha256Hex(string(entryJSON))
 		node["source_hash"] = sourceHash
 		node["shared_code_hash"] = ""
@@ -89,7 +128,7 @@ func pythonContractYAML(t *testing.T) string {
 	merged, err := yaml.Marshal(map[string]any{
 		"contract_version": 1,
 		"service":          pyE2EService,
-		"nodes":            doc.Nodes,
+		"nodes":            nodes,
 	})
 	require.NoError(t, err, "marshal merged contract")
 	return string(merged)
@@ -97,9 +136,10 @@ func pythonContractYAML(t *testing.T) string {
 
 // TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes proves the
 // python release path end to end: a kind=python release skips the compile
-// leg, parses the contract, validates its node via a real build_from_columns
-// Job against the published runner image, promotes, swaps the Neo4j
-// topology, and records the python kind + contract pointer on service_prod.
+// leg, parses the contract, validates every node — including a python-csv
+// node in the same mixed DAG — via a real build_from_columns Job against the
+// published runner image, promotes, swaps the Neo4j topology, and records
+// the python kind + contract pointer on service_prod.
 func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -119,8 +159,14 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 
 	// Skip-compile threading: the validation request names exactly the python
 	// nodes, routed to build_from_columns with a .json spec URI, and no
-	// compile.requested was ever emitted for this release.
+	// compile.requested was ever emitted for this release. The csv node takes
+	// the identical validation_op — its spec carries csv_source instead of a
+	// script, and the runner's header check against the real localstack
+	// object (seeded above) must have passed for the release to promote at
+	// all, which waitForReleasePromoted inside promotePythonFixtureRelease
+	// already proved.
 	assertValidationNodeOp(t, ctx, clients, releaseID, pyProbeUniqueID, "build_from_columns", ".json")
+	assertValidationNodeOp(t, ctx, clients, releaseID, pyCsvUniqueID, "build_from_columns", ".json")
 	assertNoCompileRequested(t, ctx, clients, releaseID)
 
 	// The promoted pointer records the python kind and the contract artifact.
@@ -178,10 +224,15 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 	contractKey := fmt.Sprintf("%s/%s/contract.yaml", pyE2EService, releaseID)
 	putS3Object(t, ctx, clients, contractKey, []byte(pythonContractYAML(t)))
 
+	// The py_csv node's contract names this exact key; seeded before the
+	// release posts so both the validation runner's header-only fetch and (on
+	// a later run) the harness's full fetch resolve against real content.
+	putS3Object(t, ctx, clients, pyCsvSourceKey, pyCsvFixtureData)
+
 	postPythonRelease(t, clients, pyE2EService, releaseID, pyFixtureImage)
 
 	assertValidationRequestedNodes(t, ctx, clients, releaseID,
-		[]string{pyProbeUniqueID, pyBadShapeUniqueID})
+		[]string{pyProbeUniqueID, pyBadShapeUniqueID, pyCsvUniqueID})
 
 	// Real build_from_columns Jobs run in kind against the published runner
 	// image; on success the release promotes and the topology swaps.
@@ -193,10 +244,12 @@ func promotePythonFixtureRelease(t *testing.T, ctx context.Context, clients *tes
 
 // TestE2E_PythonNodeRun_MaterializesAndReportsFailures proves the executor's
 // python runtime dispatch end to end. It promotes the python fixture service,
-// then runs each of its nodes: the conforming node materializes real rows in
-// the warehouse through the harness, and the non-conforming one fails with the
-// harness's deterministic error class reaching the control plane as structured
-// JSON rather than scraped text.
+// then runs each of its nodes: the conforming script node materializes real
+// rows in the warehouse through the harness, the non-conforming one fails
+// with the harness's deterministic error class reaching the control plane as
+// structured JSON rather than scraped text, and the python-csv node — a
+// scriptless node in the same mixed DAG — fetches its declared S3 source
+// itself and materializes the csv's rows with the declared column types.
 func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -264,6 +317,47 @@ func TestE2E_PythonNodeRun_MaterializesAndReportsFailures(t *testing.T) {
 			"the structured result must carry the harness's deterministic error class")
 
 		t.Log("✅ a failing python node surfaced its A6 error class as structured JSON")
+	})
+
+	t.Run("csv node materializes the seeded csv's rows", func(t *testing.T) {
+		runID, scheduleName := triggerPythonNodeRun(t, ctx, clients, "py_csv")
+		defer cleanupSingleNodeRun(t, ctx, clients, runID, scheduleName)
+
+		verifySchedulerSucceeded(t, ctx, clients, runID)
+
+		type orderRow struct {
+			OrderID int     `db:"order_id"`
+			Amount  float64 `db:"amount"`
+		}
+		var rows []orderRow
+		require.NoError(t, clients.dbtDB.SelectContext(ctx, &rows,
+			`SELECT order_id, amount FROM e2e_schema.py_csv ORDER BY order_id`))
+		require.Len(t, rows, 3, "the harness must have loaded every data row from the seeded csv")
+		assert.Equal(t, []orderRow{
+			{OrderID: 1, Amount: 19.99},
+			{OrderID: 2, Amount: 5.5},
+			{OrderID: 3, Amount: 100},
+		}, rows, "row values must match the seeded csv exactly")
+
+		columnTypes := map[string]string{}
+		typeRows, err := clients.dbtDB.QueryContext(ctx, `
+			SELECT column_name, data_type FROM information_schema.columns
+			WHERE table_schema = 'e2e_schema' AND table_name = 'py_csv'
+		`)
+		require.NoError(t, err)
+		defer typeRows.Close()
+		for typeRows.Next() {
+			var name, dataType string
+			require.NoError(t, typeRows.Scan(&name, &dataType))
+			columnTypes[name] = dataType
+		}
+		require.NoError(t, typeRows.Err())
+		assert.Equal(t, "integer", columnTypes["order_id"],
+			"the declared INTEGER column type must be what the table carries")
+		assert.Equal(t, "double precision", columnTypes["amount"],
+			"the declared DOUBLE PRECISION column type must be what the table carries")
+
+		t.Log("✅ python-csv node fetched its S3 source and materialized the csv's rows in the warehouse")
 	})
 }
 

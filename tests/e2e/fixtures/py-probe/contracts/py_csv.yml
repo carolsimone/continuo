@@ -1,0 +1,16 @@
+nodes:
+  # python-csv node: no script. The runtime harness fetches reads.csv itself
+  # (RUN) and the validation runner range-fetches only its header (VALIDATE)
+  # to check it against output_columns before materializing an empty table.
+  - schema: e2e_schema
+    table: py_csv
+    owner: e2e
+    schedule: daily
+    criticality: SECONDARY
+    kind: python-csv
+    description: "csv-sourced python node for the e2e run path"
+    reads:
+      csv: s3://continuo/fixtures/orders.csv
+    output_columns:
+      - {name: order_id, type: INTEGER, nullable: false}
+      - {name: amount, type: DOUBLE PRECISION}

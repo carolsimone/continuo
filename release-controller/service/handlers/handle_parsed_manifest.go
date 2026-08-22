@@ -437,7 +437,7 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 // cloned empty from its production schema regardless of kind.
 func validationOpFor(n release.Node, changedClosureSet map[string]bool) (op, prodSchema string) {
 	if changedClosureSet[n.UniqueID] {
-		if n.NodeType == string(pkg_model.NodeTypePythonModel) {
+		if pkg_model.NodeType(n.NodeType).IsPython() {
 			return "build_from_columns", ""
 		}
 		return "build_from_sql", ""
@@ -596,7 +596,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // node with an alias override).
 //
 // node_type carries the target claimant's kind (dbt-model, dbt-seed,
-// dbt-snapshot, or python-model) so remediation can tell, without a topology
+// dbt-snapshot, python-model, or python-csv) so remediation can tell, without a topology
 // lookup of its own, whether the target's source is a single file this
 // system can read. A python node's relation is declared in the service's
 // contract.yaml, whose repository path this system does not carry — only

@@ -227,6 +227,55 @@ func TestBuildPythonPodSpec_SecurityContext(t *testing.T) {
 	assert.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, spec.SecurityContext.SeccompProfile.Type)
 }
 
+// csvParams returns JobParams for a python-csv run task.
+func csvParams() JobParams {
+	p := pythonParams()
+	p.NodeType = pkg_model.NodeTypePythonCsv
+	return p
+}
+
+// TestBuildPythonPodSpec_CsvGetsS3Credentials verifies a python-csv pod carries
+// all four S3 credential env vars, with the actual configured values forwarded
+// through — the csv harness fetches its own source and needs real credentials,
+// not just the keys present.
+func TestBuildPythonPodSpec_CsvGetsS3Credentials(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	t.Setenv("S3_ENDPOINT_URL", "http://localstack:4566")
+	t.Setenv("AWS_ACCESS_KEY_ID", "csv-access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "csv-secret-key")
+	t.Setenv("AWS_DEFAULT_REGION", "us-east-2")
+
+	spec, err := buildPythonPodSpec(csvParams())
+	require.NoError(t, err)
+
+	env := envMap(spec.Containers[0].Env)
+	assert.Equal(t, "http://localstack:4566", env["S3_ENDPOINT_URL"])
+	assert.Equal(t, "csv-access-key", env["AWS_ACCESS_KEY_ID"])
+	assert.Equal(t, "csv-secret-key", env["AWS_SECRET_ACCESS_KEY"])
+	assert.Equal(t, "us-east-2", env["AWS_DEFAULT_REGION"])
+}
+
+// TestBuildPythonPodSpec_ModelStillGetsNoS3Credentials pins the negative half
+// of the csv exception: a python-model pod must never carry S3 credentials,
+// since its contract files travel inside the image itself.
+func TestBuildPythonPodSpec_ModelStillGetsNoS3Credentials(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	t.Setenv("S3_ENDPOINT_URL", "http://localstack:4566")
+	t.Setenv("AWS_ACCESS_KEY_ID", "csv-access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "csv-secret-key")
+	t.Setenv("AWS_DEFAULT_REGION", "us-east-2")
+
+	spec, err := buildPythonPodSpec(pythonParams())
+	require.NoError(t, err)
+
+	env := envMap(spec.Containers[0].Env)
+	for _, name := range []string{
+		"S3_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION",
+	} {
+		assert.NotContains(t, env, name, "%s must not reach a python-model pod", name)
+	}
+}
+
 // TestCreateQueryJob_PythonModel_UsesPythonPodSpec verifies the dispatch branch
 // reaches the Kubernetes API: the created Job carries the shared production
 // labels (so k8s-controller routes it through the production lifecycle and the
@@ -252,6 +301,37 @@ func TestCreateQueryJob_PythonModel_UsesPythonPodSpec(t *testing.T) {
 	assert.Equal(t, "ghcr.io/acme/marketing-py:12-abc1234", podSpec.Containers[0].Image)
 	assert.Equal(t, "analytics.py_probe", envByName(podSpec, "NODE_ID"))
 	assert.Empty(t, podSpec.InitContainers)
+}
+
+// TestCreateQueryJob_PythonCsv_UsesPythonPodSpec verifies python-csv nodes take
+// the same python pod dispatch as python-model (both are IsPython), carry the
+// runtime=python label, and additionally get S3 credentials on the container.
+func TestCreateQueryJob_PythonCsv_UsesPythonPodSpec(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
+	t.Setenv("S3_ENDPOINT_URL", "http://localstack:4566")
+	t.Setenv("AWS_ACCESS_KEY_ID", "csv-access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "csv-secret-key")
+	t.Setenv("AWS_DEFAULT_REGION", "us-east-2")
+	client := newValidationTestClient()
+
+	params := csvParams()
+	params.JobName = "run-csv-probe"
+	require.NoError(t, client.CreateQueryJob(context.Background(), params))
+
+	job := fetchJob(t, client, "default", "run-csv-probe")
+	assert.Equal(t, "dbt-job", job.Labels["app"],
+		"the executor job selector drives the concurrency cap and must not change")
+	assert.Equal(t, "python", job.Labels["runtime"])
+	assert.NotContains(t, job.Labels, "mode", "a production run Job carries no mode label")
+
+	podSpec := job.Spec.Template.Spec
+	require.Len(t, podSpec.Containers, 1)
+	assert.Equal(t, "ghcr.io/acme/marketing-py:12-abc1234", podSpec.Containers[0].Image)
+	assert.Equal(t, "analytics.py_probe", envByName(podSpec, "NODE_ID"))
+	assert.Empty(t, podSpec.InitContainers)
+
+	env := envMap(podSpec.Containers[0].Env)
+	assert.Equal(t, "csv-access-key", env["AWS_ACCESS_KEY_ID"], "csv Jobs get S3 credentials")
 }
 
 // TestCreateQueryJob_PythonModel_IsIdempotent verifies a redelivered command

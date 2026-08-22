@@ -16,10 +16,11 @@ import (
 // in the snapshot but absent from existingKeys is an error (we cannot point at
 // a manifest we do not know). image_tag is the first non-empty tag among the
 // service's nodes. manifest_kind is derived from the service's own nodes: any
-// node with NodeType python-model makes the service ManifestKindPython,
-// otherwise ManifestKindDbt; a service whose nodes mix python and non-python
-// types is an error (a service is either a dbt project or a python service,
-// never both). Idempotent: re-running upserts the same rows.
+// node whose NodeType.IsPython() is true (python-model or python-csv) makes
+// the service ManifestKindPython, otherwise ManifestKindDbt; a service whose
+// nodes mix python and non-python types is an error (a service is either a
+// dbt project or a python service, never both). Idempotent: re-running
+// upserts the same rows.
 // Returns the count of services seeded.
 func SeedServiceProd(
 	ctx context.Context,
@@ -50,7 +51,7 @@ func SeedServiceProd(
 		if e.imageTag == "" && node.ImageTag != "" {
 			e.imageTag = node.ImageTag
 		}
-		if node.NodeType == string(pkg_model.NodeTypePythonModel) {
+		if pkg_model.NodeType(node.NodeType).IsPython() {
 			e.hasPython = true
 		} else {
 			e.hasDbt = true

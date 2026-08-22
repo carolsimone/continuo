@@ -79,7 +79,7 @@ DOCKER_BUILDKIT=1 docker build -t s3-sidecar:latest s3-sidecar/
 echo "Building python e2e fixture image..."
 DOCKER_BUILDKIT=1 docker build -t "${PY_FIXTURE_IMAGE}" tests/e2e/fixtures/py-probe/
 echo "Pulling continuo-python-runtime (postgres) image..."
-docker pull ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.3.0
+docker pull ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.4.0
 echo "Building service images (batched)..."
 # Build in small batches instead of all ~13 services at once. On a 2-CPU/7.75GB
 # CI runner, building everything in parallel thrashes memory and disk I/O so badly
@@ -167,7 +167,7 @@ kind load docker-image "${PY_FIXTURE_IMAGE}" --name ${CLUSTER_NAME}
 # The validation image is pulled, not built locally, so a plain `kind load
 # docker-image` fails on a containerd-backed image store — see
 # scripts/lib/common.sh:kind_load_pulled_image.
-kind_load_pulled_image ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.3.0 "${CLUSTER_NAME}"
+kind_load_pulled_image ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.4.0 "${CLUSTER_NAME}"
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 

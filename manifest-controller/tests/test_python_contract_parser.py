@@ -1,10 +1,12 @@
 import datetime
+import hashlib
 import json
 
 import pytest
 import yaml
 
 from domain.exceptions import MalformedContractError
+from domain.model import NodeType, Runtime
 from service.content_hash import content_hash_fold
 from service.python_contract_parser import parse_python_contract
 
@@ -34,6 +36,49 @@ def make_entry(remove=(), **overrides):
         "source_hash": "aaa111",
         "shared_code_hash": "bbb222",
         "config_hash": "ccc333",
+    }
+    entry.update(overrides)
+    entry.setdefault(
+        "content_hash",
+        content_hash_fold(
+            entry.get("source_hash", ""),
+            entry.get("shared_code_hash", ""),
+            entry.get("config_hash", ""),
+        ),
+    )
+    for key in remove:
+        entry.pop(key, None)
+    return entry
+
+
+def make_csv_entry(remove=(), **overrides):
+    """A valid python-csv wire entry; overrides mutate it, remove drops keys.
+
+    A csv node has no script and its sole read is {"csv": <uri>}. The
+    "script": "" key mirrors the wire-exact shape: the runtime's merge tool
+    (merge.py node_entry()) emits "script": node.script unconditionally, so
+    every real csv entry MC receives carries an empty-string script, never an
+    absent one. Its hash parts mirror what the runtime's merge computes for a
+    csv node: source_hash over the uri bytes, shared_code_hash empty (no
+    in-repo imports), and an opaque config_hash — MC verifies only that
+    content_hash equals the fold of these three parts, never recomputing
+    config_hash from the entry itself, so the fixture does not need to
+    reproduce the runtime's canonical_entry.
+    """
+    uri = "s3://drops/orders.csv"
+    entry = {
+        "schema": "analytics",
+        "table": "orders_csv",
+        "owner": "team",
+        "schedule": "daily",
+        "criticality": "SECONDARY",
+        "kind": "python-csv",
+        "script": "",
+        "reads": {"csv": uri},
+        "output_columns": [{"name": "order_id", "type": "INTEGER", "nullable": False}],
+        "source_hash": hashlib.sha256(uri.encode()).hexdigest(),
+        "shared_code_hash": "",
+        "config_hash": "csvcfg000",
     }
     entry.update(overrides)
     entry.setdefault(
@@ -276,3 +321,121 @@ def test_mixed_type_unknown_entry_keys_fail_as_contract_error(tmp_path):
     entry["surprise"] = 2
     with pytest.raises(MalformedContractError, match="unknown fields"):
         parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_entry_parses(tmp_path):
+    nodes, _ = parse_python_contract(write_contract(tmp_path, make_csv_entry()), "v1")
+    (node,) = nodes
+    assert node.node_type == NodeType.PYTHON_CSV
+    assert node.runtime == Runtime.PYTHON
+    assert node.dependency_sqls == []
+    assert node.csv_source == "s3://drops/orders.csv"
+    assert node.original_file_path == ""
+
+
+def test_csv_entry_hash_fields_verify(tmp_path):
+    uri = "s3://drops/orders.csv"
+    entry = make_csv_entry()
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    (node,) = nodes
+    assert node.source_hash == hashlib.sha256(uri.encode()).hexdigest()
+    assert node.shared_code_hash == ""
+    assert node.content_hash == content_hash_fold(
+        node.source_hash, node.shared_code_hash, entry["config_hash"]
+    )
+
+
+def test_csv_entry_with_script_rejected(tmp_path):
+    entry = make_csv_entry(script="scripts/x.py")
+    with pytest.raises(MalformedContractError, match="script"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_entry_reads_must_be_csv_only(tmp_path):
+    entry = make_csv_entry(reads={"csv": "s3://b/k", "o": "select 1"})
+    with pytest.raises(MalformedContractError, match="exactly"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_entry_reads_value_must_be_a_valid_uri(tmp_path):
+    entry = make_csv_entry(reads={"csv": "ftp://bad"})
+    with pytest.raises(MalformedContractError, match="csv"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_uri_http_scheme_rejected(tmp_path):
+    """http:// (not https://) is rejected — the pinned runner's
+    parse_csv_uri only ever recognizes s3:// and https://."""
+    entry = make_csv_entry(reads={"csv": "http://example.com/orders.csv"})
+    with pytest.raises(MalformedContractError, match="csv"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_uri_s3_without_key_rejected(tmp_path):
+    """s3://bucket with no object key: the runtime's parse_csv_uri does
+    ``uri[5:].partition('/')`` and rejects an empty key the same way it
+    rejects an empty bucket, so this must fail here too rather than only
+    surfacing once the validation Job actually runs."""
+    entry = make_csv_entry(reads={"csv": "s3://bucket"})
+    with pytest.raises(MalformedContractError, match="bucket or key"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_uri_s3_without_bucket_rejected(tmp_path):
+    """s3:///key (empty bucket, non-empty key) is the other half of the same
+    partition — bucket is empty even though a key is present."""
+    entry = make_csv_entry(reads={"csv": "s3:///key"})
+    with pytest.raises(MalformedContractError, match="bucket or key"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_uri_https_without_host_rejected(tmp_path):
+    """https:// with nothing after the scheme: the runtime's parse_csv_uri
+    partitions on the first "/" and rejects an empty host."""
+    entry = make_csv_entry(reads={"csv": "https://"})
+    with pytest.raises(MalformedContractError, match="host"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_csv_uri_https_with_host_and_no_path_accepted(tmp_path):
+    """https://<host> with no trailing path is a valid uri — only an empty
+    host is rejected, not an absent path."""
+    entry = make_csv_entry(reads={"csv": "https://example.com"})
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    (node,) = nodes
+    assert node.csv_source == "https://example.com"
+
+
+def test_csv_uri_s3_with_bucket_and_key_accepted(tmp_path):
+    """The valid shape this whole grammar exists to keep accepting."""
+    entry = make_csv_entry(reads={"csv": "s3://bucket/path/to/orders.csv"})
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    (node,) = nodes
+    assert node.csv_source == "s3://bucket/path/to/orders.csv"
+
+
+def test_unknown_kind_rejected(tmp_path):
+    entry = make_csv_entry(kind="python-parquet")
+    with pytest.raises(MalformedContractError, match="kind"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_non_string_kind_rejected_cleanly(tmp_path):
+    entry = make_csv_entry(kind=["python-csv"])
+    with pytest.raises(MalformedContractError, match="kind"):
+        parse_python_contract(write_contract(tmp_path, entry), "v1")
+
+
+def test_model_entry_without_kind_unchanged(tmp_path):
+    nodes, _ = parse_python_contract(write_contract(tmp_path, make_entry()), "v1")
+    (node,) = nodes
+    assert node.node_type == NodeType.PYTHON_MODEL
+    assert node.csv_source == ""
+
+
+def test_model_entry_with_explicit_kind_parses_and_hash_verifies(tmp_path):
+    entry = make_entry(kind="python-model")
+    nodes, _ = parse_python_contract(write_contract(tmp_path, entry), "v1")
+    (node,) = nodes
+    assert node.node_type == NodeType.PYTHON_MODEL
+    assert node.content_hash == content_hash_fold("aaa111", "bbb222", "ccc333")

@@ -35,75 +35,161 @@ import (
 // release reaches a verdict. Nothing here re-implements any validation rule —
 // dialect, bind, and hash semantics are identical to a normal release by
 // construction, because it IS one.
+//
+// Locating the contract file and everything from the model call through
+// submitting and recording the shadow release (locateContractForFix,
+// proposeContractFixViaShadow) is shared code, not merely a similar shape,
+// with the python-csv lane (csvValidationFixer): both call the same two
+// functions. The two lanes differ only in the two seams passed into
+// proposeContractFixViaShadow — what evidence is assembled and what prompt it
+// becomes (buildPythonProposeRequest), and what "the fix preserved the node's
+// declaration" means (declarationBreach) — because a python-csv node has no
+// script and a different set of rules for what a fix may touch.
 type pythonValidationFixer struct{}
 
 func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
-	schema, table, ok := splitNodeID(in.NodeID)
+	// Steps 1-3 — split the node id, fetch the repository, locate the
+	// declaring contract file, and refuse an unverifiable sibling failure —
+	// are identical in shape to every contract-fix lane, so they live in one
+	// shared helper both lanes call.
+	schema, table, root, located, cleanup, skip, err := locateContractForFix(ctx, svc, in)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err != nil {
+		return Result{}, err
+	}
+	if skip != nil {
+		return *skip, nil
+	}
+
+	// Steps 4-10 — evidence, model call, apply, guard, package, submit, and
+	// audit artifacts are identical in shape to every contract-fix lane that
+	// ends in a shadow release; only what evidence is assembled, what prompt it
+	// becomes, and what "the fix preserved the node's declaration" means are
+	// specific to a python node, so those three are passed in as the seams.
+	return proposeContractFixViaShadow(ctx, svc, in, schema, table, root, located,
+		buildPythonProposeRequest, declarationBreach)
+}
+
+// locateContractForFix runs the steps every contract-fix lane that ends in a
+// shadow release needs before the model is ever consulted: split the node id
+// into schema and table, fetch the repository checkout at the failing
+// commit, locate the contract file declaring the node, and refuse to proceed
+// if another node declared in the same contract directory also failed the
+// original release (the shadow release this fix ends in re-runs the whole
+// packaged directory, so a second broken node there would reject it however
+// correct this fix is — see siblingFailure).
+//
+// cleanup is non-nil whenever Archive.Fetch actually ran and succeeded —
+// including when the outcome that follows is a skip — so the caller can
+// defer it unconditionally the moment this returns; it is nil only when the
+// trigger was found unusable before Fetch was ever called, or when Fetch
+// itself failed. skip is non-nil when the attempt is already fully decided as
+// proposal(status=skipped): the caller returns *skip as-is, with a nil error,
+// so the trigger is acknowledged rather than redelivered. err is non-nil only
+// for a failure a redelivery might resolve, in which case skip is always nil.
+func locateContractForFix(ctx context.Context, svc Services, in Input) (
+	schema, table, root string, located ports.Located, cleanup func(), skip *Result, err error,
+) {
+	var ok bool
+	schema, table, ok = splitNodeID(in.NodeID)
 	if !ok {
-		return skipPython(svc, in, fmt.Sprintf(
+		skip = skipResult(svc, in, fmt.Sprintf(
 			"node id %q does not name a schema and a table, so the contract file declaring it cannot be found", in.NodeID))
+		return
 	}
 	// The service names both the object-storage location the merged contract
 	// is uploaded to and the release the fix is submitted as, so a trigger
 	// without one has nowhere to put the fix and nothing to submit it under.
 	if in.Service == "" {
-		return skipPython(svc, in, "the trigger names no service, so the fix has no release to be verified under")
+		skip = skipResult(svc, in, "the trigger names no service, so the fix has no release to be verified under")
+		return
 	}
 
-	// Step 1 — the repository at the failing commit. A python node's declaring
-	// yaml path is recorded nowhere in the control plane, so the whole tree is
+	// The repository at the failing commit. A python node's declaring yaml
+	// path is recorded nowhere in the control plane, so the whole tree is
 	// searched rather than one known file read.
-	root, cleanup, err := svc.Archive.Fetch(ctx, in.Repo, in.CommitSHA)
-	// A repository or commit that does not exist is permanent: redelivering the
-	// trigger would retry it forever, so it ends the attempt with the reason
-	// recorded. Any other fetch failure is transient and is returned.
+	root, cleanup, err = svc.Archive.Fetch(ctx, in.Repo, in.CommitSHA)
+	// A repository or commit that does not exist is permanent: redelivering
+	// the trigger would retry it forever, so it ends the attempt with the
+	// reason recorded. Any other fetch failure is transient and is returned.
 	if errors.Is(err, ports.ErrSourceNotFound) {
-		return skipPython(svc, in, fmt.Sprintf("repository %s at commit %s is not available", in.Repo, in.CommitSHA))
+		skip = skipResult(svc, in, fmt.Sprintf("repository %s at commit %s is not available", in.Repo, in.CommitSHA))
+		err = nil
+		return
 	}
 	if err != nil {
-		return Result{}, fmt.Errorf("fetch repo %s@%s: %w", in.Repo, in.CommitSHA, err)
+		err = fmt.Errorf("fetch repo %s@%s: %w", in.Repo, in.CommitSHA, err)
+		return
 	}
-	defer cleanup()
 
-	// Step 2 — the declaring contract file. Neither "no file declares it" nor
-	// "several files declare it" is a transient failure, and neither may be
-	// guessed past: both end the attempt with the reason recorded, so an
-	// operator sees why the heal stopped instead of finding nothing at all.
-	located, err := svc.ContractLocator.Locate(root, schema, table)
+	// The declaring contract file. Neither "no file declares it" nor "several
+	// files declare it" is a transient failure, and neither may be guessed
+	// past: both end the attempt with the reason recorded, so an operator sees
+	// why the heal stopped instead of finding nothing at all.
+	located, err = svc.ContractLocator.Locate(root, schema, table)
 	if errors.Is(err, ports.ErrNodeNotDeclared) || errors.Is(err, ports.ErrAmbiguousDeclaration) {
-		return skipPython(svc, in, err.Error())
+		skip = skipResult(svc, in, err.Error())
+		err = nil
+		return
 	}
 	if err != nil {
-		return Result{}, fmt.Errorf("locate contract for %s: %w", in.NodeID, err)
+		err = fmt.Errorf("locate contract for %s: %w", in.NodeID, err)
+		return
 	}
 
-	// Step 3 — is a fix for this node verifiable at all? The fix is packaged
-	// from the whole contract directory, so the shadow release re-runs every
-	// node declared in it. Another node in that directory that also failed the
-	// original release therefore rejects the shadow however correct the fix is,
-	// and the attempt ends up front rather than spending a full validation
-	// release — and the single release slot — proving it.
-	sibling, err := siblingFailure(ctx, svc, in, located, root)
+	// Is a fix for this node verifiable at all? The fix is packaged from the
+	// whole contract directory, so the shadow release re-runs every node
+	// declared in it. Another node in that directory that also failed the
+	// original release therefore rejects the shadow however correct the fix
+	// is, and the attempt ends up front rather than spending a full
+	// validation release — and the single release slot — proving it.
+	var sibling string
+	sibling, err = siblingFailure(ctx, svc, in, located, root)
 	if err != nil {
-		return Result{}, err
+		return
 	}
 	if sibling != "" {
-		return skipPython(svc, in, fmt.Sprintf(
+		skip = skipResult(svc, in, fmt.Sprintf(
 			"%s also failed validation in release %s and is declared in the same contract directory (%s) as %s. "+
 				"A fix is packaged from that whole directory, so any shadow release verifying it would re-run both nodes "+
 				"and be rejected by %s. Fix both nodes together.",
 			sibling, in.ReleaseID, located.ContractDir, in.NodeID, sibling))
 	}
+	return
+}
 
-	// Step 4 — evidence. The failure itself is required; every other section
-	// degrades to its own absence rather than blocking the heal.
+// buildPythonProposeRequest assembles the python-specific evidence (the
+// failing script's log, contract entry, upstream diffs, precedent, and prior
+// attempts) and turns it into the one LLM call's request.
+func buildPythonProposeRequest(ctx context.Context, svc Services, in Input, located ports.Located) (prompt.ProposeRequest, error) {
 	ev, err := pythonEvidence(ctx, svc, in, located)
 	if err != nil {
-		return Result{}, err // transient read: the driver redelivers
+		return prompt.ProposeRequest{}, err // transient read: the driver redelivers
 	}
+	return prompt.AssemblePythonContractFix(ev), nil
+}
 
-	// Step 5 — one model call returning complete files.
-	res, err := svc.LLM.Propose(ctx, prompt.AssemblePythonContractFix(ev))
+// proposeContractFixViaShadow carries the orchestration shared by every
+// contract-fix lane that verifies its answer with a shadow release: one model
+// call, applying and guarding the answer, packaging and submitting it as a
+// shadow release, and writing the audit artifacts. buildRequest assembles the
+// lane's evidence into the LLM request; a returned error is transient (the
+// driver redelivers). checkDeclarations is the post-apply guard: it returns ""
+// when the answer preserved what the fix is required not to change, or the
+// reason to fail the attempt otherwise.
+func proposeContractFixViaShadow(
+	ctx context.Context, svc Services, in Input, schema, table, root string, located ports.Located,
+	buildRequest func(ctx context.Context, svc Services, in Input, located ports.Located) (prompt.ProposeRequest, error),
+	checkDeclarations func(svc Services, files []ports.ProposedFile, originals map[string]string) string,
+) (Result, error) {
+	// Step 4 — evidence and the one model call.
+	req, err := buildRequest(ctx, svc, in, located)
+	if err != nil {
+		return Result{}, err
+	}
+	res, err := svc.LLM.Propose(ctx, req)
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
 	}
@@ -134,7 +220,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		seen[key] = struct{}{}
 	}
 
-	// Step 6 — apply, then package. The order is the whole point: packaging the
+	// Step 5 — apply, then package. The order is the whole point: packaging the
 	// checkout before the answer is written to it would produce, and verify,
 	// the contract that already failed.
 	originals, err := applyFiles(root, res.Files)
@@ -142,14 +228,14 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, err
 	}
 
-	// Step 7 — the node under repair must have survived its own repair. A
+	// Step 6 — the node under repair must have survived its own repair. A
 	// shadow release can only reject what the packaged contract still declares,
 	// so an answer that deleted or renamed the failing node — or deleted the
 	// read that could not bind — leaves the release nothing to fail on: it
 	// validates, and the edit that removed the broken thing is recorded as a
 	// proven fix and offered to a human. The same holds for a sibling declared
 	// beside it, which this attempt was never asked to touch at all.
-	if reason := declarationBreach(svc, res.Files, originals); reason != "" {
+	if reason := checkDeclarations(svc, res.Files, originals); reason != "" {
 		return failPython(svc, in, reason)
 	}
 	// The before/after comparison above sees only the files the answer returned.
@@ -189,7 +275,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("package contract for %s: %w", in.NodeID, err)
 	}
 
-	// Step 8 — the merged contract goes to the per-release artifact location
+	// Step 7 — the merged contract goes to the per-release artifact location
 	// release-controller reads a python service's release payload from, under
 	// the shadow release's own id.
 	shadowID := shadowReleaseID(in)
@@ -198,7 +284,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("write shadow contract: %w", err)
 	}
 
-	// Step 9 — submit. The image tag is read from the ORIGINAL failing release
+	// Step 8 — submit. The image tag is read from the ORIGINAL failing release
 	// (the trigger carries none, and the shadow runs the same image); the
 	// submission itself runs under the shadow's own id. This happens after the
 	// upload because release-controller reads that object as soon as the
@@ -217,7 +303,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return Result{}, fmt.Errorf("submit shadow release %s: %w", shadowID, err)
 	}
 
-	// Step 10 — one audit artifact pair per edited file, diffed against what the
+	// Step 9 — one audit artifact pair per edited file, diffed against what the
 	// repository held before the answer was applied.
 	edits := make([]proposal.FileEdit, 0, len(res.Files))
 	for i, f := range res.Files {
@@ -229,7 +315,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 	}
 
 	svc.Logger.Info("python contract fix submitted for shadow verification",
-		"node", in.NodeID, "release", in.ReleaseID, "shadow_release", shadowID, "files", len(edits))
+		"node", in.NodeID, "node_type", in.NodeType, "release", in.ReleaseID, "shadow_release", shadowID, "files", len(edits))
 
 	return Result{Proposal: proposal.Proposal{
 		Status:          proposal.StatusVerifying,
@@ -266,16 +352,61 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 // and no longer is leaves the release less to judge than the failure it was
 // asked to repair.
 func declarationBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
-	before := map[string]ports.NodeDeclaration{}
-	after := map[string]ports.NodeDeclaration{}
+	before, after, breach := buildDeclarationMaps(svc, files, originals)
+	if breach != "" {
+		return breach
+	}
+	if breach := identityBreach(before, after); breach != "" {
+		return breach
+	}
+	for _, k := range sortedDeclarationKeys(before) {
+		if breach := droppedReadBreach(k, before[k], after[k]); breach != "" {
+			return breach
+		}
+	}
+	return ""
+}
+
+// droppedReadBreach returns the refusal reason when a node's answer no longer
+// declares one or more of the reads it declared before the edit, or "" when
+// every read survived. Every contract-fix lane whose failing node's script
+// still performs its declared reads uses this for that node — currently
+// every lane but the csv one's own single "csv" key, which csvDeclarationBreach
+// checks with its own narrower rule instead (see there for why) — and every
+// lane uses it unconditionally for every OTHER node the answer's own files
+// touch, because a sibling's script is never edited by this fix either.
+func droppedReadBreach(node string, was, now ports.NodeDeclaration) string {
+	dropped := droppedReads(was.ReadKeys, now.ReadKeys)
+	if len(dropped) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"the model's answer no longer declares the read %s of %s. Validation bind-checks the reads a contract still "+
+			"declares, so deleting one hides the failure instead of repairing it: the node's script — which this fix "+
+			"does not change — still performs that read, and no release would catch it again. A read may be corrected "+
+			"or replaced, never dropped", strings.Join(quoteAll(dropped), ", "), node)
+}
+
+// buildDeclarationMaps parses every contract yaml file in an answer, before
+// and after the edit, into declarations keyed by identityKey. It is the part
+// every contract-fix lane's post-apply guard shares, whatever it then checks
+// those declarations for: the python-model guard follows it with the
+// blanket-read check above, and the python-csv guard follows it with a
+// narrower one scoped to the single "csv" read.
+//
+// A prior content that does not parse declared nothing this answer can be
+// held to: the contract search skips such a file too, so the node it might
+// have named was never the node under repair. The model's OWN new content
+// failing to parse, in contrast, is the answer's fault and ends the check with
+// that reason.
+func buildDeclarationMaps(svc Services, files []ports.ProposedFile, originals map[string]string) (before, after map[string]ports.NodeDeclaration, breach string) {
+	before = map[string]ports.NodeDeclaration{}
+	after = map[string]ports.NodeDeclaration{}
 
 	for _, f := range files {
 		if !isContractYAMLPath(f.Path) {
 			continue
 		}
-		// A prior content that does not parse declared nothing this answer can
-		// be held to: the contract search skips such a file too, so the node it
-		// might have named was never the node under repair.
 		if decls, err := svc.ContractInspector.Declarations(originals[f.Path]); err == nil {
 			for _, d := range decls {
 				before[identityKey(d.Identity)] = d
@@ -283,22 +414,35 @@ func declarationBreach(svc Services, files []ports.ProposedFile, originals map[s
 		}
 		decls, err := svc.ContractInspector.Declarations(f.Content)
 		if err != nil {
-			return fmt.Sprintf("the model returned %q, which is not a readable contract file: %v", f.Path, err)
+			return nil, nil, fmt.Sprintf("the model returned %q, which is not a readable contract file: %v", f.Path, err)
 		}
 		for _, d := range decls {
 			after[identityKey(d.Identity)] = d
 		}
 	}
+	return before, after, ""
+}
 
-	// Sorted so an answer that moves several nodes always names the same one,
-	// and a re-run of the same attempt records the same rationale.
-	keys := make([]string, 0, len(before))
-	for k := range before {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, k := range keys {
+// identityBreach reports whether any node the answer's own files declared
+// before the edit is no longer declared afterwards, or is declared under a
+// changed identity (schema, table, script, kind, owner, schedule, or
+// criticality). Both are refused regardless of what a lane's fix is otherwise
+// allowed to touch: a fix corrects what a node declares, never which node is
+// declared — and never what KIND of node it is; a python-csv node quietly
+// flipped to kind: python-model (or the reverse) would validate under a
+// completely different set of rules than the ones the fix was judged against.
+//
+// Every caller runs this check BEFORE its own read-preservation rule (the
+// blanket one in declarationBreach, the csv-key-only one in
+// csvDeclarationBreach): identity is what says whether the entries on either
+// side of the edit are even the same node to compare reads on at all, so it
+// is checked first, deliberately, and a re-identified node is refused on that
+// alone before its reads are examined.
+//
+// Sorted so an answer that moves several nodes always names the same one, and
+// a re-run of the same attempt records the same rationale.
+func identityBreach(before, after map[string]ports.NodeDeclaration) string {
+	for _, k := range sortedDeclarationKeys(before) {
 		was := before[k]
 		now, still := after[k]
 		if !still {
@@ -311,15 +455,20 @@ func declarationBreach(svc Services, files []ports.ProposedFile, originals map[s
 				"the model's answer changed the fields that identify %s (%s). Those fields say which node the entry is, "+
 					"so changing one makes it a different node rather than a repaired one", k, identityDelta(was.Identity, now.Identity))
 		}
-		if dropped := droppedReads(was.ReadKeys, now.ReadKeys); len(dropped) > 0 {
-			return fmt.Sprintf(
-				"the model's answer no longer declares the read %s of %s. Validation bind-checks the reads a contract still "+
-					"declares, so deleting one hides the failure instead of repairing it: the node's script — which this fix "+
-					"does not change — still performs that read, and no release would catch it again. A read may be corrected "+
-					"or replaced, never dropped", strings.Join(quoteAll(dropped), ", "), k)
-		}
 	}
 	return ""
+}
+
+// sortedDeclarationKeys returns a declaration map's identity keys, sorted, so
+// every caller that walks "before" in order reports the same node first for
+// the same answer.
+func sortedDeclarationKeys(m map[string]ports.NodeDeclaration) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // droppedReads returns the read names present before an edit and absent after
@@ -371,6 +520,7 @@ func identityDelta(was, now ports.NodeIdentity) string {
 		{"schema", was.Schema, now.Schema},
 		{"table", was.Table, now.Table},
 		{"script", was.Script, now.Script},
+		{"kind", was.Kind, now.Kind},
 		{"owner", was.Owner, now.Owner},
 		{"schedule", was.Schedule, now.Schedule},
 		{"criticality", was.Criticality, now.Criticality},
@@ -461,18 +611,32 @@ func siblingFailure(ctx context.Context, svc Services, in Input, located ports.L
 
 // skipPython records a skipped attempt whose reason is kept as the proposal's
 // rationale, so the operator reading the release sees why no fix was attempted
-// rather than an unexplained absence.
+// rather than an unexplained absence. Shared by both the python-model and the
+// python-csv lane — node_type on the logged event is what tells a skipped
+// python-csv attempt apart from a skipped python-model one in the logs, since
+// both lanes route through this one function.
 func skipPython(svc Services, in Input, reason string) (Result, error) {
-	svc.Logger.Info("python contract fix skipped", "node", in.NodeID, "reason", reason)
+	svc.Logger.Info("python contract fix skipped", "node", in.NodeID, "node_type", in.NodeType, "reason", reason)
 	return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped, Rationale: reason}}, nil
+}
+
+// skipResult is skipPython with the outcome returned as a *Result rather than
+// a (Result, error) pair, for locateContractForFix's multiple named returns:
+// a plain Result field can be zero-valued to mean "not yet decided" the way a
+// pointer can be nil, which the always-populated value skipPython returns
+// cannot.
+func skipResult(svc Services, in Input, reason string) *Result {
+	r, _ := skipPython(svc, in, reason)
+	return &r
 }
 
 // failPython records a failed attempt — one where a fix was attempted and the
 // model's answer could not be used — keeping the reason as the rationale for
 // the same purpose skipPython does: a recorded outcome an operator can read is
-// never left as a log line beside an unexplained row.
+// never left as a log line beside an unexplained row. Shared by both python
+// lanes, same as skipPython.
 func failPython(svc Services, in Input, reason string) (Result, error) {
-	svc.Logger.Warn("python contract fix failed", "node", in.NodeID, "reason", reason)
+	svc.Logger.Warn("python contract fix failed", "node", in.NodeID, "node_type", in.NodeType, "reason", reason)
 	return Result{Proposal: proposal.Proposal{Status: proposal.StatusFailed, Rationale: reason}}, nil
 }
 

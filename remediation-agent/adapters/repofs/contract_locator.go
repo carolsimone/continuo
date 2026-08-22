@@ -54,6 +54,7 @@ type contractNode struct {
 	Schema      string `yaml:"schema"`
 	Table       string `yaml:"table"`
 	Script      string `yaml:"script"`
+	Kind        string `yaml:"kind"`
 	Owner       string `yaml:"owner"`
 	Schedule    string `yaml:"schedule"`
 	Criticality string `yaml:"criticality"`
@@ -196,11 +197,22 @@ func (l *Locator) Declarations(yamlText string) ([]ports.NodeDeclaration, error)
 	}
 	out := make([]ports.NodeDeclaration, 0, len(doc.Nodes))
 	for _, n := range doc.Nodes {
+		// Absent kind means python-model — the same default every parser of this
+		// wire format applies (manifest-controller's python_contract_parser.py,
+		// e.g.). Every legacy contract omits "kind:", so without this default an
+		// answer that writes it explicitly (a plausible, correct normalization)
+		// would read as an identity change ("" -> "python-model") rather than as
+		// the no-op it actually is.
+		kind := n.Kind
+		if kind == "" {
+			kind = "python-model"
+		}
 		out = append(out, ports.NodeDeclaration{
 			Identity: ports.NodeIdentity{
 				Schema:      n.Schema,
 				Table:       n.Table,
 				Script:      n.Script,
+				Kind:        kind,
 				Owner:       n.Owner,
 				Schedule:    n.Schedule,
 				Criticality: n.Criticality,

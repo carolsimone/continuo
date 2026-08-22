@@ -8,7 +8,7 @@ WORKDIR /app
 # `continuo-runtime` (the CLI the ContractPackager adapter shells out to)
 # is a standalone executable independent of the base image's own python3.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && ~/.local/bin/uv tool install --python 3.14 continuo-python-runtime==0.2.0
+    && ~/.local/bin/uv tool install --python 3.14 continuo-python-runtime==0.4.0
 ENV PATH="/root/.local/bin:${PATH}"
 
 # Layer 1: Workspace stub. All go.mod / go.sum files are copied so

@@ -241,11 +241,11 @@ func TestDeclarations_ReadsEveryDeclaredNodesIdentityAndReads(t *testing.T) {
 		{
 			Identity: ports.NodeIdentity{
 				Schema: "analytics", Table: "py_daily_kpis", Script: "scripts/py_daily_kpis.py",
-				Owner: "data-platform", Schedule: "daily", Criticality: "SECONDARY",
+				Kind: "python-model", Owner: "data-platform", Schedule: "daily", Criticality: "SECONDARY",
 			},
 			ReadKeys: []string{"orders", "customers"},
 		},
-		{Identity: ports.NodeIdentity{Schema: "analytics", Table: "py_weekly_kpis", Script: "scripts/py_weekly_kpis.py"}},
+		{Identity: ports.NodeIdentity{Schema: "analytics", Table: "py_weekly_kpis", Script: "scripts/py_weekly_kpis.py", Kind: "python-model"}},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Declarations returned %d entries, want %d: %+v", len(got), len(want), got)

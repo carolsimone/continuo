@@ -80,8 +80,8 @@ Output (stdout, JSON): up to 50 runs, newest first.
   terminal_status, started_at, completed_at, error_message, log_s3_key,
   run_results_uri, and content_hash are omitted when empty. run_results_uri
   points at the structured result block the run's container printed —
-  python-model nodes always emit one, dbt nodes never do. An unknown node
-  returns {"runs":[]}, not an error.
+  python-family nodes (python-model, python-csv) always emit one, dbt
+  nodes never do. An unknown node returns {"runs":[]}, not an error.
 
 content_hash is the code this run executed, joined client-side from the
 orchestrator's GetNodeRunHistory by run id, filtered server-side to the same

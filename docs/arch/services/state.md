@@ -61,7 +61,7 @@ Row carrier structs for Postgres (`SchedulerTracker`, `TaskTracker`, `TaskExecut
 
 | Column | Type | Purpose |
 |---|---|---|
-| `run_results_uri` | `varchar(500)` NULL | S3 key of the structured result block the executing pod printed as its last stdout line. `python-model` containers always print one — its message carries a deterministic error class (`ContractError` / `ReadError` / `ScriptError` / `ConformError` / `LoadError`) — while dbt containers never do, so the column is NULL for every dbt execution. Persisted verbatim from `run_results_uri` on `task.execution.recorded:v1`. Exposed on `TaskExecution` and on the per-node run history. Migration: V32. |
+| `run_results_uri` | `varchar(500)` NULL | S3 key of the structured result block the executing pod printed as its last stdout line. Python-family containers (`python-model`, `python-csv`) always print one — its message carries a deterministic error class (`ContractError` / `ReadError` / `ScriptError` / `ConformError` / `LoadError`) — while dbt containers never do, so the column is NULL for every dbt execution. Persisted verbatim from `run_results_uri` on `task.execution.recorded:v1`. Exposed on `TaskExecution` and on the per-node run history. Migration: V32. |
 
 ### `scheduler_tracker` indexes for schedule_name access
 

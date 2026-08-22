@@ -666,6 +666,50 @@ func TestValidation_PythonNode_SkipsBeforeAnyRead(t *testing.T) {
 	}
 }
 
+// TestValidation_PythonCsvNode_SkipsBeforeAnyRead mirrors
+// TestValidation_PythonNode_SkipsBeforeAnyRead for the python-csv node kind: a
+// csv node is part of the python family (IsPython), so it must be skipped by
+// this defensive fallback the same way a python-model node is.
+func TestValidation_PythonCsvNode_SkipsBeforeAnyRead(t *testing.T) {
+	ev := &countingEvidence{}
+	cs := &fakeCandidateSource{src: ports.CandidateSource{
+		RawCode: `{"reads":["analytics.orders"],"output_columns":[]}`, Runtime: "python"}}
+	loc := &countingLocator{filePath: "csv/report.csv", serviceName: "svc"}
+	up := &fakeUpstream{}
+	vs := &fakeVersions{}
+	pr := &fakePrecedents{}
+	llm := &fakeLLM{}
+	svc := Services{
+		LLM: llm, Evidence: ev, CandidateSource: cs, Locator: loc,
+		Upstream: up, Versions: vs, Precedents: pr, Logger: testLogger(),
+	}
+	in := validationInput()
+	in.NodeType = "python-csv"
+	in.FilePath, in.Service = "csv/report.csv", "svc"
+	in.CandidateArtifactURI = "s3://continuo/candidate-sql/r/candidate_n.json"
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Proposal.Status != proposal.StatusSkipped {
+		t.Fatalf("status = %v want skipped", r.Proposal.Status)
+	}
+	if r.Proposal.SourceResolved {
+		t.Fatal("a python-csv node must never be recorded as source-resolved")
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected no LLM call for a python-csv node, got %d", llm.calls)
+	}
+	if ev.calls != 0 {
+		t.Fatalf("expected the evidence reader to be untouched, got %d calls", ev.calls)
+	}
+	if cs.calls != 0 || loc.calls != 0 || up.calls != 0 || vs.calls != 0 || pr.calls != 0 {
+		t.Fatalf("expected zero calls to the candidate-source/locator/upstream/versions/precedent fakes, got cs=%d loc=%d up=%d vs=%d pr=%d",
+			cs.calls, loc.calls, up.calls, vs.calls, pr.calls)
+	}
+}
+
 // TestValidation_BundleRuntimeNonDbt_NoProposal covers a trigger that carries no
 // node_type — the shape emitted before a validation rejection named the failing
 // node's kind. The only remaining signal is the runtime the code bundle records

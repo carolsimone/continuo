@@ -48,7 +48,7 @@ FROM python:3.14-slim
 # packaged by the same tool that packages every promoted release.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \
  && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir continuo-python-runtime==0.2.0
+ && pip install --no-cache-dir continuo-python-runtime==0.4.0
 
 # Explicit COPY allowlist — only the service binary; new builder artifacts
 # are absent from the runtime image unless added here.

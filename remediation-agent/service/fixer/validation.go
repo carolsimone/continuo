@@ -60,7 +60,7 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	// the contract yaml declaring it, so this check is normally unreachable; it
 	// stays because a trigger carrying no node_type at all resolves to this
 	// Fixer, and the node's kind must still be able to stop it here.
-	if in.NodeType == string(pkg_model.NodeTypePythonModel) {
+	if pkg_model.NodeType(in.NodeType).IsPython() {
 		svc.Logger.Info("validation fix: failing node is a python node; skipping — "+
 			"its candidate artifact is a validation spec and its bundle entry is a contract "+
 			"entry, neither of which is model source a fix can be proposed against",
