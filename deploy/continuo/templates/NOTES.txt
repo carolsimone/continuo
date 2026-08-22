@@ -46,9 +46,18 @@ UPGRADE NOTES
   release promotion, with a validation-pod ErrImagePull.
 {{- end }}
 
+{{- if .Release.IsUpgrade }}
+
+BREAKING (service renames): the "ui-service" service is now "ui". If your
+values override services[].name entries, update them before upgrading.
+Also, if you use ingress.tls.enabled=true with the default TLS secret name,
+it changed from "ui-service-tls" to "ui-tls"; rename/recreate the Secret or
+set ingress.tls.secretName explicitly, or TLS will break.
+{{- end }}
+
 {{- $uiPort := 8090 }}
 {{- range .Values.services }}
-{{- if eq .name "ui-service" }}
+{{- if eq .name "ui" }}
 {{- $uiPort = .httpPort }}
 {{- end }}
 {{- end }}
@@ -59,7 +68,7 @@ ACCESS
 
   No Ingress configured (ingress.enabled=false) — port-forward first:
 
-    kubectl port-forward -n {{ .Release.Namespace }} svc/ui-service {{ $uiPort }}:{{ $uiPort }}
+    kubectl port-forward -n {{ .Release.Namespace }} svc/ui {{ $uiPort }}:{{ $uiPort }}
 {{- end }}
 
 {{- if .Values.dex.enabled }}
@@ -73,8 +82,8 @@ QUICKSTART LOGIN (dex.enabled=true — demo identity provider, not for productio
 {{- end }}
 {{- if not .Values.ingress.enabled }}
 
-  OIDC needs the browser and ui-service to resolve the same issuer hostname,
-  so port-forwarding ui-service alone is not enough to log in. Also run:
+  OIDC needs the browser and ui to resolve the same issuer hostname,
+  so port-forwarding ui alone is not enough to log in. Also run:
 
     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "continuo.dex.fullname" . }} 5556:5556 &
     echo "127.0.0.1 {{ include "continuo.dex.fullname" . }}" | sudo tee -a /etc/hosts

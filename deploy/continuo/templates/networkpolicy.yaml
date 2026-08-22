@@ -78,7 +78,7 @@ spec:
                 operator: In
                 values: [state, orchestrator, executor-controller, k8s-controller,
                          release-controller, remediation, remediation-agent,
-                         agent-runner, manifest-controller, ui-service, stream-reaper]
+                         agent-runner, manifest-controller, ui, stream-reaper]
       ports:
         - port: 6379
 {{- end }}
@@ -130,7 +130,7 @@ spec:
               - key: app.kubernetes.io/name
                 operator: In
                 values: [executor-controller, k8s-controller, release-controller,
-                         remediation, remediation-agent, ui-service,
+                         remediation, remediation-agent, ui,
                          manifest-controller, orchestrator, minio-bucket-init]
         - podSelector:
             matchLabels:
@@ -160,7 +160,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [orchestrator, k8s-controller, agent-runner, ui-service]
+                values: [orchestrator, k8s-controller, agent-runner, ui]
       ports:
         - port: 50051
 ---
@@ -185,7 +185,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [ui-service, agent-runner, remediation-agent]
+                values: [ui, agent-runner, remediation-agent]
       ports:
         - port: 50052
 ---
@@ -210,18 +210,18 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/instance: {{ $instance }}
-              app.kubernetes.io/name: ui-service
+              app.kubernetes.io/name: ui
       ports:
         - port: 50053
         - port: 50054
         - port: 8088
 ---
-# Front door: ui-service accepts traffic from any source (ingress controller
+# Front door: ui accepts traffic from any source (ingress controller
 # namespaces vary per cluster; authentication is enforced in the app itself).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "continuo.fullname" . }}-allow-ui-service
+  name: {{ include "continuo.fullname" . }}-allow-ui
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "continuo.labels" . | nindent 4 }}
@@ -229,7 +229,7 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/instance: {{ $instance }}
-      app.kubernetes.io/name: ui-service
+      app.kubernetes.io/name: ui
   policyTypes: ["Ingress"]
   ingress:
     - ports:

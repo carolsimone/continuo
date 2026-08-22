@@ -94,14 +94,14 @@ redis:
     storageClass: ""
   resources:
     requests: {cpu: 100m, memory: 512Mi}
-    # Redis holds both the event streams and ui-service OIDC sessions; keep
+    # Redis holds both the event streams and ui OIDC sessions; keep
     # headroom (history: OOMKilled at 576Mi). Policy stays noeviction.
     limits: {cpu: 500m, memory: 2Gi}
 
 externalRedis:
   host: ""
   port: 6379
-  # Synthesized into redis://:$(REDIS_PASSWORD)@host:port for ui-service,
+  # Synthesized into redis://:$(REDIS_PASSWORD)@host:port for ui,
   # manifest-controller, and stream-reaper. A password containing URL-reserved
   # characters (@, :, /) breaks that URL; use a URL-safe password, or set
   # existingSecret with a URL-safe value instead.
@@ -196,10 +196,10 @@ dex:
 
 auth:
   # External base URL the browser uses to reach the UI. The quickstart default
-  # matches `kubectl port-forward svc/ui-service 8090:8090`.
+  # matches `kubectl port-forward svc/ui 8090:8090`.
   publicUrl: http://localhost:8090
   # The following are consumed when dex.enabled=false (bring-your-own OIDC):
-  # all fail-closed — ui-service crashloops rather than serving an open UI.
+  # all fail-closed — ui crashloops rather than serving an open UI.
   issuerUrl: ""
   clientId: ""
   oidcClientSecret: ""           # or existingSecret
@@ -222,7 +222,7 @@ llm:
 
 github:
   # Optional. token = read-only fine-grained PAT for remediation-agent source
-  # fetch; app* = GitHub App for ui-service PR creation (503 until configured).
+  # fetch; app* = GitHub App for ui PR creation (503 until configured).
   token: ""
   appId: ""
   installationId: ""
@@ -327,7 +327,7 @@ networkPolicy:
   enabled: true
 
 ingress:
-  # Front door for ui-service. Fully values-driven: no ingress class or
+  # Front door for ui. Fully values-driven: no ingress class or
   # cert-manager/ACME assumptions are baked into the template.
   enabled: false
   className: ""
@@ -335,7 +335,7 @@ ingress:
   host: ""
   tls:
     enabled: true
-    secretName: ""               # empty → <host must be set> "ui-service-tls"
+    secretName: ""               # empty → <host must be set> "ui-tls"
 
 # Defaults applied to any service that does not override resources.
 defaultResources:
@@ -505,7 +505,7 @@ services:
       ERROR_MESSAGE_MAX_LENGTH: "4096"
       HTTP_PORT: "8085"
 
-  - name: ui-service
+  - name: ui
     enabled: true
     replicas: 1
     httpPort: 8090
@@ -522,7 +522,7 @@ services:
       NODE_ENV: production
       RELEASE_CONTROLLER_URL: http://release-controller:8088
       CHAT_BRIDGE_ENABLED: "true"
-      # Authentication is fail-closed: ui-service crashloops when these are
+      # Authentication is fail-closed: ui crashloops when these are
       # missing instead of serving an open UI. With dex.enabled the issuer,
       # client id and secret resolve to the bundled Dex automatically.
       AUTH_MODE: oidc
