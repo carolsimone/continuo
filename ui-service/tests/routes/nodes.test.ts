@@ -9,6 +9,7 @@ const mockTriggerSingleNodeRun = vi.fn();
 const mockListNodes = vi.fn();
 const mockListNodeNames = vi.fn();
 const mockGetNode = vi.fn();
+const mockGetNodeVersions = vi.fn();
 
 const mockStateClient = {
   listNodeRuns: mockListNodeRuns,
@@ -17,7 +18,7 @@ const mockStateClient = {
   listNodeNames: mockListNodeNames,
 };
 
-const mockGraphClient = { getNode: mockGetNode };
+const mockGraphClient = { getNode: mockGetNode, getNodeVersions: mockGetNodeVersions };
 
 function makeApp() {
   const app = express();
@@ -33,6 +34,7 @@ describe('nodes router', () => {
     mockListNodes.mockReset();
     mockListNodeNames.mockReset();
     mockGetNode.mockReset();
+    mockGetNodeVersions.mockReset();
   });
 
   it('GET /:svc/:schema/:table/runs returns parsed rows', async () => {
@@ -251,6 +253,105 @@ describe('nodes router', () => {
       { service_name: 'svc', schema_name: 'schema', table_name: 'tbl' },
       expect.any(Function),
     );
+  });
+
+  it('GET /meta does not look up versions for a non-csv node', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'dbt-model', test_count: 2, test_count_known: true }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('source_uri');
+    expect(mockGetNodeVersions).not.toHaveBeenCalled();
+  });
+
+  it('GET /meta resolves a python-csv node source URI from its current version', async () => {
+    // A python-csv version's raw_code is the normalized contract entry as
+    // JSON (the node has no script); the CSV location is its reads.csv field.
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb(null, {
+        versions: [{
+          raw_code: JSON.stringify({
+            schema: 'schema', table: 'tbl', kind: 'python-csv',
+            extra_columns: 'raise',
+            reads: { csv: 's3://bucket/vendor/orders.csv' },
+            output_columns: [],
+          }),
+        }],
+      }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body.node_type).toBe('python-csv');
+    expect(res.body.source_uri).toBe('s3://bucket/vendor/orders.csv');
+    expect(mockGetNodeVersions).toHaveBeenCalledWith(
+      { unique_id: 'schema.tbl', current_only: true, include_code: true },
+      expect.any(Function),
+    );
+  });
+
+  it('GET /meta lowercases the version lookup key for a node declared with uppercase spelling', async () => {
+    // unique_id is canonically lowercase ("<schema>.<table>") while GetNode
+    // works on the declared spelling; a preserved-case key would NOT_FOUND.
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb(null, { versions: [{ raw_code: JSON.stringify({ reads: { csv: 'https://x/y.csv' } }) }] }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/Analytics/Vendor_Feed/meta');
+    expect(res.status).toBe(200);
+    expect(res.body.source_uri).toBe('https://x/y.csv');
+    expect(mockGetNodeVersions).toHaveBeenCalledWith(
+      { unique_id: 'analytics.vendor_feed', current_only: true, include_code: true },
+      expect.any(Function),
+    );
+  });
+
+  it('GET /meta returns an empty source_uri when raw_code is not contract JSON or lacks reads.csv', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb(null, { versions: [{ raw_code: 'not json at all' }] }),
+    );
+    const bad = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(bad.status).toBe(200);
+    expect(bad.body.source_uri).toBe('');
+
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb(null, { versions: [{ raw_code: JSON.stringify({ reads: {} }) }] }),
+    );
+    const missing = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(missing.status).toBe(200);
+    expect(missing.body.source_uri).toBe('');
+  });
+
+  it('GET /meta degrades to an empty source_uri when the version lookup fails', async () => {
+    // The meta endpoint's primary job is gating the test trigger; a broken
+    // version lookup must not take the whole node page down with it.
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) =>
+      cb({ code: grpc.status.UNAVAILABLE, message: 'down' }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body.source_uri).toBe('');
+  });
+
+  it('GET /meta returns an empty source_uri for a csv node with no current version', async () => {
+    mockGetNode.mockImplementation((_req, cb) =>
+      cb(null, { node_type: 'python-csv', test_count: 0, test_count_known: true }),
+    );
+    mockGetNodeVersions.mockImplementation((_req, cb) => cb(null, { versions: [] }));
+    const res = await request(makeApp()).get('/api/nodes/svc/schema/tbl/meta');
+    expect(res.status).toBe(200);
+    expect(res.body.source_uri).toBe('');
   });
 
   it('GET /meta maps gRPC NOT_FOUND to 404', async () => {

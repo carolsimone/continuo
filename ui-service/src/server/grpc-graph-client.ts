@@ -22,6 +22,7 @@ export interface GrpcGraphClient {
   getRunGraph: (request: any, callback: (err: any, res: any) => void) => void;
   listScheduleTopologies: (request: any, callback: (err: any, res: any) => void) => void;
   getNode: (request: any, callback: (err: any, res: any) => void) => void;
+  getNodeVersions: (request: any, callback: (err: any, res: any) => void) => void;
 }
 
 export function createGrpcGraphClient(address: string): GrpcGraphClient {

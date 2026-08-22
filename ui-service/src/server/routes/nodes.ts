@@ -5,6 +5,19 @@ import { grpcToHttpStatus } from './grpc-status';
 import { parseLimit, parseOffset } from './paging';
 import { parseOperation, parseNodeOperation } from './operation';
 
+// A python-csv version's raw_code is the node's normalized contract entry
+// serialized as JSON (the node has no script); the CSV location is its
+// reads.csv field. Anything unparseable or missing yields "".
+function csvSourceUri(rawCode: unknown): string {
+  if (typeof rawCode !== 'string' || rawCode === '') return '';
+  try {
+    const uri = JSON.parse(rawCode)?.reads?.csv;
+    return typeof uri === 'string' ? uri : '';
+  } catch {
+    return '';
+  }
+}
+
 export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGraphClient) {
   const router = Router();
 
@@ -117,7 +130,11 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
   });
 
   // GET /:service/:schema/:table/meta — per-node topology metadata (test_count)
-  // used by the UI to gate single-node "test" on a zero-test node.
+  // used by the UI to gate single-node "test" on a zero-test node. For a
+  // python-csv node the response also carries source_uri: the CSV file the
+  // node loads, recorded as the current version's raw_code (a csv node has no
+  // script). The lookup is best-effort — the test gate must keep working even
+  // when the version query fails — so errors degrade to an empty source_uri.
   router.get('/:service/:schema/:table/meta', (req, res) => {
     graphClient.getNode(
       {
@@ -127,11 +144,27 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
       },
       (err: any, response: any) => {
         if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
-        res.json({
+        const meta = {
           node_type:        response.node_type || '',
           test_count:       Number(response.test_count ?? 0),
           test_count_known: Boolean(response.test_count_known),
-        });
+        };
+        if (meta.node_type !== 'python-csv') return res.json(meta);
+
+        graphClient.getNodeVersions(
+          {
+            // unique_id is canonically lowercase ("<schema>.<table>") while
+            // the route params carry the declared spelling, which GetNode
+            // accepts but the exact-match version lookup does not.
+            unique_id:    `${req.params.schema}.${req.params.table}`.toLowerCase(),
+            current_only: true,
+            include_code: true,
+          },
+          (verr: any, vres: any) => {
+            const sourceUri = verr ? '' : csvSourceUri(vres?.versions?.[0]?.raw_code);
+            res.json({ ...meta, source_uri: sourceUri });
+          },
+        );
       },
     );
   });

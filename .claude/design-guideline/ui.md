@@ -448,6 +448,42 @@ it is applied via the `style` attribute; this is the sanctioned exception
 to the no-inline-style rule, matching the React Flow canvas whose node API
 only accepts style objects.
 
+### Node type icons
+
+Every topology node belongs to one of three families — dbt
+(`dbt-model` / `dbt-seed` / `dbt-snapshot`), `python-model`, `python-csv` —
+and surfaces that render a single node mark it with the family's icon via
+the `NodeTypeIcon` component (`ui-service/src/client/NodeTypeIcon.tsx`):
+
+- **dbt** — the dbt Labs mark in its brand orange (`#FF694A`).
+- **python** — the Python logo in its brand blue (`#3776AB`).
+- **python-csv** — the Python logo with a small slate table badge overlaid
+  bottom-right on a white plate (`.node-type-csv` / `.node-type-csv-badge`);
+  no official mark exists, and the badge says "this node loads a file, it
+  does not run a script".
+
+The SVG paths are vendored in the component (dbt mark from dbt Labs'
+dbt-docs repository, Python logo from simple-icons) so no network fetch is
+involved. An empty or unknown `node_type` renders no icon.
+
+Rules:
+
+- The icon is an **identity cue for the tool that owns the node**, like the
+  service accent is for the service. It never conveys state; status keeps
+  the fill/border, the service accent keeps the left bar.
+- It renders wherever a *single* node is shown: graph canvas node labels
+  (`.dag-node-label`, 14px), the DAG focus legend title (12px), the node
+  detail header (15px). Aggregate surfaces — service vertices, the
+  minimap — never carry it: a mixed-family aggregate would lie, and the
+  minimap is too small to read it.
+- The node detail header pairs the icon with the **exact** `node_type` in a
+  neutral inline chip (`.info-strip--neutral .info-strip--inline`); the
+  graph shows family only.
+- A python-csv node's detail header also carries a `source: <uri>` line
+  under the title (`.detail-node-source`, the `.nodes-node-subpath`
+  monospace treatment). It renders only when the URI is known — no empty
+  `source:` label, and no such line on any other node type.
+
 ### Grouped table rows
 
 A `.nodes-table` may group its rows under collapsible per-group header rows:
