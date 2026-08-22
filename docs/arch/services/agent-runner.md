@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`agent-runner` is a cluster-internal Go service that runs a provider-agnostic LLM (Large Language Model) tool-use loop on behalf of authenticated operators. It exposes a single gRPC service, `AgentChat`, with a bidirectional streaming `Chat` RPC. Browsers never connect to it directly; `ui-service` relays each operator's `/ws/chat` WebSocket connection onto one `AgentChat.Chat` stream.
+`agent-runner` is a cluster-internal Go service that runs a provider-agnostic LLM (Large Language Model) tool-use loop on behalf of authenticated operators. It exposes a single gRPC service, `AgentChat`, with a bidirectional streaming `Chat` RPC. Browsers never connect to it directly; `ui` relays each operator's `/ws/chat` WebSocket connection onto one `AgentChat.Chat` stream.
 
 It provides:
 - a persistent conversation interface: each operator message drives one turn of the LLM tool-use loop
@@ -56,7 +56,7 @@ The retention job runs on a configurable interval and deletes threads whose `upd
 
 | Service | RPC | Description |
 |---|---|---|
-| `AgentChat` | `Chat(stream ClientEvent) returns (stream ServerEvent)` | Bidirectional streaming chat. The authenticated `user_id` arrives in the first `Open` event on the request stream (sent by `ui-service` immediately after the stream is established). Each request stream carries `ClientEvent` messages; responses are `ServerEvent` messages. |
+| `AgentChat` | `Chat(stream ClientEvent) returns (stream ServerEvent)` | Bidirectional streaming chat. The authenticated `user_id` arrives in the first `Open` event on the request stream (sent by `ui` immediately after the stream is established). Each request stream carries `ClientEvent` messages; responses are `ServerEvent` messages. |
 
 #### Health
 
@@ -196,7 +196,7 @@ agent-runner holds no direct gRPC stubs for `state` or `orchestrator` and import
 
 ## Reliability Notes
 
-- The gRPC `AgentChat.Chat` stream is held open for the duration of a WebSocket connection. If the stream is interrupted, `ui-service` reconnects and the client resumes the thread; on reconnect the agent replays the stored message history.
+- The gRPC `AgentChat.Chat` stream is held open for the duration of a WebSocket connection. If the stream is interrupted, `ui` reconnects and the client resumes the thread; on reconnect the agent replays the stored message history.
 - A pending tool confirmation can be resumed across a reconnect, but is never executed off a stale confirmation. When the stream drops while awaiting approval, the `pending_actions` row is left `pending` (not expired) and the tool call is persisted without a result. On thread resume, if a still-`pending` action whose `ConfirmTTL` window has not passed exists, agent-runner re-emits its `confirm_request`; an approval arriving outside an in-flight turn then runs the tool, persists the result, and continues the turn, while a denial records the refusal. The mutating tool still runs only on a fresh, live, explicit approval — the resume just re-offers the confirmation instead of forcing the user to re-ask. An in-session interrupt (as opposed to a disconnect) still resolves the action as `expired`, and once the `ConfirmTTL` window passes a disconnected action is no longer resumable.
 - Missing `LLM_PROVIDER`, `LLM_MODEL`, `POSTGRES_DSN`, `CONTINUO_STATE_ADDR`, or `CONTINUO_ORCHESTRATOR_ADDR` cause the process to exit before accepting any traffic (`pkg/config.Validator`). `LLM_API_KEY` is deliberately exempt: an empty key logs a startup warning and degrades chat (LLM calls fail) rather than crashing the process, so a missing key cannot crashloop the pod and time out a deploy.
 - LLM provider errors are returned to the client as `error` ServerEvents; they do not crash the stream.

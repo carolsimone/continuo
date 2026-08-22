@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// verifyUIService asserts the ui-service HTTP API returns correct data for the
+// verifyUIService asserts the ui HTTP API returns correct data for the
 // scheduler run created by the e2e test.  Status fields are polled because the
 // state service propagates job-completion events asynchronously after the k8s
 // jobs finish (k8s-controller → gRPC → state service → DB), so the scheduler
@@ -29,11 +29,11 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 
 	base := os.Getenv("UI_HTTP_BASE")
 	if base == "" {
-		t.Log("UI_HTTP_BASE not set — skipping ui-service HTTP assertions")
+		t.Log("UI_HTTP_BASE not set — skipping ui HTTP assertions")
 		return
 	}
 
-	t.Logf("Verifying ui-service at %s (schedule_id=%s)...", base, scheduleID)
+	t.Logf("Verifying ui at %s (schedule_id=%s)...", base, scheduleID)
 
 	// ── GET /api/schedulers/:id — verify specific run is present and succeeded ─
 	// verifySchedulerSucceeded already confirmed the state DB shows "succeeded"
@@ -47,7 +47,7 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 	assert.Equal(t, "succeeded", schedulerBody["status"],
 		"scheduler status should be 'succeeded'")
 
-	t.Logf("✅ ui-service /api/schedulers/%s: present (status=%v)", scheduleID, schedulerBody["status"])
+	t.Logf("✅ ui /api/schedulers/%s: present (status=%v)", scheduleID, schedulerBody["status"])
 
 	// ── GET /api/schedules — verify schedule catalog entry has correct last_run_id ─
 	schedulesBody := mustGetJSON(t, base+"/api/schedules")
@@ -66,7 +66,7 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 	assert.Equal(t, "succeeded", foundSummary["last_run_status"],
 		"schedule last_run_status should be 'succeeded'")
 
-	t.Logf("✅ ui-service /api/schedules: schedule %q present (last_run_status=%v)", foundSummary["schedule_name"], foundSummary["last_run_status"])
+	t.Logf("✅ ui /api/schedules: schedule %q present (last_run_status=%v)", foundSummary["schedule_name"], foundSummary["last_run_status"])
 
 	// ── Poll GET /api/schedulers/:id/tasks until all tasks show "succeeded" ──
 	var tasksList []interface{}
@@ -88,7 +88,7 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 		}
 		tasksList = list
 		return true, nil
-	}, fmt.Sprintf("Timeout waiting for all tasks of scheduler %s to reach status=succeeded via ui-service", scheduleID))
+	}, fmt.Sprintf("Timeout waiting for all tasks of scheduler %s to reach status=succeeded via ui", scheduleID))
 
 	require.NotEmpty(t, tasksList)
 
@@ -99,13 +99,13 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 			"task created_at %q should be an ISO-8601 timestamp", taskCreatedAt)
 	}
 
-	t.Logf("✅ ui-service /api/schedulers/%s/tasks: %d tasks present, all succeeded", scheduleID, len(tasksList))
+	t.Logf("✅ ui /api/schedulers/%s/tasks: %d tasks present, all succeeded", scheduleID, len(tasksList))
 }
 
 // getJSON performs a GET request and returns the parsed JSON body.
 // Returns an error on any network, HTTP, or parse failure (safe to use inside pollUntil).
 func getJSON(url string) (map[string]interface{}, error) {
-	resp, err := http.Get(url) //nolint:noctx,gosec // getJSON is only ever called with internally-built ui-service base-URL requests from this harness, not external input
+	resp, err := http.Get(url) //nolint:noctx,gosec // getJSON is only ever called with internally-built ui base-URL requests from this harness, not external input
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}

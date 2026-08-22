@@ -32,7 +32,7 @@ helm install continuo deploy/continuo -n continuo --create-namespace \
 
 kubectl -n continuo get pods -w        # wait for everything Running/Completed
 
-kubectl -n continuo port-forward svc/ui-service 8090:8090 &
+kubectl -n continuo port-forward svc/ui 8090:8090 &
 kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
 
 # one-time: let the browser resolve the in-cluster issuer hostname
@@ -41,16 +41,16 @@ echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
 open http://localhost:8090   # demo login: admin@example.com / password
 ```
 
-Why the `/etc/hosts` line exists: ui-service authenticates through OIDC
+Why the `/etc/hosts` line exists: ui authenticates through OIDC
 (OpenID Connect), and OIDC requires a *single* issuer URL that both parties
-can resolve — the browser, which drives the login redirect, and ui-service,
-which validates the resulting token server-side. ui-service reaches Dex fine
+can resolve — the browser, which drives the login redirect, and ui,
+which validates the resulting token server-side. ui reaches Dex fine
 over in-cluster DNS at `http://continuo-dex:5556/dex`; your browser cannot
 resolve that name at all. Port-forwarding `continuo-dex` to `localhost:5556`
 gets the browser a route to the same pod, but only if it requests the same
 hostname the issuer claims to be — hence one loopback line in `/etc/hosts`
 mapping `continuo-dex` to `127.0.0.1`. That is the smallest bridge between
-"browser-reachable" and "matches the issuer identity ui-service already
+"browser-reachable" and "matches the issuer identity ui already
 trusts"; anything else (a second Dex listener, a reverse proxy) is more
 moving parts for the same result. `curl --resolve continuo-dex:5556:127.0.0.1
 http://continuo-dex:5556/dex/.well-known/openid-configuration` verifies the
@@ -160,7 +160,7 @@ Notes that matter before you commit to this path:
 Every container in this chart, bundled or not, gets:
 
 - **Non-root execution.** `runAsNonRoot: true` at the pod level; Continuo's
-  own images run as uid `65532` (ui-service, built on `node`, runs as uid
+  own images run as uid `65532` (ui, built on `node`, runs as uid
   `1000`). Bundled datastore images run as their own documented non-root
   uid/gid (e.g. neo4j `7474:7474`).
 - **`seccompProfile: RuntimeDefault`** — the kernel syscall filter the
@@ -209,10 +209,10 @@ Every container in this chart, bundled or not, gets:
 | `externalDatabase.existingSecret` (+ `existingSecretPasswordKey`) | Pre-created Secret holding the Postgres password, instead of `externalDatabase.password` inline. Same pattern for `externalRedis.existingSecret`, `externalNeo4j.existingSecret` (all key `password` by default), `s3.existingSecret` (keys `access-key-id` / `secret-access-key`), and `auth.existingSecret` (key `client-secret`). |
 | `databaseInit.enabled` | Idempotently creates all 9 databases (the 8 Flyway-migrated service databases plus `continuo_dbt`) before migrations run. Requires the connecting user to have `CREATEDB`; disable when a DBA pre-creates them. |
 | `networkPolicy.enabled` | Default-deny ingress within the release plus allow rules derived from the service graph. |
-| `ingress.enabled` / `ingress.className` / `ingress.host` / `ingress.annotations` / `ingress.tls.*` | Front door for `ui-service` only. Fully values-driven — no ingress class or cert-manager/ACME assumptions are baked in; set them yourself (see `values-byo.yaml.example`). |
+| `ingress.enabled` / `ingress.className` / `ingress.host` / `ingress.annotations` / `ingress.tls.*` | Front door for `ui` only. Fully values-driven — no ingress class or cert-manager/ACME assumptions are baked in; set them yourself (see `values-byo.yaml.example`). |
 | `auth.operatorEmails` / `auth.viewerEmails` / `auth.roleMapping` | Role assignment for authenticated users. With `dex.enabled: true`, `operatorEmails` defaults to the Dex demo user's email. |
 | `llm.provider` / `llm.model` / `llm.apiKey` (or `llm.existingSecret`) | Optional. Empty `apiKey`: agent-runner and remediation-agent still boot and serve, but LLM (Large Language Model) calls fail until it is set. |
-| `github.token` / `github.appId` / `github.installationId` / `github.appPrivateKey` (or `github.existingSecret`) | Optional. `token` is a read-only PAT (Personal Access Token) remediation-agent uses to fetch source; the `app*` fields are a GitHub App ui-service uses to open fix PRs (Pull Requests) — Create-PR returns `503` until they're set. |
+| `github.token` / `github.appId` / `github.installationId` / `github.appPrivateKey` (or `github.existingSecret`) | Optional. `token` is a read-only PAT (Personal Access Token) remediation-agent uses to fetch source; the `app*` fields are a GitHub App ui uses to open fix PRs (Pull Requests) — Create-PR returns `503` until they're set. |
 | `streamReaper.enabled` / `streamReaper.schedule` / `streamReaper.retention` | CronJob that trims old Redis Stream entries. |
 | `services[].resources` / `defaultResources` | Per-service CPU/memory requests and limits; any service without its own `resources` block falls back to `defaultResources`. |
 
@@ -224,7 +224,7 @@ Every PR that touches this chart (or the install-test harness under
 `values-byo.yaml.example`, BYO-inline, BYO-existingSecret), then three real
 kind installs — bundled, BYO with inline credentials, and BYO with a
 pre-created Secret — each verified for completed migrations, healthy pods,
-and answering ui-service/Dex endpoints. Install jobs also layer on a CI-only
+and answering ui/Dex endpoints. Install jobs also layer on a CI-only
 low-CPU-request values override so the chart fits the runner's 2 vCPUs. PR
 installs use the latest published main-branch images, so they prove the
 install path; the e2e suite in `ci.yml` proves the code. The kind cluster

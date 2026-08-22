@@ -1,6 +1,6 @@
-# ui-service authentication — operator setup
+# ui authentication — operator setup
 
-`ui-service` is the only HTTP edge of the system. It authenticates every user as
+`ui` is the only HTTP edge of the system. It authenticates every user as
 an OpenID Connect (OIDC) relying party and enforces `viewer` / `operator` roles.
 There is **no unauthenticated mode**: if `AUTH_MODE=oidc` and the OIDC settings
 are missing, the pod fails to boot on purpose (it never serves an open UI).
@@ -12,7 +12,7 @@ or for a single operator.
 
 ## Auth modes
 
-`AUTH_MODE` (set in the `ui-service` `env` block of `deploy/continuo/values.yaml`) has
+`AUTH_MODE` (set in the `ui` `env` block of `deploy/continuo/values.yaml`) has
 exactly two values:
 
 | Mode | Behavior | When to use |
@@ -39,12 +39,12 @@ exactly two values:
 Google is a standards-compliant OIDC provider, and its OAuth clients allow
 **loopback redirect URIs** (`http://localhost:<port>`). That means you can run
 genuine `AUTH_MODE=oidc` against Google with **no domain and no self-hosted IdP**:
-you reach `ui-service` through a `kubectl port-forward` to a local port, and
+you reach `ui` through a `kubectl port-forward` to a local port, and
 Google redirects back to that same loopback address after login.
 
 Role assignment uses an **email allowlist** (Google does not emit a `groups`
 claim by default). Google asserts `email_verified: true` for verified accounts,
-which `ui-service` requires before honoring the allowlist, so this works cleanly.
+which `ui` requires before honoring the allowlist, so this works cleanly.
 
 ### Step 1 — Create the Google OAuth client
 
@@ -55,7 +55,7 @@ which `ui-service` requires before honoring the allowlist, so this works cleanly
    - Fill in the app name and your support email.
    - Under **Test users**, add the Google account(s) you will log in with. While
      the consent screen is in "Testing" status, only these accounts can sign in.
-   - The default `openid`, `email`, `profile` scopes are all `ui-service` needs;
+   - The default `openid`, `email`, `profile` scopes are all `ui` needs;
      you do not need to add any.
 3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
    - Application type: **Web application**.
@@ -132,8 +132,8 @@ helm upgrade --install <release> deploy/continuo \
 Confirm the pod is healthy (not crashlooping):
 
 ```bash
-kubectl -n continuo get pods -l app=ui-service
-kubectl -n continuo logs -l app=ui-service | tail
+kubectl -n continuo get pods -l app=ui
+kubectl -n continuo logs -l app=ui | tail
 #   -> "Continuo UI running on http://localhost:8090 (auth mode: oidc)"
 ```
 
@@ -144,7 +144,7 @@ must match the redirect URI and `AUTH_PUBLIC_URL`; the **remote** port (right of
 the colon) is always `8090`, the port the container listens on:
 
 ```bash
-kubectl -n continuo port-forward svc/ui-service 18090:8090
+kubectl -n continuo port-forward svc/ui 18090:8090
 ```
 
 Then open `http://localhost:18090` in your browser:
@@ -152,7 +152,7 @@ Then open `http://localhost:18090` in your browser:
 1. You land on the sign-in page.
 2. Click **Sign in** → you are redirected to Google (accept the "unverified app"
    notice — it is your own app in testing mode).
-3. Google redirects to `http://localhost:18090/auth/callback`; `ui-service`
+3. Google redirects to `http://localhost:18090/auth/callback`; `ui`
    validates the token, sees your verified email on the operator allowlist, and
    creates a session.
 4. You are now signed in as `operator`. `GET /auth/me` shows your email and role.

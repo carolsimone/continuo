@@ -56,7 +56,7 @@ jobs:
               - 'orchestrator/**'
               - 'executor-controller/**'
               - 'k8s-controller/**'
-              - 'ui-service/**'
+              - 'ui/**'
               - 'manifest-controller/**'
               - 'release-controller/**'
               - 'agent-runner/**'
@@ -89,7 +89,7 @@ jobs:
               - 'pkg/**'
               - 'k8s-controller/**'
             ui_service:
-              - 'ui-service/**'
+              - 'ui/**'
             manifest_controller:
               - 'manifest-controller/**'
             release_controller:
@@ -163,7 +163,7 @@ jobs:
                   {service: "orchestrator", changed: $orchestrator, dockerfile: "orchestrator/Dockerfile.prod", context: "."},
                   {service: "executor-controller", changed: $executor, dockerfile: "executor-controller/Dockerfile.prod", context: "."},
                   {service: "k8s-controller", changed: $k8s, dockerfile: "k8s-controller/Dockerfile.prod", context: "."},
-                  {service: "ui-service", changed: $ui, dockerfile: "ui-service/Dockerfile", context: "ui-service"},
+                  {service: "ui", changed: $ui, dockerfile: "ui/Dockerfile", context: "ui"},
                   {service: "manifest-controller", changed: $manifest, dockerfile: "manifest-controller/Dockerfile.prod", context: "manifest-controller"},
                   {service: "release-controller", changed: $release_controller, dockerfile: "release-controller/Dockerfile.prod", context: "."},
                   {service: "agent-runner", changed: $agent_runner, dockerfile: "agent-runner/Dockerfile.prod", context: "."},

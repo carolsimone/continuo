@@ -17,11 +17,11 @@ import (
 )
 
 // TestUIWholeDAGTestOperation drives a whole-DAG `test` run through the
-// ui-service HTTP API — POST /api/schedules/:name/trigger with a JSON
+// ui HTTP API — POST /api/schedules/:name/trigger with a JSON
 // {"operation":"test"} body — the exact wire path the UI's operation selector
 // uses. It proves the operation survives the HTTP → gRPC TriggerSchedule hop
 // by asserting the resulting :Run node's operation property, covering the
-// ui-service HTTP layer on top of the gRPC-level whole-DAG test coverage.
+// ui HTTP layer on top of the gRPC-level whole-DAG test coverage.
 func TestUIWholeDAGTestOperation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -42,7 +42,7 @@ func TestUIWholeDAGTestOperation(t *testing.T) {
 	defer cleanupTestData(t, ctx, clients, seedSchedule)
 	seedTopology(t, ctx, clients)
 
-	t.Logf("POST /api/schedules/%s/trigger {operation:test} via ui-service HTTP", seedSchedule)
+	t.Logf("POST /api/schedules/%s/trigger {operation:test} via ui HTTP", seedSchedule)
 	scheduleID := triggerScheduleOperationHTTP(t, clients.uiBase, seedSchedule, "test")
 
 	id, err := uuid.Parse(scheduleID)
@@ -58,7 +58,7 @@ func TestUIWholeDAGTestOperation(t *testing.T) {
 }
 
 // TestUISingleNodeBuildOperation drives a single-node `build` run through the
-// ui-service HTTP API — POST /api/nodes/:service/:schema/:table/run with a
+// ui HTTP API — POST /api/nodes/:service/:schema/:table/run with a
 // JSON {"operation":"build"} body — the exact wire path NodeDetailPage's
 // operation selector uses. It runs against the seed_table_1 node and asserts
 // the dispatched Job's command carries `dbt build`, proving the operation
@@ -86,7 +86,7 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 	cleanupTestData(t, ctx, clients, "single-node-build-op-ui")
 	seedTopology(t, ctx, clients)
 
-	t.Logf("POST /api/nodes/%s/%s/%s/run {operation:build} via ui-service HTTP", targetService, targetSchema, targetTable)
+	t.Logf("POST /api/nodes/%s/%s/%s/run {operation:build} via ui HTTP", targetService, targetSchema, targetTable)
 	runIDStr, scheduleName := triggerNodeRunOperationHTTP(t, clients.uiBase, targetService, targetSchema, targetTable, "build")
 
 	runID, err := uuid.Parse(runIDStr)
@@ -116,7 +116,7 @@ func TestUISingleNodeBuildOperation(t *testing.T) {
 }
 
 // triggerScheduleOperationHTTP triggers a schedule with an explicit run
-// operation via the ui-service HTTP endpoint (POST
+// operation via the ui HTTP endpoint (POST
 // /api/schedules/:name/trigger {"operation": op}) and returns the
 // schedule_id. Mirrors triggerScheduleHTTP in trigger_test.go but sends a
 // JSON body instead of a nil one, exercising the UI operation-selector's
@@ -150,7 +150,7 @@ func triggerScheduleOperationHTTP(t *testing.T, base, scheduleName, operation st
 }
 
 // triggerNodeRunOperationHTTP triggers a single-node run with an explicit run
-// operation via the ui-service HTTP endpoint (POST
+// operation via the ui HTTP endpoint (POST
 // /api/nodes/:service/:schema/:table/run {"operation": op}) and returns
 // (run_id, schedule_name).
 func triggerNodeRunOperationHTTP(t *testing.T, base, service, schema, table, operation string) (string, string) {

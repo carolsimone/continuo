@@ -24,7 +24,7 @@ export function userMetadata(req: Request): grpc.Metadata {
   return md;
 }
 
-// process.cwd() is always the project root (ui-service/ in dev, /app in Docker).
+// process.cwd() is always the project root (ui/ in dev, /app in Docker).
 // Using __dirname would break prod: dist-server/ is 1 level deep, src/server/ is 2 levels deep.
 const PROTO_PATH = path.join(process.cwd(), 'proto/state.proto');
 const PROTO_DIR = path.join(process.cwd(), 'proto');

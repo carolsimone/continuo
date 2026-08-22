@@ -323,7 +323,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 // REMEDIATION_PR_OPENING_GRACE_PERIOD this compose stack sets, proving
 // recovery rather than the fail path.
 //
-// There is no fault-injection hook in ui-service to force its own
+// There is no fault-injection hook in ui to force its own
 // RecordPullRequest call to fail after a successful PR creation, so this test
 // does not drive that failure directly; it reproduces the row state that
 // failure leaves behind, which is exactly what the opening sweep resolves
@@ -359,7 +359,7 @@ func TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	t.Logf("seeded proposal id=%s release_id=%s node_id=%s", proposalID, releaseID, nodeID)
 
 	// 2. Claim the row for PR creation via the real BeginPullRequest RPC — the
-	//    same public gRPC call ui-service's BeginPullRequest step makes. This
+	//    same public gRPC call ui's BeginPullRequest step makes. This
 	//    performs the actual pr_state ''->'opening' transition and
 	//    pr_claimed_at stamp, and returns the branch name the system actually
 	//    computed and is about to look for, so the test reads it from the

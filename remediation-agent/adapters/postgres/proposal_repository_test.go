@@ -836,7 +836,7 @@ func TestFailStuckOpeningPR_RemovesFromStuckOpeningAndAllowsReclaim(t *testing.T
 // TestFailStuckOpeningPR_CASGuardsAgainstReClaim is the regression test for
 // the lost-update every caller of FailStuckOpeningPR must avoid — the
 // reconciler's opening sweep releasing a stale claim it listed earlier in a
-// pass, or the ui-service PR-creation route releasing the claim its own
+// pass, or the ui PR-creation route releasing the claim its own
 // BeginPullRequest took after a downstream failure: the call must only fail
 // the exact claim identified by (id, observedClaimedAt). If the row was
 // released and re-claimed in between — the row now carries a different

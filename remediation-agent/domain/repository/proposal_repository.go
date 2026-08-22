@@ -156,7 +156,7 @@ type ProposalRepository interface {
 	// already recorded or failed by another caller since this one's own
 	// BeginPR claim — the same compare-and-set contract FailStuckOpeningPR and
 	// RecordPROutcome apply to every other write against an in-flight PR
-	// claim. Two callers race to record the same claim: the ui-service
+	// claim. Two callers race to record the same claim: the ui
 	// PR-creation route, right after the GitHub PR it just created, and the
 	// reconciler's opening sweep, after finding that same PR already exists
 	// on GitHub for a claim it read as stuck. Whichever reaches the row first
@@ -169,7 +169,7 @@ type ProposalRepository interface {
 	// still equals observedClaimedAt — the compare-and-set guard that lets a
 	// caller release exactly the claim it itself acquired or observed, never a
 	// fresher one taken by someone else since. Two callers use it: the
-	// ui-service PR-creation route, with the ClaimedAt its own BeginPR
+	// ui PR-creation route, with the ClaimedAt its own BeginPR
 	// returned, when a downstream S3 or GitHub step fails after the claim; and
 	// the reconciler's opening sweep, with the ClaimedAt it read while listing
 	// stuck claims. hit reports whether the CAS fired; false covers both "no

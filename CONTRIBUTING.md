@@ -90,7 +90,7 @@ scripts/lint-go.sh --ci     # go vet, staticcheck, gosec
 make security-scan          # govulncheck, gitleaks, Trivy
 ```
 
-For `ui-service`: run the **full** `npm test` (tests live in both `src/client/` and
+For `ui`: run the **full** `npm test` (tests live in both `src/client/` and
 `tests/`, so a scoped run hides failures) and `npm run build`. There is no ESLint config
 in this project, so `npm run lint` is expected to fail — ignore it.
 

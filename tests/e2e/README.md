@@ -11,7 +11,7 @@ The suite covers both the run-orchestration pipeline and the dbt blue/green rele
 - `k8s-controller` - Monitors job status
 - `manifest-controller` - Parses dbt manifests (candidate + legacy paths)
 - `release-controller` - Owns the blue/green candidate-release lifecycle and `current_prod`
-- `ui-service` - HTTP API verified to return correct scheduler/task/release data
+- `ui` - HTTP API verified to return correct scheduler/task/release data
 
 ### DAG Layout
 
@@ -48,7 +48,7 @@ bash scripts/setup.sh
 # 4. Start Go service processes inside containers and wait for health
 bash tests/e2e/start-services.sh
 
-# 5. Start the ui-service container
+# 5. Start the ui container
 docker compose up -d ui
 
 # 6. Deploy pre-built controller images into the kind cluster
@@ -83,7 +83,7 @@ docker compose ps   # neo4j should show "(healthy)"
 # Start Go service processes and wait for health
 bash tests/e2e/start-services.sh
 
-# Start ui-service
+# Start ui
 docker compose up -d ui
 
 # If any service images changed since last run, rebuild and reload into kind:
@@ -110,7 +110,7 @@ runs `provision-k8s-test-env.sh`, then executes the tests.
 
 ## Auth e2e suite (OIDC against Dex)
 
-The auth suite exercises the real OIDC login flow (ui-service in `oidc` mode
+The auth suite exercises the real OIDC login flow (ui in `oidc` mode
 against a Dex identity provider). It is skipped unless `UI_AUTH_HTTP_BASE` is
 set.
 
@@ -128,7 +128,7 @@ docker compose --profile auth-e2e down dex ui-auth
 Static users (password `password`): `operator@example.com` (operator role via
 email override), `viewer@example.com` (viewer), `norole@example.com` (no role —
 denied). Dex static users carry no groups claim; the groups-mapping path is
-covered by ui-service unit tests.
+covered by ui unit tests.
 
 ## Script Reference
 
@@ -203,7 +203,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | `release_promote_python_test.go` | `TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes`, `TestE2E_PythonNodeRun_MaterializesAndReportsFailures` — a python-contract release skips the compile leg, validates via `build_from_columns`, promotes; then each node runs in its own image. The contract's mixed DAG includes a `python-csv` node (`py_csv`, no script) whose source csv is seeded into LocalStack S3 before the release posts: the validation runner range-fetches its header and checks it against `output_columns`, and the run path fetches the full object and lands its rows in the warehouse |
 | `remediation_python_test.go` | `TestE2E_PythonValidationFailure_ShadowVerifiedFix`, `TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt` — a rejected python node is repaired in the contract yaml, verified by a real shadow release that stops at `validated`, and proposed for review; the second test proves a rejected shadow's error feeds the next attempt and produces no remediation trigger of its own. Uses the fixture repository under `fixtures/py-remediation-repo`, which `stub-github` serves as a tarball |
 | `seed_topology_test.go` | `seedTopology` helper — publishes `release.promoted:v1` to establish the e2e DAG in Neo4j (the kept production path) |
-| `ui_http_test.go` | HTTP assertions against the ui-service (`verifyUIService`) |
+| `ui_http_test.go` | HTTP assertions against the ui (`verifyUIService`) |
 | `auth_oidc_test.go` | `TestAuthOIDC` — real OIDC login flow against Dex (auth-e2e profile); skipped unless `UI_AUTH_HTTP_BASE` is set |
 | `verify.go` | DAG-level assertions (executor jobs, k8s jobs, dependency unlocking, failure helpers) |
 | `clients.go` | gRPC, Redis, Postgres, Neo4j, S3, and release-controller client setup |

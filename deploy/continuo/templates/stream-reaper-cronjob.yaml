@@ -1,6 +1,6 @@
 {{- if .Values.streamReaper.enabled }}
 # Periodically trims the continuo event streams by age (XTRIM ... MINID). Only
-# the streams in pkg/streams.All are touched; the ui-service auth session keys
+# the streams in pkg/streams.All are touched; the ui auth session keys
 # (plain strings on the same Redis) are never affected.
 apiVersion: batch/v1
 kind: CronJob

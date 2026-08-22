@@ -14,7 +14,7 @@ import (
 )
 
 // TestTriggerSchedule_SeedRunAndRerun verifies the full trigger flow from the
-// ui-service HTTP endpoint (the exact path the UI "Run" button uses) through
+// ui HTTP endpoint (the exact path the UI "Run" button uses) through
 // to schedule completion. It triggers the 3-node seed schedule via
 // POST /api/schedules/seed/trigger, waits for all tasks to succeed, then
 // re-triggers and verifies the second run also completes.
@@ -58,7 +58,7 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	}, "Timeout waiting for 'seed' to appear in schedule_catalog")
 
 	// === Run 1 ===
-	t.Log("=== Run 1: Triggering seed schedule via ui-service HTTP ===")
+	t.Log("=== Run 1: Triggering seed schedule via ui HTTP ===")
 	scheduleID1 := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 1 created: schedule_id=%s", scheduleID1)
 
@@ -86,7 +86,7 @@ func TestTriggerSchedule_SeedRunAndRerun(t *testing.T) {
 	t.Log("🎉 TriggerSchedule run-and-rerun test passed")
 }
 
-// triggerScheduleHTTP triggers a schedule via the ui-service HTTP endpoint
+// triggerScheduleHTTP triggers a schedule via the ui HTTP endpoint
 // (POST /api/schedules/:name/trigger) and returns the schedule_id.
 func triggerScheduleHTTP(t *testing.T, base, scheduleName string) string {
 	t.Helper()

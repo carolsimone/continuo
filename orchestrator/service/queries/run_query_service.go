@@ -98,7 +98,7 @@ func (s *RunQueryService) GetRunGraph(ctx context.Context, runID string) (*RunGr
 }
 
 // ListActiveRunDrifts returns one in-flight run per schedule (the newest) plus
-// the latest topology generation, so consumers (ui-service /api/schedules) can
+// the latest topology generation, so consumers (ui /api/schedules) can
 // render per-schedule drift badges. ListActiveRuns returns rows ordered by
 // schedule_name then newest-first (created_at DESC); this method keeps the head
 // row per schedule and drops any extras with a warning.

@@ -54,7 +54,7 @@ spec:
       {{- end }}
       securityContext:
         {{- include "continuo.podSecurityContext" $ | nindent 8 }}
-        {{- if eq $svc.name "ui-service" }}
+        {{- if eq $svc.name "ui" }}
         runAsUser: 1000
         runAsGroup: 1000
         {{- else }}
@@ -301,7 +301,7 @@ spec:
           configMap:
             name: {{ default (include "continuo.schedulesConfigMapName" $) $volume.configMap.name }}
         {{- end }}
-        {{- else if eq $svc.name "ui-service" }}
+        {{- else if eq $svc.name "ui" }}
         {{- range $volume := $svc.volumes }}
         - name: {{ $volume.name }}
           configMap:

@@ -463,7 +463,7 @@ func (r *ProposalRepository) RecordPR(ctx context.Context, id, prURL string, prN
 // different pr_claimed_at, or a pr_state that already moved on) leaves 0 rows
 // affected rather than clobbering the fresh claim. Used both by the
 // reconciler's opening sweep (CAS'd on the ClaimedAt it read while listing
-// stuck claims) and by the ui-service PR-creation route's own failure
+// stuck claims) and by the ui PR-creation route's own failure
 // callback (CAS'd on the ClaimedAt its own BeginPR call returned).
 func (r *ProposalRepository) FailStuckOpeningPR(ctx context.Context, id string, observedClaimedAt time.Time) (bool, error) {
 	res, err := r.q.ExecContext(ctx,

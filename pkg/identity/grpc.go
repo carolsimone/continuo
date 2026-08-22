@@ -13,7 +13,7 @@ import (
 type ctxKey struct{}
 
 // NewOutgoingContext attaches id to ctx's outgoing gRPC metadata under
-// MetadataKey. The ui-service Node client sets the same header directly; this
+// MetadataKey. The ui Node client sets the same header directly; this
 // helper is the Go-client equivalent used by any Go caller that forwards an
 // initiating user (e.g. internal services acting on a user's behalf). A system
 // identity is still propagated explicitly so the receiver records "system"

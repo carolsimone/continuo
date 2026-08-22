@@ -34,7 +34,7 @@ for m in state orchestrator executor-controller k8s-controller release-controlle
 done
 ```
 
-## npm (`ui-service`)
+## npm (`ui`)
 
 277 production packages (`--production`, so build and test tooling is excluded — that
 code is not shipped).
@@ -53,7 +53,7 @@ No copyleft dependencies. The `0BSD` package is `tslib`, which is permissive. Th
 the root `LICENSE`, not a third-party dependency.
 
 ```bash
-cd ui-service && npm ci
+cd ui && npm ci
 npm exec --yes -- license-checker@25.0.1 --production --summary
 ```
 
@@ -104,7 +104,7 @@ that is the supported production configuration in any case. See
 ## Notes on how this was scoped
 
 - The npm figures are production-only. Development dependencies are not shipped in the
-  `ui-service` image, so their licenses do not affect distribution.
+  `ui` image, so their licenses do not affect distribution.
 - The Go figures exclude this repository's own modules. Every Go module directory carries
   a copy of the root `LICENSE`, so a consumer running
   `go get github.com/carolsimone/continuo/pkg` receives the license with the module.

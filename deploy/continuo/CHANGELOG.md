@@ -66,6 +66,14 @@ shipped in those.
   `continuo-validation-<engine>` images are no longer referenced by the chart.
   The engine remains part of the image name rather than the tag, so the
   `"vX.Y.Z@sha256:<digest>"` override form still composes a valid immutable ref.
+
+- Renamed service `ui-service` to `ui`: the `services[]` entry, Deployment,
+  Service, NetworkPolicy, and ingress backend now use the name `ui`.
+  Image is now `continuo-ui`. The default `ingress.tls.secretName` also
+  changed, from `ui-service-tls` to `ui-tls`: any install with
+  `ingress.tls.enabled=true` that relies on this default (rather than
+  setting `ingress.tls.secretName` explicitly) must rename/recreate the
+  Secret before upgrading, or TLS termination breaks.
 - `remediation-agent` now refuses to start when one of its optional duration
   settings — `LLM_CACHE_TTL`, `REMEDIATION_PR_POLL_INTERVAL`,
   `REMEDIATION_PR_OPENING_GRACE_PERIOD`, `SHADOW_VERIFY_TIMEOUT`,

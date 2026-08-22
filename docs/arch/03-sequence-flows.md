@@ -133,7 +133,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant U as User
-  participant UI as ui-service
+  participant UI as ui
   participant ST as state
   participant R as Redis
   participant OR as orchestrator
@@ -186,7 +186,7 @@ All Tier-1 required keys are accumulated before any `os.Exit(1)` so the operator
 ```mermaid
 sequenceDiagram
   participant U as user
-  participant UI as ui-service
+  participant UI as ui
   participant ST as state
   participant R as Redis
   participant OR as orchestrator
@@ -311,7 +311,7 @@ An ad-hoc, one-task run for a single dbt node. No schedule catalog entry is crea
 ```mermaid
 sequenceDiagram
   participant U as user/API client
-  participant UI as ui-service (BFF)
+  participant UI as ui (BFF)
   participant ST as state (gRPC)
   participant R as Redis
   participant OR as orchestrator
@@ -365,7 +365,7 @@ A new run on the source's schedule that re-executes the failed/cancelled tasks +
 ```mermaid
 sequenceDiagram
   participant U as user/API client
-  participant UI as ui-service (BFF)
+  participant UI as ui (BFF)
   participant ST as state (gRPC)
   participant R as Redis
   participant OR as orchestrator
@@ -627,12 +627,12 @@ sequenceDiagram
 
 ## 12. Human-Gated Create PR (Remediation Surface)
 
-An operator reviews a fix proposal in the Remediation tab and clicks **Create PR**. ui-service orchestrates the claim, GitHub PR creation, and result recording; remediation-agent enforces single-winner idempotency. The PR's eventual close is then mirrored back onto the proposal by a background reconciler, independent of ui-service.
+An operator reviews a fix proposal in the Remediation tab and clicks **Create PR**. ui orchestrates the claim, GitHub PR creation, and result recording; remediation-agent enforces single-winner idempotency. The PR's eventual close is then mirrored back onto the proposal by a background reconciler, independent of ui.
 
 ```mermaid
 sequenceDiagram
   participant OP as operator (browser)
-  participant UI as ui-service
+  participant UI as ui
   participant RA as remediation-agent (gRPC 50054)
   participant S3 as S3
   participant GH as GitHub App API
@@ -701,7 +701,7 @@ sequenceDiagram
   end
 ```
 
-> The deterministic branch name and the GitHub-level "PR already exists for head" guard together make the full flow safe to retry: a double-click or browser reload issues a second `BeginPullRequest`, which — if the first already reached `opening`/`open` — short-circuits with the existing `pr_url` before touching GitHub again. `FailPullRequest` resets `pr_state` to `failed` so a subsequent click by the same or a different operator can retry cleanly; it is a compare-and-set on the `claimed_at` its own `BeginPullRequest` call returned, not an unconditional write, so a claim this same request already lost — released by the opening sweep after the grace period elapsed while the S3/GitHub round trip was still in flight, then re-claimed by someone else — is never reset out from under its new owner. `RecordPullRequest` carries the same guard on the way into `'open'`: its CAS only fires while the row is still `'opening'`, so if the opening sweep (Flow 12b) recovers and records the same PR first — recomputing the same deterministic branch and finding it on GitHub — this call's own attempt is a harmless no-op rather than a second write or a second outbox entry; ui-service still returns 200 with the PR link either way, since the PR itself was already created by the time this call runs. The `remediation.pr_opened:v1` outbox event feeds orchestrator's case-base proposals consumer (see Flow 11's "Failure-precedent case base" above), which records the opened PR as a `:Proposal` linked from its `:Rejection`.
+> The deterministic branch name and the GitHub-level "PR already exists for head" guard together make the full flow safe to retry: a double-click or browser reload issues a second `BeginPullRequest`, which — if the first already reached `opening`/`open` — short-circuits with the existing `pr_url` before touching GitHub again. `FailPullRequest` resets `pr_state` to `failed` so a subsequent click by the same or a different operator can retry cleanly; it is a compare-and-set on the `claimed_at` its own `BeginPullRequest` call returned, not an unconditional write, so a claim this same request already lost — released by the opening sweep after the grace period elapsed while the S3/GitHub round trip was still in flight, then re-claimed by someone else — is never reset out from under its new owner. `RecordPullRequest` carries the same guard on the way into `'open'`: its CAS only fires while the row is still `'opening'`, so if the opening sweep (Flow 12b) recovers and records the same PR first — recomputing the same deterministic branch and finding it on GitHub — this call's own attempt is a harmless no-op rather than a second write or a second outbox entry; ui still returns 200 with the PR link either way, since the PR itself was already created by the time this call runs. The `remediation.pr_opened:v1` outbox event feeds orchestrator's case-base proposals consumer (see Flow 11's "Failure-precedent case base" above), which records the opened PR as a `:Proposal` linked from its `:Rejection`.
 
 ### 12a. PR-Outcome Reconciler (Close-Loop Tail)
 
@@ -738,7 +738,7 @@ sequenceDiagram
 
 ### 12b. Opening Sweep (Stranded-Claim Recovery)
 
-`RecordPullRequest` in Flow 12 is explicitly best-effort: by the time it runs, the PR already exists on GitHub, so ui-service logs loudly and returns the PR link to the operator on failure rather than failing the request. That leaves the proposal row stuck at `pr_state='opening'` with no `pr_url`, which the UI reads as "no PR yet" — inviting a duplicate. The same background reconciler that drives Flow 12a also sweeps these stuck claims, on the same tick.
+`RecordPullRequest` in Flow 12 is explicitly best-effort: by the time it runs, the PR already exists on GitHub, so ui logs loudly and returns the PR link to the operator on failure rather than failing the request. That leaves the proposal row stuck at `pr_state='opening'` with no `pr_url`, which the UI reads as "no PR yet" — inviting a duplicate. The same background reconciler that drives Flow 12a also sweeps these stuck claims, on the same tick.
 
 ```mermaid
 sequenceDiagram
@@ -758,7 +758,7 @@ sequenceDiagram
         RA->>PG: Record(id, pr_url, pr_number, opened_by="") -- 1 tx:<br/>CAS pr_state 'opening' -> 'open' (WHERE pr_state='opening'), pr_opened_at=created_at, pr_claimed_at=NULL<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1)
         alt CAS hit (row was still 'opening')
           Note over PG: gap closed -- UI now shows the recovered pr_url
-        else CAS miss (ui-service's own RecordPullRequest recorded this same claim first)
+        else CAS miss (ui's own RecordPullRequest recorded this same claim first)
           Note over PG: no-op -- nothing written, no event emitted
         end
       else PR not found
@@ -782,7 +782,7 @@ sequenceDiagram
   end
 ```
 
-> `BeginPullRequest` stamps `pr_claimed_at` with the wall-clock moment it claims the row (via the service's `Clock` port, not SQL `now()`) and reads the persisted value back into its response so the caller can present it to a later `FailPullRequest` call; a `BEFORE UPDATE` trigger (`proposal_stamp_pr_claimed_at`) stamps it with `clock_timestamp()` instead whenever a row's `pr_state` is becoming `'opening'` and the column is still `NULL` — closing the gap for a claim taken by a binary that predates the column and cannot be taught to set it itself, so every claim carries a value regardless of writer version. The same trigger clears `pr_claimed_at` back to `NULL` on **every** transition out of `'opening'`, unconditionally, regardless of what value (if any) the transitioning statement itself wrote to the column — this is the database-boundary guarantee, not an application-layer convention each writer must remember: a binary that predates the column issues its `RecordPullRequest`/`FailPullRequest`-equivalent write without mentioning `pr_claimed_at` at all, and without this trigger clause the column would keep the exiting claim's stale value in place for the next claim to inherit. Combined with the fill-when-NULL clause, a row entering `'opening'` is therefore always guaranteed to find `pr_claimed_at NULL` beforehand, so a later re-claim of the same proposal (`opening → failed → opening`) always ages from its own claim time, never an earlier one — regardless of which binary version performed either transition. The sweep compares `now - pr_claimed_at` directly against `REMEDIATION_PR_OPENING_GRACE_PERIOD`, read from a stored timestamp rather than tracked in memory: a claim taken moments before a pass runs is never raced out from under an operator, because its age is always far short of the grace period regardless of the reconciler's poll interval or how many passes have run. The release itself is a compare-and-set on the exact `pr_claimed_at` the caller observed or was itself given (`FailStuckOpeningPR`), not a blind `pr_state='opening'` write, and this applies to both callers of that CAS: the reconciler's opening sweep releasing a claim it read earlier in the same pass, and `FailPullRequest` releasing the exact claim its own `BeginPullRequest` call acquired. A claim released and re-claimed by a second reconciler instance, an operator's retry, or the opening sweep itself (if the S3/GitHub round trip in Flow 12 outlives the grace period) between the caller's own claim/observation and this point leaves the CAS a no-op (`released=false`, not an error), so the fresh claim is never clobbered — this is the fresh-claim invariant every write against an `'opening'` row must preserve, and a claim's age is never computed from an earlier claim's timestamp. `RecordPR` — the write both this sweep's `Record` step and ui-service's own `RecordPullRequest` call issue to resolve a claim into `'open'` — preserves the same invariant with a `WHERE pr_state='opening'` guard rather than a blind write: whichever of the two callers reaches the row first wins, and the other's call is a no-op, never a second write racing to overwrite the first with the same pr_url and pr_number. A row with `pr_claimed_at IS NULL` — unmeasurable regardless of cause — is left untouched rather than swept, since an unmeasurable claim can never safely be judged stale. A per-row GitHub error leaves the row untouched regardless of its age — an inconclusive read is not a confirmed miss — and does not block the rest of the batch. Because the cursor advances to the next page before any row in the current page is handled, a page of persistently unresolvable rows (a standing GitHub error, or a claim that never ages out) never keeps the rows behind it out of every pass: a page shorter than the limit wraps the cursor back to the start, so a full rotation through every stuck row repeats indefinitely instead of a single stuck prefix monopolizing every pass.
+> `BeginPullRequest` stamps `pr_claimed_at` with the wall-clock moment it claims the row (via the service's `Clock` port, not SQL `now()`) and reads the persisted value back into its response so the caller can present it to a later `FailPullRequest` call; a `BEFORE UPDATE` trigger (`proposal_stamp_pr_claimed_at`) stamps it with `clock_timestamp()` instead whenever a row's `pr_state` is becoming `'opening'` and the column is still `NULL` — closing the gap for a claim taken by a binary that predates the column and cannot be taught to set it itself, so every claim carries a value regardless of writer version. The same trigger clears `pr_claimed_at` back to `NULL` on **every** transition out of `'opening'`, unconditionally, regardless of what value (if any) the transitioning statement itself wrote to the column — this is the database-boundary guarantee, not an application-layer convention each writer must remember: a binary that predates the column issues its `RecordPullRequest`/`FailPullRequest`-equivalent write without mentioning `pr_claimed_at` at all, and without this trigger clause the column would keep the exiting claim's stale value in place for the next claim to inherit. Combined with the fill-when-NULL clause, a row entering `'opening'` is therefore always guaranteed to find `pr_claimed_at NULL` beforehand, so a later re-claim of the same proposal (`opening → failed → opening`) always ages from its own claim time, never an earlier one — regardless of which binary version performed either transition. The sweep compares `now - pr_claimed_at` directly against `REMEDIATION_PR_OPENING_GRACE_PERIOD`, read from a stored timestamp rather than tracked in memory: a claim taken moments before a pass runs is never raced out from under an operator, because its age is always far short of the grace period regardless of the reconciler's poll interval or how many passes have run. The release itself is a compare-and-set on the exact `pr_claimed_at` the caller observed or was itself given (`FailStuckOpeningPR`), not a blind `pr_state='opening'` write, and this applies to both callers of that CAS: the reconciler's opening sweep releasing a claim it read earlier in the same pass, and `FailPullRequest` releasing the exact claim its own `BeginPullRequest` call acquired. A claim released and re-claimed by a second reconciler instance, an operator's retry, or the opening sweep itself (if the S3/GitHub round trip in Flow 12 outlives the grace period) between the caller's own claim/observation and this point leaves the CAS a no-op (`released=false`, not an error), so the fresh claim is never clobbered — this is the fresh-claim invariant every write against an `'opening'` row must preserve, and a claim's age is never computed from an earlier claim's timestamp. `RecordPR` — the write both this sweep's `Record` step and ui's own `RecordPullRequest` call issue to resolve a claim into `'open'` — preserves the same invariant with a `WHERE pr_state='opening'` guard rather than a blind write: whichever of the two callers reaches the row first wins, and the other's call is a no-op, never a second write racing to overwrite the first with the same pr_url and pr_number. A row with `pr_claimed_at IS NULL` — unmeasurable regardless of cause — is left untouched rather than swept, since an unmeasurable claim can never safely be judged stale. A per-row GitHub error leaves the row untouched regardless of its age — an inconclusive read is not a confirmed miss — and does not block the rest of the batch. Because the cursor advances to the next page before any row in the current page is handled, a page of persistently unresolvable rows (a standing GitHub error, or a claim that never ages out) never keeps the rows behind it out of every pass: a page shorter than the limit wraps the cursor back to the start, so a full rotation through every stuck row repeats indefinitely instead of a single stuck prefix monopolizing every pass.
 
 ## Why These Diagrams Are Not Enough On Their Own
 

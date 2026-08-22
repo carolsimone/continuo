@@ -1,6 +1,6 @@
 // Package main is a minimal GitHub API stub used in e2e tests.
 // It listens on :9200 and handles both the remediation-agent read path and the
-// ui-service PR-creation write path, so both can be exercised without a real
+// ui PR-creation write path, so both can be exercised without a real
 // GitHub token or network access.
 //
 // Endpoints served:
@@ -55,7 +55,7 @@
 //	GET  /repos/{owner}/{repo}/pulls?head=&state=
 //	    Returns PRs matching the head branch (bare "branch" or "owner:branch")
 //	    and state ("open" default, "closed", or "all") — the remediation-agent
-//	    opening sweep's branch lookup and the ui-service PR creator's
+//	    opening sweep's branch lookup and the ui PR creator's
 //	    422-already-exists retry both call this.
 //
 //	GET  /repos/{owner}/{repo}/pulls/{n}
@@ -735,7 +735,7 @@ func pullJSON(st *stubPRState) map[string]interface{} {
 // listPulls responds to GET /repos/{o}/{r}/pulls?head=&state=&per_page=,
 // filtering the stored PRs by head branch and by state, matching the real
 // GitHub pulls-list endpoint the remediation-agent's FindByBranch and the
-// ui-service PR creator's 422-retry both call:
+// ui PR creator's 422-retry both call:
 //
 //   - head accepts either "branch" or "owner:branch" (the reconciler's
 //     FindByBranch always sends "owner:branch"; a bare branch also matches,

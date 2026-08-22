@@ -5,7 +5,7 @@ package agentchat.v1;
 option go_package = "github.com/carolsimone/continuo/agent-runner/proto/agentchat/v1;agentchatv1";
 
 // AgentChat is the cluster-internal chat transport: one bidirectional stream
-// per browser WebSocket connection, relayed 1:1 by ui-service.
+// per browser WebSocket connection, relayed 1:1 by ui.
 service AgentChat {
   rpc Chat(stream ClientEvent) returns (stream ServerEvent);
 }
@@ -21,7 +21,7 @@ message ClientEvent {
 }
 
 message Open {
-  string user_id = 1;                    // authenticated identity supplied by ui-service
+  string user_id = 1;                    // authenticated identity supplied by ui
   string thread_id = 2;                  // empty = new thread; set = resume + replay history
 }
 message UserMessage { string text = 1; }

@@ -1,6 +1,6 @@
 # Continuo UI design guidelines
 
-Forward-looking reference for any change in `ui-service/`. Describes the
+Forward-looking reference for any change in `ui/`. Describes the
 design system as it stands once the
 `2026-05-23-ui-button-and-layout-standardization` work has landed. If a
 new page or component does not fit one of these patterns, add to the
@@ -435,7 +435,7 @@ support this; reuse them for any future service-scoped surface.
 ### Service accent colors
 
 Each service gets a stable accent color from the fixed 8-color palette in
-`ui-service/src/client/service-helpers.ts` (`buildServiceColors`), assigned
+`ui/src/client/service-helpers.ts` (`buildServiceColors`), assigned
 by sorted service name so the same service is painted identically on every
 surface in a view. Accents are identity cues, deliberately distinct from
 the status hues (indigo/green/red) — never use an accent to convey state,
@@ -453,7 +453,7 @@ only accepts style objects.
 Every topology node belongs to one of three families — dbt
 (`dbt-model` / `dbt-seed` / `dbt-snapshot`), `python-model`, `python-csv` —
 and surfaces that render a single node mark it with the family's icon via
-the `NodeTypeIcon` component (`ui-service/src/client/NodeTypeIcon.tsx`):
+the `NodeTypeIcon` component (`ui/src/client/NodeTypeIcon.tsx`):
 
 - **dbt** — the dbt Labs mark in its brand orange (`#FF694A`).
 - **python** — the Python logo in its brand blue (`#3776AB`).
@@ -792,4 +792,4 @@ If a need arises that doesn't fit:
    choice.
 2. If not, propose the addition here (new variant, new pattern) BEFORE
    shipping the UI change. The whole point of this file is to keep
-   ui-service feeling like the same product.
+   ui feeling like the same product.

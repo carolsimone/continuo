@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_DAGLatestSnapshot verifies the ui-service exposes per-schedule
+// TestE2E_DAGLatestSnapshot verifies the ui exposes per-schedule
 // topology aggregates and the schedule graph carries topology_generation.
 // Both surfaces back the homepage "DAG Latest Snapshot" section.
 func TestE2E_DAGLatestSnapshot(t *testing.T) {
 	base := os.Getenv("UI_HTTP_BASE")
 	if base == "" {
-		t.Skip("UI_HTTP_BASE not set — skipping ui-service HTTP assertions")
+		t.Skip("UI_HTTP_BASE not set — skipping ui HTTP assertions")
 	}
 
 	t.Logf("Verifying topology endpoints at %s", base)

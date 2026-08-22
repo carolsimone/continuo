@@ -17,7 +17,7 @@ Closes #
 - [ ] Every commit is signed off (`git commit -s`) — the `dco` check enforces this
 - [ ] Tests added or updated for the behavior changed
 - [ ] `scripts/lint-go.sh --ci` passes (Go changes)
-- [ ] Full `npm test` and `npm run build` pass (ui-service changes)
+- [ ] Full `npm test` and `npm run build` pass (ui changes)
 - [ ] `docs/arch/*` updated if service behavior, interfaces, storage ownership, Redis
       flows, gRPC surfaces, Kubernetes behavior, or S3 usage changed
 - [ ] Chart changes also update `deploy/continuo/values.schema.json` and

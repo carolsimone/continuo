@@ -6,7 +6,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "continuo.labels" . | nindent 4 }}
-    app.kubernetes.io/name: ui-service
+    app.kubernetes.io/name: ui
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -23,13 +23,13 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: ui-service
+                name: ui
                 port:
                   number: 8090
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
         - {{ .Values.ingress.host | quote }}
-      secretName: {{ .Values.ingress.tls.secretName | default "ui-service-tls" }}
+      secretName: {{ .Values.ingress.tls.secretName | default "ui-tls" }}
   {{- end }}
 {{- end }}

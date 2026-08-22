@@ -54,7 +54,7 @@ dbt/services-fixed/*/target/
 .worktree/
 .worktree/*
 
-ui-service/.superpowers*
+ui/.superpowers*
 docs/superpowers/*
 docs/future-dev/*
 

@@ -196,7 +196,7 @@ test-go: test-deps-up
 
 .PHONY: test-ui
 test-ui:
-	cd ui-service && npm ci && npm test
+	cd ui && npm ci && npm test
 
 .PHONY: test-manifest
 test-manifest:
@@ -239,7 +239,7 @@ test-manifest:
 # RegisterShutdownHandler/Shutdown racing on the shared handler slice) are only
 # checked by the race detector, not by a plain pass/fail test run.
 #
-# The proto diffs pin ui-service's vendored copies to the canonical contracts:
+# The proto diffs pin ui's vendored copies to the canonical contracts:
 # @grpc/proto-loader reads those copies at boot, so drift silently drops
 # fields on the wire instead of failing any build.
 .PHONY: guards
@@ -253,8 +253,8 @@ guards:
 	cd pkg && go test ./...
 	cd pkg && go test -race ./lifecycle/...
 	cd tests/e2e/stub-llm && GOWORK=off go test ./...
-	diff state/proto/state/v1/state.proto ui-service/proto/state.proto
-	diff remediation-agent/proto/remediation/v1/remediation.proto ui-service/proto/remediation/v1/remediation.proto
+	diff state/proto/state/v1/state.proto ui/proto/state.proto
+	diff remediation-agent/proto/remediation/v1/remediation.proto ui/proto/remediation/v1/remediation.proto
 
 .PHONY: stack-up
 stack-up:

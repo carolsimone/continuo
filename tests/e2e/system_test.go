@@ -68,8 +68,8 @@ func TestE2E_HappyPath_FullDAGExecution(t *testing.T) {
 	t.Log("Verifying scheduler reaches SUCCEEDED state...")
 	verifySchedulerSucceeded(t, ctx, clients, schedulerID)
 
-	// Verify ui-service HTTP API returns the correct data
-	t.Log("Verifying ui-service HTTP API...")
+	// Verify ui HTTP API returns the correct data
+	t.Log("Verifying ui HTTP API...")
 	verifyUIService(t, ctx, schedulerIDStr)
 
 	// ── PR0 audit assertions: kind stamped on both stores; per-task metadata populated ──
