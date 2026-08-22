@@ -229,7 +229,7 @@ func TestService_Record_UsesProvidedOpenedAt(t *testing.T) {
 
 // TestService_Record_NoEventWhenCASMisses verifies a CAS miss (row no longer
 // 'opening', e.g. already recorded by the reconciler's opening sweep or the
-// ui-service route racing to record the same claim) produces no outbox entry,
+// ui route racing to record the same claim) produces no outbox entry,
 // no commit, and no error — Record is idempotent under that race.
 func TestService_Record_NoEventWhenCASMisses(t *testing.T) {
 	repo := &fakeRepo{
@@ -291,7 +291,7 @@ func TestService_RecordOutcome_NoEventWhenAlreadyTerminal(t *testing.T) {
 // unchanged. Both of this method's callers rely on that pass-through to
 // distinguish "released" from "a fresher claim raced ahead of me": the
 // reconciler's opening sweep, and the gRPC FailPullRequest handler on the
-// ui-service PR-creation route's own failure callback.
+// ui PR-creation route's own failure callback.
 func TestService_FailStuckClaim_PassesThroughIDAndObservedClaimedAt(t *testing.T) {
 	repo := &fakeRepo{failStuckHit: true}
 	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})

@@ -85,7 +85,7 @@ The `scheduler_tracker.kind` enum (also surfaced as the `kind` field on `:Run` i
 ### User provenance
 
 Every run records the user who initiated it. The authenticated identity originates
-at the HTTP edge (`ui-service`, the OIDC relying party) as the stable
+at the HTTP edge (`ui`, the OIDC relying party) as the stable
 `issuer-host|sub` user id and is carried into `state` as the gRPC metadata header
 `x-continuo-user-id` (the single canonical key, defined in `pkg/identity`). A unary
 server interceptor (`identity.UnaryServerInterceptor`) extracts the header at the
@@ -543,7 +543,7 @@ Dedup against `message_processing` is performed by the binding before the handle
 
 | Service | Methods used |
 |---|---|
-| `ui-service` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `ListNodeNames`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule` |
+| `ui` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `ListNodeNames`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule` |
 | `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
 | `tests/e2e` | `TriggerSingleNodeRun`, `TriggerRebase` |
 

@@ -112,11 +112,11 @@ if [ "$MODE" = bundled ]; then
 fi
 
 # End-to-end health endpoints through port-forwards from this host: the same
-# unauthenticated /healthz the ui-service readiness probe hits, plus the
+# unauthenticated /healthz the ui readiness probe hits, plus the
 # bundled Dex's OIDC discovery document (proves the IdP answers at the issuer
-# ui-service is configured to trust). High local ports avoid colima/dev
+# ui is configured to trust). High local ports avoid colima/dev
 # listeners when running outside CI.
-kubectl -n "$NS" port-forward svc/ui-service 18090:8090 >/dev/null 2>&1 &
+kubectl -n "$NS" port-forward svc/ui 18090:8090 >/dev/null 2>&1 &
 pf_ui=$!
 kubectl -n "$NS" port-forward "svc/${RELEASE}-dex" 15556:5556 >/dev/null 2>&1 &
 pf_dex=$!

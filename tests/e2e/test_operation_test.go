@@ -312,7 +312,7 @@ func TestWholeDAGTestOperationNoTestsFinalizesSkipped(t *testing.T) {
 }
 
 // TestNodeCatalogOperationScoping verifies the UI-facing node catalog
-// (GET /api/nodes, ui-service's proxy of state.ListNodes) scopes stats per
+// (GET /api/nodes, ui's proxy of state.ListNodes) scopes stats per
 // operation dimension end-to-end. A model run and a test run are triggered
 // against the SAME node (seed_table_1, test_count=2), each populating a
 // DISTINCT catalog slice under its own operation: operation=run reflects the

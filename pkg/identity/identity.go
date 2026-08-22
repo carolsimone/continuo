@@ -1,5 +1,5 @@
 // Package identity carries the initiating user's provenance from the system's
-// HTTP edge (ui-service) into the backend gRPC services. The authenticated
+// HTTP edge (ui) into the backend gRPC services. The authenticated
 // user_id travels as a single gRPC metadata header; a server interceptor reads
 // it at the adapter boundary and converts it into an Identity value placed on
 // the request context, which application/use-case code reads without ever
@@ -9,8 +9,8 @@ package identity
 import "strings"
 
 // MetadataKey is the canonical gRPC metadata header that carries the
-// initiating user's stable identifier (the ui-service "issuer-host|sub").
-// It is the single source of truth for both the ui-service client that sets it
+// initiating user's stable identifier (the ui "issuer-host|sub").
+// It is the single source of truth for both the ui client that sets it
 // and the backend server interceptor that reads it; neither side inlines the
 // string.
 //

@@ -3,7 +3,7 @@
 // On each run it computes a cutoff of now-retention and, for every stream in
 // streams.All, runs XTRIM <stream> MINID <cutoff> — dropping entries older than
 // the retention window. It operates only on the explicit continuo stream list,
-// so unrelated keys on the same Redis instance — notably the ui-service auth
+// so unrelated keys on the same Redis instance — notably the ui auth
 // session keys, which are plain strings, not streams — are never touched.
 //
 // Intended to run as a periodic (daily) Kubernetes CronJob. Config via env:

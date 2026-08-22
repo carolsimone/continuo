@@ -56,7 +56,7 @@ log_info "Waiting for agent-runner to compile and start (this may take 20-30 sec
 sleep 20
 check_health "agent-runner" 8091 || exit 1
 # Also wait for the gRPC listener (50053): the chat e2e dials it through the
-# ui-service relay, and /health (always 200) can come up before the port binds.
+# ui relay, and /health (always 200) can come up before the port binds.
 log_info "Waiting for agent-runner gRPC port 50053..."
 wait_for_tcp_port agent-runner 50053
 

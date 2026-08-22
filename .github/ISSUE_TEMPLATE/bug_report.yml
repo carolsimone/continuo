@@ -41,7 +41,7 @@ body:
         - remediation-agent
         - agent-runner
         - manifest-controller
-        - ui-service
+        - ui
         - cli
         - Helm chart
         - Not sure

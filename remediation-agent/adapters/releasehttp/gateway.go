@@ -235,7 +235,7 @@ func activationTime(transitions []releaseTransition) time.Time {
 }
 
 // rejectFallback combines the release's reject_reason and reject_detail into
-// one human-readable string, the same "reason — detail" shape ui-service's
+// one human-readable string, the same "reason — detail" shape ui's
 // ReleaseDetailPage renders, so a node whose own structured result can't be
 // resolved still carries a meaningful error text.
 func rejectFallback(rel releaseResponse) string {

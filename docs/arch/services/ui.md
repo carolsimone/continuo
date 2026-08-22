@@ -1,8 +1,8 @@
-# ui-service
+# ui
 
 ## Purpose
 
-`ui-service` is an HTTP facade and React frontend for operators.
+`ui` is an HTTP facade and React frontend for operators.
 
 It provides:
 - OpenID Connect (OIDC) login with role-based authorization: every `/api` route requires an authenticated session, and mutations plus the chat WebSocket (WS) require the `operator` role (see "Authentication & Authorization")
@@ -17,7 +17,7 @@ It provides:
 - single-node run triggering: proxies `POST /api/nodes/:service/:schema/:table/run` to the `TriggerSingleNodeRun` gRPC method on `state`, carrying the caller's chosen run/test/build `operation`
 - schedule triggering: proxies `POST /api/schedules/:name/trigger` to the `TriggerSchedule` gRPC method on `state`, carrying the caller's chosen run/test/build `operation`
 - per-node topology metadata: proxies `GET /api/nodes/:service/:schema/:table/meta` to the `GetNode` gRPC method on `orchestrator`, used to decide whether a node's single-node `test` operation is meaningful; for a `python-csv` node the handler additionally calls `GetNodeVersions` (`current_only`, `include_code`) and returns the `reads.csv` field of the current version's `raw_code` — the contract entry serialized as JSON — as `source_uri`, the CSV file the node loads
-- a **Remediation** tab (5th dashboard tab): lists fix proposals from `remediation-agent` with diff, rationale, confidence, and source lineage; `operator` users can click **Create PR** to open a GitHub pull request committing every file the proposal changes in a single commit; `viewer` users see the surface read-only. ui-service holds the GitHub App write credential, reads each changed file's corrected content from S3, and records the PR result back to remediation-agent over gRPC. Each proposal's `pr_state` is rendered as a colored chip once it reaches a terminal outcome — `merged` or `rejected` — mirrored from GitHub by remediation-agent's PR-outcome reconciler; non-terminal `pr_state` values render as plain text. The release detail page carries a lightweight back-link to any associated proposal.
+- a **Remediation** tab (5th dashboard tab): lists fix proposals from `remediation-agent` with diff, rationale, confidence, and source lineage; `operator` users can click **Create PR** to open a GitHub pull request committing every file the proposal changes in a single commit; `viewer` users see the surface read-only. ui holds the GitHub App write credential, reads each changed file's corrected content from S3, and records the PR result back to remediation-agent over gRPC. Each proposal's `pr_state` is rendered as a colored chip once it reaches a terminal outcome — `merged` or `rejected` — mirrored from GitHub by remediation-agent's PR-outcome reconciler; non-terminal `pr_state` values render as plain text. The release detail page carries a lightweight back-link to any associated proposal.
 - a chat panel backed by `/ws/chat` (enabled only when `CHAT_BRIDGE_ENABLED=true`): an operator-only WebSocket (WS) endpoint that relays browser messages over a bidirectional gRPC stream to `agent-runner`, which runs the LLM (Large Language Model) tool-use loop; the WebSocket upgrade is operator-only and the endpoint is gated off by default
 
 Every mutation proxied to `state` (trigger, cancel, rerun, rebase, single-node run) forwards the authenticated user's id as the `x-continuo-user-id` gRPC metadata header so `state` and `orchestrator` record the initiating user for full provenance. The header key and the `userMetadata(req)` helper live in `src/server/grpc-client.ts`; the key value matches `pkg/identity.MetadataKey` on the Go side. An unauthenticated request records the `system` sentinel.
@@ -28,7 +28,7 @@ Its only datastore is Redis, used in `AUTH_MODE=oidc` for server-side login sess
 
 ## Authentication & Authorization
 
-`ui-service` is the only HTTP edge of the system; it authenticates every browser user as an OIDC (OpenID Connect) relying party and enforces role-based authorization on every request.
+`ui` is the only HTTP edge of the system; it authenticates every browser user as an OIDC (OpenID Connect) relying party and enforces role-based authorization on every request.
 
 ### Modes
 
@@ -126,11 +126,11 @@ Operator setup, including configuring an identity provider and a no-domain Googl
 
 ### Overview
 
-`ui-service` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the feature is enabled.
+`ui` exposes a `/ws/chat` WebSocket (WS) endpoint that is attached to its HTTP server only when the environment variable `CHAT_BRIDGE_ENABLED=true` is set. The endpoint is OFF by default, including in the production image. The same flag is surfaced to the browser via `GET /api/features` (`{ "chatBridgeEnabled": boolean }`); the client reads it on load and only mounts the chat panel — and only opens the `/ws/chat` socket — when the feature is enabled.
 
 The endpoint upgrade is authenticated: only a session with the `operator` role may open `/ws/chat`; anything else is rejected with HTTP 401 before the WebSocket is established (audited as `ws_denied`). Browser upgrade requests whose `Origin` header does not match the deployment origin (derived from `AUTH_PUBLIC_URL`) are rejected with HTTP 403 before authentication is attempted, preventing cross-site WebSocket hijacking. Requests with no `Origin` header (non-browser clients) are not subject to this check. The origin check is skipped in `dev` mode.
 
-Each incoming WebSocket connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-runner` (`AGENT_RUNNER_GRPC_ADDR`, default `localhost:50053`). `ui-service` forwards the authenticated `user_id` in the first `Open` event written to the gRPC stream (carrying `user_id` and the optional `thread_id` query parameter). The browser-to-ui-service leg is WebSocket (JSON frames); the ui-service-to-agent-runner leg is gRPC bidi streaming. `ui-service` performs no LLM calls and holds no agent state; it is a transport relay.
+Each incoming WebSocket connection is relayed 1:1 onto a bidirectional gRPC `AgentChat.Chat` stream to `agent-runner` (`AGENT_RUNNER_GRPC_ADDR`, default `localhost:50053`). `ui` forwards the authenticated `user_id` in the first `Open` event written to the gRPC stream (carrying `user_id` and the optional `thread_id` query parameter). The browser-to-ui leg is WebSocket (JSON frames); the ui-to-agent-runner leg is gRPC bidi streaming. `ui` performs no LLM calls and holds no agent state; it is a transport relay.
 
 ### Message contract
 
@@ -159,7 +159,7 @@ Incoming frames are validated before use: anything that is not valid JSON, or th
 
 ### Scope and constraints
 
-`ui-service` is a pure transport relay for chat. All agent logic, tool execution, LLM calls, confirmation gating, and conversation persistence are owned by `agent-runner`. `ui-service` introduces no new storage, no Redis Streams, and no direct connections to `state`, `orchestrator`, or LLM providers as a result of the chat relay.
+`ui` is a pure transport relay for chat. All agent logic, tool execution, LLM calls, confirmation gating, and conversation persistence are owned by `agent-runner`. `ui` introduces no new storage, no Redis Streams, and no direct connections to `state`, `orchestrator`, or LLM providers as a result of the chat relay.
 
 ## Owned Storage
 
@@ -308,7 +308,7 @@ Each WebSocket connection opens one bidirectional `AgentChat.Chat` gRPC stream. 
 
 ### GitHub App (write credential, minted per-request)
 
-ui-service holds the GitHub App ID, private key, and installation ID (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`). For each Create PR request it mints a short-lived (~1h) installation token and performs:
+ui holds the GitHub App ID, private key, and installation ID (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`). For each Create PR request it mints a short-lived (~1h) installation token and performs:
 
 1. Resolve the commit to branch from: the proposal's `commit_sha` when the claim carries one, otherwise `main`'s current HEAD SHA (`git.getRef`).
 2. Create branch `remediation/<release_id>/<node_id>-attempt<n>` from that commit (deterministic; a 422 "Reference already exists" is treated as idempotent).
@@ -317,9 +317,9 @@ ui-service holds the GitHub App ID, private key, and installation ID (`GITHUB_AP
 
 The App is installed on the single dbt-demo repo only (`contents:write` + `pull-requests:write`). It never calls merge or delete APIs and never targets `main` directly. `main` branch protection (require PR + review) is the final gate.
 
-Implemented via the `PullRequestCreator` interface in `ui-service/src/server/github/pull-request-creator.ts`.
+Implemented via the `PullRequestCreator` interface in `ui/src/server/github/pull-request-creator.ts`.
 
-Before use, `GITHUB_APP_PRIVATE_KEY` is passed through `normalizePemPrivateKey` (`ui-service/src/server/github/private-key.ts`), which reconstructs a well-formed PEM regardless of how its line breaks arrived — real newlines, `\n` escapes, spaces, CRLF, or a mix. Some encodings fold every line break into a space with no parse error at all (a quoted rather than block-scalar YAML value is the common cause), producing a key whose material is intact but that no PEM parser will accept. `resolveGithubAppPullRequestCreator` then runs a startup signing check (`crypto.createSign('RSA-SHA256')` over a dummy payload, no network) on the normalized key before constructing the Octokit client. A key that fails this check is treated as unconfigured for the route's purposes (`prCreator` stays undefined, the route reports 503) but is logged as a startup error naming the env var and the likely YAML cause — distinct from a deployment where the App is intentionally not set up, which logs nothing. On a GitHub API failure during PR creation, the route logs the proposal id and the error's `status`/`message` (never the raw error object, which for Octokit errors can carry the Authorization header used to mint the installation token) before calling `FailPullRequest`.
+Before use, `GITHUB_APP_PRIVATE_KEY` is passed through `normalizePemPrivateKey` (`ui/src/server/github/private-key.ts`), which reconstructs a well-formed PEM regardless of how its line breaks arrived — real newlines, `\n` escapes, spaces, CRLF, or a mix. Some encodings fold every line break into a space with no parse error at all (a quoted rather than block-scalar YAML value is the common cause), producing a key whose material is intact but that no PEM parser will accept. `resolveGithubAppPullRequestCreator` then runs a startup signing check (`crypto.createSign('RSA-SHA256')` over a dummy payload, no network) on the normalized key before constructing the Octokit client. A key that fails this check is treated as unconfigured for the route's purposes (`prCreator` stays undefined, the route reports 503) but is logged as a startup error naming the env var and the likely YAML cause — distinct from a deployment where the App is intentionally not set up, which logs nothing. On a GitHub API failure during PR creation, the route logs the proposal id and the error's `status`/`message` (never the raw error object, which for Octokit errors can carry the Authorization header used to mint the installation token) before calling `FailPullRequest`.
 
 The private key reaches the container differently per environment. In Kubernetes it comes from the `githubAppPrivateKey` secret reference in `deploy/continuo/values.yaml`. Under docker compose it is read from `${GITHUB_APP_PRIVATE_KEY}`, which `scripts/ensure-dev-env.sh` populates in a git-ignored `.env` with a freshly generated throwaway RSA key. A generated key is required rather than a blank or fake value because the startup signing check above rejects anything that is not a valid, well-formed PEM before the Octokit client is ever constructed, which would leave `prCreator` undefined and the Create PR route reporting itself as unconfigured. The generated key authenticates nothing: local runs point `GITHUB_API_BASE_URL` at the `stub-github` service.
 
@@ -352,7 +352,7 @@ On S3 error: returns HTTP 502 with `{ error: "Failed to fetch log from storage" 
 
 HTTP(S) to the IdP: issuer discovery at boot (retried with backoff; the process exits if discovery never succeeds) and the token-endpoint exchange during `/auth/callback`. IdP downtime after boot blocks only new logins; active sessions keep working.
 
-Beyond the session keyspace above, `ui-service` reaches backends through gRPC (`state`, `orchestrator`, `agent-runner`), HTTP (`release-controller`, the IdP), and S3 (log proxy); it neither produces nor consumes Redis Streams.
+Beyond the session keyspace above, `ui` reaches backends through gRPC (`state`, `orchestrator`, `agent-runner`), HTTP (`release-controller`, the IdP), and S3 (log proxy); it neither produces nor consumes Redis Streams.
 
 ## What It Reads
 

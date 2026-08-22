@@ -27,7 +27,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // AgentChat is the cluster-internal chat transport: one bidirectional stream
-// per browser WebSocket connection, relayed 1:1 by ui-service.
+// per browser WebSocket connection, relayed 1:1 by ui.
 type AgentChatClient interface {
 	Chat(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ClientEvent, ServerEvent], error)
 }
@@ -58,7 +58,7 @@ type AgentChat_ChatClient = grpc.BidiStreamingClient[ClientEvent, ServerEvent]
 // for forward compatibility.
 //
 // AgentChat is the cluster-internal chat transport: one bidirectional stream
-// per browser WebSocket connection, relayed 1:1 by ui-service.
+// per browser WebSocket connection, relayed 1:1 by ui.
 type AgentChatServer interface {
 	Chat(grpc.BidiStreamingServer[ClientEvent, ServerEvent]) error
 	mustEmbedUnimplementedAgentChatServer()

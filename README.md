@@ -88,7 +88,7 @@ helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
 kubectl -n continuo get pods -w
 
 # 4. Port-forward the UI and the identity provider
-kubectl -n continuo port-forward svc/ui-service 8090:8090 &
+kubectl -n continuo port-forward svc/ui 8090:8090 &
 kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
 
 # 5. One-time: let your browser resolve the in-cluster login issuer.
@@ -141,7 +141,7 @@ Service dossiers:
 - [remediation-agent.md](docs/arch/services/remediation-agent.md)
 - [agent-runner.md](docs/arch/services/agent-runner.md)
 - [manifest-controller.md](docs/arch/services/manifest-controller.md)
-- [ui-service.md](docs/arch/services/ui-service.md)
+- [ui.md](docs/arch/services/ui.md)
 - [cli.md](docs/arch/services/cli.md)
 
 The list above is every long-running service in the system — each owns a

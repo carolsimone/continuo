@@ -3,14 +3,14 @@ package e2e
 // Full-loop WebSocket chat e2e tests.
 //
 // These tests drive the complete path:
-//   user → ui-service WebSocket relay → agent-runner → stub-llm → continuo CLI → final reply
+//   user → ui WebSocket relay → agent-runner → stub-llm → continuo CLI → final reply
 //
 // They run inside the e2e container (docker exec ... go test ./...) and reach
-// the ui-service by its compose DNS name (http://ui:8090), unchanged from how
+// the ui by its compose DNS name (http://ui:8090), unchanged from how
 // other e2e tests reach the UI_HTTP_BASE.
 //
 // The stub-llm server (tests/e2e/stub-llm) must be running for these tests.
-// It is wired into docker-compose.yml as the "stub-llm" service. The ui-service
+// It is wired into docker-compose.yml as the "stub-llm" service. The ui
 // runs with AUTH_MODE=dev so /ws/chat accepts cookieless clients as the operator
 // DEV_USER with no Origin check.
 //
@@ -44,7 +44,7 @@ type chatMessage struct {
 	Message  string `json:"message,omitempty"`
 }
 
-// dialChatWS opens a WebSocket connection to the ui-service /ws/chat endpoint.
+// dialChatWS opens a WebSocket connection to the ui /ws/chat endpoint.
 // UI_HTTP_BASE defaults to http://ui:8090 (compose DNS, matching other e2e tests).
 func dialChatWS(t *testing.T) *websocket.Conn {
 	t.Helper()

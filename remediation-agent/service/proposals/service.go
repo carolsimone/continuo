@@ -94,7 +94,7 @@ func (s *Service) Begin(ctx context.Context, id string) (proposal.PRClaim, error
 // outbox entry atomically. The outbox entry ID is deterministic so a
 // re-emission of the same PR-opened fact dedups to one downstream event.
 // RecordPR's CAS guard makes this method itself idempotent: two callers can
-// race to record the same claim — the ui-service PR-creation route and the
+// race to record the same claim — the ui PR-creation route and the
 // reconciler's opening sweep, when the sweep finds a PR on GitHub for a claim
 // it read as stuck before the route's own recording call lands — and only
 // the first to reach the row writes anything or emits the event; the second
@@ -141,7 +141,7 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 // if the row's pr_claimed_at still matches observedClaimedAt — the compare-
 // and-set guard that lets a caller release exactly the claim it itself
 // acquired or observed, never a fresher one taken by someone else since. Two
-// callers use this: the ui-service PR-creation route, immediately after its
+// callers use this: the ui PR-creation route, immediately after its
 // own Begin call in the same request, when a downstream S3 or GitHub step
 // fails — passing the ClaimedAt that Begin returned; and the reconciler's
 // opening sweep, passing the ClaimedAt it read while listing stuck claims

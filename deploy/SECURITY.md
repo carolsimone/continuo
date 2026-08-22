@@ -48,6 +48,6 @@ in the chart README's [Security defaults](continuo/README.md#3-security-defaults
 - **Datastore hardening and backups** — bundled datastores are
   quickstart-grade (single instance, no backups); production datastores,
   their TLS, HA, and backup story are yours.
-- **OIDC provider** — ui-service is fail-closed on auth (it crashloops
+- **OIDC provider** — ui is fail-closed on auth (it crashloops
   rather than serving an open UI); you supply a real IdP per
   [AUTH.md](AUTH.md), or accept the quickstart-only bundled Dex demo login.

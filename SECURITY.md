@@ -36,7 +36,7 @@ no backports to earlier tags.
 In scope — anything that lets someone cross a trust boundary the system is
 supposed to enforce:
 
-- Authentication or authorisation bypass in `ui-service`, including the operator
+- Authentication or authorisation bypass in `ui`, including the operator
   role checks that gate run triggering, release promotion, and PR creation.
 - Any path that lets an unapproved change reach production, since the release
   pipeline's core promise is that promotion is human-gated.
@@ -85,11 +85,11 @@ equivalent, so where we ship a dependency with an open advisory we record the
 analysis here rather than leaving you to wonder.
 
 **GHSA-qwww-vcr4-c8h2 — `react-router` (high).** *RSC Mode CSRF Bypass Allows
-Action Execution Before 400 Response*, affecting `>=7.12.0 <8.3.0`. `ui-service`
+Action Execution Before 400 Response*, affecting `>=7.12.0 <8.3.0`. `ui`
 ships `react-router-dom@7.18.2`, which is in range, so `npm audit` reports it.
 
 It is not reachable here. The advisory is specific to React Server Components
-mode. `ui-service` uses plain declarative client-side routing — `BrowserRouter`
+mode. `ui` uses plain declarative client-side routing — `BrowserRouter`
 in `src/client/App.tsx`, with no `createBrowserRouter`, no `RouterProvider`, and
 no react-router usage anywhere under `src/server/`. There is no code path that
 reaches the vulnerable behaviour.
@@ -105,7 +105,7 @@ using the process above — we would rather be wrong about this in private.
 
 The docker compose stack talks to local stubs, not real services, and needs no
 real credentials. The one value that must be generated rather than defaulted is
-`GITHUB_APP_PRIVATE_KEY`: `ui-service` builds its GitHub App client with
+`GITHUB_APP_PRIVATE_KEY`: `ui` builds its GitHub App client with
 octokit's `createAppAuth`, whose constructor rejects a key that is not a valid
 PEM. `scripts/ensure-dev-env.sh` generates a throwaway RSA key into a
 git-ignored `.env` on first run, so no key material lives in the repository.

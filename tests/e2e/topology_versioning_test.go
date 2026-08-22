@@ -52,7 +52,7 @@ func TestTopologyVersioning_MidRunIsolation(t *testing.T) {
 	require.NoError(t, err, "failed to read topology_generation (G1) from topology_state")
 	t.Logf("G1 = %d", g1)
 
-	// Step 5: Trigger Run 1 via the ui-service HTTP endpoint.
+	// Step 5: Trigger Run 1 via the ui HTTP endpoint.
 	t.Log("=== Step 5: triggerScheduleHTTP — starting Run 1 (S1) ===")
 	scheduleID1Str := triggerScheduleHTTP(t, clients.uiBase, scheduleName)
 	t.Logf("Run 1 created: schedule_id=%s", scheduleID1Str)

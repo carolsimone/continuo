@@ -115,7 +115,7 @@ const defaultPRPollInterval = time.Minute
 const defaultPROpeningGracePeriod = 10 * time.Minute
 
 // defaultReleaseControllerURL is release-controller's in-cluster service
-// address, matching the same default ui-service already uses to reach it.
+// address, matching the same default ui already uses to reach it.
 const defaultReleaseControllerURL = "http://release-controller:8088"
 
 // defaultShadowVerifyTimeout bounds how long a shadow release is polled for a

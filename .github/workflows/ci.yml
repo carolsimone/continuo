@@ -105,7 +105,7 @@ jobs:
       - name: Run guards
         # The single copy of the fast, infra-free gates lives in the Makefile's
         # `guards` target (static check scripts, the pkg and stub-llm test
-        # modules no other gate reaches, the ui-service proto sync diffs) —
+        # modules no other gate reaches, the ui proto sync diffs) —
         # see its comment block for what each gate protects. CI calls the
         # target verbatim so a gate added there reaches CI automatically;
         # check-ci-alignment.sh fails this step if the workflow re-inlines
@@ -242,17 +242,17 @@ jobs:
             uv run --with pytest pytest tests/ -v -m integration
 
       - name: Set up Node
-        # ui-service vitest runs directly on the runner. GitHub-hosted preinstalls
+        # ui vitest runs directly on the runner. GitHub-hosted preinstalls
         # Node, but the self-hosted box does not — set it up explicitly on both.
-        # Pinned to 20 to match ui-service's production image (node:20-alpine).
+        # Pinned to 20 to match ui's production image (node:20-alpine).
         uses: actions/setup-node@v7
         with:
           node-version: "20"
 
-      - name: Test ui-service
+      - name: Test ui
         # Run vitest unit tests directly on the CI runner (devDependencies are
         # not installed in the production container image).
-        working-directory: ui-service
+        working-directory: ui
         run: npm ci && npm test
 
       # ── E2E test ────────────────────────────────────────────────────────────

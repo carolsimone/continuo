@@ -153,7 +153,7 @@ func (*ClientEvent_Interrupt) isClientEvent_Event() {}
 
 type Open struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`       // authenticated identity supplied by ui-service
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`       // authenticated identity supplied by ui
 	ThreadId      string                 `protobuf:"bytes,2,opt,name=thread_id,json=threadId,proto3" json:"thread_id,omitempty"` // empty = new thread; set = resume + replay history
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

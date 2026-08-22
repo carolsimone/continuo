@@ -173,7 +173,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 - **Promotion refreshes the pointer.** Every promotion path (validation-passed, bootstrap, empty-diff) upserts the changed service's `service_prod` row (canonical key + image tag + release id) in the same transaction that updates `current_prod`.
 - **Activation requires full coverage.** A release does not activate while any service live in `current_prod` lacks a `service_prod` pointer (and is not the changed service); it stays queued until the pointers are seeded. This prevents a populated-`current_prod`/empty-`service_prod` state from assembling a partial topology and retiring the unpointered services on promotion.
 
-## `ui-service`
+## `ui`
 
 | Category | Owned / used surface |
 |---|---|
