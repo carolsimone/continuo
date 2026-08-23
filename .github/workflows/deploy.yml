@@ -426,7 +426,12 @@ jobs:
             # Infra (Postgres/Redis/Neo4j) is managed manually from the
             # private continuo-infra repo's runbook; this workflow deploys
             # only the application chart against it (BYO mode).
+            # Values layer in two files: the non-secret install overlay
+            # (tracked as continuo-app/values.install.yaml in the private
+            # continuo-infra repo and synced to the host), then the
+            # credentials-only file on top. Helm deep-merges them.
             helm upgrade --install continuo-app deploy/continuo \
+              -f /root/continuo-values.install.yaml \
               -f /root/continuo-values.secret.yaml \
               --set global.imageTag=${{ github.sha }} \
               -n continuo \
