@@ -5,7 +5,7 @@ package remediation.v1;
 option go_package = "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1;remediationv1";
 
 // RemediationProposals serves the proposal read-path and pull-request lifecycle
-// for the remediation-agent. The UI reads proposals via ListProposals/GetProposal
+// for the agent-remediation. The UI reads proposals via ListProposals/GetProposal
 // and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
 service RemediationProposals {
   // ListProposals returns proposals filtered by status, pr_state, and limit.
