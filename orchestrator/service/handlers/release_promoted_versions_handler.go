@@ -87,7 +87,7 @@ func (h *ReleasePromotedVersionsHandler) Handle(
 	}
 
 	if in.CodeBundleURI == "" {
-		// A release promoted before manifest-controller began writing bundles.
+		// A release promoted before topology-controller began writing bundles.
 		// No retry can produce one, so record the message as handled.
 		h.logger.Warn("release.promoted carries no code_bundle_uri — no versions to ingest",
 			"release_id", in.ReleaseID)

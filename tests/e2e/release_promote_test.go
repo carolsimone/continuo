@@ -37,7 +37,7 @@ const e2eS3Bucket = "continuo"
 // so that release-controller assembly can reconstruct the full topology.
 const e2eBaselineReleaseID = "e2e-baseline"
 
-// probeUniqueID is the unique_id manifest-controller derives for the rel_probe
+// probeUniqueID is the unique_id topology-controller derives for the rel_probe
 // model (schema_name.table_name). rel_probe is a self-contained leaf
 // (`SELECT 1`) on its own "rel-probe" schedule, so it validates cleanly in an
 // isolated candidate schema without depending on any production table.
@@ -46,7 +46,7 @@ const probeUniqueID = "e2e_schema.rel_probe"
 // TestE2E_ReleasePromote_ValidatesAndSwapsTopology drives the blue/green
 // release pipeline end-to-end through the production cutover path:
 //
-//	POST /releases → release.requested:v1 → manifest-controller candidate parse
+//	POST /releases → release.requested:v1 → topology-controller candidate parse
 //	→ manifest.loaded.candidate:v1 → release-controller derives the changed-node
 //	set → validation.requested:v1 → executor/k8s run a real dbt --empty job →
 //	validation.result:v1 terminal (kind=complete) → release-controller promotes
@@ -258,10 +258,10 @@ func deleteParseCacheProdArtifact(t *testing.T, ctx context.Context, clients *te
 	t.Logf("deleted parse cache prod artifact s3://%s/%s", e2eS3Bucket, key)
 }
 
-// probeUpUniqueID and probeDownUniqueID are the unique_ids manifest-controller
+// probeUpUniqueID and probeDownUniqueID are the unique_ids topology-controller
 // derives for the rel_probe_up / rel_probe_down models. rel_probe_up is a
 // self-contained leaf (`SELECT 1`); rel_probe_down is `SELECT id FROM
-// {{ ref('rel_probe_up') }}` — an intra-service ref, so manifest-controller
+// {{ ref('rel_probe_up') }}` — an intra-service ref, so topology-controller
 // derives rel_probe_down's upstream = rel_probe_up (same service-1). The pair
 // exercises the gated intra-service path: rel_probe_up builds into the candidate
 // schema first, then rel_probe_down validates against it.
@@ -272,7 +272,7 @@ const (
 
 // xprobeUp / xprobeDown are a CLEAN cross-service chain used by the self-contained
 // validation test: xprobe_down (service-2) reads `FROM {{ env_var('DBT_UPSTREAM_SCHEMA', target.schema) }}.xprobe_up`,
-// and xprobe_up lives in service-3 — so manifest-controller resolves xprobe_down's
+// and xprobe_up lives in service-3 — so topology-controller resolves xprobe_down's
 // upstream to a different-service node. Neither has any broken or downstream model,
 // so the full closure is exactly the pair.
 const (
@@ -373,7 +373,7 @@ func TestE2E_ReleasePromote_GatedIntraServiceUpstream(t *testing.T) {
 //
 // xprobe_down lives in service-2, xprobe_up lives in service-3. The test posts
 // a per-service release for service-2. Assembly attaches service-3's current
-// baseline manifest (via service_prod), so manifest-controller sees xprobe_up
+// baseline manifest (via service_prod), so topology-controller sees xprobe_up
 // as part of the candidate topology. current_prod is seeded with every node
 // EXCEPT the xprobe pair, so the derived changed set is exactly
 // {xprobe_up, xprobe_down} with the cross-service gating edge
@@ -701,10 +701,10 @@ func getS3Object(t *testing.T, ctx context.Context, clients *testClients, key st
 }
 
 // parseManifestNodes extracts the model/seed/snapshot nodes from a dbt
-// manifest.json, mirroring manifest-controller's identity derivation
+// manifest.json, mirroring topology-controller's identity derivation
 // (unique_id = "<schema>.<name>") and RECOMPUTING content_hash with the same
-// three-part formula the live manifest-controller uses (see content_hash.go
-// / manifest-controller/service/parser.py: _content_hash). Seeding
+// three-part formula the live topology-controller uses (see content_hash.go
+// / topology-controller/service/parser.py: _content_hash). Seeding
 // current_prod from dbt's raw per-node checksum alone (the old, two-part-era
 // behavior) would never match the live formula's output, making every
 // candidate node look "changed" regardless of whether it actually changed.

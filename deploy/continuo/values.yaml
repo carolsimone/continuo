@@ -102,7 +102,7 @@ externalRedis:
   host: ""
   port: 6379
   # Synthesized into redis://:$(REDIS_PASSWORD)@host:port for ui,
-  # manifest-controller, and stream-reaper. A password containing URL-reserved
+  # topology-controller, and stream-reaper. A password containing URL-reserved
   # characters (@, :, /) breaks that URL; use a URL-safe password, or set
   # existingSecret with a URL-safe value instead.
   password: ""
@@ -171,7 +171,7 @@ s3:
   existingSecret: ""
   existingSecretAccessKeyIdKey: access-key-id
   existingSecretSecretKeyKey: secret-access-key
-  # S3_ENV consumed by manifest-controller (key prefix environment). Unlike
+  # S3_ENV consumed by topology-controller (key prefix environment). Unlike
   # the fields above, this is read in EVERY mode, bundled MinIO included.
   env: production
 
@@ -270,11 +270,11 @@ validation:
   # `continuo.validation.image`.
   #
   # `engine` also reaches the control plane: it is published to every service as
-  # WAREHOUSE_ENGINE on the shared ConfigMap, and manifest-controller uses it to
+  # WAREHOUSE_ENGINE on the shared ConfigMap, and topology-controller uses it to
   # pick the SQL dialect it parses dbt's compiled SQL with and re-renders the
   # candidate SQL in. That rewritten SQL is what the validation runner executes,
   # so the engine here must be the engine your warehouse actually is —
-  # manifest-controller refuses to start on an engine it has no dialect for.
+  # topology-controller refuses to start on an engine it has no dialect for.
   engine: postgres
   # Tag of the continuo-python-runtime-<engine> image. That image ships from its
   # own repository (github.com/carolsimone/continuo-python-runtime) on its own
@@ -544,7 +544,7 @@ services:
       - name: cancel-config
         configMap: {name: ""}
 
-  - name: manifest-controller
+  - name: topology-controller
     enabled: true
     replicas: 1
     httpPort: 8086

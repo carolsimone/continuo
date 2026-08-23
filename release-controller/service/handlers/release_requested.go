@@ -15,7 +15,7 @@ import (
 
 // manifestKeyDTO is the wire shape for one service's artifact entry in the
 // release.requested:v1 payload. Kind is emitted explicitly for every entry
-// ("dbt" | "python"): manifest-controller's absent-means-dbt defaulting is
+// ("dbt" | "python"): topology-controller's absent-means-dbt defaulting is
 // decoder tolerance for old payloads, not an emission convention.
 type manifestKeyDTO struct {
 	Service string `json:"service"`
@@ -24,7 +24,7 @@ type manifestKeyDTO struct {
 }
 
 // releaseRequestedPayload is the exact wire shape of release.requested:v1 as
-// consumed by manifest-controller.
+// consumed by topology-controller.
 type releaseRequestedPayload struct {
 	ReleaseID    string           `json:"release_id"`
 	ManifestKeys []manifestKeyDTO `json:"manifest_keys"`

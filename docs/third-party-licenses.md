@@ -59,7 +59,7 @@ npm exec --yes -- license-checker@25.0.1 --production --summary
 
 ## Python
 
-`manifest-controller` is the only Python 3.12 service in this repository, managed
+`topology-controller` is the only Python 3.12 service in this repository, managed
 with uv. The python-node runtime and validation stack (the
 `continuo-python-runtime-<engine>` images the Helm chart pulls) is built and
 released from the separate `continuo-python-runtime` repository, so its Python
@@ -70,11 +70,11 @@ licenses, not this document.
 
 | Package | License | Used by |
 | --- | --- | --- |
-| `sqlglot` | MIT | manifest-controller |
-| `redis` | MIT | manifest-controller |
-| `grpcio` | Apache-2.0 | manifest-controller |
-| `protobuf` | BSD-3-Clause | manifest-controller |
-| `boto3` | Apache-2.0 | manifest-controller |
+| `sqlglot` | MIT | topology-controller |
+| `redis` | MIT | topology-controller |
+| `grpcio` | Apache-2.0 | topology-controller |
+| `protobuf` | BSD-3-Clause | topology-controller |
+| `boto3` | Apache-2.0 | topology-controller |
 
 ```bash
 pip install pip-licenses

@@ -31,7 +31,7 @@ type Located struct {
 // ContractLocator finds which contract yaml in a repository checkout declares
 // a given python node. Unlike a dbt model's source path, which the control
 // plane carries end to end, a python node's declaring yaml path is recorded
-// nowhere: manifest-controller reads it once at candidate-build time and
+// nowhere: topology-controller reads it once at candidate-build time and
 // discards it, and the release's code bundle stores only the parsed contract
 // entry, not its file location. So the tree is searched instead.
 type ContractLocator interface {

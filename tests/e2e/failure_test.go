@@ -17,7 +17,7 @@ import (
 // run, and the projection on the new run partitions correctly between
 // rebased and inherited rows.
 //
-// DAG topology loaded via manifest-controller from dbt/services/service-{1,2,3}/:
+// DAG topology loaded via topology-controller from dbt/services/service-{1,2,3}/:
 //
 //	ftable_a (service-1) ─┬─ ftable_g (service-3, FAILS) ─ ftable_h (service-2) ← cascade-skipped
 //	                      │

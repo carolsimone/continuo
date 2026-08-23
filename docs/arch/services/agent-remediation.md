@@ -598,7 +598,7 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
    `continuo-runtime merge <contractDir> --service <service> --repo-root
    <appRoot> --dialect <dialect> --out <tmp>/contract.yaml`, the same command
    the team's own release CI runs after a merge. The hash fold verifies against
-   manifest-controller because the tool is the same, not because anything is
+   topology-controller because the tool is the same, not because anything is
    bypassed. --repo-root is the service's own directory, never the enclosing
    repository root: script paths and the in-repo import closure resolve against
    it, so the wrong base folds a different set of files and the release is
@@ -793,7 +793,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `AGENT_REMEDIATION_MAX_ATTEMPTS` | no | `3` | Per-`(source, node_id, error_signature)` attempt cap |
 | `REMEDIATION_PR_POLL_INTERVAL` | no | `60s` | Interval between PR-outcome reconciler passes (Go duration). A non-positive value falls back to the default; a value that is not a Go duration at all fails start-up naming the key. |
 | `REMEDIATION_PR_OPENING_GRACE_PERIOD` | no | `10m` | How long, measured as wall-clock time against the proposal's stored `pr_claimed_at`, the opening sweep waits before releasing a `pr_state='opening'` claim with no matching GitHub PR back to `'failed'`. A non-positive value falls back to the default; a value that is not a Go duration at all fails start-up naming the key. |
-| `WAREHOUSE_ENGINE` | no | `postgres` | The warehouse engine this install runs, published to every service on the shared ConfigMap from the chart's `validation.engine`. It resolves to the sqlglot dialect the packaging CLI renders a corrected contract's declared reads under, mirroring manifest-controller's own engine→dialect map exactly so a release that service accepts is never packaged here under a dialect it never validated against. An engine with no dialect mapping fails startup rather than packaging under another engine's rules. |
+| `WAREHOUSE_ENGINE` | no | `postgres` | The warehouse engine this install runs, published to every service on the shared ConfigMap from the chart's `validation.engine`. It resolves to the sqlglot dialect the packaging CLI renders a corrected contract's declared reads under, mirroring topology-controller's own engine→dialect map exactly so a release that service accepts is never packaged here under a dialect it never validated against. An engine with no dialect mapping fails startup rather than packaging under another engine's rules. |
 | `RELEASE_CONTROLLER_URL` | no | `http://release-controller:8088` | release-controller's HTTP root, used to submit shadow verification releases and poll their verdicts. |
 | `SHADOW_VERIFY_TIMEOUT` | no | `20m` | How long a proposal awaits its shadow release's verdict before the reconciler ends the attempt as failed (Go duration). Measured from when that release left the release queue and started running, so a backlog of other releases never spends it; when no verdict can be read at all, measured from when the attempt was recorded instead. A non-positive value falls back to the default; a value that is not a Go duration at all fails start-up naming the key. |
 | `SHADOW_VERIFY_POLL_INTERVAL` | no | `15s` | Interval between shadow-verify reconciler passes (Go duration). A non-positive value falls back to the default, so a misconfiguration can never produce a hot loop; a value that is not a Go duration at all fails start-up naming the key. |

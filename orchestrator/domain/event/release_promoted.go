@@ -36,7 +36,7 @@ type ReleasePromoted struct {
 	PromotedAt time.Time             `json:"promoted_at"`
 	// CodeBundleURI points at the release's code-bundle contract document in
 	// object storage (code-bundles/<release_id>/bundle.json). Empty for releases
-	// promoted before manifest-controller began writing bundles.
+	// promoted before topology-controller began writing bundles.
 	CodeBundleURI string `json:"code_bundle_uri"`
 	// Bootstrap marks a re-baseline release promoted without validation. Its
 	// commit did not author most of the code it carries, so versions recorded

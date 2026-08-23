@@ -78,7 +78,7 @@ spec:
                 operator: In
                 values: [state, orchestrator, executor-controller, k8s-controller,
                          release-controller, remediation, agent-remediation,
-                         agent-chat, manifest-controller, ui, stream-reaper]
+                         agent-chat, topology-controller, ui, stream-reaper]
       ports:
         - port: 6379
 {{- end }}
@@ -131,7 +131,7 @@ spec:
                 operator: In
                 values: [executor-controller, k8s-controller, release-controller,
                          remediation, agent-remediation, ui,
-                         manifest-controller, orchestrator, minio-bucket-init]
+                         topology-controller, orchestrator, minio-bucket-init]
         - podSelector:
             matchLabels:
               app: dbt-job

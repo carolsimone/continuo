@@ -66,7 +66,7 @@ type Config struct {
 	// SQLDialect is the sqlglot dialect name the ContractPackager adapter
 	// passes to continuo-runtime's --dialect flag when packaging a proposed
 	// python-node fix. Resolved from WAREHOUSE_ENGINE at startup (see
-	// engineDialects) — the same shared-ConfigMap key manifest-controller
+	// engineDialects) — the same shared-ConfigMap key topology-controller
 	// reads for its own parser dialect, so both services agree on which
 	// engines they can honour.
 	SQLDialect string
@@ -131,10 +131,10 @@ const defaultShadowVerifyPollInterval = 15 * time.Second
 
 // engineDialects maps WAREHOUSE_ENGINE (the chart's validation.engine value,
 // published to every service on the shared ConfigMap) to the sqlglot dialect
-// name continuo-runtime renders SQL with. Mirrors manifest-controller's
+// name continuo-runtime renders SQL with. Mirrors topology-controller's
 // _ENGINE_DIALECTS exactly: the two services must agree on which engines
-// they can honour, so a release manifest-controller accepts is never
-// packaged here under a dialect manifest-controller never validated it
+// they can honour, so a release topology-controller accepts is never
+// packaged here under a dialect topology-controller never validated it
 // against.
 var engineDialects = map[string]string{
 	"postgres": "postgres",

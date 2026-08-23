@@ -891,7 +891,7 @@ func TestHandleValidationResult_Promote_EmitsTestCount(t *testing.T) {
 // that on the normal validation-pass promotion path (HandleValidationResult ->
 // promoteToProduction), release.promoted:v1 carries the release's
 // code_bundle_uri (persisted at parse time by handleParseOK from
-// manifest-controller's manifest.loaded.candidate:v1) and bootstrap=false for a
+// topology-controller's manifest.loaded.candidate:v1) and bootstrap=false for a
 // non-bootstrap release.
 func TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())

@@ -6,8 +6,8 @@ import "fmt"
 // parsed: a dbt manifest.json or a Continuo python contract.yaml. It travels
 // POST /releases → Release → service_prod.manifest_kind → ManifestKey → the
 // per-entry kind on release.requested:v1. release-controller only moves
-// (service, pointer, kind) triples; manifest-controller is the sole component
-// that parses kind-specifically. Values must match manifest-controller's
+// (service, pointer, kind) triples; topology-controller is the sole component
+// that parses kind-specifically. Values must match topology-controller's
 // ManifestKind enum (domain/model.py).
 type ManifestKind string
 

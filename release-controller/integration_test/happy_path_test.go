@@ -78,7 +78,7 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusParsing, r.Status())
 
-	// 3. Simulate manifest-controller reply
+	// 3. Simulate topology-controller reply
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",

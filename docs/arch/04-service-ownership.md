@@ -43,7 +43,7 @@ if missing := v.Missing(); len(missing) > 0 {
 - **Tier 1 (required)**: recorded via `v.Require` / `v.RequireInt`; missing -> process exits with a single error listing all absent keys.
 - **Tier 2 (with default)**: read via `env` / `envInt`; missing -> silently uses the default value.
 
-`manifest-controller` (Python) performs the equivalent check at startup: it reads required env vars and raises a descriptive `RuntimeError` listing all missing keys before the event loop starts.
+`topology-controller` (Python) performs the equivalent check at startup: it reads required env vars and raises a descriptive `RuntimeError` listing all missing keys before the event loop starts.
 
 The process exits before any connection is attempted, so missing-config failures are immediately visible in `docker logs` or pod logs rather than surfacing as obscure connection errors.
 
@@ -100,7 +100,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 - **Topology swap on promotion.** `ReleasePromotedHandler` consumes
   `release.promoted:v1` and calls `ReleasePromotionRepository.PromoteRelease`
   to swap the Neo4j topology. `image_tag` arrives already populated:
-  `manifest-controller` leaves it empty and `release-controller` joins the
+  `topology-controller` leaves it empty and `release-controller` joins the
   per-service tags it assembled for the release onto the topology before
   promotion, so there is no orchestrator-side `image_tag` rejection.
 - **Dispatch watchdog.** Periodic loop terminates `is_running=true`
@@ -142,7 +142,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | Redis produces | `check.k8s:v1`, `retry.task:v1`, `task.failed:v1`, `task.status.updated:v1` (RUNNING + SUCCEEDED/FAILED — the full pod lifecycle), `task.execution.recorded:v1`, `node.updated:v1` |
 | Outbound gRPC calls | none |
 
-## `manifest-controller`
+## `topology-controller`
 
 | Category | Owned / used surface |
 |---|---|

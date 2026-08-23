@@ -79,7 +79,7 @@ func cleanupPostgres(t *testing.T, ctx context.Context, clients *testClients, sc
 	// so wipe the whole table. The e2e harness owns it for the duration of
 	// the suite; leaving stale pending rows would cause pkg/outbox.Processor
 	// to retry them forever, drowning Redis in noise that destabilises
-	// manifest-controller's consumer group across subsequent tests.
+	// topology-controller's consumer group across subsequent tests.
 	_, _ = clients.executorDB.Exec("DELETE FROM executor_outbox")
 
 	// Clean executor_deployments (the deploy command queue) BEFORE

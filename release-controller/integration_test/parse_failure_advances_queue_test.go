@@ -33,7 +33,7 @@ func TestIntegration_ParseRejection_AdvancesQueuedRelease(t *testing.T) {
 	// Advance: rA becomes Compiling; rB stays Received.
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
-	// Drive rA through the compile leg to Parsing: a manifest-controller parse
+	// Drive rA through the compile leg to Parsing: a topology-controller parse
 	// result only ever arrives for a release that reached Parsing (release.requested:v1
 	// is emitted from HandleCompileResult's ok path), so simulating a parse
 	// failure must start from that same state.

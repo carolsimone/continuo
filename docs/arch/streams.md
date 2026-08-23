@@ -8,8 +8,8 @@ A Go generator at `pkg/streams/cmd/gen-streams/` reads this file and produces:
 - `pkg/streams/streams.gen.go` — Go constants for every stream and group.
 - `pkg/streams/streams_test_access.gen.go` — Test-only accessor used by the
   contract integrity test.
-- `manifest-controller/streams_contract.py` — Python constants for the
-  manifest-controller service (filtered to streams it produces or consumes).
+- `topology-controller/streams_contract.py` — Python constants for the
+  topology-controller service (filtered to streams it produces or consumes).
 
 ## Naming policy
 
@@ -38,7 +38,7 @@ CI fails if `go generate` would produce a diff that isn't committed.
 - **Go**: `import streams "github.com/carolsimone/continuo/pkg/streams"`, then
   reference constants directly: `streams.NodeUpdatedV1`,
   `streams.OrchestratorNodeUpdated`.
-- **Python (manifest-controller)**: `from streams_contract import UPDATE_GRAPH_V1, MANIFEST_UPDATE_GRAPH`.
+- **Python (topology-controller)**: `from streams_contract import UPDATE_GRAPH_V1, MANIFEST_UPDATE_GRAPH`.
 - Service `Config` structs do not carry stream or group fields. Stream and
   group names are passed to `pkg/redis.NewStreamConsumer` at the wiring site in
   `main.go`, so the constant only appears there.
@@ -82,11 +82,11 @@ leg, so it emits it directly on activating from Received to Parsing. The
 payload is `{release_id, manifest_keys}`; each `manifest_keys` entry is
 `{service, s3_uri, kind}`, with `kind` (`"dbt"` | `"python"`) explicit on
 every entry — release-controller always sets it, never omits it — selecting
-which of manifest-controller's two parsers reads that entry's artifact: a dbt
-`manifest.json` or a python service's `contract.yaml`. manifest-controller's
+which of topology-controller's two parsers reads that entry's artifact: a dbt
+`manifest.json` or a python service's `contract.yaml`. topology-controller's
 decoder tolerates an absent `kind` by defaulting to `"dbt"` regardless, so a
 future or third-party producer that omits the field still parses. See
-`docs/arch/services/manifest-controller.md` for the per-kind parse and
+`docs/arch/services/topology-controller.md` for the per-kind parse and
 failure behavior.
 
 **`release.rejected:v1`** — emitted by release-controller for every terminal

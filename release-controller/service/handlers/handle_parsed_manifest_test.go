@@ -121,7 +121,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 }
 
 // TestHandleParsedManifest_OK_StoresCodeBundleURI verifies that handleParseOK
-// persists CodeBundleURI (published by manifest-controller on
+// persists CodeBundleURI (published by topology-controller on
 // manifest.loaded.candidate:v1) onto the saved release on the normal
 // (non-bootstrap) validating path, so it survives to be carried on
 // release.promoted:v1 once validation passes.
@@ -680,7 +680,7 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 
 // TestHandleParseOK_EmitsCandidateArtifactURIPerNode verifies each node's
 // candidate_artifact_uri (the S3 URI of the object validation must fetch to
-// build the node in the candidate schema, produced by manifest-controller) is
+// build the node in the candidate schema, produced by topology-controller) is
 // carried into the validation.requested:v1 payload under the key
 // "candidate_artifact_uri", where the executor fetches it to build the empty
 // candidate table.

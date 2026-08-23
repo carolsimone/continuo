@@ -140,7 +140,7 @@ Service dossiers:
 - [remediation.md](docs/arch/services/remediation.md)
 - [agent-remediation.md](docs/arch/services/agent-remediation.md)
 - [agent-chat.md](docs/arch/services/agent-chat.md)
-- [manifest-controller.md](docs/arch/services/manifest-controller.md)
+- [topology-controller.md](docs/arch/services/topology-controller.md)
 - [ui.md](docs/arch/services/ui.md)
 - [cli.md](docs/arch/services/cli.md)
 

@@ -54,7 +54,7 @@ are needed for local development**, and none should ever be committed.
 Run a service's tests inside its container, for example:
 
 ```bash
-docker exec manifest-controller uv run pytest -v
+docker exec topology-controller uv run pytest -v
 ```
 
 For the end-to-end suite, see [tests/e2e/README.md](tests/e2e/README.md).

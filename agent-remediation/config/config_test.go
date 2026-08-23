@@ -145,7 +145,7 @@ func TestLoad_ServiceRepoMapPath_MissingFile(t *testing.T) {
 }
 
 // TestLoad_SQLDialectDefaultsToPostgres verifies that an install which never
-// set WAREHOUSE_ENGINE (the same ConfigMap key manifest-controller reads for
+// set WAREHOUSE_ENGINE (the same ConfigMap key topology-controller reads for
 // its own parser dialect) keeps packaging against postgres.
 func TestLoad_SQLDialectDefaultsToPostgres(t *testing.T) {
 	setBaseEnv(t)

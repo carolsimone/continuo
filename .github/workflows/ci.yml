@@ -188,7 +188,7 @@ jobs:
         run: |
           source scripts/lib/common.sh
           for c in state orchestrator executor-controller k8s-controller \
-                   manifest-controller release-controller remediation agent-remediation agent-chat; do
+                   topology-controller release-controller remediation agent-remediation agent-chat; do
             wait_for_container_running "$c"
           done
 
@@ -214,8 +214,8 @@ jobs:
         # dependency cannot exist there.
         run: docker exec agent-remediation go test -tags integration -count=1 ./adapters/packaging/... -v
 
-      - name: Test manifest-controller
-        run: docker exec manifest-controller uv run pytest -v
+      - name: Test topology-controller
+        run: docker exec topology-controller uv run pytest -v
 
       - name: Test s3-sidecar
         # Unit-test the continuo-owned sidecar scripts (compile_uploader,

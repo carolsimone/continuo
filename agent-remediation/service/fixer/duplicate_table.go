@@ -30,7 +30,7 @@ import (
 // the file named by FilePath (that path is the contract's script entry, a
 // program that produces the relation but does not name it) — and this system
 // carries no repository path for contract.yaml at all, only for the object it
-// reaches manifest-controller through. Reading and renaming the script would
+// reaches topology-controller through. Reading and renaming the script would
 // therefore change nothing about which relation the node claims, so the
 // rejection would recur on the next release; the operator resolves it by hand
 // from the release page instead, which names every claimant.

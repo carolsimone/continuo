@@ -10,7 +10,7 @@ REDIS_URL       = os.environ.get("REDIS_URL", "")
 
 # Serves /health and /ready for the k8s liveness/readiness probes (see
 # deploy/continuo/templates/deployment.yaml and values.yaml's
-# manifest-controller.httpPort). Not in _REQUIRED: an operational default is
+# topology-controller.httpPort). Not in _REQUIRED: an operational default is
 # fine, unlike REDIS_URL/S3_* which must be explicitly wired per environment.
 HTTP_PORT       = int(os.environ.get("HTTP_PORT", "8086"))
 

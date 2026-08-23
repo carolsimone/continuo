@@ -128,7 +128,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 // newLocalstackS3Client builds an S3 client pointed at the e2e LocalStack
 // endpoint with path-style addressing (LocalStack does not support
 // virtual-hosted-style buckets). Credentials and endpoint mirror the
-// dbt-compile-and-load / manifest-controller configuration.
+// dbt-compile-and-load / topology-controller configuration.
 func newLocalstackS3Client() *s3.Client {
 	cfg := aws.Config{
 		Region: getEnv("AWS_DEFAULT_REGION", "us-east-1"),

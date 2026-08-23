@@ -173,6 +173,12 @@ shipped in those.
   `remediation-agent-remediation-requested` is now
   `agent-remediation-remediation-requested`. Image is now
   `continuo-agent-remediation`.
+- Renamed service `manifest-controller` to `topology-controller`; consumer
+  group `manifest-controller-release-requested` is now
+  `topology-controller-release-requested` (drained group deleted on upgrade —
+  see NOTES). Image is now `continuo-topology-controller`. Stream names are
+  unchanged — `manifest.loaded.candidate:v1` still names the dbt-manifest
+  artifact this service loads, not the service itself.
 
 ### Changed
 - Bumped the default `validation.imageTag` (and its `_helpers.tpl` fallback)

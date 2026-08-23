@@ -620,7 +620,7 @@ func TestValidation_EmptyCandidateArtifactURI_SkipsBeforeAnyRead(t *testing.T) {
 // TestValidation_PythonNode_SkipsBeforeAnyRead enforces the non-negotiable
 // project invariant that no remediation path ever produces an LLM call or a
 // proposal for a python node, on the shape a python node actually produces:
-// manifest-controller uploads a JSON validation spec for a python node, so its
+// topology-controller uploads a JSON validation spec for a python node, so its
 // validation rejection carries a NON-EMPTY candidate_artifact_uri and the
 // empty-URI skip never fires. node_type on the trigger is what guards it, and
 // it must fire before the candidate artifact, the dbt log, the node location,

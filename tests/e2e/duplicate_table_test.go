@@ -123,7 +123,7 @@ func TestE2E_DuplicateTable_RejectsBeforePromotion(t *testing.T) {
 	assert.Equal(t, "duplicate_table", detail["reject_reason"])
 	rejectDetail, _ := detail["reject_detail"].(string)
 	// victimUniqueID comes from parseManifestNodes, which mirrors
-	// manifest-controller's identity derivation in DECLARED case (see its own
+	// topology-controller's identity derivation in DECLARED case (see its own
 	// doc comment) — it does not lowercase, because that helper is shared with
 	// tests that need the declared-case value. Candidate parsing, however,
 	// mints unique_id (and the relation identity the gate groups on) already

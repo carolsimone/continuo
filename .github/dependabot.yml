@@ -85,11 +85,11 @@ updates:
     commit-message:
       prefix: chore(deps)
 
-  # The Python service manifest-controller, a uv project with its own
+  # The Python service topology-controller, a uv project with its own
   # pyproject.toml and uv.lock.
   - package-ecosystem: uv
     directories:
-      - /manifest-controller
+      - /topology-controller
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
