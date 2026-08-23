@@ -13,6 +13,15 @@ shipped in those.
 ## [Unreleased]
 
 ### Added
+- `networkPolicy.enabled` now also renders an `allow-acme-solver` policy when
+  `ingress.enabled=true`: cert-manager's HTTP-01 solver pods (label
+  `acme.cert-manager.io/http01-solver`, port 8089) answer ACME challenges
+  through the ingress controller, and the chart's default-deny would otherwise
+  block the challenge so certificate issuance times out. Selects only pods
+  carrying cert-manager's solver label, so it is inert for installs that
+  terminate TLS elsewhere or bring their own certificate Secret. No values
+  schema change; an unmodified existing values file renders the same
+  manifests as before unless both toggles are already on.
 - `global.terminationGracePeriodSeconds` (default `30`) — sets every service
   Deployment's `terminationGracePeriodSeconds` explicitly instead of relying
   on Kubernetes' implicit 30s default. Each service bounds its own graceful
