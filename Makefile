@@ -244,6 +244,7 @@ test-topology:
 # fields on the wire instead of failing any build.
 .PHONY: guards
 guards:
+	bash scripts/check-service-names.sh
 	bash scripts/check-ci-alignment.sh
 	bash scripts/check-docker-state-isolation.sh
 	bash scripts/check-kubeconfig-export.sh
