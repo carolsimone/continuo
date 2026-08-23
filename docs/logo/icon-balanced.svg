@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bgTile" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#141a2e"/>
+      <stop offset="100%" stop-color="#090d16"/>
+    </radialGradient>
+    <radialGradient id="bottomLiftGlow" cx="50%" cy="65%" r="45%">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="segA" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="segB" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#6366F1"/>
+    </linearGradient>
+    <linearGradient id="segC" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#4F46E5"/>
+    </linearGradient>
+    <linearGradient id="waveArc" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="40%" stop-color="#06B6D4"/>
+      <stop offset="100%" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#bgTile)"/>
+  <rect width="512" height="512" rx="110" fill="none" stroke="#1E293B" stroke-width="2"/>
+  <circle cx="256" cy="270" r="180" fill="url(#bottomLiftGlow)"/>
+  <g transform="translate(0, -16)">
+    <path d="M 324 186 L 380 164 A 148 148 0 0 0 318 90 L 288 144 A 84 84 0 0 1 324 186 Z" fill="url(#segA)"/>
+    <path d="M 272 136 L 294 78 A 148 148 0 0 0 172 88 L 202 142 A 84 84 0 0 1 272 136 Z" fill="url(#segB)"/>
+    <path d="M 190 152 L 150 104 A 148 148 0 0 0 100 190 L 162 202 A 84 84 0 0 1 190 152 Z" fill="url(#segC)"/>
+    <path d="M 98 212 A 148 148 0 0 0 244 364 C 308 364 338 312 376 312 C 410 312 424 326 434 340 L 434 282 C 404 258 376 258 346 258 C 292 258 272 298 244 298 A 84 84 0 0 1 162 216 Z" fill="url(#waveArc)"/>
+  </g>
+</svg>

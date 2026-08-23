@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <radialGradient id="bgGlow" cx="75%" cy="35%" r="80%">
+      <stop offset="0%" stop-color="#1E1B4B" stop-opacity="0.6"/>
+      <stop offset="60%" stop-color="#0B0F19" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#07090E" stop-opacity="1"/>
+    </radialGradient>
+    <linearGradient id="gBlock1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4C1D95"/>
+      <stop offset="100%" stop-color="#5B21B6"/>
+    </linearGradient>
+    <linearGradient id="gBlock2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5B21B6"/>
+      <stop offset="100%" stop-color="#4338CA"/>
+    </linearGradient>
+    <linearGradient id="gBlock3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4338CA"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+    <linearGradient id="gWave" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="30%" stop-color="#2563EB"/>
+      <stop offset="70%" stop-color="#06B6D4"/>
+      <stop offset="100%" stop-color="#22D3EE"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1E293B" stroke-width="1" stroke-opacity="0.35"/>
+    </pattern>
+    <filter id="markGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="20" flood-color="#06B6D4" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bgGlow)"/>
+  <rect width="1280" height="640" fill="url(#grid)"/>
+
+  <g transform="translate(100, 145)">
+    <rect x="0" y="0" width="250" height="30" rx="15" fill="#1E293B" stroke="#334155" stroke-width="1"/>
+    <circle cx="15" cy="15" r="4" fill="#06B6D4"/>
+    <text x="28" y="20" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="12" font-weight="600" letter-spacing="0.06em">EVENT-DRIVEN ORCHESTRATION</text>
+
+    <text x="0" y="95" fill="#F8FAFC" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="76" font-weight="800" letter-spacing="-0.03em">continuo</text>
+
+    <text x="0" y="146" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="23" font-weight="500">
+      Event-driven, zero-DAG data orchestration.
+    </text>
+
+    <text x="0" y="182" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="16" font-weight="400">
+      Infers DAGs from Python &amp; dbt, proposing deploy fixes with built-in chat assistance.
+    </text>
+
+    <g transform="translate(0, 235)">
+      <rect x="0" y="0" width="145" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <text x="14" y="22" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">⚡ Event-Driven</text>
+
+      <rect x="157" y="0" width="168" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <text x="171" y="22" fill="#A78BFA" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">📦 Code-Inferred DAG</text>
+
+      <rect x="337" y="0" width="180" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <text x="351" y="22" fill="#818CF8" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">🛠️ Post-CI Fix Advice</text>
+
+      <rect x="529" y="0" width="145" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <text x="543" y="22" fill="#34D399" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">💬 Chat Assistant</text>
+    </g>
+  </g>
+
+  <g transform="translate(800, 140) scale(0.95)" filter="url(#markGlow)">
+    <path d="M 318 190 L 378 168 A 148 148 0 0 0 314 92 L 282 146 A 84 84 0 0 1 318 190 Z" fill="url(#gBlock1)"/>
+    <path d="M 268 138 L 290 79 A 148 148 0 0 0 166 89 L 198 144 A 84 84 0 0 1 268 138 Z" fill="url(#gBlock2)"/>
+    <path d="M 186 153 L 145 104 A 148 148 0 0 0 94 192 L 157 204 A 84 84 0 0 1 186 153 Z" fill="url(#gBlock3)"/>
+    <path d="M 92 214 A 148 148 0 0 0 240 368 C 305 368 335 315 375 315 C 410 315 425 330 435 345 L 435 285 C 405 260 375 260 345 260 C 290 260 270 300 240 300 A 84 84 0 0 1 156 218 Z" fill="url(#gWave)"/>
+  </g>
+</svg>
