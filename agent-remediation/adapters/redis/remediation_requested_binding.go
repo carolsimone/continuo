@@ -132,7 +132,7 @@ func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, log
 	return pkgredis.NewStreamConsumer(
 		rc,
 		streams.RemediationRequestedV1,
-		streams.RemediationAgentRemediationRequested,
+		streams.AgentRemediationRemediationRequested,
 		handler,
 		logger,
 	)

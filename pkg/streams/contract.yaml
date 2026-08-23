@@ -180,7 +180,7 @@ streams:
   - name: outbox.dead_letter:v1
     const: OutboxDeadLetterV1
     description: Terminal outbox publish failures (permanent payload errors, or transient errors that exhausted their backoff budget), emitted by every service's outbox processor. Operational DLQ, not a domain event.
-    producers: [state, orchestrator, executor-controller, k8s-controller, release-controller, remediation, remediation-agent]
+    producers: [state, orchestrator, executor-controller, k8s-controller, release-controller, remediation, agent-remediation]
     consumers: []
 
   # ---------------- cross-service fanout ----------------
@@ -338,25 +338,25 @@ streams:
     description: Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent and by orchestrator's case-base rejections group.
     producers: [remediation]
     consumers:
-      - service: remediation-agent
-        group: remediation-agent-remediation-requested
-        const: RemediationAgentRemediationRequested
+      - service: agent-remediation
+        group: agent-remediation-remediation-requested
+        const: AgentRemediationRemediationRequested
       - service: orchestrator
         group: orchestrator-remediation-requested-rejections
         const: OrchestratorRemediationRequestedRejections
 
-  # ---------------- remediation-agent streams ----------------
+  # ---------------- agent-remediation streams ----------------
 
   - name: remediation.proposed:v1
     const: RemediationProposedV1
     description: Per-node fix proposal emitted by the remediation agent for a healable failure; consumed by the PR creator and approval surfaces.
-    producers: [remediation-agent]
+    producers: [agent-remediation]
     consumers: []
 
   - name: remediation.pr_opened:v1
     const: RemediationPrOpenedV1
     description: Emitted when an operator opens a GitHub PR from a fix proposal; consumed by orchestrator's case-base proposals group.
-    producers: [remediation-agent]
+    producers: [agent-remediation]
     consumers:
       - service: orchestrator
         group: orchestrator-remediation-pr-opened-proposals
@@ -365,5 +365,5 @@ streams:
   - name: remediation.pr_closed:v1
     const: RemediationPrClosedV1
     description: Audit event emitted when a remediation PR reaches a terminal outcome on GitHub (merged, or closed without merge); pointer-only, no consumer in this slice.
-    producers: [remediation-agent]
+    producers: [agent-remediation]
     consumers: []
