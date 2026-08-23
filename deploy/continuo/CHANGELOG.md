@@ -24,20 +24,81 @@ shipped in those.
   terminate TLS elsewhere or bring their own certificate Secret. No values
   schema change; an unmodified existing values file renders the same
   manifests as before unless both toggles are already on.
+
+### Changed
+- Bumped the default `validation.imageTag` (and its `_helpers.tpl` fallback)
+  from `v0.3.0` to `v0.4.0`. The runner at that release adds python-csv node
+  support. No values key changes shape, so an unmodified existing values file
+  keeps working and simply picks up the new default on upgrade. **Installs
+  pinning `validation.imageTag`** must re-pin to `v0.4.0` (or drop the
+  override to track the chart's default) before upgrading, the same way as
+  any other `continuo-python-runtime-<engine>` tag bump — an unmirrored or
+  stale pin otherwise renders healthy at install and only fails later, at the
+  next release promotion, as a validation-pod `ErrImagePull`. A pin to an
+  older tag is now caught at render time rather than left as a warning here:
+  see the `validation.imageTag` capability gate under Breaking below.
+
+### Breaking
+- Renamed service `ui-service` to `ui`: the `services[]` entry, Deployment,
+  Service, NetworkPolicy, and ingress backend now use the name `ui`.
+  Image is now `continuo-ui`. The default `ingress.tls.secretName` also
+  changed, from `ui-service-tls` to `ui-tls`: any install with
+  `ingress.tls.enabled=true` that relies on this default (rather than
+  setting `ingress.tls.secretName` explicitly) must rename/recreate the
+  Secret before upgrading, or TLS termination breaks.
+- Renamed service `agent-runner` to `agent-chat`; its database
+  `continuo_agent` is now `continuo_agent_chat` (renamed in place on
+  upgrade — see NOTES). Image is now `continuo-agent-chat`. The
+  `global.agentRunnerGrpcAddr` values key is renamed to
+  `global.agentChatGrpcAddr`; any install overriding it must rename the
+  key before upgrading.
+- Renamed service `remediation-agent` to `agent-remediation`; database
+  `continuo_remediation_agent` is now `continuo_agent_remediation` (rename in
+  place on upgrade — see NOTES); consumer group
+  `remediation-agent-remediation-requested` is now
+  `agent-remediation-remediation-requested`. Image is now
+  `continuo-agent-remediation`.
+- Renamed service `manifest-controller` to `topology-controller`; consumer
+  group `manifest-controller-release-requested` is now
+  `topology-controller-release-requested` (drained group deleted on upgrade —
+  see NOTES). Image is now `continuo-topology-controller`. Stream names are
+  unchanged — `manifest.loaded.candidate:v1` still names the dbt-manifest
+  artifact this service loads, not the service itself.
+- `validation.imageTag`, when set explicitly, is now checked against the tag
+  ranges known to predate python-csv validation support: `_helpers.tpl`'s
+  `continuo.validation.image` fails the render (rather than only warning here)
+  when the tag matches `v0.1.x`-`v0.3.x`, or when it isn't shaped like a
+  released tag (`"vX.Y.Z"` or `"vX.Y.Z@sha256:<digest>"`) at all — an
+  unparseable tag can't be checked against that known-bad range, so it fails
+  closed the same way. **BREAKING only for an install that explicitly pins
+  `validation.imageTag` to one of those tags** (or to something unparseable):
+  it previously rendered and installed, silently running a validation runner
+  that ignores a python-csv node's `csv_source` contract field and reports
+  success without checking the file's header, letting a mismatched-header csv
+  promote unvalidated; it now fails `helm template`/`helm install`/`helm
+  upgrade` outright, naming the tag and the required floor. No values key is
+  added, renamed or removed, and an install that has never overridden
+  `validation.imageTag` (or that already pins `v0.4.0` or later) is
+  unaffected. Re-pin to `v0.4.0` or later, or drop the override, before
+  upgrading.
+
+## [0.3.0] - 2026-08-21
+
+### Added
 - `global.terminationGracePeriodSeconds` (default `30`) — sets every service
   Deployment's `terminationGracePeriodSeconds` explicitly instead of relying
   on Kubernetes' implicit 30s default. Each service bounds its own graceful
   shutdown sequence via the `SHUTDOWN_GRACE` env var (default 15s, 10s for
-  `agent-chat`); the pod-level value must stay comfortably above whatever
+  `agent-runner`); the pod-level value must stay comfortably above whatever
   `SHUTDOWN_GRACE` is configured to, or Kubernetes can SIGKILL the container
   mid-teardown. The default of `30` matches today's implicit behavior, so an
   unmodified existing values file renders the same Deployment as before.
-- `agent-remediation.env.RELEASE_CONTROLLER_URL` (default
-  `http://release-controller:8088`), `agent-remediation.env.SHADOW_VERIFY_TIMEOUT`
-  (default `"20m"`) and `agent-remediation.env.SHADOW_VERIFY_POLL_INTERVAL`
+- `remediation-agent.env.RELEASE_CONTROLLER_URL` (default
+  `http://release-controller:8088`), `remediation-agent.env.SHADOW_VERIFY_TIMEOUT`
+  (default `"20m"`) and `remediation-agent.env.SHADOW_VERIFY_POLL_INTERVAL`
   (default `"15s"`) — release-controller's HTTP address, how long a python-node
   fix proposal waits for its shadow verification release to reach a verdict
-  before the attempt is recorded as failed, and how often the agent-remediation
+  before the attempt is recorded as failed, and how often the remediation-agent
   reads those releases. The timeout is spent only while the shadow release is
   actually running: time it spends queued behind another release does not count
   against it. All three sit in the same free-form `env` map as the
@@ -77,15 +138,7 @@ shipped in those.
   `continuo-validation-<engine>` images are no longer referenced by the chart.
   The engine remains part of the image name rather than the tag, so the
   `"vX.Y.Z@sha256:<digest>"` override form still composes a valid immutable ref.
-
-- Renamed service `ui-service` to `ui`: the `services[]` entry, Deployment,
-  Service, NetworkPolicy, and ingress backend now use the name `ui`.
-  Image is now `continuo-ui`. The default `ingress.tls.secretName` also
-  changed, from `ui-service-tls` to `ui-tls`: any install with
-  `ingress.tls.enabled=true` that relies on this default (rather than
-  setting `ingress.tls.secretName` explicitly) must rename/recreate the
-  Secret before upgrading, or TLS termination breaks.
-- `agent-remediation` now refuses to start when one of its optional duration
+- `remediation-agent` now refuses to start when one of its optional duration
   settings — `LLM_CACHE_TTL`, `REMEDIATION_PR_POLL_INTERVAL`,
   `REMEDIATION_PR_OPENING_GRACE_PERIOD`, `SHADOW_VERIFY_TIMEOUT`,
   `SHADOW_VERIFY_POLL_INTERVAL` — is set to something that is not a Go duration
@@ -116,18 +169,18 @@ shipped in those.
   be one shared checkout. Comments only — the file's keys, the ConfigMap it
   populates, and the values contract are unchanged, so an existing
   `values.yaml` or override needs no edit.
-- `state`, `orchestrator`, and `agent-chat` now set `livenessPath: /livez`
+- `state`, `orchestrator`, and `agent-runner` now set `livenessPath: /livez`
   instead of falling back to the always-200 `/health`. For `state` and
   `orchestrator` this means a dead or wedged Redis stream consumer restarts
   the pod, since `/livez` reports workers and heartbeats only, deliberately
   excluding dependency probes, so a transient Redis/Postgres outage no longer
-  restarts a pod whose consumers are already retrying. `agent-chat` runs no
+  restarts a pod whose consumers are already retrying. `agent-runner` runs no
   stream consumers, so this change gives it no new restart behavior — it now
   answers `/livez` so every Go service exposes the same liveness probe
   contract. Readiness (`readinessPath: /ready`) is unchanged for all three,
   and is not uniform across the chart: `state`, `orchestrator`,
-  `executor-controller`, `k8s-controller`, and `agent-chat` use `/ready`,
-  while `release-controller`, `remediation`, and `agent-remediation` use
+  `executor-controller`, `k8s-controller`, and `agent-runner` use `/ready`,
+  while `release-controller`, `remediation`, and `remediation-agent` use
   `/healthz`. `services` is a list and Helm replaces lists wholesale, so an
   operator who overrides it in their own values file keeps their old entries
   as-is on upgrade; they must add `livenessPath: /livez` to their own service
@@ -155,54 +208,7 @@ shipped in those.
   `SHUTDOWN_GRACE` value as before. All tracked goroutines in every service
   unwind well within 7.5s on cancellation, so this is not expected to change
   observed shutdown behavior for a default install.
-- `validation.imageTag`, when set explicitly, is now checked against the tag
-  ranges known to predate python-csv validation support: `_helpers.tpl`'s
-  `continuo.validation.image` fails the render (rather than only warning here)
-  when the tag matches `v0.1.x`-`v0.3.x`, or when it isn't shaped like a
-  released tag (`"vX.Y.Z"` or `"vX.Y.Z@sha256:<digest>"`) at all — an
-  unparseable tag can't be checked against that known-bad range, so it fails
-  closed the same way. **BREAKING only for an install that explicitly pins
-  `validation.imageTag` to one of those tags** (or to something unparseable):
-  it previously rendered and installed, silently running a validation runner
-  that ignores a python-csv node's `csv_source` contract field and reports
-  success without checking the file's header, letting a mismatched-header csv
-  promote unvalidated; it now fails `helm template`/`helm install`/`helm
-  upgrade` outright, naming the tag and the required floor. No values key is
-  added, renamed or removed, and an install that has never overridden
-  `validation.imageTag` (or that already pins `v0.4.0` or later) is
-  unaffected. Re-pin to `v0.4.0` or later, or drop the override, before
-  upgrading.
-- Renamed service `agent-runner` to `agent-chat`; its database
-  `continuo_agent` is now `continuo_agent_chat` (renamed in place on
-  upgrade — see NOTES). Image is now `continuo-agent-chat`. The
-  `global.agentRunnerGrpcAddr` values key is renamed to
-  `global.agentChatGrpcAddr`; any install overriding it must rename the
-  key before upgrading.
-- Renamed service `remediation-agent` to `agent-remediation`; database
-  `continuo_remediation_agent` is now `continuo_agent_remediation` (rename in
-  place on upgrade — see NOTES); consumer group
-  `remediation-agent-remediation-requested` is now
-  `agent-remediation-remediation-requested`. Image is now
-  `continuo-agent-remediation`.
-- Renamed service `manifest-controller` to `topology-controller`; consumer
-  group `manifest-controller-release-requested` is now
-  `topology-controller-release-requested` (drained group deleted on upgrade —
-  see NOTES). Image is now `continuo-topology-controller`. Stream names are
-  unchanged — `manifest.loaded.candidate:v1` still names the dbt-manifest
-  artifact this service loads, not the service itself.
 
-### Changed
-- Bumped the default `validation.imageTag` (and its `_helpers.tpl` fallback)
-  from `v0.3.0` to `v0.4.0`. The runner at that release adds python-csv node
-  support. No values key changes shape, so an unmodified existing values file
-  keeps working and simply picks up the new default on upgrade. **Installs
-  pinning `validation.imageTag`** must re-pin to `v0.4.0` (or drop the
-  override to track the chart's default) before upgrading, the same way as
-  any other `continuo-python-runtime-<engine>` tag bump — an unmirrored or
-  stale pin otherwise renders healthy at install and only fails later, at the
-  next release promotion, as a validation-pod `ErrImagePull`. A pin to an
-  older tag is now caught at render time rather than left as a warning here:
-  see the `validation.imageTag` capability gate under Breaking below.
 
 ## [0.2.0] - 2026-08-10
 
