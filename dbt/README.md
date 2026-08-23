@@ -184,11 +184,11 @@ debugging via `docker run`/`kubectl run`, not the production dispatch path.
 
 Models use direct `SELECT ... FROM a JOIN b USING (id)` SQL so that sqlglot
 can extract real cross-service upstream dependencies when the
-manifest-controller resolves the graph.
+topology-controller resolves the graph.
 
 ### Model metadata
 
-Every service's `dbt_project.yml` declares the required `+tags` (schedule name) and `+meta` (`owner`, `criticality`) under the `models:` key, and `profiles.yml` sets `schema: e2e_schema`. These fields are embedded in `manifest.json` by `dbt compile` and consumed by the manifest-controller parser.
+Every service's `dbt_project.yml` declares the required `+tags` (schedule name) and `+meta` (`owner`, `criticality`) under the `models:` key, and `profiles.yml` sets `schema: e2e_schema`. These fields are embedded in `manifest.json` by `dbt compile` and consumed by the topology-controller parser.
 
 ## Building
 

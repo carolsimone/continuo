@@ -35,15 +35,15 @@ func asObjectMap(v interface{}) map[string]interface{} {
 	return map[string]interface{}{}
 }
 
-// This file reimplements manifest-controller's three-part content_hash
+// This file reimplements topology-controller's three-part content_hash
 // formula in Go so the e2e harness can seed release-controller's
-// current_prod with hashes that match what the LIVE manifest-controller
+// current_prod with hashes that match what the LIVE topology-controller
 // computes for the exact same dbt manifest.json content. Without this, a
 // content_hash seeded from dbt's raw per-node checksum alone would never
 // match the live formula's output, and every candidate node would look
 // "changed" against current_prod regardless of whether it actually changed.
 //
-// Single source of truth: manifest-controller/service/parser.py
+// Single source of truth: topology-controller/service/parser.py
 // (_node_source_hash, _transitive_macro_ids, _shared_code_hash,
 // _config_hash, _content_hash). Any change to that formula must be mirrored
 // here, and TestContentHash_MatchesKnownVectors pins known-good vectors
@@ -57,7 +57,7 @@ var contentHashDenylist = map[string]bool{
 }
 
 // computeContentHash recomputes a dbt manifest node's content_hash exactly
-// as manifest-controller's parser does: "sha256:" + sha256(source_hash +
+// as topology-controller's parser does: "sha256:" + sha256(source_hash +
 // "|" + shared_code_hash + "|" + config_hash). n and macros are the node and
 // the manifest's top-level "macros" map, both decoded as generic JSON
 // (map[string]interface{}/[]interface{}/json.Number/string/bool/nil — see

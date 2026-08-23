@@ -1,8 +1,8 @@
 // Package codebundle is the shared reader for the code-bundle contract
-// document manifest-controller writes once per release
+// document topology-controller writes once per release
 // (code-bundles/<release_id>/bundle.json).
 //
-// The bundle exists so no consumer outside manifest-controller ever parses a dbt
+// The bundle exists so no consumer outside topology-controller ever parses a dbt
 // manifest: its shape is continuo-owned and versioned, and it is runtime-neutral
 // — every node declares a runtime, and shared code units are plain ids plus
 // source, whether they are dbt macros or Python modules.

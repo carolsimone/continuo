@@ -15,7 +15,7 @@ OWNER="${3:?usage: retag-images.sh <commit-sha> <release-tag> <registry-owner>}"
 # the continuo-owned images every main push publishes as :<git-sha>.
 services=(
   state orchestrator executor-controller k8s-controller ui
-  manifest-controller release-controller agent-chat remediation
+  topology-controller release-controller agent-chat remediation
   agent-remediation migrations s3-sidecar stream-reaper
 )
 

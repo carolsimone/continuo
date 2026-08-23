@@ -40,7 +40,7 @@ def _decode_field(fields: dict, name: str) -> str | None:
 
 def main() -> None:
     validate()
-    logger.info("manifest-controller starting (candidate consumer)")
+    logger.info("topology-controller starting (candidate consumer)")
 
     import boto3  # imported inside main() to avoid module-level side effects in tests
 
@@ -66,7 +66,7 @@ def main() -> None:
     # engine, so every release parses and re-renders SQL for the warehouse this
     # install actually targets.
     dialect = warehouse_dialect()
-    logger.info("manifest-controller SQL dialect: %s", dialect)
+    logger.info("topology-controller SQL dialect: %s", dialect)
 
     def handle_release_requested(fields: dict) -> None:
         payload_raw = _decode_field(fields, "payload")

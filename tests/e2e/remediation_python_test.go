@@ -397,7 +397,7 @@ func rejectPythonFixtureRelease(
 // It applies the same per-node hash recipe as the python release test's
 // pythonContractYAML: source_hash is the real sha256 of the script, so editing
 // the script genuinely re-fingerprints the node; shared_code_hash is empty (the
-// script imports nothing in-repo); and manifest-controller recomputes only the
+// script imports nothing in-repo); and topology-controller recomputes only the
 // three-part fold, so any deterministic config_hash is accepted as long as the
 // fold matches.
 func pyRemediationContractYAML(t *testing.T, service, contractPath, scriptPath string) string {

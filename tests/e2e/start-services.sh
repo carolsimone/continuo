@@ -45,10 +45,10 @@ check_health "remediation" 8090 "/healthz" || exit 1
 start_service "agent-remediation" "agent-remediation" "agent-remediation"
 check_health "agent-remediation" 8092 "/healthz" || exit 1
 
-log_info "Starting manifest-controller..."
-docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"
+log_info "Starting topology-controller..."
+docker exec -d topology-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"
 sleep 3
-log_info "manifest-controller started"
+log_info "topology-controller started"
 
 log_info "Starting agent-chat..."
 docker exec -d agent-chat bash -c "cd /app/agent-chat && go run . > /tmp/agent-chat.log 2>&1"

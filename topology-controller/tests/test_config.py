@@ -88,7 +88,7 @@ def test_supported_engines_match_the_chart(monkeypatch):
 
     templates/_helpers.tpl fails an install whose validation.engine is not in
     its supported list; an engine the chart allows but this service cannot map
-    would render fine and then crash manifest-controller at boot.
+    would render fine and then crash topology-controller at boot.
     """
     from config.config import _ENGINE_DIALECTS
     assert set(_ENGINE_DIALECTS) == {"postgres", "trino"}
@@ -97,7 +97,7 @@ def test_supported_engines_match_the_chart(monkeypatch):
 def test_release_requested_stream_constant_sourced_from_contract():
     from streams_contract import (
         RELEASE_REQUESTED_V1,
-        MANIFEST_CONTROLLER_RELEASE_REQUESTED,
+        TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
         MANIFEST_LOADED_CANDIDATE_V1,
     )
     from config.config import (
@@ -106,5 +106,5 @@ def test_release_requested_stream_constant_sourced_from_contract():
         MANIFEST_LOADED_CANDIDATE_STREAM,
     )
     assert RELEASE_REQUESTED_STREAM == RELEASE_REQUESTED_V1
-    assert RELEASE_REQUESTED_GROUP == MANIFEST_CONTROLLER_RELEASE_REQUESTED
+    assert RELEASE_REQUESTED_GROUP == TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
     assert MANIFEST_LOADED_CANDIDATE_STREAM == MANIFEST_LOADED_CANDIDATE_V1

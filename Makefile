@@ -198,11 +198,11 @@ test-go: test-deps-up
 test-ui:
 	cd ui && npm ci && npm test
 
-.PHONY: test-manifest
-test-manifest:
-	DOCKER_BUILDKIT=1 $(DOCKER_COMPOSE) build manifest-controller
-	$(DOCKER_COMPOSE) up -d manifest-controller
-	docker exec manifest-controller uv run pytest -v
+.PHONY: test-topology
+test-topology:
+	DOCKER_BUILDKIT=1 $(DOCKER_COMPOSE) build topology-controller
+	$(DOCKER_COMPOSE) up -d topology-controller
+	docker exec topology-controller uv run pytest -v
 
 # Fast, infra-free gates. CI runs this target verbatim (a single `make guards`
 # step), so a gate added here reaches CI automatically; check-ci-alignment.sh
@@ -244,6 +244,7 @@ test-manifest:
 # fields on the wire instead of failing any build.
 .PHONY: guards
 guards:
+	bash scripts/check-service-names.sh
 	bash scripts/check-ci-alignment.sh
 	bash scripts/check-docker-state-isolation.sh
 	bash scripts/check-kubeconfig-export.sh
@@ -271,4 +272,4 @@ e2e:
 
 # Reproduce the whole pipeline locally (the "will CI pass?" gate).
 .PHONY: ci
-ci: guards test-go test-ui test-manifest stack-up e2e
+ci: guards test-go test-ui test-topology stack-up e2e

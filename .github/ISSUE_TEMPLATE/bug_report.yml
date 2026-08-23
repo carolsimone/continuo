@@ -40,7 +40,7 @@ body:
         - remediation
         - agent-remediation
         - agent-chat
-        - manifest-controller
+        - topology-controller
         - ui
         - cli
         - Helm chart

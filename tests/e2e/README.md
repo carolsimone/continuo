@@ -9,7 +9,7 @@ The suite covers both the run-orchestration pipeline and the dbt blue/green rele
 - `orchestrator` - Snapshots topology, identifies root nodes, unlocks downstream dependencies, publishes to query.model:v1 (owns the responsibilities of the former `graph` and `dependency-controller` services)
 - `executor-controller` - Deploys k8s jobs
 - `k8s-controller` - Monitors job status
-- `manifest-controller` - Parses dbt manifests (candidate + legacy paths)
+- `topology-controller` - Parses dbt manifests (candidate + legacy paths)
 - `release-controller` - Owns the blue/green candidate-release lifecycle and `current_prod`
 - `ui` - HTTP API verified to return correct scheduler/task/release data
 
@@ -148,7 +148,7 @@ CI mirrors the blank-state flow above:
 2. Wait for containers to be running
 3. Build + start `state` and `orchestrator` binaries (gRPC health check)
 4. Run per-service unit tests
-5. Build + start `manifest-controller`
+5. Build + start `topology-controller`
 6. `docker compose up -d ui`
 7. `bash tests/e2e/deploy-k8s-controllers.sh` (images pre-loaded by setup.sh)
 8. `docker exec -e UI_HTTP_BASE=http://ui:8090 orchestrator go test -v -timeout 40m /app/tests/e2e/...`
@@ -176,7 +176,7 @@ The E2E test uses a hybrid setup:
 
 **In docker-compose:**
 - PostgreSQL, Redis, Neo4j (data stores), LocalStack (S3 — dbt manifests)
-- state, orchestrator, manifest-controller, release-controller (services)
+- state, orchestrator, topology-controller, release-controller (services)
 
 **In kind cluster (Kubernetes):**
 - executor-controller (Deployment)
@@ -215,7 +215,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 `release_promote_test.go` drives the dbt blue/green release pipeline end-to-end via the production entry point — `POST /releases`, the exact request CI's `deploy.yml` issues. Validation runs **real `continuo-python-runtime-<engine>` K8s Jobs in kind** (no dbt in the validation path — see the executor-controller doc's `CreateValidationJob`), exercising the full event chain:
 
 ```
-POST /releases → release.requested:v1 → manifest-controller candidate parse
+POST /releases → release.requested:v1 → topology-controller candidate parse
 → manifest.loaded.candidate:v1 → release-controller derives the changed-node set
 → validation.requested:v1 → executor/k8s run per-node validation jobs
 → validation.node.completed:v1 → validation.result:v1 (kind=complete)
@@ -265,7 +265,7 @@ The failure model `ftable_e` runs in the `service-2` Docker image but JOINs `pub
 
 ### TriggerSchedule Run-and-Rerun (seed schedule)
 1. **Setup** - Initialize clients, verify services healthy, cleanup seed schedule data
-2. **Graph Load** - Trigger manifest-controller, verify seed nodes and catalog
+2. **Graph Load** - Trigger topology-controller, verify seed nodes and catalog
 3. **Run 1** - `TriggerSchedule("seed")` → wait for 3 seed tasks to succeed → scheduler SUCCEEDED
 4. **Run 2** - `TriggerSchedule("seed")` again → wait for second run to complete → scheduler SUCCEEDED
 5. **Cleanup** - Remove all seed schedule data

@@ -3,14 +3,14 @@ import os
 from streams_contract import (
     RELEASE_REQUESTED_V1,
     MANIFEST_LOADED_CANDIDATE_V1,
-    MANIFEST_CONTROLLER_RELEASE_REQUESTED,
+    TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
 )
 
 REDIS_URL       = os.environ.get("REDIS_URL", "")
 
 # Serves /health and /ready for the k8s liveness/readiness probes (see
 # deploy/continuo/templates/deployment.yaml and values.yaml's
-# manifest-controller.httpPort). Not in _REQUIRED: an operational default is
+# topology-controller.httpPort). Not in _REQUIRED: an operational default is
 # fine, unlike REDIS_URL/S3_* which must be explicitly wired per environment.
 HTTP_PORT       = int(os.environ.get("HTTP_PORT", "8086"))
 
@@ -53,7 +53,7 @@ def warehouse_dialect() -> str:
 
 # Candidate-parse flow: release.requested:v1 → manifest.loaded.candidate:v1.
 RELEASE_REQUESTED_STREAM         = RELEASE_REQUESTED_V1
-RELEASE_REQUESTED_GROUP          = MANIFEST_CONTROLLER_RELEASE_REQUESTED
+RELEASE_REQUESTED_GROUP          = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 MANIFEST_LOADED_CANDIDATE_STREAM = MANIFEST_LOADED_CANDIDATE_V1
 
 _REQUIRED = [

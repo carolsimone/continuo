@@ -26,7 +26,7 @@ var ErrContractRejected = errors.New("the packaging tool refused the contract")
 // into the merged, hash-folded wire contract that the team's release CI
 // produces from the same source after a merge to main. A python-node fix
 // proposal is packaged by running the identical tool, so the release
-// artifact's hashes verify against manifest-controller for the same reason
+// artifact's hashes verify against topology-controller for the same reason
 // any other release's do: nothing downstream is reimplementing the fold.
 type ContractPackager interface {
 	// Merge runs `continuo-runtime merge` against contractDir, resolving the

@@ -17,7 +17,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// HandleParsedManifestInput carries the result of the manifest-controller
+// HandleParsedManifestInput carries the result of the topology-controller
 // parsing a candidate release. Status must be "ok" or "failed".
 type HandleParsedManifestInput struct {
 	ReleaseID     string           `json:"release_id"`
@@ -28,7 +28,7 @@ type HandleParsedManifestInput struct {
 	ErrorDetail   string           `json:"error_detail,omitempty"`
 }
 
-// HandleParsedManifest handles the manifest parse result from manifest-controller.
+// HandleParsedManifest handles the manifest parse result from topology-controller.
 //
 // On failure: transitions the release to Rejected and emits release.rejected:v1.
 // On success: joins image tags into the topology, computes the validation closure,

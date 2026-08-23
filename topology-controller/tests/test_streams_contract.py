@@ -11,7 +11,7 @@ def _find_contract_yaml() -> Path:
     """Walk up from this file until pkg/streams/contract.yaml is found.
 
     Locally the test runs from the host and the file lives at the repo root.
-    In CI the test runs inside the manifest-controller container, where the
+    In CI the test runs inside the topology-controller container, where the
     repo's pkg/ is mounted at /app/pkg. Either way, walking ancestors finds it.
     """
     start = Path(__file__).resolve()
@@ -30,15 +30,15 @@ def test_streams_contract_matches_yaml():
 
     expected = {}
     for stream in contract["streams"]:
-        involves_mc = "manifest-controller" in (stream.get("producers") or [])
+        involves_tc = "topology-controller" in (stream.get("producers") or [])
         consumers = stream.get("consumers") or []
-        if not involves_mc:
-            involves_mc = any(c["service"] == "manifest-controller" for c in consumers)
-        if not involves_mc:
+        if not involves_tc:
+            involves_tc = any(c["service"] == "topology-controller" for c in consumers)
+        if not involves_tc:
             continue
         expected[_screaming(stream["const"])] = stream["name"]
         for c in consumers:
-            if c["service"] == "manifest-controller":
+            if c["service"] == "topology-controller":
                 expected[_screaming(c["const"])] = c["group"]
 
     for name, value in expected.items():

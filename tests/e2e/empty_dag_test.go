@@ -22,7 +22,7 @@ import (
 //
 // Fixture: a unique schedule name is inserted directly into schedule_catalog with
 // no corresponding :Table nodes in Neo4j.  This is safe to do without touching
-// manifest-controller or the dbt DAG because LatestFullDAG queries Neo4j by
+// topology-controller or the dbt DAG because LatestFullDAG queries Neo4j by
 // schedule_name and returns an empty map when no nodes match.
 func TestEmptyCronDAG_FinalisesAsFailed(t *testing.T) {
 	if testing.Short() {

@@ -5,7 +5,7 @@ RELEASE_REQUESTED_V1 = "release.requested:v1"
 """Candidate release accepted by release-controller; triggers manifest load for validation."""
 
 MANIFEST_LOADED_CANDIDATE_V1 = "manifest.loaded.candidate:v1"
-"""Resolved candidate topology from manifest-controller back to release-controller."""
+"""Resolved candidate topology from topology-controller back to release-controller."""
 
-MANIFEST_CONTROLLER_RELEASE_REQUESTED = "manifest-controller-release-requested"
-"""manifest-controller consumer group on release.requested:v1."""
+TOPOLOGY_CONTROLLER_RELEASE_REQUESTED = "topology-controller-release-requested"
+"""topology-controller consumer group on release.requested:v1."""

@@ -485,7 +485,7 @@ services:
       - SERVICE_REPO_MAP_PATH=/etc/continuo/service_repos.yaml
       # sqlglot dialect continuo-runtime packages python-node fix proposals
       # with. Mirrors the chart's validation.engine; the local stack runs
-      # Postgres, same as manifest-controller's WAREHOUSE_ENGINE.
+      # Postgres, same as topology-controller's WAREHOUSE_ENGINE.
       - WAREHOUSE_ENGINE=postgres
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
       - SHADOW_VERIFY_TIMEOUT=${SHADOW_VERIFY_TIMEOUT:-20m}
@@ -717,11 +717,11 @@ services:
     volumes:
       - ./localstack/init:/etc/localstack/init/ready.d
 
-  manifest-controller:
+  topology-controller:
     build:
-      context: ./manifest-controller
+      context: ./topology-controller
       dockerfile: Dockerfile.dev
-    container_name: manifest-controller
+    container_name: topology-controller
     environment:
       REDIS_URL: redis://:continuo@redis:6379
       S3_ENDPOINT_URL: http://localstack:4566
@@ -764,7 +764,7 @@ services:
       # Per-service image tags recorded in compiled manifests. The e2e resolves
       # the dbt job image_tag from the release-controller service_prod table (seeded
       # by setup.sh / provision-k8s-test-env.sh with the real content-hash tags), so
-      # this value only satisfies the manifest-controller's A1 publish-boundary
+      # this value only satisfies the topology-controller's A1 publish-boundary
       # validator, which rejects a batch whose image_tag is empty. setup.sh exports
       # the real per-service tags before `docker compose up`; the placeholder default
       # only keeps a bare `docker compose up` from tripping the validator.

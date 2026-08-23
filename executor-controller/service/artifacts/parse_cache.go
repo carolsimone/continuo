@@ -25,7 +25,7 @@ func ParseCacheCandidateURI(bucket, service, releaseID string) string {
 
 // ManifestURI is the canonical S3 URI of a release's compiled manifest.json,
 // uploaded by the compile Job's upload container and later fetched by
-// manifest-controller.
+// topology-controller.
 func ManifestURI(bucket, service, releaseID string) string {
 	return "s3://" + bucket + "/" + service + "/" + releaseID + "/manifest.json"
 }

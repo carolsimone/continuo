@@ -6,7 +6,7 @@ from domain.model import ManifestRequest
 from streams_contract import (
     RELEASE_REQUESTED_V1,
     MANIFEST_LOADED_CANDIDATE_V1,
-    MANIFEST_CONTROLLER_RELEASE_REQUESTED,
+    TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
 )
 
 
@@ -43,7 +43,7 @@ def _common_monkeypatches(monkeypatch):
     monkeypatch.setattr(main, "S3_ENV", "local")
     monkeypatch.setattr(main, "REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setattr(main, "RELEASE_REQUESTED_STREAM", RELEASE_REQUESTED_V1)
-    monkeypatch.setattr(main, "RELEASE_REQUESTED_GROUP", MANIFEST_CONTROLLER_RELEASE_REQUESTED)
+    monkeypatch.setattr(main, "RELEASE_REQUESTED_GROUP", TOPOLOGY_CONTROLLER_RELEASE_REQUESTED)
     monkeypatch.setattr(main, "MANIFEST_LOADED_CANDIDATE_STREAM", MANIFEST_LOADED_CANDIDATE_V1)
     monkeypatch.setattr(main, "CandidateManifestPublisher", lambda *a, **kw: object())
     monkeypatch.setattr(main, "CandidateSqlUploader", lambda *a, **kw: object())
@@ -94,7 +94,7 @@ def test_main_consumer_group_correct(monkeypatch):
     assert len(_RecordingConsumer.instances) == 1
     consumer = _RecordingConsumer.instances[0]
     assert consumer.stream_name == RELEASE_REQUESTED_V1
-    assert consumer.group_name == MANIFEST_CONTROLLER_RELEASE_REQUESTED
+    assert consumer.group_name == TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 
 
 def test_main_candidate_handler_dispatches_with_manifest_keys(monkeypatch):

@@ -32,7 +32,7 @@ spec:
         # the previous configuration indefinitely. The engine case is the one
         # that corrupts output rather than merely going stale: executor-
         # controller rolls on an engine change because its validation image ref
-        # changes, so manifest-controller would keep uploading the old engine's
+        # changes, so topology-controller would keep uploading the old engine's
         # SQL to the new engine's validator.
         #
         # The ConfigMap holds only values derived deterministically from

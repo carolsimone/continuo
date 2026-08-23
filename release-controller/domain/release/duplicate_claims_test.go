@@ -85,7 +85,7 @@ func TestDuplicateClaims_ThreeWay(t *testing.T) {
 	assert.Equal(t, "sales", claims[0].Claimants[2].ServiceName)
 }
 
-// unique_id values are lowercased where they are minted, in manifest-controller,
+// unique_id values are lowercased where they are minted, in topology-controller,
 // so a differently-cased pair cannot reach this function in practice. The
 // assertion pins the division of labour: normalization happens at the mint site
 // and this function compares with plain equality. Folding case here as well

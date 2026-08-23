@@ -214,13 +214,13 @@ streams:
     description: Manifest refresh trigger.
     producers: [state]
     consumers:
-      - service: manifest-controller
-        group: manifest-controller-update-graph
+      - service: topology-controller
+        group: topology-controller-update-graph
         const: ManifestUpdateGraph
   - name: manifest.loaded:v1
     const: ManifestLoadedV1
     description: Topology after manifest load.
-    producers: [manifest-controller]
+    producers: [topology-controller]
     consumers:
       - service: orchestrator
         group: orchestrator-manifest-loaded
@@ -240,7 +240,7 @@ func TestEmitPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	got, err := emitPython(c, "manifest-controller")
+	got, err := emitPython(c, "topology-controller")
 	if err != nil {
 		t.Fatalf("emitPython: %v", err)
 	}

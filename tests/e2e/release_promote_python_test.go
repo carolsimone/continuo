@@ -78,10 +78,10 @@ var pyCsvFixtureData []byte
 // no script, but the shipped merge tool's node_entry() still emits
 // "script": node.script unconditionally, so its wire entry carries an empty
 // string rather than an absent key — mirroring what a domain repository's CI
-// computes for one (see manifest-controller/tests/test_python_contract_parser.py's
+// computes for one (see topology-controller/tests/test_python_contract_parser.py's
 // make_csv_entry), its source_hash is the sha256 of its declared csv uri
 // instead, so editing the uri re-fingerprints the node. shared_code_hash is
-// empty for every node (nothing here imports in-repo code). manifest-controller
+// empty for every node (nothing here imports in-repo code). topology-controller
 // recomputes only the fold, not config_hash, so any deterministic config_hash
 // value is accepted as long as the fold matches.
 func pythonContractYAML(t *testing.T) string {
@@ -111,7 +111,7 @@ func pythonContractYAML(t *testing.T) string {
 			// The shipped merge tool's node_entry() emits "script": node.script
 			// unconditionally, so every real csv wire entry carries an empty
 			// string, never an absent key. Match that shape here so this test
-			// exercises the document manifest-controller actually receives.
+			// exercises the document topology-controller actually receives.
 			node["script"] = ""
 		}
 

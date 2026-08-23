@@ -207,14 +207,14 @@ streams:
     description: Candidate release accepted by release-controller; triggers manifest load for validation.
     producers: [release-controller]
     consumers:
-      - service: manifest-controller
-        group: manifest-controller-release-requested
-        const: ManifestControllerReleaseRequested
+      - service: topology-controller
+        group: topology-controller-release-requested
+        const: TopologyControllerReleaseRequested
 
   - name: manifest.loaded.candidate:v1
     const: ManifestLoadedCandidateV1
-    description: Resolved candidate topology from manifest-controller back to release-controller.
-    producers: [manifest-controller]
+    description: Resolved candidate topology from topology-controller back to release-controller.
+    producers: [topology-controller]
     consumers:
       - service: release-controller
         group: release-controller-manifest-loaded-candidate

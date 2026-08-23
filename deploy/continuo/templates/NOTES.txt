@@ -65,6 +65,11 @@ rename its database: ALTER DATABASE continuo_remediation_agent RENAME TO
 continuo_agent_remediation; after upgrading, delete the drained consumer
 group: XGROUP DESTROY remediation.requested:v1
 remediation-agent-remediation-requested.
+
+BREAKING: "manifest-controller" is now "topology-controller". It has no
+database of its own, so no rename is needed there. After upgrading, delete
+the drained consumer group: XGROUP DESTROY release.requested:v1
+manifest-controller-release-requested.
 {{- end }}
 
 {{- $uiPort := 8090 }}
