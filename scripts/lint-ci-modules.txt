@@ -6,7 +6,7 @@ remediation
 cli
 release-controller
 executor-controller
-agent-runner
+agent-chat
 remediation-agent
 k8s-controller
 pkg

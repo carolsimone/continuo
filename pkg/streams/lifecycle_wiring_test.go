@@ -22,7 +22,7 @@ var blockingServerMethods = map[string]bool{
 }
 
 // TestLifecycleGoNeverWrapsAServerStart discovers every service's main.go by
-// globbing one level under the repo root (state/main.go, agent-runner/main.go,
+// globbing one level under the repo root (state/main.go, agent-chat/main.go,
 // ...) rather than reading from a maintained list, so a new service is
 // covered the day it lands. For each file it fails if a tracked goroutine —
 // a call to Go(...) with method name "Go", any receiver — invokes a

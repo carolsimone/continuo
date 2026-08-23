@@ -62,10 +62,10 @@ func TestCancel_SuccessEmitsJSON(t *testing.T) {
 func TestCancel_ForwardsActorAsCancelledBy(t *testing.T) {
 	fake := &fakeState{cancelResp: &statev1.CancelScheduleResponse{ScheduleId: "sched_123"}}
 
-	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "cleanup"}, false, "agent-runner-llm")
+	_, _, exit := runCancel(t, fake, []string{"daily_ingest", "cleanup"}, false, "agent-chat-llm")
 
 	assert.Equal(t, 0, exit)
-	assert.Equal(t, "agent-runner-llm", fake.gotCancelBy)
+	assert.Equal(t, "agent-chat-llm", fake.gotCancelBy)
 }
 
 func TestCancel_EmptyActorSendsEmptyCancelledBy(t *testing.T) {

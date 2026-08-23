@@ -40,7 +40,7 @@ spec:
                 operator: In
                 values: [state, orchestrator, executor-controller, k8s-controller,
                          release-controller, remediation, remediation-agent,
-                         agent-runner, db-init-migrate]
+                         agent-chat, db-init-migrate]
         - podSelector:
             matchLabels:
               app: dbt-job
@@ -78,7 +78,7 @@ spec:
                 operator: In
                 values: [state, orchestrator, executor-controller, k8s-controller,
                          release-controller, remediation, remediation-agent,
-                         agent-runner, manifest-controller, ui, stream-reaper]
+                         agent-chat, manifest-controller, ui, stream-reaper]
       ports:
         - port: 6379
 {{- end }}
@@ -160,7 +160,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [orchestrator, k8s-controller, agent-runner, ui]
+                values: [orchestrator, k8s-controller, agent-chat, ui]
       ports:
         - port: 50051
 ---
@@ -185,7 +185,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [ui, agent-runner, remediation-agent]
+                values: [ui, agent-chat, remediation-agent]
       ports:
         - port: 50052
 ---
@@ -201,7 +201,7 @@ spec:
     matchExpressions:
       - key: app.kubernetes.io/name
         operator: In
-        values: [agent-runner, remediation-agent, release-controller]
+        values: [agent-chat, remediation-agent, release-controller]
     matchLabels:
       app.kubernetes.io/instance: {{ $instance }}
   policyTypes: ["Ingress"]

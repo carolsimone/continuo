@@ -68,7 +68,7 @@
         "teamImagePrefix": {"type": "string"},
         "stateGrpcAddr": {"type": "string"},
         "orchestratorGrpcAddr": {"type": "string"},
-        "agentRunnerGrpcAddr": {"type": "string"},
+        "agentChatGrpcAddr": {"type": "string"},
         "terminationGracePeriodSeconds": {
           "type": "integer",
           "minimum": 20,

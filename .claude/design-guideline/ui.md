@@ -720,7 +720,7 @@ rules (`Sign out` → `Signing out…` with `.is-loading`).
 
 ## Assistant panel
 
-The agent-runner chat, docked as a fixed 360px right-hand sidebar. It reuses
+The agent-chat chat, docked as a fixed 360px right-hand sidebar. It reuses
 the system's buttons and info-strips; the only things it adds are message
 bubbles, an inline confirm prompt, and an input row. It introduces no new
 button or banner language.

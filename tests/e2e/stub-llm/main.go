@@ -1,6 +1,6 @@
 // Package main is a deterministic OpenAI-compatible server used in e2e tests.
 // It listens on :9100 and responds to POST /v1/chat/completions with scripted
-// responses so the agent-runner and remediation-agent openai adapters can be
+// responses so the agent-chat and remediation-agent openai adapters can be
 // exercised without a real LLM.
 //
 // Routing logic (evaluated in order):
@@ -35,7 +35,7 @@
 //     If the text contains "trigger" emit a tool_call for "schedule_trigger", else
 //     "schedule_status". finish_reason="tool_calls". Both are SSE streaming.
 //
-// The SSE chunk shapes match what the agent-runner openai adapter expects:
+// The SSE chunk shapes match what the agent-chat openai adapter expects:
 //   - Text: choices[].delta.content, finish_reason "stop"
 //   - Tool call: choices[].delta.tool_calls[{index,id,function:{name,arguments}}]
 //   - Stream terminated with "data: [DONE]\n\n"
@@ -124,7 +124,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// All other requests use SSE streaming (agent-runner chat e2e path).
+	// All other requests use SSE streaming (agent-chat chat e2e path).
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -530,7 +530,7 @@ func writeStopFinish(w http.ResponseWriter) {
 }
 
 // writeToolCallChunk emits a single SSE data line with a tool_call delta.
-// The agent-runner openai adapter accumulates tool calls by index; sending the
+// The agent-chat openai adapter accumulates tool calls by index; sending the
 // complete name+arguments in one chunk is sufficient (the adapter appends
 // arguments across chunks).
 func writeToolCallChunk(w http.ResponseWriter, toolName, scheduleName string) {

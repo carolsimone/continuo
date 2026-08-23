@@ -3,7 +3,7 @@ package e2e
 // Full-loop WebSocket chat e2e tests.
 //
 // These tests drive the complete path:
-//   user → ui WebSocket relay → agent-runner → stub-llm → continuo CLI → final reply
+//   user → ui WebSocket relay → agent-chat → stub-llm → continuo CLI → final reply
 //
 // They run inside the e2e container (docker exec ... go test ./...) and reach
 // the ui by its compose DNS name (http://ui:8090), unchanged from how
@@ -15,7 +15,7 @@ package e2e
 // DEV_USER with no Origin check.
 //
 // Schedule fixture: the real seeded schedule name "e2e-schedule" (testScheduleName)
-// is used so the agent-runner can successfully invoke the continuo CLI commands
+// is used so the agent-chat can successfully invoke the continuo CLI commands
 // that reference real catalog entries.
 
 import (
@@ -122,7 +122,7 @@ func boolPtr(b bool) *bool { return &b }
 // through the full loop and returns a "DONE" final text.
 //
 // Path: user asks about e2e-schedule status → stub-llm emits schedule_status
-// tool_call → agent-runner invokes CLI → stub-llm emits DONE: ok → final frame.
+// tool_call → agent-chat invokes CLI → stub-llm emits DONE: ok → final frame.
 func TestChat_StatusQuestionAnswered(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -175,7 +175,7 @@ func TestChat_TriggerRequiresConfirmAndRuns(t *testing.T) {
 		Text: fmt.Sprintf("please trigger %s", testScheduleName),
 	})
 
-	// The agent-runner should gate destructive actions behind a confirm_request.
+	// The agent-chat should gate destructive actions behind a confirm_request.
 	confirm := expectFrame(t, conn, "confirm_request")
 	require.NotEmpty(t, confirm.ActionID, "confirm_request must carry an actionId")
 	require.Contains(t, strings.ToLower(confirm.Summary), "trigger",
@@ -203,7 +203,7 @@ func TestChat_TriggerRequiresConfirmAndRuns(t *testing.T) {
 // a "denied" result back to the stub-llm which then emits "DONE: error".
 //
 // Path: user asks to trigger → confirm_request → user denies →
-// agent-runner injects denial tool result → stub-llm emits DONE: error → final.
+// agent-chat injects denial tool result → stub-llm emits DONE: error → final.
 func TestChat_TriggerDenialDoesNotRun(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")

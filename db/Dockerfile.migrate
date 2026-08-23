@@ -16,7 +16,7 @@ COPY migration/executor /flyway/sql/executor
 COPY migration/orchestrator /flyway/sql/orchestrator
 COPY migration/k8s /flyway/sql/k8s
 COPY migration/release /flyway/sql/release
-COPY migration/agent /flyway/sql/agent
+COPY migration/agent_chat /flyway/sql/agent_chat
 COPY migration/remediation /flyway/sql/remediation
 COPY migration/remediation_agent /flyway/sql/remediation_agent
 

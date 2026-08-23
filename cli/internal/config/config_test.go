@@ -40,8 +40,8 @@ func TestResolve_InvalidTimeoutFallsBackToDefault(t *testing.T) {
 }
 
 func TestResolve_ActorFromEnv(t *testing.T) {
-	cfg := Resolve(Inputs{EnvActor: "agent-runner-llm"})
-	assert.Equal(t, "agent-runner-llm", cfg.Actor)
+	cfg := Resolve(Inputs{EnvActor: "agent-chat-llm"})
+	assert.Equal(t, "agent-chat-llm", cfg.Actor)
 }
 
 func TestResolve_ActorEmptyByDefault(t *testing.T) {

@@ -58,12 +58,12 @@ services:
       cache_to:
         - "type=gha,scope=remediation-agent,mode=max"
 
-  agent-runner:
+  agent-chat:
     build:
       cache_from:
-        - "type=gha,scope=agent-runner"
+        - "type=gha,scope=agent-chat"
       cache_to:
-        - "type=gha,scope=agent-runner,mode=max"
+        - "type=gha,scope=agent-chat,mode=max"
 
   manifest-controller:
     build:

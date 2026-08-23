@@ -8,7 +8,7 @@ import { audit } from '../auth/audit';
 import type { AuthUser } from '../auth/types';
 
 export interface ChatWsOptions {
-  // Factory that opens a new bidirectional gRPC stream to agent-runner.
+  // Factory that opens a new bidirectional gRPC stream to agent-chat.
   // Called once per WebSocket connection upgrade. The stream is cancelled when
   // the socket closes.
   agentClient: () => AgentChatStream;
@@ -102,7 +102,7 @@ export function attachChatWebSocket(server: Server, opts: ChatWsOptions): WebSoc
       // error to the client.
       const isCancelled = err?.code === grpcStatus.CANCELLED;
       if (!isCancelled) {
-        // Map the gRPC status to a precise client error. agent-runner returns
+        // Map the gRPC status to a precise client error. agent-chat returns
         // NOT_FOUND when a resumed thread_id does not exist or is not owned by
         // the user; surface that distinctly as thread_not_found so the client
         // can drop its stale thread and start fresh instead of looping on

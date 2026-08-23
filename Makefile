@@ -41,7 +41,7 @@ build-prod: build-base
 	DOCKER_BUILDKIT=1 docker build -t continuo-k8s-controller:prod -f k8s-controller/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-orchestrator:prod -f orchestrator/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-release-controller:prod -f release-controller/Dockerfile.prod .
-	DOCKER_BUILDKIT=1 docker build -t continuo-agent-runner:prod -f agent-runner/Dockerfile.prod .
+	DOCKER_BUILDKIT=1 docker build -t continuo-agent-chat:prod -f agent-chat/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-remediation:prod -f remediation/Dockerfile.prod .
 	DOCKER_BUILDKIT=1 docker build -t continuo-remediation-agent:prod -f remediation-agent/Dockerfile.prod .
 
@@ -124,7 +124,7 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 	@echo "Waiting for neo4j and redis to become healthy..."
 	@$(DOCKER_COMPOSE) up -d --wait --no-recreate neo4j redis
 	@echo "Waiting for flyway migrations to complete..."
-	@for svc in flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release flyway-agent-runner flyway-remediation flyway-remediation-agent; do \
+	@for svc in flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release flyway-agent-chat flyway-remediation flyway-remediation-agent; do \
 		cid=$$($(DOCKER_COMPOSE) ps -q $$svc 2>/dev/null); \
 		if [ -n "$$cid" ]; then docker wait $$cid 2>/dev/null || true; fi; \
 	done
@@ -140,9 +140,9 @@ e2e-full:  ## Complete E2E test from a running docker-compose env (up -d + start
 
 # ── CI contract: SINGLE entrypoints used identically by local dev and CI jobs.
 GO_SERVICES := state orchestrator executor-controller k8s-controller \
-               release-controller remediation remediation-agent agent-runner
+               release-controller remediation remediation-agent agent-chat
 FLYWAY_JOBS := flyway-state flyway-executor flyway-orchestrator flyway-k8s flyway-release \
-               flyway-agent-runner flyway-remediation flyway-remediation-agent
+               flyway-agent-chat flyway-remediation flyway-remediation-agent
 
 # Data dependencies for Go tests: Postgres+Neo4j+Redis up and migrated. No service
 # images are built. Tests reach these via POSTGRES_HOST=localhost.
@@ -184,7 +184,7 @@ test-go: test-deps-up
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
-	    remediation-agent) db=continuo_remediation_agent;; agent-runner) db=continuo_agent;; \
+	    remediation-agent) db=continuo_remediation_agent;; agent-chat) db=continuo_agent_chat;; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \

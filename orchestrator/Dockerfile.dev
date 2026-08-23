@@ -31,7 +31,7 @@ COPY remediation-agent/go.mod remediation-agent/go.sum ./remediation-agent/
 # stays because orchestrator imports state/proto/state/v1 (gRPC client
 # stubs); only state/proto/ source is copied below.
 RUN go work edit -dropuse=./executor-controller \
-    && go work edit -dropuse=./agent-runner \
+    && go work edit -dropuse=./agent-chat \
     && go work edit -dropuse=./k8s-controller \
     && go work edit -dropuse=./release-controller \
     && go work edit -dropuse=./remediation \

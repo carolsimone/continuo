@@ -26,7 +26,7 @@ export interface AgentChatStream {
 }
 
 // createAgentClient returns a factory function that opens a new bidirectional
-// gRPC stream to agent-runner each time it is called. One stream is opened per
+// gRPC stream to agent-chat each time it is called. One stream is opened per
 // WebSocket connection.
 export function createAgentClient(address: string): () => AgentChatStream {
   const client = new proto.agentchat.v1.AgentChat(address, grpc.credentials.createInsecure());

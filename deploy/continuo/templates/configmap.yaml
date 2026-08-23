@@ -17,7 +17,7 @@ data:
   NEO4J_USER: {{ include "continuo.neo4j.username" . | quote }}
   STATE_GRPC_ADDR: {{ .Values.global.stateGrpcAddr | quote }}
   ORCHESTRATOR_GRPC_ADDR: {{ .Values.global.orchestratorGrpcAddr | quote }}
-  AGENT_RUNNER_GRPC_ADDR: {{ .Values.global.agentRunnerGrpcAddr | quote }}
+  AGENT_CHAT_GRPC_ADDR: {{ .Values.global.agentChatGrpcAddr | quote }}
   STATE_SERVICE_GRPC_ADDR: {{ .Values.global.stateGrpcAddr | quote }}
   S3_ENDPOINT_URL: {{ include "continuo.s3.endpointUrl" . | quote }}
   S3_BUCKET: {{ include "continuo.s3.bucket" . | quote }}
