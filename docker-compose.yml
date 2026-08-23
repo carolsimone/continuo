@@ -81,9 +81,9 @@ services:
 
   flyway-agent-remediation:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_remediation_agent -user=continuo_svc -password=continuo -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_agent_remediation -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
-      - ./db/migration/remediation_agent:/flyway/sql
+      - ./db/migration/agent_remediation:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -461,7 +461,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
-      - POSTGRES_DB=continuo_remediation_agent
+      - POSTGRES_DB=continuo_agent_remediation
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo

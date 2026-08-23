@@ -99,7 +99,7 @@ spec:
               done
               for db in continuo_state continuo_executor continuo_orchestrator \
                         continuo_k8s continuo_release continuo_agent_chat \
-                        continuo_remediation continuo_remediation_agent continuo_dbt; do
+                        continuo_remediation continuo_agent_remediation continuo_dbt; do
                 if psql -tc "SELECT 1 FROM pg_database WHERE datname = '${db}'" | grep -q 1; then
                   echo "database ${db} already exists"
                 else

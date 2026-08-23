@@ -619,7 +619,7 @@ services:
       - {name: LLM_API_KEY, ref: llm}
       - {name: GITHUB_TOKEN, ref: githubToken}
     env:
-      POSTGRES_DB: continuo_remediation_agent
+      POSTGRES_DB: continuo_agent_remediation
       HTTP_PORT: "8092"
       REMEDIATION_AGENT_HTTP_PORT: "8092"
       REMEDIATION_AGENT_GRPC_PORT: "50054"

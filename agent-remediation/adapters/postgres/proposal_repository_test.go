@@ -25,7 +25,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// agentRemediationMigrationDir resolves <repo>/db/migration/remediation_agent/
+// agentRemediationMigrationDir resolves <repo>/db/migration/agent_remediation/
 // from this source file's location so the testcontainer schema stays in
 // lock-step with the production migration.
 func agentRemediationMigrationDir() (string, error) {
@@ -35,7 +35,7 @@ func agentRemediationMigrationDir() (string, error) {
 	}
 	// thisFile = <repo>/agent-remediation/adapters/postgres/proposal_repository_test.go
 	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
-	return filepath.Join(repoRoot, "db", "migration", "remediation_agent"), nil
+	return filepath.Join(repoRoot, "db", "migration", "agent_remediation"), nil
 }
 
 // getEnvOrDefault returns the env var value or the fallback default.
@@ -46,7 +46,7 @@ func getEnvOrDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
-// newTestDB boots a PostgreSQL testcontainer, applies the remediation_agent
+// newTestDB boots a PostgreSQL testcontainer, applies the agent_remediation
 // migration, and returns a ready *sqlx.DB. The container is terminated when
 // the test finishes via t.Cleanup.
 func newTestDB(t *testing.T) *sqlx.DB {
@@ -103,8 +103,8 @@ func newTestDB(t *testing.T) *sqlx.DB {
 	require.NoError(t, err, "connect to postgres after retries")
 
 	dir, err := agentRemediationMigrationDir()
-	require.NoError(t, err, "resolve remediation_agent migration dir")
-	require.NoError(t, testmigrations.Apply(db.DB, dir), "apply remediation_agent migrations")
+	require.NoError(t, err, "resolve agent_remediation migration dir")
+	require.NoError(t, testmigrations.Apply(db.DB, dir), "apply agent_remediation migrations")
 
 	return db
 }

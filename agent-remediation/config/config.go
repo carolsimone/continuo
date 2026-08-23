@@ -180,7 +180,7 @@ func Load(v *pkgconfig.Validator) Config {
 		Postgres: pkgconfig.PostgresConfig{
 			Host:     v.Require("POSTGRES_HOST"),
 			Port:     pkgconfig.EnvIntOrDefault("POSTGRES_PORT", 5432),
-			DB:       pkgconfig.EnvOrDefault("POSTGRES_DB", "continuo_remediation_agent"),
+			DB:       pkgconfig.EnvOrDefault("POSTGRES_DB", "continuo_agent_remediation"),
 			User:     v.Require("POSTGRES_USER"),
 			Password: v.Require("POSTGRES_PASSWORD"),
 			SSLMode:  pkgconfig.EnvOrDefault("DB_SSLMODE", "disable"),

@@ -10,7 +10,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
     CREATE DATABASE continuo_release;
     CREATE DATABASE continuo_agent_chat;
     CREATE DATABASE continuo_remediation;
-    CREATE DATABASE continuo_remediation_agent;
+    CREATE DATABASE continuo_agent_remediation;
 
     GRANT ALL PRIVILEGES ON DATABASE continuo_state TO $POSTGRES_USER;
     GRANT ALL PRIVILEGES ON DATABASE continuo_executor TO $POSTGRES_USER;
@@ -20,7 +20,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
     GRANT ALL PRIVILEGES ON DATABASE continuo_release TO $POSTGRES_USER;
     GRANT ALL PRIVILEGES ON DATABASE continuo_agent_chat TO $POSTGRES_USER;
     GRANT ALL PRIVILEGES ON DATABASE continuo_remediation TO $POSTGRES_USER;
-    GRANT ALL PRIVILEGES ON DATABASE continuo_remediation_agent TO $POSTGRES_USER;
+    GRANT ALL PRIVILEGES ON DATABASE continuo_agent_remediation TO $POSTGRES_USER;
 EOSQL
 
 echo "All databases created successfully"

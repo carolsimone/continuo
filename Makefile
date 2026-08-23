@@ -184,7 +184,7 @@ test-go: test-deps-up
 	    release-controller) db=continuo_release; \
 	      extra="RELEASE_TEST_PG_DSN=postgres://continuo_svc:continuo@localhost:5432/continuo_release?sslmode=disable GOFLAGS=-p=1";; \
 	    remediation) db=continuo_remediation;; \
-	    agent-remediation) db=continuo_remediation_agent;; agent-chat) db=continuo_agent_chat;; \
+	    agent-remediation) db=continuo_agent_remediation;; agent-chat) db=continuo_agent_chat;; \
 	    *) echo "unknown service $$s" >&2; exit 2;; \
 	  esac; \
 	  echo "== go test $$s (db=$$db) =="; \
