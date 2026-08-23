@@ -88,7 +88,7 @@ jobs:
               - 'go.work.sum'
               - 'pkg/**'
               - 'k8s-controller/**'
-            ui_service:
+            ui:
               - 'ui/**'
             topology_controller:
               - 'topology-controller/**'
@@ -132,7 +132,7 @@ jobs:
           ORCHESTRATOR_CHANGED: ${{ steps.filter.outputs.orchestrator }}
           EXECUTOR_CHANGED: ${{ steps.filter.outputs.executor_controller }}
           K8S_CHANGED: ${{ steps.filter.outputs.k8s_controller }}
-          UI_CHANGED: ${{ steps.filter.outputs.ui_service }}
+          UI_CHANGED: ${{ steps.filter.outputs.ui }}
           TOPOLOGY_CHANGED: ${{ steps.filter.outputs.topology_controller }}
           RELEASE_CONTROLLER_CHANGED: ${{ steps.filter.outputs.release_controller }}
           AGENT_CHAT_CHANGED: ${{ steps.filter.outputs.agent_chat }}

@@ -658,7 +658,7 @@ sequenceDiagram
       UI->>RA: FailPullRequest(id, claimed_at)
       UI-->>OP: 502 { error: "proposal carries no file edits" }
     else edits usable
-      Note over UI: an empty edits list alongside a populated file_path/proposed_sql_uri<br/>(a agent-remediation that predates the list, mid rolling upgrade)<br/>is read as one edit synthesized from those single-file fields
+      Note over UI: an empty edits list alongside a populated file_path/proposed_sql_uri<br/>(an agent-remediation that predates the list, mid rolling upgrade)<br/>is read as one edit synthesized from those single-file fields
       alt S3 fetch fails for any edit
         UI->>S3: GetObject(edit.content_uri) (any edit)
         S3-->>UI: error
