@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-FROM golang:1.26.5-alpine AS build
+FROM golang:1.27.0-alpine AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/continuo ./cmd/continuo
