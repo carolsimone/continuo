@@ -7,7 +7,7 @@ cli
 release-controller
 executor-controller
 agent-chat
-remediation-agent
+agent-remediation
 k8s-controller
 pkg
 orchestrator

@@ -47,8 +47,8 @@ require (
 )
 
 require (
-	github.com/carolsimone/continuo/remediation-agent v0.0.0-00010101000000-000000000000
+	github.com/carolsimone/continuo/agent-remediation v0.0.0-00010101000000-000000000000
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-replace github.com/carolsimone/continuo/remediation-agent => ../../remediation-agent
+replace github.com/carolsimone/continuo/agent-remediation => ../../agent-remediation

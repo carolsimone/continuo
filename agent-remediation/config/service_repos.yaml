@@ -1,0 +1,16 @@
+# config/service_repos.yaml
+# Maps a service name (orchestrator topology service_name; dbt or python) to
+# its project root within that service's own repository. Each team ships from
+# its own repo — the single shared layout below is a dev/e2e convenience, not
+# the deployed shape — so the remediation agent only ever resolves a claimant
+# belonging to the release's changed service, whose repo comes from the
+# remediation trigger. The agent joins <repo_path> with the offending file's
+# path to read the model source from GitHub. Edit this when adding a service
+# or changing a repo's layout, then restart agent-remediation.
+services:
+  core: services/core
+  finance: services/finance
+  marketing: services/marketing
+  service-1: services/service-1
+  service-2: services/service-2
+  service-3: services/service-3

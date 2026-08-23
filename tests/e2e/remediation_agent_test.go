@@ -14,13 +14,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/carolsimone/continuo/pkg/streams"
-	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
+	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_RemediationAgent_ProposesFixForRejection drives a full remediation
+// TestE2E_AgentRemediation_ProposesFixForRejection drives a full remediation
 // chain from a validation rejection through to a persisted fix proposal:
 //
 //	POST /releases (service-2, ftable_e as changed node)
@@ -36,7 +36,7 @@ import (
 // The stub-llm (tests/e2e/stub-llm/main.go) detects the propose_fix tool in
 // the request and returns a deterministic non-streaming response, so the
 // remediation-agent behaves exactly as it would with a real LLM endpoint.
-func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
+func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -167,7 +167,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	// (b) Assert a proposal row in continuo_remediation_agent.
 	var row proposalRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
-		err := clients.remediationAgentDB.GetContext(ctx, &row,
+		err := clients.agentRemediationDB.GetContext(ctx, &row,
 			`SELECT source, release_id, node_id, status, attempt,
 			        source_resolved, proposed_sql_uri
 			   FROM proposal
@@ -217,7 +217,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	// (f) SELECT the proposal's id from the DB so we can call the PR-creation endpoint.
 	var proposalID string
 	pollUntil(t, ctx, 10*time.Second, 1*time.Second, func() (bool, error) {
-		err := clients.remediationAgentDB.GetContext(ctx, &proposalID,
+		err := clients.agentRemediationDB.GetContext(ctx, &proposalID,
 			`SELECT id FROM proposal WHERE release_id = $1 AND node_id = $2 AND attempt = 1 LIMIT 1`,
 			releaseID, ftableEUniqueID)
 		return err == nil && proposalID != "", nil
@@ -248,7 +248,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	//     pr_url, and the same pr_number the create call returned.
 	var finalRow prRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
-		err := clients.remediationAgentDB.GetContext(ctx, &finalRow,
+		err := clients.agentRemediationDB.GetContext(ctx, &finalRow,
 			`SELECT pr_state, pr_url, pr_number FROM proposal WHERE id = $1`,
 			proposalID)
 		if err != nil {
@@ -267,7 +267,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	//     and flip the proposal to the terminal pr_state='merged' with
 	//     pr_closed_at set.
 	var repoName string
-	require.NoError(t, clients.remediationAgentDB.GetContext(ctx, &repoName,
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &repoName,
 		`SELECT repo FROM proposal WHERE id = $1`, proposalID))
 	// The e2e suite runs inside the orchestrator container, so stub-github is
 	// reached by its compose service name (the same base URL the
@@ -285,7 +285,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 		PRClosedAt *time.Time `db:"pr_closed_at"`
 	}
 	pollUntil(t, ctx, 60*time.Second, 2*time.Second, func() (bool, error) {
-		err := clients.remediationAgentDB.GetContext(ctx, &closedRow,
+		err := clients.agentRemediationDB.GetContext(ctx, &closedRow,
 			`SELECT pr_state, pr_closed_at FROM proposal WHERE id = $1`, proposalID)
 		if err != nil {
 			return false, nil
@@ -297,7 +297,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	// (k) The terminal outcome was emitted atomically: a remediation_pr_closed
 	//     outbox row exists for this proposal (pending or already published).
 	var outboxCount int
-	require.NoError(t, clients.remediationAgentDB.GetContext(ctx, &outboxCount,
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &outboxCount,
 		`SELECT count(*) FROM remediation_agent_outbox
 		  WHERE event_type = 'remediation_pr_closed'
 		    AND payload->>'proposal_id' = $1`, proposalID))
@@ -305,13 +305,13 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 	t.Logf("close-loop confirmed: pr_state=merged pr_closed_at=%s", closedRow.PRClosedAt)
 }
 
-// TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR drives the
+// TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR drives the
 // "create-succeeded/record-failed" scenario the opening sweep exists to
 // recover: a proposal claimed for PR creation (pr_state='opening') whose PR
 // already exists on GitHub for its deterministic branch, but was never
 // recorded onto the row. It seeds a proposal row directly (bypassing the full
 // validation-rejection-to-remediation pipeline covered by
-// TestE2E_RemediationAgent_ProposesFixForRejection above, since this test
+// TestE2E_AgentRemediation_ProposesFixForRejection above, since this test
 // isolates the reconciler's opening sweep rather than that pipeline), claims
 // it via the real BeginPullRequest RPC, then creates the PR directly on
 // stub-github for the branch BeginPullRequest's response reports — reading
@@ -328,7 +328,7 @@ func TestE2E_RemediationAgent_ProposesFixForRejection(t *testing.T) {
 // does not drive that failure directly; it reproduces the row state that
 // failure leaves behind, which is exactly what the opening sweep resolves
 // regardless of how the row got stuck there.
-func TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR(t *testing.T) {
+func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
@@ -348,7 +348,7 @@ func TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	//    only precondition the PR-creation path checks — sidestepping the full
 	//    validation-rejection pipeline, which this test does not exercise.
 	var proposalID string
-	require.NoError(t, clients.remediationAgentDB.GetContext(ctx, &proposalID, `
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &proposalID, `
 		INSERT INTO proposal
 			(source, release_id, node_id, error_signature, attempt, status,
 			 source_resolved, repo, commit_sha, file_path, model, created_at)
@@ -364,7 +364,7 @@ func TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	//    pr_claimed_at stamp, and returns the branch name the system actually
 	//    computed and is about to look for, so the test reads it from the
 	//    system rather than re-deriving the naming rule itself.
-	claim, err := clients.remediationAgentClient.BeginPullRequest(ctx,
+	claim, err := clients.agentRemediationClient.BeginPullRequest(ctx,
 		&remediationv1.BeginPullRequestRequest{Id: proposalID})
 	require.NoError(t, err, "BeginPullRequest")
 	branch := claim.GetBranch()
@@ -418,7 +418,7 @@ func TestE2E_RemediationAgent_OpeningSweepRecoversStrandedPR(t *testing.T) {
 		PROpenedAt  *time.Time `db:"pr_opened_at"`
 	}
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
-		err := clients.remediationAgentDB.GetContext(ctx, &row,
+		err := clients.agentRemediationDB.GetContext(ctx, &row,
 			`SELECT pr_state, pr_url, pr_number, pr_claimed_at, pr_opened_at FROM proposal WHERE id = $1`,
 			proposalID)
 		if err != nil {

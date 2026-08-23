@@ -502,7 +502,7 @@ func waitForProposal(
 	var row pyProposalRow
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
-		err := clients.remediationAgentDB.GetContext(ctx, &row, `
+		err := clients.agentRemediationDB.GetContext(ctx, &row, `
 			SELECT status, attempt, shadow_release_id, verify_error, file_path, file_edits
 			  FROM proposal
 			 WHERE release_id = $1 AND node_id = $2 AND attempt = $3`,

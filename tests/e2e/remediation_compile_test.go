@@ -192,7 +192,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	//    and status=='proposed'.
 	var row compileProposalRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
-		err := clients.remediationAgentDB.GetContext(ctx, &row,
+		err := clients.agentRemediationDB.GetContext(ctx, &row,
 			`SELECT source, release_id, node_id, status, file_path, source_resolved
 			   FROM proposal
 			  WHERE release_id = $1 AND node_id = $2

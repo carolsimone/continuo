@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package remediation.v1;
 
-option go_package = "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1;remediationv1";
+option go_package = "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1;remediationv1";
 
 // RemediationProposals serves the proposal read-path and pull-request lifecycle
 // for the remediation-agent. The UI reads proposals via ListProposals/GetProposal

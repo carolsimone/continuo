@@ -2,13 +2,13 @@ go 1.25.13
 
 use (
 	./agent-chat
+	./agent-remediation
 	./executor-controller
 	./k8s-controller
 	./orchestrator
 	./pkg
 	./release-controller
 	./remediation
-	./remediation-agent
 	./state
 	./tests/e2e
 )

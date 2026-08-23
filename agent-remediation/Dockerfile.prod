@@ -1,0 +1,66 @@
+# Build stage
+ARG BASE_IMAGE=ghcr.io/carolsimone/continuo-base:v1
+FROM --platform=$BUILDPLATFORM ${BASE_IMAGE} AS builder
+
+# Supplied by buildx: the architecture of the image being produced. The builder
+# itself stays on the native build platform and cross-compiles to it.
+ARG TARGETARCH
+
+WORKDIR /app
+
+# Copy workspace and all go.mod files (required by go.work)
+COPY go.work go.work.sum* ./
+COPY state/go.mod state/go.sum ./state/
+COPY pkg/go.mod pkg/go.sum ./pkg/
+COPY orchestrator/go.mod orchestrator/go.sum ./orchestrator/
+COPY executor-controller/go.mod executor-controller/go.sum ./executor-controller/
+COPY k8s-controller/go.mod k8s-controller/go.sum ./k8s-controller/
+COPY release-controller/go.mod release-controller/go.sum ./release-controller/
+COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
+COPY remediation/go.mod remediation/go.sum ./remediation/
+COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
+COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
+
+# Download dependencies with cache
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Copy source code — pkg and orchestrator (gRPC stubs) are dependencies
+# of agent-remediation and must be present for the build.
+COPY pkg/ ./pkg/
+COPY orchestrator/ ./orchestrator/
+COPY agent-remediation/ ./agent-remediation/
+
+# Build static binary
+WORKDIR /app/agent-remediation
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -installsuffix cgo -o /app/bin/agent-remediation .
+
+# Runtime stage. Debian slim, not alpine: the packaging toolchain below pulls
+# in pyarrow, which ships manylinux wheels only — alpine's musl libc would
+# force a source build. continuo-python-runtime declares requires-python
+# >= 3.14, which python:3.14-slim satisfies.
+FROM python:3.14-slim
+
+# ca-certificates/tzdata carry over from the alpine stage this replaces.
+# continuo-python-runtime provides the continuo-runtime CLI the
+# ContractPackager adapter shells out to, so a proposed python-node fix is
+# packaged by the same tool that packages every promoted release.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir continuo-python-runtime==0.4.0
+
+# Explicit COPY allowlist — only the service binary; new builder artifacts
+# are absent from the runtime image unless added here.
+COPY --from=builder /app/bin/agent-remediation /usr/local/bin/agent-remediation
+
+EXPOSE 8092
+
+# Runs unprivileged. The service writes to temporary directories at runtime —
+# it extracts a repository tarball to search for a python node's contract file,
+# and the packaging CLI writes the merged contract to a temp file — so it needs
+# a writable /tmp, which the base image provides world-writable. Nothing outside
+# temporary directories is written.
+USER 65532:65532
+
+CMD ["agent-remediation"]
