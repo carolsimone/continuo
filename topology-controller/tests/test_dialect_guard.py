@@ -1,4 +1,4 @@
-"""Guard: no SQL dialect literal in manifest-controller's service code.
+"""Guard: no SQL dialect literal in topology-controller's service code.
 
 The dialect is a property of the operator's warehouse, resolved from
 WAREHOUSE_ENGINE at the composition root and injected downward. A literal baked

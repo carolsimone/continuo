@@ -173,7 +173,7 @@ echo "✓ All images loaded into kind"
 
 # Compile dbt manifests and upload to localstack S3 using the dbt-compile-and-load
 # service. This mirrors the production flow: manifests live in S3, and the
-# manifest-controller reads them via source=s3 when update.graph:v1 fires.
+# topology-controller reads them via source=s3 when update.graph:v1 fires.
 echo "Starting postgres and localstack for dbt manifest compilation..."
 docker compose up -d postgres localstack
 echo "Waiting for postgres to be ready..."

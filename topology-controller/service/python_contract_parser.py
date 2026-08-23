@@ -46,7 +46,7 @@ def _validate_csv_uri(uri: str, label: str) -> None:
     exactly, so a contract this loader accepts is one the pinned runner's
     validation header-fetch can actually parse. A prefix-only check would
     accept shapes the runner rejects (a bucket-less ``s3://bucket`` with no
-    object key, a host-less ``https://``), letting manifest-controller wave
+    object key, a host-less ``https://``), letting topology-controller wave
     a malformed csv contract through a release that only fails once the
     validation Job actually runs. Accepts exactly ``s3://bucket/key`` (both
     non-empty) or ``https://<non-empty-host>[/...]``; every other shape —
@@ -198,7 +198,7 @@ def _parse_entry(
         )
 
     # The node's source as the control plane sees it (the script itself never
-    # reaches manifest-controller): the normalized entry, hash fields excluded,
+    # reaches topology-controller): the normalized entry, hash fields excluded,
     # serialized deterministically for the code bundle and the remediation LLM.
     raw_entry = {
         "schema": schema,

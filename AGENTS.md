@@ -12,7 +12,7 @@ This is a monorepo with multiple microservices.
 * `agent-chat` — chat and agent gRPC backend; hosts the conversational LLM interface used by the UI.
 
 ## Python service (1)
-* `manifest-controller` — Python 3.12/uv service (not Go); consumes `release.requested:v1` Redis Stream events, batch-loads the release's dbt manifest.json files, resolves cross-service upstream deps via sqlglot, and publishes the resolved candidate topology to `manifest.loaded.candidate:v1` for release-controller (which promotes it into the orchestrator's Neo4j topology via `release.promoted:v1`). Run tests with `docker exec manifest-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d manifest-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.
+* `topology-controller` — Python 3.12/uv service (not Go); consumes `release.requested:v1` Redis Stream events, batch-loads the release's dbt manifest.json files, resolves cross-service upstream deps via sqlglot, and publishes the resolved candidate topology to `manifest.loaded.candidate:v1` for release-controller (which promotes it into the orchestrator's Neo4j topology via `release.promoted:v1`). Run tests with `docker exec topology-controller uv run pytest -v`. Start the process manually (container runs `tail -f /dev/null` by default): `docker exec -d topology-controller bash -c "cd /app && PYTHONPATH=/app/proto uv run python main.py > /tmp/mc.log 2>&1"`.
 
 ## Node service (1)
 * `ui` — HTTP API and web UI; serves the operator dashboard and proxies gRPC reads from `orchestrator` and other backend services.
@@ -52,7 +52,7 @@ Rules:
 - An interface declared in an adapter package and consumed *only by other adapters* (e.g. a gRPC/Neo4j client seam) is adapter-internal and may stay there; the rule targets application→adapter inversion, not adapter-to-adapter wiring.
 
 # Stream and consumer-group names
-Every Redis stream and consumer group is declared in `pkg/streams/contract.yaml`. A Go generator emits `pkg/streams/streams.gen.go` (`streams.QueryModelV1`, `streams.RetryTaskV1`, `streams.ExecutorRetry`, etc.) and `manifest-controller/streams_contract.py` for Python.
+Every Redis stream and consumer group is declared in `pkg/streams/contract.yaml`. A Go generator emits `pkg/streams/streams.gen.go` (`streams.QueryModelV1`, `streams.RetryTaskV1`, `streams.ExecutorRetry`, etc.) and `topology-controller/streams_contract.py` for Python.
 
 Rules:
 - Never inline a versioned stream name (`"query.model:v1"`) or a service-prefixed consumer-group name in Go, Python, or tests. Always reference the constant from `pkg/streams` (Go) or `streams_contract` (Python).
@@ -70,8 +70,8 @@ A property of the operator's environment — warehouse engine, region, auth mode
 Rules:
 - A values key that describes the user's environment must reach the services that act on it — normally as a key on the shared ConfigMap in `templates/configmap.yaml`, mirrored into `docker-compose.yml` and any other deployment path. If it is genuinely install-time-only (image selection, Secret naming), that is fine, but say so in the values comment so the next reader need not re-derive it.
 - Services **fail closed** at startup on a value they cannot honour, rather than degrading to a default mid-operation. `_helpers.tpl` already fails an install on an unsupported `validation.engine`; the service must refuse to boot rather than emit another engine's output.
-- Where the same set of allowed values is enumerated in two places, pin them to each other with a test (`test_supported_engines_match_the_chart` in `manifest-controller/tests/test_config.py`), so the chart cannot start accepting a value the code cannot honour.
-- When you remove a hardcoded literal, sweep every site of that concept rather than only the one that was flagged, and separate the **read** sites from the **write/generate** sites. The generate site is usually the real defect: its output leaves the process as an artifact another system executes, so a wrong value there surfaces far from its cause. `manifest-controller/tests/test_dialect_guard.py` is the forcing function for the SQL-dialect case; add the equivalent guard when you fix a new instance of this class.
+- Where the same set of allowed values is enumerated in two places, pin them to each other with a test (`test_supported_engines_match_the_chart` in `topology-controller/tests/test_config.py`), so the chart cannot start accepting a value the code cannot honour.
+- When you remove a hardcoded literal, sweep every site of that concept rather than only the one that was flagged, and separate the **read** sites from the **write/generate** sites. The generate site is usually the real defect: its output leaves the process as an artifact another system executes, so a wrong value there surfaces far from its cause. `topology-controller/tests/test_dialect_guard.py` is the forcing function for the SQL-dialect case; add the equivalent guard when you fix a new instance of this class.
 
 # Architecture documentation
 The architecture pack under `docs/arch/` is part of the working agreement for this repository.
@@ -79,7 +79,7 @@ Before completing any task that changes service behavior, interfaces, storage ow
 Do not consider a task complete until the architecture documentation has been reconciled with the implemented code changes.
 
 Services should be Go based service, find `Dockerfile.dev` in the service folders if you need to know how to build them.
-The exception is `manifest-controller`, which is Python 3.12 and uses uv for dependency management.
+The exception is `topology-controller`, which is Python 3.12 and uses uv for dependency management.
 All the other services should, more or less, use a similar stack but with different dependencies.
 Remove any dependency that is not needed.
 

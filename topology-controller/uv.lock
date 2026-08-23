@@ -102,40 +102,6 @@ wheels = [
 ]
 
 [[package]]
-name = "manifest-controller"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "boto3" },
-    { name = "grpcio" },
-    { name = "protobuf" },
-    { name = "pyyaml" },
-    { name = "redis" },
-    { name = "sqlglot" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "grpcio-tools" },
-    { name = "pytest" },
-    { name = "pytest-mock" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "boto3", specifier = ">=1.43.62" },
-    { name = "grpcio", specifier = ">=1.62.0" },
-    { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.62.0" },
-    { name = "protobuf", specifier = ">=7.35.1" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1.1" },
-    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "redis", specifier = ">=8.1.0" },
-    { name = "sqlglot", specifier = ">=30.14.0" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "packaging"
 version = "26.0"
 source = { registry = "https://pypi.org/simple" }
@@ -290,6 +256,40 @@ sdist = { url = "https://files.pythonhosted.org/packages/3a/cd/39a94f0f98076ee8e
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/ec/a729883ceda22dcd9117ce182f64d884bf494e72c4dfce00c2ad0a5978e1/sqlglot-30.14.0-py3-none-any.whl", hash = "sha256:fc768e24889d63a5e1237dea7ad305e5ffb4356a98b0bed828f89591ebcd3636", size = 719007, upload-time = "2026-07-27T11:23:28.637Z" },
 ]
+
+[[package]]
+name = "topology-controller"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "boto3" },
+    { name = "grpcio" },
+    { name = "protobuf" },
+    { name = "pyyaml" },
+    { name = "redis" },
+    { name = "sqlglot" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "grpcio-tools" },
+    { name = "pytest" },
+    { name = "pytest-mock" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", specifier = ">=1.43.62" },
+    { name = "grpcio", specifier = ">=1.62.0" },
+    { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.62.0" },
+    { name = "protobuf", specifier = ">=7.35.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1.1" },
+    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "redis", specifier = ">=8.1.0" },
+    { name = "sqlglot", specifier = ">=30.14.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "typing-extensions"

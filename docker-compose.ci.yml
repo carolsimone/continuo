@@ -65,12 +65,12 @@ services:
       cache_to:
         - "type=gha,scope=agent-chat,mode=max"
 
-  manifest-controller:
+  topology-controller:
     build:
       cache_from:
-        - "type=gha,scope=manifest-controller"
+        - "type=gha,scope=topology-controller"
       cache_to:
-        - "type=gha,scope=manifest-controller,mode=max"
+        - "type=gha,scope=topology-controller,mode=max"
 
   dbt-compile-and-load:
     build:

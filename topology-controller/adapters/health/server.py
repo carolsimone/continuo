@@ -45,7 +45,7 @@ class HealthServer(ThreadingHTTPServer):
     thread alive, and has it completed a loop pass recently? This differs
     deliberately from the Go services' split model (a liveness endpoint that
     is hardcoded 200, plus a heartbeat/registry-aware readiness endpoint):
-    manifest-controller serves no application traffic through this port, so
+    topology-controller serves no application traffic through this port, so
     there's no reason to keep liveness blind to a stuck consumer. The whole
     point of adding this server is for Kubernetes to *restart* the pod when
     the consumer stops making progress, and only a failing livenessProbe
