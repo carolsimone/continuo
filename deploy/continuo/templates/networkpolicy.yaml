@@ -234,6 +234,34 @@ spec:
   ingress:
     - ports:
         - port: 8090
+{{- if .Values.ingress.enabled }}
+---
+# cert-manager HTTP-01 solver pods answer ACME challenges for the ingress
+# certificate. They appear ad hoc in this namespace during issuance and are
+# reached through the ingress controller, so default-deny would block the
+# challenge and issuance would time out. Selects only pods carrying
+# cert-manager's solver label — inert on installs that terminate TLS
+# elsewhere or bring their own certificate Secret.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" . }}-allow-acme-solver
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+  annotations:
+    ignore-check.kube-linter.io/dangling-networkpolicy: >-
+      cert-manager creates the HTTP-01 solver pods ad hoc during ACME
+      challenges; no chart workload carries this label by design.
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - port: 8089
+{{- end }}
 {{- if .Values.dex.enabled }}
 ---
 # IdP endpoints are public by nature; the browser reaches dex via
