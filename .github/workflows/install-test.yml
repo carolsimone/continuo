@@ -96,6 +96,28 @@ jobs:
         with:
           cluster_name: install-test
 
+      - name: Fetch PR base commit
+        # The build-load step below diffs against it to pick the changed
+        # images; a plain checkout only has the PR merge commit at depth 1.
+        if: github.event_name == 'pull_request'
+        run: git fetch --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build and load PR-changed images into kind
+        # PR runs install with global.imageTag=latest, which otherwise pulls the
+        # images published from main. A PR that renames a service or database
+        # references image names / migrations that main's :latest lacks, failing
+        # the install against stale images. Build only what this PR changed and
+        # side-load it so those refs are already present (imagePullPolicy is
+        # IfNotPresent, so a loaded image wins); everything unchanged still pulls
+        # published :latest. Skipped on workflow_call (release), which passes a
+        # real published image_tag and must pull it unchanged.
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CLUSTER: install-test
+          TAG: latest
+        run: bash scripts/install-test/build-load-pr-images.sh
+
       - name: Install and verify (${{ matrix.mode }})
         # inputs.image_tag is empty on pull_request events (the inputs
         # context only exists for workflow_call) — default to the latest
