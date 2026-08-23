@@ -9,10 +9,10 @@ import redis.exceptions as redis_exceptions
 
 import adapters.redis.consumer as consumer_mod
 from adapters.redis.consumer import Consumer
-from streams_contract import RELEASE_REQUESTED_V1, MANIFEST_CONTROLLER_RELEASE_REQUESTED
+from streams_contract import RELEASE_REQUESTED_V1, TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 
 _STREAM = RELEASE_REQUESTED_V1
-_GROUP = MANIFEST_CONTROLLER_RELEASE_REQUESTED
+_GROUP = TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 
 
 _TEST_RETRY_SLEEP = 0.01  # real seconds; short enough to keep tests fast
@@ -204,7 +204,7 @@ def test_reclaim_uses_min_idle_so_it_never_steals_in_flight_work():
 # --- start() loop resilience ------------------------------------------------
 #
 # Reproduces the 2026-07-19 incident: Redis briefly went unreachable and
-# manifest-controller's consumer loop was suspected to have died silently on
+# topology-controller's consumer loop was suspected to have died silently on
 # the first redis.exceptions.ConnectionError, unlike the Go services' stream
 # consumer (pkg/redis/streamconsumer.go Start()), which logs "Error in read
 # loop" and keeps retrying with a flat 3s backoff until Redis recovers.

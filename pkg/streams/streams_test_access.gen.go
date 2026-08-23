@@ -64,7 +64,7 @@ func PkgConstantsForTest() map[string]string {
 		"OrchestratorScheduleCancelled": OrchestratorScheduleCancelled,
 		"ExecutorScheduleCancelled": ExecutorScheduleCancelled,
 		"K8sScheduleCancelled": K8sScheduleCancelled,
-		"ManifestControllerReleaseRequested": ManifestControllerReleaseRequested,
+		"TopologyControllerReleaseRequested": TopologyControllerReleaseRequested,
 		"ReleaseControllerManifestLoadedCandidate": ReleaseControllerManifestLoadedCandidate,
 		"ExecutorValidationRequested": ExecutorValidationRequested,
 		"ExecutorValidationNodeCompleted": ExecutorValidationNodeCompleted,

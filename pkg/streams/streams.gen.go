@@ -46,7 +46,7 @@ const (
 	ScheduleCancelledV1 = "schedule.cancelled:v1"
 	// ReleaseRequestedV1 — Candidate release accepted by release-controller; triggers manifest load for validation.
 	ReleaseRequestedV1 = "release.requested:v1"
-	// ManifestLoadedCandidateV1 — Resolved candidate topology from manifest-controller back to release-controller.
+	// ManifestLoadedCandidateV1 — Resolved candidate topology from topology-controller back to release-controller.
 	ManifestLoadedCandidateV1 = "manifest.loaded.candidate:v1"
 	// ValidationRequestedV1 — dbt --empty validation run requested by release-controller; executor-controller dispatches per-node jobs.
 	ValidationRequestedV1 = "validation.requested:v1"
@@ -122,8 +122,8 @@ const (
 	ExecutorScheduleCancelled = "executor-schedule-cancelled"
 	// K8sScheduleCancelled — k8s-controller consumer group on schedule.cancelled:v1.
 	K8sScheduleCancelled = "k8s-schedule-cancelled"
-	// ManifestControllerReleaseRequested — manifest-controller consumer group on release.requested:v1.
-	ManifestControllerReleaseRequested = "manifest-controller-release-requested"
+	// TopologyControllerReleaseRequested — topology-controller consumer group on release.requested:v1.
+	TopologyControllerReleaseRequested = "topology-controller-release-requested"
 	// ReleaseControllerManifestLoadedCandidate — release-controller consumer group on manifest.loaded.candidate:v1.
 	ReleaseControllerManifestLoadedCandidate = "release-controller-manifest-loaded-candidate"
 	// ExecutorValidationRequested — executor-controller consumer group on validation.requested:v1.

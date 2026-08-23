@@ -1,6 +1,6 @@
 // Command gen-streams reads pkg/streams/contract.yaml and writes
 // pkg/streams/streams.gen.go, pkg/streams/streams_test_access.gen.go,
-// and manifest-controller/streams_contract.py.
+// and topology-controller/streams_contract.py.
 package main
 
 import (
@@ -79,11 +79,11 @@ func run() error {
 		return fmt.Errorf("write go test access: %w", err)
 	}
 
-	pySrc, err := emitPython(c, "manifest-controller")
+	pySrc, err := emitPython(c, "topology-controller")
 	if err != nil {
 		return fmt.Errorf("emit python: %w", err)
 	}
-	pyOut := filepath.Join(root, "manifest-controller", "streams_contract.py")
+	pyOut := filepath.Join(root, "topology-controller", "streams_contract.py")
 	if err := os.WriteFile(pyOut, []byte(pySrc), 0o600); err != nil {
 		return fmt.Errorf("write python: %w", err)
 	}
@@ -241,7 +241,7 @@ func emitPython(c *Contract, service string) (string, error) {
 """{{ .Description }}"""
 
 {{ end }}{{ range .Groups }}{{ .Const }} = "{{ .Group }}"
-"""manifest-controller consumer group on {{ .Stream }}."""
+"""{{ $.Service }} consumer group on {{ .Stream }}."""
 
 {{ end }}`
 
@@ -251,9 +251,10 @@ func emitPython(c *Contract, service string) (string, error) {
 	}
 	var buf strings.Builder
 	if err := t.Execute(&buf, struct {
+		Service string
 		Streams []streamRow
 		Groups  []groupRow
-	}{streams, groups}); err != nil {
+	}{service, streams, groups}); err != nil {
 		return "", err
 	}
 	out := strings.TrimRight(buf.String(), "\n") + "\n"
@@ -326,7 +327,7 @@ func validate(c *Contract) error {
 		"orchestrator":        {},
 		"executor-controller": {},
 		"k8s-controller":      {},
-		"manifest-controller": {},
+		"topology-controller": {},
 		"release-controller":  {},
 		"remediation":         {},
 		"agent-remediation":   {},

@@ -1,7 +1,7 @@
 import json
 from unittest.mock import MagicMock
 from adapters.redis.consumer import Consumer
-from streams_contract import RELEASE_REQUESTED_V1, MANIFEST_CONTROLLER_RELEASE_REQUESTED
+from streams_contract import RELEASE_REQUESTED_V1, TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
 
 
 def test_consume_once_dispatches_payload_and_acks():
@@ -27,7 +27,7 @@ def test_consume_once_dispatches_payload_and_acks():
     consumer = Consumer(
         redis_client=redis_mock,
         stream_name=RELEASE_REQUESTED_V1,
-        group_name=MANIFEST_CONTROLLER_RELEASE_REQUESTED,
+        group_name=TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
         message_handler=handler,
     )
 
@@ -39,7 +39,7 @@ def test_consume_once_dispatches_payload_and_acks():
     assert payload["release_id"] == "rel-int"
     # ...and the production code ACKed the message id it just processed.
     redis_mock.xack.assert_called_once_with(
-        RELEASE_REQUESTED_V1, MANIFEST_CONTROLLER_RELEASE_REQUESTED, b"1700000000-0",
+        RELEASE_REQUESTED_V1, TOPOLOGY_CONTROLLER_RELEASE_REQUESTED, b"1700000000-0",
     )
 
 
@@ -59,7 +59,7 @@ def test_consume_once_does_not_ack_when_handler_raises():
     consumer = Consumer(
         redis_client=redis_mock,
         stream_name=RELEASE_REQUESTED_V1,
-        group_name=MANIFEST_CONTROLLER_RELEASE_REQUESTED,
+        group_name=TOPOLOGY_CONTROLLER_RELEASE_REQUESTED,
         message_handler=handler,
     )
 

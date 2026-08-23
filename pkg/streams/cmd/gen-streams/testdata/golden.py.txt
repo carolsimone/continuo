@@ -7,5 +7,5 @@ UPDATE_GRAPH_V1 = "update.graph:v1"
 MANIFEST_LOADED_V1 = "manifest.loaded:v1"
 """Topology after manifest load."""
 
-MANIFEST_UPDATE_GRAPH = "manifest-controller-update-graph"
-"""manifest-controller consumer group on update.graph:v1."""
+MANIFEST_UPDATE_GRAPH = "topology-controller-update-graph"
+"""topology-controller consumer group on update.graph:v1."""
