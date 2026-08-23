@@ -1,5 +1,9 @@
 # Continuo
 
+<p align="center">
+  <img src="docs/logo/continuo-social-preview.png" alt="Continuo — event-driven, zero-DAG data orchestration" width="640">
+</p>
+
 [![CI](https://github.com/carolsimone/continuo/actions/workflows/ci.yml/badge.svg)](https://github.com/carolsimone/continuo/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/carolsimone/continuo?label=release)](https://github.com/carolsimone/continuo/releases)
