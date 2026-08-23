@@ -59,7 +59,7 @@ type FailureEvidence struct {
 	// the orchestrator's case base.
 	CodeBundleURI string
 	// Shadow is true when the rejected release was a shadow release — one
-	// posted by remediation-agent to verify a proposed fix, which never
+	// posted by agent-remediation to verify a proposed fix, which never
 	// promotes and never touches current_prod. A shadow rejection means the
 	// proposed fix did not work; the classifier still records it (so the drop
 	// is never invisible) but must not enqueue a remediation trigger for it,

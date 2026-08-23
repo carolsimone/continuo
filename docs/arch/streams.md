@@ -98,7 +98,7 @@ additionally carry `candidate_artifact_uri` plus the candidate topology's
 `node_type`, `file_path`, and `service` for that node; seed_build entries carry
 `file_path`/`service` from the same source, and the payload carries
 `candidate_schema`. `shadow` is true when the rejected release was a
-fix-verification release posted by `remediation-agent` rather than a change
+fix-verification release posted by `agent-remediation` rather than a change
 anyone shipped; the remediation classifier records such a rejection and then
 drops it, so a failed fix attempt is never handed back as a fresh failure to
 heal. A payload written before the field existed decodes it as false, which is
@@ -115,7 +115,7 @@ failing code via `code_bundle_uri` (threaded from `release.rejected:v1`'s
 top-level `code_bundle_uri`; empty for compile-stage rejections, which precede
 the parse that produces the bundle) — kept pointer-first so the orchestrator's
 failure-precedent case base can record the rejection without pulling the full
-log or code inline. `remediation-agent` decodes both fields off the trigger:
+log or code inline. `agent-remediation` decodes both fields off the trigger:
 `reason`, together with `category`, is its fallback precedent-lookup key
 (`GetPrecedents`) when the exact `error_signature` has no recorded match, and
 `code_bundle_uri` is the validation fixer's primary source for the failing
@@ -131,7 +131,7 @@ path via the orchestrator's `GetNodeLocation` RPC. See
 `pkg/outbox.Processor` for a terminal outbox row: a permanent payload error,
 or a transient error whose retry budget was exhausted. Producers: `state`,
 `orchestrator`, `executor-controller`, `k8s-controller`, `release-controller`,
-`remediation`, `remediation-agent`. The payload carries
+`remediation`, `agent-remediation`. The payload carries
 `original_event_type`, `original_stream`, `original_aggregate_id`,
 `failure_kind` (`permanent` | `transient_exhausted`), `error`, `attempts`,
 `failed_outbox_id`. It is an operational DLQ signal, distinct from domain
@@ -139,7 +139,7 @@ or a transient error whose retry budget was exhausted. Producers: `state`,
 `docs/arch/05-error-classification.md` §Outbox processor resilience for the
 classification and backoff mechanics.
 
-**`remediation.pr_closed:v1`** — emitted by remediation-agent when its
+**`remediation.pr_closed:v1`** — emitted by agent-remediation when its
 PR-outcome reconciler observes a terminal GitHub pull request state (merged,
 or closed without merge) for a proposal whose `pr_state` is `open`; the CAS
 `open → merged | rejected` and this outbox row commit in the same transaction.
@@ -148,7 +148,7 @@ The payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`,
 deterministic SHA1 UUID derived from `(release_id, node_id, attempt)`, distinct
 from the `remediation.pr_opened:v1` id derived from the same triple, so the two
 events never collide. No consumer is wired to it. See
-`docs/arch/services/remediation-agent.md` for the full payload shape.
+`docs/arch/services/agent-remediation.md` for the full payload shape.
 
 ## Out of scope
 

@@ -415,7 +415,7 @@ func TestCaseBaseRepository_RecordProposalCreatesStubRejection(t *testing.T) {
 	proposal := casebase.Proposal{
 		ProposalID: proposalID, ReleaseID: releaseID, NodeID: nodeID,
 		PrURL: "https://github.com/org/repo/pull/42", PrNumber: 42,
-		PrState: "open", OpenedBy: "remediation-agent", OpenedAt: openedAt,
+		PrState: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
 	}
 	require.NoError(t, repo.RecordProposal(ctx, proposal))
 

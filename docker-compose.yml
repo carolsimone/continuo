@@ -465,9 +465,9 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      - REMEDIATION_AGENT_HTTP_PORT=8092
-      - REMEDIATION_AGENT_GRPC_PORT=50054
-      - REMEDIATION_AGENT_MAX_ATTEMPTS=3
+      - AGENT_REMEDIATION_HTTP_PORT=8092
+      - AGENT_REMEDIATION_GRPC_PORT=50054
+      - AGENT_REMEDIATION_MAX_ATTEMPTS=3
       - REMEDIATION_PR_POLL_INTERVAL=${REMEDIATION_PR_POLL_INTERVAL:-5s}
       - REMEDIATION_PR_OPENING_GRACE_PERIOD=${REMEDIATION_PR_OPENING_GRACE_PERIOD:-15s}
       - S3_BUCKET=continuo
@@ -494,7 +494,7 @@ services:
       - ./agent-remediation/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
     ports:
       # Host port 8094 avoids collision with other services.
-      # The container-internal port remains 8092 (REMEDIATION_AGENT_HTTP_PORT).
+      # The container-internal port remains 8092 (AGENT_REMEDIATION_HTTP_PORT).
       - "8094:8092"
       - "50054:50054" # gRPC
     networks:

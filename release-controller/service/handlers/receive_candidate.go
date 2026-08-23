@@ -28,7 +28,7 @@ type ReceiveCandidateInput struct {
 	// untouched) or "python" (contract.yaml, uploaded by the domain repo's CI
 	// before this POST). Anything else is rejected (HTTP 400).
 	Kind string `json:"kind"`
-	// Shadow marks a fix-verification release posted by remediation-agent: it
+	// Shadow marks a fix-verification release posted by agent-remediation: it
 	// runs the normal parse+validation pipeline but stops at StatusValidated
 	// instead of promoting to production. Absent means false — the default
 	// for every existing caller.

@@ -27,7 +27,7 @@ import (
 //	→ validation fails (ftable_e references public.wrong_name)
 //	→ release reaches "rejected" status
 //	→ remediation classifier emits remediation.requested:v1
-//	→ remediation-agent consumes remediation.requested:v1
+//	→ agent-remediation consumes remediation.requested:v1
 //	→ calls stub-llm (propose_fix tool call → deterministic SQL fix)
 //	→ writes proposed SQL and diff to S3
 //	→ inserts proposal row (status=proposed, attempt=1)
@@ -35,7 +35,7 @@ import (
 //
 // The stub-llm (tests/e2e/stub-llm/main.go) detects the propose_fix tool in
 // the request and returns a deterministic non-streaming response, so the
-// remediation-agent behaves exactly as it would with a real LLM endpoint.
+// agent-remediation behaves exactly as it would with a real LLM endpoint.
 func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -91,7 +91,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
 	// 3b. Seed the ftable_e :Table topology node in Neo4j so that the
-	//     remediation-agent's Locator (GetNodeLocation gRPC) can resolve the
+	//     agent-remediation's Locator (GetNodeLocation gRPC) can resolve the
 	//     node's file path and service name. In a cold e2e no release has been
 	//     promoted yet, so Neo4j is empty; without this seed, GetNodeLocation
 	//     returns NOT_FOUND and Step-2 source resolution degrades silently to
@@ -107,7 +107,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 
 	// 6. Poll remediation.requested:v1 to confirm the classifier consumed the
 	//    rejection and emitted a trigger for ftable_e. This is a precondition for
-	//    the remediation-agent to pick it up.
+	//    the agent-remediation to pick it up.
 	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
 		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV1, "-", "+").Result()
 		if err != nil {
@@ -129,7 +129,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 		return false, nil
 	}, fmt.Sprintf("timeout waiting for remediation.requested:v1 for release %s node %s", releaseID, ftableEUniqueID))
 
-	// 7. Poll remediation.proposed:v1. The remediation-agent consumes the trigger,
+	// 7. Poll remediation.proposed:v1. The agent-remediation consumes the trigger,
 	//    calls the stub-llm (which returns a deterministic propose_fix tool call),
 	//    writes artifacts to S3, persists the proposal row, and publishes this event.
 	var proposed remediationProposedPayload
@@ -164,7 +164,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	require.Equal(t, "validation", proposed.Source, "source must be 'validation'")
 	t.Logf("remediation.proposed:v1 received: confidence=%s sql_uri=%s", proposed.Confidence, proposed.ProposedSQLURI)
 
-	// (b) Assert a proposal row in continuo_remediation_agent.
+	// (b) Assert a proposal row in continuo_agent_remediation.
 	var row proposalRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row,
@@ -271,7 +271,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 		`SELECT repo FROM proposal WHERE id = $1`, proposalID))
 	// The e2e suite runs inside the orchestrator container, so stub-github is
 	// reached by its compose service name (the same base URL the
-	// remediation-agent uses via GITHUB_BASE_URL).
+	// agent-remediation uses via GITHUB_BASE_URL).
 	mergeURL := fmt.Sprintf("http://stub-github:9200/repos/%s/pulls/%d/merge", repoName, finalRow.PRNumber)
 	mergeReq, err := http.NewRequestWithContext(ctx, http.MethodPut, mergeURL, nil)
 	require.NoError(t, err, "build stub merge request")
@@ -376,7 +376,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	// 3. Create the PR directly on stub-github for that SAME branch — the
 	//    "create succeeded" half of the scenario. The e2e suite runs inside
 	//    the orchestrator container, so stub-github is reached by its compose
-	//    service name, same as the remediation-agent's own GITHUB_BASE_URL.
+	//    service name, same as the agent-remediation's own GITHUB_BASE_URL.
 	prBody, err := json.Marshal(map[string]string{
 		"title": "e2e opening sweep recovery", "head": branch, "base": "main",
 	})
@@ -439,7 +439,7 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 }
 
 // remediationProposedPayload mirrors the remediation.proposed:v1 wire shape
-// produced by the remediation-agent's outbox publisher.
+// produced by the agent-remediation's outbox publisher.
 type remediationProposedPayload struct {
 	EventID        string `json:"event_id"`
 	Source         string `json:"source"`
@@ -456,7 +456,7 @@ type remediationProposedPayload struct {
 	ProposedAt     string `json:"proposed_at"`
 }
 
-// proposalRow captures the fields asserted from continuo_remediation_agent.proposal.
+// proposalRow captures the fields asserted from continuo_agent_remediation.proposal.
 type proposalRow struct {
 	Source         string `db:"source"`
 	ReleaseID      string `db:"release_id"`
@@ -568,7 +568,7 @@ func stripS3Prefix(uri string) string {
 
 // seedFTableETopologyNode inserts a minimal :Table node for e2e_schema.ftable_e
 // into Neo4j. In a cold e2e no release has been promoted, so Neo4j is empty.
-// The remediation-agent's Step-2 source resolution calls GetNodeLocation to
+// The agent-remediation's Step-2 source resolution calls GetNodeLocation to
 // obtain the node's original_file_path and service_name (the candidate source
 // itself is read from the release's code bundle first, falling back to a
 // GitHub repo read only when the bundle misses); without this seed,
@@ -577,7 +577,7 @@ func stripS3Prefix(uri string) string {
 // The node uses the same unique_id key format that the release-promotion handler
 // writes: "{schema_name}.{table_name}" (e.g. "e2e_schema.ftable_e"). The
 // original_file_path matches the dbt manifest value ("models/ftable_e.sql"),
-// which the remediation-agent joins with the service_repos.yaml prefix
+// which the agent-remediation joins with the service_repos.yaml prefix
 // ("services/service-2") to form the full path passed to stub-github.
 //
 // The node is cleaned up via t.Cleanup so it does not leak into other tests.
@@ -606,7 +606,7 @@ func seedFTableETopologyNode(t *testing.T, ctx context.Context, clients *testCli
 	require.NoError(t, err, "seed ftable_e topology node in Neo4j")
 
 	// Seed one upstream :Table with a DEPENDS_ON edge from ftable_e. The
-	// remediation-agent's upstream evidence now comes from GetUpstreamChanges,
+	// agent-remediation's upstream evidence now comes from GetUpstreamChanges,
 	// which ranks ancestors by their :NodeVersion history rather than by :Table
 	// properties; this cold e2e seeds no :NodeVersion for the ancestor, so it
 	// carries no change evidence and GetUpstreamChanges skips it. Kept as a

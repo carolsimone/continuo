@@ -216,7 +216,7 @@ func TestPrecedentReader_MatchesBySignature(t *testing.T) {
 	linkPrecedentResolvedBy(t, client, relResolved, nodeResolved, nodeResolved, "hash-resolving")
 
 	seedPrecedentProposal(t, client, relResolved, nodeResolved, marker+"-proposal",
-		"https://github.com/org/repo/pull/7", 7, "open", "remediation-agent", t0.Add(30*time.Minute))
+		"https://github.com/org/repo/pull/7", 7, "open", "agent-remediation", t0.Add(30*time.Minute))
 
 	repo := newPrecedentReader(client)
 	precedents, err := repo.Precedents(ctx, sigS, "", "", 10, true)

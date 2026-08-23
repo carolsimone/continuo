@@ -1,14 +1,14 @@
-# remediation-agent
+# agent-remediation
 
 ## Purpose
 
-`remediation-agent` acts on healable failures surfaced by the `remediation` classifier, across all four failure sources: `validation`, `compile`, `seed_build`, and `duplicate_table`. It consumes `remediation.requested:v1` — one trigger per failing node — and produces a fix proposal. A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, persistence, and the outbox emit; it dispatches each trigger to a `Fixer` chosen by the trigger's error class and, for a validation failure, the failing node's kind. Each `Fixer` decides which source files to read, whether it needs the dbt log (each class fetches and sanitizes it itself, only when needed), which prompt to send, and how to interpret the model's answer. Every fixer's prompt also carries precedent — how similar past failures (by exact error signature, or the broader category/reason class) were resolved before, read from the orchestrator's failure case base. A dbt node's validation failure carries a pre-compiled candidate SQL and uses a two-step LLM flow: a Step-1 diagnosis against the candidate SQL, the diff of what this release itself changed in the failing model (last promoted version vs. candidate), the diffs of its recently-changed upstreams, and precedent; then a best-effort Step-2 pass that applies the diagnosis to the failing node's real source, resolved primarily from the release's code bundle in object storage. A **python** node's validation failure runs a different lane entirely, because a python node is not a SQL file but an entry in a contract yaml declaring the relations it reads and the columns it produces: the agent fetches the team's repository at the failing commit, searches it for the file declaring the node, asks the model for that file's corrected content, packages the result with the same CLI the team's own release CI runs after a merge, and submits it to release-controller as a **shadow release** — a real release that runs the full parse → candidate-schema → validation pipeline but stops at the terminal `validated` status instead of promoting. That attempt is recorded `verifying` and finalized asynchronously by a reconciler: `proposed` when the shadow release validated the fix, `failed` with the shadow's own error when it did not — and that error becomes the evidence the next attempt is shown. Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. Duplicate-table failures carry no dbt log at all — the rejection happens at parse time, before any Job runs — so the agent reads only the claimant the release changed, names the competing producer by service and path without reading its source, and asks the model for a rename in a single LLM call. For each successful proposal the driver — or, for a shadow-verified one, the reconciler — enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
+`agent-remediation` acts on healable failures surfaced by the `remediation` classifier, across all four failure sources: `validation`, `compile`, `seed_build`, and `duplicate_table`. It consumes `remediation.requested:v1` — one trigger per failing node — and produces a fix proposal. A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, persistence, and the outbox emit; it dispatches each trigger to a `Fixer` chosen by the trigger's error class and, for a validation failure, the failing node's kind. Each `Fixer` decides which source files to read, whether it needs the dbt log (each class fetches and sanitizes it itself, only when needed), which prompt to send, and how to interpret the model's answer. Every fixer's prompt also carries precedent — how similar past failures (by exact error signature, or the broader category/reason class) were resolved before, read from the orchestrator's failure case base. A dbt node's validation failure carries a pre-compiled candidate SQL and uses a two-step LLM flow: a Step-1 diagnosis against the candidate SQL, the diff of what this release itself changed in the failing model (last promoted version vs. candidate), the diffs of its recently-changed upstreams, and precedent; then a best-effort Step-2 pass that applies the diagnosis to the failing node's real source, resolved primarily from the release's code bundle in object storage. A **python** node's validation failure runs a different lane entirely, because a python node is not a SQL file but an entry in a contract yaml declaring the relations it reads and the columns it produces: the agent fetches the team's repository at the failing commit, searches it for the file declaring the node, asks the model for that file's corrected content, packages the result with the same CLI the team's own release CI runs after a merge, and submits it to release-controller as a **shadow release** — a real release that runs the full parse → candidate-schema → validation pipeline but stops at the terminal `validated` status instead of promoting. That attempt is recorded `verifying` and finalized asynchronously by a reconciler: `proposed` when the shadow release validated the fix, `failed` with the shadow's own error when it did not — and that error becomes the evidence the next attempt is shown. Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. Duplicate-table failures carry no dbt log at all — the rejection happens at parse time, before any Job runs — so the agent reads only the claimant the release changed, names the competing producer by service and path without reading its source, and asks the model for a rename in a single LLM call. For each successful proposal the driver — or, for a shadow-verified one, the reconciler — enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
-**Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_remediation_agent`), Redis, S3, the orchestrator gRPC endpoint (four narrow read RPCs — `GetNodeLocation`, `GetUpstreamChanges`, `GetNodeVersions`, `GetPrecedents` — behind one `GraphClient`, port 50052), release-controller's HTTP API (shadow-release submission and verdict polling), and GitHub, exclusively via read-only GETs against the Contents API (source file/directory reads), the repository tarball endpoint (whole-tree fetch for the python lane), and the Pulls API (PR status polling for the outcome reconciler, and by-branch PR lookup for its opening sweep). The service image also carries the `continuo-runtime` CLI, which the packaging adapter runs as a subprocess to merge and hash-fold a corrected contract directory.
+**Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_agent_remediation`), Redis, S3, the orchestrator gRPC endpoint (four narrow read RPCs — `GetNodeLocation`, `GetUpstreamChanges`, `GetNodeVersions`, `GetPrecedents` — behind one `GraphClient`, port 50052), release-controller's HTTP API (shadow-release submission and verdict polling), and GitHub, exclusively via read-only GETs against the Contents API (source file/directory reads), the repository tarball endpoint (whole-tree fetch for the python lane), and the Pulls API (PR status polling for the outcome reconciler, and by-branch PR lookup for its opening sweep). The service image also carries the `continuo-runtime` CLI, which the packaging adapter runs as a subprocess to merge and hash-fold a corrected contract directory.
 
 ## Owned Storage
 
-Postgres database `continuo_remediation_agent`. Tables:
+Postgres database `continuo_agent_remediation`. Tables:
 
 | Table | Purpose |
 |---|---|
@@ -24,7 +24,7 @@ The `proposal` table records one row per attempt: it is written `generating` whe
 
 | Stream | Group | Description |
 |---|---|---|
-| `remediation.requested:v1` | `remediation-agent-remediation-requested` | Emitted by the `remediation` classifier for each healable failing node. Each message drives one `ProposeFix` invocation. |
+| `remediation.requested:v1` | `agent-remediation-remediation-requested` | Emitted by the `remediation` classifier for each healable failing node. Each message drives one `ProposeFix` invocation. |
 
 ### gRPC server — `RemediationProposals` (port 50054)
 
@@ -108,7 +108,7 @@ The compile, seed, and duplicate-table fixers treat their offending-file `ReadFi
 | `GET /repos/{repo}/pulls/{number}` | Read-only fetch of one pull request's current state, used by the PR-outcome reconciler. `Accept: application/vnd.github+json`. Authenticated the same way as the Contents API calls above. Any non-2xx response (including 404) is an error: the caller leaves the proposal untouched and retries on the next reconcile pass. On success, `state="closed"` with `merged=true` maps to outcome `merged`; `state="closed"` with `merged=false` maps to outcome `rejected`; `state="open"` is not yet actionable and the row is left for a later pass. |
 | `GET /repos/{repo}/pulls?head={owner}:{branch}&state=all&per_page=1` | Read-only lookup by head branch, used by the reconciler's opening sweep to find a pull request for a claimed-but-unrecorded proposal. An empty result array means no PR exists for the branch (not an error). Any non-2xx response is an error and the row is retried next pass. |
 
-This is the only GitHub write-adjacent surface remediation-agent reads from besides source files; the request is still a GET, so GitHub access remains exclusively read-only.
+This is the only GitHub write-adjacent surface agent-remediation reads from besides source files; the request is still a GET, so GitHub access remains exclusively read-only.
 
 ### Outbound HTTP — release-controller
 
@@ -734,7 +734,7 @@ The trigger is pointer-only: it carries no SQL/CSV text, no log content, and no 
 
 ## Attempt Cap and Escalation
 
-For each `(source, node_id, error_signature)` triple the service enforces a cap (default `REMEDIATION_AGENT_MAX_ATTEMPTS=3`). Before any S3 fetch or LLM call, the handler counts existing `proposal` rows matching the triple. If the count is already at or above the cap, it inserts a `proposal(status=escalated)` row and emits nothing. The trigger is consumed and ACKed; escalation is auditable in the `proposal` table.
+For each `(source, node_id, error_signature)` triple the service enforces a cap (default `AGENT_REMEDIATION_MAX_ATTEMPTS=3`). Before any S3 fetch or LLM call, the handler counts existing `proposal` rows matching the triple. If the count is already at or above the cap, it inserts a `proposal(status=escalated)` row and emits nothing. The trigger is consumed and ACKed; escalation is auditable in the `proposal` table.
 
 ## Consumer Reliability
 
@@ -745,7 +745,7 @@ For each `(source, node_id, error_signature)` triple the service enforces a cap 
 
 ## Non-Responsibilities
 
-`remediation-agent` generates proposals and exposes their lifecycle over gRPC. It does not:
+`agent-remediation` generates proposals and exposes their lifecycle over gRPC. It does not:
 
 - Create GitHub pull requests or open code review branches. PR creation is performed by ui, which holds the GitHub App write credential.
 - Write to, commit to, or push any git repository. GitHub access is read-only.
@@ -774,7 +774,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `POSTGRES_HOST` | yes | — | Postgres host |
 | `POSTGRES_USER` | yes | — | Postgres user |
 | `POSTGRES_PASSWORD` | yes | — | Postgres password |
-| `POSTGRES_DB` | no | `continuo_remediation_agent` | Database name |
+| `POSTGRES_DB` | no | `continuo_agent_remediation` | Database name |
 | `POSTGRES_PORT` | no | `5432` | Postgres port |
 | `DB_SSLMODE` | no | `disable` | Postgres SSL mode |
 | `REDIS_ADDR` | yes | — | Redis address (via `pkg/config.LoadRedis`) |
@@ -785,12 +785,12 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | `LLM_BASE_URL` | conditional | `""` | Base URL; required when `LLM_PROVIDER=openai-compatible` |
 | `LLM_CACHE_TTL` | no | `1h` | Per-entry TTL for cached LLM propose results (Go duration). Only needs to cover the same-trigger redelivery window; kept short to bound memory on the shared `noeviction` Redis. A non-positive value is clamped to the `1h` default; a value that is not a Go duration at all fails start-up naming the key. |
 | `GITHUB_TOKEN` | no | `""` | Read-only fine-grained PAT with `Contents: Read` and `Pull requests: Read` on the dbt repo. In Helm, sourced from `global.github.token` in the chart-managed secret `continuo-app-credentials`. When empty, requests to the Contents API are sent unauthenticated (subject to GitHub's lower unauthenticated rate limit) rather than failing outright. |
-| `SERVICE_REPO_MAP_PATH` | no | `""` | Path to `service_repos.yaml`, which maps each service name (dbt or python) to its project root within that service's own repository — production is a data mesh of one repository per team; the single shared checkout this map implies is the dev/e2e convenience, not the deployed shape. In Helm, set to `/etc/continuo/service_repos.yaml` and backed by the `continuo-app-service-repos` ConfigMap (built from `deploy/continuo/files/service_repos.yaml`). In docker-compose (dev/e2e), bind-mounted from `remediation-agent/config/service_repos.yaml`. Empty (or a service name absent from the map) means compile, seed, and duplicate-table proposals are skipped (their source read always goes through this mapping). For validation it degrades Step 2 to the Step-1 candidate proposal even when the code bundle successfully supplied the source — the mapping is needed to record the file's repository path on the proposal, not only to read it — and it additionally removes validation's GitHub repo-read fallback for the (rarer) case where the code bundle permanently misses the node. |
+| `SERVICE_REPO_MAP_PATH` | no | `""` | Path to `service_repos.yaml`, which maps each service name (dbt or python) to its project root within that service's own repository — production is a data mesh of one repository per team; the single shared checkout this map implies is the dev/e2e convenience, not the deployed shape. In Helm, set to `/etc/continuo/service_repos.yaml` and backed by the `continuo-app-service-repos` ConfigMap (built from `deploy/continuo/files/service_repos.yaml`). In docker-compose (dev/e2e), bind-mounted from `agent-remediation/config/service_repos.yaml`. Empty (or a service name absent from the map) means compile, seed, and duplicate-table proposals are skipped (their source read always goes through this mapping). For validation it degrades Step 2 to the Step-1 candidate proposal even when the code bundle successfully supplied the source — the mapping is needed to record the file's repository path on the proposal, not only to read it — and it additionally removes validation's GitHub repo-read fallback for the (rarer) case where the code bundle permanently misses the node. |
 | `GITHUB_BASE_URL` | no | `https://api.github.com` | GitHub REST API root; override for e2e stub (`stub-github`) |
 | `CONTINUO_ORCHESTRATOR_ADDR` | no | `orchestrator:50052` | Orchestrator gRPC endpoint (`GraphClient`'s `GetNodeLocation`/`GetUpstreamChanges`/`GetNodeVersions`/`GetPrecedents` calls) |
-| `REMEDIATION_AGENT_HTTP_PORT` | no | `8092` | `/healthz` port |
-| `REMEDIATION_AGENT_GRPC_PORT` | no | `50054` | `RemediationProposals` gRPC server port |
-| `REMEDIATION_AGENT_MAX_ATTEMPTS` | no | `3` | Per-`(source, node_id, error_signature)` attempt cap |
+| `AGENT_REMEDIATION_HTTP_PORT` | no | `8092` | `/healthz` port |
+| `AGENT_REMEDIATION_GRPC_PORT` | no | `50054` | `RemediationProposals` gRPC server port |
+| `AGENT_REMEDIATION_MAX_ATTEMPTS` | no | `3` | Per-`(source, node_id, error_signature)` attempt cap |
 | `REMEDIATION_PR_POLL_INTERVAL` | no | `60s` | Interval between PR-outcome reconciler passes (Go duration). A non-positive value falls back to the default; a value that is not a Go duration at all fails start-up naming the key. |
 | `REMEDIATION_PR_OPENING_GRACE_PERIOD` | no | `10m` | How long, measured as wall-clock time against the proposal's stored `pr_claimed_at`, the opening sweep waits before releasing a `pr_state='opening'` claim with no matching GitHub PR back to `'failed'`. A non-positive value falls back to the default; a value that is not a Go duration at all fails start-up naming the key. |
 | `WAREHOUSE_ENGINE` | no | `postgres` | The warehouse engine this install runs, published to every service on the shared ConfigMap from the chart's `validation.engine`. It resolves to the sqlglot dialect the packaging CLI renders a corrected contract's declared reads under, mirroring manifest-controller's own engine→dialect map exactly so a release that service accepts is never packaged here under a dialect it never validated against. An engine with no dialect mapping fails startup rather than packaging under another engine's rules. |
@@ -802,42 +802,42 @@ All code-change decisions — review, approval, and PR creation — are human ac
 
 | Concern | Path |
 |---|---|
-| Proposal entity + unified diff | `remediation-agent/domain/proposal/proposal.go` |
-| Prompt assembly (validation candidate + real-source, compile, seed, duplicate table) | `remediation-agent/domain/prompt/prompt.go` (`Assemble`, `AssembleSourceFix`, `AssembleCompileFix`, `AssembleSeedFix`, `AssembleDuplicateTableFix`) |
-| Prompt assembly (python contract fix, incl. the prior-attempts section) | `remediation-agent/domain/prompt/python.go` (`AssemblePythonContractFix`) |
-| Event payloads + deterministic IDs | `remediation-agent/domain/event/` (proposed, pr_opened, pr_closed) |
-| Shared driver — attempt cap, dedup, persistence, outbox emit (each Fixer fetches its own dbt log) | `remediation-agent/service/handlers/propose_fix.go` |
-| Per-error-class fixers — `Fixer` interface, `For` factory, shared single-shot pipeline | `remediation-agent/service/fixer/fixer.go` |
-| Compile fixer (offending file + co-located YAML/`dbt_project.yml` context, one LLM call) | `remediation-agent/service/fixer/compile.go` |
-| Seed fixer (CSV read, one LLM call) | `remediation-agent/service/fixer/seed.go` |
-| Duplicate-table fixer (single-file rename, no dbt log, shares `singleFileInterpret` with compile) | `remediation-agent/service/fixer/duplicate_table.go` |
-| Validation fixer, dbt node (two-step candidate + real-source flow, best-effort upstream-diff gather) | `remediation-agent/service/fixer/validation.go` |
-| Validation fixer, python node (repo checkout, contract repair, packaging, shadow submission) | `remediation-agent/service/fixer/python_validation.go` |
-| Contract-yaml search across a repository checkout, and the node-declaration read (identity fields + declared read names) a proposed edit is checked against (`ContractLocator` + `ContractInspector`) | `remediation-agent/adapters/repofs/contract_locator.go` |
-| Shadow-verify reconciler loop (verdict polling, CAS finalization, next-attempt start) | `remediation-agent/service/shadowverify/reconciler.go` |
-| PR lifecycle application service (claim/record/fail/fail-stuck-claim/record-outcome + outbox) | `remediation-agent/service/proposals/service.go` |
-| PR-outcome reconciler loop, incl. permission-gap degraded signal and the opening sweep (recover-or-fail stuck `pr_state='opening'` claims, CAS-guarded fail, cursor-paginated rotation) | `remediation-agent/service/proposals/reconciler.go` |
-| Deterministic branch-name builder (`BuildBranch`), shared by `Service.Begin` and the opening sweep so they never drift apart | `remediation-agent/service/proposals/service.go` |
-| Port interfaces, incl. `PullRequestBranchFinder` (by-branch PR lookup for the opening sweep) | `remediation-agent/service/ports/` |
-| Postgres UoW + proposal repo (incl. CAS for BeginPR, RecordPR, RecordPROutcome, and FailStuckOpeningPR; open-PR listing; keyset-paginated stuck-opening listing) | `remediation-agent/adapters/postgres/` |
-| S3 evidence reader + artifact writer | `remediation-agent/adapters/s3/` |
-| S3 code-bundle candidate-source reader (validation only; decodes via `pkg/codebundle`) | `remediation-agent/adapters/s3/candidate_source_reader.go` |
-| Graph read ports (`NodeLocator`, `UpstreamChangeReader`, `VersionReader`, `PrecedentReader`) | `remediation-agent/service/ports/graph_reader.go` |
-| Candidate-source port | `remediation-agent/service/ports/candidate_source_reader.go` |
-| gRPC graph client (`GetNodeLocation`/`GetUpstreamChanges`/`GetNodeVersions`/`GetPrecedents` over `OrchestratorQuery`) | `remediation-agent/adapters/grpc/graph_client.go` |
-| gRPC `RemediationProposals` server | `remediation-agent/adapters/grpc/proposals_server.go` |
-| GitHub read-only source reader (file read + directory list) | `remediation-agent/adapters/github/source_reader.go` |
-| GitHub read-only repository archive (tarball fetch + hardened extraction) | `remediation-agent/adapters/github/repo_archive.go` |
-| Contract packaging adapter (`continuo-runtime merge` subprocess) | `remediation-agent/adapters/packaging/cli_packager.go` |
-| release-controller HTTP gateway (shadow submit, verdict poll, image-tag read) | `remediation-agent/adapters/releasehttp/gateway.go` |
-| GitHub read-only PR status reader (Pulls API: by-number status for the outcome reconciler, by-branch lookup for the opening sweep) | `remediation-agent/adapters/github/pr_status.go` |
-| Service→repo map config loader | `remediation-agent/config.go` (reads `SERVICE_REPO_MAP_PATH`, parses `service_repos.yaml`) |
-| Service→repo map file (dev + e2e) | `remediation-agent/config/service_repos.yaml` |
+| Proposal entity + unified diff | `agent-remediation/domain/proposal/proposal.go` |
+| Prompt assembly (validation candidate + real-source, compile, seed, duplicate table) | `agent-remediation/domain/prompt/prompt.go` (`Assemble`, `AssembleSourceFix`, `AssembleCompileFix`, `AssembleSeedFix`, `AssembleDuplicateTableFix`) |
+| Prompt assembly (python contract fix, incl. the prior-attempts section) | `agent-remediation/domain/prompt/python.go` (`AssemblePythonContractFix`) |
+| Event payloads + deterministic IDs | `agent-remediation/domain/event/` (proposed, pr_opened, pr_closed) |
+| Shared driver — attempt cap, dedup, persistence, outbox emit (each Fixer fetches its own dbt log) | `agent-remediation/service/handlers/propose_fix.go` |
+| Per-error-class fixers — `Fixer` interface, `For` factory, shared single-shot pipeline | `agent-remediation/service/fixer/fixer.go` |
+| Compile fixer (offending file + co-located YAML/`dbt_project.yml` context, one LLM call) | `agent-remediation/service/fixer/compile.go` |
+| Seed fixer (CSV read, one LLM call) | `agent-remediation/service/fixer/seed.go` |
+| Duplicate-table fixer (single-file rename, no dbt log, shares `singleFileInterpret` with compile) | `agent-remediation/service/fixer/duplicate_table.go` |
+| Validation fixer, dbt node (two-step candidate + real-source flow, best-effort upstream-diff gather) | `agent-remediation/service/fixer/validation.go` |
+| Validation fixer, python node (repo checkout, contract repair, packaging, shadow submission) | `agent-remediation/service/fixer/python_validation.go` |
+| Contract-yaml search across a repository checkout, and the node-declaration read (identity fields + declared read names) a proposed edit is checked against (`ContractLocator` + `ContractInspector`) | `agent-remediation/adapters/repofs/contract_locator.go` |
+| Shadow-verify reconciler loop (verdict polling, CAS finalization, next-attempt start) | `agent-remediation/service/shadowverify/reconciler.go` |
+| PR lifecycle application service (claim/record/fail/fail-stuck-claim/record-outcome + outbox) | `agent-remediation/service/proposals/service.go` |
+| PR-outcome reconciler loop, incl. permission-gap degraded signal and the opening sweep (recover-or-fail stuck `pr_state='opening'` claims, CAS-guarded fail, cursor-paginated rotation) | `agent-remediation/service/proposals/reconciler.go` |
+| Deterministic branch-name builder (`BuildBranch`), shared by `Service.Begin` and the opening sweep so they never drift apart | `agent-remediation/service/proposals/service.go` |
+| Port interfaces, incl. `PullRequestBranchFinder` (by-branch PR lookup for the opening sweep) | `agent-remediation/service/ports/` |
+| Postgres UoW + proposal repo (incl. CAS for BeginPR, RecordPR, RecordPROutcome, and FailStuckOpeningPR; open-PR listing; keyset-paginated stuck-opening listing) | `agent-remediation/adapters/postgres/` |
+| S3 evidence reader + artifact writer | `agent-remediation/adapters/s3/` |
+| S3 code-bundle candidate-source reader (validation only; decodes via `pkg/codebundle`) | `agent-remediation/adapters/s3/candidate_source_reader.go` |
+| Graph read ports (`NodeLocator`, `UpstreamChangeReader`, `VersionReader`, `PrecedentReader`) | `agent-remediation/service/ports/graph_reader.go` |
+| Candidate-source port | `agent-remediation/service/ports/candidate_source_reader.go` |
+| gRPC graph client (`GetNodeLocation`/`GetUpstreamChanges`/`GetNodeVersions`/`GetPrecedents` over `OrchestratorQuery`) | `agent-remediation/adapters/grpc/graph_client.go` |
+| gRPC `RemediationProposals` server | `agent-remediation/adapters/grpc/proposals_server.go` |
+| GitHub read-only source reader (file read + directory list) | `agent-remediation/adapters/github/source_reader.go` |
+| GitHub read-only repository archive (tarball fetch + hardened extraction) | `agent-remediation/adapters/github/repo_archive.go` |
+| Contract packaging adapter (`continuo-runtime merge` subprocess) | `agent-remediation/adapters/packaging/cli_packager.go` |
+| release-controller HTTP gateway (shadow submit, verdict poll, image-tag read) | `agent-remediation/adapters/releasehttp/gateway.go` |
+| GitHub read-only PR status reader (Pulls API: by-number status for the outcome reconciler, by-branch lookup for the opening sweep) | `agent-remediation/adapters/github/pr_status.go` |
+| Service→repo map config loader | `agent-remediation/config.go` (reads `SERVICE_REPO_MAP_PATH`, parses `service_repos.yaml`) |
+| Service→repo map file (dev + e2e) | `agent-remediation/config/service_repos.yaml` |
 | Service→repo map file (Helm chart) | `deploy/continuo/files/service_repos.yaml` (rendered into `continuo-app-service-repos` ConfigMap, mounted at `/etc/continuo`) |
-| Anthropic LLM adapter | `remediation-agent/adapters/llm/anthropic.go` |
-| OpenAI-compatible LLM adapter | `remediation-agent/adapters/llm/openai.go` |
-| Best-effort LLM response caching decorator | `remediation-agent/service/llmcache/caching_provider.go` |
-| Redis LLM response cache adapter | `remediation-agent/adapters/redis/llm_response_cache.go` |
-| Pass-through log sanitizer | `remediation-agent/adapters/sanitizer/passthrough.go` |
-| Redis consumer + outbox publisher | `remediation-agent/adapters/redis/` |
-| DB migrations | `db/migration/remediation_agent/` (`V1__init_remediation_agent.sql` through `V13__proposal_verification.sql`), including `V3__pr_creation.sql` for the PR-tracking columns, `V6__add_generating_proposal_status.sql` for the in-flight `generating` status, `V9__proposal_pr_claimed_at.sql` for the `pr_claimed_at` column, `V10__stamp_pr_claimed_at_on_opening.sql` for the `proposal_stamp_pr_claimed_at` trigger's fill-when-NULL clause, `V11__clear_pr_claimed_at_on_opening_exit.sql` for the same trigger's unconditional clear-on-exit clause, `V12__proposal_file_edits.sql` for the `file_edits` column, and `V13__proposal_verification.sql` for the `verifying` status and the `shadow_release_id`/`verify_error`/`trigger_payload` columns |
+| Anthropic LLM adapter | `agent-remediation/adapters/llm/anthropic.go` |
+| OpenAI-compatible LLM adapter | `agent-remediation/adapters/llm/openai.go` |
+| Best-effort LLM response caching decorator | `agent-remediation/service/llmcache/caching_provider.go` |
+| Redis LLM response cache adapter | `agent-remediation/adapters/redis/llm_response_cache.go` |
+| Pass-through log sanitizer | `agent-remediation/adapters/sanitizer/passthrough.go` |
+| Redis consumer + outbox publisher | `agent-remediation/adapters/redis/` |
+| DB migrations | `db/migration/agent_remediation/` (`V1__init_remediation_agent.sql` through `V13__proposal_verification.sql`), including `V3__pr_creation.sql` for the PR-tracking columns, `V6__add_generating_proposal_status.sql` for the in-flight `generating` status, `V9__proposal_pr_claimed_at.sql` for the `pr_claimed_at` column, `V10__stamp_pr_claimed_at_on_opening.sql` for the `proposal_stamp_pr_claimed_at` trigger's fill-when-NULL clause, `V11__clear_pr_claimed_at_on_opening_exit.sql` for the same trigger's unconditional clear-on-exit clause, `V12__proposal_file_edits.sql` for the `file_edits` column, and `V13__proposal_verification.sql` for the `verifying` status and the `shadow_release_id`/`verify_error`/`trigger_payload` columns |

@@ -138,7 +138,7 @@ Service dossiers:
 - [k8s-controller.md](docs/arch/services/k8s-controller.md)
 - [release-controller.md](docs/arch/services/release-controller.md)
 - [remediation.md](docs/arch/services/remediation.md)
-- [remediation-agent.md](docs/arch/services/remediation-agent.md)
+- [agent-remediation.md](docs/arch/services/agent-remediation.md)
 - [agent-chat.md](docs/arch/services/agent-chat.md)
 - [manifest-controller.md](docs/arch/services/manifest-controller.md)
 - [ui.md](docs/arch/services/ui.md)

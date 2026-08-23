@@ -27,7 +27,7 @@ type rejectedPayload struct {
 	// from before the field existed or for a rejection with no bundle.
 	CodeBundleURI string `json:"code_bundle_uri"`
 	// Shadow is true when the rejected release was a shadow release posted
-	// by remediation-agent to verify a proposed fix, rather than a real
+	// by agent-remediation to verify a proposed fix, rather than a real
 	// release. Always present on current release-controller payloads; absent
 	// (and thus false) on payloads from before the field existed.
 	Shadow  bool `json:"shadow"`

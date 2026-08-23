@@ -22,7 +22,7 @@ updates:
       - /pkg
       - /release-controller
       - /remediation
-      - /remediation-agent
+      - /agent-remediation
       - /state
       - /tests/e2e
       - /tests/e2e/stub-github

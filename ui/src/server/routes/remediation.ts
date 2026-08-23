@@ -21,7 +21,7 @@ function extractPrUrl(message: string): string | undefined {
 // requirement for correctness: the reconciler's opening sweep recovers any
 // claim left in 'opening' on its own, independent of whether this call ever
 // runs. claimedAt is empty when the caller never received one — a
-// remediation-agent instance still on a pre-claimed_at protocol during a
+// agent-remediation instance still on a pre-claimed_at protocol during a
 // rolling upgrade sends an empty proto3 default — and the RPC rejects an
 // empty claimed_at outright, so that case is skipped rather than attempted.
 // Any other failure is logged and swallowed rather than propagated: this
@@ -141,18 +141,18 @@ export function createRemediationRouter(
     const claimedAt = claim.claimed_at;
 
     // Every file the proposal changes, in the order the agent produced them.
-    // The list is empty when the claim came from a remediation-agent instance
+    // The list is empty when the claim came from a agent-remediation instance
     // that predates it — the same rolling-upgrade skew safeFailPullRequest
     // tolerates on claimed_at — so fall back to the claim's single-file
     // fields, which describe exactly the one file such a peer proposes. This
     // mirrors the synthesis the repository itself applies to a row stored
     // before the edits list existed.
     let edits: Array<{ path: string; content_uri: string; diff_uri: string }> = claim.edits ?? [];
-    // The Go read path (editsOrLegacy in remediation-agent's proposal
+    // The Go read path (editsOrLegacy in agent-remediation's proposal
     // repository) already guarantees every PRClaim carries a non-empty edits
     // list, synthesizing one from the single-file fields when the row has
     // none. So this branch is only reachable when talking to a
-    // remediation-agent build that predates the edits field entirely — not a
+    // agent-remediation build that predates the edits field entirely — not a
     // routinely-exercised path against the current fleet.
     if (edits.length === 0 && claim.file_path && claim.proposed_sql_uri) {
       edits = [

@@ -16,7 +16,7 @@ func TestParsePROpened_HappyPath(t *testing.T) {
 		"node_id": "analytics.revenue",
 		"pr_url": "https://github.com/org/repo/pull/42",
 		"pr_number": 42,
-		"opened_by": "remediation-agent",
+		"opened_by": "agent-remediation",
 		"opened_at": "2026-08-12T09:05:00Z"
 	}`
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": payload}}
@@ -28,7 +28,7 @@ func TestParsePROpened_HappyPath(t *testing.T) {
 	assert.Equal(t, "analytics.revenue", evt.NodeID)
 	assert.Equal(t, "https://github.com/org/repo/pull/42", evt.PrURL)
 	assert.Equal(t, 42, evt.PrNumber)
-	assert.Equal(t, "remediation-agent", evt.OpenedBy)
+	assert.Equal(t, "agent-remediation", evt.OpenedBy)
 	assert.Equal(t, "2026-08-12T09:05:00Z", evt.OpenedAt)
 }
 

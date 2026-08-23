@@ -222,7 +222,7 @@ const maxDeliveries = 5
 func (c *StreamConsumer) safeInvoke(ctx context.Context, msg goredis.XMessage) (err error) {
 	// Advance the heartbeat at each handler attempt (not just once per read-loop
 	// iteration) so a batch of up to Count messages — or a single legitimately-
-	// slow handler such as remediation-agent's LLM calls — keeps the liveness
+	// slow handler such as agent-remediation's LLM calls — keeps the liveness
 	// heartbeat fresh instead of going stale mid-work and getting the pod
 	// restarted underneath in-flight work.
 	c.lastActivity.Store(time.Now().UnixNano())

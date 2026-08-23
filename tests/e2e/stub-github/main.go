@@ -1,5 +1,5 @@
 // Package main is a minimal GitHub API stub used in e2e tests.
-// It listens on :9200 and handles both the remediation-agent read path and the
+// It listens on :9200 and handles both the agent-remediation read path and the
 // ui PR-creation write path, so both can be exercised without a real
 // GitHub token or network access.
 //
@@ -36,17 +36,17 @@
 //	    via recordedTreeFor.
 //
 //	GET  /repos/{owner}/{repo}/contents/{path}  (Accept contains "raw")
-//	    Returns the canned ftable_e dbt source — the remediation-agent's
+//	    Returns the canned ftable_e dbt source — the agent-remediation's
 //	    single-file read path.
 //
 //	GET  /repos/{owner}/{repo}/contents/{path}  (JSON Accept)
-//	    Returns 404 — the remediation-agent's directory-listing read path,
+//	    Returns 404 — the agent-remediation's directory-listing read path,
 //	    which treats a 404 as "nothing more to list".
 //
 //	GET  /repos/{owner}/{repo}/tarball/{ref}
 //	    Returns a gzipped tar of the working tree at REPO_FIXTURE_DIR, nested
 //	    under a single "{repo}-{ref}/" directory the way GitHub's archive
-//	    endpoint does — the remediation-agent's whole-repository read path.
+//	    endpoint does — the agent-remediation's whole-repository read path.
 //	    404 when no fixture directory is configured or it cannot be read.
 //
 //	POST /repos/{owner}/{repo}/pulls
@@ -54,7 +54,7 @@
 //
 //	GET  /repos/{owner}/{repo}/pulls?head=&state=
 //	    Returns PRs matching the head branch (bare "branch" or "owner:branch")
-//	    and state ("open" default, "closed", or "all") — the remediation-agent
+//	    and state ("open" default, "closed", or "all") — the agent-remediation
 //	    opening sweep's branch lookup and the ui PR creator's
 //	    422-already-exists retry both call this.
 //
@@ -96,7 +96,7 @@ var repoFixtureDir = os.Getenv("REPO_FIXTURE_DIR")
 
 // ftableESource is the canned dbt model source for ftable_e as it exists in
 // version control. It uses {{ ref(...) }} macros (real source) rather than the
-// compiled candidate SQL the remediation-agent receives from S3. The bad join
+// compiled candidate SQL the agent-remediation receives from S3. The bad join
 // to public.wrong_name is present so the Step-2 LLM call can diagnose and
 // remove it; the Step-2 stub-llm response returns the corrected source.
 const ftableESource = `{{ config(materialized='table') }}
@@ -467,9 +467,9 @@ func handleCreateCommit(w http.ResponseWriter, r *http.Request) {
 
 // handleContents responds to GET /repos/{owner}/{repo}/contents/{path}.
 //
-// GET with Accept containing "raw" (the remediation-agent single-file read
+// GET with Accept containing "raw" (the agent-remediation single-file read
 // path) returns the canned ftable_e source as raw text. GET with a JSON
-// Accept (the remediation-agent directory-listing read path) returns 404,
+// Accept (the agent-remediation directory-listing read path) returns 404,
 // which its caller treats as "nothing more to list" rather than an error.
 func handleContents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -734,7 +734,7 @@ func pullJSON(st *stubPRState) map[string]interface{} {
 
 // listPulls responds to GET /repos/{o}/{r}/pulls?head=&state=&per_page=,
 // filtering the stored PRs by head branch and by state, matching the real
-// GitHub pulls-list endpoint the remediation-agent's FindByBranch and the
+// GitHub pulls-list endpoint the agent-remediation's FindByBranch and the
 // ui PR creator's 422-retry both call:
 //
 //   - head accepts either "branch" or "owner:branch" (the reconciler's

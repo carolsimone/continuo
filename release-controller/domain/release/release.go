@@ -125,7 +125,7 @@ type Release struct {
 // commitSHA (full SHA) record the source change and are immutable after creation.
 // kind records how the service's artifact is parsed (dbt manifest.json or python
 // contract.yaml) and is immutable after creation. shadow marks a fix-verification
-// release posted by remediation-agent: it runs the normal pipeline but stops at
+// release posted by agent-remediation: it runs the normal pipeline but stops at
 // StatusValidated instead of promoting, and is immutable after creation like
 // bootstrap.
 func New(id, changedService, imageTag string, bootstrap, shadow bool, repo, commitSHA string, kind ManifestKind, now time.Time) *Release {
@@ -313,7 +313,7 @@ func (r *Release) TransitionFromSeedBuilding(validationNodeIDs []string, now tim
 
 // TransitionToPromoted ships a validated candidate to production. A shadow
 // release is refused: it carries a fix nobody has reviewed, submitted by
-// remediation-agent purely to find out whether the fix passes validation, so
+// agent-remediation purely to find out whether the fix passes validation, so
 // promoting it would put unreviewed content into production. Its only terminal
 // success is Validated (TransitionToValidated).
 func (r *Release) TransitionToPromoted(now time.Time) error {

@@ -50,7 +50,7 @@ The Kubernetes `readinessProbe` points at `/healthz` and the `livenessProbe` at
 
 | Stream | Consumed by | Emitted when |
 |---|---|---|
-| `remediation.requested:v1` | `remediation-agent` (group `remediation-agent-remediation-requested`) | A classified node is healable (`category != infra_transient`), the rejected release is not a shadow verification, and the node has not been seen before (first insertion in `classification_decision`). |
+| `remediation.requested:v1` | `agent-remediation` (group `agent-remediation-remediation-requested`) | A classified node is healable (`category != infra_transient`), the rejected release is not a shadow verification, and the node has not been seen before (first insertion in `classification_decision`). |
 
 All events are written to the outbox inside the same transaction as the `classification_decision` insert and published with a deterministic `event_id` for consumer-side dedup.
 
@@ -69,7 +69,7 @@ The domain classifier (`remediation/domain/failure/classify.go`) applies a fixed
 
 **Under-drop policy**: only the four confidently infrastructure signal families are dropped. All ambiguous cases, including signals that might be infra-related but could also be a model problem, fall through to `unknown` and are emitted. Uncertainty flows to the agent; only confident infra is silenced.
 
-**Shadow verifications are dropped regardless of category.** A rejection whose payload carries `shadow: true` came from a release `remediation-agent` posted to verify a fix proposal, not from a change anyone shipped. Its decision is recorded with the category and signature the rules produced — so the row still says truthfully what failed — but overridden to `decision=drop`, `reason=shadow_verification`, and nothing is emitted. The agent learns that verdict by polling the release it submitted; routing it back through the classifier as well would remediate a failed fix attempt with another fix attempt and never terminate.
+**Shadow verifications are dropped regardless of category.** A rejection whose payload carries `shadow: true` came from a release `agent-remediation` posted to verify a fix proposal, not from a change anyone shipped. Its decision is recorded with the category and signature the rules produced — so the row still says truthfully what failed — but overridden to `decision=drop`, `reason=shadow_verification`, and nothing is emitted. The agent learns that verdict by polling the release it submitted; routing it back through the classifier as well would remediate a failed fix attempt with another fix attempt and never terminate.
 
 A log that cannot be fetched from S3 (URI not found) is treated as an empty log and classified `unknown:log_unavailable` with `decision=emit`.
 

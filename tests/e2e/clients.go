@@ -52,7 +52,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	// Get hosts from environment (use service names for docker-compose)
 	orchestratorHost := getEnv("ORCHESTRATOR_HOST", "orchestrator")
 	stateHost := getEnv("STATE_HOST", "state")
-	agentRemediationHost := getEnv("REMEDIATION_AGENT_HOST", "remediation-agent")
+	agentRemediationHost := getEnv("AGENT_REMEDIATION_HOST", "agent-remediation")
 	redisHost := getEnv("REDIS_HOST", "redis")
 	neo4jHost := getEnv("NEO4J_HOST", "neo4j")
 	pgHost := getEnv("POSTGRES_HOST", "postgres")
@@ -72,12 +72,12 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	)
 	require.NoError(t, err, "Failed to connect to state service")
 
-	// Setup remediation-agent gRPC client (RemediationProposals, port 50054)
+	// Setup agent-remediation gRPC client (RemediationProposals, port 50054)
 	agentRemediationConn, err := grpc.NewClient(
 		fmt.Sprintf("%s:50054", agentRemediationHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to remediation-agent service")
+	require.NoError(t, err, "Failed to connect to agent-remediation service")
 
 	// Setup Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
@@ -102,7 +102,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
 	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
 	remediationDB := connectPostgres(t, pgHost, "continuo_remediation")
-	agentRemediationDB := connectPostgres(t, pgHost, "continuo_remediation_agent")
+	agentRemediationDB := connectPostgres(t, pgHost, "continuo_agent_remediation")
 
 	return &testClients{
 		orchestratorClient:     orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),

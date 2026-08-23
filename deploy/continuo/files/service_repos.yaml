@@ -6,7 +6,7 @@
 # belonging to the release's changed service, whose repo comes from the
 # remediation trigger. The agent joins <repo_path> with the offending file's
 # path to read the model source from GitHub. Edit this when adding a service
-# or changing a repo's layout, then restart remediation-agent.
+# or changing a repo's layout, then restart agent-remediation.
 services:
   core: services/core
   finance: services/finance

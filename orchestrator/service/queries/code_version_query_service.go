@@ -18,7 +18,7 @@ import (
 )
 
 // upstreamAncestorCap and diffByteCap are contract, not tuning. They mirror
-// the caps remediation-agent's prompt builder enforces on its GitHub-read
+// the caps agent-remediation's prompt builder enforces on its GitHub-read
 // upstream diffs, so a consumer switching between the two paths sees the same
 // prompt size; changing either silently changes prompt size for every heal.
 const (

@@ -15,7 +15,7 @@ import (
 //
 // PostgreSQL truncates an identifier past 63 bytes instead of rejecting it, so
 // a release id longer than 52 bytes yields a schema whose discriminating tail
-// is silently cut and can collide with another release's. remediation-agent
+// is silently cut and can collide with another release's. agent-remediation
 // bounds the shadow release ids it mints against exactly that budget; widening
 // this prefix without widening that bound would reintroduce the collision, so
 // the width is asserted here rather than left implicit.

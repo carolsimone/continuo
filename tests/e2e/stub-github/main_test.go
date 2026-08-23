@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-// TestHandleContents_RawAccept verifies that the remediation-agent read path
+// TestHandleContents_RawAccept verifies that the agent-remediation read path
 // (Accept containing "raw") still returns the canned ftable_e source.
 func TestHandleContents_RawAccept(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/repos/org/repo/contents/models/ftable_e.sql", nil)
@@ -180,7 +180,7 @@ func TestPullLifecycle_ClosePath(t *testing.T) {
 
 // TestListPulls_FindsPRByHeadBranch verifies GET pulls?head=owner:branch
 // finds a PR a prior POST created for that branch — the read path the
-// remediation-agent opening sweep's FindByBranch depends on to recover a
+// agent-remediation opening sweep's FindByBranch depends on to recover a
 // stranded claim (a PR created on GitHub but never recorded).
 func TestListPulls_FindsPRByHeadBranch(t *testing.T) {
 	resetPRs()
@@ -464,7 +464,7 @@ func TestHandleGitRefs_UpdatePatch(t *testing.T) {
 }
 
 // TestHandleTarball_ServesFixtureUnderSingleTopDirectory verifies the shape the
-// remediation-agent's archive reader depends on: a gzipped tar whose every
+// agent-remediation's archive reader depends on: a gzipped tar whose every
 // entry sits under exactly one top-level directory named "{repo}-{ref}". The
 // reader strips that one leading segment, so an archive without it would
 // extract a directory level too high and no contract file would be found.

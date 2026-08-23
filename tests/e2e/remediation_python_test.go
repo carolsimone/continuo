@@ -111,7 +111,7 @@ const (
 //	POST /releases (kind=python, one node whose declared read cannot bind)
 //	→ the validation Job's bind check fails → release rejected
 //	→ classifier emits remediation.requested:v1 (node_type=python-model)
-//	→ remediation-agent routes it to the python contract fixer: fetches the
+//	→ agent-remediation routes it to the python contract fixer: fetches the
 //	  repository tarball at the failing commit from stub-github, finds the yaml
 //	  declaring the node, has the model correct it, packages the directory with
 //	  continuo-runtime, uploads it and POSTs it back as a shadow release
@@ -488,7 +488,7 @@ type pyProposalRow struct {
 	FileEdits       []byte `db:"file_edits"`
 }
 
-// waitForProposal polls the remediation-agent's proposal table until the named
+// waitForProposal polls the agent-remediation's proposal table until the named
 // attempt for a node reaches want, and returns the row. Every status change it
 // observes is logged, so a run that stalls in 'generating' or 'verifying' is
 // distinguishable from one that never produced an attempt at all — the timeout

@@ -59,6 +59,12 @@ database: ALTER DATABASE continuo_agent RENAME TO continuo_agent_chat;
 otherwise a fresh empty database is created and chat state is stranded. If
 your values override global.agentRunnerGrpcAddr, rename it to
 global.agentChatGrpcAddr.
+
+BREAKING: "remediation-agent" is now "agent-remediation". Before upgrading,
+rename its database: ALTER DATABASE continuo_remediation_agent RENAME TO
+continuo_agent_remediation; after upgrading, delete the drained consumer
+group: XGROUP DESTROY remediation.requested:v1
+remediation-agent-remediation-requested.
 {{- end }}
 
 {{- $uiPort := 8090 }}

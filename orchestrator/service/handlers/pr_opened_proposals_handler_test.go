@@ -22,7 +22,7 @@ func prOpenedInput() domainEvent.PROpened {
 		NodeID:     "analytics.revenue",
 		PrURL:      "https://github.com/org/repo/pull/42",
 		PrNumber:   42,
-		OpenedBy:   "remediation-agent",
+		OpenedBy:   "agent-remediation",
 		OpenedAt:   "2026-08-12T09:05:00Z",
 	}
 }
@@ -51,7 +51,7 @@ func TestProposalsHandler_RecordsProposal(t *testing.T) {
 	assert.Equal(t, "https://github.com/org/repo/pull/42", p.PrURL)
 	assert.Equal(t, 42, p.PrNumber)
 	assert.Equal(t, "open", p.PrState)
-	assert.Equal(t, "remediation-agent", p.OpenedBy)
+	assert.Equal(t, "agent-remediation", p.OpenedBy)
 	wantAt, err := time.Parse(time.RFC3339, in.OpenedAt)
 	require.NoError(t, err)
 	assert.Equal(t, wantAt, p.OpenedAt)

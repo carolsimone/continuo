@@ -246,7 +246,7 @@ describe('RemediationPanel', () => {
   });
 
   it.each([
-    // status stays 'proposed' for the PR-lifecycle cases below: remediation-agent
+    // status stays 'proposed' for the PR-lifecycle cases below: agent-remediation
     // never mutates status after insert, so a merged/rejected/already-opened/
     // in-flight PR is recorded on pr_state, not on status.
     ['a claim already in flight', { status: 'proposed', source_resolved: true, pr_url: '', pr_state: 'opening' }],
