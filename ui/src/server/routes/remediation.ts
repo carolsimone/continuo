@@ -141,7 +141,7 @@ export function createRemediationRouter(
     const claimedAt = claim.claimed_at;
 
     // Every file the proposal changes, in the order the agent produced them.
-    // The list is empty when the claim came from a agent-remediation instance
+    // The list is empty when the claim came from an agent-remediation instance
     // that predates it — the same rolling-upgrade skew safeFailPullRequest
     // tolerates on claimed_at — so fall back to the claim's single-file
     // fields, which describe exactly the one file such a peer proposes. This

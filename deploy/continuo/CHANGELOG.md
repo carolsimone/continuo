@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-23
+
 ### Added
 - `networkPolicy.enabled` now also renders an `allow-acme-solver` policy when
   `ingress.enabled=true`: cert-manager's HTTP-01 solver pods (label
@@ -26,16 +28,16 @@ shipped in those.
   Deployment's `terminationGracePeriodSeconds` explicitly instead of relying
   on Kubernetes' implicit 30s default. Each service bounds its own graceful
   shutdown sequence via the `SHUTDOWN_GRACE` env var (default 15s, 10s for
-  `agent-runner`); the pod-level value must stay comfortably above whatever
+  `agent-chat`); the pod-level value must stay comfortably above whatever
   `SHUTDOWN_GRACE` is configured to, or Kubernetes can SIGKILL the container
   mid-teardown. The default of `30` matches today's implicit behavior, so an
   unmodified existing values file renders the same Deployment as before.
-- `remediation-agent.env.RELEASE_CONTROLLER_URL` (default
-  `http://release-controller:8088`), `remediation-agent.env.SHADOW_VERIFY_TIMEOUT`
-  (default `"20m"`) and `remediation-agent.env.SHADOW_VERIFY_POLL_INTERVAL`
+- `agent-remediation.env.RELEASE_CONTROLLER_URL` (default
+  `http://release-controller:8088`), `agent-remediation.env.SHADOW_VERIFY_TIMEOUT`
+  (default `"20m"`) and `agent-remediation.env.SHADOW_VERIFY_POLL_INTERVAL`
   (default `"15s"`) — release-controller's HTTP address, how long a python-node
   fix proposal waits for its shadow verification release to reach a verdict
-  before the attempt is recorded as failed, and how often the remediation-agent
+  before the attempt is recorded as failed, and how often the agent-remediation
   reads those releases. The timeout is spent only while the shadow release is
   actually running: time it spends queued behind another release does not count
   against it. All three sit in the same free-form `env` map as the
@@ -83,7 +85,7 @@ shipped in those.
   `ingress.tls.enabled=true` that relies on this default (rather than
   setting `ingress.tls.secretName` explicitly) must rename/recreate the
   Secret before upgrading, or TLS termination breaks.
-- `remediation-agent` now refuses to start when one of its optional duration
+- `agent-remediation` now refuses to start when one of its optional duration
   settings — `LLM_CACHE_TTL`, `REMEDIATION_PR_POLL_INTERVAL`,
   `REMEDIATION_PR_OPENING_GRACE_PERIOD`, `SHADOW_VERIFY_TIMEOUT`,
   `SHADOW_VERIFY_POLL_INTERVAL` — is set to something that is not a Go duration
@@ -114,18 +116,18 @@ shipped in those.
   be one shared checkout. Comments only — the file's keys, the ConfigMap it
   populates, and the values contract are unchanged, so an existing
   `values.yaml` or override needs no edit.
-- `state`, `orchestrator`, and `agent-runner` now set `livenessPath: /livez`
+- `state`, `orchestrator`, and `agent-chat` now set `livenessPath: /livez`
   instead of falling back to the always-200 `/health`. For `state` and
   `orchestrator` this means a dead or wedged Redis stream consumer restarts
   the pod, since `/livez` reports workers and heartbeats only, deliberately
   excluding dependency probes, so a transient Redis/Postgres outage no longer
-  restarts a pod whose consumers are already retrying. `agent-runner` runs no
+  restarts a pod whose consumers are already retrying. `agent-chat` runs no
   stream consumers, so this change gives it no new restart behavior — it now
   answers `/livez` so every Go service exposes the same liveness probe
   contract. Readiness (`readinessPath: /ready`) is unchanged for all three,
   and is not uniform across the chart: `state`, `orchestrator`,
-  `executor-controller`, `k8s-controller`, and `agent-runner` use `/ready`,
-  while `release-controller`, `remediation`, and `remediation-agent` use
+  `executor-controller`, `k8s-controller`, and `agent-chat` use `/ready`,
+  while `release-controller`, `remediation`, and `agent-remediation` use
   `/healthz`. `services` is a list and Helm replaces lists wholesale, so an
   operator who overrides it in their own values file keeps their old entries
   as-is on upgrade; they must add `livenessPath: /livez` to their own service
