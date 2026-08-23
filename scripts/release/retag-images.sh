@@ -16,7 +16,7 @@ OWNER="${3:?usage: retag-images.sh <commit-sha> <release-tag> <registry-owner>}"
 services=(
   state orchestrator executor-controller k8s-controller ui
   manifest-controller release-controller agent-chat remediation
-  remediation-agent migrations s3-sidecar stream-reaper
+  agent-remediation migrations s3-sidecar stream-reaper
 )
 
 # Verify-all-then-retag: never leave a half-tagged release on a missing image.

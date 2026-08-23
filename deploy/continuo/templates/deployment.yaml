@@ -307,7 +307,7 @@ spec:
           configMap:
             name: {{ default (include "continuo.cancelConfigMapName" $) $volume.configMap.name }}
         {{- end }}
-        {{- else if eq $svc.name "remediation-agent" }}
+        {{- else if eq $svc.name "agent-remediation" }}
         {{- range $volume := $svc.volumes }}
         - name: {{ $volume.name }}
           configMap:

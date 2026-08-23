@@ -81,7 +81,7 @@ func PkgConstantsForTest() map[string]string {
 		"ExecutorReleasePromoted": ExecutorReleasePromoted,
 		"RemediationReleaseRejected": RemediationReleaseRejected,
 		"ExecutorReleaseRejected": ExecutorReleaseRejected,
-		"RemediationAgentRemediationRequested": RemediationAgentRemediationRequested,
+		"AgentRemediationRemediationRequested": AgentRemediationRemediationRequested,
 		"OrchestratorRemediationRequestedRejections": OrchestratorRemediationRequestedRejections,
 		"OrchestratorRemediationPrOpenedProposals": OrchestratorRemediationPrOpenedProposals,
 	}

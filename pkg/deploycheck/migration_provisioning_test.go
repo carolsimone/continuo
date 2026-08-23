@@ -55,7 +55,7 @@ func toSet(items []string) map[string]bool {
 
 // TestDockerfileMigrateCoversAllDatabases is the regression guard for the
 // production outage where db/Dockerfile.migrate did not COPY the remediation
-// and remediation_agent migration directories, so Flyway silently skipped
+// and agent_remediation migration directories, so Flyway silently skipped
 // those databases on a fresh Hetzner deploy (non-existent filesystem location
 // = no migrations applied, tables never created).
 //

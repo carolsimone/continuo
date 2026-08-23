@@ -42,7 +42,7 @@ import (
 //	→ release.rejected:v1 {stage:"compile", per_node:[{node_id:<service>, status:"failed", dbt_log_uri}]}
 //	→ remediation classifier maps stage→SourceCompile, ExtractDbtFilePath(log)→file_path,
 //	  classifies the parse/compilation error as healable → remediation.requested:v1 (source="compile")
-//	→ remediation-agent proposeFromSource: reads model source from GitHub (stub-github),
+//	→ agent-remediation proposeFromSource: reads model source from GitHub (stub-github),
 //	  asks stub-llm to fix it → proposal row (source="compile", file_path) → remediation.proposed:v1.
 //
 // Unlike the validation path, the compile leg is the FIRST leg and rejects
@@ -56,7 +56,7 @@ import (
 // service whose image is built with the malformed-Jinja model source documented
 // above and loaded into kind,
 // whose image tag is reachable, and whose name is mapped in
-// remediation-agent/config/service_repos.yaml (so the agent resolves the repo
+// agent-remediation/config/service_repos.yaml (so the agent resolves the repo
 // prefix). Until a cold-stack harness provisions that fixture and exports
 // COMPILE_FIXTURE_SERVICE / COMPILE_FIXTURE_IMAGE_TAG, this test skips so it
 // never destabilises the green suite. See task-7.1-report.md.
@@ -192,7 +192,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	//    and status=='proposed'.
 	var row compileProposalRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
-		err := clients.remediationAgentDB.GetContext(ctx, &row,
+		err := clients.agentRemediationDB.GetContext(ctx, &row,
 			`SELECT source, release_id, node_id, status, file_path, source_resolved
 			   FROM proposal
 			  WHERE release_id = $1 AND node_id = $2

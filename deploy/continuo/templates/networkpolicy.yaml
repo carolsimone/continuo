@@ -39,7 +39,7 @@ spec:
               - key: app.kubernetes.io/name
                 operator: In
                 values: [state, orchestrator, executor-controller, k8s-controller,
-                         release-controller, remediation, remediation-agent,
+                         release-controller, remediation, agent-remediation,
                          agent-chat, db-init-migrate]
         - podSelector:
             matchLabels:
@@ -77,7 +77,7 @@ spec:
               - key: app.kubernetes.io/name
                 operator: In
                 values: [state, orchestrator, executor-controller, k8s-controller,
-                         release-controller, remediation, remediation-agent,
+                         release-controller, remediation, agent-remediation,
                          agent-chat, manifest-controller, ui, stream-reaper]
       ports:
         - port: 6379
@@ -130,7 +130,7 @@ spec:
               - key: app.kubernetes.io/name
                 operator: In
                 values: [executor-controller, k8s-controller, release-controller,
-                         remediation, remediation-agent, ui,
+                         remediation, agent-remediation, ui,
                          manifest-controller, orchestrator, minio-bucket-init]
         - podSelector:
             matchLabels:
@@ -185,7 +185,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [ui, agent-chat, remediation-agent]
+                values: [ui, agent-chat, agent-remediation]
       ports:
         - port: 50052
 ---
@@ -201,7 +201,7 @@ spec:
     matchExpressions:
       - key: app.kubernetes.io/name
         operator: In
-        values: [agent-chat, remediation-agent, release-controller]
+        values: [agent-chat, agent-remediation, release-controller]
     matchLabels:
       app.kubernetes.io/instance: {{ $instance }}
   policyTypes: ["Ingress"]

@@ -1,0 +1,1622 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/agent-remediation/domain/event"
+	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
+	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+)
+
+// fakeEvidence returns pre-loaded strings by URI, or an error if set.
+type fakeEvidence struct {
+	vals map[string]string
+	err  error
+}
+
+func (f fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.vals[uri], nil
+}
+
+// fakeSanitizer is a pass-through log sanitizer.
+type fakeSanitizer struct{}
+
+func (fakeSanitizer) Sanitize(s string) string { return s }
+
+// fakeLocator returns a fixed file path and service name, or an error, for
+// NodeLocator.Locate.
+type fakeLocator struct {
+	filePath, serviceName string
+	err                   error
+}
+
+func (f fakeLocator) Locate(_ context.Context, _ string) (string, string, error) {
+	return f.filePath, f.serviceName, f.err
+}
+
+// fakePrecedents returns no precedents for any query, or an error if set. It
+// exists so a compile/seed_build trigger's precedent lookup has a non-nil
+// port to call; the precedent content itself is exercised in the fixer
+// package's own tests.
+type fakePrecedents struct{ err error }
+
+func (f fakePrecedents) Precedents(_ context.Context, _ ports.PrecedentQuery) ([]prompt.Precedent, error) {
+	return nil, f.err
+}
+
+// fakeCandidateSource returns a fixed bundle source, or an error, for
+// CandidateSourceReader.NodeSource. It exists so a validation trigger's
+// candidate-source lookup has a non-nil port to call; the source-ladder
+// behavior itself is exercised in the fixer package's own tests.
+type fakeCandidateSource struct {
+	src ports.CandidateSource
+	err error
+}
+
+func (f fakeCandidateSource) NodeSource(_ context.Context, _, _, _ string) (ports.CandidateSource, error) {
+	return f.src, f.err
+}
+
+// fakeUpstream returns fixed upstream changes, or an error, for
+// UpstreamChangeReader.UpstreamChanges.
+type fakeUpstream struct {
+	changes []prompt.UpstreamChange
+	err     error
+}
+
+func (f fakeUpstream) UpstreamChanges(_ context.Context, _ string) ([]prompt.UpstreamChange, error) {
+	return f.changes, f.err
+}
+
+// fakeVersions returns a fixed current version, or an error, for
+// VersionReader.CurrentVersion.
+type fakeVersions struct {
+	v   ports.CurrentVersion
+	ok  bool
+	err error
+}
+
+func (f fakeVersions) CurrentVersion(_ context.Context, _ string) (ports.CurrentVersion, bool, error) {
+	return f.v, f.ok, f.err
+}
+
+// fakeLLM returns results from a queue (one per Propose call, in order).
+// When the queue is exhausted, the last entry is repeated. A single-entry queue
+// reproduces the original single-result behaviour. probe, when set, runs on each
+// Propose call, letting a test observe repository state at the moment the model
+// is invoked (e.g. that the in-flight generating row was already committed).
+type fakeLLM struct {
+	queue []ports.ProposeResult
+	errs  []error
+	calls int
+	probe func()
+}
+
+func newFakeLLM(res ports.ProposeResult, err error) fakeLLM {
+	return fakeLLM{queue: []ports.ProposeResult{res}, errs: []error{err}}
+}
+
+func (f *fakeLLM) Propose(_ context.Context, _ ports.ProposeRequest) (ports.ProposeResult, error) {
+	if f.probe != nil {
+		f.probe()
+	}
+	i := f.calls
+	if i >= len(f.queue) {
+		i = len(f.queue) - 1
+	}
+	var e error
+	if i < len(f.errs) {
+		e = f.errs[i]
+	}
+	f.calls++
+	return f.queue[i], e
+}
+
+// fakeArtifacts records writes in memory and returns deterministic URIs.
+type fakeArtifacts struct {
+	written map[string]string
+}
+
+func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, error) {
+	if f.written == nil {
+		f.written = map[string]string{}
+	}
+	f.written[key] = body
+	return "s3://bucket/" + key, nil
+}
+
+// fakeSource returns file content or an error. When files is non-nil it acts as
+// a path→content map (misses return ports.ErrSourceNotFound); otherwise it
+// returns the single content for any path. readPath records the last path
+// successfully read so tests can assert the offending file was resolved. ListDir
+// returns ErrSourceNotFound by default so the compile gather reads only the
+// offending file (co-located siblings are best-effort).
+type fakeSource struct {
+	content  string
+	files    map[string]string
+	err      error
+	readPath string
+}
+
+func (f *fakeSource) ReadFile(_ context.Context, _, _, path string) (string, error) {
+	if f.files != nil {
+		c, ok := f.files[path]
+		if !ok {
+			return "", ports.ErrSourceNotFound
+		}
+		f.readPath = path
+		return c, nil
+	}
+	f.readPath = path
+	return f.content, f.err
+}
+
+func (f *fakeSource) ListDir(_ context.Context, _, _, _ string) ([]string, error) {
+	return nil, ports.ErrSourceNotFound
+}
+
+// fakeClock returns a fixed UTC timestamp.
+type fakeClock struct{}
+
+func (fakeClock) Now() time.Time { return time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC) }
+
+// fakeProposalRepo satisfies repository.ProposalRepository in memory. inserted
+// collects only TERMINAL Upsert calls; generating collects the in-flight
+// InsertGenerating calls. genKeys models the ON CONFLICT DO NOTHING natural key
+// so a redelivery of an in-flight attempt does not create a second generating row.
+type fakeProposalRepo struct {
+	count      int
+	inserted   []proposal.Proposal
+	generating []proposal.Proposal
+	genKeys    map[string]bool
+}
+
+func (r *fakeProposalRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error) {
+	return r.count, nil
+}
+
+func natKey(p proposal.Proposal) string {
+	return fmt.Sprintf("%s|%s|%s|%d", p.ReleaseID, p.Source, p.NodeID, p.Attempt)
+}
+
+func (r *fakeProposalRepo) InsertGenerating(_ context.Context, p proposal.Proposal) error {
+	if r.genKeys == nil {
+		r.genKeys = map[string]bool{}
+	}
+	k := natKey(p)
+	if r.genKeys[k] {
+		return nil // ON CONFLICT DO NOTHING: attempt already in flight.
+	}
+	r.genKeys[k] = true
+	p.Status = proposal.StatusGenerating
+	r.generating = append(r.generating, p)
+	return nil
+}
+
+func (r *fakeProposalRepo) FailGenerating(_ context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error) {
+	n := 0
+	for i := range r.generating {
+		g := &r.generating[i]
+		if g.Status != proposal.StatusGenerating || g.ReleaseID != releaseID ||
+			g.Source != source || g.NodeID != nodeID || g.ErrorSignature != errorSignature {
+			continue
+		}
+		g.Status = proposal.StatusFailed
+		g.Rationale = reason
+		n++
+	}
+	return n, nil
+}
+
+func (r *fakeProposalRepo) Upsert(_ context.Context, p proposal.Proposal) error {
+	r.inserted = append(r.inserted, p)
+	return nil
+}
+
+func (r *fakeProposalRepo) Get(_ context.Context, _ string) (proposal.View, error) {
+	return proposal.View{}, repository.ErrNotFound
+}
+
+func (r *fakeProposalRepo) List(_ context.Context, _ repository.ProposalFilter) ([]proposal.View, error) {
+	return nil, nil
+}
+
+func (r *fakeProposalRepo) BeginPR(_ context.Context, _, _ string, _ time.Time) (proposal.PRClaim, error) {
+	return proposal.PRClaim{}, nil
+}
+
+func (r *fakeProposalRepo) RecordPR(_ context.Context, _ string, _ string, _ int, _ string, _ time.Time) (bool, error) {
+	return true, nil
+}
+
+func (r *fakeProposalRepo) FailStuckOpeningPR(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
+}
+
+func (r *fakeProposalRepo) ListOpenPullRequests(_ context.Context, _ int) ([]proposal.OpenPR, error) {
+	return nil, nil
+}
+
+func (r *fakeProposalRepo) ListStuckOpening(_ context.Context, _ int, _ *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
+	return nil, nil, nil
+}
+
+func (r *fakeProposalRepo) RecordPROutcome(_ context.Context, _ string, _ proposal.PROutcome, _ time.Time) (bool, error) {
+	return false, nil
+}
+
+func (r *fakeProposalRepo) ListVerifying(_ context.Context) ([]proposal.View, error) {
+	return nil, nil
+}
+
+func (r *fakeProposalRepo) MarkVerified(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
+func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, _, _ string) (bool, error) {
+	return false, nil
+}
+
+// fakeOutbox satisfies outbox.Repository in memory. Create takes a pointer to
+// match the real pkg/outbox.Repository interface. The read-path and retry
+// methods are no-ops as they are not exercised by ProposeFix.
+type fakeOutbox struct {
+	entries []*outbox.Entry
+}
+
+func (o *fakeOutbox) Create(_ context.Context, e *outbox.Entry) error {
+	o.entries = append(o.entries, e)
+	return nil
+}
+
+func (o *fakeOutbox) GetPendingBatch(_ context.Context, _ int) ([]*outbox.Entry, error) {
+	return nil, nil
+}
+
+func (o *fakeOutbox) MarkProcessed(_ context.Context, _ uuid.UUID) error { return nil }
+
+func (o *fakeOutbox) MarkProcessedBatch(_ context.Context, _ []uuid.UUID) error { return nil }
+
+func (o *fakeOutbox) MarkFailed(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+
+func (o *fakeOutbox) IncrementRetry(_ context.Context, _ uuid.UUID) error { return nil }
+
+// fakeMsgProcRepo satisfies messageprocessing.Repository in memory.
+// InsertIfNotExists returns (newUUID, true, nil) on the first call for a given
+// (messageID, outboxEntryID) combination, and (existingUUID, false, nil) on
+// subsequent calls for the same combination, mimicking the DB unique-constraint
+// dedup behaviour.
+type fakeMsgProcRepo struct {
+	// seen maps the dedup key to the assigned UUID (populated on first insert).
+	seen map[string]uuid.UUID
+	// rows stores inserted rows keyed by UUID for GetByID.
+	rows map[uuid.UUID]*messageprocessing.MessageProcessing
+}
+
+func newFakeMsgProcRepo() *fakeMsgProcRepo {
+	return &fakeMsgProcRepo{
+		seen: map[string]uuid.UUID{},
+		rows: map[uuid.UUID]*messageprocessing.MessageProcessing{},
+	}
+}
+
+// dedupKey produces the string used to detect a repeat call. It combines
+// messageID and outboxEntryID (if non-nil) so both dedup axes are covered.
+func (r *fakeMsgProcRepo) dedupKey(m *messageprocessing.MessageProcessing) string {
+	if m.OutboxEntryID != nil {
+		return "oe:" + m.OutboxEntryID.String()
+	}
+	return "mid:" + m.MessageID + ":" + m.StreamName
+}
+
+func (r *fakeMsgProcRepo) InsertIfNotExists(
+	ctx context.Context, m *messageprocessing.MessageProcessing,
+) (uuid.UUID, bool, error) {
+	key := r.dedupKey(m)
+	if id, exists := r.seen[key]; exists {
+		return id, false, nil
+	}
+	id := uuid.New()
+	r.seen[key] = id
+	stored := *m
+	stored.ID = id
+	r.rows[id] = &stored
+	return id, true, nil
+}
+
+// AlreadyProcessed mirrors the two dedup axes InsertIfNotExists keys on: a row
+// inserted with an outbox_entry_id is found by that id, otherwise by the
+// (message_id, stream_name) pair. dedupKey stores exactly one of these axes per
+// row, matching the production insert lookup.
+func (r *fakeMsgProcRepo) AlreadyProcessed(
+	_ context.Context, messageID, streamName string, outboxEntryID *uuid.UUID,
+) (bool, error) {
+	if outboxEntryID != nil {
+		if _, ok := r.seen["oe:"+outboxEntryID.String()]; ok {
+			return true, nil
+		}
+	}
+	if _, ok := r.seen["mid:"+messageID+":"+streamName]; ok {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (r *fakeMsgProcRepo) GetByMessageIDAndStream(
+	_ context.Context, messageID, streamName string,
+) (*messageprocessing.MessageProcessing, error) {
+	for _, m := range r.rows {
+		if m.MessageID == messageID && m.StreamName == streamName {
+			return m, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *fakeMsgProcRepo) GetByID(
+	_ context.Context, id uuid.UUID,
+) (*messageprocessing.MessageProcessing, error) {
+	m, ok := r.rows[id]
+	if !ok {
+		return nil, nil
+	}
+	return m, nil
+}
+
+func (r *fakeMsgProcRepo) UpdateState(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+
+func (r *fakeMsgProcRepo) DeleteTerminalOlderThan(
+	_ context.Context, _ time.Duration, _ int,
+) (int64, error) {
+	return 0, nil
+}
+
+// fakeUoW satisfies uow.UnitOfWork in memory.
+type fakeUoW struct {
+	pr        *fakeProposalRepo
+	ob        *fakeOutbox
+	mp        *fakeMsgProcRepo
+	committed bool
+}
+
+func (u *fakeUoW) Begin(context.Context) error                         { return nil }
+func (u *fakeUoW) Commit() error                                       { u.committed = true; return nil }
+func (u *fakeUoW) Rollback() error                                     { return nil }
+func (u *fakeUoW) ProposalRepo() repository.ProposalRepository         { return u.pr }
+func (u *fakeUoW) OutboxRepo() outbox.Repository                       { return u.ob }
+func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return u.mp }
+
+func newFakeUoW() *fakeUoW {
+	return &fakeUoW{
+		pr: &fakeProposalRepo{count: 0},
+		ob: &fakeOutbox{},
+		mp: newFakeMsgProcRepo(),
+	}
+}
+
+func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
+	return Deps{
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              llm,
+		Evidence:         ev,
+		Source:           &fakeSource{},
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Locator:          fakeLocator{},
+		Precedents:       fakePrecedents{},
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
+	}
+}
+
+func baseTrigger() Trigger {
+	return Trigger{
+		Source:               "validation",
+		ReleaseID:            "r1",
+		NodeID:               "s.n",
+		ErrorSignature:       "sig",
+		Category:             "logic",
+		DBTLogURI:            "s3://b/log",
+		CandidateArtifactURI: "s3://b/sql",
+		Repo:                 "o/r",
+		CommitSHA:            "abc",
+		MessageID:            "1-0",
+	}
+}
+
+// TestProposeFix_CompileSource verifies the compile branch: a compile trigger
+// carries no candidate SQL but a FilePath. The handler must read the offending
+// source from version control, prompt the LLM with the dbt error + raw source,
+// and persist a non-skipped, source-resolved proposal whose FilePath and Source
+// are preserved. A non-empty proposed-fix artifact is written.
+func TestProposeFix_CompileSource(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://c.log": "Compilation Error in model daily_transactions (models/daily_transactions.sql)\n  unexpected '}' in config block",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedContent: "{{ config(materialized='table', tags=['daily']) }}\nselect * from analytics.raw_transactions",
+		Rationale:       "fixed malformed config block",
+		Confidence:      "high",
+		Model:           "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	// The broken source has a malformed config()/tags expression. Keyed by the
+	// full offending path so the co-located dbt_project.yml read returns 404 and
+	// does not overwrite readPath.
+	src := &fakeSource{files: map[string]string{
+		"models/daily_transactions.sql": "{{ config(materialized='table'), tags=['daily'])}}\nselect * from analytics.raw_transactions",
+	}}
+
+	d := Deps{
+		NewUoW:      func() uow.UnitOfWork { return u },
+		LLM:         &llm,
+		Evidence:    ev,
+		Source:      src,
+		Sanitizer:   fakeSanitizer{},
+		Artifacts:   art,
+		Clock:       fakeClock{},
+		Logger:      slog.Default(),
+		MaxAttempts: 3,
+		// Service "core" maps to the repo root, so the full path equals FilePath.
+		ServiceRepoPaths: map[string]string{"core": ""},
+		Precedents:       fakePrecedents{},
+	}
+	tr := Trigger{
+		Source:               "compile",
+		ReleaseID:            "r1",
+		NodeID:               "core",
+		ErrorSignature:       "compile-err",
+		FilePath:             "models/daily_transactions.sql",
+		CandidateArtifactURI: "",
+		DBTLogURI:            "s3://c.log",
+		Repo:                 "o/r",
+		CommitSHA:            "sha",
+		MessageID:            "7-0",
+	}
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+	if p.Status == proposal.StatusSkipped {
+		t.Fatalf("compile proposal must not be skipped, got %+v", p)
+	}
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status, got %s", p.Status)
+	}
+	if p.Source != "compile" {
+		t.Fatalf("Source = %q, want compile", p.Source)
+	}
+	if p.FilePath != "models/daily_transactions.sql" {
+		t.Fatalf("FilePath = %q, want models/daily_transactions.sql", p.FilePath)
+	}
+	if !p.SourceResolved {
+		t.Fatal("expected SourceResolved=true")
+	}
+	// Source must be read at join(prefix, FilePath); prefix is empty here.
+	if src.readPath != "models/daily_transactions.sql" {
+		t.Fatalf("ReadFile path = %q, want models/daily_transactions.sql", src.readPath)
+	}
+	// At least one non-empty proposed-fix artifact must be written.
+	nonEmpty := 0
+	for _, body := range art.written {
+		if body != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty == 0 {
+		t.Fatalf("expected a non-empty proposed-fix artifact, got %v", art.written)
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox entry, got %d", len(u.ob.entries))
+	}
+	if !u.committed {
+		t.Fatal("not committed")
+	}
+}
+
+// TestProposeFix_SeedSourceViaThreadedPayload verifies the primary seed_build
+// path: when FilePath and Service are carried on the trigger (threaded from the
+// candidate topology), the handler must produce a source-resolved proposal
+// without a NodeLocator call. This is the common case for newly-added seeds
+// that do not yet exist in the promoted topology the NodeLocator serves.
+func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/log": "Database Error in seed customers: extra column",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedContent: "id,name\n1,alice",
+		Rationale:       "removed extra column",
+		Confidence:      "high",
+		Model:           "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	src := &fakeSource{content: "id,name\n1,alice,extra"}
+
+	d := Deps{
+		NewUoW:   func() uow.UnitOfWork { return u },
+		LLM:      &llm,
+		Evidence: ev,
+		// Locator is deliberately left unset: FilePath and Service are threaded on
+		// the trigger, so the NodeLocator fallback must never be called — a call
+		// here would panic on the nil port.
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Precedents:       fakePrecedents{},
+	}
+	tr := Trigger{
+		Source:         "seed_build",
+		ReleaseID:      "r1",
+		NodeID:         "svc.customers",
+		ErrorSignature: "seed-err",
+		// FilePath and Service are threaded from the candidate topology by
+		// release-controller, bypassing the need for a NodeLocator call.
+		FilePath:             "seeds/customers.csv",
+		Service:              "svc",
+		CandidateArtifactURI: "",
+		DBTLogURI:            "s3://b/log",
+		Repo:                 "o/r",
+		CommitSHA:            "sha",
+		MessageID:            "8-0",
+	}
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status, got %s", p.Status)
+	}
+	if p.Source != "seed_build" {
+		t.Fatalf("Source = %q, want seed_build", p.Source)
+	}
+	if !p.SourceResolved {
+		t.Fatal("expected SourceResolved=true")
+	}
+	if p.FilePath != "services/svc/seeds/customers.csv" {
+		t.Fatalf("FilePath = %q, want services/svc/seeds/customers.csv", p.FilePath)
+	}
+	if src.readPath != "services/svc/seeds/customers.csv" {
+		t.Fatalf("ReadFile path = %q, want services/svc/seeds/customers.csv", src.readPath)
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox entry, got %d", len(u.ob.entries))
+	}
+}
+
+// TestProposeFix_SeedSourceFallsBackToLocator verifies the NodeLocator
+// fallback path for seed_build: when FilePath is absent on the trigger (e.g.
+// an older rejection payload that predates the candidate-topology threading),
+// the handler falls back to the orchestrator graph's NodeLocator to resolve
+// the source location.
+func TestProposeFix_SeedSourceFallsBackToLocator(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/log": "Database Error in seed customers: extra column",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedContent: "id,name\n1,alice",
+		Rationale:       "removed extra column",
+		Confidence:      "high",
+		Model:           "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	src := &fakeSource{content: "id,name\n1,alice,extra"}
+
+	d := Deps{
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Locator:          fakeLocator{filePath: "seeds/customers.csv", serviceName: "svc"},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Precedents:       fakePrecedents{},
+	}
+	// No FilePath or Service on the trigger: must fall back to the NodeLocator.
+	tr := Trigger{
+		Source:               "seed_build",
+		ReleaseID:            "r1",
+		NodeID:               "svc.customers",
+		ErrorSignature:       "seed-err",
+		FilePath:             "",
+		Service:              "",
+		CandidateArtifactURI: "",
+		DBTLogURI:            "s3://b/log",
+		Repo:                 "o/r",
+		CommitSHA:            "sha",
+		MessageID:            "8-1",
+	}
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status on locator fallback, got %s", p.Status)
+	}
+	if !p.SourceResolved {
+		t.Fatal("expected SourceResolved=true on locator fallback")
+	}
+	if p.FilePath != "services/svc/seeds/customers.csv" {
+		t.Fatalf("FilePath = %q, want services/svc/seeds/customers.csv", p.FilePath)
+	}
+}
+
+// TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaLocator covers the
+// partial-threading case: a topology node carries a file_path but no service.
+// The handler must fall back to the NodeLocator for the SERVICE (not treat
+// NodeID as the service) while keeping the threaded file_path — otherwise the
+// proposal is wrongly skipped.
+func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaLocator(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/log": "Database Error in seed customers: extra column",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedContent: "id,name\n1,alice",
+		Rationale:       "removed extra column",
+		Confidence:      "high",
+		Model:           "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	src := &fakeSource{content: "id,name\n1,alice,extra"}
+
+	d := Deps{
+		NewUoW:   func() uow.UnitOfWork { return u },
+		LLM:      &llm,
+		Evidence: ev,
+		// The NodeLocator supplies the missing service; its filePath is
+		// deliberately wrong to prove the threaded file_path is preserved, not
+		// overwritten.
+		Locator:          fakeLocator{filePath: "seeds/WRONG.csv", serviceName: "svc"},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Precedents:       fakePrecedents{},
+	}
+	tr := Trigger{
+		Source:         "seed_build",
+		ReleaseID:      "r1",
+		NodeID:         "svc.customers", // a dbt node id, NOT a service
+		ErrorSignature: "seed-err",
+		FilePath:       "seeds/customers.csv", // threaded; service missing
+		Service:        "",
+		DBTLogURI:      "s3://b/log",
+		Repo:           "o/r",
+		CommitSHA:      "sha",
+		MessageID:      "9-0",
+	}
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row (not skipped), got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status, got %s", p.Status)
+	}
+	// Threaded file_path preserved + service resolved from the NodeLocator → svc.
+	if src.readPath != "services/svc/seeds/customers.csv" {
+		t.Fatalf("ReadFile path = %q, want services/svc/seeds/customers.csv", src.readPath)
+	}
+}
+
+func TestProposeFix_HappyPath(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t",
+		Rationale:   "typo",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	art := &fakeArtifacts{}
+
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, art), baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusProposed {
+		t.Fatalf("expected one proposed row, got %+v", u.pr.inserted)
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected one outbox entry, got %d", len(u.ob.entries))
+	}
+	var p event.RemediationProposed
+	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	if p.NodeID != "s.n" || p.Confidence != "high" || p.EventID != event.RemediationEventID("r1", "s.n", 1).String() {
+		t.Fatalf("bad payload %+v", p)
+	}
+	if len(art.written) != 2 {
+		t.Fatalf("expected 2 artifacts (.sql + .diff), got %d", len(art.written))
+	}
+	// Artifact keys must include attempt number.
+	if _, ok := art.written["proposed-fix/r1/s.n/attempt-1.sql"]; !ok {
+		t.Fatalf("expected attempt-scoped sql key; got keys %v", art.written)
+	}
+	if _, ok := art.written["proposed-fix/r1/s.n/attempt-1.diff"]; !ok {
+		t.Fatalf("expected attempt-scoped diff key; got keys %v", art.written)
+	}
+	// The outbox entry must carry the message_processing row ID.
+	if u.ob.entries[0].MessageProcessingID == nil {
+		t.Fatal("outbox entry MessageProcessingID must be set on happy path")
+	}
+	if !u.committed {
+		t.Fatal("not committed")
+	}
+}
+
+func TestProposeFix_AttemptCapEscalates(t *testing.T) {
+	u := newFakeUoW()
+	u.pr.count = 3
+	ev := fakeEvidence{vals: map[string]string{"s3://b/sql": "x", "s3://b/log": "y"}}
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusEscalated {
+		t.Fatalf("expected escalated row, got %+v", u.pr.inserted)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatal("escalated must not emit an outbox entry")
+	}
+}
+
+func TestProposeFix_EmptyCandidateSQLSkips(t *testing.T) {
+	u := newFakeUoW()
+	tr := baseTrigger()
+	tr.CandidateArtifactURI = ""
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+
+	if err := ProposeFix(context.Background(), deps(u, fakeEvidence{}, &llm, &fakeArtifacts{}), tr); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusSkipped {
+		t.Fatalf("expected skipped row, got %+v", u.pr.inserted)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatal("skip must not emit an outbox entry")
+	}
+}
+
+// TestProposeFix_EmptyCandidateSQLSkipsDespiteLogError proves the empty-candidate
+// validation skip is decided before any dbt-log read: even when the evidence
+// store returns a transient error for every fetch (an unreadable or
+// misconfigured log URI), the trigger is still recorded skipped and ACKed rather
+// than erroring and being redelivered.
+func TestProposeFix_EmptyCandidateSQLSkipsDespiteLogError(t *testing.T) {
+	u := newFakeUoW()
+	tr := baseTrigger()
+	tr.CandidateArtifactURI = ""
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+	ev := fakeEvidence{err: fmt.Errorf("s3 503: log temporarily unreadable")}
+
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), tr); err != nil {
+		t.Fatalf("empty-candidate skip must not surface a log-read error: %v", err)
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusSkipped {
+		t.Fatalf("expected skipped row, got %+v", u.pr.inserted)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatal("skip must not emit an outbox entry")
+	}
+}
+
+func TestProposeFix_LLMEmptyFails(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{"s3://b/sql": "x", "s3://b/log": "y"}}
+	llm := newFakeLLM(ports.ProposeResult{ProposedSQL: ""}, nil)
+
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusFailed {
+		t.Fatalf("expected failed row, got %+v", u.pr.inserted)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatal("failed must not emit an outbox entry")
+	}
+}
+
+// TestProposeFix_DuplicateTriggerIsDeduped calls ProposeFix twice with
+// identical trigger data (same MessageID / OutboxEntryID). The second call
+// must be recognised as a duplicate and return nil without inserting a second
+// proposal row or enqueuing a second outbox entry.
+func TestProposeFix_DuplicateTriggerIsDeduped(t *testing.T) {
+	// Both calls share the same UoW factory state (fakeMsgProcRepo is reused
+	// across calls, which is what the fake is designed for).
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t",
+		Rationale:   "typo",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	d := deps(u, ev, &llm, art)
+
+	oeID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	tr := baseTrigger()
+	tr.MessageID = "42-0"
+	tr.OutboxEntryID = &oeID
+
+	// First call: must succeed and produce exactly one proposal + one outbox entry.
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("first call: expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("first call: expected 1 outbox entry, got %d", len(u.ob.entries))
+	}
+
+	// Second call with the same trigger (simulates redelivery).
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatalf("second call (dup) must return nil, got: %v", err)
+	}
+
+	// Counts must not have grown — the duplicate was suppressed.
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("after dup: expected still 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("after dup: expected still 1 outbox entry, got %d", len(u.ob.entries))
+	}
+}
+
+// TestProposeFix_MarksGeneratingBeforeLLM verifies the in-flight indicator
+// contract: an in-flight 'generating' row is committed BEFORE the model is
+// called, and is finalized to the terminal 'proposed' row afterwards. The probe
+// runs inside the LLM call and asserts the generating row already exists at that
+// moment.
+func TestProposeFix_MarksGeneratingBeforeLLM(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t", Rationale: "typo", Confidence: "high", Model: "m",
+	}, nil)
+
+	var genAtLLMCall int
+	llm.probe = func() { genAtLLMCall = len(u.pr.generating) }
+
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+
+	if genAtLLMCall != 1 {
+		t.Fatalf("expected 1 generating row committed before the LLM call, got %d", genAtLLMCall)
+	}
+	if len(u.pr.generating) != 1 || u.pr.generating[0].Status != proposal.StatusGenerating {
+		t.Fatalf("expected one generating row, got %+v", u.pr.generating)
+	}
+	if u.pr.generating[0].Attempt != 1 {
+		t.Fatalf("generating row must be attempt 1, got %d", u.pr.generating[0].Attempt)
+	}
+	// The terminal write finalizes the same attempt to proposed.
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusProposed {
+		t.Fatalf("expected one proposed terminal row, got %+v", u.pr.inserted)
+	}
+	if u.pr.inserted[0].Attempt != 1 {
+		t.Fatalf("terminal row must finalize attempt 1, got %d", u.pr.inserted[0].Attempt)
+	}
+}
+
+// TestProposeFix_AlreadyProcessedPreCheckNoPhantom proves the read-only dedup
+// pre-check prevents a phantom generating row. A completed trigger is re-emitted
+// with a fresh Redis message id but the same upstream outbox_entry_id; the second
+// invocation must ACK (return nil) before writing anything — no extra generating
+// row, no extra terminal row, and no second model call.
+func TestProposeFix_AlreadyProcessedPreCheckNoPhantom(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t", Rationale: "typo", Confidence: "high", Model: "m",
+	}, nil)
+	d := deps(u, ev, &llm, &fakeArtifacts{})
+
+	oeID := uuid.MustParse("00000000-0000-0000-0000-0000000000aa")
+	tr := baseTrigger()
+	tr.MessageID = "100-0"
+	tr.OutboxEntryID = &oeID
+
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatalf("first delivery: %v", err)
+	}
+	if len(u.pr.generating) != 1 || len(u.pr.inserted) != 1 {
+		t.Fatalf("first delivery: want 1 generating + 1 terminal, got %d/%d", len(u.pr.generating), len(u.pr.inserted))
+	}
+	if llm.calls != 1 {
+		t.Fatalf("first delivery: want 1 LLM call, got %d", llm.calls)
+	}
+
+	// Re-emission: fresh message id, same outbox_entry_id.
+	tr.MessageID = "200-0"
+	if err := ProposeFix(context.Background(), d, tr); err != nil {
+		t.Fatalf("re-emitted delivery must return nil, got: %v", err)
+	}
+	if len(u.pr.generating) != 1 {
+		t.Fatalf("re-emission must not add a phantom generating row, got %d", len(u.pr.generating))
+	}
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("re-emission must not add a terminal row, got %d", len(u.pr.inserted))
+	}
+	if llm.calls != 1 {
+		t.Fatalf("re-emission must not call the model again, got %d calls", llm.calls)
+	}
+}
+
+// TestProposeFix_EscalateWritesNoGenerating verifies the attempt-cap path never
+// shows the "Generating fix…" chip: it escalates before markGenerating, so no
+// generating row is written and the model is never called.
+func TestProposeFix_EscalateWritesNoGenerating(t *testing.T) {
+	u := newFakeUoW()
+	u.pr.count = 3
+	ev := fakeEvidence{vals: map[string]string{"s3://b/sql": "x", "s3://b/log": "y"}}
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.pr.generating) != 0 {
+		t.Fatalf("escalated (unhealable) attempt must not write a generating row, got %d", len(u.pr.generating))
+	}
+	if llm.calls != 0 {
+		t.Fatalf("escalated attempt must not call the model, got %d calls", llm.calls)
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusEscalated {
+		t.Fatalf("expected one escalated terminal row, got %+v", u.pr.inserted)
+	}
+}
+
+// TestProposeFix_InternalSkipFinalizesGenerating documents the accepted
+// generating→blank flicker: a Fixer that skips internally (here, a validation
+// trigger with no candidate SQL) still marks the attempt generating in the
+// driver, then finalizes it to skipped. Exactly one generating row and one
+// skipped terminal row result — no outbox emit.
+func TestProposeFix_InternalSkipFinalizesGenerating(t *testing.T) {
+	u := newFakeUoW()
+	tr := baseTrigger()
+	tr.CandidateArtifactURI = ""
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+
+	if err := ProposeFix(context.Background(), deps(u, fakeEvidence{}, &llm, &fakeArtifacts{}), tr); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.pr.generating) != 1 {
+		t.Fatalf("expected one generating row before the internal skip, got %d", len(u.pr.generating))
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusSkipped {
+		t.Fatalf("expected one skipped terminal row, got %+v", u.pr.inserted)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatal("skip must not emit an outbox entry")
+	}
+}
+
+// TestProposeFix_Step2_SourceResolved verifies that when the orchestrator
+// graph's NodeLocator returns a file path and the source reader returns the
+// original SQL, the Step-2 LLM call produces source artifacts. The final
+// proposal URIs point to the source artifacts; the candidate artifacts are
+// also recorded on the proposal.
+func TestProposeFix_Step2_SourceResolved(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	// Step-1 returns the candidate fix; Step-2 returns the corrected source.
+	llm := fakeLLM{
+		queue: []ports.ProposeResult{
+			{ProposedSQL: "select customer_id from t", Rationale: "typo fix", Confidence: "high", Model: "m"},
+			{ProposedSQL: "{{ config(materialized='table') }}\nselect customer_id from {{ ref('t') }}", Rationale: "typo fix", Confidence: "high", Model: "m"},
+		},
+		errs: []error{nil, nil},
+	}
+	art := &fakeArtifacts{}
+
+	src := &fakeSource{content: "{{ config(materialized='table') }}\nselect custmer_id from {{ ref('t') }}"}
+	d := Deps{
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "svc"},
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
+		Precedents:       fakePrecedents{},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+	}
+
+	if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status, got %s", p.Status)
+	}
+	if !p.SourceResolved {
+		t.Fatal("expected SourceResolved=true")
+	}
+
+	// The source must be read at the full path: prefix + filePath.
+	if src.readPath != "services/svc/models/table_e.sql" {
+		t.Fatalf("ReadFile called with path %q, want %q", src.readPath, "services/svc/models/table_e.sql")
+	}
+
+	// Final proposed SQL URI must point to the source artifact.
+	const wantSuffix = "attempt-1.source.sql"
+	if !strings.HasSuffix(p.ProposedSQLURI, wantSuffix) {
+		t.Fatalf("ProposedSQLURI %q must end with %q", p.ProposedSQLURI, wantSuffix)
+	}
+
+	// Candidate URI must point to the candidate (Step-1) artifact.
+	const wantCandSuffix = "attempt-1.sql"
+	if !strings.HasSuffix(p.CandidateFixSQLURI, wantCandSuffix) {
+		t.Fatalf("CandidateFixSQLURI %q must end with %q", p.CandidateFixSQLURI, wantCandSuffix)
+	}
+
+	// Exactly 4 artifacts: .sql, .diff, .source.sql, .source.diff.
+	if len(art.written) != 4 {
+		t.Fatalf("expected 4 artifacts, got %d: %v", len(art.written), art.written)
+	}
+	for _, key := range []string{
+		"proposed-fix/r1/s.n/attempt-1.sql",
+		"proposed-fix/r1/s.n/attempt-1.diff",
+		"proposed-fix/r1/s.n/attempt-1.source.sql",
+		"proposed-fix/r1/s.n/attempt-1.source.diff",
+	} {
+		if _, ok := art.written[key]; !ok {
+			t.Fatalf("missing artifact key %q; got %v", key, art.written)
+		}
+	}
+
+	// The outbox event must carry SourceResolved=true and the source URI.
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox entry, got %d", len(u.ob.entries))
+	}
+	var ev2 event.RemediationProposed
+	_ = json.Unmarshal(u.ob.entries[0].Payload, &ev2)
+	if !ev2.SourceResolved {
+		t.Fatal("outbox event SourceResolved must be true")
+	}
+	if !strings.HasSuffix(ev2.ProposedSQLURI, "attempt-1.source.sql") {
+		t.Fatalf("outbox ProposedSQLURI %q must end with attempt-1.source.sql", ev2.ProposedSQLURI)
+	}
+}
+
+// TestProposeFix_Step2_FallbackOnSourceError verifies that when the source
+// reader returns an error, the handler falls back to the candidate proposal:
+// SourceResolved=false, ProposedSQLURI points to the candidate, 2 artifacts
+// written, and the proposal is still status=proposed with one outbox emit.
+func TestProposeFix_Step2_FallbackOnSourceError(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t",
+		Rationale:   "typo",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	art := &fakeArtifacts{}
+
+	d := Deps{
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "svc"},
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
+		Precedents:       fakePrecedents{},
+		Source:           &fakeSource{err: fmt.Errorf("github 503")},
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+	}
+
+	if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	p := u.pr.inserted[0]
+
+	if p.Status != proposal.StatusProposed {
+		t.Fatalf("expected proposed status, got %s", p.Status)
+	}
+	if p.SourceResolved {
+		t.Fatal("expected SourceResolved=false on source read error")
+	}
+	if !strings.HasSuffix(p.ProposedSQLURI, "attempt-1.sql") {
+		t.Fatalf("ProposedSQLURI %q must end with attempt-1.sql (candidate fallback)", p.ProposedSQLURI)
+	}
+
+	// Only candidate artifacts written (no source step artifacts).
+	if len(art.written) != 2 {
+		t.Fatalf("expected 2 artifacts on fallback, got %d: %v", len(art.written), art.written)
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox emit, got %d", len(u.ob.entries))
+	}
+}
+
+// TestProposeFix_Step2_FallbackOnEmptyFilePath verifies that when the
+// NodeLocator returns an empty file path, the handler skips the source read
+// entirely and falls back to the candidate proposal with SourceResolved=false.
+func TestProposeFix_Step2_FallbackOnEmptyFilePath(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t",
+		Rationale:   "typo",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	// sourceReadCount is implicitly checked: fakeSource with err would cause a
+	// test failure if ReadFile were called, but it won't be because filePath=="".
+	art := &fakeArtifacts{}
+
+	src := &fakeSource{err: fmt.Errorf("must not be called")}
+	d := Deps{
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Locator:          fakeLocator{filePath: "", serviceName: "svc"}, // empty file path → skip Step 2.
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
+		Precedents:       fakePrecedents{},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+	}
+
+	if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+
+	p := u.pr.inserted[0]
+	if p.SourceResolved {
+		t.Fatal("expected SourceResolved=false when file path is empty")
+	}
+	if !strings.HasSuffix(p.ProposedSQLURI, "attempt-1.sql") {
+		t.Fatalf("ProposedSQLURI %q must be the candidate URI when file path empty", p.ProposedSQLURI)
+	}
+	if len(art.written) != 2 {
+		t.Fatalf("expected 2 artifacts (candidate only) when file path empty, got %d", len(art.written))
+	}
+	// ReadFile must not have been called if filePath is empty.
+	if src.readPath != "" {
+		t.Fatalf("ReadFile must not be called when filePath is empty, but was called with %q", src.readPath)
+	}
+}
+
+// TestProposeFix_Step2_FallbackOnUnmappedService verifies that when the
+// node's service name has no entry in ServiceRepoPaths, Step 2 degrades:
+// SourceResolved=false and ReadFile is never called.
+func TestProposeFix_Step2_FallbackOnUnmappedService(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t",
+		Rationale:   "typo",
+		Confidence:  "high",
+		Model:       "m",
+	}, nil)
+	art := &fakeArtifacts{}
+	src := &fakeSource{content: "should not be called"}
+
+	d := Deps{
+		NewUoW:           func() uow.UnitOfWork { return u },
+		LLM:              &llm,
+		Evidence:         ev,
+		Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "unknown-service"},
+		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+		Upstream:         fakeUpstream{},
+		Versions:         fakeVersions{},
+		Precedents:       fakePrecedents{},
+		Source:           src,
+		Sanitizer:        fakeSanitizer{},
+		Artifacts:        art,
+		Clock:            fakeClock{},
+		Logger:           slog.Default(),
+		MaxAttempts:      3,
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"}, // "unknown-service" not present
+	}
+
+	if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+
+	p := u.pr.inserted[0]
+	if p.SourceResolved {
+		t.Fatal("expected SourceResolved=false when service name not in ServiceRepoPaths")
+	}
+	if !strings.HasSuffix(p.ProposedSQLURI, "attempt-1.sql") {
+		t.Fatalf("ProposedSQLURI %q must be the candidate URI on unmapped service", p.ProposedSQLURI)
+	}
+	if len(art.written) != 2 {
+		t.Fatalf("expected 2 artifacts (candidate only), got %d: %v", len(art.written), art.written)
+	}
+	// ReadFile must not have been called.
+	if src.readPath != "" {
+		t.Fatalf("ReadFile must not be called for unmapped service, but was called with %q", src.readPath)
+	}
+}
+
+// TestProposeFix_SourceResolved_PersistsSourceLocation verifies that when Step
+// 2 succeeds, the inserted proposal carries the three source-location fields:
+// Repo, CommitSHA, and FilePath (the full repo-relative path passed to
+// ReadFile). On the candidate-fallback path these fields must remain empty.
+func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
+	t.Run("source_resolved_fields_populated", func(t *testing.T) {
+		u := newFakeUoW()
+		ev := fakeEvidence{vals: map[string]string{
+			"s3://b/sql": "select custmer_id from t",
+			"s3://b/log": "column does not exist",
+		}}
+		// Step-1 returns the candidate fix; Step-2 returns the corrected source.
+		llm := fakeLLM{
+			queue: []ports.ProposeResult{
+				{ProposedSQL: "select customer_id from t", Rationale: "typo fix", Confidence: "high", Model: "m"},
+				{ProposedSQL: "{{ config() }}\nselect customer_id from {{ ref('t') }}", Rationale: "typo fix", Confidence: "high", Model: "m"},
+			},
+			errs: []error{nil, nil},
+		}
+		art := &fakeArtifacts{}
+		src := &fakeSource{content: "{{ config() }}\nselect custmer_id from {{ ref('t') }}"}
+		d := Deps{
+			NewUoW:           func() uow.UnitOfWork { return u },
+			LLM:              &llm,
+			Evidence:         ev,
+			Locator:          fakeLocator{filePath: "models/orders_d.sql", serviceName: "service-3"},
+			CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+			Upstream:         fakeUpstream{},
+			Versions:         fakeVersions{},
+			Precedents:       fakePrecedents{},
+			Source:           src,
+			Sanitizer:        fakeSanitizer{},
+			Artifacts:        art,
+			Clock:            fakeClock{},
+			Logger:           slog.Default(),
+			MaxAttempts:      3,
+			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
+		}
+		tr := baseTrigger()
+		tr.Repo = "owner/continuo-dbt-demo"
+		tr.CommitSHA = "abc123"
+
+		if err := ProposeFix(context.Background(), d, tr); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(u.pr.inserted) != 1 {
+			t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+		}
+		p := u.pr.inserted[0]
+
+		if !p.SourceResolved {
+			t.Fatal("expected SourceResolved=true")
+		}
+		if p.Repo != "owner/continuo-dbt-demo" {
+			t.Errorf("Repo = %q, want %q", p.Repo, "owner/continuo-dbt-demo")
+		}
+		if p.CommitSHA != "abc123" {
+			t.Errorf("CommitSHA = %q, want %q", p.CommitSHA, "abc123")
+		}
+		if p.FilePath != "services/service-3/models/orders_d.sql" {
+			t.Errorf("FilePath = %q, want %q", p.FilePath, "services/service-3/models/orders_d.sql")
+		}
+	})
+
+	t.Run("candidate_fallback_fields_empty", func(t *testing.T) {
+		u := newFakeUoW()
+		ev := fakeEvidence{vals: map[string]string{
+			"s3://b/sql": "select custmer_id from t",
+			"s3://b/log": "column does not exist",
+		}}
+		llm := newFakeLLM(ports.ProposeResult{
+			ProposedSQL: "select customer_id from t",
+			Rationale:   "typo",
+			Confidence:  "high",
+			Model:       "m",
+		}, nil)
+		art := &fakeArtifacts{}
+		// Source read error forces candidate fallback.
+		d := Deps{
+			NewUoW:           func() uow.UnitOfWork { return u },
+			LLM:              &llm,
+			Evidence:         ev,
+			Locator:          fakeLocator{filePath: "models/orders_d.sql", serviceName: "service-3"},
+			CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+			Upstream:         fakeUpstream{},
+			Versions:         fakeVersions{},
+			Precedents:       fakePrecedents{},
+			Source:           &fakeSource{err: fmt.Errorf("github 503")},
+			Sanitizer:        fakeSanitizer{},
+			Artifacts:        art,
+			Clock:            fakeClock{},
+			Logger:           slog.Default(),
+			MaxAttempts:      3,
+			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
+		}
+		tr := baseTrigger()
+		tr.Repo = "owner/continuo-dbt-demo"
+		tr.CommitSHA = "abc123"
+
+		if err := ProposeFix(context.Background(), d, tr); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(u.pr.inserted) != 1 {
+			t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+		}
+		p := u.pr.inserted[0]
+
+		if p.SourceResolved {
+			t.Fatal("expected SourceResolved=false on candidate fallback path")
+		}
+		if p.Repo != "" {
+			t.Errorf("Repo must be empty on fallback path, got %q", p.Repo)
+		}
+		if p.CommitSHA != "" {
+			t.Errorf("CommitSHA must be empty on fallback path, got %q", p.CommitSHA)
+		}
+		if p.FilePath != "" {
+			t.Errorf("FilePath must be empty on fallback path, got %q", p.FilePath)
+		}
+	})
+}
+
+// TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence verifies that when
+// the Step-2 LLM returns the same SQL as the original source, or returns a
+// low-confidence result, the handler degrades to the candidate proposal:
+// SourceResolved=false, only 2 artifacts written.
+func TestProposeFix_Step2_FallbackOnUnchangedOrLowConfidence(t *testing.T) {
+	originalSQL := "{{ config(materialized='table') }}\nselect custmer_id from {{ ref('t') }}"
+
+	t.Run("unchanged_sql", func(t *testing.T) {
+		u := newFakeUoW()
+		ev := fakeEvidence{vals: map[string]string{
+			"s3://b/sql": "select custmer_id from t",
+			"s3://b/log": "column does not exist",
+		}}
+		llm := fakeLLM{
+			queue: []ports.ProposeResult{
+				{ProposedSQL: "select customer_id from t", Rationale: "typo fix", Confidence: "high", Model: "m"},
+				// Step-2 returns the same source unchanged — not a fix.
+				{ProposedSQL: originalSQL, Rationale: "no change", Confidence: "high", Model: "m"},
+			},
+			errs: []error{nil, nil},
+		}
+		art := &fakeArtifacts{}
+		d := Deps{
+			NewUoW:           func() uow.UnitOfWork { return u },
+			LLM:              &llm,
+			Evidence:         ev,
+			Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "svc"},
+			CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+			Upstream:         fakeUpstream{},
+			Versions:         fakeVersions{},
+			Precedents:       fakePrecedents{},
+			Source:           &fakeSource{content: originalSQL},
+			Sanitizer:        fakeSanitizer{},
+			Artifacts:        art,
+			Clock:            fakeClock{},
+			Logger:           slog.Default(),
+			MaxAttempts:      3,
+			ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		}
+		if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
+			t.Fatal(err)
+		}
+		p := u.pr.inserted[0]
+		if p.SourceResolved {
+			t.Fatal("expected SourceResolved=false when Step-2 SQL equals original")
+		}
+		if len(art.written) != 2 {
+			t.Fatalf("expected 2 candidate-only artifacts, got %d: %v", len(art.written), art.written)
+		}
+	})
+
+	t.Run("low_confidence", func(t *testing.T) {
+		u := newFakeUoW()
+		ev := fakeEvidence{vals: map[string]string{
+			"s3://b/sql": "select custmer_id from t",
+			"s3://b/log": "column does not exist",
+		}}
+		llm := fakeLLM{
+			queue: []ports.ProposeResult{
+				{ProposedSQL: "select customer_id from t", Rationale: "typo fix", Confidence: "high", Model: "m"},
+				// Step-2 returns a different SQL but with low confidence.
+				{ProposedSQL: "select fixed_id from t", Rationale: "maybe", Confidence: "low", Model: "m"},
+			},
+			errs: []error{nil, nil},
+		}
+		art := &fakeArtifacts{}
+		d := Deps{
+			NewUoW:           func() uow.UnitOfWork { return u },
+			LLM:              &llm,
+			Evidence:         ev,
+			Locator:          fakeLocator{filePath: "models/table_e.sql", serviceName: "svc"},
+			CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
+			Upstream:         fakeUpstream{},
+			Versions:         fakeVersions{},
+			Precedents:       fakePrecedents{},
+			Source:           &fakeSource{content: originalSQL},
+			Sanitizer:        fakeSanitizer{},
+			Artifacts:        art,
+			Clock:            fakeClock{},
+			Logger:           slog.Default(),
+			MaxAttempts:      3,
+			ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		}
+		if err := ProposeFix(context.Background(), d, baseTrigger()); err != nil {
+			t.Fatal(err)
+		}
+		p := u.pr.inserted[0]
+		if p.SourceResolved {
+			t.Fatal("expected SourceResolved=false when Step-2 confidence is low")
+		}
+		if len(art.written) != 2 {
+			t.Fatalf("expected 2 candidate-only artifacts, got %d: %v", len(art.written), art.written)
+		}
+	})
+}
+
+// TestRecord_NormalizesScalarsInRowAndEvent verifies that record normalizes
+// a proposal's single-file scalar fields to agree with edits[0] before
+// either the persisted row or the remediation.proposed:v1 event is built,
+// so a proposal whose scalars disagree with its own edits list cannot
+// produce a stored row and an emitted event that disagree about which file
+// was fixed. The mismatched input is a shape only a hand-built value can
+// produce, never the fixer's own proposal-assembly code, but record must
+// not persist or emit it regardless.
+func TestRecord_NormalizesScalarsInRowAndEvent(t *testing.T) {
+	u := newFakeUoW()
+	d := deps(u, fakeEvidence{}, nil, &fakeArtifacts{})
+	tr := baseTrigger()
+
+	p := proposal.Proposal{
+		Status:     proposal.StatusProposed,
+		Confidence: proposal.ConfidenceHigh,
+		Rationale:  "rationale",
+		Model:      "m",
+		// Scalars deliberately disagree with edits[0].
+		FilePath:       "stale/path.sql",
+		ProposedSQLURI: "s3://stale/content",
+		DiffURI:        "s3://stale/diff",
+		Edits: []proposal.FileEdit{
+			{Path: "services/svc/models/orders_d.sql", ContentURI: "s3://real/content", DiffURI: "s3://real/diff"},
+		},
+	}
+
+	if err := record(context.Background(), d, tr, 1, p, true, true); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	if len(u.pr.inserted) != 1 {
+		t.Fatalf("expected 1 proposal row, got %d", len(u.pr.inserted))
+	}
+	got := u.pr.inserted[0]
+	if got.FilePath != "services/svc/models/orders_d.sql" {
+		t.Fatalf("row FilePath = %q, want edits[0].Path", got.FilePath)
+	}
+	if got.ProposedSQLURI != "s3://real/content" {
+		t.Fatalf("row ProposedSQLURI = %q, want edits[0].ContentURI", got.ProposedSQLURI)
+	}
+	if got.DiffURI != "s3://real/diff" {
+		t.Fatalf("row DiffURI = %q, want edits[0].DiffURI", got.DiffURI)
+	}
+
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("expected 1 outbox entry, got %d", len(u.ob.entries))
+	}
+	var payload event.RemediationProposed
+	if err := json.Unmarshal(u.ob.entries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal event payload: %v", err)
+	}
+	if payload.ProposedSQLURI != "s3://real/content" {
+		t.Fatalf("event ProposedSQLURI = %q, want edits[0].ContentURI", payload.ProposedSQLURI)
+	}
+	if payload.DiffURI != "s3://real/diff" {
+		t.Fatalf("event DiffURI = %q, want edits[0].DiffURI", payload.DiffURI)
+	}
+}

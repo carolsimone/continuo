@@ -167,6 +167,12 @@ shipped in those.
   `global.agentRunnerGrpcAddr` values key is renamed to
   `global.agentChatGrpcAddr`; any install overriding it must rename the
   key before upgrading.
+- Renamed service `remediation-agent` to `agent-remediation`; database
+  `continuo_remediation_agent` is now `continuo_agent_remediation` (rename in
+  place on upgrade — see NOTES); consumer group
+  `remediation-agent-remediation-requested` is now
+  `agent-remediation-remediation-requested`. Image is now
+  `continuo-agent-remediation`.
 
 ### Changed
 - Bumped the default `validation.imageTag` (and its `_helpers.tpl` fallback)

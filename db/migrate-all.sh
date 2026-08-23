@@ -17,7 +17,7 @@ DB_SSLMODE="${DB_SSLMODE:-}"
 
 # Single source of truth: every database this job owns. The same list drives
 # both the create-loop and the flyway-loop below, so they cannot drift.
-DATABASES="state executor orchestrator k8s release agent_chat remediation remediation_agent"
+DATABASES="state executor orchestrator k8s release agent_chat remediation agent_remediation"
 
 # -connectRetries rides out Postgres cold start. Kept low enough that a genuine
 # misconfiguration surfaces well within the Helm pre-upgrade hook timeout rather

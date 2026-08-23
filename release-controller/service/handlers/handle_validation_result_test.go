@@ -465,7 +465,7 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 
 // TestHandleValidationResult_Shadow_Rejected_CarriesShadowTrue verifies that a
 // shadow release's validation_failed rejection carries shadow:true on
-// release.rejected:v1. This is the case remediation-agent's fix-verification
+// release.rejected:v1. This is the case agent-remediation's fix-verification
 // loop hinges on: without this signal, a failed shadow release would be
 // indistinguishable from a normal rejection and remediation would trigger a
 // fresh heal attempt on the release meant to verify one, looping forever.

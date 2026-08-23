@@ -19,7 +19,7 @@ COPY release-controller/go.mod release-controller/go.sum ./release-controller/
 COPY agent-chat/go.mod agent-chat/go.sum ./agent-chat/
 COPY remediation/go.mod remediation/go.sum ./remediation/
 COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
-COPY remediation-agent/go.mod remediation-agent/go.sum ./remediation-agent/
+COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
 
 # Download dependencies with cache
 RUN --mount=type=cache,target=/go/pkg/mod \

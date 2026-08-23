@@ -1,6 +1,6 @@
 package event
 
-// PROpened mirrors the remediation.pr_opened:v1 wire payload remediation-agent
+// PROpened mirrors the remediation.pr_opened:v1 wire payload agent-remediation
 // emits when an operator opens a fix PR from a proposal.
 type PROpened struct {
 	ProposalID string `json:"proposal_id"`

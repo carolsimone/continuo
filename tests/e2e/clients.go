@@ -11,7 +11,7 @@ import (
 	awscreds "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
-	remediationv1 "github.com/carolsimone/continuo/remediation-agent/api/remediation/v1"
+	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	statev1 "github.com/carolsimone/continuo/state/proto/state/v1"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -26,7 +26,7 @@ import (
 type testClients struct {
 	orchestratorClient     orchestratorv1.OrchestratorQueryClient
 	stateClient            statev1.StateServiceClient
-	remediationAgentClient remediationv1.RemediationProposalsClient
+	agentRemediationClient remediationv1.RemediationProposalsClient
 	redisClient            *goredis.Client
 	neo4jDriver            neo4jdriver.DriverWithContext
 	executorDB             *sqlx.DB
@@ -36,7 +36,7 @@ type testClients struct {
 	releaseDB              *sqlx.DB
 	dbtDB                  *sqlx.DB
 	remediationDB          *sqlx.DB
-	remediationAgentDB     *sqlx.DB
+	agentRemediationDB     *sqlx.DB
 	s3Client               *s3.Client
 	releaseBase            string
 	logger                 *slog.Logger
@@ -52,7 +52,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	// Get hosts from environment (use service names for docker-compose)
 	orchestratorHost := getEnv("ORCHESTRATOR_HOST", "orchestrator")
 	stateHost := getEnv("STATE_HOST", "state")
-	remediationAgentHost := getEnv("REMEDIATION_AGENT_HOST", "remediation-agent")
+	agentRemediationHost := getEnv("AGENT_REMEDIATION_HOST", "agent-remediation")
 	redisHost := getEnv("REDIS_HOST", "redis")
 	neo4jHost := getEnv("NEO4J_HOST", "neo4j")
 	pgHost := getEnv("POSTGRES_HOST", "postgres")
@@ -72,12 +72,12 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	)
 	require.NoError(t, err, "Failed to connect to state service")
 
-	// Setup remediation-agent gRPC client (RemediationProposals, port 50054)
-	remediationAgentConn, err := grpc.NewClient(
-		fmt.Sprintf("%s:50054", remediationAgentHost),
+	// Setup agent-remediation gRPC client (RemediationProposals, port 50054)
+	agentRemediationConn, err := grpc.NewClient(
+		fmt.Sprintf("%s:50054", agentRemediationHost),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to connect to remediation-agent service")
+	require.NoError(t, err, "Failed to connect to agent-remediation service")
 
 	// Setup Redis client
 	redisClient := goredis.NewClient(&goredis.Options{
@@ -102,12 +102,12 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
 	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
 	remediationDB := connectPostgres(t, pgHost, "continuo_remediation")
-	remediationAgentDB := connectPostgres(t, pgHost, "continuo_remediation_agent")
+	agentRemediationDB := connectPostgres(t, pgHost, "continuo_agent_remediation")
 
 	return &testClients{
 		orchestratorClient:     orchestratorv1.NewOrchestratorQueryClient(orchestratorConn),
 		stateClient:            statev1.NewStateServiceClient(stateConn),
-		remediationAgentClient: remediationv1.NewRemediationProposalsClient(remediationAgentConn),
+		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
 		redisClient:            redisClient,
 		neo4jDriver:            neo4jDriver,
 		executorDB:             executorDB,
@@ -117,7 +117,7 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		releaseDB:              releaseDB,
 		dbtDB:                  dbtDB,
 		remediationDB:          remediationDB,
-		remediationAgentDB:     remediationAgentDB,
+		agentRemediationDB:     agentRemediationDB,
 		s3Client:               newLocalstackS3Client(),
 		releaseBase:            getEnv("RELEASE_CONTROLLER_BASE", "http://release-controller:8088"),
 		logger:                 logger,
@@ -168,7 +168,7 @@ func (c *testClients) close(ctx context.Context) {
 	_ = c.releaseDB.Close()
 	_ = c.dbtDB.Close()
 	_ = c.remediationDB.Close()
-	_ = c.remediationAgentDB.Close()
+	_ = c.agentRemediationDB.Close()
 }
 
 // getEnv returns environment variable or default value

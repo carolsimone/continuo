@@ -18,7 +18,7 @@ COPY migration/k8s /flyway/sql/k8s
 COPY migration/release /flyway/sql/release
 COPY migration/agent_chat /flyway/sql/agent_chat
 COPY migration/remediation /flyway/sql/remediation
-COPY migration/remediation_agent /flyway/sql/remediation_agent
+COPY migration/agent_remediation /flyway/sql/agent_remediation
 
 # Non-recursive: only the /flyway directory entry needs to be group-writable
 # so Flyway (WORKDIR /flyway) can create its report files there. Everything

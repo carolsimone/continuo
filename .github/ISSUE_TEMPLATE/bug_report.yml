@@ -38,7 +38,7 @@ body:
         - k8s-controller
         - release-controller
         - remediation
-        - remediation-agent
+        - agent-remediation
         - agent-chat
         - manifest-controller
         - ui

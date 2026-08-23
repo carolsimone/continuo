@@ -70,7 +70,7 @@ manifest-controller|manifest-controller/|manifest-controller/Dockerfile.prod|man
 release-controller|release-controller/|release-controller/Dockerfile.prod|.|1
 agent-chat|agent-chat/|agent-chat/Dockerfile.prod|.|1
 remediation|remediation/|remediation/Dockerfile.prod|.|1
-remediation-agent|remediation-agent/|remediation-agent/Dockerfile.prod|.|1
+agent-remediation|agent-remediation/|agent-remediation/Dockerfile.prod|.|1
 migrations|db/|db/Dockerfile.migrate|db|0
 s3-sidecar|s3-sidecar/|s3-sidecar/Dockerfile|s3-sidecar|0
 stream-reaper|pkg/cmd/stream-reaper/|pkg/cmd/stream-reaper/Dockerfile|pkg|1"

@@ -1,6 +1,6 @@
 // Package main is a deterministic OpenAI-compatible server used in e2e tests.
 // It listens on :9100 and responds to POST /v1/chat/completions with scripted
-// responses so the agent-chat and remediation-agent openai adapters can be
+// responses so the agent-chat and agent-remediation openai adapters can be
 // exercised without a real LLM.
 //
 // Routing logic (evaluated in order):
@@ -8,7 +8,7 @@
 //  1. propose_fix mode: when the request body contains a tool named "propose_fix"
 //     in its tools array, the server returns a NON-STREAMING (stream:false) JSON
 //     response with choices[0].message.tool_calls[0] for propose_fix. This is
-//     what the remediation-agent's openai adapter expects. The remediation-agent
+//     what the agent-remediation's openai adapter expects. The agent-remediation
 //     sends three propose_fix variants that share the tool name but differ in
 //     their parameter schema, so the stub routes on the declared parameters:
 //     compile (target_file) → target_file + corrected proposed_content; seed
@@ -105,7 +105,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// propose_fix mode: when the request tools include propose_fix, return a
-	// non-streaming JSON completion. The remediation-agent openai adapter sends
+	// non-streaming JSON completion. The agent-remediation openai adapter sends
 	// stream:false and parses choices[0].message.tool_calls[0].function.
 	// Branch on the user-content marker to distinguish Step-1 (candidate SQL)
 	// from Step-2 (real source fix via stub-github).
@@ -223,7 +223,7 @@ select 1 as id
 const seedFixContent = "id,name\n1,\"a,b\"\n"
 
 // step2Marker is the string present in the user message when the
-// remediation-agent sends a Step-2 (real-source fix) request. It is produced
+// agent-remediation sends a Step-2 (real-source fix) request. It is produced
 // by prompt.AssembleSourceFix, which prefixes the user body with
 // "Original model source:".
 const step2Marker = "Original model source"
@@ -393,7 +393,7 @@ func lastUserContent(messages []message) string {
 
 // writeProposeFixResponse returns a deterministic, non-streaming OpenAI
 // chat-completions response that forces the propose_fix tool call. The
-// remediation-agent openai adapter reads choices[0].message.tool_calls[0]. The
+// agent-remediation openai adapter reads choices[0].message.tool_calls[0]. The
 // response fields are chosen from the tool's parameter set so each fix variant
 // gets a valid answer:
 //
@@ -442,7 +442,7 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 
 // writeToolCallCompletion writes a non-streaming chat-completions response
 // whose single choice forces one tool call with the given name and
-// JSON-encoded arguments — the shape the remediation-agent openai adapter
+// JSON-encoded arguments — the shape the agent-remediation openai adapter
 // parses (choices[0].message.tool_calls[0].function). Every forced-tool answer
 // this stub gives goes through here, so the envelope cannot drift between
 // them.

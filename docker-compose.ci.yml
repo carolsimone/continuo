@@ -51,12 +51,12 @@ services:
       cache_to:
         - "type=gha,scope=remediation,mode=max"
 
-  remediation-agent:
+  agent-remediation:
     build:
       cache_from:
-        - "type=gha,scope=remediation-agent"
+        - "type=gha,scope=agent-remediation"
       cache_to:
-        - "type=gha,scope=remediation-agent,mode=max"
+        - "type=gha,scope=agent-remediation,mode=max"
 
   agent-chat:
     build:

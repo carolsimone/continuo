@@ -14,7 +14,7 @@ flowchart LR
     UI[ui]
     AR[agent-chat]
     REM[remediation]
-    REMA[remediation-agent]
+    REMA[agent-remediation]
   end
 
   subgraph Storage
@@ -25,7 +25,7 @@ flowchart LR
     KCPG[(Postgres: k8s_outbox/message_processing)]
     AGPG[(Postgres: continuo_agent_chat)]
     REMPG[(Postgres: continuo_remediation)]
-    REMAGPG[(Postgres: continuo_remediation_agent)]
+    REMAGPG[(Postgres: continuo_agent_remediation)]
     S3[(S3/LocalStack)]
     K8S[(Kubernetes API)]
     R[(Redis)]
@@ -108,7 +108,7 @@ flowchart TD
   RC --> RREJ
   RREJ --> REM[remediation]
   REM --> REMREQ
-  REMREQ --> REMA[remediation-agent]
+  REMREQ --> REMA[agent-remediation]
   REMREQ --> OR[orchestrator]
   REMA --> REMPROP
   REMA --> PROPENED
@@ -171,7 +171,7 @@ flowchart TD
 | LLM agent conversations and tool execution | `agent-chat` | Postgres `continuo_agent_chat` (`threads`, `messages`, `pending_actions`) |
 | `topology_generation` counter and run-isolation snapshot | `orchestrator` | Postgres (`topology_state`) + Neo4j (`:TopologyRoot`, `Run`, `EXECUTES`) |
 | Failed-node triage and remediation triggers | `remediation` | Postgres `continuo_remediation` (`classification_decision`, `remediation_outbox`, `message_processing`) |
-| Fix proposals for healable dbt failures | `remediation-agent` | Postgres `continuo_remediation_agent` (`proposal`, `remediation_agent_outbox`, `message_processing`) |
+| Fix proposals for healable dbt failures | `agent-remediation` | Postgres `continuo_agent_remediation` (`proposal`, `remediation_agent_outbox`, `message_processing`) |
 
 ## Key Architectural Rules
 

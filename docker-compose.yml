@@ -79,11 +79,11 @@ services:
       - postgres
     tty: true
 
-  flyway-remediation-agent:
+  flyway-agent-remediation:
     image: flyway/flyway
-    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_remediation_agent -user=continuo_svc -password=continuo -connectRetries=30
+    command: migrate -url=jdbc:postgresql://postgres:5432/continuo_agent_remediation -user=continuo_svc -password=continuo -connectRetries=30
     volumes:
-      - ./db/migration/remediation_agent:/flyway/sql
+      - ./db/migration/agent_remediation:/flyway/sql
     depends_on:
       - postgres
     tty: true
@@ -163,7 +163,7 @@ services:
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./agent-chat:/app/agent-chat
-      - ./remediation-agent:/app/remediation-agent
+      - ./agent-remediation:/app/agent-remediation
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
       - ./config/schedules.yaml:/etc/continuo/schedules.yaml:ro
     networks:
@@ -238,7 +238,7 @@ services:
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./agent-chat:/app/agent-chat
-      - ./remediation-agent:/app/remediation-agent
+      - ./agent-remediation:/app/agent-remediation
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
       - ./config/dbt-commands.yaml:/etc/continuo/dbt-commands.yaml:ro
@@ -300,7 +300,7 @@ services:
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./agent-chat:/app/agent-chat
-      - ./remediation-agent:/app/remediation-agent
+      - ./agent-remediation:/app/agent-remediation
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock  # For testcontainers
     networks:
@@ -373,7 +373,7 @@ services:
       - ./tests/e2e:/app/tests/e2e
       - ./go.work:/app/go.work
       - ./agent-chat:/app/agent-chat
-      - ./remediation-agent:/app/remediation-agent
+      - ./agent-remediation:/app/agent-remediation
       - ./kubeconfig:/app/kubeconfig
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -443,15 +443,15 @@ services:
     networks:
       - default
 
-  remediation-agent:
+  agent-remediation:
     build:
       context: .
-      dockerfile: remediation-agent/Dockerfile.dev
-    container_name: remediation-agent
+      dockerfile: agent-remediation/Dockerfile.dev
+    container_name: agent-remediation
     depends_on:
       - postgres
       - redis
-      - flyway-remediation-agent
+      - flyway-agent-remediation
       - localstack
       - stub-llm
       - stub-github
@@ -461,13 +461,13 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_USER=continuo_svc
       - POSTGRES_PASSWORD=continuo
-      - POSTGRES_DB=continuo_remediation_agent
+      - POSTGRES_DB=continuo_agent_remediation
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=continuo
-      - REMEDIATION_AGENT_HTTP_PORT=8092
-      - REMEDIATION_AGENT_GRPC_PORT=50054
-      - REMEDIATION_AGENT_MAX_ATTEMPTS=3
+      - AGENT_REMEDIATION_HTTP_PORT=8092
+      - AGENT_REMEDIATION_GRPC_PORT=50054
+      - AGENT_REMEDIATION_MAX_ATTEMPTS=3
       - REMEDIATION_PR_POLL_INTERVAL=${REMEDIATION_PR_POLL_INTERVAL:-5s}
       - REMEDIATION_PR_OPENING_GRACE_PERIOD=${REMEDIATION_PR_OPENING_GRACE_PERIOD:-15s}
       - S3_BUCKET=continuo
@@ -491,10 +491,10 @@ services:
       - SHADOW_VERIFY_TIMEOUT=${SHADOW_VERIFY_TIMEOUT:-20m}
       - SHADOW_VERIFY_POLL_INTERVAL=${SHADOW_VERIFY_POLL_INTERVAL:-5s}
     volumes:
-      - ./remediation-agent/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
+      - ./agent-remediation/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
     ports:
       # Host port 8094 avoids collision with other services.
-      # The container-internal port remains 8092 (REMEDIATION_AGENT_HTTP_PORT).
+      # The container-internal port remains 8092 (AGENT_REMEDIATION_HTTP_PORT).
       - "8094:8092"
       - "50054:50054" # gRPC
     networks:
@@ -515,7 +515,7 @@ services:
     container_name: stub-github
     environment:
       # The working tree stub-github serves from GET /repos/{o}/{r}/tarball/{ref}.
-      # remediation-agent fetches a whole repository checkout there when it
+      # agent-remediation fetches a whole repository checkout there when it
       # repairs a python node, whose declaring contract yaml has no recorded
       # path and so has to be searched for across the tree.
       - REPO_FIXTURE_DIR=/fixtures/repo
@@ -563,7 +563,7 @@ services:
       - "50053:50053"
     volumes:
       - ./agent-chat:/app/agent-chat
-      - ./remediation-agent:/app/remediation-agent
+      - ./agent-remediation:/app/agent-remediation
       - ./pkg:/app/pkg
       - ./go.work:/app/go.work
     networks:
@@ -608,7 +608,7 @@ services:
       - ./pkg:/app/pkg
       - ./go.work:/app/go.work
       - ./agent-chat:/app/agent-chat
-      - ./remediation-agent:/app/remediation-agent
+      - ./agent-remediation:/app/agent-remediation
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - default
@@ -641,7 +641,7 @@ services:
       - AUTH_MODE=dev
       - AGENT_CHAT_GRPC_ADDR=agent-chat:50053
       - CHAT_BRIDGE_ENABLED=true
-      - REMEDIATION_GRPC_ADDR=remediation-agent:50054
+      - REMEDIATION_GRPC_ADDR=agent-remediation:50054
       - GITHUB_APP_ID=1
       - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY:-}
       - GITHUB_APP_INSTALLATION_ID=1

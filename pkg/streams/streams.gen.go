@@ -156,8 +156,8 @@ const (
 	RemediationReleaseRejected = "remediation-release-rejected"
 	// ExecutorReleaseRejected — executor-controller consumer group on release.rejected:v1.
 	ExecutorReleaseRejected = "executor-release-rejected"
-	// RemediationAgentRemediationRequested — remediation-agent consumer group on remediation.requested:v1.
-	RemediationAgentRemediationRequested = "remediation-agent-remediation-requested"
+	// AgentRemediationRemediationRequested — agent-remediation consumer group on remediation.requested:v1.
+	AgentRemediationRemediationRequested = "agent-remediation-remediation-requested"
 	// OrchestratorRemediationRequestedRejections — orchestrator consumer group on remediation.requested:v1.
 	OrchestratorRemediationRequestedRejections = "orchestrator-remediation-requested-rejections"
 	// OrchestratorRemediationPrOpenedProposals — orchestrator consumer group on remediation.pr_opened:v1.
