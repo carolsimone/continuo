@@ -782,6 +782,14 @@ helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
 `llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-4-5`. For
 OpenAI, add `--set llm.provider=openai --set llm.model=<model>`.
 
+Then restart the agent so it picks the credentials up — the upgrade changes
+only the Secret, and a Secret change alone does not restart the pod that
+reads it at startup:
+
+```bash
+kubectl -n continuo rollout restart deploy/agent-remediation
+```
+
 Re-release the broken finance with a new `release_id` and the pushed
 `commit_sha`. When it is rejected this time, the proposed fix appears in the UI
 against the failed release.
