@@ -7,14 +7,15 @@ independent dbt projects into one dependency graph, validating a change against
 the whole downstream lineage before it reaches production, healing a broken
 model — only becomes visible once there are real dbt projects on it.
 
-This guide puts three of them there.
+This guide puts four of them there.
 
 By the end you will have built four independent projects into container images —
-three dbt, one python — released them into a local Continuo one at a time, watched the platform
-discover a dependency that crosses project boundaries and that none of the
-projects declares, run the resulting graph from the web UI, and then broken it
-on purpose to watch validation refuse the change while production keeps serving
-the last version that worked.
+three dbt, one python — released them into a local Continuo, watched the platform
+discover dependencies that cross project boundaries and that none of the
+projects declares, run the resulting graph from the web UI, added a brand-new
+model and watched validation prove it against production before promoting it,
+and then broken the graph on purpose to watch validation refuse the change
+while production keeps serving the last version that worked.
 
 Everything runs on your machine. Nothing is deployed anywhere, and no step
 needs a cloud account.
@@ -44,21 +45,21 @@ colima start --cpu 4 --memory 8 --disk 60
 ```
 
 **A GitHub account.** You will fork the example dbt projects so that the code
-you release is yours — which matters from chapter 8 onward, where Continuo reads
+you release is yours — which matters in chapter 10, where Continuo reads
 your source to explain (and then propose a fix for) a failure.
 
-**Credentials: none, until chapter 9.** Chapters 2 through 8 need no API keys
-and no secrets of any kind. The last chapter, where an LLM proposes a fix for the
+**Credentials: none, until chapter 10.** Every other chapter needs no API keys
+and no secrets of any kind. Chapter 10, where an LLM proposes a fix for the
 model you broke, is the exception:
 
-| For chapter 9 only | What it is |
+| For chapter 10 only | What it is |
 |---|---|
 | An LLM API key | Anthropic (the default) or OpenAI |
 | A GitHub personal access token | Read-only, fine-grained, `Contents: Read` on your fork — the agent reads the failing model's source through it |
 | *(optional)* A GitHub App | Only if you want the UI's "Create PR" button to actually open the pull request rather than just show you the proposed diff |
 
-If you do not want to set those up, stop after chapter 8. It is a complete
-story on its own.
+If you do not want to set those up, skip chapter 10. The rest is a complete
+story without it.
 
 **Time.** Budget about an hour end to end, most of it waiting for image pulls and
 for validation Jobs to run.
@@ -110,7 +111,7 @@ open http://localhost:8090
 Log in with `admin@example.com` / `password`.
 
 The `/etc/hosts` line exists because logging in uses OIDC, which requires that
-your browser and `ui-service` agree on one issuer hostname. `ui-service` reaches
+your browser and the `ui` service agree on one issuer hostname. `ui` reaches
 the identity provider over in-cluster DNS at `continuo-dex`; your browser cannot
 resolve that name at all. One loopback line bridges the two. If you cannot use
 `sudo`, [the chart's README](../deploy/continuo/README.md) shows how to do it
@@ -129,8 +130,8 @@ git clone https://github.com/<your-username>/continuo-dbt-demo.git
 cd continuo-dbt-demo
 ```
 
-Fork rather than clone the original, because from chapter 8 onward the code you
-release has to be code you can change and push.
+Fork rather than clone the original, because the code you release has to be
+code you can change — and, in chapter 10, push.
 
 The repository holds seven services under `services/`. Three of them —
 `service-1`, `service-2`, `service-3` — are test scaffolding lifted from
@@ -317,14 +318,14 @@ carries no manifest: Continuo compiles your project itself, using the same image
 it will later run your models with, so what gets analysed is exactly what will
 execute.
 
-**`parsing`** — `manifest-controller` read that manifest and worked out the
+**`parsing`** — `topology-controller` read that manifest and worked out the
 shape of your project: which nodes exist, what each one reads, and what its
 content hashes to. Cross-project dependencies are resolved here by parsing the
 compiled SQL with sqlglot — this is the step that discovers `FROM
 analytics.fx_transactions_eur` is an edge in the graph.
 
 **`validating` → `promoted`** — bootstrap skips the actual validation, so these
-are the same instant. Chapter 6 is where this gets interesting.
+are the same instant. Chapter 8 is where validation happens for real.
 
 Then, on promotion, Continuo materialises the release's seeds into production.
 
@@ -338,22 +339,43 @@ exist yet. Nothing is broken; the graph simply reflects what has been released.
 
 ---
 
-## 6. The remaining releases: validated
+## 6. The remaining releases: bootstrap them all
 
-**Order matters from here.** A release is validated against the topology that
-exists when it runs, so a service must be released *after* whatever it reads.
-`finance` reads a table `marketing` produces, so marketing goes first. Release
-finance before it and validation correctly refuses the release with
-`relation "analytics.marketing_cost_per_user" does not exist` — Continuo doing
-its job, not a fault.
+The obvious next step — release `marketing` normally and let it validate — does
+not work yet, and the reason teaches you how validation actually operates. Two
+rules collide on a first install:
 
-The order is **marketing → finance → service-py**.
+- **Validation clones what a change reads from production.** To prove a release
+  against real structure, Continuo builds a temporary candidate schema by
+  cloning the release's unchanged upstream tables from production — so those
+  tables must already physically exist.
+- **Promotion materialises only seeds.** Models become real tables when a *run*
+  executes them (chapter 7), not at promotion.
 
-Releases also run a **FIFO queue**: one is active at a time, and each terminal
+You have promoted `core`, but nothing has run: core's *models* do not exist as
+tables yet. Validate any service that reads them and the clone step fails with
+`relation "analytics.daily_transactions" does not exist` — Continuo refusing to
+prove a change against tables that are not there. No release order escapes
+this, because the demo's services read from each other in both directions
+(core ↔ finance, core ↔ service-py): whichever service you validate first needs
+another one's models materialised, and that needs a run.
+
+So a cold install is seeded the way production was born: **every service's
+first release is a bootstrap.** Promote all four without validation, run the
+graph once so every model physically exists, and from then on validation has a
+production to clone from. This chapter is the last time you will pass
+`"bootstrap": true`; every release after it is validated for real.
+
+Order among the remaining three does not matter. Every release re-parses the
+*full* set of promoted manifests plus its own, so the edge between two services
+appears as soon as both have been released — whichever release comes last
+completes the DAG.
+
+Releases run a **FIFO queue**: one is active at a time, and each terminal
 outcome advances the next. Post them one at a time and wait for each to reach
 `promoted`; a release that never finishes blocks everything behind it.
 
-Start with `marketing`, this time with `bootstrap: false`:
+`marketing` first:
 
 ```bash
 curl -s -X POST http://localhost:8088/releases \
@@ -362,64 +384,16 @@ curl -s -X POST http://localhost:8088/releases \
     "release_id": "rel-marketing-v1",
     "service": "marketing",
     "image_tag": "v1",
-    "bootstrap": false,
+    "bootstrap": true,
     "repo": "<your-username>/continuo-dbt-demo",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
 
-This one takes longer and passes through an extra stage:
-
-```
-received → compiling → seed_building → validating → promoted
-```
-
-When it lands, look at what was validated:
-
-```bash
-curl -s http://localhost:8088/releases/rel-finance-v1 | jq '.validation_node_ids'
-```
-
-```json
-[
-  "analytics.daily_transactions",
-  "analytics.fx_transactions_eur",
-  "analytics.operation_cost_per_user_view",
-  "analytics.operational_cost_per_user",
-  "analytics.operational_costs_monthly",
-  "analytics.seed_card_transactions",
-  "analytics.seed_fx_transactions",
-  "analytics.seed_users"
-]
-```
-
-**Read that list again.** You released `finance`. Continuo validated eight nodes,
-and `analytics.daily_transactions` is not one of finance's — it belongs to
-`core`. It was pulled in because it reads `analytics.fx_transactions_eur`, which
-this release changes. Core's seeds are in the list too, as the upstream the
-change depends on.
-
-Nobody declared that relationship. Both projects were written independently, and
-neither mentions the other in its dbt configuration. Continuo found it in the
-SQL and worked out that changing finance means re-proving core.
-
-That is the difference between "the release passed its own tests" and "the
-release does not break anything downstream of it, in any project".
-
-### How it proves that
-
-`seed_building` and `validating` are the blue/green mechanism. Continuo creates
-a temporary candidate schema, builds the release's seeds into it, rewrites every
-in-scope model's compiled SQL to read from that schema instead of production,
-and runs it there. The lineage is checked against the result. Production is
-untouched throughout, and the candidate schema is torn down afterwards. No data
-is copied — only schema-level structure.
-
-Only if all of that passes does the new image become the production image for
-that service.
-
-Now release `finance` the same way, with `release_id` `rel-finance-v1` and
-`service: finance`. Once it promotes, all three dbt projects are live.
+Like core's, it promotes in about half a minute. Release `finance` the same
+way, with `release_id` `rel-finance-v1` and `service: finance`. Once it
+promotes, all three dbt projects are live — and the UI now shows the
+cross-project edges from chapter 3, discovered from the SQL alone.
 
 ### The fourth service is not dbt
 
@@ -432,7 +406,50 @@ your CD and uploaded to object storage *before* the release is posted.
 This is exactly what the demo repo's CI does, and doing it by hand here is the
 point: it is the same sequence your own CD will run.
 
-First build the contract from the service's `contracts/` directory, using the
+**One edit first.** `service-py` declares two nodes. `py_daily_kpis` runs a
+Python script against the warehouse. `demo_orders_csv` is a *python-csv* node:
+no script at all — the runtime loads a CSV file straight from object storage
+and writes it through as a table. A csv node's contract therefore names an
+object in *an* object store, and as shipped it names one in the demo author's:
+
+```yaml
+# services/service-py/contracts/demo_orders_csv.yml
+    reads:
+      csv: s3://continuo-dev/static-files/demo/orders.csv
+```
+
+Your install has no `continuo-dev` bucket. Point it at your own — this is your
+fork, and the file is meant to be yours:
+
+```yaml
+    reads:
+      csv: s3://continuo/static-files/demo/orders.csv
+```
+
+Then put a file there. Your install's object store is the bundled MinIO;
+port-forward it and drive it with the AWS CLI:
+
+```bash
+kubectl -n continuo port-forward svc/continuo-minio 9000:9000 &
+
+export AWS_ACCESS_KEY_ID=$(kubectl -n continuo get secret continuo-minio \
+  -o jsonpath='{.data.access-key-id}' | base64 -d)
+export AWS_SECRET_ACCESS_KEY=$(kubectl -n continuo get secret continuo-minio \
+  -o jsonpath='{.data.secret-access-key}' | base64 -d)
+export AWS_DEFAULT_REGION=us-east-1
+
+cat > /tmp/orders.csv <<'EOF'
+order_id,customer,amount
+1001,acme,120.50
+1002,globex,80.00
+1003,initech,42.25
+EOF
+
+aws --endpoint-url http://localhost:9000 \
+  s3 cp /tmp/orders.csv s3://continuo/static-files/demo/orders.csv
+```
+
+Now build the contract from the service's `contracts/` directory, using the
 runtime CLI the release gate uses:
 
 ```bash
@@ -447,20 +464,11 @@ continuo-runtime merge services/service-py/contracts \
   --out /tmp/contract.yaml
 ```
 
-Then upload it to the canonical key, `<service>/<release_id>/contract.yaml`.
-The local install's object storage is the bundled MinIO, so port-forward it and
-point the AWS CLI at it — the same `aws s3 cp` your CD runs, aimed somewhere
-else:
+Then upload it to the canonical key, `<service>/<release_id>/contract.yaml` —
+the same `aws s3 cp` your CD runs, aimed at the MinIO you forwarded a moment
+ago:
 
 ```bash
-kubectl -n continuo port-forward svc/continuo-minio 9000:9000 &
-
-export AWS_ACCESS_KEY_ID=$(kubectl -n continuo get secret continuo-minio \
-  -o jsonpath='{.data.access-key-id}' | base64 -d)
-export AWS_SECRET_ACCESS_KEY=$(kubectl -n continuo get secret continuo-minio \
-  -o jsonpath='{.data.secret-access-key}' | base64 -d)
-export AWS_DEFAULT_REGION=us-east-1
-
 aws --endpoint-url http://localhost:9000 \
   s3 cp /tmp/contract.yaml s3://continuo/service-py/rel-py-v1/contract.yaml
 ```
@@ -475,7 +483,7 @@ curl -s -X POST http://localhost:8088/releases \
     "release_id": "rel-py-v1",
     "service": "service-py",
     "image_tag": "v1",
-    "bootstrap": false,
+    "bootstrap": true,
     "kind": "python",
     "repo": "<your-username>/continuo-dbt-demo",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
@@ -546,9 +554,94 @@ One table, two halves. The `card` rows came from core's own seed through a
 in a different dbt project, built by a different image, released separately —
 reached by nothing more than `FROM analytics.fx_transactions_eur`.
 
+This run also unlocked validation. Every model in the graph now exists as a
+real production table — which is exactly what the next chapter's release will
+be proven against.
+
 ---
 
-## 8. Break it on purpose
+## 8. Add a model, watch validation work
+
+Everything on the platform so far went in through the bootstrap door. Now do
+what a team does on an ordinary Tuesday: add one model and release it — this
+time with validation on.
+
+The model computes each marketing channel's return on spend, and its input is
+`ltv_per_user` — a model that belongs to **finance**. Create
+`services/marketing/models/channel_roi.sql`:
+
+```sql
+{{ config(materialized='table', tags=['daily']) }}
+
+-- Per-channel return on marketing spend: lifetime contribution earned per
+-- euro spent. analytics.ltv_per_user is produced by the finance project and
+-- is referenced by its raw schema-qualified name (see "the four rules").
+SELECT
+    channel,
+    COUNT(*)                                   AS users,
+    ROUND(SUM(contribution_margin_eur), 2)     AS contribution_eur,
+    ROUND(SUM(marketing_cost_eur), 2)          AS spend_eur,
+    ROUND(SUM(contribution_margin_eur) / NULLIF(SUM(marketing_cost_eur), 0), 2)
+        AS roi
+FROM analytics.ltv_per_user
+GROUP BY channel
+```
+
+Build it, load it, release it — from here on, `bootstrap` is `false`:
+
+```bash
+docker build -t marketing:v2 services/marketing
+kind load docker-image marketing:v2 --name continuo
+
+curl -s -X POST http://localhost:8088/releases \
+  -H 'content-type: application/json' \
+  -d '{
+    "release_id": "rel-marketing-v2",
+    "service": "marketing",
+    "image_tag": "v2",
+    "bootstrap": false,
+    "repo": "<your-username>/continuo-dbt-demo",
+    "commit_sha": "'"$(git rev-parse HEAD)"'"
+  }' | jq
+```
+
+This release takes longer than the bootstraps and walks the stages they
+skipped:
+
+```
+received → compiling → seed_building → validating → promoted
+```
+
+### What validation actually did
+
+`seed_building` and `validating` are the blue/green mechanism. Continuo created
+a temporary candidate schema, built the release's seeds into it, **cloned the
+unchanged upstream tables the change reads from production** — this is why
+chapter 6 had to bootstrap — rewrote the new model's compiled SQL to read from
+that schema instead of production, and ran it there. Production was untouched
+throughout, and the candidate schema was torn down afterwards. No data is
+copied — only schema-level structure.
+
+Look at what was in scope:
+
+```bash
+curl -s http://localhost:8088/releases/rel-marketing-v2 | jq '.validation_node_ids'
+```
+
+The list contains your new node and the lineage it depends on — including
+`analytics.ltv_per_user`, which belongs to finance. You changed marketing;
+Continuo worked out from the SQL that proving the change requires another
+team's model, cloned its production structure, and ran your model against it.
+Nobody declared that relationship anywhere.
+
+Only because all of that passed did `marketing:v2` become marketing's
+production image. In the UI, the graph now shows `channel_roi` downstream of
+finance's `ltv_per_user` — a node that exists but has never run, which the last
+chapter fixes.
+
+---
+
+## 9. Break it on purpose
 
 Everything so far has worked. The point of Continuo is what happens when
 something doesn't.
@@ -604,9 +697,9 @@ Now check production:
 curl -s http://localhost:8088/current-prod | jq '.current_prod_release_id'
 ```
 
-Still `rel-finance-v1`. Production never saw `finance:v2`. The `daily` schedule
-will keep running the last version that passed, indefinitely, and a scheduled
-run tonight will produce correct data.
+Still `rel-marketing-v2`, the release chapter 8 promoted. Production never saw
+`finance:v2`. The `daily` schedule will keep running the last version that
+passed, indefinitely, and a scheduled run tonight will produce correct data.
 
 This is the part that is hard to get any other way. In a conventional setup this
 change merges, deploys, and breaks `core` the next time it runs — and the person
@@ -616,19 +709,20 @@ reached production, in another team's model they had never heard of.
 
 ---
 
-## 9. Let the agent propose a fix
+## 10. Let the agent propose a fix
 
 *This chapter needs the credentials from chapter 1. Everything above did not.*
 
 A rejected release tells you something broke. Continuo can also try to fix it.
 
-`remediation` classifies the rejection, and for a fixable one `remediation-agent`
-reads the failing model's source from GitHub, asks an LLM for a fix, and surfaces
+`remediation` classifies the rejection, and for a fixable one `agent-remediation`
+reads the failing model's source, asks an LLM for a fix, and surfaces
 the proposal for a human to approve. It never writes to your repository on its
 own — the output is a diff you review, and a pull request you choose to open.
 
-Because it reads the source from GitHub, it needs the broken code to exist
-there. Commit and push your change to your fork, and use that commit:
+The proposal is anchored to a commit in your repository, so the broken code
+needs to exist there. Commit and push your change to your fork, and use that
+commit:
 
 ```bash
 git add services/finance && git commit -m "break amount_eur" && git push
@@ -656,7 +750,35 @@ token is enough to *see* the proposal, but not to create a PR with it.
 
 ---
 
-## 10. Clean up
+## 11. Run it again
+
+One green run proved the graph you bootstrapped. Close the loop by proving the
+graph as it stands now — new node included, broken release excluded.
+
+Open the UI, pick the `daily` schedule, and press **▶ Trigger run** again.
+
+The run picks up `channel_roi` as just another node: downstream of finance's
+`ltv_per_user`, so it is dispatched after it, across the same four services.
+The rejected `finance:v2` is nowhere in it — production still runs the finance
+that passed.
+
+When it finishes green, read your new model's answer:
+
+```bash
+PGPW=$(kubectl -n continuo get secret continuo-postgresql -o jsonpath='{.data.password}' | base64 -d)
+kubectl -n continuo exec continuo-postgresql-0 -- env PGPASSWORD="$PGPW" \
+  psql -U continuo -d continuo_dbt -c \
+  "select channel, users, spend_eur, roi from analytics.channel_roi order by roi desc"
+```
+
+That is the whole loop: four projects released independently, one graph derived
+from their SQL, a new model validated against production before it could touch
+it, a bad change stopped at the same gate, and a run that crosses team
+boundaries in the right order every time.
+
+---
+
+## 12. Clean up
 
 ```bash
 kind delete cluster --name continuo
@@ -665,7 +787,7 @@ kind delete cluster --name continuo
 That removes everything: the cluster, all Continuo services, both databases, and
 every image you side-loaded. The only thing left on your machine is the images in
 your local Docker daemon, which `docker image rm core:v1 finance:v1 finance:v2
-marketing:v1` clears.
+marketing:v1 marketing:v2 service-py:v1` clears.
 
 ---
 
@@ -723,6 +845,13 @@ aws --endpoint-url http://localhost:9000 s3 ls \
 **A release sits in `compiling` and then rejects with `compile_failed`.** Your
 dbt project does not compile. The most common cause is a `{{ ref() }}` pointing
 at a model in a *different* service — see the cross-project rule in chapter 3.
+
+**A validated release is rejected with `relation "analytics.…" does not
+exist`.** The release was validated before the tables it reads physically
+existed — usually a cold install where a service was released with
+`"bootstrap": false` before the first full run. Bootstrap every service first
+(chapter 6), run the DAG once (chapter 7), then re-release with a new
+`release_id`.
 
 **Everything is slow, or pods are being OOM-killed.** The bundled install asks
 for roughly 4 GiB in resource requests before your dbt Jobs even start. Give the
