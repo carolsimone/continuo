@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
   <defs>
-    <radialGradient id="bgGlow" cx="75%" cy="35%" r="80%">
+    <radialGradient id="bgGlow" cx="70%" cy="40%" r="80%">
       <stop offset="0%" stop-color="#1E1B4B" stop-opacity="0.6"/>
       <stop offset="60%" stop-color="#0B0F19" stop-opacity="1"/>
       <stop offset="100%" stop-color="#07090E" stop-opacity="1"/>
@@ -30,41 +30,27 @@
       <feDropShadow dx="0" dy="10" stdDeviation="20" flood-color="#06B6D4" flood-opacity="0.18"/>
     </filter>
   </defs>
-
   <rect width="1280" height="640" fill="url(#bgGlow)"/>
   <rect width="1280" height="640" fill="url(#grid)"/>
-
   <g transform="translate(100, 145)">
-    <rect x="0" y="0" width="250" height="30" rx="15" fill="#1E293B" stroke="#334155" stroke-width="1"/>
+    <rect x="0" y="0" width="225" height="30" rx="15" fill="#1E293B" stroke="#334155" stroke-width="1"/>
     <circle cx="15" cy="15" r="4" fill="#06B6D4"/>
-    <text x="28" y="20" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="12" font-weight="600" letter-spacing="0.06em">EVENT-DRIVEN ORCHESTRATION</text>
-
+    <text x="28" y="20" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="12" font-weight="600" letter-spacing="0.06em">AGENTIC REMEDIATION PLATFORM</text>
     <text x="0" y="95" fill="#F8FAFC" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="76" font-weight="800" letter-spacing="-0.03em">continuo</text>
-
-    <text x="0" y="146" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="23" font-weight="500">
-      Event-driven, zero-DAG data orchestration.
-    </text>
-
-    <text x="0" y="182" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="16" font-weight="400">
-      Infers DAGs from Python &amp; dbt, proposing deploy fixes with built-in chat assistance.
-    </text>
-
+    <text x="0" y="146" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="23" font-weight="500">Control plane for data pipelines with agentic remediation.</text>
+    <text x="0" y="182" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif" font-size="16" font-weight="400">Orchestrates dbt and Python, stitching one dependency graph, and healing broken pipelines via LLM.</text>
     <g transform="translate(0, 235)">
-      <rect x="0" y="0" width="145" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
-      <text x="14" y="22" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">⚡ Event-Driven</text>
-
-      <rect x="157" y="0" width="168" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
-      <text x="171" y="22" fill="#A78BFA" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">📦 Code-Inferred DAG</text>
-
-      <rect x="337" y="0" width="180" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
-      <text x="351" y="22" fill="#818CF8" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">🛠️ Post-CI Fix Advice</text>
-
-      <rect x="529" y="0" width="145" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
-      <text x="543" y="22" fill="#34D399" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">💬 Chat Assistant</text>
+      <rect x="0" y="0" width="168" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <text x="14" y="22" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">⚡ Code-Inferred DAG</text>
+      <rect x="180" y="0" width="175" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <text x="194" y="22" fill="#A78BFA" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">🤖 Agentic Remediation</text>
+      <rect x="367" y="0" width="180" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <text x="381" y="22" fill="#818CF8" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">🛠️ Blue/Green Validation</text>
+      <rect x="559" y="0" width="145" height="34" rx="8" fill="#111827" stroke="#1F2937" stroke-width="1"/>
+      <text x="573" y="22" fill="#34D399" font-family="-apple-system, BlinkMacSystemFont, 'JetBrains Mono', monospace" font-size="13" font-weight="500">💬 Chat Assistant</text>
     </g>
   </g>
-
-  <g transform="translate(800, 140) scale(0.95)" filter="url(#markGlow)">
+  <g transform="translate(800, 140) scale(0.95)" filter="markGlow">
     <path d="M 318 190 L 378 168 A 148 148 0 0 0 314 92 L 282 146 A 84 84 0 0 1 318 190 Z" fill="url(#gBlock1)"/>
     <path d="M 268 138 L 290 79 A 148 148 0 0 0 166 89 L 198 144 A 84 84 0 0 1 268 138 Z" fill="url(#gBlock2)"/>
     <path d="M 186 153 L 145 104 A 148 148 0 0 0 94 192 L 157 204 A 84 84 0 0 1 186 153 Z" fill="url(#gBlock3)"/>
