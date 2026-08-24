@@ -98,7 +98,7 @@ func TestBuildPythonPodSpec_OmitsDbtPlumbing(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
 	t.Setenv("S3_BUCKET", "continuo-artifacts")
 	t.Setenv("AWS_ACCESS_KEY_ID", "key")
-	t.Setenv("S3_ENDPOINT_URL", "http://localstack:4566")
+	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
 
 	spec, err := buildPythonPodSpec(pythonParams())
 	require.NoError(t, err)
@@ -240,7 +240,7 @@ func csvParams() JobParams {
 // not just the keys present.
 func TestBuildPythonPodSpec_CsvGetsS3Credentials(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
-	t.Setenv("S3_ENDPOINT_URL", "http://localstack:4566")
+	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
 	t.Setenv("AWS_ACCESS_KEY_ID", "csv-access-key")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "csv-secret-key")
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-2")
@@ -249,7 +249,7 @@ func TestBuildPythonPodSpec_CsvGetsS3Credentials(t *testing.T) {
 	require.NoError(t, err)
 
 	env := envMap(spec.Containers[0].Env)
-	assert.Equal(t, "http://localstack:4566", env["S3_ENDPOINT_URL"])
+	assert.Equal(t, "http://minio:9000", env["S3_ENDPOINT_URL"])
 	assert.Equal(t, "csv-access-key", env["AWS_ACCESS_KEY_ID"])
 	assert.Equal(t, "csv-secret-key", env["AWS_SECRET_ACCESS_KEY"])
 	assert.Equal(t, "us-east-2", env["AWS_DEFAULT_REGION"])
@@ -260,7 +260,7 @@ func TestBuildPythonPodSpec_CsvGetsS3Credentials(t *testing.T) {
 // since its contract files travel inside the image itself.
 func TestBuildPythonPodSpec_ModelStillGetsNoS3Credentials(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
-	t.Setenv("S3_ENDPOINT_URL", "http://localstack:4566")
+	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
 	t.Setenv("AWS_ACCESS_KEY_ID", "csv-access-key")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "csv-secret-key")
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-2")
@@ -308,7 +308,7 @@ func TestCreateQueryJob_PythonModel_UsesPythonPodSpec(t *testing.T) {
 // runtime=python label, and additionally get S3 credentials on the container.
 func TestCreateQueryJob_PythonCsv_UsesPythonPodSpec(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "warehouse-conn")
-	t.Setenv("S3_ENDPOINT_URL", "http://localstack:4566")
+	t.Setenv("S3_ENDPOINT_URL", "http://minio:9000")
 	t.Setenv("AWS_ACCESS_KEY_ID", "csv-access-key")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "csv-secret-key")
 	t.Setenv("AWS_DEFAULT_REGION", "us-east-2")

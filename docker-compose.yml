@@ -180,7 +180,7 @@ services:
       - postgres
       - redis
       - neo4j
-      - localstack
+      - minio
     environment:
       # Redis
       - REDIS_HOST=redis
@@ -213,15 +213,15 @@ services:
       - DBT_COMMANDS_CONFIG_PATH=/etc/continuo/dbt-commands.yaml
       # S3 credentials forwarded into both the validation pod (which fetches
       # CANDIDATE_SQL_URI itself) and the compile pod's s3-sidecar (manifest upload).
-      # Points at LocalStack on the compose network. NOTE: like POSTGRES_HOST above,
+      # Points at MinIO on the compose network. NOTE: like POSTGRES_HOST above,
       # this is a compose-network DNS name — it serves this process's own use and
       # is NOT resolvable from in-kind pods. The e2e dispatches via the kind deployment
       # (tests/e2e/k8s/executor-controller-deployment.yaml), which supplies the
       # docker-bridge-IP equivalents that in-kind pods can reach.
-      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_ENDPOINT_URL=http://minio:9000
       - S3_BUCKET=continuo
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
       # Application
       - HTTP_PORT=8084
@@ -257,7 +257,7 @@ services:
       - postgres
       - redis
       - state
-      - localstack
+      - minio
     environment:
       # Redis
       - REDIS_HOST=redis
@@ -276,11 +276,11 @@ services:
       # Kubernetes
       - KUBECONFIG=/app/kubeconfig/kubeconfig.yaml
       - K8S_NAMESPACE=default
-      # S3 / LocalStack
-      - S3_ENDPOINT_URL=http://localstack:4566
+      # S3 / MinIO
+      - S3_ENDPOINT_URL=http://minio:9000
       - S3_BUCKET=continuo
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
       - LOG_TAIL_LINES=50
       # Application
@@ -319,7 +319,7 @@ services:
       - state
       - flyway-orchestrator
       - neo4j
-      - localstack
+      - minio
     environment:
       # Neo4j
       - NEO4J_URI=bolt://neo4j:7687
@@ -350,10 +350,10 @@ services:
       - POSTGRES_PASSWORD=continuo
       # Object storage — the version-ingestion consumer reads each release's
       # code-bundle document
-      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_ENDPOINT_URL=http://minio:9000
       - S3_BUCKET=continuo
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
       # Application
       - GRPC_PORT=50052
@@ -390,7 +390,7 @@ services:
       - postgres
       - redis
       - flyway-release
-      - localstack
+      - minio
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -402,9 +402,9 @@ services:
       - REDIS_PASSWORD=continuo
       - RELEASE_CONTROLLER_HTTP_PORT=8088
       - S3_BUCKET=continuo
-      - S3_ENDPOINT_URL=http://localstack:4566
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      - S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
     ports:
       - "8088:8088"
@@ -420,7 +420,7 @@ services:
       - postgres
       - redis
       - flyway-remediation
-      - localstack
+      - minio
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -432,9 +432,9 @@ services:
       - REDIS_PASSWORD=continuo
       - REMEDIATION_HTTP_PORT=8090
       - S3_BUCKET=continuo
-      - S3_ENDPOINT_URL=http://localstack:4566
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      - S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
     ports:
       # Host port 8093 avoids collision with ui which also binds 8090.
@@ -452,7 +452,7 @@ services:
       - postgres
       - redis
       - flyway-agent-remediation
-      - localstack
+      - minio
       - stub-llm
       - stub-github
       - release-controller
@@ -471,9 +471,9 @@ services:
       - REMEDIATION_PR_POLL_INTERVAL=${REMEDIATION_PR_POLL_INTERVAL:-5s}
       - REMEDIATION_PR_OPENING_GRACE_PERIOD=${REMEDIATION_PR_OPENING_GRACE_PERIOD:-15s}
       - S3_BUCKET=continuo
-      - S3_ENDPOINT_URL=http://localstack:4566
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      - S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
       - CONTINUO_ORCHESTRATOR_ADDR=orchestrator:50052
       - LLM_PROVIDER=${LLM_PROVIDER:-openai-compatible}
@@ -624,7 +624,7 @@ services:
     container_name: ui
     depends_on:
       - state
-      - localstack
+      - minio
       - release-controller
       - stub-github
     environment:
@@ -632,10 +632,10 @@ services:
       - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
       - PORT=8090
       - NODE_ENV=production
-      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_ENDPOINT_URL=http://minio:9000
       - S3_BUCKET=continuo
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
       - AUTH_MODE=dev
@@ -673,17 +673,17 @@ services:
       - state
       - redis
       - dex
-      - localstack
+      - minio
       - release-controller
     environment:
       - STATE_GRPC_ADDR=state:50051
       - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
       - PORT=8090
       - NODE_ENV=production
-      - S3_ENDPOINT_URL=http://localstack:4566
+      - S3_ENDPOINT_URL=http://minio:9000
       - S3_BUCKET=continuo
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
       - AUTH_MODE=oidc
@@ -699,23 +699,48 @@ services:
     networks:
       - default
 
-  localstack:
-    image: localstack/localstack:3
+  # Same MinIO server/client releases the Helm chart bundles
+  # (deploy/continuo/values.yaml minio.image / minio.mcImage), so the local
+  # stack exercises the object store a real install runs.
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--console-address", ":9001"]
     ports:
-      - "4566:4566"
+      - "9000:9000"
+      - "9001:9001"
     environment:
-      - SERVICES=s3
-      - DEFAULT_REGION=us-east-1
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:4566/_localstack/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-    volumes:
-      - ./localstack/init:/etc/localstack/init/ready.d
+
+  # One-shot bucket provisioner: creates the continuo bucket and installs the
+  # 30-day expiry lifecycle rules. `mc ilm import` replaces the full rule set,
+  # so re-running the service is idempotent. Services that read or write S3 at
+  # startup depend on this completing, not merely on minio being healthy.
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 minioadmin minioadmin
+        mc mb --ignore-existing local/continuo
+        mc ilm import local/continuo <<'EOF'
+        {
+          "Rules": [
+            {"ID": "expire-candidate-sql-30d", "Filter": {"Prefix": "candidate-sql/"}, "Status": "Enabled", "Expiration": {"Days": 30}},
+            {"ID": "expire-logs-30d", "Filter": {"Prefix": "logs/"}, "Status": "Enabled", "Expiration": {"Days": 30}},
+            {"ID": "expire-code-bundles-30d", "Filter": {"Prefix": "code-bundles/"}, "Status": "Enabled", "Expiration": {"Days": 30}}
+          ]
+        }
+        EOF
 
   topology-controller:
     build:
@@ -724,11 +749,11 @@ services:
     container_name: topology-controller
     environment:
       REDIS_URL: redis://:continuo@redis:6379
-      S3_ENDPOINT_URL: http://localstack:4566
+      S3_ENDPOINT_URL: http://minio:9000
       S3_BUCKET: continuo
       S3_ENV: local
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
       AWS_DEFAULT_REGION: us-east-1
       # SQL dialect for dependency resolution and the candidate-schema rewrite.
       # Mirrors the chart's validation.engine; the local stack runs Postgres.
@@ -738,8 +763,8 @@ services:
     depends_on:
       redis:
         condition: service_started
-      localstack:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
   dbt-compile-and-load:
     build:
@@ -751,8 +776,8 @@ services:
       - path: ./dbt/.env.hetzner
         required: false
     depends_on:
-      localstack:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_started
     environment:

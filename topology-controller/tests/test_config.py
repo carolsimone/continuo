@@ -23,7 +23,7 @@ def test_validate_raises_listing_all_missing(monkeypatch):
 def test_validate_passes_when_all_required_set(monkeypatch):
     """validate() does not raise when all required vars are present."""
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
-    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localstack:4566")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
     monkeypatch.setenv("S3_BUCKET", "continuo")
     monkeypatch.setenv("S3_ENV", "local")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
@@ -72,7 +72,7 @@ def test_warehouse_dialect_rejects_unknown_engine(monkeypatch):
 def test_validate_rejects_unsupported_engine(monkeypatch):
     """The unsupported-engine failure lands at startup, via validate()."""
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
-    monkeypatch.setenv("S3_ENDPOINT_URL", "http://localstack:4566")
+    monkeypatch.setenv("S3_ENDPOINT_URL", "http://minio:9000")
     monkeypatch.setenv("S3_BUCKET", "continuo")
     monkeypatch.setenv("S3_ENV", "local")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")

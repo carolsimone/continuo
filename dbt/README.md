@@ -46,7 +46,7 @@ dbt/
     config.py                # Target profile loading, service dir resolution
     compile.py               # dbt compile wrapper
     upload.py                # Manifest filtering + S3 upload
-  targets.yaml              # Named S3 target profiles (localstack, hetzner)
+  targets.yaml              # Named S3 target profiles (minio, hetzner)
   .env.hetzner              # Hetzner credentials (gitignored)
   Dockerfile.upload         # Image for dbt-compile-and-load service
   base/                     # Shared Docker base image (Python 3.12 + dbt-postgres)
@@ -59,7 +59,7 @@ dbt/
     test_compile.py          # Unit tests for compile module
     test_cli.py              # Unit tests for CLI
     test_upload.py           # Manifest filter + S3 key unit tests, plus
-                             #   localstack integration tests (@pytest.mark.integration)
+                             #   minio integration tests (@pytest.mark.integration)
 ```
 
 ## dbt_upload CLI
@@ -102,8 +102,8 @@ Targets are defined in `targets.yaml`:
 
 ```yaml
 targets:
-  localstack:              # Local development (docker-compose)
-    endpoint_url: http://localstack:4566
+  minio:                   # Local development (docker-compose)
+    endpoint_url: http://minio:9000
     bucket: continuo
     region: us-east-1
     env: local
@@ -123,9 +123,9 @@ targets:
 2. Values in `targets.yaml`
 3. If neither is set, the CLI exits with a clear error
 
-### Targeting LocalStack (local dev)
+### Targeting MinIO (local dev)
 
-LocalStack credentials are baked into `targets.yaml`. No extra setup needed:
+MinIO credentials are baked into `targets.yaml`. No extra setup needed:
 
 ```bash
 # Start the container (it idles until exec'd)
@@ -161,7 +161,7 @@ Manifests are uploaded to `s3://continuo-dev/dev/manifest/<service-name>/manifes
 s3://<bucket>/<env>/manifest/<service-name>/manifest_v{N}.json
 ```
 
-Each upload increments `N` from the highest existing version (1 if none exist). Example keys for localstack after three load runs:
+Each upload increments `N` from the highest existing version (1 if none exist). Example keys for minio after three load runs:
 
 ```
 s3://continuo/local/manifest/service-1/manifest_v1.json
@@ -218,11 +218,11 @@ DOCKER_BUILDKIT=1 docker build -t service-3:latest ./services/service-3
 # Unit tests (no Docker needed)
 cd dbt && uv run pytest tests/test_config.py tests/test_compile.py tests/test_cli.py -v
 
-# Integration tests (requires docker compose up -d localstack postgres dbt-compile-and-load)
+# Integration tests (requires docker compose up -d minio-init postgres dbt-compile-and-load)
 docker exec \
-  -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test \
+  -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
   -e AWS_DEFAULT_REGION=us-east-1 \
-  -e S3_ENDPOINT_URL=http://localstack:4566 \
+  -e S3_ENDPOINT_URL=http://minio:9000 \
   -e S3_BUCKET=continuo -e S3_ENV=local \
   -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
   -e POSTGRES_DB=continuo_dbt -e POSTGRES_USER=continuo_svc \

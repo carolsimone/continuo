@@ -12,7 +12,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 )
 
-// S3Client implements ports.CandidateSQLDeleter backed by AWS S3 / LocalStack.
+// S3Client implements ports.CandidateSQLDeleter backed by AWS S3 / MinIO.
 type S3Client struct {
 	client *s3.Client
 	bucket string
@@ -20,7 +20,7 @@ type S3Client struct {
 }
 
 // NewS3Client creates an S3Client for the given bucket.
-// endpointURL: e.g. "http://localstack:4566" (empty string → AWS default)
+// endpointURL: e.g. "http://minio:9000" (empty string → AWS default)
 func NewS3Client(endpointURL, bucket, region, accessKeyID, secretKey string, logger *slog.Logger) *S3Client {
 	cfg := aws.Config{
 		Region:      region,

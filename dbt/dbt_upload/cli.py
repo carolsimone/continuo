@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     p_upload = subparsers.add_parser("upload", help="Upload compiled manifests to S3")
     p_upload.add_argument("paths", nargs="*", default=[], help="Service directories")
     p_upload.add_argument("--services-dir", default=None, help="Directory containing services")
-    p_upload.add_argument("--target", default="localstack", help="Target profile name")
+    p_upload.add_argument("--target", default="minio", help="Target profile name")
     p_upload.add_argument("--env", default=None, help="Override S3 env prefix")
     p_upload.add_argument(
         "--release-id",
@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     p_load = subparsers.add_parser("load", help="Compile + upload (primary workflow)")
     p_load.add_argument("paths", nargs="*", default=[], help="Service directories")
     p_load.add_argument("--services-dir", default=None, help="Directory containing services")
-    p_load.add_argument("--target", default="localstack", help="Target profile name")
+    p_load.add_argument("--target", default="minio", help="Target profile name")
     p_load.add_argument("--env", default=None, help="Override S3 env prefix")
     p_load.add_argument(
         "--release-id",

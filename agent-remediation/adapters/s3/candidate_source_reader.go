@@ -31,7 +31,7 @@ var _ ports.CandidateSourceReader = (*CandidateSourceReader)(nil)
 const maxBundleBytes int64 = 64 * 1024 * 1024
 
 // NewCandidateSourceReader builds an S3 client for the given bucket.
-// endpointURL empty → AWS default; non-empty (e.g. http://localstack:4566) → path-style addressing.
+// endpointURL empty → AWS default; non-empty (e.g. http://minio:9000) → path-style addressing.
 func NewCandidateSourceReader(endpointURL, bucket, region, accessKeyID, secretKey string) *CandidateSourceReader {
 	cfg := aws.Config{
 		Region:      region,
