@@ -3,9 +3,10 @@
 The install in the [README](../README.md#try-it-locally) gets Continuo running
 on your laptop in about ten minutes, but it gets you an *empty* Continuo: a
 control plane with no pipelines in it. Everything Continuo does — stitching
-independent dbt projects into one dependency graph, validating a change against
-the whole downstream lineage before it reaches production, healing a broken
-model — only becomes visible once there are real dbt projects on it.
+independent data projects, dbt and python alike, into one dependency graph,
+validating a change against the whole downstream lineage before it reaches
+production, healing a broken model — only becomes visible once there are real
+projects on it.
 
 This guide puts four of them there.
 
@@ -28,7 +29,7 @@ needs a cloud account.
 
 | Tool | Why | Install |
 |---|---|---|
-| Docker Desktop, or [colima](https://github.com/abiosoft/colima) | Runs the cluster and builds the dbt images | `brew install colima && colima start` |
+| Docker Desktop, or [colima](https://github.com/abiosoft/colima) | Runs the cluster and builds the service images | `brew install colima && colima start` |
 | [kind](https://kind.sigs.k8s.io/) | The local Kubernetes cluster | `brew install kind` |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | Talking to that cluster | `brew install kubectl` |
 | [Helm](https://helm.sh/) 3.14+ | Installing Continuo | `brew install helm` |
@@ -37,7 +38,7 @@ needs a cloud account.
 
 **Room to run it.** Continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
 identity provider in this mode, plus ten of its own services, and then runs your
-dbt models as Kubernetes Jobs alongside all of that. Give the container runtime
+nodes as Kubernetes Jobs alongside all of that. Give the container runtime
 at least **4 CPUs, 8 GiB of memory and 20 GB of free disk**, and close anything
 else large that is running on it. On colima that is:
 
@@ -85,7 +86,7 @@ kubectl -n continuo get pods -w
 ```
 
 That single `helm install` brings up PostgreSQL, Redis, Neo4j, MinIO, an
-identity provider, and Continuo's twelve services. It is a quickstart layout meant
+identity provider, and Continuo's ten services. It is a quickstart layout meant
 for evaluation — one static login, no backups, no high availability. Production
 installs bring their own datastores; see
 [deploy/README.md](../deploy/README.md).
@@ -545,7 +546,7 @@ seeds), then `core.daily_transactions` (which needs finance's model). The
 ordering crosses project boundaries in both directions — which is precisely the
 ordering no single `dbt run` could have produced.
 
-Click any node to see its dbt log.
+Click any node to see its execution log.
 
 When the run finishes, every node should be green. Now look at the actual
 result:
@@ -861,7 +862,7 @@ until their dependency answers; `orchestrator` in particular usually restarts tw
 or three times waiting for Neo4j's DNS. If a pod is still crash-looping after all
 the datastore pods are `Running`, check its logs.
 
-**`ErrImagePull` on a dbt Job.** The image tag in your release body does not
+**`ErrImagePull` on a node's Job.** The image tag in your release body does not
 match anything loaded onto the node. Check with:
 
 ```bash
@@ -924,7 +925,7 @@ existed — usually a cold install where a service was released with
 `release_id`.
 
 **Everything is slow, or pods are being OOM-killed.** The bundled install asks
-for roughly 4 GiB in resource requests before your dbt Jobs even start. Give the
+for roughly 4 GiB in resource requests before your own Jobs even start. Give the
 container runtime more memory (chapter 1) and close other large workloads.
 
 ---
