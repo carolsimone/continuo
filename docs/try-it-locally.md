@@ -1,4 +1,4 @@
-# Try it locally, with real dbt projects
+# Try it locally, with real data projects
 
 The install in the [README](../README.md#try-it-locally) gets Continuo running
 on your laptop in about ten minutes, but it gets you an *empty* Continuo: a
@@ -45,7 +45,7 @@ else large that is running on it. On colima that is:
 colima start --cpu 4 --memory 8 --disk 60
 ```
 
-**A GitHub account.** You will fork the example dbt projects so that the code
+**A GitHub account.** You will fork the example projects so that the code
 you release is yours — which matters in chapter 10, where Continuo reads
 your source to explain (and then propose a fix for) a failure.
 
