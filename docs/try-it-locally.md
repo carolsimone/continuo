@@ -9,8 +9,8 @@ model — only becomes visible once there are real dbt projects on it.
 
 This guide puts three of them there.
 
-By the end you will have built three independent dbt projects into container
-images, released them into a local Continuo one at a time, watched the platform
+By the end you will have built four independent projects into container images —
+three dbt, one python — released them into a local Continuo one at a time, watched the platform
 discover a dependency that crosses project boundaries and that none of the
 projects declares, run the resulting graph from the web UI, and then broken it
 on purpose to watch validation refuse the change while production keeps serving
@@ -76,14 +76,14 @@ kind create cluster --name continuo
 
 # Continuo itself, from the published chart
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.2.0 -n continuo --create-namespace
+  --version 0.4.0 -n continuo --create-namespace
 
 # Wait for everything to come up (5-10 minutes on a first install)
 kubectl -n continuo get pods -w
 ```
 
 That single `helm install` brings up PostgreSQL, Redis, Neo4j, MinIO, an
-identity provider, and Continuo's ten services. It is a quickstart layout meant
+identity provider, and Continuo's twelve services. It is a quickstart layout meant
 for evaluation — one static login, no backups, no high availability. Production
 installs bring their own datastores; see
 [deploy/README.md](../deploy/README.md).
@@ -97,7 +97,7 @@ on.
 Then open it:
 
 ```bash
-kubectl -n continuo port-forward svc/ui-service 8090:8090 &
+kubectl -n continuo port-forward svc/ui 8090:8090 &
 kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
 
 # One-time. Run this in a real terminal window — sudo reads the password from
@@ -132,12 +132,19 @@ cd continuo-dbt-demo
 Fork rather than clone the original, because from chapter 8 onward the code you
 release has to be code you can change and push.
 
-The repository holds six dbt services under `services/`. Three of them —
+The repository holds seven services under `services/`. Three of them —
 `service-1`, `service-2`, `service-3` — are test scaffolding lifted from
 Continuo's own end-to-end suite, full of deliberate failure nodes. Ignore those.
-The three worth reading are `core`, `finance`, and `marketing`, and each one is
-an ordinary, self-contained dbt project: its own `dbt_project.yml`, its own
-`profiles.yml`, its own models and seeds, its own `Dockerfile`.
+
+Four matter here. `core`, `finance`, and `marketing` are ordinary,
+self-contained dbt projects: each with its own `dbt_project.yml`,
+`profiles.yml`, models, seeds, and `Dockerfile`. `service-py` is different — it
+is a **python-node service**, declaring `contracts/*.yml` and `scripts/*.py`
+instead of dbt models. It onboards through the same `POST /releases` call but a
+different artifact, which chapter 6 covers.
+
+You need all four. A dbt model in `core` reads a table `service-py` produces, so
+releasing only the dbt services leaves the graph with a node that cannot build.
 
 ### The dependency that makes this interesting
 
@@ -207,21 +214,22 @@ carries, is in
 
 ## 4. Build the images and load them into the cluster
 
-Continuo runs your dbt project by running *your image* as a Kubernetes Job, so
-each service needs to be built and made visible to the cluster. No registry is
-involved:
+Continuo runs your project by running *your image* as a Kubernetes Job, so each
+service needs to be built and made visible to the cluster. That is true of the
+python service too — it ships as an image exactly like the dbt ones. No registry
+is involved:
 
 ```bash
-for svc in core finance marketing; do
+for svc in core finance marketing service-py; do
   docker build -t "${svc}:v1" "services/${svc}"
   kind load docker-image "${svc}:v1" --name continuo
 done
 ```
 
-Confirm the node can see all three:
+Confirm the node can see all four:
 
 ```bash
-docker exec continuo-control-plane crictl images | grep -E "core|finance|marketing"
+docker exec continuo-control-plane crictl images | grep -E "core|finance|marketing|service-py"
 ```
 
 **Why a bare `core:v1` works.** The chart value `global.teamImagePrefix` is empty
@@ -330,16 +338,29 @@ exist yet. Nothing is broken; the graph simply reflects what has been released.
 
 ---
 
-## 6. Releases two and three: validated
+## 6. The remaining releases: validated
 
-Now release `finance`, this time with `bootstrap: false`:
+**Order matters from here.** A release is validated against the topology that
+exists when it runs, so a service must be released *after* whatever it reads.
+`finance` reads a table `marketing` produces, so marketing goes first. Release
+finance before it and validation correctly refuses the release with
+`relation "analytics.marketing_cost_per_user" does not exist` — Continuo doing
+its job, not a fault.
+
+The order is **marketing → finance → service-py**.
+
+Releases also run a **FIFO queue**: one is active at a time, and each terminal
+outcome advances the next. Post them one at a time and wait for each to reach
+`promoted`; a release that never finishes blocks everything behind it.
+
+Start with `marketing`, this time with `bootstrap: false`:
 
 ```bash
 curl -s -X POST http://localhost:8088/releases \
   -H 'content-type: application/json' \
   -d '{
-    "release_id": "rel-finance-v1",
-    "service": "finance",
+    "release_id": "rel-marketing-v1",
+    "service": "marketing",
     "image_tag": "v1",
     "bootstrap": false,
     "repo": "<your-username>/continuo-dbt-demo",
@@ -397,20 +418,88 @@ is copied — only schema-level structure.
 Only if all of that passes does the new image become the production image for
 that service.
 
-Now release `marketing` the same way, with `release_id` `rel-marketing-v1` and
-`service: marketing`. Once it promotes, all three projects are live.
+Now release `finance` the same way, with `release_id` `rel-finance-v1` and
+`service: finance`. Once it promotes, all three dbt projects are live.
 
-The full graph is now 14 nodes with three dependencies that cross a project
-boundary:
+### The fourth service is not dbt
+
+`service-py` is a python-node service, and its onboarding differs in one
+important way: **you upload its artifact yourself.** A dbt service's manifest is
+produced by Continuo's own compile leg — that is what the `compiling` stage
+above was doing. A python service has no compile leg; its contract is built in
+your CD and uploaded to object storage *before* the release is posted.
+
+This is exactly what the demo repo's CI does, and doing it by hand here is the
+point: it is the same sequence your own CD will run.
+
+First build the contract from the service's `contracts/` directory, using the
+runtime CLI the release gate uses:
+
+```bash
+uv tool install continuo-python-runtime==0.4.0
+
+continuo-runtime validate services/service-py/contracts --dialect postgres
+
+continuo-runtime merge services/service-py/contracts \
+  --service service-py \
+  --repo-root services/service-py \
+  --dialect postgres \
+  --out /tmp/contract.yaml
+```
+
+Then upload it to the canonical key, `<service>/<release_id>/contract.yaml`.
+The local install's object storage is the bundled MinIO, so port-forward it and
+point the AWS CLI at it — the same `aws s3 cp` your CD runs, aimed somewhere
+else:
+
+```bash
+kubectl -n continuo port-forward svc/continuo-minio 9000:9000 &
+
+export AWS_ACCESS_KEY_ID=$(kubectl -n continuo get secret continuo-minio \
+  -o jsonpath='{.data.access-key-id}' | base64 -d)
+export AWS_SECRET_ACCESS_KEY=$(kubectl -n continuo get secret continuo-minio \
+  -o jsonpath='{.data.secret-access-key}' | base64 -d)
+export AWS_DEFAULT_REGION=us-east-1
+
+aws --endpoint-url http://localhost:9000 \
+  s3 cp /tmp/contract.yaml s3://continuo/service-py/rel-py-v1/contract.yaml
+```
+
+Only now post the release, with one extra field — `"kind": "python"` — telling
+Continuo to skip the compile leg and read the contract you just uploaded:
+
+```bash
+curl -s -X POST http://localhost:8088/releases \
+  -H 'content-type: application/json' \
+  -d '{
+    "release_id": "rel-py-v1",
+    "service": "service-py",
+    "image_tag": "v1",
+    "bootstrap": false,
+    "kind": "python",
+    "repo": "<your-username>/continuo-dbt-demo",
+    "commit_sha": "'"$(git rev-parse HEAD)"'"
+  }' | jq
+```
+
+If you post this before the upload, the release parks in `parsing` and stays
+there: the parse is retrying against a 404 for an object that does not exist.
+
+### The graph you have built
+
+Four services, stitched into one graph, from four API calls that each named a
+single service — and the chain crosses both project *and* runtime boundaries:
 
 ```
-core.daily_transactions          ←  finance.fx_transactions_eur
-finance.fx_transactions_eur      ←  core.seed_fx_transactions
-finance.operational_cost_per_user ←  core.seed_users
+core.seed_fx_transactions   →  finance.fx_transactions_eur   (dbt → dbt)
+core.daily_transactions     →  service-py.py_daily_kpis      (dbt → python)
+service-py.py_daily_kpis    →  core.dbt_daily_kpis           (python → dbt)
+marketing.marketing_cost_per_user → finance.ltv_per_user     (dbt → dbt)
 ```
 
-Three independent dbt projects, stitched into one graph, from three API calls
-that each named a single service.
+The middle two are the interesting pair: a Python job reads a table dbt built,
+and a dbt model reads the table that Python job wrote. Neither project declares
+the other. Continuo derived the ordering from the SQL and the contract.
 
 ---
 
@@ -419,7 +508,8 @@ that each named a single service.
 Open the UI, pick the `daily` schedule, and press **▶ Trigger run**.
 
 You will see nodes move through the graph as Continuo dispatches each one as its
-own Kubernetes Job, in dependency order, across all three projects. Watch it
+own Kubernetes Job, in dependency order, across all four services — including the
+hop through the python one. Watch it
 from the cluster side too if you like:
 
 ```bash
@@ -433,7 +523,7 @@ ordering no single `dbt run` could have produced.
 
 Click any node to see its dbt log.
 
-When the run finishes, all 14 nodes should be green. Now look at the actual
+When the run finishes, every node should be green. Now look at the actual
 result:
 
 ```bash
@@ -548,7 +638,7 @@ Then reinstall with the credentials wired in:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.2.0 -n continuo \
+  --version 0.4.0 -n continuo \
   --set llm.apiKey='<your-api-key>' \
   --set github.token='<your-read-only-PAT>'
 ```
@@ -597,30 +687,6 @@ docker exec continuo-control-plane crictl images | grep <service>
 Remember that `kind load` copies the image at that moment — rebuilding an image
 does not update what the node has, so rebuild *and* reload.
 
-**A seed Job fails on your very first release** with `duplicate key value
-violates unique constraint "pg_namespace_nspname_index"`. Two seed Jobs raced to
-create the `analytics` schema, and one lost. It only happens on the first
-release into a schema that does not exist yet — once the schema exists it cannot
-recur.
-
-This affects chart **0.2.0**, the version installed above. On 0.2.0 the promoted
-seed build runs outside the run lifecycle, so the failure is neither retried nor
-reported: the Job is simply `Failed` and its table is missing. Later versions
-build a release's seeds as an ordinary run, where the losing Job is retried
-automatically, finds the schema present, and succeeds — so there is nothing to
-do and nothing to see.
-
-On 0.2.0, re-run the failed Job by hand and it will succeed:
-
-```bash
-kubectl -n continuo get job <failed-job> -o json \
-  | jq 'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,
-            .metadata.generation,.status,.spec.selector,
-            .spec.template.metadata.labels)
-        | .metadata.name="retry-<failed-job>"' \
-  | kubectl -n continuo apply -f -
-```
-
 **`sudo: a terminal is required to read the password`** on the `/etc/hosts`
 line. `sudo` reads its password from the controlling terminal, so it cannot
 prompt inside an IDE panel or an agent shell. Run it in a real terminal window,
@@ -632,6 +698,26 @@ open -na "Google Chrome" --args \
   --host-resolver-rules="MAP continuo-dex 127.0.0.1" \
   --user-data-dir="$HOME/.continuo-chrome" \
   http://localhost:8090
+```
+
+**A release sits in `received` and never moves.** Releases run a FIFO queue —
+one release is active at a time, and each terminal outcome advances the next. A
+release stuck earlier in the queue therefore blocks every release behind it.
+Check the one in front of it:
+
+```bash
+curl -s http://localhost:8088/releases | jq '.releases[] | {release_id, status}'
+```
+
+**A python release sits in `parsing` and never moves.** Its `contract.yaml` is
+not where Continuo expects it. Unlike a dbt service — whose manifest Continuo
+compiles itself — a python service's contract is uploaded by the *caller*, and
+a missing object leaves the parse retrying against a 404. Confirm the object
+exists at the canonical key:
+
+```bash
+aws --endpoint-url http://localhost:9000 s3 ls \
+  s3://continuo/<service>/<release_id>/contract.yaml
 ```
 
 **A release sits in `compiling` and then rejects with `compile_failed`.** Your
