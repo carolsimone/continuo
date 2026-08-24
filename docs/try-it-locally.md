@@ -813,6 +813,18 @@ kubectl -n continuo exec continuo-postgresql-0 -- env PGPASSWORD="$PGPW" \
   "select channel, users, spend_eur, roi from analytics.channel_roi order by roi desc"
 ```
 
+```
+  channel   | users | spend_eur | roi
+------------+-------+-----------+------
+ organic    |   310 |      0.00 |
+ referral   |   390 |   9750.00 | 3.38
+ google_ads |   709 |  18585.46 | 3.03
+ meta_ads   |   324 |  11248.70 | 2.35
+ tiktok_ads |   190 |   7888.94 | 2.08
+ email      |    39 |   1591.56 | 1.75
+ affiliate  |    38 |   7939.07 | 0.41
+```
+
 That is the whole loop: four projects released independently, one graph derived
 from their SQL, a new model validated against production before it could touch
 it, a bad change stopped at the same gate, and a run that crosses team
