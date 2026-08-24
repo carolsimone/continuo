@@ -188,7 +188,7 @@ So the real dependency chain runs:
 core.seed_fx_transactions  →  finance.fx_transactions_eur  →  core.daily_transactions
 ```
 
-It crosses the project boundary twice. No single `dbt run` can order it,
+💡 It crosses the project boundary twice. No single `dbt run` can order it,
 because dbt's `ref()` only resolves within one project — and neither project
 declares the relationship anywhere. Continuo infers the whole chain from the
 SQL itself, which is the entire point of chapter 5.
@@ -296,7 +296,7 @@ curl -s -X POST http://localhost:8088/releases \
 {"release_id": "rel-core-v1", "status": "received"}
 ```
 
-Note what you did *not* send: no manifest, no list of models, no DAG, no S3
+💡 Note what you did *not* send: no manifest, no list of models, no DAG, no S3
 upload. One service, one image tag. Continuo derives the rest.
 
 Watch it:
@@ -371,7 +371,7 @@ graph once so every model physically exists, and from then on validation has a
 production to clone from. This chapter is the last time you will pass
 `"bootstrap": true`; every release after it is validated for real.
 
-Order among the remaining three does not matter. Every release re-parses the
+💡 Order among the remaining three does not matter. Every release re-parses the
 *full* set of promoted manifests plus its own, so the edge between two services
 appears as soon as both have been released — whichever release comes last
 completes the DAG.
@@ -523,7 +523,7 @@ service-py.py_daily_kpis    →  core.dbt_daily_kpis           (python → dbt)
 marketing.marketing_cost_per_user → finance.ltv_per_user     (dbt → dbt)
 ```
 
-The middle two are the interesting pair: a Python job reads a table dbt built,
+💡 The middle two are the interesting pair: a Python job reads a table dbt built,
 and a dbt model reads the table that Python job wrote. Neither project declares
 the other. Continuo derived the ordering from the SQL and the contract.
 
@@ -542,7 +542,7 @@ from the cluster side too if you like:
 kubectl -n continuo get jobs -w
 ```
 
-Seeds build first, then `finance.fx_transactions_eur` (which needs core's
+💡 Seeds build first, then `finance.fx_transactions_eur` (which needs core's
 seeds), then `core.daily_transactions` (which needs finance's model). The
 ordering crosses project boundaries in both directions — which is precisely the
 ordering no single `dbt run` could have produced.
@@ -567,7 +567,7 @@ kubectl -n continuo exec continuo-postgresql-0 -- env PGPASSWORD="$PGPW" \
  fx     | 4786 |  38852881
 ```
 
-One table, two halves. The `card` rows came from core's own seed through a
+💡 One table, two halves. The `card` rows came from core's own seed through a
 `{{ ref() }}`. The `fx` rows arrived via finance's `fx_transactions_eur`, a model
 in a different dbt project, built by a different image, released separately —
 reached by nothing more than `FROM analytics.fx_transactions_eur`.
@@ -660,7 +660,7 @@ curl -s http://localhost:8088/releases/rel-marketing-v2 | jq '.validation_node_i
 ]
 ```
 
-**Read that list again.** You added one model to marketing. Continuo put
+💡 **Read that list again.** You added one model to marketing. Continuo put
 sixteen of the graph's nineteen nodes in scope: your new node and its entire
 upstream lineage — `ltv_per_user` from finance, `revenue_per_user` and
 `daily_transactions` from core, and the seeds under all of them. You changed
@@ -729,7 +729,7 @@ curl -s http://localhost:8088/releases/rel-finance-v2 | jq '{status, reject_reas
 }
 ```
 
-The release was rejected, and look at where the damage landed: models in
+💡 The release was rejected, and look at where the damage landed: models in
 **core**, the `channel_roi` you added to **marketing** in the previous
 chapter, finance's own `ltv_per_user`, and even **service-py**'s python node —
 everything downstream of the column you removed, across all four projects and
@@ -745,7 +745,7 @@ Still `rel-marketing-v2`, the release chapter 8 promoted. Production never saw
 `finance:v2`. The `daily` schedule will keep running the last version that
 passed, indefinitely, and a scheduled run tonight will produce correct data.
 
-This is the part that is hard to get any other way. In a conventional setup this
+💡 This is the part that is hard to get any other way. In a conventional setup this
 change merges, deploys, and breaks `core` the next time it runs — and the person
 who gets paged is on the core team, looking at a model they did not change.
 Here, the failure surfaced against the person who made the change, before it
@@ -759,7 +759,7 @@ reached production, in another team's model they had never heard of.
 
 A rejected release tells you something broke. Continuo can also try to fix it.
 
-`remediation` classifies the rejection, and for a fixable one `agent-remediation`
+💡 `remediation` classifies the rejection, and for a fixable one `agent-remediation`
 reads the failing model's source, asks an LLM for a fix, and surfaces
 the proposal for a human to approve. It never writes to your repository on its
 own — the output is a diff you review, and a pull request you choose to open.
@@ -835,7 +835,7 @@ kubectl -n continuo exec continuo-postgresql-0 -- env PGPASSWORD="$PGPW" \
  affiliate  |    38 |   7939.07 | 0.41
 ```
 
-That is the whole loop: four projects released independently, one graph derived
+💡 That is the whole loop: four projects released independently, one graph derived
 from their SQL, a new model validated against production before it could touch
 it, a bad change stopped at the same gate, and a run that crosses team
 boundaries in the right order every time.
