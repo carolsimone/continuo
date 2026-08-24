@@ -1,8 +1,8 @@
 # Roadmap
 
 What Continuo does today is in the [README](../README.md#-what-it-delivers).
-This page is the rest: work that is started, work that is planned, and ideas
-that are still open. Nothing here is a commitment to a date.
+This page is the rest: work that is started and work that is planned.
+Nothing here is a commitment to a date.
 
 ## In progress
 
@@ -35,26 +35,3 @@ the validation result.
 **Test suite for circular dependencies.**
 Cycles across projects already fail at CD. The check needs its own test suite
 covering the cross-project and cross-runtime cases.
-
-## Ideas
-
-**Better local development.**
-The current stance is that dbt and the Python runtime own local development,
-and Continuo does not. That may change. Continuo has three things dbt does not:
-the GitHub history of every change, when each change happened, and the full
-upstream and downstream graph across projects. That is enough to help an agent
-working locally understand the blast radius of a change before it is pushed.
-
-**A single query engine.**
-One implementation on top of Trino, so validation and runs behave the same on
-every warehouse.
-
-**Managed compute, your data.**
-Data stays inside the company's data-center perimeter; Continuo runs the
-control plane and the compute.
-
-## Not planned
-
-**A schema registry.**
-Contracts are already enforced on every node, so they act as a schema registry
-by design. A separate one is not needed.
