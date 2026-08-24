@@ -1,8 +1,8 @@
-# Continuo
-
 <p align="center">
-  <img src="docs/logo/continuo-social-preview.png" alt="Continuo — event-driven, zero-DAG data orchestration" width="640">
+  <img src="docs/logo/continuo-social-preview.png" alt="Continuo — control plane for data pipelines with agentic remediation" width="100%">
 </p>
+
+# Continuo
 
 [![CI](https://github.com/carolsimone/continuo/actions/workflows/ci.yml/badge.svg)](https://github.com/carolsimone/continuo/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
