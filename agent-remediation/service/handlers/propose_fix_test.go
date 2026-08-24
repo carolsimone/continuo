@@ -1380,7 +1380,7 @@ func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
 			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
 		}
 		tr := baseTrigger()
-		tr.Repo = "owner/continuo-dbt-demo"
+		tr.Repo = "owner/continuo-demo"
 		tr.CommitSHA = "abc123"
 
 		if err := ProposeFix(context.Background(), d, tr); err != nil {
@@ -1395,8 +1395,8 @@ func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
 		if !p.SourceResolved {
 			t.Fatal("expected SourceResolved=true")
 		}
-		if p.Repo != "owner/continuo-dbt-demo" {
-			t.Errorf("Repo = %q, want %q", p.Repo, "owner/continuo-dbt-demo")
+		if p.Repo != "owner/continuo-demo" {
+			t.Errorf("Repo = %q, want %q", p.Repo, "owner/continuo-demo")
 		}
 		if p.CommitSHA != "abc123" {
 			t.Errorf("CommitSHA = %q, want %q", p.CommitSHA, "abc123")
@@ -1438,7 +1438,7 @@ func TestProposeFix_SourceResolved_PersistsSourceLocation(t *testing.T) {
 			ServiceRepoPaths: map[string]string{"service-3": "services/service-3"},
 		}
 		tr := baseTrigger()
-		tr.Repo = "owner/continuo-dbt-demo"
+		tr.Repo = "owner/continuo-demo"
 		tr.CommitSHA = "abc123"
 
 		if err := ProposeFix(context.Background(), d, tr); err != nil {

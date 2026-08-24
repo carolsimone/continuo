@@ -4,7 +4,7 @@ What a team's dbt image must provide to run under Continuo.
 executor-controller launches your image as Kubernetes Jobs for scheduled
 runs, seed builds, and release-time compiles; this page is the contract
 those Jobs assume. The reference implementation is the
-[`continuo-dbt-demo`](https://github.com/carolsimone/continuo-dbt-demo)
+[`continuo-demo`](https://github.com/carolsimone/continuo-demo)
 repository.
 
 For `python-model` nodes, whose images are resolved and configured differently,
@@ -96,5 +96,5 @@ macro. Without it, validation runs would write into production schemas.
 resolves to dbt Fusion, which dropped the Postgres adapter), bakes the
 macro above into `/project/macros/`, and is what the in-repo e2e fixture
 images build from. Real team images may build from it or replicate its
-contract on any base — `continuo-dbt-demo` builds `FROM python:3.12-slim`
+contract on any base — `continuo-demo` builds `FROM python:3.12-slim`
 directly.

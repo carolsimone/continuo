@@ -16,7 +16,7 @@ import (
 )
 
 // CLIPackager runs `continuo-runtime merge` — the exact command the team's
-// release CI runs after a merge to main (continuo-dbt-demo's release.yml) —
+// release CI runs after a merge to main (continuo-demo's release.yml) —
 // so a proposed fix's contract yaml is packaged and hash-folded by the same
 // tool that packages every promoted release, never a reimplementation of it.
 type CLIPackager struct {
