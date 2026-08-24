@@ -9,25 +9,28 @@
 [![Release](https://img.shields.io/github/v/release/carolsimone/continuo?label=release)](https://github.com/carolsimone/continuo/releases)
 
 Continuo is a control plane for data pipelines with built-in agentic
-remediation. It orchestrates independent dbt (data build tool) projects
-without requiring them to know about each other, automatically stitching
-them into one dependency graph, and it heals broken pipelines by having an
-LLM (Large Language Model) propose a fix before anything reaches production.
+remediation. It orchestrates independent data projects — dbt (data build
+tool) and Python alike — without requiring them to know about each other,
+automatically stitching them into one dependency graph, and it heals broken
+pipelines by having an LLM (Large Language Model) propose a fix before
+anything reaches production.
 
-## How it works
+## ⚙️ How it works
 
 A DAG (Directed Acyclic Graph) is just the shape of your dependencies — and
 those dependencies are already fully described in your SQL. So Continuo
 infers them from schema and table names across projects instead of asking
-you to declare a DAG by hand. Each dbt project stays fully independent:
+you to declare a DAG by hand. Each project stays fully independent:
 hardcode the schema and table names your models read and write, and Continuo
-stitches everything into one big DAG behind the scenes.
+stitches everything into one big DAG behind the scenes — dbt models and
+Python nodes ordered together in the same graph.
 
-Onboarding a project is three things: publish a dbt image, publish its
-manifest to a known path, and POST to the `/releases` endpoint at CD
-(Continuous Deployment) time. Continuo takes it from there.
+Onboarding a project is two things: publish an image and POST to the
+`/releases` endpoint at CD (Continuous Deployment) time. Continuo compiles
+the project itself and derives the rest. (A Python service uploads its
+contract to object storage first — one extra `aws s3 cp` in your CD.)
 
-## How it keeps production safe
+## 🛡️ How it keeps production safe
 
 Continuo validates every release the way a blue/green deployment validates a
 software release: stand up the new version alongside the current one, prove
@@ -45,28 +48,24 @@ run against production data. Continuo validates the full downstream lineage
 before a release is promoted, so a breaking change never reaches production
 in the first place. If validation fails, production keeps running the last
 version that passed — never a broken DAG — while a remediation agent
-proposes a fix for a human to review and merge. The same remediation path
-for live production runs (not just new releases) is still being refined and
-is coming soon.
+proposes a fix for a human to review and merge. The same path covers failed
+production runs, not just rejected releases: a failure is classified, and a
+fixable one gets an LLM-proposed pull request for a human to approve.
 
-## Status and roadmap
+## 🚦 Status
 
-Beta. dbt is the only supported runtime today; Python is next, on the same
-integration contract, within a few weeks.
+Beta. dbt and Python are both first-class runtimes on the same integration
+contract: dbt models, Python scripts, and contract-only CSV loads live in
+one graph, released and validated the same way.
 
-Remediation is the first agentic capability, not the last. Performance-tuning
-agents are planned next: looking at Kubernetes resource usage, the SQL
-itself, and the query planner to suggest better-performing SQL based on how
-downstream models actually consume the data. This is still in design and not
-available yet.
+## 🚀 Deploying it
 
-## Deploying it
+Run the full system on your own Kubernetes cluster with the published Helm
+chart. Bring your own Postgres and Redis, or let the chart bundle every
+datastore alongside Continuo. Install modes, values, and hardening are in
+[deploy/README.md](deploy/README.md).
 
-Run the full system on your own Kubernetes cluster today; a hosted Cloud
-version is coming. Bring your own Postgres and Redis, or use the bundled
-Helm charts to stand them up alongside Continuo.
-
-## Try it locally
+## 🧪 Try it locally
 
 Everything below pulls pre-built images — nothing is compiled from source,
 so this takes minutes, not a full local build.
@@ -86,7 +85,7 @@ kind create cluster --name continuo
 
 # 2. Install Continuo from the published Helm chart (pre-built images, no clone needed)
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.2.0 -n continuo --create-namespace
+  --version 0.4.0 -n continuo --create-namespace
 
 # 3. Wait for everything to come up
 kubectl -n continuo get pods -w
@@ -111,24 +110,28 @@ This installs everything bundled — Postgres, Redis, Neo4j, MinIO, and Dex
 data: no backup, no high availability, one static login. For production
 installs bringing your own datastores, see [deploy/README.md](deploy/README.md).
 
-### Now put real dbt projects on it
+### 💡 Now put real projects on it
 
 The install above gets you an *empty* Continuo. Everything Continuo actually
-does — inferring one dependency graph across independent dbt projects,
+does — inferring one dependency graph across independent projects,
 validating a change against its full downstream lineage before promoting it,
 refusing a release that would break another team's model — only becomes visible
 once there are real projects on it.
 
-**[Try it locally, with real dbt projects](docs/try-it-locally.md)** walks through
-that end to end, on the same local cluster: build three example dbt projects into
-images, release them one at a time, watch Continuo discover a dependency that
-crosses project boundaries and that neither project declares, run the resulting
-graph, and then break it on purpose to watch validation reject the change while
-production keeps serving the last version that worked.
+**[Try it locally, with real data projects](docs/try-it-locally.md)** walks
+through that end to end, on the same local cluster: build four example
+projects — three dbt, one Python — into images, release them, watch Continuo
+discover dependencies that cross project boundaries and that no project
+declares, run the graph from the UI, add a brand-new model and watch
+validation prove it against production before promoting it, then break the
+graph on purpose to watch validation reject the change while production keeps
+serving the last version that worked — and, if you bring an LLM key, let the
+agent propose the fix.
 
-## Architecture pack
+## 📚 Architecture pack
 
-This folder is the operational architecture map for the current Continuo microservice system.
+The pack under [docs/arch/](docs/arch/) is the operational architecture map
+for the current Continuo microservice system.
 
 Use it in this order:
 
