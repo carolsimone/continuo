@@ -125,10 +125,10 @@ You are now looking at an empty Continuo. Everything that follows fills it.
 ## 3. Fork the example projects and read them
 
 ```bash
-# Fork https://github.com/carolsimone/continuo-dbt-demo on GitHub first,
+# Fork https://github.com/carolsimone/continuo-demo on GitHub first,
 # then clone your fork:
-git clone https://github.com/<your-username>/continuo-dbt-demo.git
-cd continuo-dbt-demo
+git clone https://github.com/<your-username>/continuo-demo.git
+cd continuo-demo
 ```
 
 Fork rather than clone the original, because the code you release has to be
@@ -285,7 +285,7 @@ curl -s -X POST http://localhost:8088/releases \
     "service": "core",
     "image_tag": "v1",
     "bootstrap": true,
-    "repo": "<your-username>/continuo-dbt-demo",
+    "repo": "<your-username>/continuo-demo",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
@@ -388,7 +388,7 @@ curl -s -X POST http://localhost:8088/releases \
     "service": "marketing",
     "image_tag": "v1",
     "bootstrap": true,
-    "repo": "<your-username>/continuo-dbt-demo",
+    "repo": "<your-username>/continuo-demo",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
@@ -501,7 +501,7 @@ curl -s -X POST http://localhost:8088/releases \
     "image_tag": "service-py:v1",
     "bootstrap": true,
     "kind": "python",
-    "repo": "<your-username>/continuo-dbt-demo",
+    "repo": "<your-username>/continuo-demo",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
@@ -616,7 +616,7 @@ curl -s -X POST http://localhost:8088/releases \
     "service": "marketing",
     "image_tag": "v2",
     "bootstrap": false,
-    "repo": "<your-username>/continuo-dbt-demo",
+    "repo": "<your-username>/continuo-demo",
     "commit_sha": "'"$(git rev-parse HEAD)"'"
   }' | jq
 ```
@@ -702,7 +702,7 @@ kind load docker-image finance:v2 --name continuo
 curl -s -X POST http://localhost:8088/releases \
   -H 'content-type: application/json' \
   -d '{"release_id":"rel-finance-v2","service":"finance","image_tag":"v2",
-       "bootstrap":false,"repo":"<your-username>/continuo-dbt-demo",
+       "bootstrap":false,"repo":"<your-username>/continuo-demo",
        "commit_sha":"'"$(git rev-parse HEAD)"'"}' | jq
 ```
 
