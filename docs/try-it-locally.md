@@ -259,6 +259,15 @@ Continuo's release API is an internal ClusterIP service. Port-forward it:
 kubectl -n continuo port-forward svc/release-controller 8088:8088 &
 ```
 
+One word before the first call. **Production**, here and everywhere in this
+guide, is Continuo's term for the promoted side of its blue/green release
+pair — the set of tables the schedules serve, the thing a release is validated
+against and promoted into. It is not a claim about where you are: on your
+laptop, production is a schema in the bundled Postgres, and nothing in this
+walkthrough leaves your machine. In a real install it is your warehouse, and
+every mechanism below behaves identically — which is the point of trying them
+here.
+
 Ask production what it is currently running:
 
 ```bash
