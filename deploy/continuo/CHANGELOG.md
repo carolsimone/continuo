@@ -12,6 +12,11 @@ shipped in those.
 
 ## [Unreleased]
 
+### Changed
+- Comment-only: `files/dbt-commands.yaml` now names the demo repository by its
+  new name, `continuo-demo` (renamed from `continuo-dbt-demo`). No rendered
+  template, values key, or behavior changes; PATCH when released.
+
 ## [0.4.0] - 2026-08-23
 
 ### Added
