@@ -15,42 +15,70 @@ automatically stitching them into one dependency graph, and it heals broken
 pipelines by having an LLM (Large Language Model) propose a fix before
 anything reaches production.
 
+## 🎯 Use it when
+
+- Several teams own separate dbt or Python projects that read each other's
+  tables, and you want a change validated across those boundaries before it
+  reaches production.
+- You want an agent to propose a fix for a breaking change *before* it is
+  deployed, not after the nightly run has already failed.
+- You want to ask the platform what is going on in plain language: an LLM
+  chat is built into the UI, and it can inspect the platform and, with your
+  confirmation, act on it.
+
+## ✅ What it delivers
+
+- **No hand-written DAGs.** Dependencies are inferred from your SQL and
+  Python contracts. The DAG is a by-product of your code.
+- **One graph across independent projects.** dbt and Python projects are
+  stitched together without declaring each other, including edges that cross
+  project boundaries in both directions (dbt → Python → dbt).
+- **Blue/green validation for data.** Every release runs in a temporary
+  schema clone and is checked against its full downstream lineage. Only a
+  passing release becomes the production image.
+- **Production never runs a broken graph.** A rejected release leaves
+  production on the last version that passed; schedules keep producing
+  correct data.
+- **Breakage surfaces on the person who made the change**, before it reaches
+  production, even when the damage is in another team's model.
+- **Agentic remediation.** A rejected release is classified, and a fixable one
+  gets an LLM-proposed diff — and, with a GitHub App, a pull request — for a
+  human to review and merge.
+- **LLM chat in the UI.** Ask about releases, runs, and nodes; read-only
+  answers come back immediately, and anything that changes state asks for
+  your confirmation first.
+- **Fully event-driven.** No polling, horizontally scalable, and the same
+  events are yours to build on — alerting, dead-letter queues, custom tooling.
+- **Two-step onboarding.** Publish an image and POST to `/releases`. Continuo
+  compiles the project and derives the rest.
+- **Also:** dbt, Python scripts, and contract-only CSV loads on one contract;
+  bring your own dbt image; schedules in one YAML file; each node runs as its
+  own Kubernetes Job in dependency order; circular dependencies fail at CD;
+  runs on your Kubernetes via Helm, so data stays inside your perimeter.
+
+What is not there yet — remediation for failed production runs, streaming and
+batch under one control plane, performance regression detection — is in the
+[roadmap](docs/roadmap.md).
+
 ## ⚙️ How it works
 
-A DAG (Directed Acyclic Graph) is just the shape of your dependencies — and
-those dependencies are already fully described in your SQL. So Continuo
-infers them from schema and table names across projects instead of asking
-you to declare a DAG by hand. Each project stays fully independent:
-hardcode the schema and table names your models read and write, and Continuo
-stitches everything into one big DAG behind the scenes — dbt models and
-Python nodes ordered together in the same graph.
+A DAG (Directed Acyclic Graph) is just the shape of your dependencies, and
+those are already written down in your SQL. Continuo reads the schema and
+table names each model reads and writes and stitches every project into one
+graph — dbt models and Python nodes ordered together — so no project has to
+know about any other. Onboarding is two steps at CD (Continuous Deployment)
+time: publish an image and POST to `/releases`. Continuo compiles the project
+itself and derives the rest. (A Python service uploads its contract to object
+storage first — one extra `aws s3 cp` in your CD.)
 
-Onboarding a project is two things: publish an image and POST to the
-`/releases` endpoint at CD (Continuous Deployment) time. Continuo compiles
-the project itself and derives the rest. (A Python service uploads its
-contract to object storage first — one extra `aws s3 cp` in your CD.)
-
-## 🛡️ How it keeps production safe
-
-Continuo validates every release the way a blue/green deployment validates a
-software release: stand up the new version alongside the current one, prove
-it's healthy, then cut over. Data doesn't move the way software traffic
-does, so the mechanism looks different — Continuo runs the new DAG against a
-second, temporary schema (a schema copy, not a data copy, so no data
-actually moves) and checks that the resulting lineage is correct and won't
-break anything downstream. Only once that passes does the new dbt image
-become the production image — which is why we call it "a sort of"
-blue/green: the goal is the same, the technique had to be reinvented for
-data.
-
-Most orchestration systems only catch a broken model after it has already
-run against production data. Continuo validates the full downstream lineage
-before a release is promoted, so a breaking change never reaches production
-in the first place. If validation fails, production keeps running the last
-version that passed — never a broken DAG — while a remediation agent
-proposes a fix for a human to review and merge. The same path covers failed
-production runs, not just rejected releases: a failure is classified, and a
-fixable one gets an LLM-proposed pull request for a human to approve.
+Every release is then validated the way blue/green validates a software
+release: stand the new version up next to the current one, prove it is
+healthy, then cut over. Data does not move the way traffic does, so Continuo
+runs the new DAG in a second, temporary schema (a schema copy, not a data
+copy) and checks that the full downstream lineage still works. Only then does
+the new image become the production image. If validation fails, production
+keeps the last version that passed while a remediation agent proposes a fix
+for a human to review.
 
 ## 🚦 Status
 
