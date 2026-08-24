@@ -18,7 +18,9 @@ S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "")
 S3_BUCKET       = os.environ.get("S3_BUCKET", "")
 S3_ENV          = os.environ.get("S3_ENV", "")
 
-AWS_DEFAULT_REGION = os.environ.get("AWS_DEFAULT_REGION", "")
+AWS_DEFAULT_REGION    = os.environ.get("AWS_DEFAULT_REGION", "")
+AWS_ACCESS_KEY_ID     = os.environ.get("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 
 # Engine name (as the chart declares it in validation.engine, injected through
 # the shared ConfigMap as WAREHOUSE_ENGINE) -> the sqlglot dialect this service
@@ -59,6 +61,7 @@ MANIFEST_LOADED_CANDIDATE_STREAM = MANIFEST_LOADED_CANDIDATE_V1
 _REQUIRED = [
     "REDIS_URL",
     "S3_ENDPOINT_URL", "S3_BUCKET", "S3_ENV", "AWS_DEFAULT_REGION",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
 ]
 
 

@@ -177,10 +177,14 @@ services:
     image: continuo-executor-controller:latest
     container_name: executor-controller
     depends_on:
-      - postgres
-      - redis
-      - neo4j
-      - minio
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      neo4j:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     environment:
       # Redis
       - REDIS_HOST=redis
@@ -254,10 +258,14 @@ services:
     image: continuo-k8s-controller:latest
     container_name: k8s-controller
     depends_on:
-      - postgres
-      - redis
-      - state
-      - minio
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      state:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     environment:
       # Redis
       - REDIS_HOST=redis
@@ -314,12 +322,18 @@ services:
       dockerfile: orchestrator/Dockerfile.dev
     container_name: orchestrator
     depends_on:
-      - postgres
-      - redis
-      - state
-      - flyway-orchestrator
-      - neo4j
-      - minio
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      state:
+        condition: service_started
+      flyway-orchestrator:
+        condition: service_started
+      neo4j:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     environment:
       # Neo4j
       - NEO4J_URI=bolt://neo4j:7687
@@ -387,10 +401,14 @@ services:
       dockerfile: release-controller/Dockerfile.dev
     container_name: release-controller
     depends_on:
-      - postgres
-      - redis
-      - flyway-release
-      - minio
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      flyway-release:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -417,10 +435,14 @@ services:
       dockerfile: remediation/Dockerfile.dev
     container_name: remediation
     depends_on:
-      - postgres
-      - redis
-      - flyway-remediation
-      - minio
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      flyway-remediation:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -449,13 +471,20 @@ services:
       dockerfile: agent-remediation/Dockerfile.dev
     container_name: agent-remediation
     depends_on:
-      - postgres
-      - redis
-      - flyway-agent-remediation
-      - minio
-      - stub-llm
-      - stub-github
-      - release-controller
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      flyway-agent-remediation:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+      stub-llm:
+        condition: service_started
+      stub-github:
+        condition: service_started
+      release-controller:
+        condition: service_started
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -623,10 +652,14 @@ services:
       network: host
     container_name: ui
     depends_on:
-      - state
-      - minio
-      - release-controller
-      - stub-github
+      state:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+      release-controller:
+        condition: service_started
+      stub-github:
+        condition: service_started
     environment:
       - STATE_GRPC_ADDR=state:50051
       - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052
@@ -670,11 +703,16 @@ services:
     container_name: ui-auth
     profiles: ["auth-e2e"]
     depends_on:
-      - state
-      - redis
-      - dex
-      - minio
-      - release-controller
+      state:
+        condition: service_started
+      redis:
+        condition: service_started
+      dex:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+      release-controller:
+        condition: service_started
     environment:
       - STATE_GRPC_ADDR=state:50051
       - ORCHESTRATOR_GRPC_ADDR=orchestrator:50052

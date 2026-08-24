@@ -7,6 +7,7 @@ def test_validate_raises_listing_all_missing(monkeypatch):
     required = [
         "REDIS_URL",
         "S3_ENDPOINT_URL", "S3_BUCKET", "S3_ENV", "AWS_DEFAULT_REGION",
+        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
     ]
     for key in required:
         monkeypatch.delenv(key, raising=False)
@@ -27,6 +28,8 @@ def test_validate_passes_when_all_required_set(monkeypatch):
     monkeypatch.setenv("S3_BUCKET", "continuo")
     monkeypatch.setenv("S3_ENV", "local")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
 
     from config.config import validate
     validate()  # must not raise
@@ -76,6 +79,8 @@ def test_validate_rejects_unsupported_engine(monkeypatch):
     monkeypatch.setenv("S3_BUCKET", "continuo")
     monkeypatch.setenv("S3_ENV", "local")
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "minioadmin")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
     monkeypatch.setenv("WAREHOUSE_ENGINE", "duckdb")
 
     from config.config import validate

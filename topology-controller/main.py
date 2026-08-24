@@ -1,12 +1,12 @@
 import json
 import logging
-import os
 import threading
 import redis
 from config.config import (
     REDIS_URL,
     HTTP_PORT,
     S3_ENDPOINT_URL, S3_BUCKET, S3_ENV,
+    AWS_DEFAULT_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
     RELEASE_REQUESTED_STREAM, RELEASE_REQUESTED_GROUP,
     MANIFEST_LOADED_CANDIDATE_STREAM,
     validate,
@@ -44,12 +44,15 @@ def main() -> None:
 
     import boto3  # imported inside main() to avoid module-level side effects in tests
 
+    # All credential values come from config, where validate() has already
+    # required them: a missing credential fails the boot instead of falling
+    # back to a placeholder that breaks on the first S3 call.
     s3_client = boto3.client(
         "s3",
         endpoint_url=S3_ENDPOINT_URL,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "test"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
-        region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=AWS_DEFAULT_REGION,
     )
 
     redis_client = redis.from_url(REDIS_URL, decode_responses=False)
