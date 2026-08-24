@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// e2eS3Bucket is the LocalStack bucket dbt manifests are uploaded to in the e2e
-// environment (created by localstack/init/init-s3.sh, written by setup.sh's
-// `dbt_upload load --target localstack --release-id e2e-baseline`).
+// e2eS3Bucket is the MinIO bucket dbt manifests are uploaded to in the e2e
+// environment (created by the minio-init compose service, written by setup.sh's
+// `dbt_upload load --target minio --release-id e2e-baseline`).
 const e2eS3Bucket = "continuo"
 
 // e2eBaselineReleaseID is the fixed release-id under which setup.sh uploads
@@ -241,7 +241,7 @@ func triggerRelProbeRun(t *testing.T, ctx context.Context, clients *testClients)
 }
 
 // deleteParseCacheProdArtifact removes the prod-context partial-parse artifact
-// for (service, imageTag) from LocalStack, mirroring the canonical key the
+// for (service, imageTag) from MinIO, mirroring the canonical key the
 // executor's compile leg writes to and the hydrate-parse-cache initContainer
 // reads from: s3://<bucket>/<service>/parse-cache/<image_tag>/partial_parse.msgpack
 // (see executor-controller/service/artifacts.ParseCacheProdURI). Deleting it proves

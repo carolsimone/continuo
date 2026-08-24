@@ -26,7 +26,7 @@ flowchart LR
     AGPG[(Postgres: continuo_agent_chat)]
     REMPG[(Postgres: continuo_remediation)]
     REMAGPG[(Postgres: continuo_agent_remediation)]
-    S3[(S3/LocalStack)]
+    S3[(S3/MinIO)]
     K8S[(Kubernetes API)]
     R[(Redis)]
     LLM[(LLM provider HTTPS)]

@@ -118,25 +118,25 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		dbtDB:                  dbtDB,
 		remediationDB:          remediationDB,
 		agentRemediationDB:     agentRemediationDB,
-		s3Client:               newLocalstackS3Client(),
+		s3Client:               newMinioS3Client(),
 		releaseBase:            getEnv("RELEASE_CONTROLLER_BASE", "http://release-controller:8088"),
 		logger:                 logger,
 		uiBase:                 uiBase,
 	}
 }
 
-// newLocalstackS3Client builds an S3 client pointed at the e2e LocalStack
-// endpoint with path-style addressing (LocalStack does not support
-// virtual-hosted-style buckets). Credentials and endpoint mirror the
-// dbt-compile-and-load / topology-controller configuration.
-func newLocalstackS3Client() *s3.Client {
+// newMinioS3Client builds an S3 client pointed at the e2e MinIO endpoint
+// with path-style addressing (the dev MinIO is reached by hostname, not
+// virtual-hosted-style bucket subdomains). Credentials and endpoint mirror
+// the dbt-compile-and-load / topology-controller configuration.
+func newMinioS3Client() *s3.Client {
 	cfg := aws.Config{
 		Region: getEnv("AWS_DEFAULT_REGION", "us-east-1"),
 		Credentials: awscreds.NewStaticCredentialsProvider(
-			getEnv("AWS_ACCESS_KEY_ID", "test"),
-			getEnv("AWS_SECRET_ACCESS_KEY", "test"), ""),
+			getEnv("AWS_ACCESS_KEY_ID", "minioadmin"),
+			getEnv("AWS_SECRET_ACCESS_KEY", "minioadmin"), ""),
 	}
-	endpoint := getEnv("S3_ENDPOINT_URL", "http://localstack:4566")
+	endpoint := getEnv("S3_ENDPOINT_URL", "http://minio:9000")
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true
 		o.BaseEndpoint = aws.String(endpoint)

@@ -161,7 +161,7 @@ func TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes(t *testing.T) 
 	// nodes, routed to build_from_columns with a .json spec URI, and no
 	// compile.requested was ever emitted for this release. The csv node takes
 	// the identical validation_op — its spec carries csv_source instead of a
-	// script, and the runner's header check against the real localstack
+	// script, and the runner's header check against the real minio
 	// object (seeded above) must have passed for the release to promote at
 	// all, which waitForReleasePromoted inside promotePythonFixtureRelease
 	// already proved.

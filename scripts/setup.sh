@@ -171,11 +171,11 @@ kind_load_pulled_image ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.4
 echo "✓ All images loaded into kind"
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Compile dbt manifests and upload to localstack S3 using the dbt-compile-and-load
+# Compile dbt manifests and upload to MinIO S3 using the dbt-compile-and-load
 # service. This mirrors the production flow: manifests live in S3, and the
 # topology-controller reads them via source=s3 when update.graph:v1 fires.
-echo "Starting postgres and localstack for dbt manifest compilation..."
-docker compose up -d postgres localstack
+echo "Starting postgres and minio for dbt manifest compilation..."
+docker compose up -d postgres minio
 echo "Waiting for postgres to be ready..."
 for i in $(seq 1 30); do
     if docker compose exec -T postgres pg_isready -U continuo_svc > /dev/null 2>&1; then
@@ -188,23 +188,18 @@ for i in $(seq 1 30); do
     fi
     sleep 2
 done
-echo "Waiting for localstack to be healthy..."
-for i in $(seq 1 30); do
-    if docker compose exec -T localstack curl -sf http://localhost:4566/_localstack/health > /dev/null 2>&1; then
-        echo "✓ localstack ready"
-        break
-    fi
-    if [ "$i" -eq 30 ]; then
-        echo "✗ localstack not ready after 60s"
-        exit 1
-    fi
-    sleep 2
-done
+echo "Provisioning minio bucket (minio-init)..."
+if docker compose run --rm minio-init; then
+    echo "✓ minio ready (bucket provisioned)"
+else
+    echo "✗ minio-init did not complete successfully"
+    exit 1
+fi
 echo "Starting dbt-compile-and-load..."
 docker compose up -d dbt-compile-and-load
-echo "Compiling and uploading dbt manifests to localstack S3..."
-docker exec dbt-compile-and-load uv run python -m dbt_upload load --services-dir /app/services --target localstack --release-id e2e-baseline
-echo "✓ dbt manifests compiled and uploaded to localstack S3 (key: <service>/e2e-baseline/manifest.json)"
+echo "Compiling and uploading dbt manifests to MinIO S3..."
+docker exec dbt-compile-and-load uv run python -m dbt_upload load --services-dir /app/services --target minio --release-id e2e-baseline
+echo "✓ dbt manifests compiled and uploaded to MinIO S3 (key: <service>/e2e-baseline/manifest.json)"
 
 # Per-service image tags are seeded into the release-controller service_prod
 # pointer table at the end of this script (after the final compose up runs the

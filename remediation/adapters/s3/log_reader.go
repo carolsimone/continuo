@@ -1,4 +1,4 @@
-// Package s3 implements ports.LogReader over AWS SDK v2 S3 (LocalStack in dev).
+// Package s3 implements ports.LogReader over AWS SDK v2 S3 (MinIO in dev).
 package s3
 
 import (
@@ -24,7 +24,7 @@ type LogReader struct {
 var _ ports.LogReader = (*LogReader)(nil)
 
 // NewLogReader builds an S3-backed LogReader. endpointURL empty → AWS default;
-// non-empty (e.g. http://localstack:4566) → path-style addressing.
+// non-empty (e.g. http://minio:9000) → path-style addressing.
 func NewLogReader(endpointURL, bucket, region, accessKeyID, secretKey string) *LogReader {
 	cfg := aws.Config{
 		Region:      region,

@@ -1,11 +1,11 @@
 """
 Tests for dbt manifest upload logic.
 
-Integration tests (requiring localstack) are marked with @pytest.mark.integration
+Integration tests (requiring minio) are marked with @pytest.mark.integration
 and skipped by default. Run them inside the dbt-compile-and-load container:
-  docker exec -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test \
+  docker exec -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
     -e AWS_DEFAULT_REGION=us-east-1 \
-    -e S3_ENDPOINT_URL=http://localstack:4566 -e S3_BUCKET=continuo -e S3_ENV=local \
+    -e S3_ENDPOINT_URL=http://minio:9000 -e S3_BUCKET=continuo -e S3_ENV=local \
     -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
     -e POSTGRES_DB=continuo_dbt -e POSTGRES_USER=continuo_svc \
     -e POSTGRES_PASSWORD=continuo \
@@ -22,7 +22,7 @@ import pytest
 from dbt_upload.upload import upload_manifest
 
 SERVICES_DIR = "/app/services"
-S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://localstack:4566")
+S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
 S3_BUCKET = os.getenv("S3_BUCKET", "continuo")
 S3_ENV = os.getenv("S3_ENV", "local")
 
@@ -32,8 +32,8 @@ def s3():
     client = boto3.client(
         "s3",
         endpoint_url=S3_ENDPOINT,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "test"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "minioadmin"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin"),
         region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
     )
     try:
@@ -46,7 +46,7 @@ def s3():
 
 
 # ---------------------------------------------------------------------------
-# Unit tests (no localstack required)
+# Unit tests (no minio required)
 # ---------------------------------------------------------------------------
 
 
@@ -163,7 +163,7 @@ def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatc
     monkeypatch.setenv("IMAGE_TAG_PER_SERVICE", "")
 
     target_config = {
-        "endpoint_url": "http://localstack:4566",
+        "endpoint_url": "http://minio:9000",
         "access_key_id": "test",
         "secret_access_key": "test",
         "region": "us-east-1",
@@ -190,7 +190,7 @@ def test_upload_services_release_mode_no_image_tag_required(tmp_path, monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# Integration tests (require localstack + compiled dbt services)
+# Integration tests (require minio + compiled dbt services)
 # ---------------------------------------------------------------------------
 
 
@@ -270,8 +270,8 @@ def test_compile_uploader_lands_manifest_at_canonical_key(s3):
         "COMPILE_MANIFEST_PATH": manifest_path,
         "MANIFEST_S3_URI": f"s3://{S3_BUCKET}/{key}",
         "S3_ENDPOINT_URL": S3_ENDPOINT,
-        "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", "test"),
-        "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
+        "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", "minioadmin"),
+        "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin"),
         "AWS_DEFAULT_REGION": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
     }
     uploaded = subprocess.run(

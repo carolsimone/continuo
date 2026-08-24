@@ -4,13 +4,13 @@ from dbt_upload.config import load_target, resolve_service_dirs
 
 
 class TestLoadTarget:
-    def test_loads_localstack_target(self, tmp_path, monkeypatch):
+    def test_loads_minio_target(self, tmp_path, monkeypatch):
         monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
         yaml_content = (
             "targets:\n"
-            "  localstack:\n"
-            "    endpoint_url: http://localstack:4566\n"
+            "  minio:\n"
+            "    endpoint_url: http://minio:9000\n"
             "    bucket: continuo\n"
             "    region: us-east-1\n"
             "    env: local\n"
@@ -20,9 +20,9 @@ class TestLoadTarget:
         targets_file = tmp_path / "targets.yaml"
         targets_file.write_text(yaml_content)
 
-        target = load_target(str(targets_file), "localstack")
+        target = load_target(str(targets_file), "minio")
 
-        assert target["endpoint_url"] == "http://localstack:4566"
+        assert target["endpoint_url"] == "http://minio:9000"
         assert target["bucket"] == "continuo"
         assert target["region"] == "us-east-1"
         assert target["env"] == "local"
@@ -32,8 +32,8 @@ class TestLoadTarget:
     def test_env_vars_override_yaml_credentials(self, tmp_path, monkeypatch):
         yaml_content = (
             "targets:\n"
-            "  localstack:\n"
-            "    endpoint_url: http://localstack:4566\n"
+            "  minio:\n"
+            "    endpoint_url: http://minio:9000\n"
             "    bucket: continuo\n"
             "    region: us-east-1\n"
             "    env: local\n"
@@ -46,7 +46,7 @@ class TestLoadTarget:
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "env-key")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "env-secret")
 
-        target = load_target(str(targets_file), "localstack")
+        target = load_target(str(targets_file), "minio")
 
         assert target["access_key_id"] == "env-key"
         assert target["secret_access_key"] == "env-secret"
@@ -72,7 +72,7 @@ class TestLoadTarget:
         assert target["secret_access_key"] == "hetzner-secret"
 
     def test_unknown_target_raises(self, tmp_path):
-        yaml_content = "targets:\n  localstack:\n    endpoint_url: http://localhost\n"
+        yaml_content = "targets:\n  minio:\n    endpoint_url: http://localhost\n"
         targets_file = tmp_path / "targets.yaml"
         targets_file.write_text(yaml_content)
 

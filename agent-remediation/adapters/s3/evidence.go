@@ -17,7 +17,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
-// S3 reads evidence objects and writes proposal artifacts to S3 (or LocalStack in dev).
+// S3 reads evidence objects and writes proposal artifacts to S3 (or MinIO in dev).
 type S3 struct {
 	client *awss3.Client
 	bucket string
@@ -27,7 +27,7 @@ var _ ports.EvidenceReader = (*S3)(nil)
 var _ ports.ArtifactWriter = (*S3)(nil)
 
 // NewS3 builds an S3 client for the given bucket.
-// endpointURL empty → AWS default; non-empty (e.g. http://localstack:4566) → path-style addressing.
+// endpointURL empty → AWS default; non-empty (e.g. http://minio:9000) → path-style addressing.
 func NewS3(endpointURL, bucket, region, accessKeyID, secretKey string) *S3 {
 	cfg := aws.Config{
 		Region:      region,

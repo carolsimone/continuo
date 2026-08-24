@@ -1,4 +1,4 @@
-// Package s3 implements ports.CodeBundleReader over AWS SDK v2 S3 (LocalStack
+// Package s3 implements ports.CodeBundleReader over AWS SDK v2 S3 (MinIO
 // or MinIO in dev).
 package s3
 
@@ -34,7 +34,7 @@ type CodeBundleReader struct {
 var _ ports.CodeBundleReader = (*CodeBundleReader)(nil)
 
 // NewCodeBundleReader builds an S3-backed CodeBundleReader. endpointURL empty →
-// AWS default; non-empty (e.g. http://localstack:4566) → path-style addressing.
+// AWS default; non-empty (e.g. http://minio:9000) → path-style addressing.
 //
 // Static credentials are attached only when both key values are supplied. An
 // install running under an IAM role or workload identity leaves them empty on

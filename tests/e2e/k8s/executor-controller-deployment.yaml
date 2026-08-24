@@ -147,16 +147,16 @@ spec:
               value: "/etc/continuo/dbt-commands.yaml"
             # S3 access for the validation Job: the executor forwards these into
             # each validation pod so the validation runner can fetch the candidate
-            # SQL from CANDIDATE_SQL_URI. The endpoint points at LocalStack via the
+            # SQL from CANDIDATE_SQL_URI. The endpoint points at MinIO via the
             # docker bridge so the in-kind Job can reach it.
             - name: S3_ENDPOINT_URL
-              value: "http://${DOCKER_BRIDGE_IP}:4566"
+              value: "http://${DOCKER_BRIDGE_IP}:9000"
             - name: S3_BUCKET
               value: "continuo"
             - name: AWS_ACCESS_KEY_ID
-              value: "test"
+              value: "minioadmin"
             - name: AWS_SECRET_ACCESS_KEY
-              value: "test"
+              value: "minioadmin"
             - name: AWS_DEFAULT_REGION
               value: "us-east-1"
             - name: CANCELLED_SCHEDULES_TTL_HOURS

@@ -37,7 +37,7 @@ class TestCliUpload:
         mock_load_target.return_value = {"env": "local", "bucket": "continuo"}
         mock_upload.return_value = (["/app/services/svc-1"], [])
 
-        code = main(["upload", "--services-dir", "./services", "--target", "localstack",
+        code = main(["upload", "--services-dir", "./services", "--target", "minio",
                      "--release-id", "rel-456"])
 
         assert code == 0
@@ -73,7 +73,7 @@ class TestCliLoad:
         mock_load_target.return_value = {"env": "local", "bucket": "continuo"}
         mock_upload.return_value = (["/app/services/svc-1"], [])
 
-        code = main(["load", "--services-dir", "./services", "--target", "localstack",
+        code = main(["load", "--services-dir", "./services", "--target", "minio",
                      "--release-id", "rel-789"])
 
         # upload_services receives only the successfully compiled dirs

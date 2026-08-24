@@ -11,14 +11,14 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 )
 
-// S3Client implements ports.LogUploader backed by AWS S3 / LocalStack.
+// S3Client implements ports.LogUploader backed by AWS S3 / MinIO.
 type S3Client struct {
 	client *s3.Client
 	bucket string
 }
 
 // NewS3Client creates an S3Client for the given bucket.
-// endpointURL: e.g. "http://localstack:4566" (empty string → AWS default)
+// endpointURL: e.g. "http://minio:9000" (empty string → AWS default)
 func NewS3Client(endpointURL, bucket, region, accessKeyID, secretKey string) *S3Client {
 	cfg := aws.Config{
 		Region:      region,

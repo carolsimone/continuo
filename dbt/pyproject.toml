@@ -15,7 +15,7 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 markers = [
-    "integration: requires localstack and compiled dbt services (skipped by default)",
+    "integration: requires minio and compiled dbt services (skipped by default)",
 ]
 
 [tool.hatch.build.targets.wheel]

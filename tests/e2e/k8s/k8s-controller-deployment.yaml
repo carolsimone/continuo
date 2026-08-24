@@ -90,15 +90,15 @@ spec:
             - name: STATE_SERVICE_GRPC_ADDR
               value: "${DOCKER_BRIDGE_IP}:50051"
             - name: S3_ENDPOINT_URL
-              value: "http://${DOCKER_BRIDGE_IP}:4566"
+              value: "http://${DOCKER_BRIDGE_IP}:9000"
             - name: S3_BUCKET
               value: "continuo"
             - name: AWS_DEFAULT_REGION
               value: "us-east-1"
             - name: AWS_ACCESS_KEY_ID
-              value: "test"
+              value: "minioadmin"
             - name: AWS_SECRET_ACCESS_KEY
-              value: "test"
+              value: "minioadmin"
             - name: K8S_NAMESPACE
               value: "default"
             - name: K8S_CHECK_DELAY_SECONDS

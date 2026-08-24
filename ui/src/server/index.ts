@@ -9,6 +9,7 @@ import { createRemediationClient } from './remediation-client';
 import { resolveGithubAppPullRequestCreator } from './github/pull-request-creator';
 import { normalizePemPrivateKey } from './github/private-key';
 import { createApp } from './app';
+import { assertS3Config } from './s3';
 import { attachChatWebSocket } from './ws/chat';
 import { loadAuthConfig } from './auth/config';
 import { buildAuth } from './auth';
@@ -34,6 +35,10 @@ async function main() {
   // Fail fast: missing/invalid auth configuration must never boot an open UI.
   const authConfig = loadAuthConfig(process.env);
   const auth = await buildAuth(authConfig);
+
+  // Fail fast on missing S3 credentials too: without this the first log fetch
+  // would fail mid-request instead of the misconfiguration surfacing at boot.
+  assertS3Config();
 
   const client = createGrpcClient(STATE_GRPC_ADDR);
   const graphClient = createGrpcGraphClient(ORCHESTRATOR_GRPC_ADDR);

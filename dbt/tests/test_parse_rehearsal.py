@@ -38,8 +38,8 @@ deployed s3-sidecar scripts at /compile_uploader.py, /parse_cache_fetcher.py,
 and the shared macros at /project/macros):
 
   docker run --rm -v $(pwd)/dbt:/app -w /app --network <net> \
-    -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test \
-    -e AWS_DEFAULT_REGION=us-east-1 -e S3_ENDPOINT_URL=http://<localstack>:4566 \
+    -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
+    -e AWS_DEFAULT_REGION=us-east-1 -e S3_ENDPOINT_URL=http://<minio>:9000 \
     -e S3_BUCKET=continuo -e S3_ENV=local \
     <dbt-compile-and-load image> uv run --with pytest pytest tests/test_parse_rehearsal.py -v -m integration
 """
@@ -64,7 +64,7 @@ SERVICE_FIXTURE_DIR = "/app/services/service-1"
 # DBT_TARGET_SCHEMA env_var() read.
 BASE_MACROS_DIR = "/project/macros"
 
-S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://localstack:4566")
+S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
 S3_BUCKET = os.getenv("S3_BUCKET", "continuo")
 
 
@@ -217,13 +217,13 @@ def test_disabled_partial_parse_is_detected(tmp_path):
 def test_fetcher_round_trip_through_deployed_script():
     """Pins invariant 3: the DEPLOYED /compile_uploader.py and
     /parse_cache_fetcher.py round-trip a partial_parse.msgpack byte-for-byte
-    through real S3 (localstack), and the fetcher's termination message is
+    through real S3 (minio), and the fetcher's termination message is
     exactly "hydrated" on success."""
     s3 = boto3.client(
         "s3",
         endpoint_url=S3_ENDPOINT,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "test"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID", "minioadmin"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin"),
         region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
     )
     try:
@@ -256,8 +256,8 @@ def test_fetcher_round_trip_through_deployed_script():
             "PARSE_PROD_LOCAL_PATH": local_msgpack,
             "PARSE_PROD_S3_URI": parse_uri,
             "S3_ENDPOINT_URL": S3_ENDPOINT,
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", "test"),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
+            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", "minioadmin"),
+            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin"),
             "AWS_DEFAULT_REGION": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
         }
         uploaded = subprocess.run(
@@ -273,8 +273,8 @@ def test_fetcher_round_trip_through_deployed_script():
             "PARSE_CACHE_DEST": dest,
             "TERMINATION_LOG_PATH": term_log,
             "S3_ENDPOINT_URL": S3_ENDPOINT,
-            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", "test"),
-            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
+            "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID", "minioadmin"),
+            "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin"),
             "AWS_DEFAULT_REGION": os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
         }
         fetched = subprocess.run(

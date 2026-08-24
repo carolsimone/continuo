@@ -22,8 +22,8 @@ type Archiver struct {
 
 var _ ports.Archiver = (*Archiver)(nil)
 
-// NewArchiver creates an Archiver backed by S3 or a LocalStack endpoint.
-// endpointURL: e.g. "http://localstack:4566" (empty string → AWS default).
+// NewArchiver creates an Archiver backed by S3 or a MinIO endpoint.
+// endpointURL: e.g. "http://minio:9000" (empty string → AWS default).
 func NewArchiver(endpointURL, bucket, region, accessKeyID, secretKey string) *Archiver {
 	cfg := aws.Config{
 		Region:      region,

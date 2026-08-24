@@ -175,7 +175,7 @@ You should see:
 The E2E test uses a hybrid setup:
 
 **In docker-compose:**
-- PostgreSQL, Redis, Neo4j (data stores), LocalStack (S3 — dbt manifests)
+- PostgreSQL, Redis, Neo4j (data stores), MinIO (S3 — dbt manifests)
 - state, orchestrator, topology-controller, release-controller (services)
 
 **In kind cluster (Kubernetes):**
@@ -200,7 +200,7 @@ Controllers in kind connect to docker-compose services via docker bridge network
 | `topology_versioning_test.go` | `TestTopologyVersioning_MidRunIsolation` — lazy generation switch (in-flight runs immutable) |
 | `watchdog_termination_test.go` | `TestWatchdog_TerminatesStuckSchedule` |
 | `release_promote_test.go` | dbt blue/green release tests — see [Blue/Green Release Tests](#bluegreen-release-tests) |
-| `release_promote_python_test.go` | `TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes`, `TestE2E_PythonNodeRun_MaterializesAndReportsFailures` — a python-contract release skips the compile leg, validates via `build_from_columns`, promotes; then each node runs in its own image. The contract's mixed DAG includes a `python-csv` node (`py_csv`, no script) whose source csv is seeded into LocalStack S3 before the release posts: the validation runner range-fetches its header and checks it against `output_columns`, and the run path fetches the full object and lands its rows in the warehouse |
+| `release_promote_python_test.go` | `TestE2E_ReleasePromote_PythonContractSkipsCompileAndPromotes`, `TestE2E_PythonNodeRun_MaterializesAndReportsFailures` — a python-contract release skips the compile leg, validates via `build_from_columns`, promotes; then each node runs in its own image. The contract's mixed DAG includes a `python-csv` node (`py_csv`, no script) whose source csv is seeded into MinIO S3 before the release posts: the validation runner range-fetches its header and checks it against `output_columns`, and the run path fetches the full object and lands its rows in the warehouse |
 | `remediation_python_test.go` | `TestE2E_PythonValidationFailure_ShadowVerifiedFix`, `TestE2E_PythonValidationFailure_ShadowErrorFeedsNextAttempt` — a rejected python node is repaired in the contract yaml, verified by a real shadow release that stops at `validated`, and proposed for review; the second test proves a rejected shadow's error feeds the next attempt and produces no remediation trigger of its own. Uses the fixture repository under `fixtures/py-remediation-repo`, which `stub-github` serves as a tarball |
 | `seed_topology_test.go` | `seedTopology` helper — publishes `release.promoted:v1` to establish the e2e DAG in Neo4j (the kept production path) |
 | `ui_http_test.go` | HTTP assertions against the ui (`verifyUIService`) |
@@ -230,7 +230,7 @@ POST /releases → release.requested:v1 → topology-controller candidate parse
 | `TestE2E_ReleasePromote_GatedCrossServiceUpstream` | A clean **cross-service** chain (`xprobe_down`@service-2 → `xprobe_up`@service-3) validates self-contained — the changed node and its cross-service upstream are both built empty in the candidate schema. |
 | `TestE2E_ReleasePromote_BootstrapSkipsValidation` | `bootstrap:true` promotes directly, skipping validation, and seeds `current_prod`. |
 
-These tests read the dbt manifests that `setup.sh` uploads to LocalStack S3 and use the content-addressed image tags loaded into kind, so they need no setup beyond the standard blank-state harness. Compile and seed-build run real dbt, and each validation job runs a real `continuo-python-runtime-<engine>` Job — allow up to ~10 minutes per test, and expect a cold kind run to be slower than a warm one.
+These tests read the dbt manifests that `setup.sh` uploads to MinIO S3 and use the content-addressed image tags loaded into kind, so they need no setup beyond the standard blank-state harness. Compile and seed-build run real dbt, and each validation job runs a real `continuo-python-runtime-<engine>` Job — allow up to ~10 minutes per test, and expect a cold kind run to be slower than a warm one.
 
 Run only the blue/green tests:
 

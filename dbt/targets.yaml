@@ -1,11 +1,11 @@
 targets:
-  localstack:
-    endpoint_url: http://localstack:4566
+  minio:
+    endpoint_url: http://minio:9000
     bucket: continuo
     region: us-east-1
     env: local
-    access_key_id: test
-    secret_access_key: test
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
 
   hetzner:
     endpoint_url: https://nbg1.your-objectstorage.com
