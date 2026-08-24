@@ -33,6 +33,7 @@ needs a cloud account.
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | Talking to that cluster | `brew install kubectl` |
 | [Helm](https://helm.sh/) 3.14+ | Installing Continuo | `brew install helm` |
 | `git`, `curl`, `jq` | Cloning, calling the release API, reading its answers | `brew install jq` |
+| [AWS CLI](https://docs.aws.amazon.com/cli/) | Uploading the python service's artifacts to the bundled MinIO (chapter 6) | `brew install awscli` |
 
 **Room to run it.** Continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
 identity provider in this mode, plus ten of its own services, and then runs your
@@ -242,7 +243,9 @@ your Docker Hub or registry namespace when you move to a real cluster, and the
 same mechanism resolves `yourteam/core:v1` instead.
 
 The tag `v1` is arbitrary — it just has to match what you send in the next
-chapter. Real CD systems use the commit SHA.
+chapter. Real CD systems use the commit SHA. (The python service's release
+body needs the *full* `service-py:v1` reference rather than the bare tag —
+chapter 6 explains why.)
 
 ---
 
@@ -426,7 +429,16 @@ fork, and the file is meant to be yours:
       csv: s3://continuo/static-files/demo/orders.csv
 ```
 
-Then put a file there. Your install's object store is the bundled MinIO;
+The contract ships *inside* the image (`COPY contracts/` in the service's
+Dockerfile), and the runtime reads that baked copy when the node runs — so
+rebuild and reload the image you built in chapter 4:
+
+```bash
+docker build -t service-py:v1 services/service-py
+kind load docker-image service-py:v1 --name continuo
+```
+
+Then put a file where the contract now points. Your install's object store is the bundled MinIO;
 port-forward it and drive it with the AWS CLI:
 
 ```bash
@@ -474,7 +486,11 @@ aws --endpoint-url http://localhost:9000 \
 ```
 
 Only now post the release, with one extra field — `"kind": "python"` — telling
-Continuo to skip the compile leg and read the contract you just uploaded:
+Continuo to skip the compile leg and read the contract you just uploaded. Note
+the `image_tag`: a dbt release passes the bare tag (`v1`) and Continuo composes
+the image reference itself, but **a python release's `image_tag` is used
+verbatim as the full image reference** — pass `service-py:v1`, not `v1`, or
+the node will fail to dispatch at run time:
 
 ```bash
 curl -s -X POST http://localhost:8088/releases \
@@ -482,7 +498,7 @@ curl -s -X POST http://localhost:8088/releases \
   -d '{
     "release_id": "rel-py-v1",
     "service": "service-py",
-    "image_tag": "v1",
+    "image_tag": "service-py:v1",
     "bootstrap": true,
     "kind": "python",
     "repo": "<your-username>/continuo-dbt-demo",
@@ -545,8 +561,8 @@ kubectl -n continuo exec continuo-postgresql-0 -- env PGPASSWORD="$PGPW" \
 ```
  source | rows | total_eur
 --------+------+-----------
- card   |  100 |     70318
- fx     |  100 |    744400
+ card   | 7208 |   5091176
+ fx     | 4786 |  38852881
 ```
 
 One table, two halves. The `card` rows came from core's own seed through a
@@ -605,22 +621,15 @@ curl -s -X POST http://localhost:8088/releases \
   }' | jq
 ```
 
-This release takes longer than the bootstraps and walks the stages they
-skipped:
-
-```
-received → compiling → seed_building → validating → promoted
-```
-
-### What validation actually did
-
-`seed_building` and `validating` are the blue/green mechanism. Continuo created
-a temporary candidate schema, built the release's seeds into it, **cloned the
-unchanged upstream tables the change reads from production** — this is why
-chapter 6 had to bootstrap — rewrote the new model's compiled SQL to read from
-that schema instead of production, and ran it there. Production was untouched
-throughout, and the candidate schema was torn down afterwards. No data is
-copied — only schema-level structure.
+The stages are the same ones every release walks — but this time `validating`
+is not an instant no-op. It runs for a minute or two, and this is the
+blue/green mechanism at work: Continuo created a temporary candidate schema,
+built the release's seeds into it, **cloned the unchanged upstream tables the
+change reads from production** — this is why chapter 6 had to bootstrap —
+rewrote the in-scope models' compiled SQL to read from that schema instead of
+production, and ran them there. Production was untouched throughout, and the
+candidate schema was torn down afterwards. No data is copied — only
+schema-level structure.
 
 Look at what was in scope:
 
@@ -628,11 +637,34 @@ Look at what was in scope:
 curl -s http://localhost:8088/releases/rel-marketing-v2 | jq '.validation_node_ids'
 ```
 
-The list contains your new node and the lineage it depends on — including
-`analytics.ltv_per_user`, which belongs to finance. You changed marketing;
-Continuo worked out from the SQL that proving the change requires another
-team's model, cloned its production structure, and ran your model against it.
-Nobody declared that relationship anywhere.
+```json
+[
+  "analytics.channel_roi",
+  "analytics.daily_transactions",
+  "analytics.fx_transactions_eur",
+  "analytics.ltv_per_user",
+  "analytics.marketing_cost_per_user",
+  "analytics.marketing_spend_monthly",
+  "analytics.operational_cost_per_user",
+  "analytics.operational_costs_monthly",
+  "analytics.revenue_per_user",
+  "analytics.seed_card_transactions",
+  "analytics.seed_fx_rates_eur",
+  "analytics.seed_fx_transactions",
+  "analytics.seed_marketing_spend",
+  "analytics.seed_operational_costs",
+  "analytics.seed_user_acquisition",
+  "analytics.seed_users"
+]
+```
+
+**Read that list again.** You added one model to marketing. Continuo put
+sixteen of the graph's nineteen nodes in scope: your new node and its entire
+upstream lineage — `ltv_per_user` from finance, `revenue_per_user` and
+`daily_transactions` from core, and the seeds under all of them. You changed
+marketing; Continuo worked out from the SQL that proving the change requires
+two other teams' models, cloned their production structure, and ran your model
+against it. Nobody declared those relationships anywhere.
 
 Only because all of that passed did `marketing:v2` become marketing's
 production image. In the UI, the graph now shows `channel_roi` downstream of
@@ -684,12 +716,22 @@ curl -s http://localhost:8088/releases/rel-finance-v2 | jq '{status, reject_reas
 {
   "status": "rejected",
   "reject_reason": "validation_failed",
-  "failing_nodes": ["analytics.daily_transactions"]
+  "failing_nodes": [
+    "analytics.channel_roi",
+    "analytics.daily_transactions",
+    "analytics.dbt_daily_kpis",
+    "analytics.ltv_per_user",
+    "analytics.py_daily_kpis",
+    "analytics.revenue_per_user"
+  ]
 }
 ```
 
-The release was rejected, and the node it names belongs to **`core`** — the
-project you did not touch.
+The release was rejected, and look at where the damage landed: models in
+**core**, the `channel_roi` you added to **marketing** in the previous
+chapter, finance's own `ltv_per_user`, and even **service-py**'s python node —
+everything downstream of the column you removed, across all four projects and
+both runtimes. You touched one file in finance.
 
 Now check production:
 
@@ -830,6 +872,14 @@ Check the one in front of it:
 ```bash
 curl -s http://localhost:8088/releases | jq '.releases[] | {release_id, status}'
 ```
+
+**A python node fails at run time with `carries no explicit tag or digest`,
+and the run never finishes.** The python release was posted with a bare
+`image_tag` like `"v1"`. A python release's `image_tag` is used verbatim as
+the full image reference (`service-py:v1`); with a bare tag the executor
+cannot build the pod spec and the node fails without ever creating a Job.
+Cancel the run, re-release the python service with the full reference (a new
+`release_id`, and re-upload its contract under that id), and run again.
 
 **A python release sits in `parsing` and never moves.** Its `contract.yaml` is
 not where Continuo expects it. Unlike a dbt service — whose manifest Continuo
