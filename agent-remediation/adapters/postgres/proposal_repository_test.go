@@ -504,7 +504,7 @@ func TestInsert_PersistsSourceLocation(t *testing.T) {
 		Attempt:        1,
 		Status:         proposal.StatusProposed,
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CommitSHA:      "abc123",
 		FilePath:       "services/service-3/models/orders_d.sql",
 		CreatedAt:      time.Now(),
@@ -519,7 +519,7 @@ func TestInsert_PersistsSourceLocation(t *testing.T) {
 	require.NoError(t, db.GetContext(ctx, &got,
 		`SELECT repo, commit_sha, file_path FROM proposal WHERE release_id=$1 AND node_id=$2 AND attempt=$3`,
 		"r-1", "model.p.orders_d", 1))
-	require.Equal(t, "owner/continuo-dbt-demo", got.Repo)
+	require.Equal(t, "owner/continuo-demo", got.Repo)
 	require.Equal(t, "abc123", got.CommitSha)
 	require.Equal(t, "services/service-3/models/orders_d.sql", got.FilePath)
 }
@@ -557,7 +557,7 @@ func TestBeginPR_SingleWinner(t *testing.T) {
 		ProposedSQLURI: "s3://bucket/sql/1",
 		DiffURI:        "s3://bucket/diff/1",
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CommitSHA:      "abc123",
 		FilePath:       "services/service-3/models/orders_d.sql",
 		Model:          "claude-3-5-sonnet",
@@ -567,7 +567,7 @@ func TestBeginPR_SingleWinner(t *testing.T) {
 
 	c1, err := repo.BeginPR(ctx, id, "remediation/r-1/orders_d-attempt1", time.Now().UTC())
 	require.NoError(t, err)
-	require.Equal(t, "owner/continuo-dbt-demo", c1.Repo)
+	require.Equal(t, "owner/continuo-demo", c1.Repo)
 	require.Equal(t, "remediation/r-1/orders_d-attempt1", c1.Branch)
 	require.Equal(t, id, c1.ID)
 
@@ -598,7 +598,7 @@ func TestBeginPR_ListsAsStuckOpening(t *testing.T) {
 		ProposedSQLURI: "s3://bucket/sql/1",
 		DiffURI:        "s3://bucket/diff/1",
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CommitSHA:      "abc123",
 		FilePath:       "services/service-3/models/orders_d.sql",
 		Model:          "claude-3-5-sonnet",
@@ -615,7 +615,7 @@ func TestBeginPR_ListsAsStuckOpening(t *testing.T) {
 	require.Nil(t, next, "a page under the limit must report no next cursor")
 	require.Len(t, stuck, 1)
 	require.Equal(t, id, stuck[0].ID)
-	require.Equal(t, "owner/continuo-dbt-demo", stuck[0].Repo)
+	require.Equal(t, "owner/continuo-demo", stuck[0].Repo)
 	require.Equal(t, "r-opening-1", stuck[0].ReleaseID)
 	require.Equal(t, "model.p.orders", stuck[0].NodeID)
 	require.Equal(t, 1, stuck[0].Attempt)
@@ -658,7 +658,7 @@ func TestOpeningTransition_TriggerStampsClaimedAtWhenWriterOmitsIt(t *testing.T)
 		Attempt:        1,
 		Status:         proposal.StatusProposed,
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CreatedAt:      time.Now().UTC(),
 	}
 	id := seedProposal(t, repo, db, p)
@@ -694,7 +694,7 @@ func TestOpeningTransition_TriggerDoesNotOverrideExplicitClaimedAt(t *testing.T)
 		Attempt:        1,
 		Status:         proposal.StatusProposed,
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CreatedAt:      time.Now().UTC(),
 	}
 	id := seedProposal(t, repo, db, p)
@@ -735,7 +735,7 @@ func TestOpeningTransition_ExitClearsStaleTimestampFromWriterThatOmitsColumn(t *
 		Attempt:        1,
 		Status:         proposal.StatusProposed,
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CreatedAt:      time.Now().UTC(),
 	}
 	id := seedProposal(t, repo, db, p)
@@ -794,7 +794,7 @@ func TestFailStuckOpeningPR_RemovesFromStuckOpeningAndAllowsReclaim(t *testing.T
 		ProposedSQLURI: "s3://bucket/sql/1",
 		DiffURI:        "s3://bucket/diff/1",
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CommitSHA:      "abc123",
 		FilePath:       "services/service-3/models/customers_d.sql",
 		Model:          "claude-3-5-sonnet",
@@ -855,7 +855,7 @@ func TestFailStuckOpeningPR_CASGuardsAgainstReClaim(t *testing.T) {
 		Attempt:        1,
 		Status:         proposal.StatusProposed,
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CreatedAt:      time.Now().UTC(),
 	}
 	id := seedProposal(t, repo, db, p)
@@ -925,7 +925,7 @@ func TestListStuckOpening_CursorRotatesAcrossPages(t *testing.T) {
 			Attempt:        1,
 			Status:         proposal.StatusProposed,
 			SourceResolved: true,
-			Repo:           "owner/continuo-dbt-demo",
+			Repo:           "owner/continuo-demo",
 			// Strictly increasing created_at so the (created_at, id) order is
 			// deterministic and matches insertion order.
 			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Second),
@@ -1058,7 +1058,7 @@ func TestRecordPR_ThenGet(t *testing.T) {
 		ProposedSQLURI: "s3://bucket/sql/1",
 		DiffURI:        "s3://bucket/diff/1",
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CommitSHA:      "abc123",
 		FilePath:       "services/service-3/models/orders_d.sql",
 		Model:          "claude-3-5-sonnet",
@@ -1120,7 +1120,7 @@ func TestList_FilterAwaitingHuman(t *testing.T) {
 		ProposedSQLURI: "s3://bucket/sql/1",
 		DiffURI:        "s3://bucket/diff/1",
 		SourceResolved: true,
-		Repo:           "owner/continuo-dbt-demo",
+		Repo:           "owner/continuo-demo",
 		CommitSHA:      "abc123",
 		FilePath:       "services/service-3/models/orders_d.sql",
 		Model:          "claude-3-5-sonnet",

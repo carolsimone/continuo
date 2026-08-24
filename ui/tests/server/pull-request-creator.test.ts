@@ -63,7 +63,7 @@ function buildFakeOctokit(opts: {
 }
 
 const baseInput: CreatePRInput = {
-  repo: 'o/continuo-dbt-demo',
+  repo: 'o/continuo-demo',
   baseBranch: 'main',
   headBranch: 'remediation/r-1/orders_d-attempt1',
   files: [{ path: 'models/orders_d.sql', content: 'SELECT 1' }],

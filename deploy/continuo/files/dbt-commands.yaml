@@ -25,7 +25,7 @@ default:
 
 services:
   # Team "wise" runs finance through its own dbt CLI, wise-dbt, baked into the
-  # finance image at /usr/local/bin/wise-dbt (continuo-dbt-demo services/finance).
+  # finance image at /usr/local/bin/wise-dbt (continuo-demo services/finance).
   # Every key routes through the wrapper; seed_build reuses load-seed (schema via
   # DBT_TARGET_SCHEMA). Verb map: run-model->run, load-seed->seed,
   # capture-snapshot->snapshot, test-model->test, build-model->build,

@@ -4,7 +4,7 @@ Dockerized dbt (PostgreSQL) job images. The platform owns the shared image
 and the command-dispatch mechanism (`base/`, `dbt-commands.yaml`) — it does
 not own dbt model definitions. `services/service-1/2/3` below are throwaway
 e2e test fixtures, not production content; real teams own their dbt models
-in their own repo (e.g. [`continuo-dbt-demo`](https://github.com/carolsimone/continuo-dbt-demo))
+in their own repo (e.g. [`continuo-demo`](https://github.com/carolsimone/continuo-demo))
 and ship them as their own service image built on this base.
 
 ## Job, not a service
@@ -249,4 +249,4 @@ release-controller HTTP API (`GET /current-prod`, `POST /releases`,
 terminal status — is documented in
 [`docs/loading-releases.md`](../docs/loading-releases.md).
 A runnable reference producer lives at
-<https://github.com/carolsimone/continuo-dbt-demo>.
+<https://github.com/carolsimone/continuo-demo>.

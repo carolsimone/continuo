@@ -81,7 +81,7 @@ type Proposal struct {
 	// confident result; false when the step was skipped or inconclusive.
 	SourceResolved bool
 	// Repo is the version-control repository (owner/name) from which the source
-	// file was fetched (e.g. "owner/continuo-dbt-demo"). Empty when not resolved.
+	// file was fetched (e.g. "owner/continuo-demo"). Empty when not resolved.
 	Repo string
 	// CommitSHA is the git commit hash at which the source file was fetched.
 	// Empty when not resolved.
