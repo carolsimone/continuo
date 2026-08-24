@@ -91,11 +91,12 @@ for evaluation — one static login, no backups, no high availability. Productio
 installs bring their own datastores; see
 [deploy/README.md](../deploy/README.md).
 
-While you wait, expect some noise: services that depend on a datastore fail
-fast and get restarted until that datastore answers, so a few pods pass through
-`Error` or `CrashLoopBackOff` on the way up. That is the intended behaviour, not
-a broken install. Wait until every pod is `Running` or `Completed` before moving
-on.
+While you wait, most service pods sit in `Init:0/1`: each one gates on an init
+container that waits for the datastores to answer and the database migrations
+to finish, so services start in dependency order rather than crash-looping.
+The wait is image pulls plus that gate — on a first install expect several
+quiet minutes with no restarts. Wait until every pod is `Running` or
+`Completed` before moving on.
 
 Then open it:
 
@@ -856,11 +857,12 @@ marketing:v1 marketing:v2 service-py:v1` clears.
 
 ## Troubleshooting
 
-**A pod is in `CrashLoopBackOff` during install.** Expected while the datastores
-come up. Services that need Postgres, Redis or Neo4j fail fast and are restarted
-until their dependency answers; `orchestrator` in particular usually restarts two
-or three times waiting for Neo4j's DNS. If a pod is still crash-looping after all
-the datastore pods are `Running`, check its logs.
+**A pod is in `CrashLoopBackOff` during install.** Not expected: services gate
+on init containers (`wait-for-migrations`, `wait-for-redis`) and start in
+dependency order, so a healthy install comes up with zero restarts. A pod
+stuck in `Init:0/1` is still waiting on its gate — look at the datastore pods
+and the `db-init-migrate` job first. A pod that is actually crash-looping is a
+real signal: read its logs.
 
 **`ErrImagePull` on a node's Job.** The image tag in your release body does not
 match anything loaded onto the node. Check with:
