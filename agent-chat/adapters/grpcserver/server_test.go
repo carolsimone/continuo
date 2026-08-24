@@ -168,11 +168,12 @@ func TestChat_RejectsBeyondConcurrentSessionCap(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, ev.GetThread().GetThreadId())
 
-	// Second session: the cap of 1 is reached, so the server rejects it with
-	// ResourceExhausted on the first Recv.
+	// Second session: the cap of 1 is reached, so the server rejects the stream
+	// at open, before reading any client event — Recv surfaces ResourceExhausted
+	// without a Send. (Sending here would race the server's teardown: a Send on
+	// an already-terminated stream returns io.EOF, not the rejection status.)
 	s2, err := client.Chat(context.Background())
 	require.NoError(t, err)
-	require.NoError(t, s2.Send(&agentchatv1.ClientEvent{Event: &agentchatv1.ClientEvent_Open{Open: &agentchatv1.Open{UserId: "bob"}}}))
 	_, err = s2.Recv()
 	require.Error(t, err)
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
