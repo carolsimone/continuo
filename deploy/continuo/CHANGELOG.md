@@ -16,6 +16,14 @@ shipped in those.
 - Comment-only: `files/dbt-commands.yaml` now names the demo repository by its
   new name, `continuo-demo` (renamed from `continuo-dbt-demo`). No rendered
   template, values key, or behavior changes; PATCH when released.
+- `validation.imageTag` default bumped `v0.4.0` → `v0.4.1`. The
+  `continuo-python-runtime-<engine>` image now installs its runtime and engine
+  adapter from PyPI (versioned) instead of building from source, and the
+  adapter packages were renamed to `continuo-<engine>-adapter`. The image name,
+  entrypoint, `run`/`validation-op` commands, uid `65532`, and adapter
+  discovery are unchanged, so it is a drop-in; an unmodified existing values
+  file that keeps `imageTag: "v0.4.0"` still installs and runs. PATCH when
+  released.
 
 ## [0.4.0] - 2026-08-23
 

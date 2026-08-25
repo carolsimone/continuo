@@ -34,7 +34,7 @@ func TestSchemaOpJob_RunsEngineImageWithSecretAndOpEnv(t *testing.T) {
 	spec := job.Spec.Template.Spec
 	require.Len(t, spec.Containers, 1)
 	c := spec.Containers[0]
-	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.4.0", c.Image)
+	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.4.1", c.Image)
 	assert.Equal(t, corev1.RestartPolicyNever, spec.RestartPolicy)
 	// The runtime image's default command runs the python-node harness, so the
 	// schema-op container must select the validation entrypoint explicitly.

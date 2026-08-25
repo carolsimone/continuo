@@ -128,7 +128,7 @@ spec:
             - name: VALIDATION_IMAGE_PULL_POLICY
               value: "IfNotPresent"
             - name: VALIDATION_IMAGE
-              value: "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.4.0"
+              value: "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.4.1"
             # Names the Secret (created by provision-k8s-test-env.sh) whose keys the
             # validation pod receives via envFrom as its warehouse connection.
             - name: VALIDATION_WAREHOUSE_SECRET
