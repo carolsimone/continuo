@@ -96,7 +96,7 @@ app.kubernetes.io/name: {{ .service }}
 {{- fail (printf "validation.imageTag=%q predates python-csv validation support (added in v0.4.0): topology-controller already accepts \"kind: python-csv\" nodes and emits csv_source, but this runner ignores that field and reports success without checking the file's header, so a csv node with a mismatched header would promote unvalidated. Re-pin validation.imageTag to \"v0.4.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
 {{- else -}}
-{{- $tag = "v0.4.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
+{{- $tag = "v0.4.1" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
 {{- end -}}
 {{- if .Values.global.imageRegistry -}}
 {{- printf "%s/%s/continuo-python-runtime-%s:%s" .Values.global.imageRegistry .Values.global.imageRepositoryPrefix $eng $tag -}}
