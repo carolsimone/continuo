@@ -29,6 +29,16 @@ production**: the failure is classified as an event, a fixable one gets an
 LLM-proposed diff, and a human reviews and merges it. Merging stays a human
 decision by design.
 
+### Standardize every node on the Open Data Contract Standard (ODCS)
+**Target date:** —
+
+Every node — dbt models, Python nodes, seeds, and streaming producers — will
+carry a data contract in the Open Data Contract Standard (ODCS) format: schema,
+data-quality expectations, and ownership expressed the same way regardless of
+runtime. One contract format across the whole graph replaces the per-runtime
+metadata we derive today and gives the control plane and the remediation agents
+a single, portable contract to enforce and reason about.
+
 ### One control plane for streaming and batch
 **Target date:** —
 
