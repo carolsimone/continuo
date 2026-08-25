@@ -8,16 +8,16 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir uv
 
-RUN uv venv /app/.venv
+# Resolve dependencies from the lockfile, never from versions named here: the
+# declared set in pyproject.toml/uv.lock is what CI tests, so anything pinned in
+# this file would ship a set no test ever exercised. Guarded by
+# tests/test_prod_image_guard.py.
+COPY pyproject.toml uv.lock ./
+
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --python /app/.venv/bin/python \
-    boto3==1.42.68 \
-    grpcio==1.78.0 \
-    protobuf==6.33.5 \
-    PyYAML==6.0.3 \
-    redis==7.3.0 \
-    sqlglot==29.0.1
+    uv sync --frozen --no-dev --no-install-project
 
 COPY main.py ./
 COPY streams_contract.py ./
