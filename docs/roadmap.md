@@ -35,6 +35,19 @@ change to it is validated against its downstream lineage the same way — so a
 spreadsheet another team edits can no longer silently break a model that reads
 from it.
 
+**More warehouse engines.**
+Snowflake, BigQuery, Redshift, and Spark alongside the Postgres and Trino
+supported today. Each is an adapter in
+[continuo-python-runtime](https://github.com/carolsimone/continuo-python-runtime)
+implementing the shared engine contract, shipped as its own
+`continuo-python-runtime-<engine>` image that validation Jobs run. Continuo then
+has to learn the engine in two places a guard test keeps in step: the sqlglot
+dialect `topology-controller` reads and writes SQL with, and the chart's
+supported-engine list — which fails the install outright rather than run one
+engine's SQL under another engine's rules. Each engine also needs its own
+warehouse connection and dbt profile from the operator, since the credentials
+are engine-specific.
+
 **Show who pushed a change in the UI.**
 Each release will show the GitHub handle of the user who pushed it, next to
 the validation result.
