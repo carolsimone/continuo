@@ -28,6 +28,13 @@ getting worse and to point at the change that caused it.
 
 ## Planned
 
+**Spreadsheet nodes.**
+A spreadsheet becomes a first-class node type, on the same integration contract
+as dbt, Python, and CSV. Its column contract feeds the same one graph, and a
+change to it is validated against its downstream lineage the same way — so a
+spreadsheet another team edits can no longer silently break a model that reads
+from it.
+
 **Show who pushed a change in the UI.**
 Each release will show the GitHub handle of the user who pushed it, next to
 the validation result.

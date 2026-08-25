@@ -10,10 +10,10 @@
 
 Continuo is a control plane for data pipelines with built-in agentic
 remediation. It orchestrates independent data projects — dbt (data build
-tool) and Python alike — without requiring them to know about each other,
-automatically stitching them into one dependency graph, and it heals broken
-pipelines by having an LLM (Large Language Model) propose a fix before
-anything reaches production.
+tool) models, Python scripts, and CSV (comma-separated values) loads alike —
+without requiring them to know about each other, automatically stitching them
+into one dependency graph, and it heals broken pipelines by having an LLM
+(Large Language Model) propose a fix before anything reaches production.
 
 ## 🎯 Use it when
 
@@ -82,9 +82,15 @@ for a human to review.
 
 ## 🚦 Status
 
-Beta. dbt and Python are both first-class runtimes on the same integration
-contract: dbt models, Python scripts, and contract-only CSV loads live in
-one graph, released and validated the same way.
+Beta. Three node types are first-class on one integration contract — **dbt
+models**, **Python scripts**, and **contract-only CSV loads** — living in the
+same graph, released and validated the same way.
+
+Those nodes run and validate against your data warehouse, and the supported
+warehouse engines today are **Postgres** and **Trino**. The engine you point
+Continuo at must be one of these; it refuses to start on any other. (That
+warehouse is separate from Continuo's own control-plane datastores, covered in
+[Deploying it](#-deploying-it).)
 
 ## 🚀 Deploying it
 
