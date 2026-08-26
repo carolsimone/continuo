@@ -38,6 +38,16 @@ describe('DashboardPage — shell', () => {
     expect(container.querySelector('.app')).toBeNull();
     expect(container.querySelector('.app-header')).toBeNull();
   });
+
+  it('renders the brand as a home link inside the heading', async () => {
+    const { container } = renderPage();
+    await act(async () => { await Promise.resolve(); });
+
+    const brand = container.querySelector('.page-header h1 a.brand');
+    expect(brand).toHaveAttribute('href', '/');
+    expect(brand?.textContent?.trim()).toBe('continuo');
+    expect(brand?.querySelector('img.brand__mark')).toHaveAttribute('src', '/mark-light.svg');
+  });
 });
 
 function renderAt(entries: string[]) {

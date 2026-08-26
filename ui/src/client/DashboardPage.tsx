@@ -8,6 +8,7 @@ import NodesCatalogPanel from './NodesCatalogPanel';
 import RemediationPanel from './RemediationPanel';
 import UserMenu from './auth/UserMenu';
 import { fetchProposals } from './remediation-api';
+import Brand from './Brand';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -81,7 +82,7 @@ export default function DashboardPage() {
   return (
     <div className="page">
       <header className="page-header">
-        <h1>Continuo</h1>
+        <h1><Brand /></h1>
         <div className="page-actions">
           <span className="live-badge">
             ● live{lastUpdated ? ` · ${lastUpdated.toLocaleTimeString()}` : ''}

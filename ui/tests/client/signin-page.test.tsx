@@ -23,6 +23,15 @@ describe('SignInPage', () => {
     expect(screen.getByText(/sign-in failed/i)).toBeInTheDocument();
   });
 
+  it('shows the brand mark in the header', () => {
+    window.history.replaceState({}, '', '/');
+    const { container } = render(<SignInPage />);
+    const brand = container.querySelector('.page-header a.brand');
+    expect(brand).toHaveAttribute('href', '/');
+    expect(brand?.textContent?.trim()).toBe('continuo');
+    expect(brand?.querySelector('img.brand__mark')).toHaveAttribute('src', '/mark-light.svg');
+  });
+
   it('shows no error strip without the query parameter', () => {
     window.history.replaceState({}, '', '/');
     render(<SignInPage />);

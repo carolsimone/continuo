@@ -1,3 +1,5 @@
+import Brand from '../Brand';
+
 const ERROR_COPY: Record<string, string> = {
   no_role:
     'Your account has no continuo role assigned. Ask your administrator to map your group or email to a role.',
@@ -12,7 +14,7 @@ export default function SignInPage() {
   return (
     <div className="page">
       <header className="page-header">
-        <span className="section-header__title">continuo</span>
+        <Brand />
       </header>
       <main className="page-content">
         <div className="signin-card">
