@@ -1,0 +1,9 @@
+WISE-DBT WRAPPER v1 -> dbt compile --profiles-dir /project
+[0m13:28:03  Running with dbt=1.12.0-b1
+[0m13:28:03  Registered adapter: postgres=1.10.0
+[0m13:28:04  Unable to do partial parsing because saved manifest not found. Starting full parse.
+[0m13:28:04  [[31mERROR[0m]: Encountered an error:
+Compilation Error in model fx_transactions_eur (models/fx_transactions_eur.sql)
+  unexpected char "'" at 38
+    line 1
+      {{ config(materialized='table', tags=['dai }}

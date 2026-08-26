@@ -77,7 +77,9 @@ A `duplicate_table` rejection never reaches this table: `ClassifyDuplicateTable`
 
 ## Error Signature Normalization
 
-`NormalizeSignature` (`remediation/domain/failure/signature.go`) produces a stable dedup key for each failure. It strips the volatile parts that vary release-to-release:
+The signature is derived from one piece of the log: the key error line (`keyErrorLine`, `remediation/domain/failure/classify.go`), which is also the `error_excerpt` carried on the trigger and recorded in the case base. It is the first line mentioning "error" or "failure" (else the first non-blank line), with ANSI colour codes removed — except when that line is dbt's lead-in `[ERROR]: Encountered an error:`, which precedes every error dbt reports and says nothing about the failure. Keyed on the lead-in, every failure a node ever raised would share one signature, which is how unrelated compile errors once exhausted the agent's attempt cap and polluted precedent lookup. When the error line is the lead-in, the key is the message block after it: its consecutive non-blank lines up to the next timestamped log line, at most three, joined with a space — for a compile failure, `Compilation Error in model <name> (models/<name>.sql) <detail> line N`. A log that ends at the lead-in keys on the lead-in itself. Fixture tests under `remediation/domain/failure/testdata/` pin the key line for verbatim logs captured from real dbt Jobs, and the compile e2e test asserts the excerpt on a live rejection.
+
+`NormalizeSignature` (`remediation/domain/failure/signature.go`) then produces a stable dedup key from that text. It strips the volatile parts that vary release-to-release:
 
 - Candidate schema names (`candidate_<hex>`  → `candidate_schema`)
 - UUIDs and invocation IDs

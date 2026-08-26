@@ -140,7 +140,14 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	require.NotEmpty(t, trigger.FilePath,
 		"compile trigger must carry a file_path extracted from the dbt compile log")
 	require.NotEmpty(t, trigger.DBTLogURI, "compile trigger must carry a dbt_log_uri")
-	t.Logf("✅ remediation.requested:v1 (compile): file_path=%s signature=%s", trigger.FilePath, trigger.ErrorSignature)
+	// The excerpt is the text the signature was derived from and what the case
+	// base records as precedent. On a real dbt log it must be the compilation
+	// message naming the broken model — not dbt's `Encountered an error:`
+	// lead-in, which precedes every error and would give every compile failure
+	// of a service the same signature.
+	require.Contains(t, trigger.ErrorExcerpt, "Compilation Error in model daily_transactions",
+		"compile trigger error_excerpt must carry the compilation message, got %q", trigger.ErrorExcerpt)
+	t.Logf("✅ remediation.requested:v1 (compile): file_path=%s signature=%s excerpt=%q", trigger.FilePath, trigger.ErrorSignature, trigger.ErrorExcerpt)
 
 	// 5. classification_decision row must record source=='compile'.
 	var decision classificationDecisionRow
@@ -285,6 +292,7 @@ type compileTriggerPayload struct {
 	NodeID         string `json:"node_id"`
 	Category       string `json:"category"`
 	ErrorSignature string `json:"error_signature"`
+	ErrorExcerpt   string `json:"error_excerpt"`
 	DBTLogURI      string `json:"dbt_log_uri"`
 	FilePath       string `json:"file_path"`
 }

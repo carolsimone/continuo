@@ -89,12 +89,15 @@ type OpeningLister interface {
 // UnitOfWork, so methods take only ctx + domain types.
 type ProposalRepository interface {
 	// CountAttempts returns the number of TERMINAL proposal attempts recorded for
-	// the (source, nodeID, errorSignature) triplet. In-flight rows — 'generating'
-	// (the model call has not resolved) and 'verifying' (a shadow release is
-	// still validating a proposed fix) — are excluded so an attempt that has not
-	// yet concluded neither inflates the attempt cap nor shifts the attempt
-	// number on a redelivery.
-	CountAttempts(ctx context.Context, source, nodeID, errorSignature string) (int, error)
+	// the (releaseID, source, nodeID, errorSignature) key. The release is part
+	// of the key because the attempt cap bounds how often one release's failure
+	// is retried: a later release is new code, and its attempts at the same
+	// failure are its own, never charged to an earlier release's budget.
+	// In-flight rows — 'generating' (the model call has not resolved) and
+	// 'verifying' (a shadow release is still validating a proposed fix) — are
+	// excluded so an attempt that has not yet concluded neither inflates the
+	// attempt cap nor shifts the attempt number on a redelivery.
+	CountAttempts(ctx context.Context, releaseID, source, nodeID, errorSignature string) (int, error)
 
 	// InsertGenerating persists an in-flight 'generating' row for the attempt just
 	// before the model is called. It is idempotent: a redelivery that re-runs the

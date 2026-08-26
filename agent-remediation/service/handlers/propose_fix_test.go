@@ -181,13 +181,20 @@ func (fakeClock) Now() time.Time { return time.Date(2026, 6, 23, 0, 0, 0, 0, tim
 // InsertGenerating calls. genKeys models the ON CONFLICT DO NOTHING natural key
 // so a redelivery of an in-flight attempt does not create a second generating row.
 type fakeProposalRepo struct {
-	count      int
-	inserted   []proposal.Proposal
+	count int
+	// countByRelease, when set, answers CountAttempts per release id. The cap
+	// is scoped to a release, so a fake that ignored the release would pass a
+	// handler that ignored it too.
+	countByRelease map[string]int
+	inserted       []proposal.Proposal
 	generating []proposal.Proposal
 	genKeys    map[string]bool
 }
 
-func (r *fakeProposalRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error) {
+func (r *fakeProposalRepo) CountAttempts(_ context.Context, releaseID, _, _, _ string) (int, error) {
+	if r.countByRelease != nil {
+		return r.countByRelease[releaseID], nil
+	}
 	return r.count, nil
 }
 
@@ -816,6 +823,46 @@ func TestProposeFix_AttemptCapEscalates(t *testing.T) {
 	}
 	if len(u.ob.entries) != 0 {
 		t.Fatal("escalated must not emit an outbox entry")
+	}
+}
+
+// TestProposeFix_AttemptCapIsScopedToTheRelease: three exhausted attempts on
+// one release do not bind a later release. The same node failing with the same
+// signature under a new release is new code, and gets its own budget: the model
+// is consulted and the attempt numbering starts again at 1. The release that
+// exhausted its budget stays escalated.
+func TestProposeFix_AttemptCapIsScopedToTheRelease(t *testing.T) {
+	u := newFakeUoW()
+	u.pr.countByRelease = map[string]int{"r1": 3}
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{
+		ProposedSQL: "select customer_id from t", Rationale: "typo", Confidence: "high", Model: "m",
+	}, nil)
+
+	later := baseTrigger()
+	later.ReleaseID = "r2"
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), later); err != nil {
+		t.Fatal(err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("a new release must reach the model; llm calls = %d", llm.calls)
+	}
+	if len(u.pr.inserted) != 1 || u.pr.inserted[0].Status != proposal.StatusProposed || u.pr.inserted[0].Attempt != 1 {
+		t.Fatalf("expected attempt 1 proposed for the new release, got %+v", u.pr.inserted)
+	}
+
+	// The exhausted release is still escalated, without another model call.
+	u2 := newFakeUoW()
+	u2.pr.countByRelease = map[string]int{"r1": 3}
+	llm2 := newFakeLLM(ports.ProposeResult{}, nil)
+	if err := ProposeFix(context.Background(), deps(u2, ev, &llm2, &fakeArtifacts{}), baseTrigger()); err != nil {
+		t.Fatal(err)
+	}
+	if llm2.calls != 0 || len(u2.pr.inserted) != 1 || u2.pr.inserted[0].Status != proposal.StatusEscalated {
+		t.Fatalf("expected the exhausted release to escalate without a model call, calls=%d rows=%+v", llm2.calls, u2.pr.inserted)
 	}
 }
 

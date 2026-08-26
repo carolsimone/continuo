@@ -1,6 +1,7 @@
 package failure
 
 import (
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -216,14 +217,25 @@ func firstMatch(lower string, rules []rule) (rule, bool) {
 	return rule{}, false
 }
 
-// keyErrorLine extracts the most informative line for signature derivation:
+// keyErrorLine extracts the most informative text for signature derivation:
 // the first line mentioning "error" or "failure", else the first non-blank
-// line. This keeps the signature focused on the cause, not the surrounding
-// dbt boilerplate.
+// line, with ANSI colour codes removed. This keeps the signature focused on
+// the cause, not the surrounding dbt boilerplate.
+//
+// dbt reports every error under a lead-in line, `[ERROR]: Encountered an
+// error:`, and prints the message on the lines that follow. That lead-in is
+// the first line mentioning "error", but it says nothing about the failure —
+// keyed on it, every error a node ever raises shares one signature. So when
+// the error line is that lead-in, the key is the message block after it: its
+// consecutive non-blank lines, joined with a space, up to messageBlockLines
+// of them or until the next timestamped log line, whichever comes first. A
+// log that ends at the lead-in (the Job died before dbt printed the message)
+// keys on the lead-in itself, so the signature is never empty.
 func keyErrorLine(logText string) string {
+	lines := strings.Split(logText, "\n")
 	var firstNonBlank string
-	for _, ln := range strings.Split(logText, "\n") {
-		t := strings.TrimSpace(ln)
+	for i, ln := range lines {
+		t := strings.TrimSpace(reANSI.ReplaceAllString(ln, ""))
 		if t == "" {
 			continue
 		}
@@ -231,9 +243,50 @@ func keyErrorLine(logText string) string {
 			firstNonBlank = t
 		}
 		l := strings.ToLower(t)
-		if strings.Contains(l, "error") || strings.Contains(l, "failure") {
-			return t
+		if !strings.Contains(l, "error") && !strings.Contains(l, "failure") {
+			continue
 		}
+		if strings.HasSuffix(l, errorLeadIn) {
+			if block := messageBlock(lines[i+1:]); block != "" {
+				return block
+			}
+		}
+		return t
 	}
 	return firstNonBlank
 }
+
+// errorLeadIn is the line dbt prints before every error message, lower-cased.
+const errorLeadIn = "encountered an error:"
+
+// messageBlockLines bounds how many lines of an error message feed the key:
+// enough to carry the error kind, the affected node, and the detail dbt puts
+// on the following line, without dragging in a rendered source excerpt.
+const messageBlockLines = 3
+
+// messageBlock joins the message lines that follow dbt's error lead-in:
+// consecutive non-blank, non-timestamped lines, at most messageBlockLines of
+// them. It returns "" when the lead-in has nothing after it.
+func messageBlock(lines []string) string {
+	var parts []string
+	for _, ln := range lines {
+		t := strings.TrimSpace(reANSI.ReplaceAllString(ln, ""))
+		if t == "" || reLogLineStart.MatchString(t) {
+			break
+		}
+		parts = append(parts, t)
+		if len(parts) == messageBlockLines {
+			break
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+var (
+	// reANSI matches the terminal colour codes dbt wraps its log levels in.
+	reANSI = regexp.MustCompile("\x1b\\[[0-9;]*m")
+	// reLogLineStart matches the clock-time prefix every dbt log line starts
+	// with (`13:28:04  ...` on stdout, `13:28:04.340090 [error] ...` in the
+	// file log), which is what separates a message from the log line after it.
+	reLogLineStart = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}`)
+)
