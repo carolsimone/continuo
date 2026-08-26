@@ -11,7 +11,7 @@ const docsLogo = (name: string) => fileURLToPath(new URL(`../../../docs/logo/${n
 const indexHtml = fileURLToPath(new URL('../../index.html', import.meta.url));
 
 describe('brand assets', () => {
-  it.each(['favicon.svg', 'mark.svg'])('public/%s is byte-identical to docs/logo', name => {
+  it.each(['favicon.svg', 'mark-light.svg'])('public/%s is byte-identical to docs/logo', name => {
     expect(readFileSync(uiPublic(name), 'utf8')).toBe(readFileSync(docsLogo(name), 'utf8'));
   });
 

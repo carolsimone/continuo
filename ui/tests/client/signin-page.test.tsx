@@ -26,9 +26,10 @@ describe('SignInPage', () => {
   it('shows the brand mark in the header', () => {
     window.history.replaceState({}, '', '/');
     const { container } = render(<SignInPage />);
-    const header = container.querySelector('.page-header');
-    expect(header).toHaveTextContent('Continuo');
-    expect(header?.querySelector('img.brand__mark')).toHaveAttribute('src', '/mark.svg');
+    const brand = container.querySelector('.page-header a.brand');
+    expect(brand).toHaveAttribute('href', '/');
+    expect(brand?.textContent?.trim()).toBe('continuo');
+    expect(brand?.querySelector('img.brand__mark')).toHaveAttribute('src', '/mark-light.svg');
   });
 
   it('shows no error strip without the query parameter', () => {

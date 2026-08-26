@@ -14,7 +14,7 @@ export default function SignInPage() {
   return (
     <div className="page">
       <header className="page-header">
-        <span className="section-header__title"><Brand /></span>
+        <Brand />
       </header>
       <main className="page-content">
         <div className="signin-card">

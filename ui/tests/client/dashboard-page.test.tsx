@@ -39,13 +39,14 @@ describe('DashboardPage — shell', () => {
     expect(container.querySelector('.app-header')).toBeNull();
   });
 
-  it('shows the brand mark next to the Continuo heading', async () => {
+  it('renders the brand as a home link inside the heading', async () => {
     const { container } = renderPage();
     await act(async () => { await Promise.resolve(); });
 
-    const heading = container.querySelector('.page-header h1');
-    expect(heading).toHaveTextContent('Continuo');
-    expect(heading?.querySelector('img.brand__mark')).toHaveAttribute('src', '/mark.svg');
+    const brand = container.querySelector('.page-header h1 a.brand');
+    expect(brand).toHaveAttribute('href', '/');
+    expect(brand?.textContent?.trim()).toBe('continuo');
+    expect(brand?.querySelector('img.brand__mark')).toHaveAttribute('src', '/mark-light.svg');
   });
 });
 
