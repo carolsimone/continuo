@@ -15,7 +15,7 @@ describe('Brand', () => {
     const mark = container.querySelector('img.brand__mark');
     expect(mark).toHaveAttribute('src', '/mark-light.svg');
     expect(mark).toHaveAttribute('alt', '');
-    expect(mark).toHaveAttribute('width', '28');
-    expect(mark).toHaveAttribute('height', '28');
+    expect(mark).toHaveAttribute('width', '24');
+    expect(mark).toHaveAttribute('height', '24');
   });
 });

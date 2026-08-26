@@ -7,7 +7,7 @@
 export default function Brand() {
   return (
     <a className="brand" href="/">
-      <img className="brand__mark" src="/mark-light.svg" alt="" width={28} height={28} />
+      <img className="brand__mark" src="/mark-light.svg" alt="" width={24} height={24} />
       continuo
     </a>
   );
