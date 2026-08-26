@@ -1,0 +1,9 @@
+[0m08:15:44.271623 [error] [MainThread]: Encountered an error:
+Database Error
+  connection to server at "localhost" (::1), port 5432 failed: Connection refused
+  	Is the server running on that host and accepting TCP/IP connections?
+  connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused
+  	Is the server running on that host and accepting TCP/IP connections?
+  
+[0m08:15:44.272082 [debug] [MainThread]: Resource report: {"command_name": "compile", "command_success": false, "command_wall_clock_time": 0.6331199, "process_in_blocks": "0", "process_kernel_time": 0.083153, "process_mem_max_rss": "127804", "process_out_blocks": "2808", "process_user_time": 1.090006}
+[0m08:15:44.272330 [debug] [MainThread]: Command `dbt compile` failed at 08:15:44.272293 after 0.63 seconds

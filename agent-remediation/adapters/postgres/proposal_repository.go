@@ -39,11 +39,12 @@ func NewProposalRepository(q Queryer) *ProposalRepository {
 // release is still validating a proposed fix) — are excluded so an attempt
 // that has not yet concluded neither inflates the attempt cap nor shifts the
 // attempt number on a redelivery.
-func (r *ProposalRepository) CountAttempts(ctx context.Context, source, nodeID, errorSignature string) (int, error) {
+func (r *ProposalRepository) CountAttempts(ctx context.Context, releaseID, source, nodeID, errorSignature string) (int, error) {
 	const query = `SELECT count(*) FROM proposal
-		WHERE source=$1 AND node_id=$2 AND error_signature=$3 AND status NOT IN ('generating','verifying')`
+		WHERE release_id=$1 AND source=$2 AND node_id=$3 AND error_signature=$4
+		  AND status NOT IN ('generating','verifying')`
 	var count int
-	if err := r.q.GetContext(ctx, &count, query, source, nodeID, errorSignature); err != nil {
+	if err := r.q.GetContext(ctx, &count, query, releaseID, source, nodeID, errorSignature); err != nil {
 		return 0, fmt.Errorf("count proposal attempts: %w", err)
 	}
 	return count, nil

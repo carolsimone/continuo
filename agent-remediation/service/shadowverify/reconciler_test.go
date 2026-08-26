@@ -166,7 +166,7 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, id, verifyErr str
 	return true, nil
 }
 
-func (r *fakeProposalRepo) CountAttempts(context.Context, string, string, string) (int, error) {
+func (r *fakeProposalRepo) CountAttempts(context.Context, string, string, string, string) (int, error) {
 	return r.attempts, nil
 }
 

@@ -179,7 +179,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	}
 	attempt := attempts + 1
 
-	// Per-(node, error_signature) attempt cap: record escalated, emit nothing.
+	// Per-(release, node, error_signature) attempt cap: record escalated, emit nothing.
 	if attempts >= deps.MaxAttempts {
 		return record(ctx, deps, t, attempt, proposal.Proposal{
 			Status: proposal.StatusEscalated,
@@ -271,16 +271,18 @@ func alreadyProcessed(ctx context.Context, deps Deps, t Trigger) (bool, error) {
 }
 
 // countAttempts opens a read-only transaction to count prior TERMINAL proposals
-// for this (source, node, error_signature) triple. In-flight generating rows are
-// excluded by the repository so the in-progress attempt keeps a stable attempt
-// number across a redelivery.
+// for this (release, source, node, error_signature) key. The cap is a
+// per-release budget — a later release is new code and starts its own count,
+// even when the node fails with the same signature. In-flight generating rows
+// are excluded by the repository so the in-progress attempt keeps a stable
+// attempt number across a redelivery.
 func countAttempts(ctx context.Context, deps Deps, t Trigger) (int, error) {
 	u := deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {
 		return 0, fmt.Errorf("begin (count): %w", err)
 	}
 	defer func() { _ = u.Rollback() }()
-	n, err := u.ProposalRepo().CountAttempts(ctx, t.Source, t.NodeID, t.ErrorSignature)
+	n, err := u.ProposalRepo().CountAttempts(ctx, t.ReleaseID, t.Source, t.NodeID, t.ErrorSignature)
 	if err != nil {
 		return 0, fmt.Errorf("count attempts: %w", err)
 	}

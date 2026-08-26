@@ -56,7 +56,7 @@ type fakeRepo struct {
 	failStuckHit           bool
 }
 
-func (r *fakeRepo) CountAttempts(_ context.Context, _, _, _ string) (int, error)  { return 0, nil }
+func (r *fakeRepo) CountAttempts(_ context.Context, _, _, _, _ string) (int, error) { return 0, nil }
 func (r *fakeRepo) InsertGenerating(_ context.Context, _ proposal.Proposal) error { return nil }
 func (r *fakeRepo) FailGenerating(_ context.Context, _, _, _, _, _ string) (int, error) {
 	return 0, nil
