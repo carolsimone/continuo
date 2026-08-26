@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <!-- Favicon Dark Canvas Background -->
+    <radialGradient id="favBg" cx="50%" cy="50%" r="75%">
+      <stop offset="0%" stop-color="#141838"/>
+      <stop offset="65%" stop-color="#080B14"/>
+      <stop offset="100%" stop-color="#04060A"/>
+    </radialGradient>
+
+    <!-- High-Contrast Neon Gradient -->
+    <linearGradient id="favGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#D8B4FE"/>
+      <stop offset="25%" stop-color="#818CF8"/>
+      <stop offset="55%" stop-color="#38BDF8"/>
+      <stop offset="85%" stop-color="#06B6D4"/>
+      <stop offset="100%" stop-color="#2DD4BF"/>
+    </linearGradient>
+
+    <!-- Compact Glow Filter for Favicons -->
+    <filter id="favGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.5" result="b1"/>
+      <feMerge>
+        <feMergeNode in="b1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background Base Tile -->
+  <rect width="64" height="64" rx="14" fill="url(#favBg)"/>
+
+  <!-- Centered Favicon Mark -->
+  <g transform="translate(32, 32)">
+    <!-- Translucent Base Guides -->
+    <g fill="none" stroke="#38BDF8" stroke-opacity="0.16" stroke-linecap="round">
+      <path d="M 15 -15 A 21.2 21.2 0 1 0 15 15" stroke-width="4.5"/>
+      <path d="M 10.5 -10.5 A 14.8 14.8 0 1 0 10.5 10.5" stroke-width="4.5"/>
+      <path d="M 6 -6 A 8.5 8.5 0 1 0 6 6" stroke-width="4.5"/>
+    </g>
+
+    <!-- High-Legibility Neon Tubes -->
+    <g fill="none" stroke="url(#favGradient)" stroke-linecap="round" filter="url(#favGlow)">
+      <!-- Outer Continuous "C" (R=21.2) -->
+      <path d="M 15 -15 A 21.2 21.2 0 1 0 15 15" stroke-width="3.2"/>
+
+      <!-- Middle Track Capsules (R=14.8) -->
+      <path d="M 10.5 -10.5 A 14.8 14.8 0 0 0 -2.5 -14.6" stroke-width="3.2"/>
+      <path d="M -9.5 -11.4 A 14.8 14.8 0 1 0 10.5 10.5" stroke-width="3.2"/>
+
+      <!-- Inner Track Capsules (R=8.5) -->
+      <path d="M 6 -6 A 8.5 8.5 0 0 0 -8.5 0" stroke-width="3.2"/>
+      <path d="M -6 6 A 8.5 8.5 0 0 0 6 6" stroke-width="3.2"/>
+    </g>
+
+    <!-- Core Highlights -->
+    <g fill="none" stroke="#FFFFFF" stroke-linecap="round" opacity="0.8">
+      <path d="M 15 -15 A 21.2 21.2 0 1 0 15 15" stroke-width="0.8"/>
+      <path d="M 10.5 -10.5 A 14.8 14.8 0 0 0 -2.5 -14.6" stroke-width="0.8"/>
+      <path d="M -9.5 -11.4 A 14.8 14.8 0 1 0 10.5 10.5" stroke-width="0.8"/>
+      <path d="M 6 -6 A 8.5 8.5 0 0 0 -8.5 0" stroke-width="0.8"/>
+      <path d="M -6 6 A 8.5 8.5 0 0 0 6 6" stroke-width="0.8"/>
+    </g>
+  </g>
+</svg>

@@ -760,6 +760,19 @@ body {
   font-weight: 600;
 }
 
+/* Product mark + wordmark, inline so it inherits the host heading's size. */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand__mark {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
 .page-content {}
 .page-content--readable {
   max-width: 960px;

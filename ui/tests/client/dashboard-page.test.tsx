@@ -38,6 +38,15 @@ describe('DashboardPage — shell', () => {
     expect(container.querySelector('.app')).toBeNull();
     expect(container.querySelector('.app-header')).toBeNull();
   });
+
+  it('shows the brand mark next to the Continuo heading', async () => {
+    const { container } = renderPage();
+    await act(async () => { await Promise.resolve(); });
+
+    const heading = container.querySelector('.page-header h1');
+    expect(heading).toHaveTextContent('Continuo');
+    expect(heading?.querySelector('img.brand__mark')).toHaveAttribute('src', '/mark.svg');
+  });
 });
 
 function renderAt(entries: string[]) {

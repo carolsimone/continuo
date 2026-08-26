@@ -259,7 +259,7 @@ The Create PR route requires the GitHub App to be provisioned (`GITHUB_APP_ID`, 
 
 #### Frontend
 
-In production mode, `dist/` (built React SPA) is served as static files; all unmatched routes serve `index.html` (SPA fallback).
+In production mode, `dist/` (built React SPA) is served as static files; all unmatched routes serve `index.html` (SPA fallback). `dist/` also carries the brand assets Vite copies verbatim from `ui/public/`: `favicon.svg` (linked from `index.html` as the tab icon, with `apple-touch-icon.png` for iOS bookmarks) and `mark.svg`, the background-less product mark the `Brand` component renders next to the wordmark in the dashboard and sign-in headers. Both SVGs are copies of the canonical files in `docs/logo/`; `ui/tests/client/brand-assets.test.ts` fails if either copy drifts.
 
 ## Outbound Interfaces
 
