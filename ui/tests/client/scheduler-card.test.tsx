@@ -199,3 +199,32 @@ describe('SchedulerCard — drift strip', () => {
     expect(screen.queryByText(/topology version unknown/i)).toBeNull();
   });
 });
+
+describe('SchedulerCard — activity badge', () => {
+  it('shows Active with cron + timezone when the schedule is in schedules.yaml', () => {
+    const { container } = renderCard(baseSchedule({
+      cron_expression: '0 1 * * *',
+      timezone: 'Europe/Paris',
+      is_running: false,
+      last_run_id: 'r1',
+    }));
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(screen.queryByText('Inactive')).toBeNull();
+    const cron = container.querySelector('.schedule-cron');
+    expect(cron).not.toBeNull();
+    expect(cron).toHaveTextContent('0 1 * * *');
+    expect(cron).toHaveTextContent('Europe/Paris');
+  });
+
+  it('shows Inactive and no cron text when the schedule is not in schedules.yaml', () => {
+    const { container } = renderCard(baseSchedule({
+      cron_expression: '',
+      timezone: '',
+      is_running: false,
+      last_run_id: 'r1',
+    }));
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
+    expect(screen.queryByText('Active')).toBeNull();
+    expect(container.querySelector('.schedule-cron')).toBeNull();
+  });
+});

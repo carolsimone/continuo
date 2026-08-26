@@ -76,6 +76,28 @@ body {
 .status-skipped    { background: #f3f4f6; color: #6b7280; }
 .status-never-run  { background-color: #888; color: #fff; }
 
+/* Activity badge: whether the schedule matches an entry in schedules.yaml. */
+.activity-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid transparent;
+}
+
+.activity-badge--active   { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+.activity-badge--inactive { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
+
+/* Cron expression + timezone, shown only for active schedules. */
+.schedule-cron {
+  color: #6b7280;
+  font-size: 12px;
+  font-family: monospace;
+}
+
 /* Task table */
 .task-table {
   width: 100%;

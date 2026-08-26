@@ -83,6 +83,12 @@ export default function SchedulerCard({ schedule }: Props) {
     ? 'running'
     : schedule.last_run_status;
 
+  // A schedule is "active" when its name matches an entry in schedules.yaml:
+  // state fills cron_expression only for those, so a non-empty cron is the
+  // exact signal. Inactive schedules exist purely as node tags and never fire
+  // on a cron — they run only when triggered manually.
+  const isActive = schedule.cron_expression.trim() !== '';
+
   const total = tasks.length;
   const succeeded = tasks.filter(t => t.status === 'succeeded').length;
   const failed = tasks.filter(t => t.status === 'failed').length;
@@ -154,6 +160,20 @@ export default function SchedulerCard({ schedule }: Props) {
           <span className={`status-badge status-${displayStatus.replace(' ', '-')}`}>
             {displayStatus}
           </span>
+          <span
+            className={`activity-badge activity-badge--${isActive ? 'active' : 'inactive'}`}
+            title={isActive
+              ? 'Scheduled in schedules.yaml — fires automatically on its cron'
+              : 'Not in schedules.yaml — runs only when triggered manually'}
+          >
+            {isActive ? 'Active' : 'Inactive'}
+          </span>
+          {isActive && (
+            <span className="schedule-cron" title="Cron schedule (from schedules.yaml)">
+              {schedule.cron_expression}
+              {schedule.timezone ? ` · ${schedule.timezone}` : ''}
+            </span>
+          )}
           {!neverRun && (
             <span className="timestamps">
               {schedule.last_run_at && <>last run {formatTime(schedule.last_run_at)}</>}
