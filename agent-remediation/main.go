@@ -32,6 +32,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
 	"github.com/carolsimone/continuo/agent-remediation/service/shadowverify"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
@@ -166,12 +167,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Log the full prompt fed to the model on every real call. The logging
+	// decorator wraps the raw provider and the cache wraps the logger, so a
+	// prompt is recorded exactly when the model is called — a cache hit reuses a
+	// prior completion and logs nothing, because nothing is fed to the model.
+	loggedLLM := promptlog.New(llmProvider, logger)
+
 	// Wrap the provider in a best-effort, idempotency-keyed Redis cache so a
 	// redelivered remediation.requested trigger reuses the prior completion
 	// instead of re-paying the LLM call. A cache miss or error falls through to
 	// the real provider, so the cache can never break the happy path.
 	cachedLLM := llmcache.New(
-		llmProvider,
+		loggedLLM,
 		rredis.NewLLMResponseCache(rc, cfg.LLMCacheTTL),
 		cfg.LLMModel,
 		logger,
