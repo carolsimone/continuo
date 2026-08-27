@@ -111,7 +111,13 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	require.Equal(t, http.StatusAccepted, st, "body=%v", body)
 	require.EqualValues(t, 2, body["remediation_round"])
 
-	// 6. A round-2 trigger reaches the agent and a new proposal continues the
+	// 6. The round has been started but its first proposal row has not landed
+	//    yet, so a second click cannot spend another round.
+	st, body = postRetry(t, clients, releaseID)
+	require.Equal(t, http.StatusConflict, st, "body=%v", body)
+	require.Equal(t, "retry_in_progress", body["error"])
+
+	// 7. A round-2 trigger reaches the agent and a new proposal continues the
 	//    attempt numbering.
 	var round2 retryProposalRow
 	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
@@ -127,11 +133,11 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 		`SELECT count(*) FROM classification_decision WHERE release_id=$1 AND node_id=$2`, releaseID, ftableEUniqueID))
 	require.Equal(t, 2, decisions, "one classification per round")
 
-	// 7. Release record shows the round.
+	// 8. Release record shows the round.
 	detail := getReleaseDetail(t, clients, releaseID)
 	require.EqualValues(t, 2, detail["remediation_round"])
 
-	// 8. Third retry while round 2's proposal is open → refused again.
+	// 9. Fourth retry while round 2's proposal is open → refused again.
 	st, body = postRetry(t, clients, releaseID)
 	require.Equal(t, http.StatusConflict, st, "body=%v", body)
 	require.Equal(t, "proposal_open", body["error"])

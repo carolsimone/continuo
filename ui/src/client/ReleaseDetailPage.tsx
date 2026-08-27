@@ -21,6 +21,7 @@ const REFUSAL_TEXT: Record<string, string> = {
   not_rejected: 'Only a rejected release can be retried.',
   retry_in_progress: 'A retry is already in progress — wait for the new round to start.',
   internal: 'Retry failed on the server — try again in a moment.',
+  proposal_reader_unavailable: 'The remediation service is unreachable — try again in a moment.',
 };
 
 // Cadence for re-checking whether a remediation proposal has been persisted for a

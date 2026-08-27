@@ -572,6 +572,15 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(await screen.findByText(/This rejection is not something the agent can fix\./)).toBeInTheDocument();
   });
 
+  it('maps a 502 proposal_reader_unavailable refusal to its message', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    mockPost.mockResolvedValue({ ok: false, status: 502, json: async () => ({ error: 'proposal_reader_unavailable' }) });
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+    const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
+    fireEvent.click(btn);
+    expect(await screen.findByText('The remediation service is unreachable — try again in a moment.')).toBeInTheDocument();
+  });
+
   it('says push a new commit when the release is on round 3 at a dead end', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 3 })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })], 'compile_failed', false, 3));
