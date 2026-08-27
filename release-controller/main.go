@@ -10,9 +10,14 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	pkgconfig "github.com/carolsimone/continuo/pkg/config"
 	"github.com/carolsimone/continuo/pkg/liveness"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
+	rcgrpc "github.com/carolsimone/continuo/release-controller/adapters/grpc"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	redisadapter "github.com/carolsimone/continuo/release-controller/adapters/redis"
@@ -127,12 +132,23 @@ func main() {
 		logger,
 	)
 
+	// Dial agent-remediation once for the RetryRemediation handler, which reads
+	// a release's remediation attempts before starting another round.
+	remediationConn, err := grpc.NewClient(cfg.AgentRemediationGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		logger.Error("grpc agent-remediation client dial", "error", err)
+		os.Exit(1)
+	}
+	defer func() { _ = remediationConn.Close() }()
+	proposalsClient := rcgrpc.NewProposalsClient(remediationv1.NewRemediationProposalsClient(remediationConn))
+
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, s3Client) },
 		Clock:     ports.SystemClock{},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    logger,
 		Bucket:    cfg.S3.Bucket,
+		Proposals: proposalsClient,
 	}
 
 	// Start outbox publisher — spawns its own goroutine internally and runs until

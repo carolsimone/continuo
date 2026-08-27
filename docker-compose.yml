@@ -424,6 +424,7 @@ services:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_DEFAULT_REGION=us-east-1
+      - AGENT_REMEDIATION_GRPC_ADDR=agent-remediation:50054
     ports:
       - "8088:8088"
     networks:

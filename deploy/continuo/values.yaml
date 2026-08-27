@@ -29,6 +29,7 @@ global:
 
   stateGrpcAddr: state:50051
   orchestratorGrpcAddr: orchestrator:50052
+  agentRemediationGrpcAddr: agent-remediation:50054  # in-cluster gRPC address release-controller uses to read remediation attempts before starting a retry round
   agentChatGrpcAddr: agent-chat:50053
 
   # Pod-level shutdown budget (kubectl/kubelet SIGTERM-to-SIGKILL window) for

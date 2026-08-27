@@ -12,6 +12,12 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `global.agentRemediationGrpcAddr` (default `agent-remediation:50054`) —
+  release-controller reads remediation attempts before starting a retry
+  round. New key with a safe default; an unmodified existing values file
+  keeps working unmodified. MINOR.
+
 ## [0.4.1] - 2026-08-25
 
 ### Changed
