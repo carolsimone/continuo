@@ -679,9 +679,6 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 	if err := r.TransitionToRejected("duplicate_table", detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
-	}
 
 	payload, err := json.Marshal(map[string]any{
 		"release_id":      releaseID,
@@ -698,6 +695,12 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
+
+	r.SetRejectionPayload(payload)
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: "release-controller",

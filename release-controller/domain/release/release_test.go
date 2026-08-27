@@ -389,3 +389,37 @@ func TestNewRelease_CarriesShadow(t *testing.T) {
 	plain := release.New("sha-abc", "svc1", "sha-abc", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(0, 0))
 	assert.False(t, plain.IsShadow())
 }
+
+func TestStartRemediationRound_IncrementsUpToCap(t *testing.T) {
+	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	r := release.New("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+	require.NoError(t, r.TransitionToCompiling(now))
+	require.NoError(t, r.TransitionToRejected("compile_failed", "", []string{"finance"}, now))
+	require.Equal(t, 1, r.RemediationRound())
+
+	n, err := r.StartRemediationRound(now)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	n, err = r.StartRemediationRound(now)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+	_, err = r.StartRemediationRound(now)
+	require.ErrorIs(t, err, release.ErrRoundsExhausted)
+
+	last := r.Transitions()[len(r.Transitions())-1]
+	require.Equal(t, "remediation_retry", string(last.To))
+}
+
+func TestStartRemediationRound_RequiresRejected(t *testing.T) {
+	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	r := release.New("rel-1", "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+	_, err := r.StartRemediationRound(now)
+	require.ErrorIs(t, err, release.ErrNotRejected)
+}
+
+func TestRehydrate_CarriesRoundAndPayload(t *testing.T) {
+	r := release.Rehydrate(release.RehydrateInput{ID: "rel-1", Status: release.StatusRejected, RemediationRound: 2, RejectionPayload: []byte(`{"a":1}`)})
+	require.Equal(t, 2, r.RemediationRound())
+	require.JSONEq(t, `{"a":1}`, string(r.RejectionPayload()))
+	require.Equal(t, 1, release.Rehydrate(release.RehydrateInput{ID: "rel-2", Status: release.StatusRejected}).RemediationRound(), "zero rehydrates as round 1")
+}

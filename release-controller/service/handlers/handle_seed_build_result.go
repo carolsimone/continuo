@@ -65,9 +65,6 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 	if err := r.TransitionToRejected("seed_build_failed", in.ErrorDetail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
-	}
 
 	// perNodeEntry is the outbox wire shape for a single seed-build-leg result.
 	// FilePath and Service carry the source location from the candidate topology
@@ -121,6 +118,12 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
+
+	r.SetRejectionPayload(payload)
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: "release-controller",

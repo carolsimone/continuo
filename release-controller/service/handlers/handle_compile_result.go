@@ -99,9 +99,6 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		if err := r.TransitionToRejected(reason, errorDetail, failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
-		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
-			return fmt.Errorf("save release: %w", err)
-		}
 
 		// perNodeEntry is the outbox wire shape for a single compile-leg result.
 		// Intentionally omits duration_ms (irrelevant for compile) and file_path
@@ -138,6 +135,12 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		if err != nil {
 			return fmt.Errorf("marshal payload: %w", err)
 		}
+
+		r.SetRejectionPayload(payload)
+		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+			return fmt.Errorf("save release: %w", err)
+		}
+
 		if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 			ID:            uuid.New(),
 			AggregateType: "release-controller",

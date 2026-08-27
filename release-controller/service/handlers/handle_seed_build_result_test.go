@@ -198,7 +198,10 @@ func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	r := mustGetRelease(t, store, releaseID)
 	assert.Equal(t, release.StatusRejected, r.Status())
 	assert.Equal(t, "seed_build_failed", r.RejectReason())
-	assert.Equal(t, streams.ReleaseRejectedV1, lastOutbox(t, store).StreamName)
+	e := lastOutbox(t, store)
+	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
+		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
 }
 
 func TestHandleSeedBuildResult_FailedPayloadCarriesCandidateSchema(t *testing.T) {

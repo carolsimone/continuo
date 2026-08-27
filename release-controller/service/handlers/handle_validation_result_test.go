@@ -173,6 +173,11 @@ func TestHandleValidationResult_FailedNodeInStore_Rejects(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, release.StatusRejected, r.Status())
 	assert.Equal(t, []string{"a"}, r.FailingNodes())
+
+	e := lastOutbox(t, store)
+	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
+		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
 }
 
 // TestHandleValidationResult_SkippedNodeInStore_Rejects verifies that a per-node

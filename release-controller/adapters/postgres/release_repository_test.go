@@ -269,6 +269,48 @@ func TestReleaseRepository_RoundTripsRejectDetail(t *testing.T) {
 		got.RejectDetail())
 }
 
+// TestReleaseRepository_RoundTripsRemediationRoundAndPayload verifies that a
+// rejected release's remediation round and rejection payload persist across a
+// StartRemediationRound + Save + Get round trip, and that a release rejected
+// without ever setting a payload reads back nil.
+func TestReleaseRepository_RoundTripsRemediationRoundAndPayload(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewReleaseRepository(db, nil)
+	ctx := context.Background()
+
+	r := release.New("rel-remediation", "finance", "tag", false, false, "owner/repo", "abc123",
+		release.ManifestKindDbt, time.Unix(300, 0).UTC())
+	require.NoError(t, r.TransitionToParsing(time.Unix(301, 0).UTC()))
+	require.NoError(t, r.TransitionToRejected("duplicate_table", "",
+		[]string{"analytics.orders"}, time.Unix(302, 0).UTC()))
+	r.SetRejectionPayload([]byte(`{"release_id":"rel-x"}`))
+	require.NoError(t, repo.Save(ctx, r))
+
+	n, err := r.StartRemediationRound(time.Unix(303, 0).UTC())
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.NoError(t, repo.Save(ctx, r))
+
+	got, err := repo.Get(ctx, "rel-remediation")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, 2, got.RemediationRound())
+	assert.JSONEq(t, `{"release_id":"rel-x"}`, string(got.RejectionPayload()))
+
+	noPayload := release.New("rel-no-payload", "finance", "tag", false, false, "owner/repo", "abc123",
+		release.ManifestKindDbt, time.Unix(310, 0).UTC())
+	require.NoError(t, noPayload.TransitionToParsing(time.Unix(311, 0).UTC()))
+	require.NoError(t, noPayload.TransitionToRejected("parse_failed", "",
+		nil, time.Unix(312, 0).UTC()))
+	require.NoError(t, repo.Save(ctx, noPayload))
+
+	gotNoPayload, err := repo.Get(ctx, "rel-no-payload")
+	require.NoError(t, err)
+	require.NotNil(t, gotNoPayload)
+	assert.Equal(t, 1, gotNoPayload.RemediationRound())
+	assert.Nil(t, gotNoPayload.RejectionPayload())
+}
+
 // TestReleaseRepository_List_IncludesRejectDetail guards against List's SELECT
 // silently dropping reject_detail. List returns the same fully-hydrated
 // Release aggregate as Get/Load/NextQueuedRelease/ActiveRelease, so a caller
