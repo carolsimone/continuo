@@ -30,8 +30,8 @@ func (f *fakeProposalsClient) ListProposals(_ context.Context, in *remediationv1
 func TestProposalsClient_ListProposalsForRelease_MapsSummaries(t *testing.T) {
 	fake := &fakeProposalsClient{resp: &remediationv1.ListProposalsResponse{
 		Proposals: []*remediationv1.Proposal{
-			{Id: "p1", NodeId: "finance", Attempt: 1, Status: "failed", PrState: "", PrUrl: ""},
-			{Id: "p2", NodeId: "finance", Attempt: 2, Status: "proposed", PrState: "open", PrUrl: "https://x/pr/7"},
+			{Id: "p1", NodeId: "finance", Attempt: 1, Status: "failed", PrState: "", PrUrl: "", RemediationRound: 1},
+			{Id: "p2", NodeId: "finance", Attempt: 2, Status: "proposed", PrState: "open", PrUrl: "https://x/pr/7", RemediationRound: 2},
 		},
 	}}
 	client := grpcadapter.NewProposalsClient(fake)
@@ -39,8 +39,8 @@ func TestProposalsClient_ListProposalsForRelease_MapsSummaries(t *testing.T) {
 	got, err := client.ListProposalsForRelease(context.Background(), "rel-1")
 	require.NoError(t, err)
 	require.Equal(t, []ports.ProposalSummary{
-		{ID: "p1", NodeID: "finance", Attempt: 1, Status: "failed"},
-		{ID: "p2", NodeID: "finance", Attempt: 2, Status: "proposed", PRState: "open", PRURL: "https://x/pr/7"},
+		{ID: "p1", NodeID: "finance", Attempt: 1, Status: "failed", RemediationRound: 1},
+		{ID: "p2", NodeID: "finance", Attempt: 2, Status: "proposed", PRState: "open", PRURL: "https://x/pr/7", RemediationRound: 2},
 	}, got)
 
 	require.NotNil(t, fake.gotReq)

@@ -10,6 +10,10 @@ type ProposalSummary struct {
 	Status  string // generating | verifying | proposed | skipped | failed | escalated
 	PRState string // "" | opening | open | merged | rejected | failed
 	PRURL   string
+	// RemediationRound is the release's remediation round this attempt belongs
+	// to. 0 on an attempt recorded before the field existed, which the retry
+	// decision treats the same as round 1.
+	RemediationRound int
 }
 
 // ProposalReader lists the remediation attempts recorded for a release.

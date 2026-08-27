@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -159,6 +160,9 @@ func TestRetryRemediationHandler_Accepted(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	deps, releases := newRetryRemediationDeps(now)
 	releases.releases["rel-1"] = rejectedReleaseForRetry(t, "rel-1", now)
+	deps.Proposals = &fakeProposalReader{items: []ports.ProposalSummary{
+		{ID: "p1", NodeID: "finance", Attempt: 1, Status: "escalated", RemediationRound: 1},
+	}}
 
 	rec := postRetryRemediation(newTestServer(deps), "rel-1")
 
@@ -213,6 +217,9 @@ func TestRetryRemediationHandler_NotFound(t *testing.T) {
 	rec := postRetryRemediation(newTestServer(deps), "nope")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "not_found", body["error"])
 }
 
 func TestRetryRemediationHandler_ReaderDown(t *testing.T) {
@@ -228,3 +235,56 @@ func TestRetryRemediationHandler_ReaderDown(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, "proposal_reader_unavailable", body["error"])
 }
+
+func TestRetryRemediationHandler_RetryInProgress(t *testing.T) {
+	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	deps, releases := newRetryRemediationDeps(now)
+	releases.releases["rel-1"] = rejectedReleaseForRetry(t, "rel-1", now)
+	deps.Proposals = &fakeProposalReader{items: nil}
+
+	rec := postRetryRemediation(newTestServer(deps), "rel-1")
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "retry_in_progress", body["error"])
+}
+
+// erroringReleaseRepo forces Load to fail, so a handler test can drive the
+// generic-error (500) branch without any of the specific sentinels. It embeds
+// *fakeReleaseRepo so every other method keeps that fake's behavior.
+type erroringReleaseRepo struct{ *fakeReleaseRepo }
+
+func (erroringReleaseRepo) Load(context.Context, string) (*release.Release, error) {
+	return nil, errors.New("row-lock timeout")
+}
+
+func TestRetryRemediationHandler_GenericErrorIsInternal(t *testing.T) {
+	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	repo := erroringReleaseRepo{&fakeReleaseRepo{releases: map[string]*release.Release{}}}
+	u := &fakeUoW{releases: repo.fakeReleaseRepo, outbox: &fakeOutboxRepo{}}
+	deps := &handlers.Deps{
+		NewUoW: func() uow.UnitOfWork {
+			return &loadErrUoW{fakeUoW: u, releaseRepo: repo}
+		},
+		Clock:     fakeClock{t: now},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Proposals: &fakeProposalReader{},
+	}
+
+	rec := postRetryRemediation(newTestServer(deps), "rel-1")
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "internal", body["error"])
+}
+
+// loadErrUoW wraps a fakeUoW but serves ReleaseRepo from an erroringReleaseRepo,
+// so RetryRemediation's Load call fails with a plain (non-sentinel) error.
+type loadErrUoW struct {
+	*fakeUoW
+	releaseRepo erroringReleaseRepo
+}
+
+func (u *loadErrUoW) ReleaseRepo() repository.ReleaseRepository { return u.releaseRepo }

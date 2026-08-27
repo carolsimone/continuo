@@ -38,6 +38,7 @@ func (p *ProposalsClient) ListProposalsForRelease(ctx context.Context, releaseID
 		out = append(out, ports.ProposalSummary{
 			ID: pr.Id, NodeID: pr.NodeId, Attempt: int(pr.Attempt),
 			Status: pr.Status, PRState: pr.PrState, PRURL: pr.PrUrl,
+			RemediationRound: int(pr.RemediationRound),
 		})
 	}
 	return out, nil
