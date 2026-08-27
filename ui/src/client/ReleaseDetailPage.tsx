@@ -53,6 +53,15 @@ function isFixState(status: string): status is FixState {
   return status in FIX_STATE_RANK;
 }
 
+// effectiveRound is the remediation round a proposal belongs to. The gRPC
+// client (ui/src/server/remediation-client.ts) loads the proto with
+// `defaults: true`, so a proposal recorded before remediation_round existed
+// arrives over the wire as 0, not undefined — a plain `?? 1` fallback would
+// not catch it. Both a missing field and an explicit 0 read as round 1.
+function effectiveRound(p: ProposalDTO): number {
+  return p.remediation_round && p.remediation_round > 0 ? p.remediation_round : 1;
+}
+
 // hasActiveFix reports whether any failed node has a generating/verifying/
 // proposed fix among the given proposals — the same furthest-along ranking
 // FixCell uses, restricted to whatever list is passed in (all proposals, or
@@ -226,7 +235,7 @@ export default function ReleaseDetailPage() {
   // (older rows, or a round-1 attempt) counts as round 1. Scoping the
   // in-flight check to this set is what keeps a freshly-bumped round from
   // reading as a dead end off the *previous* round's now-terminal proposals.
-  const currentRoundProposals = proposals.filter(p => (p.remediation_round ?? 1) === rel?.remediation_round);
+  const currentRoundProposals = proposals.filter(p => effectiveRound(p) === rel?.remediation_round);
 
   // A rejected release is a dead end for remediation — nothing left for the
   // agent to do without human input — once it has at least one failed node,

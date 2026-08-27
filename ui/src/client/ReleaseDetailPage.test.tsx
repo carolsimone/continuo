@@ -599,6 +599,17 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(await screen.findByText('The remediation service is unreachable — try again in a moment.')).toBeInTheDocument();
   });
 
+  it('treats a proposal with remediation_round 0 as round 1 (Try again shows on a round-1 dead end)', async () => {
+    // A missing remediation_round arrives over the wire as 0, not undefined —
+    // ui/src/server/remediation-client.ts loads the proto with `defaults:
+    // true`. The proposal must still be read as belonging to round 1.
+    mockFetchProposals.mockResolvedValue([proposal({
+      source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 0,
+    })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+    expect(await screen.findByRole('button', { name: 'Try again (round 1 of 3)' })).toBeInTheDocument();
+  });
+
   it('says push a new commit when the release is on round 3 at a dead end', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 3 })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })], 'compile_failed', false, 3));
