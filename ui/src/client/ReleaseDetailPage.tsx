@@ -50,6 +50,22 @@ function isFixState(status: string): status is FixState {
   return status in FIX_STATE_RANK;
 }
 
+// hasActiveFix reports whether any failed node has a generating/verifying/
+// proposed fix among the given proposals — the same furthest-along ranking
+// FixCell uses, restricted to whatever list is passed in (all proposals, or
+// only the current remediation round's), so the dead-end check below can be
+// scoped to a single round without disturbing how the table renders.
+function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
+  const byKey = new Map<string, FixState>();
+  for (const p of list) {
+    if (!isFixState(p.status)) continue;
+    const k = proposalKey(p.source, p.node_id);
+    const current = byKey.get(k);
+    if (!current || FIX_STATE_RANK[p.status] > FIX_STATE_RANK[current]) byKey.set(k, p.status);
+  }
+  return failedKeys.some(k => byKey.has(k));
+}
+
 // FixCell renders one node's remediation state: a link to the proposal once a
 // fix is ready to review, a non-actionable chip while one is still being
 // produced or verified, and — when no attempt is in flight — a note
@@ -70,7 +86,7 @@ function FixCell({ state, note }: { state?: FixState; note?: string }) {
       </span>
     );
   }
-  if (note) return <span className="muted">{note}</span>;
+  if (note) return <span className="nodes-reason">{note}</span>;
   return null;
 }
 
@@ -121,8 +137,8 @@ export default function ReleaseDetailPage() {
   // that cell empty. Only ever read where fixState has no entry for the key.
   const [fixNote, setFixNote] = useState<Map<string, string>>(new Map());
   // The last polled proposal list for this release, kept alongside fixState so
-  // the dead-end check below can see PR state (fixState only tracks the
-  // furthest-along generation/verification status, not the PR).
+  // the dead-end check below can recompute in-flight/PR state per remediation
+  // round (fixState itself is a rendering-only summary across every round).
   const [proposals, setProposals] = useState<ProposalDTO[]>([]);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
@@ -192,13 +208,25 @@ export default function ReleaseDetailPage() {
   // to find.
   const isRejected = rel?.status === 'rejected';
 
+  // This remediation round's proposals — a proposal with no remediation_round
+  // (older rows, or a round-1 attempt) counts as round 1. Scoping the
+  // in-flight check to this set is what keeps a freshly-bumped round from
+  // reading as a dead end off the *previous* round's now-terminal proposals.
+  const currentRoundProposals = proposals.filter(p => (p.remediation_round ?? 1) === rel?.remediation_round);
+
   // A rejected release is a dead end for remediation — nothing left for the
-  // agent to do without human input — once every failed node has stopped
-  // short of a ready fix and no proposal already has a PR out for review.
-  // "Try again" (below) only ever shows in this state.
+  // agent to do without human input — once no proposal already has a PR out
+  // for review, and no failed node has an in-flight/proposed fix. Round 1
+  // reads that off every proposal fetched for the release; a later round
+  // additionally requires at least one of *its own* proposals to exist, so
+  // the window between "round bumped" and "the new round's first proposal
+  // landed" is not mistaken for a dead end. "Try again" (below) only ever
+  // shows in this state.
   const deadEnd = rel?.status === 'rejected'
-    && failedKeys.every(k => !fixState.has(k))
-    && proposals.every(p => !OPEN_PR_STATES.includes(p.pr_state ?? ''));
+    && proposals.every(p => !OPEN_PR_STATES.includes(p.pr_state ?? ''))
+    && (rel?.remediation_round === 1
+      ? !hasActiveFix(proposals, failedKeys)
+      : currentRoundProposals.length > 0 && !hasActiveFix(currentRoundProposals, failedKeys));
 
   // Poll for remediation proposals so the FIX cell surfaces the "Generating fix…"
   // chip and then the "Proposed fix available →" link without a manual refresh.
@@ -370,9 +398,16 @@ export default function ReleaseDetailPage() {
         </button>
       )}
       {rel.status === 'rejected' && deadEnd && rel.remediation_round >= MAX_REMEDIATION_ROUNDS && (
-        <p className="muted">Retried {MAX_REMEDIATION_ROUNDS} times — push a new commit to start over.</p>
+        <div className="info-strip info-strip--neutral">
+          <span className="info-strip__icon">ⓘ</span>
+          Retried {MAX_REMEDIATION_ROUNDS} times — push a new commit to start over.
+        </div>
       )}
-      {retryError && <p className="error">{retryError}</p>}
+      {retryError && (
+        <div className="info-strip info-strip--error">
+          <span className="info-strip__icon">⚠</span>{retryError}
+        </div>
+      )}
 
       {pollError && (
         <div className="info-strip info-strip--warning">

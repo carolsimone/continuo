@@ -488,6 +488,22 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/api/releases/rel-1/retry-remediation', expect.objectContaining({ method: 'POST' })));
   });
 
+  it('bumps the round shown in the header and restarts proposal polling after a successful retry (202)', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', remediation_round: 2 }) });
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+    const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
+    const callsBeforeRetry = mockFetchProposals.mock.calls.length;
+
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      const pill = document.querySelector('.pill');
+      expect(pill!.textContent).toBe('rejected · round 2');
+    });
+    await waitFor(() => expect(mockFetchProposals.mock.calls.length).toBeGreaterThan(callsBeforeRetry));
+  });
+
   it('hides Try again once the FIX cell already shows a proposed fix', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'proposed' })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
@@ -501,7 +517,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     fireEvent.click(btn);
-    expect(await screen.findByText('A fix is already proposed: https://x/pr/7')).toBeInTheDocument();
+    expect(await screen.findByText(/A fix is already proposed: https:\/\/x\/pr\/7/)).toBeInTheDocument();
   });
 
   it('says a fix is already proposed when 409 proposal_open carries no pr_url', async () => {
@@ -510,7 +526,7 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     fireEvent.click(btn);
-    expect(await screen.findByText('A fix is already proposed — review it on the Remediation tab.')).toBeInTheDocument();
+    expect(await screen.findByText(/A fix is already proposed — review it on the Remediation tab\./)).toBeInTheDocument();
   });
 
   it('maps a release-controller refusal reason to its message', async () => {
@@ -519,13 +535,13 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
     const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
     fireEvent.click(btn);
-    expect(await screen.findByText('This rejection is not something the agent can fix.')).toBeInTheDocument();
+    expect(await screen.findByText(/This rejection is not something the agent can fix\./)).toBeInTheDocument();
   });
 
   it('says push a new commit when the release is on round 3 at a dead end', async () => {
-    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 3 })]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })], 'compile_failed', false, 3));
-    expect(await screen.findByText('Retried 3 times — push a new commit to start over.')).toBeInTheDocument();
+    expect(await screen.findByText(/Retried 3 times — push a new commit to start over\./)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
   });
 
@@ -554,5 +570,40 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     await screen.findByText('models/x.sql');
     const pill = document.querySelector('.pill');
     expect(pill!.textContent).toBe('rejected');
+  });
+
+  it('keeps Try again hidden right after a 202 even though only the old round\'s proposal has been refetched, then reflects the new round live', async () => {
+    vi.useFakeTimers();
+    try {
+      // Round 1's only proposal is a terminal, non-actionable escalation — the
+      // release-controller would not have accepted a retry otherwise.
+      const round1Escalated = proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, remediation_round: 1 });
+      mockFetchProposals.mockResolvedValue([round1Escalated]);
+      mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', remediation_round: 2 }) });
+
+      renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(screen.getByRole('button', { name: 'Try again (round 1 of 3)' })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Try again (round 1 of 3)' }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+      const pill = document.querySelector('.pill');
+      expect(pill!.textContent).toBe('rejected · round 2');
+      // The wire still only carries round 1's terminal proposal — the button
+      // must not reappear off that stale, already-spent round.
+      expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+
+      // Round 2's first attempt lands on the next poll tick.
+      mockFetchProposals.mockResolvedValue([
+        round1Escalated,
+        proposal({ source: 'compile', node_id: 'finance', status: 'generating', attempt: 4, remediation_round: 2 }),
+      ]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText(/Generating fix/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

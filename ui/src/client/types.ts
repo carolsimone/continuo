@@ -251,4 +251,8 @@ export interface ProposalDTO {
   // no real repository source to edit — a candidate-only fix — in which case
   // the single-file diff_uri above still points at a previewable diff.
   edits?: FileEditDTO[];
+  // remediation_round is the release's remediation round this attempt
+  // belongs to. Absent on a proposal from before rounds existed, which the
+  // reader treats the same as round 1.
+  remediation_round?: number;
 }
