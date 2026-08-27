@@ -179,10 +179,12 @@ func openProposal(current, all []ports.ProposalSummary) (ErrProposalOpen, bool) 
 }
 
 // openInCurrentRound reports whether any node's latest attempt in the current
-// round is still generating, verifying, or proposed — a fix may still land
-// without spending another round. Only each node's latest attempt is
-// consulted; an earlier attempt superseded by a later one on the same node
-// does not count.
+// round is still generating or verifying, or is proposed with a PR that is
+// not terminally closed — a fix may still land without spending another
+// round. A proposed attempt whose PR was rejected (closed without merging) is
+// a dead end for that attempt, not an open one, so it does not block a new
+// round. Only each node's latest attempt is consulted; an earlier attempt
+// superseded by a later one on the same node does not count.
 func openInCurrentRound(current []ports.ProposalSummary) (ErrProposalOpen, bool) {
 	latest := map[string]ports.ProposalSummary{}
 	for _, p := range current {
@@ -193,7 +195,12 @@ func openInCurrentRound(current []ports.ProposalSummary) (ErrProposalOpen, bool)
 	for _, id := range sortedNodeIDs(latest) {
 		p := latest[id]
 		switch p.Status {
-		case "generating", "verifying", "proposed":
+		case "generating", "verifying":
+			return ErrProposalOpen{ProposalID: p.ID, PRURL: p.PRURL}, true
+		case "proposed":
+			if p.PRState == "rejected" {
+				continue
+			}
 			return ErrProposalOpen{ProposalID: p.ID, PRURL: p.PRURL}, true
 		}
 	}

@@ -209,6 +209,45 @@ func TestRetryRemediation_OpenPROnEarlierAttemptRefuses(t *testing.T) {
 	require.Empty(t, outboxEntries(store), "nothing emitted")
 }
 
+func TestRetryRemediation_RejectedPRDoesNotBlockARound(t *testing.T) {
+	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
+	// The node's latest attempt in the current round is proposed, but the PR
+	// it opened was closed without merging: that attempt is a dead end, not an
+	// open one, so it must not block a new round.
+	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{
+		{ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed", PRState: "rejected", RemediationRound: 1},
+	}}
+
+	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 2, res.RemediationRound)
+
+	r, err := store.GetRelease("rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 2, r.RemediationRound())
+}
+
+func TestRetryRemediation_ProposedWithNoPRStillBlocksARound(t *testing.T) {
+	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
+	// Same shape as the rejected-PR case, but no PR has been opened at all —
+	// the attempt is still a live proposal a human could review, so it must
+	// still refuse the retry.
+	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{
+		{ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed", PRState: "", RemediationRound: 1},
+	}}
+
+	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+	var open handlers.ErrProposalOpen
+	require.ErrorAs(t, err, &open)
+	require.Equal(t, "p1", open.ProposalID)
+
+	r, err := store.GetRelease("rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+}
+
 func TestRetryRemediation_NamesTheLowestNodeIDWhenSeveralAreOpen(t *testing.T) {
 	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
 	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))

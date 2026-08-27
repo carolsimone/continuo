@@ -57,11 +57,15 @@ function isFixState(status: string): status is FixState {
 // proposed fix among the given proposals — the same furthest-along ranking
 // FixCell uses, restricted to whatever list is passed in (all proposals, or
 // only the current remediation round's), so the dead-end check below can be
-// scoped to a single round without disturbing how the table renders.
+// scoped to a single round without disturbing how the table renders. A
+// 'proposed' attempt whose PR was closed without merging is excluded: that PR
+// is a dead end for the attempt, not something still open for a human to act
+// on, so it must not keep the node counted as having an active fix.
 function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
   const byKey = new Map<string, FixState>();
   for (const p of list) {
     if (!isFixState(p.status)) continue;
+    if (p.status === 'proposed' && p.pr_state === 'rejected') continue;
     const k = proposalKey(p.source, p.node_id);
     const current = byKey.get(k);
     if (!current || FIX_STATE_RANK[p.status] > FIX_STATE_RANK[current]) byKey.set(k, p.status);

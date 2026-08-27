@@ -527,6 +527,24 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
   });
 
+  it('shows Try again when the only round-1 proposal is proposed but its PR was rejected', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({
+      source: 'compile', node_id: 'finance', status: 'proposed', pr_state: 'rejected', remediation_round: 1,
+    })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+    expect(await screen.findByRole('button', { name: 'Try again (round 1 of 3)' })).toBeInTheDocument();
+  });
+
+  it('hides Try again when the only round-1 proposal is proposed with no PR yet', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({
+      source: 'compile', node_id: 'finance', status: 'proposed', pr_state: '', remediation_round: 1,
+    })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+    await screen.findByText('finance');
+    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+  });
+
   it('hides Try again when the release has no failed nodes', async () => {
     mockFetchProposals.mockResolvedValue([]);
     renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'ok' })]));

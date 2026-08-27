@@ -268,6 +268,8 @@ ListProposals(release_id) via agent-remediation gRPC (see "gRPC calls to
     no proposal belongs to release.remediation_round → 409 retry_in_progress
     among that round's proposals, any node's latest attempt is
         generating/verifying/proposed → 409 proposal_open {proposal_id, pr_url}
+        (a proposed attempt whose PR was closed without merging is terminal,
+        not open, and does not block a new round)
     among every round's proposals, any attempt's PR is
         opening/open/merged → 409 proposal_open {proposal_id, pr_url}
     otherwise, in one transaction:
