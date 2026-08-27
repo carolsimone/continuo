@@ -160,9 +160,8 @@ type Deps struct {
 // records the proposal row and (on a proposed outcome) enqueues a
 // remediation.proposed:v1 outbox trigger.
 func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
-	// A trigger delivered without a remediation round (or with an explicit 0 —
-	// the field predates this column) belongs to round 1, the round every
-	// rejection starts a release at.
+	// A trigger without a remediation round (unset, or explicit 0) belongs to
+	// round 1, the round every rejection starts a release at.
 	if t.RemediationRound < 1 {
 		t.RemediationRound = 1
 	}

@@ -96,6 +96,11 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 // attempt per (source, node) can be generating at a time, so this matches at
 // most one row.
 //
+// The predicate carries no remediation round because release-controller starts
+// a new round only once the current round has terminal rows and nothing in
+// flight, so at most one attempt per (release, source, node, signature) is
+// generating at any time.
+//
 // The status filter is what makes it safe to run at any time: a row that has
 // already reached a terminal state is left exactly as it is.
 func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error) {
