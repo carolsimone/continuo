@@ -18,4 +18,5 @@ type Deps struct {
 	Telemetry ports.Telemetry
 	Logger    *slog.Logger
 	Bucket    string
+	Proposals ports.ProposalReader // lists a release's remediation attempts for the retry decision
 }

@@ -76,6 +76,17 @@ func (s *fakeStore) GetRelease(id string) (*release.Release, error) {
 	return r, nil
 }
 
+// SeedRelease installs a release directly, simulating a row already persisted
+// by an earlier stage of the pipeline.
+func (s *fakeStore) SeedRelease(r *release.Release) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.releases[r.ID()]; !exists {
+		s.order = append(s.order, r.ID())
+	}
+	s.releases[r.ID()] = r
+}
+
 // SeedCurrentProd installs a current-prod snapshot directly, simulating a
 // prior promotion. Used by handler tests to exercise the content_hash diff.
 func (s *fakeStore) SeedCurrentProd(cp *release.CurrentProd) {
@@ -331,6 +342,25 @@ func (fakeMessageProcessing) DeleteTerminalOlderThan(_ context.Context, _ time.D
 
 var _ messageprocessing.Repository = (*fakeMessageProcessing)(nil)
 
+// --- fakeProposals ---
+
+// fakeProposals is a stub ports.ProposalReader. items is returned verbatim
+// unless err is set, in which case err is returned instead — letting tests
+// simulate the agent-remediation gRPC call being unavailable.
+type fakeProposals struct {
+	items []ports.ProposalSummary
+	err   error
+}
+
+func (f *fakeProposals) ListProposalsForRelease(_ context.Context, _ string) ([]ports.ProposalSummary, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.items, nil
+}
+
+var _ ports.ProposalReader = (*fakeProposals)(nil)
+
 // --- fakeUoW ---
 
 // fakeUoW wraps the four fakes backed by a shared fakeStore. Begin/Commit/Rollback
@@ -384,6 +414,7 @@ func newDeps(now time.Time) (*handlers.Deps, *fakeStore) {
 		Clock:     &fakeClock{t: now},
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.Default(),
+		Proposals: &fakeProposals{},
 	}, store
 }
 
