@@ -49,6 +49,18 @@ export function createReleasesRouter(
     }
   });
 
+  // POST /api/releases/:id/retry-remediation — start another remediation round.
+  // release-controller's status and body are passed through: 202 with the new
+  // round, or 409 with a reason the page turns into "look at the proposal instead".
+  router.post('/:id/retry-remediation', async (req, res) => {
+    try {
+      const { status, body } = await client.retryRemediation(req.params.id);
+      res.status(status).json(body);
+    } catch {
+      res.status(502).json({ error: 'release-controller request failed' });
+    }
+  });
+
   // GET /api/releases/:id
   router.get('/:id', async (req, res) => {
     try {

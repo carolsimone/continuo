@@ -1,8 +1,25 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
-import { ReleaseDetail, NodeValidationResult } from './types';
+import { ReleaseDetail, NodeValidationResult, ProposalDTO } from './types';
 import { releasePillClass, groupByStage, stageLabel, proposalKey, reasonLabel } from './release-helpers';
 import { fetchProposals } from './remediation-api';
+
+// A remediation round is capped at this many attempts; the release-controller
+// enforces the same limit and answers 409 rounds_exhausted past it.
+const MAX_REMEDIATION_ROUNDS = 3;
+
+// PR states that mean a fix is already out for human review — "Try again"
+// stays hidden while one of these is open, since a retry would be redundant.
+const OPEN_PR_STATES = ['opening', 'open', 'merged'];
+
+// Messages for the release-controller's 409 refusal reasons, other than
+// proposal_open (handled separately because it also carries a PR link).
+const REFUSAL_TEXT: Record<string, string> = {
+  rounds_exhausted: `Retried ${MAX_REMEDIATION_ROUNDS} times — push a new commit to start over.`,
+  not_retryable: 'This release was rejected before retries existed — push a new commit.',
+  not_healable: 'This rejection is not something the agent can fix.',
+  not_rejected: 'Only a rejected release can be retried.',
+};
 
 // Cadence for re-checking whether a remediation proposal has been persisted for a
 // failed node. The proposal is produced asynchronously after a release is rejected
@@ -34,10 +51,11 @@ function isFixState(status: string): status is FixState {
 }
 
 // FixCell renders one node's remediation state: a link to the proposal once a
-// fix is ready to review, and a non-actionable chip while one is still being
-// produced or verified, so a node whose fix is in flight says so instead of
-// showing an empty cell.
-function FixCell({ state }: { state?: FixState }) {
+// fix is ready to review, a non-actionable chip while one is still being
+// produced or verified, and — when no attempt is in flight — a note
+// explaining why the latest attempt stopped (skipped/failed/escalated), so a
+// node whose fix dead-ended says why instead of showing an empty cell.
+function FixCell({ state, note }: { state?: FixState; note?: string }) {
   if (state === 'proposed') {
     return (
       <Link to="/?tab=remediation" className="btn btn--secondary">
@@ -45,12 +63,15 @@ function FixCell({ state }: { state?: FixState }) {
       </Link>
     );
   }
-  if (!state) return null;
-  return (
-    <span className="btn btn--secondary is-disabled" aria-disabled="true" aria-busy="true">
-      {state === 'verifying' ? 'Verifying fix…' : 'Generating fix…'}
-    </span>
-  );
+  if (state) {
+    return (
+      <span className="btn btn--secondary is-disabled" aria-disabled="true" aria-busy="true">
+        {state === 'verifying' ? 'Verifying fix…' : 'Generating fix…'}
+      </span>
+    );
+  }
+  if (note) return <span className="muted">{note}</span>;
+  return null;
 }
 
 function LogView({ uri }: { uri: string }) {
@@ -93,8 +114,22 @@ export default function ReleaseDetailPage() {
   const [pollError, setPollError] = useState<string | null>(null);
   // Per (stage, node_id) FIX-cell state, bucketed from the node's remediation
   // proposals — see FixState. Nodes with only terminal-but-blank outcomes
-  // (skipped/failed/escalated) or none carry no entry and render nothing.
+  // (skipped/failed/escalated) or none carry no entry and render nothing here.
   const [fixState, setFixState] = useState<Map<string, FixState>>(new Map());
+  // Per (stage, node_id) explanation for a node whose latest attempt landed on
+  // a terminal-but-blank status, so the FIX cell says why instead of leaving
+  // that cell empty. Only ever read where fixState has no entry for the key.
+  const [fixNote, setFixNote] = useState<Map<string, string>>(new Map());
+  // The last polled proposal list for this release, kept alongside fixState so
+  // the dead-end check below can see PR state (fixState only tracks the
+  // furthest-along generation/verification status, not the PR).
+  const [proposals, setProposals] = useState<ProposalDTO[]>([]);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  // Bumped by retry() to re-arm the proposal-polling effect below after a
+  // successful retry, without changing the failed-node set it is also keyed
+  // on (a retry does not change which nodes failed).
+  const [pollNonce, setPollNonce] = useState(0);
 
   // Poll the release detail while it is still progressing, so per-node validation
   // results (projected incrementally by the backend) render live without a manual
@@ -157,6 +192,14 @@ export default function ReleaseDetailPage() {
   // to find.
   const isRejected = rel?.status === 'rejected';
 
+  // A rejected release is a dead end for remediation — nothing left for the
+  // agent to do without human input — once every failed node has stopped
+  // short of a ready fix and no proposal already has a PR out for review.
+  // "Try again" (below) only ever shows in this state.
+  const deadEnd = rel?.status === 'rejected'
+    && failedKeys.every(k => !fixState.has(k))
+    && proposals.every(p => !OPEN_PR_STATES.includes(p.pr_state ?? ''));
+
   // Poll for remediation proposals so the FIX cell surfaces the "Generating fix…"
   // chip and then the "Proposed fix available →" link without a manual refresh.
   // Polling runs only while a failed node has not yet reached a ready proposal,
@@ -199,20 +242,36 @@ export default function ReleaseDetailPage() {
     const refresh = () => {
       const seq = ++issued;
       return fetchProposals()
-        .then(proposals => {
+        .then(fetched => {
           if (cancelled || seq <= applied) return;
           applied = seq;
+          const releaseProposals = fetched.filter(p => p.release_id === id);
+          setProposals(releaseProposals);
           // Bucket each failed node by its proposals, keeping the furthest-along
           // state any of its attempts reached; terminal-but-blank statuses
-          // (skipped/failed/escalated) leave the node without an entry.
+          // (skipped/failed/escalated) leave the node without an entry here —
+          // see fixNote below for those.
           const byKey = new Map<string, FixState>();
-          for (const p of proposals.filter(p => p.release_id === id)) {
-            if (!isFixState(p.status)) continue;
+          // Latest attempt per node, so fixNote explains why remediation
+          // stopped rather than why an earlier attempt did.
+          const latestByKey = new Map<string, ProposalDTO>();
+          for (const p of releaseProposals) {
             const k = proposalKey(p.source, p.node_id);
-            const current = byKey.get(k);
-            if (!current || FIX_STATE_RANK[p.status] > FIX_STATE_RANK[current]) byKey.set(k, p.status);
+            if (isFixState(p.status)) {
+              const current = byKey.get(k);
+              if (!current || FIX_STATE_RANK[p.status] > FIX_STATE_RANK[current]) byKey.set(k, p.status);
+            }
+            const latest = latestByKey.get(k);
+            if (!latest || p.attempt > latest.attempt) latestByKey.set(k, p);
           }
           setFixState(byKey);
+          const noteByKey = new Map<string, string>();
+          for (const [k, p] of latestByKey) {
+            if (p.status === 'escalated') noteByKey.set(k, 'Attempt budget spent.');
+            else if (p.status === 'failed') noteByKey.set(k, p.rationale || 'The model could not produce a safe fix.');
+            else if (p.status === 'skipped') noteByKey.set(k, `${p.rationale || 'No source to fix at this commit.'} Fix it in the repository.`);
+          }
+          setFixNote(noteByKey);
           verifying = failed.some(k => byKey.get(k) === 'verifying');
           // Stop only when every failed node has a ready fix; keep polling through
           // the generating→proposed swap and until the cap for unhealable nodes.
@@ -234,7 +293,42 @@ export default function ReleaseDetailPage() {
     }
 
     return () => { cancelled = true; stop(); };
-  }, [id, isRejected, failedKey]);
+  }, [id, isRejected, failedKey, pollNonce]);
+
+  // restartProposalPolling re-arms the effect above after a successful retry,
+  // so a fresh remediation round's proposals are picked up without a reload.
+  const restartProposalPolling = () => setPollNonce(n => n + 1);
+
+  // retry asks release-controller to start another remediation round. A 202
+  // advances the round shown in the header and restarts proposal polling; a
+  // 409 means the request was refused, and the reason is turned into the text
+  // shown under the button.
+  const retry = async () => {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const r = await fetch(`/api/releases/${id}/retry-remediation`, { method: 'POST' });
+      const body = await r.json().catch(() => ({}));
+      if (r.status === 202) {
+        setRel(prev => (prev ? { ...prev, remediation_round: body.remediation_round } : prev));
+        restartProposalPolling();
+        return;
+      }
+      if (body.error === 'proposal_open') {
+        setRetryError(
+          body.pr_url
+            ? `A fix is already proposed: ${body.pr_url}`
+            : 'A fix is already proposed — review it on the Remediation tab.',
+        );
+        return;
+      }
+      setRetryError(REFUSAL_TEXT[body.error] ?? `Retry refused (${body.error ?? r.status}).`);
+    } catch (e: any) {
+      setRetryError(e.message);
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   if (error) {
     return (
@@ -257,7 +351,9 @@ export default function ReleaseDetailPage() {
         {rel.shadow && (
           <span className="pill-sm pill-sm--verification">fix verification run</span>
         )}
-        <span className={`pill ${releasePillClass(rel.status)}`}>{rel.status}</span>
+        <span className={`pill ${releasePillClass(rel.status)}`}>
+          {rel.status}{rel.remediation_round > 1 ? ` · round ${rel.remediation_round}` : ''}
+        </span>
       </header>
 
       {rel.reject_reason && (
@@ -267,6 +363,16 @@ export default function ReleaseDetailPage() {
           {rel.reject_detail ? ` — ${rel.reject_detail}` : ''}
         </div>
       )}
+
+      {rel.status === 'rejected' && deadEnd && rel.remediation_round < MAX_REMEDIATION_ROUNDS && (
+        <button type="button" className="btn btn--primary" disabled={retrying} onClick={retry}>
+          Try again (round {rel.remediation_round} of {MAX_REMEDIATION_ROUNDS})
+        </button>
+      )}
+      {rel.status === 'rejected' && deadEnd && rel.remediation_round >= MAX_REMEDIATION_ROUNDS && (
+        <p className="muted">Retried {MAX_REMEDIATION_ROUNDS} times — push a new commit to start over.</p>
+      )}
+      {retryError && <p className="error">{retryError}</p>}
 
       {pollError && (
         <div className="info-strip info-strip--warning">
@@ -325,7 +431,10 @@ export default function ReleaseDetailPage() {
                       <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
                       <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
                       <td>
-                        <FixCell state={fixState.get(proposalKey(stage, n.node_id))} />
+                        <FixCell
+                          state={fixState.get(proposalKey(stage, n.node_id))}
+                          note={fixNote.get(proposalKey(stage, n.node_id))}
+                        />
                       </td>
                     </tr>
                   ))}

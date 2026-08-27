@@ -170,6 +170,9 @@ export interface ReleaseDetail {
   image_tags: Record<string, string>;
   bootstrap: boolean;
   shadow: boolean;
+  // How many remediation rounds have run for this release. 1 for every release
+  // that has not been retried; "Try again" increments it up to the 3-round cap.
+  remediation_round: number;
 }
 
 export interface NodeSummary {

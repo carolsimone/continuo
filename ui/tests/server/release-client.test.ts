@@ -23,4 +23,24 @@ describe('release-client', () => {
     const client = createReleaseClient('http://rc:8088');
     await expect(client.getRelease('missing')).rejects.toThrow(/404/);
   });
+
+  it('posts to retry-remediation and passes status and body through, even on 4xx', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'rounds_exhausted' }), { status: 409 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = createReleaseClient('http://rc:8088');
+    const out = await client.retryRemediation('rel-1');
+    expect(out).toEqual({ status: 409, body: { error: 'rounds_exhausted' } });
+    const [calledUrl, init] = fetchMock.mock.calls[0];
+    expect(calledUrl).toBe('http://rc:8088/releases/rel-1/retry-remediation');
+    expect(init).toEqual({ method: 'POST' });
+  });
+
+  it('reports invalid_response when retry-remediation answers with a non-JSON body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('not json', { status: 202 })));
+    const client = createReleaseClient('http://rc:8088');
+    const out = await client.retryRemediation('rel-1');
+    expect(out).toEqual({ status: 202, body: { error: 'invalid_response' } });
+  });
 });

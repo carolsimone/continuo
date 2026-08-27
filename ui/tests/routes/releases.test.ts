@@ -53,4 +53,20 @@ describe('releases router', () => {
     expect(res.status).toBe(404);
     expect(res.body.error).not.toContain('release-controller /releases'); // no internal detail leaked
   });
+
+  it('POST /api/releases/:id/retry-remediation passes release-controller status and body through', async () => {
+    const client = { retryRemediation: vi.fn().mockResolvedValue({ status: 409, body: { error: 'proposal_open', pr_url: 'https://x/pr/7' } }) };
+    const app = appWith({ client, getLog: vi.fn() });
+    const res = await request(app).post('/api/releases/rel-1/retry-remediation');
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'proposal_open', pr_url: 'https://x/pr/7' });
+    expect(client.retryRemediation).toHaveBeenCalledWith('rel-1');
+  });
+
+  it('POST /api/releases/:id/retry-remediation answers 502 when release-controller is unreachable', async () => {
+    const client = { retryRemediation: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) };
+    const app = appWith({ client, getLog: vi.fn() });
+    const res = await request(app).post('/api/releases/rel-1/retry-remediation');
+    expect(res.status).toBe(502);
+  });
 });
