@@ -511,6 +511,40 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
   });
 
+  it('hides Try again when the current round has no proposals yet (a retry is already in progress)', async () => {
+    mockFetchProposals.mockResolvedValue([]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+    await screen.findByText('finance');
+    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+  });
+
+  it('hides Try again for a shadow release', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })], 'compile_failed', true));
+    await screen.findByText('finance');
+    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+  });
+
+  it('hides Try again when the release has no failed nodes', async () => {
+    mockFetchProposals.mockResolvedValue([]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'ok' })]));
+    await screen.findByText('finance');
+    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+  });
+
+  it('shows the retry-in-progress message on a 409 retry_in_progress', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
+    mockPost.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'retry_in_progress' }) });
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+    const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
+    fireEvent.click(btn);
+    expect(await screen.findByText(/A retry is already in progress — wait for the new round to start\./)).toBeInTheDocument();
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
   it('shows a link to the open PR when retry answers 409 proposal_open', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
     mockPost.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'proposal_open', pr_url: 'https://x/pr/7' }) });

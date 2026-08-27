@@ -12,13 +12,15 @@ const MAX_REMEDIATION_ROUNDS = 3;
 // stays hidden while one of these is open, since a retry would be redundant.
 const OPEN_PR_STATES = ['opening', 'open', 'merged'];
 
-// Messages for the release-controller's 409 refusal reasons, other than
-// proposal_open (handled separately because it also carries a PR link).
+// Messages for the release-controller's 409/502/500 refusal reasons, other
+// than proposal_open (handled separately because it also carries a PR link).
 const REFUSAL_TEXT: Record<string, string> = {
   rounds_exhausted: `Retried ${MAX_REMEDIATION_ROUNDS} times — push a new commit to start over.`,
   not_retryable: 'This release was rejected before retries existed — push a new commit.',
   not_healable: 'This rejection is not something the agent can fix.',
   not_rejected: 'Only a rejected release can be retried.',
+  retry_in_progress: 'A retry is already in progress — wait for the new round to start.',
+  internal: 'Retry failed on the server — try again in a moment.',
 };
 
 // Cadence for re-checking whether a remediation proposal has been persisted for a
@@ -64,6 +66,13 @@ function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
     if (!current || FIX_STATE_RANK[p.status] > FIX_STATE_RANK[current]) byKey.set(k, p.status);
   }
   return failedKeys.some(k => byKey.has(k));
+}
+
+// anyOpenPR reports whether any proposal in the list has a PR out for review —
+// checked across every round, not just the current one, since a fix from an
+// earlier round is still the thing to look at instead of retrying.
+function anyOpenPR(list: ProposalDTO[]): boolean {
+  return list.some(p => OPEN_PR_STATES.includes(p.pr_state ?? ''));
 }
 
 // FixCell renders one node's remediation state: a link to the proposal once a
@@ -215,18 +224,19 @@ export default function ReleaseDetailPage() {
   const currentRoundProposals = proposals.filter(p => (p.remediation_round ?? 1) === rel?.remediation_round);
 
   // A rejected release is a dead end for remediation — nothing left for the
-  // agent to do without human input — once no proposal already has a PR out
-  // for review, and no failed node has an in-flight/proposed fix. Round 1
-  // reads that off every proposal fetched for the release; a later round
-  // additionally requires at least one of *its own* proposals to exist, so
-  // the window between "round bumped" and "the new round's first proposal
-  // landed" is not mistaken for a dead end. "Try again" (below) only ever
-  // shows in this state.
+  // agent to do without human input — once it has at least one failed node,
+  // the current round has produced at least one proposal (the window between
+  // "round bumped" and "the new round's first proposal landed" is never a
+  // dead end), no failed node has an in-flight/proposed fix in the current
+  // round, and no proposal from any round already has a PR out for review.
+  // A shadow release is never a dead end — it verifies a fix, it does not
+  // start one. "Try again" (below) only ever shows in this state.
   const deadEnd = rel?.status === 'rejected'
-    && proposals.every(p => !OPEN_PR_STATES.includes(p.pr_state ?? ''))
-    && (rel?.remediation_round === 1
-      ? !hasActiveFix(proposals, failedKeys)
-      : currentRoundProposals.length > 0 && !hasActiveFix(currentRoundProposals, failedKeys));
+    && !rel.shadow
+    && failedKeys.length > 0
+    && currentRoundProposals.length > 0
+    && !hasActiveFix(currentRoundProposals, failedKeys)
+    && !anyOpenPR(proposals);
 
   // Poll for remediation proposals so the FIX cell surfaces the "Generating fix…"
   // chip and then the "Proposed fix available →" link without a manual refresh.
@@ -404,7 +414,7 @@ export default function ReleaseDetailPage() {
         </div>
       )}
       {retryError && (
-        <div className="info-strip info-strip--error">
+        <div className="info-strip info-strip--error" role="alert">
           <span className="info-strip__icon">⚠</span>{retryError}
         </div>
       )}
