@@ -34,7 +34,7 @@ const (
 // for the agent-remediation. The UI reads proposals via ListProposals/GetProposal
 // and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
 type RemediationProposalsClient interface {
-	// ListProposals returns proposals filtered by status, pr_state, and limit.
+	// ListProposals returns proposals filtered by status, pr_state, release_id, and limit.
 	ListProposals(ctx context.Context, in *ListProposalsRequest, opts ...grpc.CallOption) (*ListProposalsResponse, error)
 	// GetProposal returns a single proposal by ID.
 	GetProposal(ctx context.Context, in *GetProposalRequest, opts ...grpc.CallOption) (*Proposal, error)
@@ -113,7 +113,7 @@ func (c *remediationProposalsClient) FailPullRequest(ctx context.Context, in *Fa
 // for the agent-remediation. The UI reads proposals via ListProposals/GetProposal
 // and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
 type RemediationProposalsServer interface {
-	// ListProposals returns proposals filtered by status, pr_state, and limit.
+	// ListProposals returns proposals filtered by status, pr_state, release_id, and limit.
 	ListProposals(context.Context, *ListProposalsRequest) (*ListProposalsResponse, error)
 	// GetProposal returns a single proposal by ID.
 	GetProposal(context.Context, *GetProposalRequest) (*Proposal, error)
