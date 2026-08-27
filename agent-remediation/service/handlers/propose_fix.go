@@ -21,6 +21,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/fixer"
 	"github.com/carolsimone/continuo/agent-remediation/service/llmcache"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
 )
 
@@ -243,6 +244,15 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	// (e.g. a later attempt for the same failure) misses and calls the model
 	// again. The caching decorator reads this key off the context.
 	llmCtx := llmcache.ContextWithIdempotencyKey(ctx, t.idempotencyKey())
+	// Stamp the failure identity so the prompt-logging decorator can tie the
+	// logged prompt back to the release, node, source, and attempt it was built
+	// for.
+	llmCtx = promptlog.ContextWithFailure(llmCtx, promptlog.Failure{
+		Source:    t.Source,
+		ReleaseID: t.ReleaseID,
+		NodeID:    t.NodeID,
+		Attempt:   attempt,
+	})
 
 	r, err := fx.Propose(llmCtx, svc, in)
 	if err != nil {
