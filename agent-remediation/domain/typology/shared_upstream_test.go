@@ -93,3 +93,41 @@ func TestSharedUpstream_MixedViaGroup_TwoClusters(t *testing.T) {
 		t.Errorf("cluster 1 wrong: %+v", got[1])
 	}
 }
+
+func TestSharedUpstream_MultipleCommonAncestors_PicksSmallestId(t *testing.T) {
+	nodes := []FailingNode{
+		{NodeID: "analytics.a", ErrorSignature: "missing_col_x"},
+		{NodeID: "analytics.b", ErrorSignature: "missing_col_x"},
+	}
+	dag := DagView{ChangedAncestorsByNode: map[string][]string{
+		"analytics.a": {"analytics.z", "analytics.m"},
+		"analytics.b": {"analytics.m", "analytics.z"},
+	}}
+
+	claimed, _ := SharedUpstreamCause{}.Claim(nodes, dag)
+
+	if len(claimed) != 1 || claimed[0].TargetNodeID != "analytics.m" {
+		t.Fatalf("want target analytics.m (smallest common id), got %+v", claimed)
+	}
+}
+
+func TestGroup_StableAcrossInputOrder(t *testing.T) {
+	dag := DagView{ChangedAncestorsByNode: map[string][]string{
+		"analytics.a": {"analytics.u"},
+		"analytics.b": {"analytics.u"},
+		"analytics.c": nil,
+	}}
+	base := []FailingNode{
+		{NodeID: "analytics.a", ErrorSignature: "s"},
+		{NodeID: "analytics.b", ErrorSignature: "s"},
+		{NodeID: "analytics.c", ErrorSignature: "t"},
+	}
+	reordered := []FailingNode{base[2], base[0], base[1]}
+
+	g1 := Group(base, dag, SharedUpstreamCause{})
+	g2 := Group(reordered, dag, SharedUpstreamCause{})
+
+	if !reflect.DeepEqual(g1, g2) {
+		t.Fatalf("grouping must be input-order independent:\n%+v\n%+v", g1, g2)
+	}
+}
