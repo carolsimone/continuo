@@ -2,7 +2,11 @@
 // deterministic identifiers used for outbox dedup.
 package event
 
-import "github.com/google/uuid"
+import (
+	"strconv"
+
+	"github.com/google/uuid"
+)
 
 // EventType is the outbox event_type discriminator for remediation triggers.
 const EventType = "remediation_requested"
@@ -11,11 +15,19 @@ const EventType = "remediation_requested"
 // so a redelivered failure does not produce a distinct downstream trigger.
 var remediationEventNamespace = uuid.MustParse("b8c4d2e1-6f3a-4b9c-8d7e-1a2b3c4d5e6f")
 
-// RemediationEventID maps (releaseID, nodeID) to a stable UUID. The agent's
-// dedup keys off this, so identical (release, node) failures collapse to one
-// logical trigger.
-func RemediationEventID(releaseID, nodeID string) uuid.UUID {
-	return uuid.NewSHA1(remediationEventNamespace, []byte(releaseID+"|"+nodeID))
+// RemediationEventID maps (releaseID, nodeID, round) to a stable UUID. The
+// agent's dedup keys off this, so identical (release, node) failures within
+// the same remediation round collapse to one logical trigger. Round <= 1
+// reproduces the id the round-less classifier used to mint, so every trigger
+// emitted before rounds existed keeps its identity; round >= 2 — a human's
+// "try again" on the release — mints a distinct id per round, so a retry's
+// trigger is never mistaken for the rejection's original one.
+func RemediationEventID(releaseID, nodeID string, round int) uuid.UUID {
+	name := releaseID + "|" + nodeID
+	if round > 1 {
+		name += "|round|" + strconv.Itoa(round)
+	}
+	return uuid.NewSHA1(remediationEventNamespace, []byte(name))
 }
 
 // AggregateIDForRelease maps a release id to a stable UUID for use as the
@@ -35,7 +47,11 @@ type RemediationRequested struct {
 	EventID   string `json:"event_id"`
 	Source    string `json:"source"`
 	ReleaseID string `json:"release_id"`
-	NodeID    string `json:"node_id"`
+	// RemediationRound is the release's remediation round this trigger
+	// belongs to: 1 for the rejection itself, +1 per human "try again" on
+	// the release.
+	RemediationRound int    `json:"remediation_round"`
+	NodeID           string `json:"node_id"`
 	// RelationID is the contested physical relation for a duplicate_table
 	// trigger, distinct from NodeID (the target claimant's own unique_id) —
 	// the two differ whenever the target carries an alias. Empty for every

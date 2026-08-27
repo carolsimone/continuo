@@ -29,11 +29,11 @@ func NewDecisionRepository(q Queryer) *DecisionRepository { return &DecisionRepo
 func (r *DecisionRepository) Upsert(ctx context.Context, d repository.ClassificationDecision) (bool, error) {
 	const stmt = `
 		INSERT INTO classification_decision
-			(source, release_id, node_id, category, error_signature, decision, reason, dbt_log_uri, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (source, release_id, node_id) DO NOTHING`
+			(source, release_id, remediation_round, node_id, category, error_signature, decision, reason, dbt_log_uri, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (source, release_id, remediation_round, node_id) DO NOTHING`
 	res, err := r.q.ExecContext(ctx, stmt,
-		d.Source, d.ReleaseID, d.NodeID, d.Category, d.ErrorSignature,
+		d.Source, d.ReleaseID, d.RemediationRound, d.NodeID, d.Category, d.ErrorSignature,
 		d.Decision, d.Reason, d.DBTLogURI, d.CreatedAt)
 	if err != nil {
 		return false, fmt.Errorf("insert classification_decision: %w", err)

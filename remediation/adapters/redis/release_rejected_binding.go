@@ -22,6 +22,11 @@ type rejectedPayload struct {
 	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed" | "duplicate_table"
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
+	// RemediationRound is set by release-controller on a
+	// remediation.retry_requested:v1 replay of this payload — a human's "try
+	// again" on the release. Absent (and thus zero) on the original
+	// release.rejected:v1 rejection, which is round 1.
+	RemediationRound int `json:"remediation_round"`
 	// CodeBundleURI locates the rejected release's code-bundle document,
 	// stamped by release-controller. Absent (and thus empty) for a payload
 	// from before the field existed or for a rejection with no bundle.
@@ -135,6 +140,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 		out = append(out, failure.FailureEvidence{
 			Source:               src,
 			ReleaseID:            p.ReleaseID,
+			RemediationRound:     p.RemediationRound,
 			NodeID:               n.NodeID,
 			RelationID:           n.RelationID,
 			DBTLogURI:            n.DBTLogURI,
@@ -154,20 +160,24 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	return out, nil
 }
 
-// NewReleaseRejectedConsumer constructs a StreamConsumer that reads
-// release.rejected:v1 and classifies each failed node via handlers.ClassifyFailure.
-// The consumer group is created idempotently by StreamConsumer.Start; call
-// Start(ctx) in a goroutine to begin consuming.
-func NewReleaseRejectedConsumer(rc *goredis.Client, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
+// classifyRejectionMessages builds a StreamConsumer over the given stream and
+// consumer group that decodes each message with the release.rejected:v1
+// payload shape and classifies every failed node via handlers.ClassifyFailure.
+// release.rejected:v1 and its per-round retry replay on
+// remediation.retry_requested:v1 share this exact shape (the retry payload
+// adds only the top-level remediation_round field), so one handler serves
+// both consumers. The consumer group is created idempotently by
+// StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
+func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
 	handler := func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {
-			logger.Error("release.rejected:v1 missing payload — discarding", "message_id", msg.ID)
+			logger.Error(stream+" missing payload — discarding", "message_id", msg.ID)
 			return nil // permanent: ACK by returning nil so the message is not left in the PEL
 		}
 		evs, err := evidenceFromRejected([]byte(raw))
 		if err != nil {
-			logger.Error("release.rejected:v1 decode failure — discarding", "message_id", msg.ID, "error", err)
+			logger.Error(stream+" decode failure — discarding", "message_id", msg.ID, "error", err)
 			return nil // permanent: malformed payload cannot be retried
 		}
 		for _, ev := range evs {
@@ -177,11 +187,13 @@ func NewReleaseRejectedConsumer(rc *goredis.Client, deps handlers.Deps, logger *
 		}
 		return nil
 	}
-	return pkgredis.NewStreamConsumer(
-		rc,
-		streams.ReleaseRejectedV1,
-		streams.RemediationReleaseRejected,
-		handler,
-		logger,
-	)
+	return pkgredis.NewStreamConsumer(rc, stream, group, handler, logger)
+}
+
+// NewReleaseRejectedConsumer constructs a StreamConsumer that reads
+// release.rejected:v1 and classifies each failed node via handlers.ClassifyFailure.
+// The consumer group is created idempotently by StreamConsumer.Start; call
+// Start(ctx) in a goroutine to begin consuming.
+func NewReleaseRejectedConsumer(rc *goredis.Client, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
+	return classifyRejectionMessages(rc, streams.ReleaseRejectedV1, streams.RemediationReleaseRejected, deps, logger)
 }
