@@ -17,11 +17,11 @@ var remediationEventNamespace = uuid.MustParse("b8c4d2e1-6f3a-4b9c-8d7e-1a2b3c4d
 
 // RemediationEventID maps (releaseID, nodeID, round) to a stable UUID. The
 // agent's dedup keys off this, so identical (release, node) failures within
-// the same remediation round collapse to one logical trigger. Round <= 1
-// reproduces the id the round-less classifier used to mint, so every trigger
-// emitted before rounds existed keeps its identity; round >= 2 — a human's
-// "try again" on the release — mints a distinct id per round, so a retry's
-// trigger is never mistaken for the rejection's original one.
+// the same remediation round collapse to one logical trigger. For round <= 1
+// the name is "release|node" only, so the id is identical whether or not a
+// payload carries the field; round >= 2 appends "|round|N", so a human's "try
+// again" on the release mints a distinct id per round and a retry's trigger
+// is never mistaken for the rejection's original one.
 func RemediationEventID(releaseID, nodeID string, round int) uuid.UUID {
 	name := releaseID + "|" + nodeID
 	if round > 1 {
