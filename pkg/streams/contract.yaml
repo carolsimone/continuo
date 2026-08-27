@@ -331,6 +331,15 @@ streams:
         group: executor-release-rejected
         const: ExecutorReleaseRejected
 
+  - name: remediation.retry_requested:v1
+    const: RemediationRetryRequestedV1
+    description: A human asked for another remediation round on a rejected release; release-controller replays the release's stored rejection payload plus remediation_round, and the remediation classifier re-classifies it as a fresh round.
+    producers: [release-controller]
+    consumers:
+      - service: remediation
+        group: remediation-retry-requested
+        const: RemediationRetryRequested
+
   # ---------------- remediation-classifier streams ----------------
 
   - name: remediation.requested:v1

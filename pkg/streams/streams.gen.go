@@ -70,6 +70,8 @@ const (
 	ReleasePromotedV1 = "release.promoted:v1"
 	// ReleaseRejectedV1 — Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
 	ReleaseRejectedV1 = "release.rejected:v1"
+	// RemediationRetryRequestedV1 — A human asked for another remediation round on a rejected release; release-controller replays the release's stored rejection payload plus remediation_round, and the remediation classifier re-classifies it as a fresh round.
+	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
 	// RemediationRequestedV1 — Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent and by orchestrator's case-base rejections group.
 	RemediationRequestedV1 = "remediation.requested:v1"
 	// RemediationProposedV1 — Per-node fix proposal emitted by the remediation agent for a healable failure; consumed by the PR creator and approval surfaces.
@@ -156,6 +158,8 @@ const (
 	RemediationReleaseRejected = "remediation-release-rejected"
 	// ExecutorReleaseRejected — executor-controller consumer group on release.rejected:v1.
 	ExecutorReleaseRejected = "executor-release-rejected"
+	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.
+	RemediationRetryRequested = "remediation-retry-requested"
 	// AgentRemediationRemediationRequested — agent-remediation consumer group on remediation.requested:v1.
 	AgentRemediationRemediationRequested = "agent-remediation-remediation-requested"
 	// OrchestratorRemediationRequestedRejections — orchestrator consumer group on remediation.requested:v1.
@@ -200,6 +204,7 @@ var All = []string{
 	CompileCompletedV1,
 	ReleasePromotedV1,
 	ReleaseRejectedV1,
+	RemediationRetryRequestedV1,
 	RemediationRequestedV1,
 	RemediationProposedV1,
 	RemediationPrOpenedV1,
