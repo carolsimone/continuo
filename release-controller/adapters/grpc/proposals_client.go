@@ -22,14 +22,17 @@ func NewProposalsClient(c remediationv1.RemediationProposalsClient) *ProposalsCl
 	return &ProposalsClient{c: c}
 }
 
-// listLimit bounds one release's attempts: nodes × rounds × attempts stays far
-// below it for any real release.
-const listLimit = 500
-
 // ListProposalsForRelease returns every remediation attempt recorded for the
-// release, mapped from the wire type to ports.ProposalSummary.
+// release, mapped from the wire type to ports.ProposalSummary. The request
+// carries Limit: 0 — the repository's List treats that as unbounded — rather
+// than a fixed page size: the list is already scoped to one release_id, and
+// bounded in practice by that release's nodes × rounds × attempts, but the
+// retry decision must see every attempt to decide correctly. A capped page
+// could let an older open PR or proposed attempt fall off the page and be
+// missed, which would let the retry gate approve a round it should have
+// refused.
 func (p *ProposalsClient) ListProposalsForRelease(ctx context.Context, releaseID string) ([]ports.ProposalSummary, error) {
-	resp, err := p.c.ListProposals(ctx, &remediationv1.ListProposalsRequest{ReleaseId: releaseID, Limit: listLimit})
+	resp, err := p.c.ListProposals(ctx, &remediationv1.ListProposalsRequest{ReleaseId: releaseID, Limit: 0})
 	if err != nil {
 		return nil, fmt.Errorf("list proposals for %s: %w", releaseID, err)
 	}

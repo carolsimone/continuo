@@ -45,7 +45,9 @@ func TestProposalsClient_ListProposalsForRelease_MapsSummaries(t *testing.T) {
 
 	require.NotNil(t, fake.gotReq)
 	require.Equal(t, "rel-1", fake.gotReq.ReleaseId)
-	require.EqualValues(t, 500, fake.gotReq.Limit)
+	// The retry decision must see every attempt: a capped page could let an
+	// older open PR or proposed attempt fall off the page and be missed.
+	require.EqualValues(t, 0, fake.gotReq.Limit)
 }
 
 func TestProposalsClient_ListProposalsForRelease_PropagatesError(t *testing.T) {
