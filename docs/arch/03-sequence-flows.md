@@ -625,6 +625,62 @@ sequenceDiagram
 
 **Why attempt n+1 is better informed.** A failed attempt's row keeps both the diffs it applied (as S3 artifacts) and the error its shadow release reported. The next attempt's prompt renders every earlier attempt with both, so the model is told what has already been tried and rejected rather than re-proposing it. The retry is driven from the trigger stored on that row, given a dedup identity derived from the shadow release id — the original message id was already claimed by the first attempt's own transaction, so replaying it verbatim would be reported as "already processed" and quietly do nothing.
 
+### 11b. Remediation Retry Round (Try Again on a Rejected Release)
+
+A rejected release is a dead end for remediation once every failed node's latest attempt has settled without an open PR — nothing generating, nothing verifying, nothing proposed and still awaiting review — and only a human can move it forward. The release page surfaces a **Try again** button exactly in that state (it stays hidden while any attempt is in flight, since a retry then would only race it). Clicking it does not require a new commit: it asks `release-controller` to run the release's own stored rejection back through the classifier once more, as remediation round N+1.
+
+```mermaid
+sequenceDiagram
+  participant OP as operator (browser)
+  participant UI as ui
+  participant RC as release-controller
+  participant RA as agent-remediation (gRPC 50054)
+  participant RM as remediation (classifier)
+
+  OP->>UI: POST /api/releases/:id/retry-remediation ("Try again")
+  UI->>RC: POST /releases/{id}/retry-remediation
+  RC->>RC: load release FOR UPDATE
+
+  alt release not found
+    RC-->>UI: 404 { error: not_found }
+  else status != rejected
+    RC-->>UI: 409 { error: not_rejected }
+  else reject_reason not healable<br/>(only compile_failed, seed_build_failed, validation_failed, duplicate_table qualify)
+    RC-->>UI: 409 { error: not_healable }
+  else no stored rejection_payload (release predates the column)
+    RC-->>UI: 409 { error: not_retryable }
+  else remediation_round >= MaxRemediationRounds (3)
+    RC-->>UI: 409 { error: rounds_exhausted }
+  else
+    RC->>RA: ListProposals({release_id})
+    alt gRPC call itself fails
+      RA-->>RC: error
+      RC-->>UI: 502 { error: proposal_reader_unavailable }
+    else any node's latest attempt is generating/verifying/proposed,<br/>or its PR is opening/open/merged
+      RA-->>RC: proposals
+      RC-->>UI: 409 { error: proposal_open, proposal_id, pr_url }
+    else every node's latest attempt is terminal and unclaimed
+      RA-->>RC: proposals
+      Note over RC: round = remediation_round + 1 (StartRemediationRound records<br/>a "remediation_retry" transition, saves)
+      Note over RC: decode stored rejection_payload, set top-level remediation_round=round,<br/>re-encode — the exact bytes release-controller emitted at rejection,<br/>replayed one round later
+      RC->>RM: publish remediation.retry_requested:v1 { ...stored release.rejected:v1 payload,<br/>remediation_round=round } (event_id = remediation-retry:<release_id>:<round>)
+      RC-->>UI: 202 { release_id, remediation_round=round }
+      UI-->>OP: status pill "rejected · round N"; proposal polling restarts
+
+      Note over RM: classifyRejectionMessages — the same handler that reads<br/>release.rejected:v1 (Flow 11) — decodes the identical payload shape<br/>and classifies every per_node entry again
+      RM->>RM: classification_decision upsert keyed (source, release_id,<br/>remediation_round, node_id) — a fresh slot, independent of round 1's rows
+      RM->>RA: remediation.requested:v1 { ...as Flow 11, remediation_round=round }<br/>(event_id suffixed "|round|N" so it never collides with round 1's trigger)
+      Note over RA: attempt cap resets for this round's key (release_id,<br/>remediation_round, source, node_id, error_signature); the attempt NUMBER<br/>itself keeps the release's one running sequence — see Flow 11a and<br/>docs/arch/services/agent-remediation.md
+    end
+  end
+```
+
+**Why the round bump is not a queue transition.** Every other release state change in this doc is driven by an inbound stream message through the FIFO queue advance. A retry is triggered by a human clicking a button, so `RetryRemediation` runs synchronously in the HTTP handler against a `FOR UPDATE`-locked release row and never touches the release's own `status` or the FIFO queue — `rejected` stays `rejected`; only `remediation_round` and the replayed rejection change. Everything after the retry stream — classification, proposal, a python node's shadow verification, human PR review — is Flow 11 / 11a / 12 run again, with round N+1 threaded through the trigger.
+
+**Why the check reads agent-remediation over gRPC, not remediation's own table.** `classification_decision`'s round-scoped natural key only tells release-controller whether a node was *classified* again, not whether a fix from that classification is still being worked or already out for review — that state lives entirely in agent-remediation's `proposal` table. `RetryRemediation` reads it directly via `ListProposals` rather than inferring it from an event it would otherwise have to wait for, so the refusal is synchronous: the operator sees "a fix is already proposed" immediately, not after a round trip through two more services.
+
+**What ends the loop.** A round exhausts remediation the same way round 1 does: every failed node reaches a terminal, unclaimed outcome (`skipped`, `failed`, or `escalated`, or a `proposed` fix nobody opened a PR for). At that point the release is a dead end again and, below the cap, the button reappears for round N+2. At `MaxRemediationRounds = 3` the button is replaced by a fixed message telling the operator to push a new commit instead — the round counter belongs to this one release's rejection lineage and there is no route back to round 1 short of a fresh `POST /releases`.
+
 ## 12. Human-Gated Create PR (Remediation Surface)
 
 An operator reviews a fix proposal in the Remediation tab and clicks **Create PR**. ui orchestrates the claim, GitHub PR creation, and result recording; agent-remediation enforces single-winner idempotency. The PR's eventual close is then mirrored back onto the proposal by a background reconciler, independent of ui.

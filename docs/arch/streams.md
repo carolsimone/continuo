@@ -107,6 +107,28 @@ Consumers must not assume `stage` is always `validation`
 — all three legs reuse this single stream. See `docs/arch/services/release-controller.md`
 for the full per-leg payload shape.
 
+**`remediation.retry_requested:v1`** — emitted by release-controller when a
+human asks a rejected release to "try again" (`POST
+/releases/{id}/retry-remediation`). The payload is the release's own stored
+`release.rejected:v1` payload — release-controller keeps the exact bytes it
+emitted at the healable rejection on the `releases.rejection_payload` column
+— replayed verbatim with one field added: the incremented
+`remediation_round`. `remediation` consumes it on its own consumer group
+(`remediation-retry-requested`) through the same handler that reads
+`release.rejected:v1`, since the two payloads share one shape; classifying it
+re-runs the identical per-node triage one round later. The request that
+produces this event is refused before it is ever published unless the
+release is `rejected`, its stored reason is healable (`compile_failed`,
+`seed_build_failed`, `validation_failed`, or `duplicate_table`), it has a
+stored rejection payload at all (a release rejected before this column
+existed, or rejected for a non-healable reason such as `parse_failed` or the
+shadow-only `nothing_to_validate`, has none), its round is below the cap
+(`MaxRemediationRounds = 3`), and agent-remediation's `ListProposals` reports
+no attempt still in flight, proposed, or already carrying an
+opening/open/merged PR for the release. See
+`docs/arch/services/release-controller.md` (`RetryRemediation`) and
+`docs/arch/services/remediation.md` for the full behavior.
+
 **`remediation.requested:v1`** — emitted by remediation for each healable
 failing node. The payload carries `reason` (the matched classifier rule, e.g.
 `logic:missing_object`) and `error_excerpt` (the classifier's key error line,
