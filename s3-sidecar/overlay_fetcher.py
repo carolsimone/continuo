@@ -60,6 +60,13 @@ def main() -> None:
 
     written = 0
     try:
+        # OVERLAY_DEST is a subdirectory this script creates itself (the pod
+        # sets no fsGroup, and the compile container that reads it back runs
+        # as the team image's own uid), so its mode depends on this process's
+        # umask unless set explicitly here — the same reason every extracted
+        # file and directory below is chmod'd rather than left at its default.
+        os.makedirs(dest, exist_ok=True)
+        os.chmod(dest, 0o755)
         with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as tf:
             for member in tf.getmembers():
                 rel = _safe_relative(member.name)

@@ -5,6 +5,7 @@ Unlike parse_cache_fetcher it FAILS the Job on any problem: a shadow release
 that compiled the committed source instead of the proposed fix would verify
 the wrong thing.
 """
+import contextlib
 import io
 import os
 import stat
@@ -34,19 +35,50 @@ def _serve(monkeypatch, body: bytes) -> mock.MagicMock:
     return fake
 
 
+@contextlib.contextmanager
+def _restrictive_umask():
+    """Force a 0077 umask so a missing explicit chmod on a created path fails
+    the world-readable assertions below instead of silently passing under
+    whatever permissive umask happens to be set on the host/CI runner."""
+    old = os.umask(0o077)
+    try:
+        yield
+    finally:
+        os.umask(old)
+
+
 def test_extracts_files_world_readable(tmp_path, monkeypatch):
     dest = tmp_path / "overlay"
     monkeypatch.setenv("SOURCE_OVERLAY_URI", "s3://continuo/svc/shadow-1/source-overlay.tar.gz")
     monkeypatch.setenv("OVERLAY_DEST", str(dest))
     fake = _serve(monkeypatch, _tar({"models/a.sql": b"select 1", "models/nested/b.sql": b"select 2"}))
 
-    overlay_fetcher.main()
+    with _restrictive_umask():
+        overlay_fetcher.main()
 
     fake.get_object.assert_called_once_with(Bucket="continuo", Key="svc/shadow-1/source-overlay.tar.gz")
     assert (dest / "models" / "a.sql").read_bytes() == b"select 1"
     assert (dest / "models" / "nested" / "b.sql").read_bytes() == b"select 2"
     assert stat.S_IMODE(os.stat(dest / "models" / "a.sql").st_mode) == 0o644
     assert stat.S_IMODE(os.stat(dest / "models").st_mode) == 0o755
+    assert stat.S_IMODE(os.stat(dest).st_mode) == 0o755
+
+
+def test_extracts_single_top_level_file_dest_world_readable(tmp_path, monkeypatch):
+    """OVERLAY_DEST itself must be world-readable even when the tarball has no
+    directory members at all (the compile Job's OVERLAY_DEST=/shared/overlay
+    is a subdirectory this script creates, with no fsGroup set on the pod)."""
+    dest = tmp_path / "overlay"
+    monkeypatch.setenv("SOURCE_OVERLAY_URI", "s3://continuo/svc/shadow-1/source-overlay.tar.gz")
+    monkeypatch.setenv("OVERLAY_DEST", str(dest))
+    _serve(monkeypatch, _tar({"a.sql": b"select 1"}))
+
+    with _restrictive_umask():
+        overlay_fetcher.main()
+
+    assert (dest / "a.sql").read_bytes() == b"select 1"
+    assert stat.S_IMODE(os.stat(dest / "a.sql").st_mode) == 0o644
+    assert stat.S_IMODE(os.stat(dest).st_mode) == 0o755
 
 
 @pytest.mark.parametrize("name", ["../escape.sql", "/abs/escape.sql", "models/../../escape.sql"])
