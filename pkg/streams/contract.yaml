@@ -342,9 +342,9 @@ streams:
 
   # ---------------- remediation-classifier streams ----------------
 
-  - name: remediation.requested:v1
-    const: RemediationRequestedV1
-    description: Per-node remediation trigger emitted by the remediation classifier for healable validation failures; consumed by the heal agent and by orchestrator's case-base rejections group.
+  - name: remediation.requested:v2
+    const: RemediationRequestedV2
+    description: One batched remediation trigger per rejected release carrying its whole healable node set (each node with the classifier's evidence and its changed ancestors); emitted by the remediation classifier, consumed by the heal agent and by orchestrator's case-base rejections group.
     producers: [remediation]
     consumers:
       - service: agent-remediation
