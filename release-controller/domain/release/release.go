@@ -129,6 +129,7 @@ type Release struct {
 	manifestKind        ManifestKind
 	remediationRound    int
 	rejectionPayload    []byte
+	sourceOverlayURI    string
 }
 
 // New creates a new Release for a single-service delta. imageTags is initialised
@@ -172,9 +173,16 @@ func (r *Release) ManifestKind() ManifestKind   { return r.manifestKind }
 // SetCodeBundleURI records the S3 URI of the release's code-bundle document,
 // received with the parse result and carried into release.promoted:v1.
 func (r *Release) SetCodeBundleURI(uri string) { r.codeBundleURI = uri }
-func (r *Release) CandidateTopology() Topology { return r.candidateTopology }
-func (r *Release) ValidationNodeIDs() []string { return r.validationNodeIDs }
-func (r *Release) RejectReason() string        { return r.rejectReason }
+
+// SourceOverlayURI locates the tarball of source files a shadow release lays
+// over the service's checked-in project before its compile leg runs, so the
+// release compiles and validates a proposed fix rather than the committed
+// source. Empty for every non-shadow release.
+func (r *Release) SourceOverlayURI() string       { return r.sourceOverlayURI }
+func (r *Release) SetSourceOverlayURI(uri string) { r.sourceOverlayURI = uri }
+func (r *Release) CandidateTopology() Topology    { return r.candidateTopology }
+func (r *Release) ValidationNodeIDs() []string    { return r.validationNodeIDs }
+func (r *Release) RejectReason() string           { return r.rejectReason }
 
 // RejectDetail is the operator-facing explanation of why the release was
 // rejected — the same string carried in release.rejected:v1's error_detail.
@@ -421,6 +429,7 @@ type RehydrateInput struct {
 	ManifestKind      ManifestKind
 	RemediationRound  int
 	RejectionPayload  []byte
+	SourceOverlayURI  string
 }
 
 // Rehydrate reconstructs a Release from persistence. Bypasses state-machine
@@ -447,6 +456,7 @@ func Rehydrate(in RehydrateInput) *Release {
 		manifestKind:      in.ManifestKind,
 		remediationRound:  in.RemediationRound,
 		rejectionPayload:  in.RejectionPayload,
+		sourceOverlayURI:  in.SourceOverlayURI,
 	}
 	if r.remediationRound < 1 {
 		r.remediationRound = 1

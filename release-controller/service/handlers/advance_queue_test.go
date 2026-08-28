@@ -247,3 +247,26 @@ func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 	assert.Equal(t, release.StatusCompiling, rOLD.Status())
 	assert.Equal(t, release.StatusReceived, rNEW.Status())
 }
+
+func TestAdvanceQueue_CompileRequestedCarriesSourceOverlayURI(t *testing.T) {
+	deps, store := newDeps(time.Now())
+	r := release.New("r-ov", "svc", "tag", false, true, "o/r", "sha", release.ManifestKindDbt, deps.Clock.Now())
+	r.SetSourceOverlayURI("s3://b/svc/r-ov/source-overlay.tar.gz")
+	store.SeedRelease(r)
+
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+
+	var found bool
+	for _, e := range outboxEntries(store) {
+		if e.StreamName != streams.CompileRequestedV1 {
+			continue
+		}
+		var p struct {
+			SourceOverlayURI string `json:"source_overlay_uri"`
+		}
+		require.NoError(t, json.Unmarshal(e.Payload, &p))
+		assert.Equal(t, "s3://b/svc/r-ov/source-overlay.tar.gz", p.SourceOverlayURI)
+		found = true
+	}
+	require.True(t, found, "compile.requested must be emitted for a dbt shadow release")
+}

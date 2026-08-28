@@ -65,6 +65,7 @@ type releaseRow struct {
 	Kind              string         `db:"kind"`
 	RemediationRound  int            `db:"remediation_round"`
 	RejectionPayload  []byte         `db:"rejection_payload"`
+	SourceOverlayURI  string         `db:"source_overlay_uri"`
 }
 
 // Get returns the Release with the given ID, or nil if it does not exist.
@@ -74,7 +75,7 @@ func (r *ReleaseRepository) Get(ctx context.Context, id string) (*release.Releas
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind,
-		        remediation_round, rejection_payload
+		        remediation_round, rejection_payload, source_overlay_uri
 		 FROM releases WHERE release_id = $1`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -94,7 +95,7 @@ func (r *ReleaseRepository) Load(ctx context.Context, id string) (*release.Relea
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind,
-		        remediation_round, rejection_payload
+		        remediation_round, rejection_payload, source_overlay_uri
 		 FROM releases WHERE release_id = $1 FOR UPDATE`, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -113,7 +114,7 @@ func (r *ReleaseRepository) NextQueuedRelease(ctx context.Context) (*release.Rel
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind,
-		        remediation_round, rejection_payload
+		        remediation_round, rejection_payload, source_overlay_uri
 		 FROM releases WHERE status = 'received'
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -133,7 +134,7 @@ func (r *ReleaseRepository) ActiveRelease(ctx context.Context) (*release.Release
 		`SELECT release_id, status, image_tags, changed_service,
 		        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind,
-		        remediation_round, rejection_payload
+		        remediation_round, rejection_payload, source_overlay_uri
 		 FROM releases WHERE status IN ('compiling','parsing','seed_building','validating')
 		 ORDER BY created_at ASC, release_id ASC LIMIT 1`)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -181,8 +182,8 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		   release_id, status, image_tags, changed_service,
 		   candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 		   per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind,
-		   remediation_round, rejection_payload
-		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+		   remediation_round, rejection_payload, source_overlay_uri
+		 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
 		 ON CONFLICT (release_id) DO UPDATE SET
 		   status = EXCLUDED.status,
 		   image_tags = EXCLUDED.image_tags,
@@ -200,7 +201,7 @@ func (r *ReleaseRepository) Save(ctx context.Context, rel *release.Release) erro
 		imageTagsJSON, rel.ChangedService(), topoJSON, pq.StringArray(rel.ValidationNodeIDs()),
 		rejectReason, rel.RejectDetail(), pq.StringArray(rel.FailingNodes()), perNodeJSON,
 		rel.CreatedAt(), transitionsJSON, rel.IsBootstrap(), rel.IsShadow(), rel.Repo(), rel.CommitSHA(), rel.CodeBundleURI(),
-		string(rel.ManifestKind()), rel.RemediationRound(), rejectionPayload)
+		string(rel.ManifestKind()), rel.RemediationRound(), rejectionPayload, rel.SourceOverlayURI())
 	if err != nil {
 		return fmt.Errorf("upsert release: %w", err)
 	}
@@ -254,6 +255,7 @@ func rowToRelease(row releaseRow) (*release.Release, error) {
 		ManifestKind:      release.ManifestKind(row.Kind),
 		RemediationRound:  row.RemediationRound,
 		RejectionPayload:  row.RejectionPayload,
+		SourceOverlayURI:  row.SourceOverlayURI,
 	}), nil
 }
 
@@ -285,7 +287,7 @@ func (r *ReleaseRepository) List(ctx context.Context, f repository.ListFilter) (
 	query := fmt.Sprintf(`SELECT release_id, status, image_tags, changed_service,
 	        candidate_topology, validation_node_ids, reject_reason, reject_detail, failing_nodes,
 	        per_node_results, created_at, transitions, bootstrap, shadow, repo, commit_sha, code_bundle_uri, kind,
-	        remediation_round, rejection_payload
+	        remediation_round, rejection_payload, source_overlay_uri
 	 FROM releases %s
 	 ORDER BY created_at DESC, release_id DESC
 	 LIMIT $%d`, where, len(args))
