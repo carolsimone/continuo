@@ -177,3 +177,23 @@ func TestUnbuildableCrossServiceUpstreams_NoneWhenAllInCandidate(t *testing.T) {
 	}
 	assert.Empty(t, release.UnbuildableCrossServiceUpstreams(candidate, []string{"a2"}))
 }
+
+func TestChangedAncestors_FiltersTransitiveAncestorsToChangedOnes(t *testing.T) {
+	topo := release.Topology{
+		{UniqueID: "s.u"},
+		{UniqueID: "s.m", UpstreamUniqueIDs: []string{"s.u"}},
+		{UniqueID: "s.x", UpstreamUniqueIDs: []string{"s.m"}},
+		{UniqueID: "s.other"},
+	}
+	changed := map[string]bool{"s.u": true, "s.x": true, "s.other": true}
+
+	got := release.ChangedAncestors(topo, "s.x", changed)
+
+	want := []string{"s.u"}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("want %v (m unchanged, x is itself, other unrelated), got %v", want, got)
+	}
+	if release.ChangedAncestors(topo, "s.unknown", changed) != nil {
+		t.Fatal("unknown node must yield nil")
+	}
+}

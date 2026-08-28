@@ -211,6 +211,32 @@ func UnbuildableCrossServiceUpstreams(candidate Topology, nodeIDs []string) []Cr
 	return out
 }
 
+// ChangedAncestors returns the transitive upstream ancestors of nodeID — across
+// service boundaries — that are in changed, sorted by id. nodeID itself is
+// never included even when it changed, and an unknown node yields nil. It
+// tells a remediation which changed nodes upstream of a failing node could be
+// the root cause of its failure.
+func ChangedAncestors(topo Topology, nodeID string, changed map[string]bool) []string {
+	known := false
+	for _, n := range topo {
+		if n.UniqueID == nodeID {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return nil
+	}
+	var out []string
+	for _, id := range FullAncestorsClosure(topo, []string{nodeID}) {
+		if id != nodeID && changed[id] {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // topoSortIncluded returns the included node IDs in topological order
 // (upstreams before downstreams), considering only intra-included edges.
 // Ties break on lexical order for determinism. Panics on a cycle.

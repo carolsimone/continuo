@@ -892,6 +892,87 @@ func TestHandleValidationResult_Promote_EmitsTestCount(t *testing.T) {
 	assert.Equal(t, 3, p.Topology[0].TestCount, "release.promoted:v1 must carry per-node test_count")
 }
 
+// TestHandleValidationResult_Rejected_CarriesChangedAncestorIDs verifies that
+// each failing node's rejected per_node entry names its transitive candidate
+// ancestors whose content changed against production. The seeded topology is
+// rewired so "b" depends on "a", and current_prod is seeded with a stale hash
+// for "a" so it counts as changed; "b" then fails validation and must carry
+// "a" as its changed_ancestor_ids, while "a" itself (which has no ancestors)
+// must carry none.
+func TestHandleValidationResult_Rejected_CarriesChangedAncestorIDs(t *testing.T) {
+	deps, store := seedToValidatingWithURIs(t, "rAnc")
+	// Rewire the seeded candidate topology so b depends on a, and record a
+	// current-prod snapshot where a's content differs: a is the changed
+	// ancestor of the failing b.
+	r, err := store.GetRelease("rAnc")
+	require.NoError(t, err)
+	topo := r.CandidateTopology()
+	var bHash string
+	for i := range topo {
+		if topo[i].UniqueID == "b" {
+			topo[i].UpstreamUniqueIDs = []string{"a"}
+			bHash = topo[i].ContentHash
+		}
+	}
+	// The release is already in Validating (seedToValidatingWithURIs drives it
+	// there), so re-transitioning is refused by the state machine; rehydrate a
+	// new aggregate carrying every persisted field, with the rewired topology.
+	r = release.Rehydrate(release.RehydrateInput{
+		ID:                r.ID(),
+		Status:            r.Status(),
+		ImageTags:         r.ImageTags(),
+		ChangedService:    r.ChangedService(),
+		CandidateTopology: topo,
+		ValidationNodeIDs: r.ValidationNodeIDs(),
+		PerNodeResults:    r.PerNodeResults(),
+		RejectReason:      r.RejectReason(),
+		RejectDetail:      r.RejectDetail(),
+		FailingNodes:      r.FailingNodes(),
+		CreatedAt:         r.CreatedAt(),
+		Transitions:       r.Transitions(),
+		Bootstrap:         r.IsBootstrap(),
+		Shadow:            r.IsShadow(),
+		Repo:              r.Repo(),
+		CommitSHA:         r.CommitSHA(),
+		CodeBundleURI:     r.CodeBundleURI(),
+		ManifestKind:      r.ManifestKind(),
+		RemediationRound:  r.RemediationRound(),
+		RejectionPayload:  r.RejectionPayload(),
+	})
+	store.SeedRelease(r)
+	cp := release.NewCurrentProd()
+	cp.Update("prev", release.Topology{
+		{UniqueID: "a", ContentHash: "old-hash-for-a"},
+		{UniqueID: "b", ContentHash: bHash},
+	}, deps.Clock.Now())
+	store.SeedCurrentProd(cp)
+	seedValidationNodes(t, deps, "rAnc", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "b", Status: "failed", DBTLogURI: "s3://logs/rAnc/b.log"},
+	})
+
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rAnc", AggregateStatus: "failed",
+	}))
+
+	entries := outboxEntries(store)
+	rej := entries[len(entries)-1]
+	require.Equal(t, streams.ReleaseRejectedV1, rej.StreamName)
+	var payload struct {
+		PerNode []struct {
+			NodeID             string   `json:"node_id"`
+			ChangedAncestorIDs []string `json:"changed_ancestor_ids"`
+		} `json:"per_node"`
+	}
+	require.NoError(t, json.Unmarshal(rej.Payload, &payload))
+	byID := map[string][]string{}
+	for _, pn := range payload.PerNode {
+		byID[pn.NodeID] = pn.ChangedAncestorIDs
+	}
+	assert.Equal(t, []string{"a"}, byID["b"], "b's changed ancestor is a")
+	assert.Empty(t, byID["a"], "a has no changed ancestors")
+}
+
 // TestHandleValidationResult_Promote_EmitsCodeBundleURIAndBootstrap verifies
 // that on the normal validation-pass promotion path (HandleValidationResult ->
 // promoteToProduction), release.promoted:v1 carries the release's

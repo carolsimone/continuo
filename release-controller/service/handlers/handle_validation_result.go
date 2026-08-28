@@ -283,15 +283,27 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		}
 	}
 
+	// Which candidate nodes changed against production, so each failing node
+	// can name the changed ancestors that may be the root cause of its failure.
+	cp, err := u.CurrentProdRepo().Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get current prod: %w", err)
+	}
+	changedSet := make(map[string]bool)
+	for _, id := range release.DerivedChangedNodeIDs(r.CandidateTopology(), cp.TopologySnapshot()) {
+		changedSet[id] = true
+	}
+
 	type perNodeEntry struct {
-		NodeID               string `json:"node_id"`
-		Status               string `json:"status"`
-		DBTLogURI            string `json:"dbt_log_uri,omitempty"`
-		RunResultsURI        string `json:"run_results_uri,omitempty"`
-		CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
-		NodeType             string `json:"node_type,omitempty"`
-		FilePath             string `json:"file_path,omitempty"`
-		Service              string `json:"service,omitempty"`
+		NodeID               string   `json:"node_id"`
+		Status               string   `json:"status"`
+		DBTLogURI            string   `json:"dbt_log_uri,omitempty"`
+		RunResultsURI        string   `json:"run_results_uri,omitempty"`
+		CandidateArtifactURI string   `json:"candidate_artifact_uri,omitempty"`
+		NodeType             string   `json:"node_type,omitempty"`
+		FilePath             string   `json:"file_path,omitempty"`
+		Service              string   `json:"service,omitempty"`
+		ChangedAncestorIDs   []string `json:"changed_ancestor_ids,omitempty"`
 	}
 	// Source the per-node audit rows from the projected read model, enriched with
 	// each node's candidate artifact pointer, kind, and source location from the
@@ -302,7 +314,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 			continue
 		}
 		f := factsByNodeID[nr.NodeID]
-		perNode = append(perNode, perNodeEntry{
+		entry := perNodeEntry{
 			NodeID:               nr.NodeID,
 			Status:               nr.Status,
 			DBTLogURI:            nr.DBTLogURI,
@@ -311,7 +323,11 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 			NodeType:             f.nodeType,
 			FilePath:             f.filePath,
 			Service:              f.service,
-		})
+		}
+		if nr.Status != "ok" {
+			entry.ChangedAncestorIDs = release.ChangedAncestors(r.CandidateTopology(), nr.NodeID, changedSet)
+		}
+		perNode = append(perNode, entry)
 	}
 
 	payload, err := json.Marshal(map[string]any{
