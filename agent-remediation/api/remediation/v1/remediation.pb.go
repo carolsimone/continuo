@@ -70,9 +70,11 @@ type Proposal struct {
 	// verify_error is why that release rejected the fix — the reason a python
 	// contract attempt reached 'failed', and the evidence the next attempt is
 	// shown. Empty unless verification failed.
-	VerifyError   string `protobuf:"bytes,28,opt,name=verify_error,json=verifyError,proto3" json:"verify_error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	VerifyError string `protobuf:"bytes,28,opt,name=verify_error,json=verifyError,proto3" json:"verify_error,omitempty"`
+	// remediation_round is the release's remediation round this attempt belongs to.
+	RemediationRound int32 `protobuf:"varint,29,opt,name=remediation_round,json=remediationRound,proto3" json:"remediation_round,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Proposal) Reset() {
@@ -301,12 +303,20 @@ func (x *Proposal) GetVerifyError() string {
 	return ""
 }
 
+func (x *Proposal) GetRemediationRound() int32 {
+	if x != nil {
+		return x.RemediationRound
+	}
+	return 0
+}
+
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
 type ListProposalsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	PrState       string                 `protobuf:"bytes,2,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	ReleaseId     string                 `protobuf:"bytes,4,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"` // when set, only proposals of this release
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -360,6 +370,13 @@ func (x *ListProposalsRequest) GetLimit() int32 {
 		return x.Limit
 	}
 	return 0
+}
+
+func (x *ListProposalsRequest) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
 }
 
 type ListProposalsResponse struct {
@@ -940,7 +957,7 @@ var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\x92\a\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xbf\a\n" +
 	"\bProposal\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
@@ -978,11 +995,14 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"prClosedAt\x12.\n" +
 	"\x05edits\x18\x1a \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12*\n" +
 	"\x11shadow_release_id\x18\x1b \x01(\tR\x0fshadowReleaseId\x12!\n" +
-	"\fverify_error\x18\x1c \x01(\tR\vverifyError\"_\n" +
+	"\fverify_error\x18\x1c \x01(\tR\vverifyError\x12+\n" +
+	"\x11remediation_round\x18\x1d \x01(\x05R\x10remediationRound\"~\n" +
 	"\x14ListProposalsRequest\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x19\n" +
 	"\bpr_state\x18\x02 \x01(\tR\aprState\x12\x14\n" +
-	"\x05limit\x18\x03 \x01(\x05R\x05limit\"O\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\x04 \x01(\tR\treleaseId\"O\n" +
 	"\x15ListProposalsResponse\x126\n" +
 	"\tproposals\x18\x01 \x03(\v2\x18.remediation.v1.ProposalR\tproposals\"$\n" +
 	"\x12GetProposalRequest\x12\x0e\n" +

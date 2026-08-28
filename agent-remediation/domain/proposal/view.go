@@ -5,13 +5,15 @@ import "time"
 // View is a read-only projection of a proposal row, including all PR-lifecycle
 // columns. It is returned by ProposalRepository.Get and ProposalRepository.List.
 type View struct {
-	ID             string
-	Source         string
-	ReleaseID      string
-	NodeID         string
-	ErrorSignature string
-	Attempt        int
-	Status         Status
+	ID        string
+	Source    string
+	ReleaseID string
+	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
+	RemediationRound int
+	NodeID           string
+	ErrorSignature   string
+	Attempt          int
+	Status           Status
 	// ShadowReleaseID is the id of the shadow release posted to verify this
 	// attempt's fix, written when Status is (or was) 'verifying'. It is kept
 	// when the attempt is finalized, so a resolved row still names the release

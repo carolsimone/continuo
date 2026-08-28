@@ -170,6 +170,9 @@ export interface ReleaseDetail {
   image_tags: Record<string, string>;
   bootstrap: boolean;
   shadow: boolean;
+  // How many remediation rounds have run for this release. 1 for every release
+  // that has not been retried; "Try again" increments it up to the 3-round cap.
+  remediation_round: number;
 }
 
 export interface NodeSummary {
@@ -248,4 +251,8 @@ export interface ProposalDTO {
   // no real repository source to edit — a candidate-only fix — in which case
   // the single-file diff_uri above still points at a previewable diff.
   edits?: FileEditDTO[];
+  // remediation_round is the release's remediation round this attempt
+  // belongs to. Absent on a proposal from before rounds existed, which the
+  // reader treats the same as round 1.
+  remediation_round?: number;
 }

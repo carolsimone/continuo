@@ -30,7 +30,9 @@ import (
 type Trigger struct {
 	Source    string
 	ReleaseID string
-	NodeID    string
+	// RemediationRound is the release's remediation round this trigger belongs to (1 for the rejection itself).
+	RemediationRound int
+	NodeID           string
 	// RelationID is the contested physical relation for a duplicate-relation
 	// trigger, distinct from NodeID (the target claimant's own unique_id) —
 	// the two differ whenever the target already carries an alias. Empty for
@@ -158,6 +160,12 @@ type Deps struct {
 // records the proposal row and (on a proposed outcome) enqueues a
 // remediation.proposed:v1 outbox trigger.
 func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
+	// A trigger without a remediation round (unset, or explicit 0) belongs to
+	// round 1, the round every rejection starts a release at.
+	if t.RemediationRound < 1 {
+		t.RemediationRound = 1
+	}
+
 	// Read-only dedup pre-check before any write. A redelivery of a trigger that
 	// was already handled (including one re-emitted with a fresh Redis message id
 	// but the same upstream outbox_entry_id) is ACKed here without touching the
@@ -174,14 +182,14 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		return nil
 	}
 
-	attempts, err := countAttempts(ctx, deps, t)
+	attemptsInRound, totalAttempts, err := countAttempts(ctx, deps, t)
 	if err != nil {
 		return err
 	}
-	attempt := attempts + 1
+	attempt := totalAttempts + 1
 
-	// Per-(release, node, error_signature) attempt cap: record escalated, emit nothing.
-	if attempts >= deps.MaxAttempts {
+	// Per-(release, round, node, error_signature) attempt cap: record escalated, emit nothing.
+	if attemptsInRound >= deps.MaxAttempts {
 		return record(ctx, deps, t, attempt, proposal.Proposal{
 			Status: proposal.StatusEscalated,
 		}, false, false)
@@ -280,23 +288,38 @@ func alreadyProcessed(ctx context.Context, deps Deps, t Trigger) (bool, error) {
 	return done, nil
 }
 
-// countAttempts opens a read-only transaction to count prior TERMINAL proposals
-// for this (release, source, node, error_signature) key. The cap is a
-// per-release budget — a later release is new code and starts its own count,
-// even when the node fails with the same signature. In-flight generating rows
-// are excluded by the repository so the in-progress attempt keeps a stable
-// attempt number across a redelivery.
-func countAttempts(ctx context.Context, deps Deps, t Trigger) (int, error) {
+// countAttempts opens a read-only transaction and returns two counts of prior
+// TERMINAL proposals for this (release, source, node, error_signature) key:
+// inRound, scoped to this trigger's own remediation round, is what the
+// per-round attempt cap is checked against — a later release is new code and
+// starts its own count even when the node fails with the same signature, and
+// a human's "try again" on a rejected release starts a fresh round with its
+// own count too. total is the cumulative count across every round of this
+// release so far, and is what this attempt is numbered from: the proposal
+// table's uniqueness is (release_id, source, node_id, attempt), not scoped by
+// round, so a round's first attempt must continue the release's existing
+// attempt sequence rather than restart it — restarting would collide with,
+// and silently overwrite, a row an earlier round already wrote (a round-2
+// retry of a node round 1 escalated is the ordinary case this guards). For a
+// round-1 trigger — the common case — total equals inRound. In-flight
+// generating rows are excluded by the repository from both counts, so the
+// in-progress attempt keeps a stable attempt number across a redelivery.
+func countAttempts(ctx context.Context, deps Deps, t Trigger) (inRound, total int, err error) {
 	u := deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {
-		return 0, fmt.Errorf("begin (count): %w", err)
+		return 0, 0, fmt.Errorf("begin (count): %w", err)
 	}
 	defer func() { _ = u.Rollback() }()
-	n, err := u.ProposalRepo().CountAttempts(ctx, t.ReleaseID, t.Source, t.NodeID, t.ErrorSignature)
-	if err != nil {
-		return 0, fmt.Errorf("count attempts: %w", err)
+	repo := u.ProposalRepo()
+	for round := 1; round <= t.RemediationRound; round++ {
+		n, err := repo.CountAttempts(ctx, t.ReleaseID, round, t.Source, t.NodeID, t.ErrorSignature)
+		if err != nil {
+			return 0, 0, fmt.Errorf("count attempts (round %d): %w", round, err)
+		}
+		total += n
+		inRound = n
 	}
-	return n, nil
+	return inRound, total, nil
 }
 
 // markGenerating writes an in-flight 'generating' proposal row for the attempt
@@ -311,13 +334,14 @@ func markGenerating(ctx context.Context, deps Deps, t Trigger, attempt int) erro
 	}
 	defer func() { _ = u.Rollback() }()
 	p := proposal.Proposal{
-		Source:         t.Source,
-		ReleaseID:      t.ReleaseID,
-		NodeID:         t.NodeID,
-		ErrorSignature: t.ErrorSignature,
-		Attempt:        attempt,
-		Status:         proposal.StatusGenerating,
-		CreatedAt:      deps.Clock.Now(),
+		Source:           t.Source,
+		ReleaseID:        t.ReleaseID,
+		RemediationRound: t.RemediationRound,
+		NodeID:           t.NodeID,
+		ErrorSignature:   t.ErrorSignature,
+		Attempt:          attempt,
+		Status:           proposal.StatusGenerating,
+		CreatedAt:        deps.Clock.Now(),
 	}
 	if err := u.ProposalRepo().InsertGenerating(ctx, p); err != nil {
 		return fmt.Errorf("mark generating: %w", err)
@@ -344,6 +368,7 @@ func markGenerating(ctx context.Context, deps Deps, t Trigger, attempt int) erro
 func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.Proposal, emit bool, sourceResolved bool, suspectedRoot ...string) error {
 	p.Source = t.Source
 	p.ReleaseID = t.ReleaseID
+	p.RemediationRound = t.RemediationRound
 	p.NodeID = t.NodeID
 	p.ErrorSignature = t.ErrorSignature
 	p.Attempt = attempt
@@ -422,6 +447,7 @@ func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposa
 		EventID:                eventID.String(),
 		Source:                 p.Source,
 		ReleaseID:              p.ReleaseID,
+		RemediationRound:       p.RemediationRound,
 		NodeID:                 p.NodeID,
 		ErrorSignature:         p.ErrorSignature,
 		ProposedSQLURI:         p.ProposedSQLURI,

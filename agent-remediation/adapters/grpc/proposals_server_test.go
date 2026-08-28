@@ -19,8 +19,11 @@ import (
 
 // fakeSvc is a test double that implements grpcadapter.ProposalService.
 type fakeSvc struct {
-	listViews   []proposal.View
-	listErr     error
+	listViews []proposal.View
+	listErr   error
+	// lastFilter captures the filter List was called with, so a test can
+	// verify the gRPC request's fields reach the service unchanged.
+	lastFilter  repository.ProposalFilter
 	getView     proposal.View
 	getErr      error
 	beginClaim  proposal.PRClaim
@@ -34,7 +37,8 @@ type fakeSvc struct {
 	lastFailObserved time.Time
 }
 
-func (f *fakeSvc) List(_ context.Context, _ repository.ProposalFilter) ([]proposal.View, error) {
+func (f *fakeSvc) List(_ context.Context, filter repository.ProposalFilter) ([]proposal.View, error) {
+	f.lastFilter = filter
 	return f.listViews, f.listErr
 }
 
@@ -65,27 +69,28 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 	ts := time.Date(2024, 3, 15, 10, 0, 0, 0, time.UTC)
 	fakeViews := []proposal.View{
 		{
-			ID:             "p1",
-			Source:         "test-source",
-			ReleaseID:      "rel-1",
-			NodeID:         "node-1",
-			ErrorSignature: "sig",
-			Attempt:        1,
-			Status:         proposal.Status("pending"),
-			Confidence:     proposal.Confidence("high"),
-			Rationale:      "reason",
-			ProposedSQLURI: "s3://bucket/proposed.sql",
-			DiffURI:        "s3://bucket/diff.txt",
-			SourceResolved: true,
-			Repo:           "my-repo",
-			CommitSHA:      "abc123",
-			FilePath:       "models/foo.sql",
-			Model:          "my_model",
-			CreatedAt:      ts,
-			PrURL:          "https://gh/pr/1",
-			PrNumber:       42,
-			PrState:        "open",
-			PrOpenedBy:     "user1",
+			ID:               "p1",
+			Source:           "test-source",
+			ReleaseID:        "rel-1",
+			RemediationRound: 2,
+			NodeID:           "node-1",
+			ErrorSignature:   "sig",
+			Attempt:          1,
+			Status:           proposal.Status("pending"),
+			Confidence:       proposal.Confidence("high"),
+			Rationale:        "reason",
+			ProposedSQLURI:   "s3://bucket/proposed.sql",
+			DiffURI:          "s3://bucket/diff.txt",
+			SourceResolved:   true,
+			Repo:             "my-repo",
+			CommitSHA:        "abc123",
+			FilePath:         "models/foo.sql",
+			Model:            "my_model",
+			CreatedAt:        ts,
+			PrURL:            "https://gh/pr/1",
+			PrNumber:         42,
+			PrState:          "open",
+			PrOpenedBy:       "user1",
 			Edits: []proposal.FileEdit{
 				{Path: "models/foo.sql", ContentURI: "s3://bucket/foo.sql", DiffURI: "s3://bucket/foo.diff"},
 				{Path: "models/bar.sql", ContentURI: "s3://bucket/bar.sql", DiffURI: "s3://bucket/bar.diff"},
@@ -104,6 +109,7 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 	assert.Equal(t, "p1", p.Id)
 	assert.Equal(t, "test-source", p.Source)
 	assert.Equal(t, "rel-1", p.ReleaseId)
+	assert.Equal(t, int32(2), p.RemediationRound, "viewToProto must copy RemediationRound")
 	assert.Equal(t, "node-1", p.NodeId)
 	assert.Equal(t, int32(1), p.Attempt)
 	assert.Equal(t, "pending", p.Status)
@@ -139,6 +145,19 @@ func TestProposalsServer_ListProposals_InternalError(t *testing.T) {
 	_, err := s.ListProposals(context.Background(), &remediationv1.ListProposalsRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
+// TestProposalsServer_ListProposals_FiltersByReleaseID verifies that
+// ListProposalsRequest.release_id reaches the service as
+// ProposalFilter.ReleaseID unchanged, so a release page can list only its own
+// proposals.
+func TestProposalsServer_ListProposals_FiltersByReleaseID(t *testing.T) {
+	svc := &fakeSvc{}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	_, err := s.ListProposals(context.Background(), &remediationv1.ListProposalsRequest{ReleaseId: "rel-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "rel-1", svc.lastFilter.ReleaseID)
 }
 
 // ---- GetProposal ----

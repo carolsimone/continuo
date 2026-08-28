@@ -36,9 +36,11 @@ func itoa(n int) string {
 // RemediationProposed is the pointer-only trigger output: it carries S3 pointers
 // to the proposed SQL + diff and the model's short rationale (no warehouse data).
 type RemediationProposed struct {
-	EventID                string `json:"event_id"`
-	Source                 string `json:"source"`
-	ReleaseID              string `json:"release_id"`
+	EventID   string `json:"event_id"`
+	Source    string `json:"source"`
+	ReleaseID string `json:"release_id"`
+	// RemediationRound is the release's remediation round this attempt belongs to.
+	RemediationRound       int    `json:"remediation_round"`
 	NodeID                 string `json:"node_id"`
 	ErrorSignature         string `json:"error_signature"`
 	ProposedSQLURI         string `json:"proposed_sql_uri"`

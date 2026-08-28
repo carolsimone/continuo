@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`remediation` is the triage gate for failed nodes in the blue/green validation pipeline. It consumes `release.rejected:v1`, fetches the execution log from S3 for each failing node, and deterministically sorts the failure into a category. Every classification decision — whether the outcome is to emit a trigger or to drop the failure — is recorded in Postgres so that no dropped failure is invisible. For each healable failure, the service enqueues a `remediation.requested:v1` trigger so a downstream agent can investigate and propose a fix. Rejections of shadow verification releases are the one class routed on something other than the failure itself: they are recorded and then dropped, because they report on a fix the agent is already waiting for rather than on a change anyone shipped.
+`remediation` is the triage gate for failed nodes in the blue/green validation pipeline. It consumes `release.rejected:v1`, fetches the execution log from S3 for each failing node, and deterministically sorts the failure into a category. Every classification decision — whether the outcome is to emit a trigger or to drop the failure — is recorded in Postgres so that no dropped failure is invisible. For each healable failure, the service enqueues a `remediation.requested:v1` trigger so a downstream agent can investigate and propose a fix. Rejections of shadow verification releases are the one class routed on something other than the failure itself: they are recorded and then dropped, because they report on a fix the agent is already waiting for rather than on a change anyone shipped. It also consumes `remediation.retry_requested:v1` — release-controller's replay of a rejected release's stored rejection, tagged with an incremented `remediation_round`, produced when a human asks the release to "try again" — through the exact same classification handler, so a retry walks the same path as the original rejection, one round later.
 
 **Runtime**: Go service. HTTP `/healthz` on port 8090. Depends on Postgres (`continuo_remediation`), Redis, and S3.
 
@@ -12,9 +12,9 @@ Postgres database `continuo_remediation`. Tables:
 
 | Table | Purpose |
 |---|---|
-| `classification_decision` | One row per classified node per stage. Records `source` (`validation`, `compile`, `seed_build`, or `duplicate_table`), `release_id`, `node_id`, `category`, `error_signature`, `decision` (`emit` or `drop`), `reason` (matched rule, e.g. `infra:connection_refused`, or `shadow_verification` for a rejected fix-verification release), `dbt_log_uri`, and `created_at`. Natural key `(source, release_id, node_id)` gives idempotency: a redelivered rejection neither re-records nor re-emits. |
+| `classification_decision` | One row per classified node per stage per remediation round. Records `source` (`validation`, `compile`, `seed_build`, or `duplicate_table`), `release_id`, `remediation_round` (default `1`; the release's remediation round this decision belongs to — a human's "try again" on a rejected release starts a new round), `node_id`, `category`, `error_signature`, `decision` (`emit` or `drop`), `reason` (matched rule, e.g. `infra:connection_refused`, or `shadow_verification` for a rejected fix-verification release), `dbt_log_uri`, and `created_at`. Natural key `(source, release_id, remediation_round, node_id)` gives idempotency: a redelivered rejection or retry neither re-records nor re-emits, while a later round classifies the same node into its own fresh row rather than colliding with an earlier round's. |
 | `remediation_outbox` | Transactional outbox; one row per `remediation.requested:v1` trigger, drained by the outbox publisher. |
-| `message_processing` | FK target of `remediation_outbox.message_processing_id` (canonical outbox table shape). Not used for inbound consumer dedup; inbound idempotency is enforced by the `classification_decision` natural key `(source, release_id, node_id)`. |
+| `message_processing` | FK target of `remediation_outbox.message_processing_id` (canonical outbox table shape). Not used for inbound consumer dedup; inbound idempotency is enforced by the `classification_decision` natural key `(source, release_id, remediation_round, node_id)`. |
 
 The `classification_decision` table is append-only and auditable: it contains every decision, including dropped infra failures, so the full triage history is queryable without needing downstream systems.
 
@@ -25,6 +25,7 @@ The `classification_decision` table is append-only and auditable: it contains ev
 | Stream | Group | Description |
 |---|---|---|
 | `release.rejected:v1` | `remediation-release-rejected` | Emitted by release-controller when a release fails at any pipeline stage (compile, seed_build, or validation). The `stage` field in the payload determines how each failing node is classified. Each message carries one or more failing nodes (one for compile, one per seed for seed_build, one per model for validation); the handler processes each node independently. A `reason` of `parse_rehearsal_failed` or `artifact_upload_failed` (both `stage="compile"`) is excluded entirely at the inbound adapter, before any evidence is built — see "Parse-export-leg exclusion" below. |
+| `remediation.retry_requested:v1` | `remediation-retry-requested` | Emitted by release-controller when a human retries a rejected release (`POST /releases/{id}/retry-remediation`). The payload is release-controller's own stored `release.rejected:v1` payload, replayed verbatim plus a top-level `remediation_round`; it is decoded and classified by the exact same handler as `release.rejected:v1` (`classifyRejectionMessages` builds both consumers over one shared handler), one round later. |
 
 ### HTTP (port 8090)
 
@@ -50,7 +51,7 @@ The Kubernetes `readinessProbe` points at `/healthz` and the `livenessProbe` at
 
 | Stream | Consumed by | Emitted when |
 |---|---|---|
-| `remediation.requested:v1` | `agent-remediation` (group `agent-remediation-remediation-requested`) | A classified node is healable (`category != infra_transient`), the rejected release is not a shadow verification, and the node has not been seen before (first insertion in `classification_decision`). |
+| `remediation.requested:v1` | `agent-remediation` (group `agent-remediation-remediation-requested`) | A classified node is healable (`category != infra_transient`), the rejected release is not a shadow verification, and the node has not been seen before within its remediation round (first insertion in `classification_decision` for that `(source, release_id, remediation_round, node_id)` key) — a later round reclassifies the same node as a fresh first-insertion, independent of an earlier round's row. |
 
 All events are written to the outbox inside the same transaction as the `classification_decision` insert and published with a deterministic `event_id` for consumer-side dedup.
 
@@ -96,16 +97,22 @@ After stripping, it folds the category with the normalized error text and return
 
 Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_binding.go::evidenceFromRejected`) checks the payload's `reason`: `parse_rehearsal_failed` and `artifact_upload_failed` both short-circuit to an empty evidence list, so the consumer ACKs the message having produced nothing at all — no `classification_decision` row, no `remediation.requested:v1` trigger. Both reasons are `stage="compile"`, but neither is a model defect: a parse-rehearsal miss is a project *property* (partial parsing disabled, or an `env_var()` read at parse time that differs between compile and run pods) and an artifact-upload failure is continuo-internal: no change to the dbt project fixes either, so proposing a heal would misdirect the agent onto SQL that was never the problem. `compile_failed`, `seed_build_failed`, and `validation_failed` resolve to their pipeline leg; the stage-less `duplicate_table` resolves to its own source. Every other stage-less reason — `parse_failed` and `unbuildable_cross_service_upstream` — reaches `sourceFromPayload` and is dropped there (`ok=false`), producing no evidence, no `classification_decision` row, and no trigger: neither is a model defect a heal proposal could fix.
 
-### On `release.rejected:v1` — per failing node
+### On `release.rejected:v1` and `remediation.retry_requested:v1` — per failing node
+
+Both streams decode to the identical payload shape — `remediation.retry_requested:v1` is release-controller's own stored `release.rejected:v1` payload replayed with one field added, the top-level `remediation_round` — so `classifyRejectionMessages` builds one handler shared by both consumer groups (`remediation-release-rejected` and `remediation-retry-requested`); nothing below the inbound adapter can tell which stream a message arrived on.
 
 ```
 0. Exclude reason=parse_rehearsal_failed / artifact_upload_failed entirely
    (see "Parse-export-leg exclusion" above) — ACK with no evidence built.
 1. Parse the event; extract stage ("compile" | "seed_build" | "validation") and,
    for each entry in per_node where status="failed":
-   build FailureEvidence {source (derived from stage), release_id, node_id,
-   dbt_log_uri, run_results_uri, candidate_artifact_uri, repo, commit_sha,
-   code_bundle_uri}.
+   build FailureEvidence {source (derived from stage), release_id,
+   remediation_round, node_id, dbt_log_uri, run_results_uri,
+   candidate_artifact_uri, repo, commit_sha, code_bundle_uri}.
+   remediation_round is the payload's top-level field, absent (and thus zero)
+   on the original release.rejected:v1 rejection; ClassifyFailure normalizes
+   an unset or zero round to 1 before anything downstream reads it, so round
+   1 and "no round field at all" are handled identically.
    When `stage` is absent, the `reason` field is used as the source fallback.
    For source=duplicate_table, FilePath/Service (the rename target),
    OtherService/OtherFilePath (the competing claimant), and RelationID (the
@@ -185,14 +192,20 @@ Before any `FailureEvidence` is built, the inbound adapter (`release_rejected_bi
    failure to heal, and the loop would never end. The decision is still written,
    because no drop in this service is invisible.
 4. Open transaction:
-   a. Upsert classification_decision (source, release_id, node_id).
-      - If already exists (redelivery): inserted=false → skip enqueue, commit, done.
+   a. Upsert classification_decision (source, release_id, remediation_round, node_id).
+      - If already exists (redelivery, or a re-read of this exact round): inserted=false
+        → skip enqueue, commit, done. A later round's row has a different
+        remediation_round, so it is never mistaken for an earlier round's decision.
    b. If inserted && decision == emit:
       - Build RemediationRequested payload: pointer-first (the full log stays
         behind dbt_log_uri, the failing code behind code_bundle_uri), carrying
-        the classifier's reason and capped error_excerpt inline.
+        the classifier's reason, remediation_round, and capped error_excerpt inline.
       - Enqueue remediation_outbox row (stream=remediation.requested:v1,
-        event_id = SHA1(namespace, release_id+"|"+node_id)).
+        event_id = RemediationEventID(release_id, node_id, remediation_round):
+        round <= 1 → SHA1(namespace, release_id+"|"+node_id), reproducing every
+        id minted before rounds existed; round >= 2 → the same SHA1 input with
+        a "|round|<n>" suffix, so a retry's trigger is never mistaken for the
+        rejection's original one).
 5. Commit.
 ```
 
@@ -206,9 +219,10 @@ The trigger is pointer-first: the full log stays behind `dbt_log_uri` and the fa
 
 | Field | Description |
 |---|---|
-| `event_id` | Deterministic SHA1 UUID keyed on `release_id\|node_id`. Stable on redelivery. |
+| `event_id` | Deterministic SHA1 UUID keyed on `release_id\|node_id` for `remediation_round <= 1` — reproducing the id every trigger minted before rounds existed. For `remediation_round >= 2` (a human's "try again"), a `\|round\|<n>` suffix is folded in, so a retry's trigger for the same node is never mistaken for an earlier round's. Stable on redelivery. |
 | `source` | Origin pipeline. One of `validation`, `compile`, `seed_build`, or `duplicate_table`. |
 | `release_id` | The rejected release identifier. |
+| `remediation_round` | The release's remediation round this trigger belongs to: `1` for the rejection itself, `+1` per human "try again" on the release. |
 | `node_id` | The unique_id of the failing dbt node — for duplicate_table, the target claimant's own unique_id. |
 | `relation_id` | Duplicate_table only: the contested physical relation, threaded from `per_node[].relation_id`. Distinct from `node_id` — the two differ whenever the target claimant carries an alias. Used for the classification signature and the remediation agent's rename prompt, both of which need the relation, not the target's own declared name. Empty for every other source. |
 | `category` | `logic`, `test`, or `unknown`. |
@@ -229,7 +243,7 @@ The trigger is pointer-first: the full log stays behind `dbt_log_uri` and the fa
 
 ## Consumer Reliability
 
-- Inbound idempotency is enforced by the natural key `(source, release_id, node_id)` in `classification_decision`. A redelivered `release.rejected:v1` message produces the same outcome: the Upsert detects the existing row (`inserted=false`) and skips re-enqueue. The `message_processing` table is present as the FK target of `remediation_outbox.message_processing_id` and is not used for inbound consumer dedup.
+- Inbound idempotency is enforced by the natural key `(source, release_id, remediation_round, node_id)` in `classification_decision`. A redelivered `release.rejected:v1` or `remediation.retry_requested:v1` message produces the same outcome: the Upsert detects the existing row for that round (`inserted=false`) and skips re-enqueue. `remediation_round` is part of the key precisely so a retry's replay of the same node is not swallowed by round 1's row. The `message_processing` table is present as the FK target of `remediation_outbox.message_processing_id` and is not used for inbound consumer dedup.
 - A transient S3 fetch error is not wrapped in `ErrPermanent` and causes the message to stay in the PEL for retry. A permanent decode failure (malformed payload) is ACKed by returning nil from the handler (not retried).
 - The `classification_decision` insert and the `remediation_outbox` enqueue are performed in one transaction, so a crash between them cannot produce a trigger without a decision record, or a decision record without a trigger.
 
@@ -251,6 +265,7 @@ All solution state — proposals, what-worked history, agent conversations — b
 |---|---|
 | Outbox publisher | Drains `remediation_outbox` and XADDs each pending row to `remediation.requested:v1`. |
 | `release.rejected:v1` consumer | Dispatches each rejected-release message to the `ClassifyFailure` handler. |
+| `remediation.retry_requested:v1` consumer | Dispatches each retried-release message to the same `ClassifyFailure` handler, tagged with the incremented `remediation_round`. |
 
 ## Key Code Paths
 
@@ -259,11 +274,12 @@ All solution state — proposals, what-worked history, agent conversations — b
 | Domain model (evidence, categories, decisions, source constants) | `remediation/domain/failure/evidence.go` |
 | Deterministic classifier (incl. stage dispatch, ExtractDbtFilePath, and ClassifyDuplicateTable) | `remediation/domain/failure/classify.go` |
 | Signature normalization | `remediation/domain/failure/signature.go` |
-| Trigger payload (incl. FilePath field) | `remediation/domain/event/remediation_requested.go` |
-| Application handler (stage discrimination, FilePath derivation) | `remediation/service/handlers/classify_failure.go` |
-| Inbound adapter (stage→source mapping, reason fallback) | `remediation/adapters/redis/release_rejected_binding.go` |
+| Trigger payload (incl. FilePath and RemediationRound fields) | `remediation/domain/event/remediation_requested.go` |
+| Application handler (stage discrimination, FilePath derivation, round normalization) | `remediation/service/handlers/classify_failure.go` |
+| Inbound adapter (stage→source mapping, reason fallback, `release.rejected:v1` shape) | `remediation/adapters/redis/release_rejected_binding.go` |
+| `remediation.retry_requested:v1` consumer (shares the inbound adapter's handler) | `remediation/adapters/redis/remediation_retry_binding.go` |
 | Decision repository port | `remediation/domain/repository/decision_repository.go` |
 | Postgres adapter | `remediation/adapters/postgres/decision_repository.go` |
 | S3 log reader | `remediation/adapters/s3/log_reader.go` |
 | Redis ingress + outbox publisher | `remediation/adapters/redis/` |
-| DB migrations | `db/migration/remediation/V1__init_remediation.sql` |
+| DB migrations | `db/migration/remediation/V1__init_remediation.sql` through `V4__classification_decision_round.sql` (the latter adds the `remediation_round` column and widens the natural-key unique constraint to `(source, release_id, remediation_round, node_id)`) |

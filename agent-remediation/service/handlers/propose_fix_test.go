@@ -182,18 +182,18 @@ func (fakeClock) Now() time.Time { return time.Date(2026, 6, 23, 0, 0, 0, 0, tim
 // so a redelivery of an in-flight attempt does not create a second generating row.
 type fakeProposalRepo struct {
 	count int
-	// countByRelease, when set, answers CountAttempts per release id. The cap
-	// is scoped to a release, so a fake that ignored the release would pass a
-	// handler that ignored it too.
+	// countByRelease, when set, answers CountAttempts per "<releaseID>#<round>"
+	// key. The cap is scoped to a release and remediation round, so a fake that
+	// ignored either would pass a handler that ignored it too.
 	countByRelease map[string]int
 	inserted       []proposal.Proposal
-	generating []proposal.Proposal
-	genKeys    map[string]bool
+	generating     []proposal.Proposal
+	genKeys        map[string]bool
 }
 
-func (r *fakeProposalRepo) CountAttempts(_ context.Context, releaseID, _, _, _ string) (int, error) {
+func (r *fakeProposalRepo) CountAttempts(_ context.Context, releaseID string, round int, _, _, _ string) (int, error) {
 	if r.countByRelease != nil {
-		return r.countByRelease[releaseID], nil
+		return r.countByRelease[fmt.Sprintf("%s#%d", releaseID, round)], nil
 	}
 	return r.count, nil
 }
@@ -833,7 +833,7 @@ func TestProposeFix_AttemptCapEscalates(t *testing.T) {
 // exhausted its budget stays escalated.
 func TestProposeFix_AttemptCapIsScopedToTheRelease(t *testing.T) {
 	u := newFakeUoW()
-	u.pr.countByRelease = map[string]int{"r1": 3}
+	u.pr.countByRelease = map[string]int{"r1#1": 3}
 	ev := fakeEvidence{vals: map[string]string{
 		"s3://b/sql": "select custmer_id from t",
 		"s3://b/log": "column does not exist",
@@ -856,13 +856,68 @@ func TestProposeFix_AttemptCapIsScopedToTheRelease(t *testing.T) {
 
 	// The exhausted release is still escalated, without another model call.
 	u2 := newFakeUoW()
-	u2.pr.countByRelease = map[string]int{"r1": 3}
+	u2.pr.countByRelease = map[string]int{"r1#1": 3}
 	llm2 := newFakeLLM(ports.ProposeResult{}, nil)
 	if err := ProposeFix(context.Background(), deps(u2, ev, &llm2, &fakeArtifacts{}), baseTrigger()); err != nil {
 		t.Fatal(err)
 	}
 	if llm2.calls != 0 || len(u2.pr.inserted) != 1 || u2.pr.inserted[0].Status != proposal.StatusEscalated {
 		t.Fatalf("expected the exhausted release to escalate without a model call, calls=%d rows=%+v", llm2.calls, u2.pr.inserted)
+	}
+}
+
+// TestProposeFix_RoundTwoStartsAFreshBudget: the same release and failure under
+// remediation round 2 is a new budget, and the row records the round.
+func TestProposeFix_RoundTwoStartsAFreshBudget(t *testing.T) {
+	u := newFakeUoW()
+	u.pr.countByRelease = map[string]int{"r1#1": 3}
+	ev := fakeEvidence{vals: map[string]string{"s3://b/sql": "select custmer_id from t", "s3://b/log": "column does not exist"}}
+	llm := newFakeLLM(ports.ProposeResult{ProposedSQL: "select customer_id from t", Rationale: "typo", Confidence: "high", Model: "m"}, nil)
+
+	tr := baseTrigger()
+	tr.RemediationRound = 2
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), tr); err != nil {
+		t.Fatal(err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("round 2 must reach the model; calls=%d", llm.calls)
+	}
+	row := u.pr.inserted[0]
+	if row.Status != proposal.StatusProposed || row.RemediationRound != 2 {
+		t.Fatalf("expected a proposed row for round 2, got %+v", row)
+	}
+	if u.pr.generating[0].RemediationRound != 2 {
+		t.Fatalf("generating row must carry the round, got %+v", u.pr.generating[0])
+	}
+}
+
+// TestProposeFix_AttemptNumberKeepsIncrementingAcrossRounds guards the
+// natural-key collision a naive round-scoped attempt count would cause: the
+// proposal table is unique on (release_id, source, node_id, attempt), not
+// scoped by remediation_round, so a later round's first attempt must continue
+// the release's existing attempt sequence rather than restart it at 1 — which
+// would collide with, and silently overwrite via the terminal upsert's ON
+// CONFLICT, the row an earlier round already wrote at that same attempt
+// number. Round 1 already used 3 terminal attempts (e.g. it escalated); round
+// 2's own budget is fresh (0 attempts), but the attempt NUMBER assigned must
+// be 4, continuing the release's sequence.
+func TestProposeFix_AttemptNumberKeepsIncrementingAcrossRounds(t *testing.T) {
+	u := newFakeUoW()
+	u.pr.countByRelease = map[string]int{"r1#1": 3}
+	ev := fakeEvidence{vals: map[string]string{"s3://b/sql": "select custmer_id from t", "s3://b/log": "column does not exist"}}
+	llm := newFakeLLM(ports.ProposeResult{ProposedSQL: "select customer_id from t", Rationale: "typo", Confidence: "high", Model: "m"}, nil)
+
+	tr := baseTrigger()
+	tr.RemediationRound = 2
+	if err := ProposeFix(context.Background(), deps(u, ev, &llm, &fakeArtifacts{}), tr); err != nil {
+		t.Fatal(err)
+	}
+	if u.pr.generating[0].Attempt != 4 {
+		t.Fatalf("generating row must continue the release's attempt sequence, got attempt %d, want 4", u.pr.generating[0].Attempt)
+	}
+	row := u.pr.inserted[0]
+	if row.Attempt != 4 {
+		t.Fatalf("terminal row must continue the release's attempt sequence, got attempt %d, want 4", row.Attempt)
 	}
 }
 

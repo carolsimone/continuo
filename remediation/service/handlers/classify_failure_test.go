@@ -124,7 +124,7 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	}
 	var p event.RemediationRequested
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
-	if p.Category != "logic" || p.NodeID != "s.n" || p.EventID != event.RemediationEventID("r1", "s.n").String() {
+	if p.Category != "logic" || p.NodeID != "s.n" || p.EventID != event.RemediationEventID("r1", "s.n", 1).String() {
 		t.Fatalf("bad trigger payload: %+v", p)
 	}
 	if p.Reason != "logic:missing_object" {
@@ -288,15 +288,72 @@ func TestClassifyFailure_InfraDropsNoTrigger(t *testing.T) {
 }
 
 func TestClassifyFailure_IdempotentSkipsTrigger(t *testing.T) {
-	// inserted=false → already classified → no duplicate trigger.
+	// inserted=false → already classified in this round → no duplicate
+	// trigger. The natural key that makes this a no-op is now scoped to
+	// (source, release_id, remediation_round, node_id): a redelivery of the
+	// same round's rejection is a no-op, but a later round for the same node
+	// is a fresh insert (see TestClassifyFailure_DifferentRoundsBothInsertAndEmit).
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: false}, ob: &fakeOutbox{}}
-	ev := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n"}
+	ev := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n", RemediationRound: 1}
 	err := ClassifyFailure(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), ev)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(u.ob.entries) != 0 {
 		t.Fatalf("redelivery must not re-emit, got %d", len(u.ob.entries))
+	}
+}
+
+// TestClassifyFailure_DifferentRoundsBothInsertAndEmit verifies that a
+// remediation round is a human's "try again" on the same rejected release,
+// not a redelivery of the same message: reclassifying the same
+// (source, release, node) at round 1 and then round 2 must record two
+// decisions and enqueue two triggers, and the triggers must be
+// distinguishable — different remediation_round, different event_id — so the
+// agent never conflates a retry's proposal with the original attempt's.
+func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	deps := depsWith(u, `Database Error: column "x" does not exist`, nil)
+	ev := failure.FailureEvidence{
+		Source:    failure.SourceValidation,
+		ReleaseID: "r1",
+		NodeID:    "s.n",
+		DBTLogURI: "s3://b/k",
+	}
+
+	ev.RemediationRound = 1
+	if err := ClassifyFailure(context.Background(), deps, ev); err != nil {
+		t.Fatal(err)
+	}
+	ev.RemediationRound = 2
+	if err := ClassifyFailure(context.Background(), deps, ev); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(u.dec.saved) != 2 {
+		t.Fatalf("expected 2 decisions recorded (one per round), got %d", len(u.dec.saved))
+	}
+	if u.dec.saved[0].RemediationRound != 1 || u.dec.saved[1].RemediationRound != 2 {
+		t.Fatalf("decision rounds = %d, %d; want 1, 2", u.dec.saved[0].RemediationRound, u.dec.saved[1].RemediationRound)
+	}
+
+	if len(u.ob.entries) != 2 {
+		t.Fatalf("expected 2 outbox triggers (one per round), got %d", len(u.ob.entries))
+	}
+	var p1, p2 event.RemediationRequested
+	_ = json.Unmarshal(u.ob.entries[0].Payload, &p1)
+	_ = json.Unmarshal(u.ob.entries[1].Payload, &p2)
+	if p1.RemediationRound != 1 {
+		t.Fatalf("first trigger remediation_round = %d, want 1", p1.RemediationRound)
+	}
+	if p2.RemediationRound != 2 {
+		t.Fatalf("second trigger remediation_round = %d, want 2", p2.RemediationRound)
+	}
+	if p1.EventID == p2.EventID {
+		t.Fatal("triggers from different rounds must have different event_id")
+	}
+	if p2.EventID != event.RemediationEventID("r1", "s.n", 2).String() {
+		t.Fatalf("second trigger event_id = %q, want RemediationEventID(r1,s.n,2)", p2.EventID)
 	}
 }
 

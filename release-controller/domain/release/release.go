@@ -1,6 +1,7 @@
 package release
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -26,6 +27,16 @@ type Transition struct {
 	To Status    `json:"to"`
 	At time.Time `json:"at"`
 }
+
+// MaxRemediationRounds bounds how many times remediation may be driven for one
+// rejected release: the rejection itself plus two "try again"s. Beyond it only a
+// new commit — a new release — starts over.
+const MaxRemediationRounds = 3
+
+var (
+	ErrNotRejected     = errors.New("release is not rejected")
+	ErrRoundsExhausted = errors.New("remediation rounds exhausted")
+)
 
 // NodeValidationResult is the persisted per-node outcome of a pipeline stage.
 // Stage identifies which leg produced this result: "compile", "seed_build", or
@@ -116,6 +127,8 @@ type Release struct {
 	commitSHA           string
 	codeBundleURI       string
 	manifestKind        ManifestKind
+	remediationRound    int
+	rejectionPayload    []byte
 }
 
 // New creates a new Release for a single-service delta. imageTags is initialised
@@ -130,17 +143,18 @@ type Release struct {
 // bootstrap.
 func New(id, changedService, imageTag string, bootstrap, shadow bool, repo, commitSHA string, kind ManifestKind, now time.Time) *Release {
 	return &Release{
-		id:             id,
-		status:         StatusReceived,
-		imageTags:      map[string]string{changedService: imageTag},
-		changedService: changedService,
-		bootstrap:      bootstrap,
-		shadow:         shadow,
-		repo:           repo,
-		commitSHA:      commitSHA,
-		createdAt:      now,
-		transitions:    []Transition{{To: StatusReceived, At: now}},
-		manifestKind:   kind,
+		id:               id,
+		status:           StatusReceived,
+		imageTags:        map[string]string{changedService: imageTag},
+		changedService:   changedService,
+		bootstrap:        bootstrap,
+		shadow:           shadow,
+		repo:             repo,
+		commitSHA:        commitSHA,
+		createdAt:        now,
+		transitions:      []Transition{{To: StatusReceived, At: now}},
+		manifestKind:     kind,
+		remediationRound: 1,
 	}
 }
 
@@ -170,6 +184,26 @@ func (r *Release) FailingNodes() []string                 { return r.failingNode
 func (r *Release) PerNodeResults() []NodeValidationResult { return r.perNodeResults }
 func (r *Release) CreatedAt() time.Time                   { return r.createdAt }
 func (r *Release) Transitions() []Transition              { return r.transitions }
+func (r *Release) RemediationRound() int                  { return r.remediationRound }
+func (r *Release) RejectionPayload() []byte               { return r.rejectionPayload }
+
+// SetRejectionPayload records the exact release.rejected:v1 payload emitted for
+// this rejection, so a later remediation round can replay it verbatim.
+func (r *Release) SetRejectionPayload(p []byte) { r.rejectionPayload = p }
+
+// StartRemediationRound records that a human asked for another remediation
+// round on this rejected release and returns the new round number.
+func (r *Release) StartRemediationRound(now time.Time) (int, error) {
+	if r.status != StatusRejected {
+		return 0, ErrNotRejected
+	}
+	if r.remediationRound >= MaxRemediationRounds {
+		return 0, ErrRoundsExhausted
+	}
+	r.remediationRound++
+	r.transitions = append(r.transitions, Transition{To: "remediation_retry", At: now})
+	return r.remediationRound, nil
+}
 
 // SetAssembledImageTags replaces the image-tags map with the fully assembled set
 // built from every service's current service_prod pointer. This is called in
@@ -385,12 +419,14 @@ type RehydrateInput struct {
 	CommitSHA         string
 	CodeBundleURI     string
 	ManifestKind      ManifestKind
+	RemediationRound  int
+	RejectionPayload  []byte
 }
 
 // Rehydrate reconstructs a Release from persistence. Bypasses state-machine
 // validation — only repositories should call it.
 func Rehydrate(in RehydrateInput) *Release {
-	return &Release{
+	r := &Release{
 		id:                in.ID,
 		status:            in.Status,
 		imageTags:         in.ImageTags,
@@ -409,5 +445,11 @@ func Rehydrate(in RehydrateInput) *Release {
 		commitSHA:         in.CommitSHA,
 		codeBundleURI:     in.CodeBundleURI,
 		manifestKind:      in.ManifestKind,
+		remediationRound:  in.RemediationRound,
+		rejectionPayload:  in.RejectionPayload,
 	}
+	if r.remediationRound < 1 {
+		r.remediationRound = 1
+	}
+	return r
 }

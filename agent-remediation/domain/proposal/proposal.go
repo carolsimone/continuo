@@ -48,12 +48,14 @@ const (
 // Proposal is the append-only record of one fix-proposal attempt for a failed
 // node. One row per attempt; unique on (release_id, node_id, attempt).
 type Proposal struct {
-	Source         string
-	ReleaseID      string
-	NodeID         string
-	ErrorSignature string
-	Attempt        int
-	Status         Status
+	Source    string
+	ReleaseID string
+	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
+	RemediationRound int
+	NodeID           string
+	ErrorSignature   string
+	Attempt          int
+	Status           Status
 	// ShadowReleaseID is the id of the shadow release posted to verify this
 	// attempt's fix, written when Status is (or was) StatusVerifying. It is
 	// kept when the attempt is finalized, so a resolved row still names the

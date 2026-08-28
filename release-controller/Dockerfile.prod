@@ -24,6 +24,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY release-controller/ ./release-controller/
 COPY pkg/ ./pkg/
+COPY agent-remediation/ ./agent-remediation/
 
 WORKDIR /app/release-controller
 RUN --mount=type=cache,target=/root/.cache/go-build \

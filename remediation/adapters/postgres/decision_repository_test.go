@@ -111,7 +111,7 @@ func TestDecisionRepositoryUpsertIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	repo := NewDecisionRepository(tx) // bound to the tx, matching the UnitOfWork
 	d := repository.ClassificationDecision{
-		Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n",
+		Source: failure.SourceValidation, ReleaseID: "r1", RemediationRound: 1, NodeID: "s.n",
 		Category: failure.CategoryLogic, ErrorSignature: "sig",
 		Decision: failure.DecisionEmit, Reason: "logic:x", CreatedAt: time.Now().UTC(),
 	}
@@ -121,5 +121,42 @@ func TestDecisionRepositoryUpsertIdempotent(t *testing.T) {
 	second, err := repo.Upsert(context.Background(), d)
 	require.NoError(t, err)
 	require.False(t, second, "second upsert is a no-op (idempotent)")
+	require.NoError(t, tx.Commit())
+}
+
+// TestDecisionRepositoryUpsertScopedByRound verifies that
+// remediation_round is part of the natural key: reclassifying the same
+// (source, release, node) at a later round — a human's "try again" on the
+// rejected release — inserts a fresh row rather than colliding with the
+// earlier round's decision.
+func TestDecisionRepositoryUpsertScopedByRound(t *testing.T) {
+	db := newTestDB(t)
+	tx, err := db.Beginx()
+	require.NoError(t, err)
+	repo := NewDecisionRepository(tx)
+
+	base := repository.ClassificationDecision{
+		Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n",
+		Category: failure.CategoryLogic, ErrorSignature: "sig",
+		Decision: failure.DecisionEmit, Reason: "logic:x", CreatedAt: time.Now().UTC(),
+	}
+
+	roundOne := base
+	roundOne.RemediationRound = 1
+	inserted, err := repo.Upsert(context.Background(), roundOne)
+	require.NoError(t, err)
+	require.True(t, inserted, "round 1 inserts")
+
+	roundOneAgain := roundOne
+	inserted, err = repo.Upsert(context.Background(), roundOneAgain)
+	require.NoError(t, err)
+	require.False(t, inserted, "redelivering round 1 is a no-op")
+
+	roundTwo := base
+	roundTwo.RemediationRound = 2
+	inserted, err = repo.Upsert(context.Background(), roundTwo)
+	require.NoError(t, err)
+	require.True(t, inserted, "round 2 is a fresh insert, not a conflict with round 1")
+
 	require.NoError(t, tx.Commit())
 }

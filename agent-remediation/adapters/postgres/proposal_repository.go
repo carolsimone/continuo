@@ -34,20 +34,31 @@ func NewProposalRepository(q Queryer) *ProposalRepository {
 }
 
 // CountAttempts returns the number of TERMINAL proposal attempts recorded for
-// the given (source, nodeID, errorSignature) triplet. In-flight rows —
-// 'generating' (the model call has not resolved) and 'verifying' (a shadow
-// release is still validating a proposed fix) — are excluded so an attempt
-// that has not yet concluded neither inflates the attempt cap nor shifts the
-// attempt number on a redelivery.
-func (r *ProposalRepository) CountAttempts(ctx context.Context, releaseID, source, nodeID, errorSignature string) (int, error) {
+// the given (source, nodeID, errorSignature) triplet within one release's
+// remediation round. In-flight rows — 'generating' (the model call has not
+// resolved) and 'verifying' (a shadow release is still validating a proposed
+// fix) — are excluded so an attempt that has not yet concluded neither
+// inflates the attempt cap nor shifts the attempt number on a redelivery.
+func (r *ProposalRepository) CountAttempts(ctx context.Context, releaseID string, remediationRound int, source, nodeID, errorSignature string) (int, error) {
 	const query = `SELECT count(*) FROM proposal
-		WHERE release_id=$1 AND source=$2 AND node_id=$3 AND error_signature=$4
+		WHERE release_id=$1 AND remediation_round=$2 AND source=$3 AND node_id=$4 AND error_signature=$5
 		  AND status NOT IN ('generating','verifying')`
 	var count int
-	if err := r.q.GetContext(ctx, &count, query, releaseID, source, nodeID, errorSignature); err != nil {
+	if err := r.q.GetContext(ctx, &count, query, releaseID, remediationRound, source, nodeID, errorSignature); err != nil {
 		return 0, fmt.Errorf("count proposal attempts: %w", err)
 	}
 	return count, nil
+}
+
+// roundOrDefault returns n, or 1 when n is not a positive round number. A
+// proposal built without an explicit remediation round (e.g. an instant
+// escalation path that never saw a trigger) belongs to round 1, the round
+// every proposal predating this column belongs to.
+func roundOrDefault(n int) int {
+	if n < 1 {
+		return 1
+	}
+	return n
 }
 
 // InsertGenerating persists an in-flight 'generating' row for the attempt right
@@ -59,11 +70,11 @@ func (r *ProposalRepository) CountAttempts(ctx context.Context, releaseID, sourc
 func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Proposal) error {
 	const stmt = `
 		INSERT INTO proposal
-			(source, release_id, node_id, error_signature, attempt, status, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+			(source, release_id, remediation_round, node_id, error_signature, attempt, status, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		ON CONFLICT (release_id, source, node_id, attempt) DO NOTHING`
 	_, err := r.q.ExecContext(ctx, stmt,
-		p.Source, p.ReleaseID, p.NodeID, p.ErrorSignature, p.Attempt,
+		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
 		proposal.StatusGenerating, p.CreatedAt,
 	)
 	if err != nil {
@@ -84,6 +95,11 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 // was allowed on a failure that happened elsewhere. Within one release only one
 // attempt per (source, node) can be generating at a time, so this matches at
 // most one row.
+//
+// The predicate carries no remediation round because release-controller starts
+// a new round only once the current round has terminal rows and nothing in
+// flight, so at most one attempt per (release, source, node, signature) is
+// generating at any time.
 //
 // The status filter is what makes it safe to run at any time: a row that has
 // already reached a terminal state is left exactly as it is.
@@ -111,13 +127,13 @@ func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, sour
 func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) error {
 	const stmt = `
 		INSERT INTO proposal
-			(source, release_id, node_id, error_signature, attempt,
+			(source, release_id, remediation_round, node_id, error_signature, attempt,
 			 status, shadow_release_id, trigger_payload,
 			 confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
 			 repo, commit_sha, file_path, file_edits)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 		ON CONFLICT (release_id, source, node_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
 			shadow_release_id      = EXCLUDED.shadow_release_id,
@@ -140,7 +156,7 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 		return fmt.Errorf("marshal proposal file edits: %w", err)
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
-		p.Source, p.ReleaseID, p.NodeID, p.ErrorSignature, p.Attempt,
+		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
 		p.Status, p.ShadowReleaseID, triggerPayloadOrDefault(p.TriggerPayload),
 		p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
@@ -170,6 +186,7 @@ type proposalRow struct {
 	ID                  string     `db:"id"`
 	Source              string     `db:"source"`
 	ReleaseID           string     `db:"release_id"`
+	RemediationRound    int        `db:"remediation_round"`
 	NodeID              string     `db:"node_id"`
 	ErrorSignature      string     `db:"error_signature"`
 	Attempt             int        `db:"attempt"`
@@ -245,6 +262,7 @@ func (row proposalRow) toView() proposal.View {
 		ID:                  row.ID,
 		Source:              row.Source,
 		ReleaseID:           row.ReleaseID,
+		RemediationRound:    row.RemediationRound,
 		NodeID:              row.NodeID,
 		ErrorSignature:      row.ErrorSignature,
 		Attempt:             row.Attempt,
@@ -274,7 +292,7 @@ func (row proposalRow) toView() proposal.View {
 	}
 }
 
-const proposalColumns = `id, source, release_id, node_id, error_signature, attempt,
+const proposalColumns = `id, source, release_id, remediation_round, node_id, error_signature, attempt,
 		       status, shadow_release_id, verify_error, trigger_payload,
 		       confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,

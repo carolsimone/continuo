@@ -378,17 +378,18 @@ func (r *Reconciler) abandonInFlight(ctx context.Context, v proposal.View, cause
 // are carried; the verification added no content of its own.
 func proposedEvent(v proposal.View) proposal.Proposal {
 	return proposal.Proposal{
-		Source:         v.Source,
-		ReleaseID:      v.ReleaseID,
-		NodeID:         v.NodeID,
-		ErrorSignature: v.ErrorSignature,
-		Attempt:        v.Attempt,
-		Status:         proposal.StatusProposed,
-		Confidence:     v.Confidence,
-		Rationale:      v.Rationale,
-		ProposedSQLURI: v.ProposedSQLURI,
-		DiffURI:        v.DiffURI,
-		Model:          v.Model,
+		Source:           v.Source,
+		ReleaseID:        v.ReleaseID,
+		NodeID:           v.NodeID,
+		ErrorSignature:   v.ErrorSignature,
+		Attempt:          v.Attempt,
+		Status:           proposal.StatusProposed,
+		Confidence:       v.Confidence,
+		Rationale:        v.Rationale,
+		ProposedSQLURI:   v.ProposedSQLURI,
+		DiffURI:          v.DiffURI,
+		Model:            v.Model,
+		RemediationRound: v.RemediationRound,
 	}
 }
 

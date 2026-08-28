@@ -37,6 +37,10 @@ type Deps struct {
 // enforced by the decision repository's natural key, so a redelivered
 // rejection neither double-records nor double-emits.
 func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence) error {
+	if ev.RemediationRound < 1 {
+		ev.RemediationRound = 1
+	}
+
 	c, err := classify(ctx, deps, &ev)
 	if err != nil {
 		return err
@@ -49,15 +53,16 @@ func ClassifyFailure(ctx context.Context, deps Deps, ev failure.FailureEvidence)
 	defer func() { _ = u.Rollback() }()
 
 	inserted, err := u.DecisionRepo().Upsert(ctx, repository.ClassificationDecision{
-		Source:         ev.Source,
-		ReleaseID:      ev.ReleaseID,
-		NodeID:         ev.NodeID,
-		Category:       c.Category,
-		ErrorSignature: c.Signature,
-		Decision:       c.Decision,
-		Reason:         c.Reason,
-		DBTLogURI:      ev.DBTLogURI,
-		CreatedAt:      deps.Clock.Now(),
+		Source:           ev.Source,
+		ReleaseID:        ev.ReleaseID,
+		RemediationRound: ev.RemediationRound,
+		NodeID:           ev.NodeID,
+		Category:         c.Category,
+		ErrorSignature:   c.Signature,
+		Decision:         c.Decision,
+		Reason:           c.Reason,
+		DBTLogURI:        ev.DBTLogURI,
+		CreatedAt:        deps.Clock.Now(),
 	})
 	if err != nil {
 		return fmt.Errorf("upsert decision: %w", err)
@@ -142,9 +147,10 @@ func classify(ctx context.Context, deps Deps, ev *failure.FailureEvidence) (fail
 
 func enqueueTrigger(ctx context.Context, u uow.UnitOfWork, deps Deps, ev failure.FailureEvidence, c failure.Classification) error {
 	payload := event.RemediationRequested{
-		EventID:              event.RemediationEventID(ev.ReleaseID, ev.NodeID).String(),
+		EventID:              event.RemediationEventID(ev.ReleaseID, ev.NodeID, ev.RemediationRound).String(),
 		Source:               string(ev.Source),
 		ReleaseID:            ev.ReleaseID,
+		RemediationRound:     ev.RemediationRound,
 		NodeID:               ev.NodeID,
 		RelationID:           ev.RelationID,
 		Category:             string(c.Category),

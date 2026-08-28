@@ -258,9 +258,6 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	if err := r.TransitionToRejected("validation_failed", "", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
-	}
 
 	// Build a per-node lookup over the candidate topology so each entry in the
 	// rejected payload carries, alongside its outcome:
@@ -333,6 +330,12 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
+
+	r.SetRejectionPayload(payload)
+	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: "release-controller",

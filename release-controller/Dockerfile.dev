@@ -13,19 +13,24 @@ COPY tests/e2e/go.mod tests/e2e/go.sum ./tests/e2e/
 COPY remediation/go.mod remediation/go.sum ./remediation/
 COPY agent-remediation/go.mod agent-remediation/go.sum ./agent-remediation/
 
+# orchestrator is not dropped: release-controller's go.mod replaces
+# agent-remediation with a local directory, and agent-remediation's own
+# go.mod in turn replaces orchestrator with a local directory. A `replace`
+# directive is only honoured for the main module or a workspace `use` member,
+# so orchestrator must stay in `use` for its own replace of state to resolve
+# state's go.mod locally instead of fetching a nonexistent published version.
 RUN go work edit -dropuse=./state \
     && go work edit -dropuse=./agent-chat \
-    && go work edit -dropuse=./orchestrator \
     && go work edit -dropuse=./executor-controller \
     && go work edit -dropuse=./k8s-controller \
     && go work edit -dropuse=./remediation \
-    && go work edit -dropuse=./agent-remediation \
     && go work edit -dropuse=./tests/e2e
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 COPY pkg/ ./pkg/
+COPY agent-remediation/ ./agent-remediation/
 COPY release-controller/ ./release-controller/
 
 WORKDIR /app/release-controller

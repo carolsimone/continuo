@@ -37,6 +37,7 @@ type ProposalFilter struct {
 	// ReleaseID, Source, and NodeID together address the attempts recorded
 	// for one failing node in one release — the slice a fixer reads to show
 	// the model what earlier attempts tried and why they were rejected.
+	// ReleaseID, when set alone, restricts the listing to one release.
 	ReleaseID string
 	Source    string
 	NodeID    string
@@ -89,15 +90,19 @@ type OpeningLister interface {
 // UnitOfWork, so methods take only ctx + domain types.
 type ProposalRepository interface {
 	// CountAttempts returns the number of TERMINAL proposal attempts recorded for
-	// the (releaseID, source, nodeID, errorSignature) key. The release is part
-	// of the key because the attempt cap bounds how often one release's failure
-	// is retried: a later release is new code, and its attempts at the same
-	// failure are its own, never charged to an earlier release's budget.
-	// In-flight rows — 'generating' (the model call has not resolved) and
-	// 'verifying' (a shadow release is still validating a proposed fix) — are
-	// excluded so an attempt that has not yet concluded neither inflates the
-	// attempt cap nor shifts the attempt number on a redelivery.
-	CountAttempts(ctx context.Context, releaseID, source, nodeID, errorSignature string) (int, error)
+	// the (releaseID, remediationRound, source, nodeID, errorSignature) key. The
+	// release is part of the key because the attempt cap bounds how often one
+	// release's failure is retried: a later release is new code, and its
+	// attempts at the same failure are its own, never charged to an earlier
+	// release's budget. The remediation round is part of the key for the same
+	// reason within one release: a human's "try again" on a rejected release
+	// starts a fresh round, and its attempts at the same failure are never
+	// charged to an earlier round's exhausted budget. In-flight rows —
+	// 'generating' (the model call has not resolved) and 'verifying' (a shadow
+	// release is still validating a proposed fix) — are excluded so an attempt
+	// that has not yet concluded neither inflates the attempt cap nor shifts the
+	// attempt number on a redelivery.
+	CountAttempts(ctx context.Context, releaseID string, remediationRound int, source, nodeID, errorSignature string) (int, error)
 
 	// InsertGenerating persists an in-flight 'generating' row for the attempt just
 	// before the model is called. It is idempotent: a redelivery that re-runs the

@@ -53,13 +53,15 @@ func NewProposalsServer(svc ProposalService) *ProposalsServer {
 	return &ProposalsServer{svc: svc}
 }
 
-// ListProposals returns proposals matching the request filter, ordered by
-// created_at DESC. An empty filter returns all stored proposals up to Limit.
+// ListProposals returns proposals matching the request filter — status,
+// pr_state, and release_id — ordered by created_at DESC. An empty filter
+// returns all stored proposals up to Limit.
 func (s *ProposalsServer) ListProposals(ctx context.Context, req *remediationv1.ListProposalsRequest) (*remediationv1.ListProposalsResponse, error) {
 	filter := repository.ProposalFilter{
-		Status:  req.Status,
-		PRState: req.PrState,
-		Limit:   int(req.Limit),
+		Status:    req.Status,
+		PRState:   req.PrState,
+		ReleaseID: req.ReleaseId,
+		Limit:     int(req.Limit),
 	}
 	views, err := s.svc.List(ctx, filter)
 	if err != nil {
@@ -223,6 +225,7 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		Edits:               editsToProto(v.Edits),
 		ShadowReleaseId:     v.ShadowReleaseID,
 		VerifyError:         v.VerifyError,
+		RemediationRound:    num.ClampInt32(v.RemediationRound),
 	}
 }
 

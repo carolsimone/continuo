@@ -1125,6 +1125,8 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 		"top-level code_bundle_uri must come from the release aggregate, set at parse time")
 	assert.Equal(t, false, payload["shadow"],
 		"a non-shadow release's duplicate_table rejection must carry shadow:false")
+	assert.JSONEq(t, string(entry.Payload), string(r.RejectionPayload()),
+		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
 }
 
 // TestHandleParsedManifest_DuplicateTable_Shadow_CarriesShadowTrue verifies

@@ -12,6 +12,19 @@ shipped in those.
 
 ## [Unreleased]
 
+### Added
+- `global.agentRemediationGrpcAddr` (default `agent-remediation:50054`) —
+  release-controller reads remediation attempts before starting a retry
+  round. New key with a safe default; an unmodified existing values file
+  keeps working unmodified. MINOR.
+
+### Changed
+- During a rolling upgrade, the old `remediation` binary logs `ON CONFLICT`
+  constraint errors for a few seconds after migration `V4` applies the wider
+  `classification_decision` unique key; affected messages stay pending on
+  their stream and are processed once the new pod is up. No values or
+  template change.
+
 ## [0.4.1] - 2026-08-25
 
 ### Changed

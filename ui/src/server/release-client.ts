@@ -2,6 +2,7 @@ export interface ReleaseClient {
   listReleases(query: Record<string, string>): Promise<any>;
   getRelease(id: string): Promise<any>;
   getCurrentProd(): Promise<any>;
+  retryRemediation(id: string): Promise<{ status: number; body: unknown }>;
 }
 
 class HttpError extends Error {
@@ -31,6 +32,17 @@ export function createReleaseClient(baseUrl: string): ReleaseClient {
     },
     getCurrentProd() {
       return getJson('/current-prod');
+    },
+    async retryRemediation(id) {
+      const resp = await fetch(`${base}/releases/${encodeURIComponent(id)}/retry-remediation`, { method: 'POST' });
+      const text = await resp.text();
+      let body: unknown = {};
+      try {
+        body = text ? JSON.parse(text) : {};
+      } catch {
+        body = { error: 'invalid_response' };
+      }
+      return { status: resp.status, body };
     },
   };
 }

@@ -40,6 +40,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /livez", liveness.Handler("liveness", s.registry.LivenessCheck, s.log))
 	mux.HandleFunc("POST /releases", s.handleReceiveCandidate)
 	mux.HandleFunc("GET /releases/{id}", s.handleGetRelease)
+	mux.HandleFunc("POST /releases/{id}/retry-remediation", s.handleRetryRemediation)
 	mux.HandleFunc("GET /releases", s.handleListReleases)
 	mux.HandleFunc("GET /current-prod", s.handleGetCurrentProd)
 	return mux

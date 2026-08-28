@@ -24,6 +24,7 @@ func getReleaseResponse(rel *release.Release) map[string]any {
 		"shadow":              rel.IsShadow(),
 		"repo":                rel.Repo(),
 		"commit_sha":          rel.CommitSHA(),
+		"remediation_round":   rel.RemediationRound(),
 	}
 }
 

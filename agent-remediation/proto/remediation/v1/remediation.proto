@@ -8,7 +8,7 @@ option go_package = "github.com/carolsimone/continuo/agent-remediation/api/remed
 // for the agent-remediation. The UI reads proposals via ListProposals/GetProposal
 // and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
 service RemediationProposals {
-  // ListProposals returns proposals filtered by status, pr_state, and limit.
+  // ListProposals returns proposals filtered by status, pr_state, release_id, and limit.
   rpc ListProposals(ListProposalsRequest) returns (ListProposalsResponse);
   // GetProposal returns a single proposal by ID.
   rpc GetProposal(GetProposalRequest) returns (Proposal);
@@ -70,6 +70,8 @@ message Proposal {
   // contract attempt reached 'failed', and the evidence the next attempt is
   // shown. Empty unless verification failed.
   string verify_error = 28;
+  // remediation_round is the release's remediation round this attempt belongs to.
+  int32 remediation_round = 29;
 }
 
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
@@ -77,6 +79,7 @@ message ListProposalsRequest {
   string status = 1;
   string pr_state = 2;
   int32 limit = 3;
+  string release_id = 4; // when set, only proposals of this release
 }
 
 message ListProposalsResponse {

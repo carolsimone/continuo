@@ -166,7 +166,7 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, id, verifyErr str
 	return true, nil
 }
 
-func (r *fakeProposalRepo) CountAttempts(context.Context, string, string, string, string) (int, error) {
+func (r *fakeProposalRepo) CountAttempts(context.Context, string, int, string, string, string) (int, error) {
 	return r.attempts, nil
 }
 
@@ -388,6 +388,25 @@ func TestReconcileOnce_ValidatedShadowProposesTheFix(t *testing.T) {
 	assert.True(t, payload.SourceResolved)
 	assert.Equal(t, 1, h.uow.commits, "the status flip and the event must commit together")
 	assert.Empty(t, h.proposer.triggers, "a verified fix must not start another attempt")
+}
+
+// TestReconcileOnce_ValidatedShadowCarriesTheRemediationRound pins that the
+// enqueued remediation.proposed:v1 event carries the attempt's own
+// remediation round. Without it a round-2 (or later) attempt that a shadow
+// release validates would surface with remediation_round dropped to zero, and
+// a UI reader that treats 0 as round 1 would misfile it under the wrong round.
+func TestReconcileOnce_ValidatedShadowCarriesTheRemediationRound(t *testing.T) {
+	row := verifyingRow("p1", 1, time.Minute)
+	row.RemediationRound = 2
+	h := newHarness(row)
+	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+
+	h.rec.ReconcileOnce(context.Background())
+
+	require.Len(t, h.uow.ob.entries, 1)
+	var payload event.RemediationProposed
+	require.NoError(t, json.Unmarshal(h.uow.ob.entries[0].Payload, &payload))
+	assert.Equal(t, 2, payload.RemediationRound)
 }
 
 // TestReconcileOnce_ValidatedShadowEmitsOnceAcrossTicks pins the CAS: a second

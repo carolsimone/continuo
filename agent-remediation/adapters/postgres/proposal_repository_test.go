@@ -322,7 +322,7 @@ func TestProposalRepositoryCountAttemptsExcludesGenerating(t *testing.T) {
 		Attempt: 3, Status: proposal.StatusGenerating, CreatedAt: now,
 	}))
 
-	n, err := repo.CountAttempts(ctx, "release-g", source, nodeID, sig)
+	n, err := repo.CountAttempts(ctx, "release-g", 1, source, nodeID, sig)
 	require.NoError(t, err)
 	require.Equal(t, 2, n, "generating row must be excluded from the attempt count")
 
@@ -462,7 +462,7 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 		require.NoError(t, repo.Upsert(ctx, p), "insert attempt %d", i)
 	}
 
-	count, err := repo.CountAttempts(ctx, "release-1", source, nodeID, sig)
+	count, err := repo.CountAttempts(ctx, "release-1", 1, source, nodeID, sig)
 	require.NoError(t, err)
 	require.Equal(t, 3, count, "expected 3 attempts for the original node")
 
@@ -483,7 +483,7 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 	}
 	require.NoError(t, repo.Upsert(ctx, other), "insert other node attempt")
 
-	count, err = repo.CountAttempts(ctx, "release-1", source, nodeID, sig)
+	count, err = repo.CountAttempts(ctx, "release-1", 1, source, nodeID, sig)
 	require.NoError(t, err)
 	require.Equal(t, 3, count, "count for original node must remain 3 after inserting different node")
 
@@ -493,12 +493,24 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 		Attempt: 1, Status: proposal.StatusProposed, CreatedAt: now,
 	}), "insert later-release attempt")
 
-	count, err = repo.CountAttempts(ctx, "release-1", source, nodeID, sig)
+	count, err = repo.CountAttempts(ctx, "release-1", 1, source, nodeID, sig)
 	require.NoError(t, err)
 	require.Equal(t, 3, count, "a later release's attempt must not be charged to release-1")
-	count, err = repo.CountAttempts(ctx, "release-2", source, nodeID, sig)
+	count, err = repo.CountAttempts(ctx, "release-2", 1, source, nodeID, sig)
 	require.NoError(t, err)
 	require.Equal(t, 1, count, "release-2 has exactly its own attempt")
+
+	// Round 2 of release-1: a "try again" starts a fresh budget for the same failure.
+	require.NoError(t, repo.Upsert(ctx, proposal.Proposal{
+		Source: source, ReleaseID: "release-1", RemediationRound: 2, NodeID: nodeID, ErrorSignature: sig,
+		Attempt: 4, Status: proposal.StatusProposed, CreatedAt: now,
+	}))
+	count, err = repo.CountAttempts(ctx, "release-1", 1, source, nodeID, sig)
+	require.NoError(t, err)
+	require.Equal(t, 3, count, "round 1 keeps its own count")
+	count, err = repo.CountAttempts(ctx, "release-1", 2, source, nodeID, sig)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "round 2 counts only its own attempts")
 
 	require.NoError(t, tx.Commit())
 }
@@ -1554,7 +1566,7 @@ func TestProposalRepositoryCountAttemptsExcludesVerifying(t *testing.T) {
 		Attempt: 3, Status: proposal.StatusVerifying, ShadowReleaseID: "shadow-count-1", CreatedAt: now,
 	}))
 
-	n, err := repo.CountAttempts(ctx, "release-v", source, nodeID, sig)
+	n, err := repo.CountAttempts(ctx, "release-v", 1, source, nodeID, sig)
 	require.NoError(t, err)
 	require.Equal(t, 2, n, "a verifying row must be excluded from the attempt count")
 
@@ -1593,6 +1605,33 @@ func TestList_FilterByFailingNode(t *testing.T) {
 		require.Equal(t, "rel-node-a", v.ReleaseID)
 		require.Equal(t, "validation", v.Source)
 		require.Equal(t, "analytics.py_kpis", v.NodeID)
+	}
+}
+
+// TestList_FilterByReleaseID verifies that a ReleaseID-only filter returns
+// every proposal of that release regardless of source or node — the filter a
+// release page reads to show the whole release's remediation history.
+func TestList_FilterByReleaseID(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	base := func(release, source, node string, attempt int) proposal.Proposal {
+		return proposal.Proposal{
+			Source: source, ReleaseID: release, NodeID: node,
+			ErrorSignature: "sig", Attempt: attempt,
+			Status: proposal.StatusFailed, CreatedAt: time.Now().UTC(),
+		}
+	}
+	_ = seedProposal(t, repo, db, base("release-1", "validation", "analytics.py_kpis", 1))
+	_ = seedProposal(t, repo, db, base("release-1", "compile", "analytics.other", 1))
+	_ = seedProposal(t, repo, db, base("release-2", "validation", "analytics.py_kpis", 1))
+
+	views, err := repo.List(ctx, repository.ProposalFilter{ReleaseID: "release-1"})
+	require.NoError(t, err)
+	require.Len(t, views, 2, "only release-1's rows must be returned")
+	for _, v := range views {
+		require.Equal(t, "release-1", v.ReleaseID)
 	}
 }
 
@@ -1699,11 +1738,11 @@ func TestProposalRepositoryFailGenerating_LeavesAnotherReleasesAttemptAlone(t *t
 	require.Equal(t, string(proposal.StatusGenerating), theirStatus,
 		"another release's in-flight attempt must not be failed, nor its attempt budget spent")
 
-	count, err := repo.CountAttempts(ctx, "rel-mine", "validation", "analytics.py_kpis", "sig-shared")
+	count, err := repo.CountAttempts(ctx, "rel-mine", 1, "validation", "analytics.py_kpis", "sig-shared")
 	require.NoError(t, err)
 	require.Equal(t, 1, count,
 		"only the attempt that actually failed may count against this release's budget")
-	count, err = repo.CountAttempts(ctx, "rel-theirs", "validation", "analytics.py_kpis", "sig-shared")
+	count, err = repo.CountAttempts(ctx, "rel-theirs", 1, "validation", "analytics.py_kpis", "sig-shared")
 	require.NoError(t, err)
 	require.Equal(t, 0, count,
 		"the other release's attempt is still in flight and its budget untouched")

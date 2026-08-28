@@ -20,7 +20,10 @@ type requestedPayload struct {
 	EventID   string `json:"event_id"`
 	Source    string `json:"source"`
 	ReleaseID string `json:"release_id"`
-	NodeID    string `json:"node_id"`
+	// RemediationRound is the release's remediation round this trigger belongs
+	// to; missing or 0 means round 1 (the rejection itself).
+	RemediationRound int    `json:"remediation_round"`
+	NodeID           string `json:"node_id"`
 	// RelationID is the contested physical relation for a duplicate_table
 	// trigger, distinct from NodeID (the target claimant's own unique_id) —
 	// the two differ whenever the target carries an alias. Empty for every
@@ -75,6 +78,7 @@ func TriggerFromPayload(raw []byte) (handlers.Trigger, error) {
 	return handlers.Trigger{
 		Source:               p.Source,
 		ReleaseID:            p.ReleaseID,
+		RemediationRound:     p.RemediationRound,
 		NodeID:               p.NodeID,
 		RelationID:           p.RelationID,
 		Category:             p.Category,
