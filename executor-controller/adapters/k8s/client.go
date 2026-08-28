@@ -1006,7 +1006,7 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 // /shared in every container:
 //   - when params.SourceOverlayURI is set, initContainer "overlay": the
 //     s3-sidecar image fetches a shadow release's proposed source files into
-//     /shared/overlay before the compile container runs.
+//     /shared/overlay before any other team-image init container runs.
 //   - initContainer "compile": team image runs the service's resolved compile
 //     command and copies the manifest from its declared path into
 //     /shared/manifest.json, with the warehouse-Secret envFrom attached; when
@@ -1015,7 +1015,10 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 //   - when params.CandidateSchema is set, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", export and rehearse the service's
 //     partial-parse cache (see buildParseExportCommand) into
-//     /shared/parse/<prod|candidate>/partial_parse.msgpack.
+//     /shared/parse/<prod|candidate>/partial_parse.msgpack; when the overlay
+//     ran, both commands also first copy /shared/overlay over the checked-in
+//     project, so the parse rehearsal exercises the same proposed source the
+//     compile container compiled, not the pristine checked-in one.
 //   - main container "upload": the shared s3-sidecar image (S3_SIDECAR_IMAGE
 //     env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest) runs
 //     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH +
@@ -1086,21 +1089,25 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //     the shared s3-sidecar image that runs `python /overlay_fetcher.py` with
 //     SOURCE_OVERLAY_URI, OVERLAY_DEST=/shared/overlay, and the S3 credential
 //     envs, laying a shadow release's proposed source files into
-//     /shared/overlay before the compile container runs;
+//     /shared/overlay before any other team-image init container runs. Every
+//     team-image init container's shell command (compile and both parse legs
+//     below) is then prefixed with `cp -R /shared/overlay/. ./` so the overlay
+//     is the project under test throughout the pod, not just in compile;
 //   - an initContainer "compile" using the team image (ImageTag must be
 //     non-empty) that, when the overlay ran, first copies /shared/overlay
-//     over the checked-in project (`cp -R /shared/overlay/. ./`), then runs
-//     the service's resolved compile command, copies the manifest from its
-//     declared path into /shared/manifest.json, and chmods it 644 so it is
-//     world-readable regardless of the team image's uid/umask (the upload
-//     container below runs as a fixed, different uid);
+//     over the checked-in project, then runs the service's resolved compile
+//     command, copies the manifest from its declared path into
+//     /shared/manifest.json, and chmods it 644 so it is world-readable
+//     regardless of the team image's uid/umask (the upload container below
+//     runs as a fixed, different uid);
 //   - when p.CandidateSchema is non-empty, two more team-image initContainers,
-//     "parse-prod" and "parse-candidate", that export and rehearse the
-//     service's partial-parse cache under prod and candidate connection
-//     contexts respectively (see buildParseExportCommand) into
-//     /shared/parse/<ctx>/partial_parse.msgpack; when CandidateSchema is
-//     empty the parse-export leg is disabled and the pod keeps the
-//     two-container layout (compile initContainer + upload main container);
+//     "parse-prod" and "parse-candidate", that (also applying the overlay
+//     copy first, when set) export and rehearse the service's partial-parse
+//     cache under prod and candidate connection contexts respectively (see
+//     buildParseExportCommand) into /shared/parse/<ctx>/partial_parse.msgpack;
+//     when CandidateSchema is empty the parse-export leg is disabled and the
+//     pod keeps the two-container layout (compile initContainer + upload main
+//     container);
 //   - a main container "upload" using the shared s3-sidecar image (no dbt;
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
@@ -1141,10 +1148,17 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 	compileCmd := shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json" +
 		" && chmod 644 /shared/manifest.json"
 	var initContainers []corev1.Container
+	// overlayPrefix, when non-empty, is prepended to the shell command of every
+	// team-image init container (compile and both parse legs) so a shadow
+	// release's proposed source lands over the checked-in project before that
+	// container's dbt invocation reads it. Empty (the common case) leaves every
+	// command exactly as it was before the overlay feature existed.
+	var overlayPrefix string
 	if p.SourceOverlayURI != "" {
+		overlayPrefix = "cp -R /shared/overlay/. ./ && "
 		// A shadow release verifies a proposed fix: the overlay fetcher lays the
-		// proposed files into /shared/overlay and the compile container copies
-		// them over the checked-in project before dbt reads it.
+		// proposed files into /shared/overlay and every team-image init
+		// container copies them over the checked-in project before dbt reads it.
 		initContainers = append(initContainers, corev1.Container{
 			Name:            "overlay",
 			Image:           uploadImage,
@@ -1157,7 +1171,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 			VolumeMounts:    []corev1.VolumeMount{mount},
 			SecurityContext: continuoImageSecurityContext(),
 		})
-		compileCmd = "cp -R /shared/overlay/. ./ && " + compileCmd
+		compileCmd = overlayPrefix + compileCmd
 	}
 	initContainers = append(initContainers, corev1.Container{
 		Name:            "compile",
@@ -1194,7 +1208,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 				Name:            "parse-prod",
 				Image:           teamImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "prod")},
+				Command:         []string{"sh", "-c", overlayPrefix + buildParseExportCommand(parseArgv, partialParsePath, "prod")},
 				EnvFrom:         whFrom,
 				VolumeMounts:    []corev1.VolumeMount{mount},
 				SecurityContext: baseContainerSecurityContext(),
@@ -1203,7 +1217,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 				Name:            "parse-candidate",
 				Image:           teamImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "candidate")},
+				Command:         []string{"sh", "-c", overlayPrefix + buildParseExportCommand(parseArgv, partialParsePath, "candidate")},
 				Env:             candEnv,
 				EnvFrom:         whFrom,
 				VolumeMounts:    []corev1.VolumeMount{mount},

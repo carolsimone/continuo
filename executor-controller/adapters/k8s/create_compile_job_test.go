@@ -202,6 +202,40 @@ func TestCreateCompileJob_SourceOverlayAddsFetcherAndCopiesOverProject(t *testin
 	assert.True(t, strings.HasPrefix(compile.Command[2], "cp -R /shared/overlay/. ./ && "), compile.Command[2])
 }
 
+// TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers verifies that
+// when a shadow release's overlay is set alongside CandidateSchema, the
+// overlay copy prefix lands on the parse-prod and parse-candidate commands
+// too — not just compile — so parse rehearsal exercises the overlaid source
+// rather than the pristine checked-in project.
+func TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	p := ValidationJobParams{
+		ServiceName:         "core",
+		ImageTag:            "abc123",
+		ManifestS3URI:       "s3://continuo/core/shadow-rel-1/manifest.json",
+		SourceOverlayURI:    "s3://continuo/core/shadow-rel-1/source-overlay.tar.gz",
+		CandidateSchema:     "candidate_x",
+		ParseProdS3URI:      "s3://continuo/core/shadow-rel-1/parse/prod.msgpack",
+		ParseCandidateS3URI: "s3://continuo/core/shadow-rel-1/parse/candidate.msgpack",
+	}
+	spec, err := buildCompilePodSpec(p, []string{"dbt", "compile"}, "target/manifest.json",
+		[]string{"dbt", "parse"}, "target/partial_parse.msgpack")
+	require.NoError(t, err)
+
+	names := make([]string, len(spec.InitContainers))
+	for i, ic := range spec.InitContainers {
+		names[i] = ic.Name
+	}
+	require.Equal(t, []string{"overlay", "compile", "parse-prod", "parse-candidate"}, names)
+
+	parseProd := spec.InitContainers[2]
+	parseCandidate := spec.InitContainers[3]
+	require.Len(t, parseProd.Command, 3)
+	require.Len(t, parseCandidate.Command, 3)
+	assert.True(t, strings.HasPrefix(parseProd.Command[2], "cp -R /shared/overlay/. ./ && "), parseProd.Command[2])
+	assert.True(t, strings.HasPrefix(parseCandidate.Command[2], "cp -R /shared/overlay/. ./ && "), parseCandidate.Command[2])
+}
+
 func TestCreateCompileJob_NoOverlayKeepsSingleInitContainer(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
