@@ -6,6 +6,12 @@ import "sort"
 // error signature) and descend from a common node that changed this release.
 // It targets that changed ancestor, so one edit resolves every member — even
 // when the ancestor itself did not fail. An empty signature never groups.
+//
+// Within one signature the nodes may not all share a single ancestor: the same
+// failure can reach two unrelated changed ancestors. Each signature is therefore
+// partitioned into one cluster per ancestor-sharing subset, so a batch like
+// {a,b}→u and {c,d}→v under one signature yields two upstream clusters rather
+// than falling through to independent fixes.
 type SharedUpstreamCause struct{}
 
 func (SharedUpstreamCause) Claim(remaining []FailingNode, dag DagView) ([]Cluster, []FailingNode) {
@@ -25,18 +31,18 @@ func (SharedUpstreamCause) Claim(remaining []FailingNode, dag DagView) ([]Cluste
 		if sig == "" || len(group) < 2 {
 			continue
 		}
-		target, ok := commonChangedAncestor(group, dag)
-		if !ok {
-			continue
+		for _, c := range clusterByChangedAncestor(group, dag) {
+			for _, m := range c.Members {
+				claimedSet[m] = true
+			}
+			clusters = append(clusters, c)
 		}
-		members := make([]string, 0, len(group))
-		for _, n := range group {
-			members = append(members, n.NodeID)
-			claimedSet[n.NodeID] = true
-		}
-		sort.Strings(members)
-		clusters = append(clusters, Cluster{TargetNodeID: target, Members: members, Kind: KindSharedUpstream})
 	}
+
+	// Emit clusters ordered by their smallest member so the output does not
+	// depend on input order. Members are disjoint across clusters, so the
+	// smallest member is a unique, stable key.
+	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Members[0] < clusters[j].Members[0] })
 
 	var rest []FailingNode
 	for _, n := range remaining {
@@ -47,30 +53,50 @@ func (SharedUpstreamCause) Claim(remaining []FailingNode, dag DagView) ([]Cluste
 	return clusters, rest
 }
 
-// commonChangedAncestor returns a changed ancestor shared by every node in the
-// group. Ties are broken by the lexicographically smallest id so grouping is
-// deterministic regardless of map iteration order.
-func commonChangedAncestor(group []FailingNode, dag DagView) (string, bool) {
-	counts := map[string]int{}
+// clusterByChangedAncestor partitions one same-signature group into shared
+// clusters. It considers candidate changed ancestors in ascending id order and,
+// for each, gathers the still-unclaimed group members that descend from it; a
+// candidate with at least two such members becomes one cluster targeting it.
+// Considering the smallest ancestor id first makes both the assignment and the
+// target choice deterministic regardless of map iteration or input order. Nodes
+// matching no shared ancestor are left for the independent default strategy.
+func clusterByChangedAncestor(group []FailingNode, dag DagView) []Cluster {
+	ancestorsByNode := make(map[string]map[string]bool, len(group))
+	candidateSet := map[string]bool{}
 	for _, n := range group {
-		seen := map[string]bool{}
+		set := map[string]bool{}
 		for _, anc := range dag.ChangedAncestorsByNode[n.NodeID] {
-			if seen[anc] {
+			set[anc] = true
+			candidateSet[anc] = true
+		}
+		ancestorsByNode[n.NodeID] = set
+	}
+	candidates := make([]string, 0, len(candidateSet))
+	for anc := range candidateSet {
+		candidates = append(candidates, anc)
+	}
+	sort.Strings(candidates)
+
+	claimed := map[string]bool{}
+	var clusters []Cluster
+	for _, anc := range candidates {
+		var members []string
+		for _, n := range group {
+			if claimed[n.NodeID] {
 				continue
 			}
-			seen[anc] = true
-			counts[anc]++
+			if ancestorsByNode[n.NodeID][anc] {
+				members = append(members, n.NodeID)
+			}
 		}
-	}
-	var common []string
-	for anc, c := range counts {
-		if c == len(group) {
-			common = append(common, anc)
+		if len(members) < 2 {
+			continue
 		}
+		sort.Strings(members)
+		for _, m := range members {
+			claimed[m] = true
+		}
+		clusters = append(clusters, Cluster{TargetNodeID: anc, Members: members, Kind: KindSharedUpstream})
 	}
-	if len(common) == 0 {
-		return "", false
-	}
-	sort.Strings(common)
-	return common[0], true
+	return clusters
 }
