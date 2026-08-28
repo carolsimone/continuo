@@ -92,6 +92,7 @@ func TestCompileParamsFromSpec_MapsAllFields(t *testing.T) {
 		ManifestS3URI:        "s3://continuo/svc/rel123/manifest.json",
 		ParseProdS3URI:       "s3://continuo/svc/rel123/parse/prod.msgpack",
 		ParseCandidateS3URI:  "s3://continuo/svc/rel123/parse/candidate.msgpack",
+		SourceOverlayURI:     "s3://continuo/svc/rel123/source-overlay.tar.gz",
 	}
 
 	params, err := compileParamsFromSpec(spec, "default")
@@ -108,6 +109,7 @@ func TestCompileParamsFromSpec_MapsAllFields(t *testing.T) {
 	assert.Equal(t, "candidate_rel123", params.CandidateSchema)
 	assert.Equal(t, "s3://continuo/svc/rel123/parse/prod.msgpack", params.ParseProdS3URI)
 	assert.Equal(t, "s3://continuo/svc/rel123/parse/candidate.msgpack", params.ParseCandidateS3URI)
+	assert.Equal(t, "s3://continuo/svc/rel123/source-overlay.tar.gz", params.SourceOverlayURI)
 	assert.Equal(t, "default", params.Namespace)
 
 	// Fields DeployCompile deliberately does NOT set (SchemaName/TableName/

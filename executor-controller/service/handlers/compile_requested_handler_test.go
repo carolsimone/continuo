@@ -140,3 +140,23 @@ func TestCompileRequestedHandler_EmptyCandidateSchemaDisablesParseCacheLeg(t *te
 	assert.Empty(t, cmd.ParseProdS3URI)
 	assert.Empty(t, cmd.ParseCandidateS3URI)
 }
+
+func TestCompileRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
+	depl := &stubDeploymentsRepo{}
+	u := &uow.FakeUnitOfWork{Deployments: depl}
+
+	evt := events.CompileRequested{
+		ReleaseID:        "shadow-rel-1-svc-a1",
+		Service:          "finance",
+		ImageTag:         "sha-shadow-1",
+		Bucket:           "my-artifacts-bucket",
+		SourceOverlayURI: "s3://my-artifacts-bucket/finance/shadow-rel-1-svc-a1/source-overlay.tar.gz",
+	}
+
+	h := handlers.NewCompileRequestedHandler(discardLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.Nil))
+	require.Len(t, depl.added, 1)
+
+	cmd := depl.added[0].ValidationCommand()
+	assert.Equal(t, evt.SourceOverlayURI, cmd.SourceOverlayURI)
+}

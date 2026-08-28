@@ -41,12 +41,13 @@ func (h *CompileRequestedHandler) Handle(
 ) error {
 	now := time.Now()
 	cmd := command.ValidationDeployTask{
-		ReleaseID:     evt.ReleaseID,
-		NodeID:        evt.Service,
-		ServiceName:   evt.Service,
-		ImageTag:      evt.ImageTag,
-		JobName:       BuildValidationJobName(evt.ReleaseID, evt.Service),
-		ManifestS3URI: artifacts.ManifestURI(evt.Bucket, evt.Service, evt.ReleaseID),
+		ReleaseID:        evt.ReleaseID,
+		NodeID:           evt.Service,
+		ServiceName:      evt.Service,
+		ImageTag:         evt.ImageTag,
+		JobName:          BuildValidationJobName(evt.ReleaseID, evt.Service),
+		ManifestS3URI:    artifacts.ManifestURI(evt.Bucket, evt.Service, evt.ReleaseID),
+		SourceOverlayURI: evt.SourceOverlayURI,
 		// Compile tasks have no candidate SQL URI, upstreams, validation op, or prod schema.
 	}
 	// The parse-export leg needs the candidate schema at parse time; an older

@@ -115,3 +115,12 @@ func TestParseCompileRequested_CandidateSchemaAbsentIsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "", evt.CandidateSchema)
 }
+
+func TestParseCompileRequested_SourceOverlayURI(t *testing.T) {
+	msg := goredis.XMessage{ID: "1-0", Values: map[string]any{
+		"payload": `{"release_id":"r","service":"svc","image_tag":"t","bucket":"b","candidate_schema":"c","source_overlay_uri":"s3://b/svc/r/source-overlay.tar.gz"}`,
+	}}
+	evt, err := ParseCompileRequested(msg)
+	require.NoError(t, err)
+	assert.Equal(t, "s3://b/svc/r/source-overlay.tar.gz", evt.SourceOverlayURI)
+}

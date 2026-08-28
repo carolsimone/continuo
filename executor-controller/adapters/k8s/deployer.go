@@ -136,6 +136,7 @@ func compileParamsFromSpec(spec deploy.ValidationJobSpec, namespace string) (Val
 		CandidateSchema:     spec.CandidateSchema,
 		ParseProdS3URI:      spec.ParseProdS3URI,
 		ParseCandidateS3URI: spec.ParseCandidateS3URI,
+		SourceOverlayURI:    spec.SourceOverlayURI,
 		Namespace:           namespace,
 	}, nil
 }

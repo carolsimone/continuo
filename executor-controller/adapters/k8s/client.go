@@ -247,6 +247,11 @@ type ValidationJobParams struct {
 	ParseProdS3URI      string
 	ParseCandidateS3URI string
 
+	// SourceOverlayURI locates the source-overlay tarball a shadow release's
+	// compile Job lays over the project before compiling. Populated only for
+	// mode=compile dispatches of a shadow release.
+	SourceOverlayURI string
+
 	Namespace string
 }
 
@@ -999,9 +1004,14 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 // CreateCompileJob builds and creates a mode=compile K8s Job (idempotent by
 // job name). The Job pod has a shared emptyDir volume "shared" mounted at
 // /shared in every container:
+//   - when params.SourceOverlayURI is set, initContainer "overlay": the
+//     s3-sidecar image fetches a shadow release's proposed source files into
+//     /shared/overlay before the compile container runs.
 //   - initContainer "compile": team image runs the service's resolved compile
 //     command and copies the manifest from its declared path into
-//     /shared/manifest.json, with the warehouse-Secret envFrom attached.
+//     /shared/manifest.json, with the warehouse-Secret envFrom attached; when
+//     the overlay ran, the command first copies /shared/overlay over the
+//     checked-in project.
 //   - when params.CandidateSchema is set, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", export and rehearse the service's
 //     partial-parse cache (see buildParseExportCommand) into
@@ -1072,11 +1082,18 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 
 // buildCompilePodSpec constructs the PodSpec for a compile Job. The pod has:
 //   - a shared emptyDir volume "shared" mounted at /shared in every container;
+//   - when p.SourceOverlayURI is non-empty, an initContainer "overlay" using
+//     the shared s3-sidecar image that runs `python /overlay_fetcher.py` with
+//     SOURCE_OVERLAY_URI, OVERLAY_DEST=/shared/overlay, and the S3 credential
+//     envs, laying a shadow release's proposed source files into
+//     /shared/overlay before the compile container runs;
 //   - an initContainer "compile" using the team image (ImageTag must be
-//     non-empty) that runs the service's resolved compile command, copies
-//     the manifest from its declared path into /shared/manifest.json, and
-//     chmods it 644 so it is world-readable regardless of the team image's
-//     uid/umask (the upload container below runs as a fixed, different uid);
+//     non-empty) that, when the overlay ran, first copies /shared/overlay
+//     over the checked-in project (`cp -R /shared/overlay/. ./`), then runs
+//     the service's resolved compile command, copies the manifest from its
+//     declared path into /shared/manifest.json, and chmods it 644 so it is
+//     world-readable regardless of the team image's uid/umask (the upload
+//     container below runs as a fixed, different uid);
 //   - when p.CandidateSchema is non-empty, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", that export and rehearse the
 //     service's partial-parse cache under prod and candidate connection
@@ -1121,25 +1138,42 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
 	}, s3CredEnvVars()...)
 
+	compileCmd := shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json" +
+		" && chmod 644 /shared/manifest.json"
+	var initContainers []corev1.Container
+	if p.SourceOverlayURI != "" {
+		// A shadow release verifies a proposed fix: the overlay fetcher lays the
+		// proposed files into /shared/overlay and the compile container copies
+		// them over the checked-in project before dbt reads it.
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "overlay",
+			Image:           uploadImage,
+			ImagePullPolicy: validationImagePullPolicy(),
+			Command:         []string{"python", "/overlay_fetcher.py"},
+			Env: append([]corev1.EnvVar{
+				{Name: "SOURCE_OVERLAY_URI", Value: p.SourceOverlayURI},
+				{Name: "OVERLAY_DEST", Value: "/shared/overlay"},
+			}, s3CredEnvVars()...),
+			VolumeMounts:    []corev1.VolumeMount{mount},
+			SecurityContext: continuoImageSecurityContext(),
+		})
+		compileCmd = "cp -R /shared/overlay/. ./ && " + compileCmd
+	}
+	initContainers = append(initContainers, corev1.Container{
+		Name:            "compile",
+		Image:           teamImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-c", compileCmd},
+		EnvFrom:         whFrom,
+		VolumeMounts:    []corev1.VolumeMount{mount},
+		SecurityContext: baseContainerSecurityContext(),
+	})
+
 	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
 		SecurityContext: jobPodSecurityContext(),
 		Volumes:         []corev1.Volume{sharedEmptyDirVolume()},
-		InitContainers: []corev1.Container{
-			{
-				Name:            "compile",
-				Image:           teamImage,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command: []string{
-					"sh", "-c",
-					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json" +
-						" && chmod 644 /shared/manifest.json",
-				},
-				EnvFrom:         whFrom,
-				VolumeMounts:    []corev1.VolumeMount{mount},
-				SecurityContext: baseContainerSecurityContext(),
-			},
-		},
+		InitContainers:  initContainers,
 		Containers: []corev1.Container{
 			{
 				Name:            "upload",

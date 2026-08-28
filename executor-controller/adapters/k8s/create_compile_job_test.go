@@ -145,6 +145,7 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 	assert.Equal(t, "/shared/parse/candidate/partial_parse.msgpack", envByName(spec, "PARSE_CANDIDATE_LOCAL_PATH"))
 	assert.Equal(t, p.ParseCandidateS3URI, envByName(spec, "PARSE_CANDIDATE_S3_URI"))
 }
+
 // TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty verifies that
 // when CandidateSchema is empty the parse-export leg is disabled and the pod
 // keeps the two-container layout: a single "compile" initContainer and an
@@ -171,4 +172,55 @@ func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 	for _, e := range spec.Containers[0].Env {
 		assert.False(t, strings.HasPrefix(e.Name, "PARSE_"), "no PARSE_* env when CandidateSchema is empty, got %s", e.Name)
 	}
+}
+
+func TestCreateCompileJob_SourceOverlayAddsFetcherAndCopiesOverProject(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	c := newValidationTestClient()
+	p := ValidationJobParams{
+		JobName: "compile-svc-shadow", ReleaseID: "shadow-rel-1-svc-a1", NodeID: "core",
+		ServiceName: "core", ImageTag: "abc123",
+		ManifestS3URI:    "s3://continuo/core/shadow-rel-1-svc-a1/manifest.json",
+		SourceOverlayURI: "s3://continuo/core/shadow-rel-1-svc-a1/source-overlay.tar.gz",
+		Namespace:        "default",
+	}
+	require.NoError(t, c.CreateCompileJob(context.Background(), p))
+	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
+
+	require.Len(t, spec.InitContainers, 2)
+	overlay := spec.InitContainers[0]
+	assert.Equal(t, "overlay", overlay.Name)
+	assert.Equal(t, "carolsimone/s3-sidecar:latest", overlay.Image)
+	assert.Equal(t, []string{"python", "/overlay_fetcher.py"}, overlay.Command)
+	assert.Equal(t, "s3://continuo/core/shadow-rel-1-svc-a1/source-overlay.tar.gz", envOf(overlay, "SOURCE_OVERLAY_URI"))
+	assert.Equal(t, "/shared/overlay", envOf(overlay, "OVERLAY_DEST"))
+	assert.Equal(t, "shared", overlay.VolumeMounts[0].Name)
+
+	compile := spec.InitContainers[1]
+	assert.Equal(t, "compile", compile.Name)
+	assert.True(t, strings.HasPrefix(compile.Command[2], "cp -R /shared/overlay/. ./ && "), compile.Command[2])
+}
+
+func TestCreateCompileJob_NoOverlayKeepsSingleInitContainer(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	c := newValidationTestClient()
+	p := ValidationJobParams{JobName: "compile-svc-rel", ReleaseID: "rel-1", NodeID: "core",
+		ServiceName: "core", ImageTag: "abc123", ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default"}
+	require.NoError(t, c.CreateCompileJob(context.Background(), p))
+	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
+	require.Len(t, spec.InitContainers, 1)
+	assert.Equal(t, "compile", spec.InitContainers[0].Name)
+	assert.False(t, strings.Contains(spec.InitContainers[0].Command[2], "/shared/overlay"))
+}
+
+// envOf returns the value of the named env var on one container ("" when absent).
+func envOf(c corev1.Container, name string) string {
+	for _, e := range c.Env {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
 }
