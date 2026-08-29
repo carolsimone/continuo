@@ -614,29 +614,33 @@ func TestReconcileOnce_OpeningSweep_ReClaimedRowLeftUntouched(t *testing.T) {
 // forever.
 func TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows(t *testing.T) {
 	now := fixedClock{}.Now()
-	// The branch is keyed on (releaseID, attempt) alone, so each row below
-	// gets its own release id to keep the five branches distinct.
-	branch := func(releaseID string) string { return proposals.BuildBranch(releaseID, 1) }
+	// One release, five attempts of it: the branch is keyed on
+	// (releaseID, attempt) alone, so varying Attempt on a single ReleaseID is
+	// what keeps the five branches distinct here — proving the sweep's
+	// per-row branch lookup discriminates attempts of the SAME release, not
+	// just different releases.
+	const releaseID = "rel-p"
+	branch := func(attempt int) string { return proposals.BuildBranch(releaseID, attempt) }
 
 	// Five rows, strictly increasing CreatedAt (and thus stable sweep order).
-	// p1 and p2 error on every pass and never resolve; p3-p5 succeed.
+	// attempt 1 and 2 error on every pass and never resolve; 3-5 succeed.
 	ids := []string{"p1", "p2", "p3", "p4", "p5"}
 	var opening []proposal.OpeningPR
 	for i, id := range ids {
-		releaseID := "rel-" + id
+		attempt := i + 1
 		opening = append(opening, proposal.OpeningPR{
-			ID: id, Repo: "acme/r", ReleaseID: releaseID, NodeID: id, Attempt: 1,
+			ID: id, Repo: "acme/r", ReleaseID: releaseID, NodeID: id, Attempt: attempt,
 			ClaimedAt: timePtr(now),
 			CreatedAt: now.Add(time.Duration(i) * time.Second),
 		})
 	}
 	lister := &fakeOpeningLister{opening: opening}
 	finder := &fakeBranchFinder{
-		errs: map[string]error{branch("rel-p1"): errors.New("boom"), branch("rel-p2"): errors.New("boom")},
+		errs: map[string]error{branch(1): errors.New("boom"), branch(2): errors.New("boom")},
 		refs: map[string]ports.PullRequestRef{
-			branch("rel-p3"): {Number: 3, URL: "https://github.com/acme/r/pull/3"},
-			branch("rel-p4"): {Number: 4, URL: "https://github.com/acme/r/pull/4"},
-			branch("rel-p5"): {Number: 5, URL: "https://github.com/acme/r/pull/5"},
+			branch(3): {Number: 3, URL: "https://github.com/acme/r/pull/3"},
+			branch(4): {Number: 4, URL: "https://github.com/acme/r/pull/4"},
+			branch(5): {Number: 5, URL: "https://github.com/acme/r/pull/5"},
 		},
 	}
 	recorder := &fakeOpeningRecorder{}
@@ -651,7 +655,7 @@ func TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows(t *testi
 		Failer:          &fakeFailer{},
 		Clock:           fixedClock{},
 		Logger:          slog.Default(),
-		BatchLimit:      2, // smaller than len(nodes): a single pass cannot see every row
+		BatchLimit:      2, // smaller than len(ids): a single pass cannot see every row
 	})
 
 	// Pass 1 sees [p1, p2]: both error, nothing recorded.

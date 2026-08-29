@@ -146,6 +146,17 @@ func (r *fakeRepo) uowFactory() uow.UnitOfWork {
 	return &fakeUoW{repo: r}
 }
 
+// TestBuildBranch_DistinctPerAttemptWithinARelease verifies that, with the
+// node segment gone, attempt is still enough to keep two attempts of the same
+// release on distinct branches.
+func TestBuildBranch_DistinctPerAttemptWithinARelease(t *testing.T) {
+	b1 := proposals.BuildBranch("r", 1)
+	b2 := proposals.BuildBranch("r", 2)
+	require.Equal(t, "remediation/r/attempt1", b1)
+	require.Equal(t, "remediation/r/attempt2", b2)
+	require.NotEqual(t, b1, b2, "two attempts of the same release must not collide on branch")
+}
+
 // TestService_Begin_BuildsDeterministicBranch verifies that Begin derives the
 // branch name remediation/<release_id>/attempt<n>, with no node segment.
 func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
