@@ -80,3 +80,28 @@ func TestNormalizeSingleFileView_EmptyFirstEditPathLeavesScalarsAlone(t *testing
 		t.Fatalf("DiffURI = %q, want unchanged", p.DiffURI)
 	}
 }
+
+// TestNormalizeRepresentativeViews_FillsNodeIDAndShadowFromBatchFields verifies
+// that NormalizeRepresentativeViews sorts ResolvedNodeIDs, derives NodeID and
+// ShadowReleaseID from the batch fields when empty, and follows edits[0] for
+// the single-file view.
+func TestNormalizeRepresentativeViews_FillsNodeIDAndShadowFromBatchFields(t *testing.T) {
+	p := Proposal{
+		ResolvedNodeIDs: []string{"s.b", "s.a"},
+		Verifications:   []Verification{{Service: "svc", Kind: "dbt", ShadowReleaseID: "shadow-r-svc-a1"}},
+		Edits:           []FileEdit{{Path: "services/svc/models/u.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "s.u"}},
+	}
+	p.NormalizeRepresentativeViews()
+	if p.NodeID != "s.a" {
+		t.Fatalf("representative node must be the smallest resolved id, got %q", p.NodeID)
+	}
+	if p.ShadowReleaseID != "shadow-r-svc-a1" {
+		t.Fatalf("shadow id view must be the first verification, got %q", p.ShadowReleaseID)
+	}
+	if p.FilePath != "services/svc/models/u.sql" || p.ProposedSQLURI != "s3://c" {
+		t.Fatalf("single-file view must follow edits[0]: %+v", p)
+	}
+	if p.ResolvedNodeIDs[0] != "s.a" {
+		t.Fatal("resolved ids must be sorted")
+	}
+}

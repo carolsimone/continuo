@@ -2,19 +2,21 @@ package proposals_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/pkg/messageprocessing"
-	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // fixedClock returns a fixed time for deterministic tests.
@@ -145,8 +147,7 @@ func (r *fakeRepo) uowFactory() uow.UnitOfWork {
 }
 
 // TestService_Begin_BuildsDeterministicBranch verifies that Begin derives the
-// branch name remediation/<release_id>/<node_sanitized>-attempt<n> where every
-// rune outside [A-Za-z0-9_-] is replaced with '-'.
+// branch name remediation/<release_id>/attempt<n>, with no node segment.
 func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 	repo := &fakeRepo{view: proposal.View{
 		ReleaseID:      "r-1",
@@ -161,20 +162,21 @@ func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 	})
 	_, err := svc.Begin(context.Background(), "p1")
 	require.NoError(t, err)
-	require.Equal(t, "remediation/r-1/model-p-orders_d-attempt1", repo.lastBranch)
+	require.Equal(t, "remediation/r-1/attempt1", repo.lastBranch)
 	require.Equal(t, fixedClock{}.Now(), repo.lastClaimedAt, "Begin must stamp the claim with the service's clock")
 }
 
 // TestService_Record_EmitsPROpenedAtomically verifies that Record writes an
-// outbox entry with StreamName == streams.RemediationPrOpenedV1 and commits
-// the unit of work.
+// outbox entry with StreamName == streams.RemediationPrOpenedV1, whose payload
+// carries the view's ResolvedNodeIDs, and commits the unit of work.
 func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	repo := &fakeRepo{
 		view: proposal.View{
-			ID:        "p1",
-			ReleaseID: "r-1",
-			NodeID:    "model.p.orders_d",
-			Attempt:   1,
+			ID:              "p1",
+			ReleaseID:       "r-1",
+			NodeID:          "model.p.orders_d",
+			ResolvedNodeIDs: []string{"model.p.orders_d", "model.p.orders_e"},
+			Attempt:         1,
 		},
 		recordPRCASHit: true,
 	}
@@ -195,6 +197,11 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	require.True(t, repo.committed, "expected the unit of work to be committed")
 	require.Equal(t, fixedClock{}.Now(), repo.lastRecordPR.openedAt,
 		"an unset OpenedAt must fall back to the service clock, as the normal client-side flow relies on")
+
+	var payload event.PROpened
+	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
+	require.Equal(t, repo.view.ResolvedNodeIDs, payload.ResolvedNodeIDs,
+		"the pr_opened payload must carry the view's ResolvedNodeIDs")
 }
 
 // TestService_Record_UsesProvidedOpenedAt verifies that a non-zero

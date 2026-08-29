@@ -6,14 +6,25 @@ import (
 )
 
 func TestRemediationEventIDVariesByAttempt(t *testing.T) {
-	a1 := RemediationEventID("r1", "s.n", 1)
-	a1b := RemediationEventID("r1", "s.n", 1)
-	a2 := RemediationEventID("r1", "s.n", 2)
+	a1 := RemediationEventID("r1", 1)
+	a1b := RemediationEventID("r1", 1)
+	a2 := RemediationEventID("r1", 2)
 	if a1 != a1b {
-		t.Fatal("same (release,node,attempt) must be stable")
+		t.Fatal("same (release,attempt) must be stable")
 	}
 	if a1 == a2 {
 		t.Fatal("different attempt must differ")
+	}
+}
+
+// TestRemediationEventID_KeyedOnReleaseAndAttempt verifies the id is a
+// function of (releaseID, attempt) alone, with no node segment.
+func TestRemediationEventID_KeyedOnReleaseAndAttempt(t *testing.T) {
+	if RemediationEventID("r", 1) == RemediationEventID("r", 2) {
+		t.Fatal("attempts must mint distinct ids")
+	}
+	if RemediationEventID("r", 1) != RemediationEventID("r", 1) {
+		t.Fatal("must be stable")
 	}
 }
 
@@ -28,7 +39,7 @@ func TestRemediationProposedJSON(t *testing.T) {
 	_ = json.Unmarshal(b, &m)
 	for _, k := range []string{"event_id", "source", "release_id", "node_id", "error_signature",
 		"proposed_sql_uri", "diff_uri", "rationale", "confidence", "model", "attempt", "proposed_at",
-		"source_resolved"} {
+		"source_resolved", "resolved_node_ids", "edits"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("missing key %q", k)
 		}

@@ -245,7 +245,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 
 	now := r.clock.Now()
 	for _, o := range stuck {
-		branch := BuildBranch(o.ReleaseID, o.NodeID, o.Attempt)
+		branch := BuildBranch(o.ReleaseID, o.Attempt)
 		ref, found, err := r.branchFinder.FindByBranch(ctx, o.Repo, branch)
 		if err != nil {
 			if errors.Is(err, ports.ErrPermissionDenied) {

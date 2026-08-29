@@ -295,7 +295,7 @@ func (f *fakeFailer) FailStuckClaim(_ context.Context, id string, observedClaime
 // very first pass — finding an existing PR is unambiguous and safe
 // regardless of how fresh the claim is.
 func TestReconcileOnce_OpeningSweep_PRFoundRecords(t *testing.T) {
-	branch := proposals.BuildBranch("rel-1", "model.p.orders", 1)
+	branch := proposals.BuildBranch("rel-1", 1)
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
 		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: timePtr(fixedClock{}.Now())},
 	}}
@@ -469,8 +469,8 @@ func TestReconcileOnce_OpeningSweep_NilClaimedAtLeftAlone(t *testing.T) {
 // never fails the errored row even when its claim has aged past the grace
 // period — an inconclusive read must not be treated as a confirmed miss.
 func TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues(t *testing.T) {
-	branchOK := proposals.BuildBranch("rel-2", "model.p.customers", 1)
-	branchErr := proposals.BuildBranch("rel-1", "model.p.orders", 1)
+	branchOK := proposals.BuildBranch("rel-2", 1)
+	branchErr := proposals.BuildBranch("rel-1", 1)
 	now := fixedClock{}.Now()
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
 		{ID: "p-err", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
@@ -512,7 +512,7 @@ func TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues(t *testing.T) {
 // same GitHub token, so a permission gap discovered by either loop must be
 // visible via Degraded(), not silently swallowed into a generic warn.
 func TestReconcileOnce_OpeningSweepPermissionErrorMarksDegraded(t *testing.T) {
-	branch := proposals.BuildBranch("rel-1", "model.p.orders", 1)
+	branch := proposals.BuildBranch("rel-1", 1)
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
 		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
 			ClaimedAt: timePtr(fixedClock{}.Now())},
@@ -614,26 +614,29 @@ func TestReconcileOnce_OpeningSweep_ReClaimedRowLeftUntouched(t *testing.T) {
 // forever.
 func TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows(t *testing.T) {
 	now := fixedClock{}.Now()
-	branch := func(n string) string { return proposals.BuildBranch("rel-1", n, 1) }
+	// The branch is keyed on (releaseID, attempt) alone, so each row below
+	// gets its own release id to keep the five branches distinct.
+	branch := func(releaseID string) string { return proposals.BuildBranch(releaseID, 1) }
 
 	// Five rows, strictly increasing CreatedAt (and thus stable sweep order).
 	// p1 and p2 error on every pass and never resolve; p3-p5 succeed.
-	nodes := []string{"p1", "p2", "p3", "p4", "p5"}
+	ids := []string{"p1", "p2", "p3", "p4", "p5"}
 	var opening []proposal.OpeningPR
-	for i, n := range nodes {
+	for i, id := range ids {
+		releaseID := "rel-" + id
 		opening = append(opening, proposal.OpeningPR{
-			ID: n, Repo: "acme/r", ReleaseID: "rel-1", NodeID: n, Attempt: 1,
+			ID: id, Repo: "acme/r", ReleaseID: releaseID, NodeID: id, Attempt: 1,
 			ClaimedAt: timePtr(now),
 			CreatedAt: now.Add(time.Duration(i) * time.Second),
 		})
 	}
 	lister := &fakeOpeningLister{opening: opening}
 	finder := &fakeBranchFinder{
-		errs: map[string]error{branch("p1"): errors.New("boom"), branch("p2"): errors.New("boom")},
+		errs: map[string]error{branch("rel-p1"): errors.New("boom"), branch("rel-p2"): errors.New("boom")},
 		refs: map[string]ports.PullRequestRef{
-			branch("p3"): {Number: 3, URL: "https://github.com/acme/r/pull/3"},
-			branch("p4"): {Number: 4, URL: "https://github.com/acme/r/pull/4"},
-			branch("p5"): {Number: 5, URL: "https://github.com/acme/r/pull/5"},
+			branch("rel-p3"): {Number: 3, URL: "https://github.com/acme/r/pull/3"},
+			branch("rel-p4"): {Number: 4, URL: "https://github.com/acme/r/pull/4"},
+			branch("rel-p5"): {Number: 5, URL: "https://github.com/acme/r/pull/5"},
 		},
 	}
 	recorder := &fakeOpeningRecorder{}
@@ -677,7 +680,7 @@ func TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows(t *testi
 // happened to run — a claim can be recovered minutes or hours after GitHub
 // actually created the PR, and pr_opened_at should reflect the true value.
 func TestReconcileOnce_OpeningSweepRecordsGitHubCreatedAt(t *testing.T) {
-	branch := proposals.BuildBranch("rel-1", "model.p.orders", 1)
+	branch := proposals.BuildBranch("rel-1", 1)
 	githubCreatedAt := fixedClock{}.Now().Add(-45 * time.Minute)
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
 		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,

@@ -8,17 +8,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-	"unicode"
 
 	"github.com/google/uuid"
 
-	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // RecordInput carries the data required to record a successfully opened PR.
@@ -73,14 +72,14 @@ func (s *Service) Get(ctx context.Context, id string) (proposal.View, error) {
 
 // Begin atomically claims a proposal for PR creation and returns the data
 // needed to open the GitHub pull-request. It builds the deterministic branch
-// name remediation/<release_id>/<node_sanitized>-attempt<n> before delegating
-// to repo.BeginPR. The returned PRClaim carries the computed Branch field set.
+// name remediation/<release_id>/attempt<n> before delegating to repo.BeginPR.
+// The returned PRClaim carries the computed Branch field set.
 func (s *Service) Begin(ctx context.Context, id string) (proposal.PRClaim, error) {
 	v, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("get proposal: %w", err)
 	}
-	branch := BuildBranch(v.ReleaseID, v.NodeID, v.Attempt)
+	branch := BuildBranch(v.ReleaseID, v.Attempt)
 	claim, err := s.repo.BeginPR(ctx, id, branch, s.clock.Now())
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("begin pr: %w", err)
@@ -191,15 +190,16 @@ func (s *Service) RecordOutcome(ctx context.Context, id string, outcome proposal
 // enqueuePRClosed builds the deterministic remediation.pr_closed:v1 outbox
 // entry and creates it on the repository bound to the caller's transaction.
 func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v proposal.View, outcome proposal.PROutcome, closedAt time.Time) error {
-	eventID := event.PRClosedEventID(v.ReleaseID, v.NodeID, v.Attempt)
+	eventID := event.PRClosedEventID(v.ReleaseID, v.Attempt)
 	payload := event.PRClosed{
-		ProposalID: v.ID,
-		ReleaseID:  v.ReleaseID,
-		NodeID:     v.NodeID,
-		PrURL:      v.PrURL,
-		PrNumber:   v.PrNumber,
-		Outcome:    string(outcome),
-		ClosedAt:   closedAt.Format(time.RFC3339),
+		ProposalID:      v.ID,
+		ReleaseID:       v.ReleaseID,
+		NodeID:          v.NodeID,
+		ResolvedNodeIDs: v.ResolvedNodeIDs,
+		PrURL:           v.PrURL,
+		PrNumber:        v.PrNumber,
+		Outcome:         string(outcome),
+		ClosedAt:        closedAt.Format(time.RFC3339),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -226,15 +226,16 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 // a stranded PR through the opening sweep resolves it long after GitHub
 // created it.
 func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v proposal.View, in RecordInput, now, openedAt time.Time) error {
-	eventID := event.PROpenedEventID(v.ReleaseID, v.NodeID, v.Attempt)
+	eventID := event.PROpenedEventID(v.ReleaseID, v.Attempt)
 	payload := event.PROpened{
-		ProposalID: in.ProposalID,
-		ReleaseID:  v.ReleaseID,
-		NodeID:     v.NodeID,
-		PrURL:      in.PrURL,
-		PrNumber:   in.PrNumber,
-		OpenedBy:   in.OpenedBy,
-		OpenedAt:   openedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ProposalID:      in.ProposalID,
+		ReleaseID:       v.ReleaseID,
+		NodeID:          v.NodeID,
+		ResolvedNodeIDs: v.ResolvedNodeIDs,
+		PrURL:           in.PrURL,
+		PrNumber:        in.PrNumber,
+		OpenedBy:        in.OpenedBy,
+		OpenedAt:        openedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -255,30 +256,10 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 }
 
 // BuildBranch returns the deterministic remediation branch name for a
-// proposal's release/node/attempt: remediation/<release_id>/<node_sanitized>-attempt<n>.
-// Both Begin (computing the branch to claim) and the reconciler's opening
-// sweep (recomputing the same branch to look a stuck claim up on GitHub) call
-// this so the two never drift apart.
-func BuildBranch(releaseID, nodeID string, attempt int) string {
-	return fmt.Sprintf("remediation/%s/%s-attempt%d", releaseID, sanitizeBranchSegment(nodeID), attempt)
-}
-
-// sanitizeBranchSegment replaces every rune that is not in [A-Za-z0-9_-] with
-// '-', so a node id like "model.p.orders_d" becomes "model-p-orders_d".
-func sanitizeBranchSegment(s string) string {
-	b := make([]byte, 0, len(s))
-	for _, r := range s {
-		if r > unicode.MaxASCII || (!isAlphaNum(r) && r != '_' && r != '-') {
-			b = append(b, '-')
-		} else {
-			// Safe: the branch above already excludes any r > unicode.MaxASCII
-			// (127), so r fits in a byte without truncation.
-			b = append(b, byte(r)) //nolint:gosec // G115: r <= unicode.MaxASCII is guaranteed above.
-		}
-	}
-	return string(b)
-}
-
-func isAlphaNum(r rune) bool {
-	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+// proposal's release/attempt: remediation/<release_id>/attempt<n>. Both Begin
+// (computing the branch to claim) and the reconciler's opening sweep
+// (recomputing the same branch to look a stuck claim up on GitHub) call this
+// so the two never drift apart.
+func BuildBranch(releaseID string, attempt int) string {
+	return fmt.Sprintf("remediation/%s/attempt%d", releaseID, attempt)
 }
