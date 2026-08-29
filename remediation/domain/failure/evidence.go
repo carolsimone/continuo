@@ -44,7 +44,7 @@ type FailureEvidence struct {
 	ReleaseID string
 	// RemediationRound is the release's remediation round this evidence
 	// belongs to: 1 for the rejection itself, +1 per human "try again" on
-	// the release. 0 and 1 both mean round 1 — ClassifyFailure normalises
+	// the release. 0 and 1 both mean round 1 — ClassifyRejection normalises
 	// an unset value before using it.
 	RemediationRound     int
 	NodeID               string
@@ -70,4 +70,8 @@ type FailureEvidence struct {
 	// is never invisible) but must not enqueue a remediation trigger for it,
 	// or a failed fix attempt would trigger a remediation of itself.
 	Shadow bool
+	// ChangedAncestorIDs are the node's changed transitive ancestors in the
+	// rejected release, as release-controller stamped them; forwarded onto the
+	// trigger so the agent can group failures by shared root cause.
+	ChangedAncestorIDs []string
 }

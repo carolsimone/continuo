@@ -33,6 +33,6 @@ func TestEvidenceFromRejected_RemediationRound(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, evs, 1)
 		assert.Equal(t, failure.SourceCompile, evs[0].Source)
-		assert.Equal(t, 0, evs[0].RemediationRound, "0 and 1 both mean round 1; ClassifyFailure normalises it")
+		assert.Equal(t, 0, evs[0].RemediationRound, "0 and 1 both mean round 1; ClassifyRejection normalises it")
 	})
 }
