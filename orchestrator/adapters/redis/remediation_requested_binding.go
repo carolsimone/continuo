@@ -14,7 +14,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
-// ParseRemediationRequested decodes a remediation.requested:v1 XMessage's
+// ParseRemediationRequested decodes a remediation.requested:v2 XMessage's
 // payload into the case-base DTO. Structural errors are events.ErrPermanent —
 // the consumer ACKs and drops the poison message.
 func ParseRemediationRequested(msg goredis.XMessage) (event.RemediationRequested, error) {

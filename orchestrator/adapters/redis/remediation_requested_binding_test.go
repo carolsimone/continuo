@@ -14,14 +14,16 @@ func TestParseRemediationRequested_HappyPath(t *testing.T) {
 		"event_id": "evt-1",
 		"source": "validation",
 		"release_id": "rel-1",
-		"node_id": "analytics.revenue",
-		"category": "sql_syntax_error",
-		"error_signature": "sig-1",
-		"reason": "column \"foo\" does not exist",
-		"error_excerpt": "ERROR: column \"foo\" does not exist",
-		"dbt_log_uri": "s3://b/logs/rel-1/analytics.revenue.log",
 		"code_bundle_uri": "s3://b/code-bundles/rel-1/bundle.json",
-		"classified_at": "2026-08-12T09:00:00Z"
+		"classified_at": "2026-08-12T09:00:00Z",
+		"nodes": [{
+			"node_id": "analytics.revenue",
+			"category": "sql_syntax_error",
+			"error_signature": "sig-1",
+			"reason": "column \"foo\" does not exist",
+			"error_excerpt": "ERROR: column \"foo\" does not exist",
+			"dbt_log_uri": "s3://b/logs/rel-1/analytics.revenue.log"
+		}]
 	}`
 	msg := goredis.XMessage{ID: "1-0", Values: map[string]interface{}{"payload": payload}}
 
@@ -30,14 +32,15 @@ func TestParseRemediationRequested_HappyPath(t *testing.T) {
 	assert.Equal(t, "evt-1", evt.EventID)
 	assert.Equal(t, "validation", evt.Source)
 	assert.Equal(t, "rel-1", evt.ReleaseID)
-	assert.Equal(t, "analytics.revenue", evt.NodeID)
-	assert.Equal(t, "sql_syntax_error", evt.Category)
-	assert.Equal(t, "sig-1", evt.ErrorSignature)
-	assert.Equal(t, `column "foo" does not exist`, evt.Reason)
-	assert.Equal(t, `ERROR: column "foo" does not exist`, evt.ErrorExcerpt)
-	assert.Equal(t, "s3://b/logs/rel-1/analytics.revenue.log", evt.DBTLogURI)
 	assert.Equal(t, "s3://b/code-bundles/rel-1/bundle.json", evt.CodeBundleURI)
 	assert.Equal(t, "2026-08-12T09:00:00Z", evt.ClassifiedAt)
+	require.Len(t, evt.Nodes, 1)
+	assert.Equal(t, "analytics.revenue", evt.Nodes[0].NodeID)
+	assert.Equal(t, "sql_syntax_error", evt.Nodes[0].Category)
+	assert.Equal(t, "sig-1", evt.Nodes[0].ErrorSignature)
+	assert.Equal(t, `column "foo" does not exist`, evt.Nodes[0].Reason)
+	assert.Equal(t, `ERROR: column "foo" does not exist`, evt.Nodes[0].ErrorExcerpt)
+	assert.Equal(t, "s3://b/logs/rel-1/analytics.revenue.log", evt.Nodes[0].DBTLogURI)
 }
 
 func TestParseRemediationRequested_MissingPayloadField(t *testing.T) {

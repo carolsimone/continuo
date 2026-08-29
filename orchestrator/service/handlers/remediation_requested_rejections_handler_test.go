@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
-	"github.com/carolsimone/continuo/pkg/codebundle"
 	domainEvent "github.com/carolsimone/continuo/orchestrator/domain/event"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/orchestrator/service/ports"
+	"github.com/carolsimone/continuo/pkg/codebundle"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,17 +58,21 @@ func rejectionsBundle() codebundle.Bundle {
 
 func rejectionInput() domainEvent.RemediationRequested {
 	return domainEvent.RemediationRequested{
-		EventID:        "evt-1",
-		Source:         "validation",
-		ReleaseID:      "rel-1",
-		NodeID:         "analytics.revenue",
-		Category:       "sql_syntax_error",
-		ErrorSignature: "sig-1",
-		Reason:         `column "foo" does not exist`,
-		ErrorExcerpt:   `ERROR: column "foo" does not exist`,
-		DBTLogURI:      "s3://b/logs/rel-1/analytics.revenue.log",
-		CodeBundleURI:  rejectionsBundleURI,
-		ClassifiedAt:   "2026-08-12T09:00:00Z",
+		EventID:       "evt-1",
+		Source:        "validation",
+		ReleaseID:     "rel-1",
+		CodeBundleURI: rejectionsBundleURI,
+		ClassifiedAt:  "2026-08-12T09:00:00Z",
+		Nodes: []domainEvent.RemediationRequestedNode{
+			{
+				NodeID:         "analytics.revenue",
+				Category:       "sql_syntax_error",
+				ErrorSignature: "sig-1",
+				Reason:         `column "foo" does not exist`,
+				ErrorExcerpt:   `ERROR: column "foo" does not exist`,
+				DBTLogURI:      "s3://b/logs/rel-1/analytics.revenue.log",
+			},
+		},
 	}
 }
 
@@ -107,6 +111,49 @@ func TestRejectionsHandler_RecordsRejectionWithBundleCode(t *testing.T) {
 	assert.Equal(t, "select 1", rej.RawCode)
 	assert.Equal(t, "h1", rej.ContentHash)
 	assert.True(t, uow.CommittedTx)
+}
+
+// The batched trigger carries every healable node from one rejected release
+// in a single message; the case base gets one :Rejection per node, and the
+// bundle backing all of them is fetched exactly once.
+func TestRejectionsHandler_RecordsOneRejectionPerNode(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeBundleReader{bundle: codebundle.Bundle{
+		ContractVersion: 1,
+		ReleaseID:       "rel-1",
+		Nodes: map[string]codebundle.Node{
+			"s.a": {RawCode: "select a", ContentHash: "ha"},
+			"s.b": {RawCode: "select b", ContentHash: "hb"},
+		},
+	}}
+	repo := &fakeCaseBaseRepository{}
+
+	in := domainEvent.RemediationRequested{
+		Source: "validation", ReleaseID: "rel-1", CodeBundleURI: "s3://b/code-bundles/rel-1/bundle.json",
+		ClassifiedAt: "2026-08-28T10:00:00Z",
+		Nodes: []domainEvent.RemediationRequestedNode{
+			{NodeID: "s.a", Category: "logic", ErrorSignature: "sig", Reason: "logic:missing_object", DBTLogURI: "s3://l/a"},
+			{NodeID: "s.b", Category: "logic", ErrorSignature: "sig", Reason: "logic:missing_object", DBTLogURI: "s3://l/b"},
+		},
+	}
+	require.NoError(t, newRejectionsHandler(uow, reader, repo).Handle(context.Background(), "1-0", nil, in))
+	require.Len(t, repo.recordRejectionCalls, 2)
+	assert.Equal(t, "s.a", repo.recordRejectionCalls[0].NodeID)
+	assert.Equal(t, "select a", repo.recordRejectionCalls[0].RawCode)
+	assert.Equal(t, "s.b", repo.recordRejectionCalls[1].NodeID)
+	assert.Equal(t, "hb", repo.recordRejectionCalls[1].ContentHash)
+	assert.Len(t, reader.calls, 1, "the bundle is read once per message, not once per node")
+}
+
+func TestRejectionsHandler_EmptyNodesIsPermanent(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	reader := &fakeBundleReader{bundle: rejectionsBundle()}
+	repo := &fakeCaseBaseRepository{}
+
+	err := newRejectionsHandler(uow, reader, repo).Handle(context.Background(), "1-0", nil,
+		domainEvent.RemediationRequested{ReleaseID: "rel-1", ClassifiedAt: "2026-08-28T10:00:00Z"})
+	require.ErrorIs(t, err, pkgevents.ErrPermanent)
+	assert.Empty(t, repo.recordRejectionCalls)
 }
 
 // A compile-stage failure happens before any parse produces a bundle, so
@@ -176,19 +223,21 @@ func TestRejectionsHandler_NodeAbsentFromBundleRecordsWithoutCode(t *testing.T) 
 	assert.True(t, uow.CommittedTx)
 }
 
-// A payload missing an identity field, or carrying a classified_at that
-// cannot be parsed, can never be fixed by redelivery: dropping it permanently
-// is the only option, and it must never reach the repository. An unparseable
-// classified_at is caught here rather than left to zero-value At, which would
-// make the rejection eligible to be "resolved by" essentially any version.
+// A payload missing an identity field, carrying no healable nodes, or an
+// unparseable classified_at can never be fixed by redelivery: dropping it
+// permanently is the only option, and it must never reach the repository. An
+// unparseable classified_at is caught here rather than left to zero-value At,
+// which would make the rejection eligible to be "resolved by" essentially any
+// version.
 func TestRejectionsHandler_PoisonPayloadIsPermanent(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func(*domainEvent.RemediationRequested)
 	}{
 		{"empty release_id", func(in *domainEvent.RemediationRequested) { in.ReleaseID = "" }},
-		{"empty node_id", func(in *domainEvent.RemediationRequested) { in.NodeID = "" }},
-		{"empty error_signature", func(in *domainEvent.RemediationRequested) { in.ErrorSignature = "" }},
+		{"no nodes", func(in *domainEvent.RemediationRequested) { in.Nodes = nil }},
+		{"empty node_id", func(in *domainEvent.RemediationRequested) { in.Nodes[0].NodeID = "" }},
+		{"empty error_signature", func(in *domainEvent.RemediationRequested) { in.Nodes[0].ErrorSignature = "" }},
 		{"unparseable classified_at", func(in *domainEvent.RemediationRequested) { in.ClassifiedAt = "not-a-time" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

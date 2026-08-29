@@ -386,7 +386,7 @@ func main() {
 	releasePromotedVersionsHandler := handlers.NewReleasePromotedVersionsHandler(
 		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, codeVersionRepo, logger)
 
-	// remediation.requested:v1 (rejections) + remediation.pr_opened:v1
+	// remediation.requested:v2 (rejections) + remediation.pr_opened:v1
 	// (proposals) — the failure-precedent case base. The rejections handler
 	// reuses the versions path's bundle reader to fetch the failing code; the
 	// proposals handler needs no bundle. Orchestrator remains the sole Neo4j
@@ -416,7 +416,7 @@ func main() {
 		{"release_promoted", streams.ReleasePromotedV1, streams.OrchestratorReleasePromoted, redis.NewReleasePromotedBinding(releasePromotedHandler, logger)},
 		{"release_promoted_versions", streams.ReleasePromotedV1, streams.OrchestratorReleasePromotedVersions, redis.NewReleasePromotedVersionsBinding(releasePromotedVersionsHandler, logger)},
 		{"promoted_seeds", streams.TriggerPromotedSeedsV1, streams.OrchestratorPromotedSeeds, redis.NewPromotedSeedsBinding(handlePromotedSeedsHandler, logger)},
-		{"remediation_requested_rejections", streams.RemediationRequestedV1, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger)},
+		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger)},
 		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.OrchestratorRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger)},
 	}
 	for _, c := range consumers {
