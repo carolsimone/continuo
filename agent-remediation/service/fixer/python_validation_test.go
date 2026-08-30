@@ -80,38 +80,20 @@ func (f *fakePackager) Merge(_ context.Context, contractDir, repoRoot, service, 
 	return f.merged, nil
 }
 
-// fakeReleases records the two distinct id spaces the gateway is called with:
-// ImageTag reads the ORIGINAL failing release, Submit posts the SHADOW one. It
-// also checks, at submission time, that the merged contract is already in
-// object storage under the shadow release's own key — release-controller reads
-// that object as soon as the submission is accepted, so a submission that
-// precedes the upload is a real ordering defect, not a stylistic one.
+// fakeReleases answers the sibling-failure check's read of the ORIGINAL
+// failing release with a fixed verdict; verdictCalls records the ids it was
+// asked for, so a test can prove the original release is read and not a
+// shadow. A fixer never submits a release or reads an image tag — that is the
+// driver's job — so Submit and ImageTag error if a test forgets to assert
+// that and the production code regresses into calling them.
 type fakeReleases struct {
-	tag           string
-	tagErr        error
-	submitErr     error
-	imageTagCalls [][2]string // (releaseID, service) per call
-	submissions   []ports.ShadowSubmission
-	artifacts     *fakeArtifacts
-	artifactKey   func(releaseID string) string
-	submitSawKey  []bool
-	// verdict answers the fixer's read of the ORIGINAL failing release, whose
-	// NodeErrors name every node that release rejected. verdictCalls records
-	// the ids it was asked for, so a test can prove the original release is
-	// read and not the shadow.
 	verdict      ports.ShadowVerdict
 	verdictErr   error
 	verdictCalls []string
 }
 
-func (f *fakeReleases) Submit(_ context.Context, s ports.ShadowSubmission) error {
-	seen := false
-	if f.artifacts != nil && f.artifactKey != nil {
-		_, seen = f.artifacts.written[f.artifactKey(s.ReleaseID)]
-	}
-	f.submitSawKey = append(f.submitSawKey, seen)
-	f.submissions = append(f.submissions, s)
-	return f.submitErr
+func (f *fakeReleases) Submit(_ context.Context, _ ports.ShadowSubmission) error {
+	return fmt.Errorf("a fixer must never submit a shadow release; the driver does")
 }
 
 func (f *fakeReleases) Verdict(_ context.Context, releaseID string) (ports.ShadowVerdict, error) {
@@ -119,9 +101,8 @@ func (f *fakeReleases) Verdict(_ context.Context, releaseID string) (ports.Shado
 	return f.verdict, f.verdictErr
 }
 
-func (f *fakeReleases) ImageTag(_ context.Context, releaseID, service string) (string, error) {
-	f.imageTagCalls = append(f.imageTagCalls, [2]string{releaseID, service})
-	return f.tag, f.tagErr
+func (f *fakeReleases) ImageTag(_ context.Context, _, _ string) (string, error) {
+	return "", fmt.Errorf("a fixer must never read an image tag; the driver does")
 }
 
 // fakeAttempts returns a fixed set of prior proposal rows and records the
@@ -184,9 +165,6 @@ func pythonRepoTree(t *testing.T) string {
 	return root
 }
 
-const wantShadowID = "shadow-rel-1-analytics.py_daily_kpis-a1"
-const wantArtifactKey = "svc-py/" + wantShadowID + "/contract.yaml"
-
 // pythonInput is the trigger a rejected python node produces.
 func pythonInput() Input {
 	return Input{
@@ -206,10 +184,7 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 	locator := repofs.NewLocator(testLogger())
 	pkgr := &fakePackager{merged: []byte("merged: contract\n")}
 	arts := &fakeArtifacts{}
-	rel := &fakeReleases{
-		tag: "ghcr.io/o/service-py:v9", artifacts: arts,
-		artifactKey: func(id string) string { return "svc-py/" + id + "/contract.yaml" },
-	}
+	rel := &fakeReleases{}
 	svc := Services{
 		LLM: &fakeLLM{queue: []ports.ProposeResult{{
 			Files: []ports.ProposedFile{
@@ -238,12 +213,11 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 // --- tests ------------------------------------------------------------------
 
 // TestPythonValidation_HappyPath walks the whole lane end to end and pins the
-// two things a reordering would break: the tree is packaged only after the
-// model's files are written into it, and the merged contract is in object
-// storage before the shadow release that will read it is submitted. It also
-// pins the two distinct release-id spaces — the image tag is read from the
-// ORIGINAL failing release, while the submission runs under the shadow's own
-// id — which nothing else in this service exercises together.
+// property a reordering would break: the contract directory is packaged only
+// after the model's files are written into it, never from the still-failing
+// tree. The merged contract comes back as Result.ShadowContract for the
+// driver to submit and verify — this lane never uploads or submits anything
+// itself — and the edit names the node it repairs.
 func TestPythonValidation_HappyPath(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, arch, pkgr, rel, arts := pythonSvc(t, root)
@@ -272,26 +246,16 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 	require.Equal(t, siblingYAML, call.sawOnDisk["other.yml"],
 		"a file the model did not return must be left exactly as the repository holds it")
 
-	// The merged document is uploaded under the shadow release's own key.
-	require.Equal(t, "merged: contract\n", arts.written[wantArtifactKey])
+	// The merged contract is returned in memory for the driver, not uploaded.
+	require.Equal(t, []byte("merged: contract\n"), r.ShadowContract)
 
-	// Image tag comes from the ORIGINAL failing release id.
-	require.Equal(t, [][2]string{{"rel-1", "svc-py"}}, rel.imageTagCalls)
+	// The sibling check read the ORIGINAL failing release, not a shadow.
+	require.Equal(t, []string{"rel-1"}, rel.verdictCalls)
 
-	// The submission runs under the SHADOW release id, reusing that tag, and
-	// happens only once the merged contract is already in object storage.
-	require.Len(t, rel.submissions, 1)
-	require.Equal(t, ports.ShadowSubmission{
-		ReleaseID: wantShadowID, Service: "svc-py",
-		ImageTag: "ghcr.io/o/service-py:v9", Repo: "o/demo", CommitSHA: "deadbeef",
-	}, rel.submissions[0])
-	require.Equal(t, []bool{true}, rel.submitSawKey,
-		"the merged contract must be uploaded before the shadow release is submitted")
-
-	// The proposal awaits verification and carries the edit.
+	// The proposal is complete and carries the edit; the driver decides
+	// whether it survives a shadow release.
 	p := r.Proposal
-	require.Equal(t, proposal.StatusVerifying, p.Status)
-	require.Equal(t, wantShadowID, p.ShadowReleaseID)
+	require.Equal(t, proposal.StatusProposed, p.Status)
 	require.True(t, p.SourceResolved)
 	require.Equal(t, "declared the column the script produces", p.Rationale)
 	require.Equal(t, proposal.ConfidenceHigh, p.Confidence)
@@ -300,6 +264,7 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 	require.Equal(t, "deadbeef", p.CommitSHA)
 	require.Len(t, p.Edits, 1)
 	require.Equal(t, "services/service-py/contracts/py_daily_kpis.yml", p.Edits[0].Path)
+	require.Equal(t, "analytics.py_daily_kpis", p.Edits[0].TargetNodeID)
 	require.Equal(t, p.Edits[0].Path, p.FilePath)
 	require.Equal(t, correctedYAML, arts.written["proposed-fix/rel-1/analytics.py_daily_kpis/attempt-1/edit-0.content"])
 	require.Contains(t, arts.written["proposed-fix/rel-1/analytics.py_daily_kpis/attempt-1/edit-0.diff"], "+      - name: revenue_total")
@@ -311,7 +276,7 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 // downstream of the search runs.
 func TestPythonValidation_NodeNotDeclared_Skips(t *testing.T) {
 	root := pythonRepoTree(t)
-	svc, arch, pkgr, rel, _ := pythonSvc(t, root)
+	svc, arch, pkgr, _, _ := pythonSvc(t, root)
 	llm := &fakeLLM{}
 	svc.LLM = llm
 
@@ -324,7 +289,6 @@ func TestPythonValidation_NodeNotDeclared_Skips(t *testing.T) {
 	require.Contains(t, r.Proposal.Rationale, "not declared")
 	require.Equal(t, 0, llm.calls)
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, rel.submissions)
 	require.Equal(t, 1, arch.cleanups)
 }
 
@@ -357,7 +321,7 @@ func TestPythonValidation_PathOutsideContractDir_Fails(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := pythonRepoTree(t)
-			svc, _, pkgr, rel, _ := pythonSvc(t, root)
+			svc, _, pkgr, _, _ := pythonSvc(t, root)
 			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 				Files:      []ports.ProposedFile{{Path: badPath, Content: "nodes: []\n"}},
 				Confidence: "high",
@@ -369,7 +333,6 @@ func TestPythonValidation_PathOutsideContractDir_Fails(t *testing.T) {
 			require.Contains(t, r.Proposal.Rationale, badPath,
 				"a failed attempt must record why, naming the path that was refused")
 			require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
-			require.Empty(t, rel.submissions)
 
 			// The tree is untouched: the declaring file still holds the failing
 			// contract, so a later attempt starts from the real source.
@@ -381,10 +344,10 @@ func TestPythonValidation_PathOutsideContractDir_Fails(t *testing.T) {
 }
 
 // TestPythonValidation_NoFiles_Fails verifies that a model that returned no
-// files at all is a failed attempt, not a submitted shadow release.
+// files at all is a failed attempt, not a packaged contract.
 func TestPythonValidation_NoFiles_Fails(t *testing.T) {
 	root := pythonRepoTree(t)
-	svc, _, pkgr, rel, _ := pythonSvc(t, root)
+	svc, _, pkgr, _, _ := pythonSvc(t, root)
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Confidence: "high"}}}
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
@@ -393,7 +356,6 @@ func TestPythonValidation_NoFiles_Fails(t *testing.T) {
 	require.NotEmpty(t, r.Proposal.Rationale,
 		"an operator must see why the attempt failed, not an unexplained failed row")
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, rel.submissions)
 }
 
 // TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence verifies the
@@ -429,8 +391,7 @@ func TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence(t *testing.T)
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, in)
 	require.NoError(t, err)
-	require.Equal(t, proposal.StatusVerifying, r.Proposal.Status)
-	require.Equal(t, "shadow-rel-1-analytics.py_daily_kpis-a2", r.Proposal.ShadowReleaseID)
+	require.Equal(t, proposal.StatusProposed, r.Proposal.Status)
 
 	require.Equal(t, repository.ProposalFilter{
 		ReleaseID: "rel-1", Source: "validation", NodeID: "analytics.py_daily_kpis",
@@ -448,7 +409,7 @@ func TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence(t *testing.T)
 // bundle entry each cost the prompt a section but never the heal.
 func TestPythonValidation_EvidenceDegradesNeverBlocks(t *testing.T) {
 	root := pythonRepoTree(t)
-	svc, _, _, rel, _ := pythonSvc(t, root)
+	svc, _, _, _, _ := pythonSvc(t, root)
 	svc.Upstream = &fakeUpstream{err: fmt.Errorf("orchestrator down")}
 	svc.Precedents = &fakePrecedents{err: fmt.Errorf("orchestrator down")}
 	svc.PriorAttempts = &fakeAttempts{err: fmt.Errorf("db down")}
@@ -456,8 +417,8 @@ func TestPythonValidation_EvidenceDegradesNeverBlocks(t *testing.T) {
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
-	require.Equal(t, proposal.StatusVerifying, r.Proposal.Status)
-	require.Len(t, rel.submissions, 1)
+	require.Equal(t, proposal.StatusProposed, r.Proposal.Status)
+	require.NotEmpty(t, r.ShadowContract)
 }
 
 // TestPythonValidation_TransientBundleError_Redelivers verifies that a
@@ -465,12 +426,11 @@ func TestPythonValidation_EvidenceDegradesNeverBlocks(t *testing.T) {
 // redelivered, rather than proposing a fix from evidence it could not read.
 func TestPythonValidation_TransientBundleError_Redelivers(t *testing.T) {
 	root := pythonRepoTree(t)
-	svc, arch, _, rel, _ := pythonSvc(t, root)
+	svc, arch, _, _, _ := pythonSvc(t, root)
 	svc.CandidateSource = &fakeCandidateSource{err: fmt.Errorf("connection reset")}
 
 	_, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.Error(t, err)
-	require.Empty(t, rel.submissions)
 	require.Equal(t, 1, arch.cleanups, "the checkout is released even when the attempt fails")
 }
 
@@ -553,23 +513,21 @@ func TestFor_NonValidationSourcesIgnoreNodeType(t *testing.T) {
 }
 
 // TestPythonValidation_TransientFailuresRedeliver verifies that each
-// collaborator which can fail transiently — the checkout fetch, the packaging
-// CLI, the image-tag read, and the shadow submission — surfaces its error so
-// the trigger is redelivered. Swallowing any of them would record an attempt
-// that consumed one of the three the failure is allowed, while nothing was ever
-// submitted for verification.
+// collaborator which can fail transiently — the checkout fetch and the
+// packaging CLI — surfaces its error so the trigger is redelivered.
+// Swallowing either would record an attempt that consumed one of the three
+// the failure is allowed, while nothing was ever proposed for the driver to
+// verify.
 func TestPythonValidation_TransientFailuresRedeliver(t *testing.T) {
 	boom := fmt.Errorf("boom")
-	cases := map[string]func(*fakeArchive, *fakePackager, *fakeReleases){
-		"checkout fetch": func(a *fakeArchive, _ *fakePackager, _ *fakeReleases) { a.err = boom },
-		"packaging":      func(_ *fakeArchive, p *fakePackager, _ *fakeReleases) { p.err = boom },
-		"image tag":      func(_ *fakeArchive, _ *fakePackager, r *fakeReleases) { r.tagErr = boom },
-		"submission":     func(_ *fakeArchive, _ *fakePackager, r *fakeReleases) { r.submitErr = boom },
+	cases := map[string]func(*fakeArchive, *fakePackager){
+		"checkout fetch": func(a *fakeArchive, _ *fakePackager) { a.err = boom },
+		"packaging":      func(_ *fakeArchive, p *fakePackager) { p.err = boom },
 	}
 	for name, breakIt := range cases {
 		t.Run(name, func(t *testing.T) {
-			svc, arch, pkgr, rel, _ := pythonSvc(t, pythonRepoTree(t))
-			breakIt(arch, pkgr, rel)
+			svc, arch, pkgr, _, _ := pythonSvc(t, pythonRepoTree(t))
+			breakIt(arch, pkgr)
 
 			r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 			require.ErrorIs(t, err, boom)
@@ -590,7 +548,7 @@ func TestPythonValidation_TransientFailuresRedeliver(t *testing.T) {
 // It is recorded as a failed attempt instead, keeping the CLI's own complaint
 // as the rationale so an operator can read why.
 func TestPythonValidation_RejectedPackaging_Fails(t *testing.T) {
-	svc, arch, pkgr, rel, arts := pythonSvc(t, pythonRepoTree(t))
+	svc, arch, pkgr, _, arts := pythonSvc(t, pythonRepoTree(t))
 	pkgr.err = fmt.Errorf("continuo-runtime merge: node analytics.py_daily_kpis: output_columns is required: %w",
 		ports.ErrContractRejected)
 
@@ -599,19 +557,19 @@ func TestPythonValidation_RejectedPackaging_Fails(t *testing.T) {
 	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
 	require.Contains(t, r.Proposal.Rationale, "output_columns is required",
 		"the tool's own complaint is the evidence the next attempt is shown")
-	require.Empty(t, rel.submissions, "nothing was packaged, so nothing may be submitted")
+	require.Empty(t, r.ShadowContract, "nothing was packaged, so there is no contract to hand the driver")
 	require.Empty(t, arts.written, "a contract that could not be packaged writes no artifacts")
 	require.Equal(t, 1, arch.cleanups, "the checkout is released even when the attempt fails")
 }
 
 // TestPythonValidation_UnusableTrigger_Skips verifies that a trigger this lane
 // can never act on stops with the reason recorded instead of being redelivered
-// forever. A trigger naming no service has no artifact location and no release
-// to submit under; a repository or commit that no longer exists cannot be
-// fetched however many times the message comes back.
+// forever. A trigger naming no service has no artifact location for its edits;
+// a repository or commit that no longer exists cannot be fetched however many
+// times the message comes back.
 func TestPythonValidation_UnusableTrigger_Skips(t *testing.T) {
 	t.Run("no service", func(t *testing.T) {
-		svc, arch, _, rel, _ := pythonSvc(t, pythonRepoTree(t))
+		svc, arch, _, _, _ := pythonSvc(t, pythonRepoTree(t))
 		in := pythonInput()
 		in.Service = ""
 
@@ -620,18 +578,16 @@ func TestPythonValidation_UnusableTrigger_Skips(t *testing.T) {
 		require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
 		require.Contains(t, r.Proposal.Rationale, "service")
 		require.Equal(t, 0, arch.calls)
-		require.Empty(t, rel.submissions)
 	})
 
 	t.Run("repository or commit gone", func(t *testing.T) {
-		svc, arch, _, rel, _ := pythonSvc(t, pythonRepoTree(t))
+		svc, arch, _, _, _ := pythonSvc(t, pythonRepoTree(t))
 		arch.err = ports.ErrSourceNotFound
 
 		r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 		require.NoError(t, err)
 		require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
 		require.NotEmpty(t, r.Proposal.Rationale)
-		require.Empty(t, rel.submissions)
 	})
 }
 
@@ -644,7 +600,7 @@ func TestPythonValidation_UnusableTrigger_Skips(t *testing.T) {
 // what verifying the real bytes is meant to rule out.
 func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
 	root := pythonRepoTree(t)
-	svc, _, pkgr, rel, arts := pythonSvc(t, root)
+	svc, _, pkgr, _, arts := pythonSvc(t, root)
 	const target = "services/service-py/contracts/py_daily_kpis.yml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{
@@ -659,7 +615,6 @@ func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
 	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
 	require.Contains(t, r.Proposal.Rationale, target)
 	require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
-	require.Empty(t, rel.submissions)
 	require.Empty(t, arts.written, "a refused answer writes no artifacts")
 
 	// The checkout is untouched, so a later attempt starts from the real source.
@@ -732,7 +687,7 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := pythonRepoTree(t)
-			svc, _, pkgr, rel, arts := pythonSvc(t, root)
+			svc, _, pkgr, _, arts := pythonSvc(t, root)
 			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: tc.files, Confidence: "high"}}}
 
 			r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
@@ -742,7 +697,6 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 			require.Contains(t, r.Proposal.Rationale, tc.want,
 				"a failed attempt must record what the answer moved")
 			require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
-			require.Empty(t, rel.submissions, "no release slot is spent proving a deletion")
 			require.Empty(t, arts.written, "a refused answer writes no artifacts")
 		})
 	}
@@ -758,7 +712,7 @@ func TestPythonValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 // kind "" -> "python-model" and being refused by identityBreach.
 func TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies(t *testing.T) {
 	root := pythonRepoTree(t)
-	svc, _, pkgr, rel, _ := pythonSvc(t, root)
+	svc, _, pkgr, _, _ := pythonSvc(t, root)
 	const answerWithExplicitKind = `nodes:
   - schema: analytics
     table: py_daily_kpis
@@ -776,10 +730,10 @@ func TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies(t *testing.T) {
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
-	require.Equal(t, proposal.StatusVerifying, r.Proposal.Status,
-		"writing the same default kind explicitly must verify like any other accepted fix")
+	require.Equal(t, proposal.StatusProposed, r.Proposal.Status,
+		"writing the same default kind explicitly must be proposed like any other accepted fix")
 	require.Len(t, pkgr.calls, 1)
-	require.Len(t, rel.submissions, 1)
+	require.NotEmpty(t, r.ShadowContract)
 }
 
 // TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails covers the
@@ -791,7 +745,7 @@ func TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies(t *testing.T) {
 // could not search either.
 func TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails(t *testing.T) {
 	root := pythonRepoTree(t)
-	svc, _, pkgr, rel, _ := pythonSvc(t, root)
+	svc, _, pkgr, _, _ := pythonSvc(t, root)
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{
 			{Path: "services/service-py/contracts/copy.yml", Content: correctedYAML},
@@ -804,7 +758,6 @@ func TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails(t *testing.T) 
 	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
 	require.Contains(t, r.Proposal.Rationale, "analytics.py_daily_kpis")
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, rel.submissions)
 }
 
 // TestPythonValidation_AnswerThatDropsADeclaredRead_Fails covers the cheapest
@@ -863,7 +816,7 @@ func TestPythonValidation_AnswerThatDropsADeclaredRead_Fails(t *testing.T) {
 	for name, tc := range refused {
 		t.Run(name, func(t *testing.T) {
 			root := pythonRepoTree(t)
-			svc, _, pkgr, rel, arts := pythonSvc(t, root)
+			svc, _, pkgr, _, arts := pythonSvc(t, root)
 			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: tc.files, Confidence: "high"}}}
 
 			r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
@@ -873,7 +826,6 @@ func TestPythonValidation_AnswerThatDropsADeclaredRead_Fails(t *testing.T) {
 			require.Contains(t, r.Proposal.Rationale, tc.want,
 				"a failed attempt must name the read the answer dropped")
 			require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
-			require.Empty(t, rel.submissions, "no release slot is spent proving a deletion")
 			require.Empty(t, arts.written, "a refused answer writes no artifacts")
 		})
 	}
@@ -903,84 +855,17 @@ func TestPythonValidation_AnswerThatDropsADeclaredRead_Fails(t *testing.T) {
 	for name, files := range allowed {
 		t.Run(name, func(t *testing.T) {
 			root := pythonRepoTree(t)
-			svc, _, pkgr, rel, _ := pythonSvc(t, root)
+			svc, _, pkgr, _, _ := pythonSvc(t, root)
 			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{Files: files, Confidence: "high"}}}
 
 			r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 			require.NoError(t, err)
-			require.Equal(t, proposal.StatusVerifying, r.Proposal.Status,
-				"a fix that keeps every declared read must reach a shadow release")
+			require.Equal(t, proposal.StatusProposed, r.Proposal.Status,
+				"a fix that keeps every declared read must be proposed")
 			require.Len(t, pkgr.calls, 1)
-			require.Len(t, rel.submissions, 1)
+			require.NotEmpty(t, r.ShadowContract)
 		})
 	}
-}
-
-// TestShadowReleaseID_BoundedForTheCandidateSchema pins the length rule the
-// minted id has to satisfy, and what survives when it cannot be satisfied
-// verbatim.
-//
-// The id is not just a label: release-controller derives the release's
-// candidate schema from it, as "_candidate_" plus the id with every character
-// outside [A-Za-z0-9_] replaced one-for-one. PostgreSQL silently truncates an
-// identifier past 63 bytes, and what truncation removes is exactly the tail
-// that discriminates one attempt from another — so two attempts at the same
-// node would share a schema and each would validate against the other's
-// leftovers. That is a wrong verdict, which is the one output this lane exists
-// to produce.
-func TestShadowReleaseID_BoundedForTheCandidateSchema(t *testing.T) {
-	// A node name long enough to push the untruncated id past the bound.
-	longNode := "analytics.py_daily_kpis_by_region_and_channel"
-
-	t.Run("a short id is left readable", func(t *testing.T) {
-		in := pythonInput()
-		require.Equal(t, wantShadowID, shadowReleaseID(in),
-			"an id that already fits must not be hashed")
-	})
-
-	t.Run("an overlong id is bounded", func(t *testing.T) {
-		in := pythonInput()
-		in.NodeID = longNode
-		in.ReleaseID = "rel-c627c38-111"
-		id := shadowReleaseID(in)
-		require.Greater(t, len("shadow-"+in.ReleaseID+"-"+in.NodeID+"-a1"), maxShadowReleaseIDLen,
-			"fixture check: this input must actually overflow, or the test proves nothing")
-		require.LessOrEqual(t, len(id), maxShadowReleaseIDLen)
-	})
-
-	t.Run("the prefix and the attempt survive truncation", func(t *testing.T) {
-		in := pythonInput()
-		in.NodeID = longNode
-		in.Attempt = 2
-		id := shadowReleaseID(in)
-		require.True(t, strings.HasPrefix(id, "shadow-"),
-			"every log line and UI row reads the shadow- prefix")
-		require.True(t, strings.HasSuffix(id, "-a2"),
-			"the attempt number is what tells two attempts at one node apart")
-	})
-
-	t.Run("two attempts at one node stay distinct", func(t *testing.T) {
-		a1, a2 := pythonInput(), pythonInput()
-		a1.NodeID, a2.NodeID = longNode, longNode
-		a1.Attempt, a2.Attempt = 1, 2
-		require.NotEqual(t, shadowReleaseID(a1), shadowReleaseID(a2))
-	})
-
-	t.Run("nodes differing only past the cut stay distinct", func(t *testing.T) {
-		a, b := pythonInput(), pythonInput()
-		a.NodeID = longNode + "_north"
-		b.NodeID = longNode + "_south"
-		require.NotEqual(t, shadowReleaseID(a), shadowReleaseID(b),
-			"truncation alone would map both to one schema")
-	})
-
-	t.Run("the same input always mints the same id", func(t *testing.T) {
-		in := pythonInput()
-		in.NodeID = longNode
-		require.Equal(t, shadowReleaseID(in), shadowReleaseID(in),
-			"release-controller's submission is idempotent on this id, so a "+
-				"redelivered attempt must resubmit under the same one")
-	})
 }
 
 // TestPythonValidation_SiblingFailureInSameDirectory_Skips covers the case a
@@ -1017,7 +902,7 @@ func TestPythonValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 		"the sibling check reads the ORIGINAL failing release, not a shadow")
 	require.Equal(t, 0, llm.calls, "no model call is worth making for an unverifiable fix")
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, rel.submissions, "no release slot is spent on a shadow that cannot pass")
+	require.Empty(t, r.ShadowContract, "no release slot is spent on a shadow that cannot pass")
 	require.Empty(t, arts.written)
 }
 
@@ -1042,16 +927,15 @@ func TestPythonValidation_FailureElsewhereDoesNotBlock(t *testing.T) {
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
-	require.Equal(t, proposal.StatusVerifying, r.Proposal.Status)
+	require.Equal(t, proposal.StatusProposed, r.Proposal.Status)
 	require.Len(t, pkgr.calls, 1)
-	require.Len(t, rel.submissions, 1)
+	require.NotEmpty(t, r.ShadowContract)
 }
 
 // TestPythonValidation_UnreadableVerdictIsTransient pins that a release read
 // which fails is not answered by guessing. The sibling check decides whether a
 // shadow release can mean anything at all, so an unanswerable read ends the
-// call with an error — the driver redelivers — exactly as the image-tag read of
-// the same release already does.
+// call with an error — the driver redelivers.
 func TestPythonValidation_UnreadableVerdictIsTransient(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, pkgr, rel, _ := pythonSvc(t, root)
@@ -1061,5 +945,4 @@ func TestPythonValidation_UnreadableVerdictIsTransient(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "release-controller unreachable")
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, rel.submissions)
 }

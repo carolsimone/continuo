@@ -2,8 +2,6 @@ package fixer
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -25,19 +23,21 @@ import (
 // what the contract promised. So the fix is made in that yaml, and it cannot be
 // judged by reading it back — only by running it.
 //
-// The fixer therefore ends in a shadow release rather than a proposal: it
-// checks out the team's repository at the failing commit, finds the file
-// declaring the node, asks the model to correct it, packages the result with
-// the same tool the team's own CI runs after a merge, and submits it as a real
-// release that runs the full parse -> candidate-schema -> validation pipeline
-// but stops at "validated" instead of promoting. The proposal it returns is
-// 'verifying'; a reconciler resolves it to 'proposed' or 'failed' once that
-// release reaches a verdict. Nothing here re-implements any validation rule —
-// dialect, bind, and hash semantics are identical to a normal release by
-// construction, because it IS one.
+// The fixer therefore cannot judge its own answer: it checks out the team's
+// repository at the failing commit, finds the file declaring the node, asks
+// the model to correct it, and packages the result with the same tool the
+// team's own CI runs after a merge — the merged contract a real release would
+// run. It returns that contract as Result.ShadowContract alongside the
+// proposed edits, with Status=StatusProposed; the driver collects it with
+// every other edit for the release and submits a shadow release that runs the
+// full parse -> candidate-schema -> validation pipeline but stops at
+// "validated" instead of promoting, deciding whether the fix survives.
+// Nothing here re-implements any validation rule — dialect, bind, and hash
+// semantics are identical to a normal release by construction, because a
+// shadow release IS one.
 //
 // Locating the contract file and everything from the model call through
-// submitting and recording the shadow release (locateContractForFix,
+// packaging the merged contract (locateContractForFix,
 // proposeContractFixViaShadow) is shared code, not merely a similar shape,
 // with the python-csv lane (csvValidationFixer): both call the same two
 // functions. The two lanes differ only in the two seams passed into
@@ -63,23 +63,24 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 		return *skip, nil
 	}
 
-	// Steps 4-10 — evidence, model call, apply, guard, package, submit, and
-	// audit artifacts are identical in shape to every contract-fix lane that
-	// ends in a shadow release; only what evidence is assembled, what prompt it
-	// becomes, and what "the fix preserved the node's declaration" means are
-	// specific to a python node, so those three are passed in as the seams.
+	// Steps 4-7 — evidence, model call, apply, guard, package, and audit
+	// artifacts are identical in shape to every contract-fix lane whose answer
+	// is judged by a shadow release; only what evidence is assembled, what
+	// prompt it becomes, and what "the fix preserved the node's declaration"
+	// means are specific to a python node, so those three are passed in as the
+	// seams.
 	return proposeContractFixViaShadow(ctx, svc, in, schema, table, root, located,
 		buildPythonProposeRequest, declarationBreach)
 }
 
-// locateContractForFix runs the steps every contract-fix lane that ends in a
-// shadow release needs before the model is ever consulted: split the node id
-// into schema and table, fetch the repository checkout at the failing
-// commit, locate the contract file declaring the node, and refuse to proceed
-// if another node declared in the same contract directory also failed the
-// original release (the shadow release this fix ends in re-runs the whole
-// packaged directory, so a second broken node there would reject it however
-// correct this fix is — see siblingFailure).
+// locateContractForFix runs the steps every contract-fix lane whose answer is
+// judged by a shadow release needs before the model is ever consulted: split
+// the node id into schema and table, fetch the repository checkout at the
+// failing commit, locate the contract file declaring the node, and refuse to
+// proceed if another node declared in the same contract directory also
+// failed the original release (the shadow release the driver later submits
+// re-runs the whole packaged directory, so a second broken node there would
+// reject it however correct this fix is — see siblingFailure).
 //
 // cleanup is non-nil whenever Archive.Fetch actually ran and succeeded —
 // including when the outcome that follows is a skip — so the caller can
@@ -99,9 +100,9 @@ func locateContractForFix(ctx context.Context, svc Services, in Input) (
 			"node id %q does not name a schema and a table, so the contract file declaring it cannot be found", in.NodeID))
 		return
 	}
-	// The service names both the object-storage location the merged contract
-	// is uploaded to and the release the fix is submitted as, so a trigger
-	// without one has nowhere to put the fix and nothing to submit it under.
+	// The service is what the driver later keys the merged contract's upload
+	// and the shadow release's submission by, so a trigger without one names
+	// nothing the fix could ever be verified under.
 	if in.Service == "" {
 		skip = skipResult(svc, in, "the trigger names no service, so the fix has no release to be verified under")
 		return
@@ -172,13 +173,16 @@ func buildPythonProposeRequest(ctx context.Context, svc Services, in Input, loca
 }
 
 // proposeContractFixViaShadow carries the orchestration shared by every
-// contract-fix lane that verifies its answer with a shadow release: one model
-// call, applying and guarding the answer, packaging and submitting it as a
-// shadow release, and writing the audit artifacts. buildRequest assembles the
-// lane's evidence into the LLM request; a returned error is transient (the
-// driver redelivers). checkDeclarations is the post-apply guard: it returns ""
-// when the answer preserved what the fix is required not to change, or the
-// reason to fail the attempt otherwise.
+// contract-fix lane whose answer can only be judged by a shadow release: one
+// model call, applying and guarding the answer, and packaging it into the
+// merged contract a shadow release would run, plus writing the audit
+// artifacts. It never submits anything — packaging the whole release from
+// every edited service's contract and deciding whether the fix survives
+// belongs to the driver, which collects this and every other cluster's edits
+// first. buildRequest assembles the lane's evidence into the LLM request; a
+// returned error is transient (the driver redelivers). checkDeclarations is
+// the post-apply guard: it returns "" when the answer preserved what the fix
+// is required not to change, or the reason to fail the attempt otherwise.
 func proposeContractFixViaShadow(
 	ctx context.Context, svc Services, in Input, schema, table, root string, located ports.Located,
 	buildRequest func(ctx context.Context, svc Services, in Input, located ports.Located) (prompt.ProposeRequest, error),
@@ -275,64 +279,41 @@ func proposeContractFixViaShadow(
 		return Result{}, fmt.Errorf("package contract for %s: %w", in.NodeID, err)
 	}
 
-	// Step 7 — the merged contract goes to the per-release artifact location
-	// release-controller reads a python service's release payload from, under
-	// the shadow release's own id.
-	shadowID := shadowReleaseID(in)
-	if _, err := svc.Artifacts.Write(ctx,
-		fmt.Sprintf("%s/%s/contract.yaml", in.Service, shadowID), string(merged), "application/yaml"); err != nil {
-		return Result{}, fmt.Errorf("write shadow contract: %w", err)
-	}
-
-	// Step 8 — submit. The image tag is read from the ORIGINAL failing release
-	// (the trigger carries none, and the shadow runs the same image); the
-	// submission itself runs under the shadow's own id. This happens after the
-	// upload because release-controller reads that object as soon as the
-	// submission is accepted.
-	imageTag, err := svc.Releases.ImageTag(ctx, in.ReleaseID, in.Service)
-	if err != nil {
-		return Result{}, fmt.Errorf("read image tag for %s: %w", in.Service, err)
-	}
-	if err := svc.Releases.Submit(ctx, ports.ShadowSubmission{
-		ReleaseID: shadowID,
-		Service:   in.Service,
-		ImageTag:  imageTag,
-		Repo:      in.Repo,
-		CommitSHA: in.CommitSHA,
-	}); err != nil {
-		return Result{}, fmt.Errorf("submit shadow release %s: %w", shadowID, err)
-	}
-
-	// Step 9 — one audit artifact pair per edited file, diffed against what the
-	// repository held before the answer was applied.
+	// Step 7 — one audit artifact pair per edited file, diffed against what the
+	// repository held before the answer was applied, each naming the node
+	// under repair as its target.
 	edits := make([]proposal.FileEdit, 0, len(res.Files))
 	for i, f := range res.Files {
 		edit, werr := writeEditArtifacts(ctx, svc, in, in.Attempt, i, f.Path, originals[f.Path], f.Content)
 		if werr != nil {
 			return Result{}, werr
 		}
+		edit.TargetNodeID = in.NodeID
 		edits = append(edits, edit)
 	}
 
-	svc.Logger.Info("python contract fix submitted for shadow verification",
-		"node", in.NodeID, "node_type", in.NodeType, "release", in.ReleaseID, "shadow_release", shadowID, "files", len(edits))
+	svc.Logger.Info("python contract fix proposed",
+		"node", in.NodeID, "node_type", in.NodeType, "release", in.ReleaseID, "files", len(edits))
 
-	return Result{Proposal: proposal.Proposal{
-		Status:          proposal.StatusVerifying,
-		ShadowReleaseID: shadowID,
-		Confidence:      normalizeConfidence(res.Confidence),
-		Rationale:       res.Rationale,
-		Model:           res.Model,
-		Repo:            in.Repo,
-		CommitSHA:       in.CommitSHA,
-		FilePath:        edits[0].Path,
-		ProposedSQLURI:  edits[0].ContentURI,
-		DiffURI:         edits[0].DiffURI,
-		// The edits name real files at a real commit, which is what a pull
-		// request needs; the shadow release decides whether they are right.
-		SourceResolved: true,
-		Edits:          edits,
-	}}, nil
+	return Result{
+		ShadowContract: merged,
+		Proposal: proposal.Proposal{
+			Status:         proposal.StatusProposed,
+			Confidence:     normalizeConfidence(res.Confidence),
+			Rationale:      res.Rationale,
+			Model:          res.Model,
+			Repo:           in.Repo,
+			CommitSHA:      in.CommitSHA,
+			FilePath:       edits[0].Path,
+			ProposedSQLURI: edits[0].ContentURI,
+			DiffURI:        edits[0].DiffURI,
+			// The edits name real files at a real commit, which is what a pull
+			// request needs; the shadow release the driver submits from
+			// ShadowContract decides whether they are right.
+			SourceResolved: true,
+			Edits:          edits,
+		},
+	}, nil
 }
 
 // declarationBreach compares the node declarations the answer's own files held
@@ -655,64 +636,6 @@ func splitNodeID(nodeID string) (schema, table string, ok bool) {
 		return "", "", false
 	}
 	return schema, table, true
-}
-
-// maxShadowReleaseIDLen bounds the minted id so every name derived from it
-// downstream stays legal. The tightest consumer is the candidate schema
-// release-controller creates for the release, built as "_candidate_" followed
-// by the release id with every character outside [A-Za-z0-9_] replaced
-// one-for-one — so the schema is exactly 11 bytes longer than the id.
-// PostgreSQL truncates an identifier past 63 bytes rather than rejecting it,
-// and what it cuts is the tail: the attempt suffix, then the node name. Two
-// attempts at one node would then share a schema and each would validate
-// against the other's leftovers, so the id is bounded here instead.
-const maxShadowReleaseIDLen = 63 - len("_candidate_")
-
-// shadowIDPrefix marks a release as a fix verification at a glance, in release
-// listings and in every log line that names one.
-const shadowIDPrefix = "shadow-"
-
-// shadowReleaseID mints the id of the release that verifies this attempt. It
-// embeds the failing release, node, and attempt so it is unique per attempt and
-// legible in release listings, and so a redelivery of the same attempt reuses
-// the same id — release-controller's submission is idempotent on it.
-//
-// Past maxShadowReleaseIDLen the middle — the failing release and node — is
-// shortened and given a digest of what it held. The prefix and the attempt
-// number are kept whole because they are what a reader identifies the release
-// by, and the digest is what keeps two nodes whose names diverge only past the
-// cut on separate candidate schemas.
-func shadowReleaseID(in Input) string {
-	middle := sanitizeIDSegment(in.ReleaseID) + "-" + sanitizeIDSegment(in.NodeID)
-	suffix := fmt.Sprintf("-a%d", in.Attempt)
-	if len(shadowIDPrefix)+len(middle)+len(suffix) <= maxShadowReleaseIDLen {
-		return shadowIDPrefix + middle + suffix
-	}
-	digest := sha256.Sum256([]byte(middle))
-	tail := hex.EncodeToString(digest[:4]) // 8 hex chars
-	// Reserve the digest and its separator before cutting, so shortening eats
-	// the readable head rather than the part that restores uniqueness.
-	budget := maxShadowReleaseIDLen - len(shadowIDPrefix) - len(suffix) - len(tail) - 1
-	if budget < 0 {
-		budget = 0
-	}
-	return shadowIDPrefix + strings.TrimRight(middle[:budget], "-") + "-" + tail + suffix
-}
-
-// sanitizeIDSegment reduces a value to the characters a release id and the S3
-// key derived from it can safely carry, replacing every other character with a
-// dash. Dots, dashes, and underscores survive, so a node id reads unchanged.
-func sanitizeIDSegment(s string) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			return r
-		case r == '.', r == '-', r == '_':
-			return r
-		default:
-			return '-'
-		}
-	}, s)
 }
 
 // withinDir reports whether a model-proposed repository path resolves inside

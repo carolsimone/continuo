@@ -33,10 +33,10 @@ const csvReadKey = "csv"
 // own reads section holds.
 //
 // Locating the failing node's contract file, verifying no sibling in the same
-// directory also failed (so the shadow release this fix ends in can actually
-// pass), and everything from the model call through submitting and recording
-// the shadow release is not merely similar in shape to the python-model
-// lane's — it is the same code, shared through locateContractForFix and
+// directory also failed (so the shadow release the driver later submits can
+// actually pass), and everything from the model call through packaging the
+// merged contract is not merely similar in shape to the python-model lane's —
+// it is the same code, shared through locateContractForFix and
 // proposeContractFixViaShadow. This type differs from pythonValidationFixer
 // only in the two seams passed into proposeContractFixViaShadow: what
 // evidence it shows the model (buildCsvProposeRequest) and what "the fix
