@@ -1265,6 +1265,79 @@ func TestProposeFix_UpstreamTargetUnlocatable_FallsBackToIndependent(t *testing.
 	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.w"].Status)
 }
 
+// TestProposeFix_UpstreamDeclined_FallsBackToIndependent: the model is asked to
+// repair the changed ancestor and declines (low confidence). One declined answer
+// must not abandon every member of the cluster — each falls back to its own
+// two-step fix, exactly as an unlocatable ancestor does.
+func TestProposeFix_UpstreamDeclined_FallsBackToIndependent(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/log": "column u.amount does not exist", "s3://b/sql-v": "select id from s.v", "s3://b/sql-w": "select id from s.w",
+		"s3://art/proposed-fix/r1/s.v/attempt-1.source.sql": "select id, amount from s.base",
+		"s3://art/proposed-fix/r1/s.w/attempt-1.source.sql": "select id, amount from s.base",
+	}}
+	fixed := ports.ProposeResult{ProposedSQL: "select id, amount from s.base", Rationale: "restored amount", Confidence: "high", Model: "m"}
+	llm := fakeLLM{queue: []ports.ProposeResult{
+		// The upstream call: a real answer the model itself rates low.
+		{ProposedSQL: "select id, amount from s.base", Rationale: "unsure", Confidence: "low", Model: "m"},
+		fixed, fixed, // s.v: candidate diagnosis, then the source fix
+		fixed, fixed, // s.w: the same
+	}}
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "tag-1"}
+	d := deps(u, ev, &llm, art)
+	d.Releases = gw
+	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select id from s.base", Runtime: ports.RuntimeDbt}}
+	d.Versions = fakeVersions{v: ports.CurrentVersion{RawCode: "select id, amount from s.base"}, ok: true}
+	d.Locator = fakeLocator{filePath: "models/u.sql", serviceName: "svc"}
+
+	require.NoError(t, ProposeFix(context.Background(), d, upstreamTrigger()))
+
+	p := u.pr.inserted[0]
+	assert.Equal(t, 5, llm.calls, "one declined upstream call, then a two-step fix per member")
+	require.Len(t, p.Edits, 2)
+	assert.Equal(t, "s.v", p.Edits[0].TargetNodeID)
+	assert.Equal(t, "services/svc/models/v.sql", p.Edits[0].Path)
+	assert.Equal(t, "s.w", p.Edits[1].TargetNodeID)
+	assert.Equal(t, "services/svc/models/w.sql", p.Edits[1].Path)
+	assert.Equal(t, proposal.StatusVerifying, p.Status)
+	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.v"].Status)
+	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.w"].Status)
+	require.Len(t, gw.submitted, 1)
+}
+
+// TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField pins that the
+// lane and the shadow release's service come from where the edits actually live,
+// not from the service field the trigger happens to carry: a python node whose
+// trigger names no service at all is still verified as python, under the service
+// its contract file belongs to.
+func TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField(t *testing.T) {
+	u := newFakeUoW()
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "tag-py"}
+	d := deps(u, fakeEvidence{}, nil, art)
+	d.Releases = gw
+	tr := baseTrigger()
+	tr.Nodes = []TriggerNode{{NodeID: "analytics.py_daily_kpis", ErrorSignature: "sig",
+		NodeType: "python-model", Service: ""}}
+	edits := []proposal.FileEdit{{
+		Path: "services/svc/contracts/kpis.yml", ContentURI: "s3://art/edit", TargetNodeID: "analytics.py_daily_kpis",
+	}}
+
+	got, err := submitVerifications(context.Background(), d, tr, 1, edits,
+		map[string][]byte{"svc": []byte("merged: contract\n")})
+	require.NoError(t, err)
+
+	require.Equal(t, []proposal.Verification{{
+		Service: "svc", Kind: ports.ShadowKindPython, ShadowReleaseID: "shadow-r1-svc-a1",
+	}}, got)
+	require.Equal(t, "merged: contract\n", art.written["svc/shadow-r1-svc-a1/contract.yaml"])
+	require.NotContains(t, art.written, "svc/shadow-r1-svc-a1/source-overlay.tar.gz")
+	require.Len(t, gw.submitted, 1)
+	require.Equal(t, ports.ShadowKindPython, gw.submitted[0].Kind)
+	require.Empty(t, gw.submitted[0].SourceOverlayURI)
+}
+
 // TestProposeFix_MixedOutcomes_SkippedMemberDoesNotBlockVerification: one node
 // this agent cannot fix must not hold back the fix for the node it can.
 func TestProposeFix_MixedOutcomes_SkippedMemberDoesNotBlockVerification(t *testing.T) {
@@ -1624,7 +1697,7 @@ func TestEnqueue_CarriesTheResolvedSetAndEveryEdit(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, Enqueue(context.Background(), u, fakeClock{}, p, "s.root", true, uuid.Nil))
+	require.NoError(t, Enqueue(context.Background(), u, fakeClock{}, p, true, uuid.Nil))
 
 	require.Len(t, u.ob.entries, 1)
 	var got event.RemediationProposed
@@ -1632,7 +1705,6 @@ func TestEnqueue_CarriesTheResolvedSetAndEveryEdit(t *testing.T) {
 	require.Equal(t, event.RemediationEventID("r1", 2).String(), got.EventID)
 	require.Equal(t, "s.a", got.NodeID)
 	require.Equal(t, []string{"s.a", "s.b"}, got.ResolvedNodeIDs)
-	require.Equal(t, "s.root", got.SuspectedRootCauseNode)
 	require.True(t, got.SourceResolved)
 	require.Equal(t, []event.ProposedEdit{
 		{Path: "services/svc/models/a.sql", ContentURI: "s3://real/content", DiffURI: "s3://real/diff", TargetNodeID: "s.a"},

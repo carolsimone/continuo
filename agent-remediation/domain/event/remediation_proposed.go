@@ -58,13 +58,14 @@ type RemediationProposed struct {
 	ProposedSQLURI  string   `json:"proposed_sql_uri"`
 	DiffURI         string   `json:"diff_uri"`
 	// Edits is the full multi-file description of this attempt's proposed
-	// changes.
-	Edits                  []ProposedEdit `json:"edits"`
-	Rationale              string         `json:"rationale"`
-	Confidence             string         `json:"confidence"`
-	SuspectedRootCauseNode string         `json:"suspected_root_cause_node,omitempty"`
-	Model                  string         `json:"model"`
-	Attempt                int            `json:"attempt"`
-	SourceResolved         bool           `json:"source_resolved"`
-	ProposedAt             string         `json:"proposed_at"`
+	// changes. Each edit names the node whose source it changes, which is what
+	// tells a reader where the fix was made — one attempt repairs a whole
+	// failing set, so no single node can stand for the cause of all of them.
+	Edits          []ProposedEdit `json:"edits"`
+	Rationale      string         `json:"rationale"`
+	Confidence     string         `json:"confidence"`
+	Model          string         `json:"model"`
+	Attempt        int            `json:"attempt"`
+	SourceResolved bool           `json:"source_resolved"`
+	ProposedAt     string         `json:"proposed_at"`
 }

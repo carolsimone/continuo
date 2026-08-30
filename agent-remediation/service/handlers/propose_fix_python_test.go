@@ -131,6 +131,84 @@ func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 	require.Empty(t, u.ob.entries, "an unverified fix must not be announced")
 }
 
+// TestProposeFix_PythonValidation_ServiceDerivedFromTheEditPath pins that the
+// contract and the edits it packages always land on the same shadow release.
+// The trigger's own service field names something this install has no repository
+// path for; the contract is still keyed by the service the fix's file belongs to,
+// so the release is submitted as python. Keyed by the trigger's field instead,
+// the lookup would miss and these very edits would be verified as a dbt project
+// — silently, since a dbt overlay of a contract yaml compiles to nothing.
+func TestProposeFix_PythonValidation_ServiceDerivedFromTheEditPath(t *testing.T) {
+	u := newFakeUoW()
+	llm := newFakeLLM(pythonFixResult(), nil)
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "ghcr.io/o/svc:v9"}
+	d := pythonDeps(t, u, &llm, art, gw, pythonCheckout(t))
+	tr := pythonTrigger()
+	// The node's declared service is not a key of ServiceRepoPaths; its contract
+	// file lives under the "svc" service's project root.
+	tr.Nodes[0].Service = "svc-py"
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+
+	require.Len(t, u.pr.inserted, 1)
+	got := u.pr.inserted[0]
+	require.Equal(t, proposal.StatusVerifying, got.Status)
+	require.Equal(t, []proposal.Verification{{
+		Service: "svc", Kind: ports.ShadowKindPython, ShadowReleaseID: "shadow-r1-svc-a1",
+	}}, got.Verifications)
+	require.Equal(t, "merged: contract\n", art.written["svc/shadow-r1-svc-a1/contract.yaml"])
+	require.NotContains(t, art.written, "svc/shadow-r1-svc-a1/source-overlay.tar.gz")
+	require.Len(t, gw.submitted, 1)
+	require.Equal(t, "svc", gw.submitted[0].Service)
+	require.Equal(t, ports.ShadowKindPython, gw.submitted[0].Kind)
+}
+
+// TestProposeFix_PythonContractWithDbtEditInOneService covers the attempt that
+// would have to be two releases at once: a python node's contract fix and a dbt
+// model's source fix land in the same service. A release parses one manifest
+// kind, so whichever lane were chosen would verify half the change and silently
+// ignore the rest. The attempt is refused whole instead.
+func TestProposeFix_PythonContractWithDbtEditInOneService(t *testing.T) {
+	u := newFakeUoW()
+	// Cluster order is by node id: the python node first, then the dbt node's
+	// two-step source fix.
+	llm := fakeLLM{queue: []ports.ProposeResult{
+		pythonFixResult(),
+		{ProposedSQL: "select customer_id from t", Rationale: "typo", Confidence: "high", Model: "m"},
+		{ProposedSQL: "select customer_id from t", Rationale: "typo", Confidence: "high", Model: "m"},
+	}}
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "ghcr.io/o/svc:v9"}
+	d := pythonDeps(t, u, &llm, art, gw, pythonCheckout(t))
+	d.Evidence = fakeEvidence{vals: map[string]string{
+		"s3://b/sql": "select custmer_id from t",
+		"s3://b/log": "column does not exist",
+	}}
+	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select custmer_id from t", Runtime: ports.RuntimeDbt}}
+
+	tr := pythonTrigger()
+	// The dbt node from baseTrigger, in the same service as the python node's
+	// contract file.
+	tr.Nodes = append(tr.Nodes, baseTrigger().Nodes...)
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+
+	require.Len(t, u.pr.inserted, 1)
+	got := u.pr.inserted[0]
+	require.Equal(t, proposal.StatusFailed, got.Status)
+	const reason = "service svc mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind"
+	for _, id := range []string{"analytics.py_daily_kpis", "s.n"} {
+		require.Equal(t, proposal.StatusFailed, got.NodeOutcomes[id].Status)
+		require.Equal(t, reason, got.NodeOutcomes[id].Reason)
+	}
+	require.Empty(t, got.Verifications)
+	require.Empty(t, gw.submitted, "no release slot is spent on a change one release cannot verify")
+	require.NotContains(t, art.written, "svc/shadow-r1-svc-a1/contract.yaml",
+		"every service is checked before any is submitted, so nothing is uploaded either")
+	require.Empty(t, u.ob.entries)
+}
+
 // TestProposeFix_PythonValidation_EditOutsideEveryConfiguredService covers the
 // install whose python service has no repository-path mapping: the fix names a
 // real file, but no shadow release could ever run it, and a redelivery would map

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/service/overlay"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -18,6 +19,20 @@ import (
 // down is relative to that service's project — so the attempt ends with the
 // reason recorded rather than being redelivered forever.
 var errUnmappedEdit = errors.New("edit belongs to no configured service")
+
+// errMixedManifestKinds marks a service whose edits would have to be verified
+// as two different manifest kinds at once: a packaged python contract plus at
+// least one edit to something that is not a python node's contract. A release
+// parses one kind, so whichever lane were chosen would verify only half the
+// change and silently ignore the rest.
+var errMixedManifestKinds = errors.New("mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind")
+
+// unverifiable reports whether a verification failure is permanent — the edits
+// themselves are unrunnable, so a redelivery would fail identically. The caller
+// records the attempt rather than returning the error for redelivery.
+func unverifiable(err error) bool {
+	return errors.Is(err, errUnmappedEdit) || errors.Is(err, errMixedManifestKinds)
+}
 
 // submitVerifications posts one shadow verification release per service the
 // attempt edits, and returns what it posted. A shadow release is a real release
@@ -55,6 +70,22 @@ func submitVerifications(
 		services = append(services, service)
 	}
 	sort.Strings(services)
+
+	// Every service is checked before any is submitted, so an attempt one of
+	// them cannot verify spends no release slot on the others — the attempt is
+	// recorded as a whole, and a half-submitted one would leave shadow releases
+	// running for a fix that was never recorded as being verified.
+	for _, service := range services {
+		if contracts[service] == nil {
+			continue
+		}
+		if edit, ok := nonContractEdit(t, byService[service]); ok {
+			deps.Logger.Error("a service's edits span two manifest kinds; the attempt cannot be verified",
+				"release", t.ReleaseID, "attempt", attempt, "service", service,
+				"edit", edit.Path, "target", edit.TargetNodeID)
+			return nil, fmt.Errorf("service %s %w", service, errMixedManifestKinds)
+		}
+	}
 
 	verifications := make([]proposal.Verification, 0, len(services))
 	for _, service := range services {
@@ -123,6 +154,21 @@ func submitVerifications(
 		})
 	}
 	return verifications, nil
+}
+
+// nonContractEdit returns the first edit in a python service's group that is
+// not a python node's contract, and whether one exists. An edit qualifies only
+// when it changes the source of a failing node the trigger carries and that
+// node is a python kind; an edit to a dbt node, or to an upstream ancestor the
+// trigger never named, is something a python release cannot verify.
+func nonContractEdit(t Trigger, edits []proposal.FileEdit) (proposal.FileEdit, bool) {
+	for _, e := range edits {
+		n, ok := nodeByID(t, e.TargetNodeID)
+		if !ok || !pkg_model.NodeType(n.NodeType).IsPython() {
+			return e, true
+		}
+	}
+	return proposal.FileEdit{}, false
 }
 
 // serviceForPath resolves which configured service owns a repository path, and

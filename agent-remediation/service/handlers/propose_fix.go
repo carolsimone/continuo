@@ -14,7 +14,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -159,7 +158,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	var edits []proposal.FileEdit
 	var rationales []string
 	var confidence proposal.Confidence
-	var model, suspectedRoot string
+	var model string
 	sourceResolved := true
 
 	// A shared-upstream cluster whose ancestor cannot be targeted is replaced by
@@ -192,8 +191,15 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		for _, m := range c.Members {
 			outcomes[m] = proposal.NodeOutcome{Status: proposal.StatusVerifying}
 		}
-		if out.contract != nil && out.service != "" {
-			contracts[out.service] = out.contract
+		// The contract is keyed by the service its own edits belong to, derived
+		// from their paths exactly as submitVerifications groups them, so the
+		// contract and the edits it packages can never end up on different
+		// shadow releases — which would silently verify these edits as a dbt
+		// project instead.
+		if out.contract != nil && len(out.edits) > 0 {
+			if service, _, ok := serviceForPath(deps.ServiceRepoPaths, out.edits[0].Path); ok {
+				contracts[service] = out.contract
+			}
 		}
 		if out.rationale != "" {
 			rationales = append(rationales, c.TargetNodeID+": "+out.rationale)
@@ -204,15 +210,12 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		if model == "" {
 			model = out.model
 		}
-		if suspectedRoot == "" {
-			suspectedRoot = out.suspectedRoot
-		}
 		sourceResolved = sourceResolved && out.sourceResolved
 	}
 
 	deps.Logger.Info("release fix attempt assembled",
 		"release", t.ReleaseID, "attempt", attempt, "nodes", len(t.Nodes),
-		"clusters", len(queue), "edits", len(edits), "suspected_root", suspectedRoot)
+		"clusters", len(queue), "edits", len(edits))
 
 	// Nothing to verify: the attempt is settled by what the clusters reported.
 	// Every cluster skipping is a skip (nothing was wrong that this agent knows
@@ -229,11 +232,12 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	}
 
 	verifications, err := submitVerifications(ctx, deps, t, attempt, edits, contracts)
-	// An edit outside every configured service is permanent: no release could
-	// ever run it, and a redelivery would map it no better. The attempt ends
+	// Edits no release could ever run — outside every configured service, or
+	// mixing two manifest kinds in one service — are permanent: a redelivery
+	// would produce the same edits and route them no better. The attempt ends
 	// here with the reason recorded rather than being retried forever.
-	if errors.Is(err, errUnmappedEdit) {
-		deps.Logger.Error("proposed edit belongs to no configured service; the attempt cannot be verified",
+	if unverifiable(err) {
+		deps.Logger.Error("the attempt's edits cannot be verified by any release",
 			"release", t.ReleaseID, "attempt", attempt, "error", err)
 		return record(ctx, deps, t, attempt, proposal.Proposal{
 			Status:          proposal.StatusFailed,
@@ -288,10 +292,10 @@ func groupClusters(t Trigger) []typology.Cluster {
 type clusterOutcome struct {
 	edits []proposal.FileEdit
 	// contract is the packaged contract yaml a python fix must be verified
-	// with, to be uploaded under the shadow release of service; nil for a dbt
-	// fix, whose edits are verified by re-running the project itself.
+	// with, uploaded under the shadow release of whichever service this
+	// cluster's edits belong to; nil for a dbt fix, whose edits are verified by
+	// re-running the project itself.
 	contract []byte
-	service  string
 	status   proposal.Status
 	// reason explains a non-proposed status to the operator; rationale is the
 	// model's account of a proposed fix.
@@ -300,7 +304,6 @@ type clusterOutcome struct {
 	model          string
 	confidence     proposal.Confidence
 	sourceResolved bool
-	suspectedRoot  string
 	// fallback reports that a shared-upstream cluster could not be targeted, so
 	// each of its members must be fixed in its own source instead.
 	fallback bool
@@ -339,7 +342,7 @@ func fixCluster(ctx context.Context, deps Deps, svc fixer.Services, t Trigger, c
 				"members", c.Members, "reason", r.Proposal.Rationale)
 			return clusterOutcome{fallback: true}, nil
 		}
-		return outcomeFromResult(r, ""), nil
+		return outcomeFromResult(r), nil
 	}
 
 	node, ok := nodeByID(t, c.TargetNodeID)
@@ -354,7 +357,7 @@ func fixCluster(ctx context.Context, deps Deps, svc fixer.Services, t Trigger, c
 	if err != nil {
 		return clusterOutcome{}, err
 	}
-	out := outcomeFromResult(r, node.Service)
+	out := outcomeFromResult(r)
 	// A Fixer that repairs the failing node's own source names no target on its
 	// edits, because it only ever edits that one node.
 	for i := range out.edits {
@@ -370,18 +373,16 @@ func fixCluster(ctx context.Context, deps Deps, svc fixer.Services, t Trigger, c
 // edit changes nothing a shadow release could run, and no pull request could
 // carry it either, so recording its members as being verified would promise a
 // verdict that never arrives.
-func outcomeFromResult(r fixer.Result, service string) clusterOutcome {
+func outcomeFromResult(r fixer.Result) clusterOutcome {
 	out := clusterOutcome{
 		edits:          append([]proposal.FileEdit(nil), r.Proposal.Edits...),
 		contract:       r.ShadowContract,
-		service:        service,
 		status:         r.Proposal.Status,
 		reason:         r.Proposal.Rationale,
 		rationale:      r.Proposal.Rationale,
 		model:          r.Proposal.Model,
 		confidence:     r.Proposal.Confidence,
 		sourceResolved: r.Proposal.SourceResolved,
-		suspectedRoot:  r.SuspectedRoot,
 	}
 	if out.status == proposal.StatusProposed && len(out.edits) == 0 {
 		out.status = proposal.StatusFailed
@@ -671,13 +672,13 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 // attempt whose fix a shadow release has verified, and creates it on the
 // repository bound to the caller's transaction. p carries the whole
 // announcement: the failure it addresses (source, release, representative node,
-// error signature), every node it resolves, and every file it changes.
-// suspectedRoot is the optional LLM-named root-cause node. sourceResolved
-// indicates whether the fix rewrote real version-controlled source. msgProcID is
-// the message_processing row UUID of the inbound trigger behind the write,
-// stored on the outbox entry for provenance; uuid.Nil for a write no inbound
-// message drove.
-func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposal.Proposal, suspectedRoot string, sourceResolved bool, msgProcID uuid.UUID) error {
+// error signature), every node it resolves, and every file it changes — each
+// edit naming the node whose source it changes. sourceResolved indicates
+// whether the fix rewrote real version-controlled source. msgProcID is the
+// message_processing row UUID of the inbound trigger behind the write, stored
+// on the outbox entry for provenance; uuid.Nil for a write no inbound message
+// drove.
+func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposal.Proposal, sourceResolved bool, msgProcID uuid.UUID) error {
 	eventID := event.RemediationEventID(p.ReleaseID, p.Attempt)
 	edits := make([]event.ProposedEdit, 0, len(p.Edits))
 	for _, e := range p.Edits {
@@ -689,23 +690,22 @@ func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposa
 		})
 	}
 	payload := event.RemediationProposed{
-		EventID:                eventID.String(),
-		Source:                 p.Source,
-		ReleaseID:              p.ReleaseID,
-		RemediationRound:       p.RemediationRound,
-		NodeID:                 p.NodeID,
-		ResolvedNodeIDs:        append([]string(nil), p.ResolvedNodeIDs...),
-		ErrorSignature:         p.ErrorSignature,
-		ProposedSQLURI:         p.ProposedSQLURI,
-		DiffURI:                p.DiffURI,
-		Edits:                  edits,
-		Rationale:              p.Rationale,
-		Confidence:             string(p.Confidence),
-		SuspectedRootCauseNode: suspectedRoot,
-		Model:                  p.Model,
-		Attempt:                p.Attempt,
-		SourceResolved:         sourceResolved,
-		ProposedAt:             clock.Now().Format(time.RFC3339),
+		EventID:          eventID.String(),
+		Source:           p.Source,
+		ReleaseID:        p.ReleaseID,
+		RemediationRound: p.RemediationRound,
+		NodeID:           p.NodeID,
+		ResolvedNodeIDs:  append([]string(nil), p.ResolvedNodeIDs...),
+		ErrorSignature:   p.ErrorSignature,
+		ProposedSQLURI:   p.ProposedSQLURI,
+		DiffURI:          p.DiffURI,
+		Edits:            edits,
+		Rationale:        p.Rationale,
+		Confidence:       string(p.Confidence),
+		Model:            p.Model,
+		Attempt:          p.Attempt,
+		SourceResolved:   sourceResolved,
+		ProposedAt:       clock.Now().Format(time.RFC3339),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

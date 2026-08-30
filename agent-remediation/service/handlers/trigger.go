@@ -135,11 +135,16 @@ func (t Trigger) Subset(ids []string) Trigger {
 		}
 	}
 	// A payload that cannot be marshalled would mean a node field this package
-	// declares is not serializable, which the wire types below rule out.
+	// declares is not serializable, which the wire types below rule out. If it
+	// ever happened, the subset carries no payload rather than the full batch's:
+	// replaying the whole batch under the guise of a subset would re-fix nodes
+	// the caller deliberately narrowed away.
 	raw, err := json.Marshal(sub.wire())
-	if err == nil {
-		sub.RawPayload = raw
+	if err != nil {
+		sub.RawPayload = nil
+		return sub
 	}
+	sub.RawPayload = raw
 	return sub
 }
 
