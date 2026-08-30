@@ -16,6 +16,12 @@
 // records why it failed and starts the next attempt over the nodes those
 // releases still reject — the nodes a shadow release accepted are left fixed
 // rather than being fixed again.
+//
+// Those releases share one global queue and run one at a time, so an attempt's
+// shadow releases are answered one after another rather than together. Every
+// wait here is therefore bounded per release, from the moment that release
+// itself started running: queueing spends nothing, and an attempt is never
+// timed out for the accumulated wall-clock of several healthy releases.
 package shadowverify
 
 import (
@@ -181,7 +187,7 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 	nodeErrors := map[string]string{}
 	anyRejected, allTerminal := false, true
-	var startedAt time.Time
+	var runningSince []time.Time
 	for _, ver := range verificationsOf(v) {
 		verdict, err := r.releases.Verdict(ctx, ver.ShadowReleaseID)
 		if err != nil {
@@ -198,11 +204,12 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 			}
 		case !verdict.Terminal:
 			allTerminal = false
-		}
-		// The budget is spent from the moment the first release started
-		// running: that is when this attempt began occupying the pipeline.
-		if !verdict.ActivatedAt.IsZero() && (startedAt.IsZero() || verdict.ActivatedAt.Before(startedAt)) {
-			startedAt = verdict.ActivatedAt
+			// Each release carries its own budget, spent from its own
+			// activation. A release still queued has not started, so it has
+			// spent nothing and is not collected here.
+			if !verdict.ActivatedAt.IsZero() {
+				runningSince = append(runningSince, verdict.ActivatedAt)
+			}
 		}
 	}
 	switch {
@@ -211,7 +218,7 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 	case allTerminal:
 		r.verified(ctx, v)
 	default:
-		r.failIfVerificationExpired(ctx, v, startedAt)
+		r.failIfVerificationExpired(ctx, v, runningSince)
 	}
 }
 
@@ -299,28 +306,47 @@ func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr st
 	r.retry(ctx, v, nodeErrors)
 }
 
-// failIfVerificationExpired ends an attempt whose shadow releases have been
-// RUNNING longer than the verification budget. Inside the budget the row is
-// left exactly as it is, so a release still working is never cut short.
+// failIfVerificationExpired ends an attempt one of whose shadow releases has
+// been RUNNING longer than the verification budget. runningSince carries the
+// activation of every release that has started and not yet reached a verdict;
+// inside the budget the row is left exactly as it is, so a release still
+// working is never cut short.
 //
-// activatedAt is when the earliest of them left the queue, and the budget is
-// measured from there rather than from when the attempt was recorded. A shadow release
-// joins the same global FIFO queue as every other release and only one release
-// runs at a time, so measuring from the proposal would let a backlog fail an
-// attempt whose release never ran — and do the same to every retry behind it,
-// spending the whole per-failure budget on releases that were never given a
-// chance to answer. A release still queued (no activation) is therefore left
-// alone however long ago the attempt was recorded: it has not started, so it
-// has not spent anything. Its wait is still bounded, because a queue that never
-// advances is a stopped pipeline, and a release that runs and then wedges is
-// caught by this budget from the moment it started.
-func (r *Reconciler) failIfVerificationExpired(ctx context.Context, v proposal.View, activatedAt time.Time) {
-	if activatedAt.IsZero() || r.clock.Now().Sub(activatedAt) < r.timeout {
+// The budget belongs to each release individually, measured from when that
+// release itself left the queue. Two things follow, and both matter.
+//
+// A shadow release joins the same global FIFO queue as every other release and
+// only one release runs at a time, so measuring from when the attempt was
+// recorded would let a backlog fail an attempt whose release never ran — and do
+// the same to every retry behind it, spending the whole per-failure budget on
+// releases that were never given a chance to answer. A release still queued (no
+// activation) is therefore left alone however long ago the attempt was
+// recorded: it has not started, so it has not spent anything.
+//
+// For the same reason the budget is not shared across an attempt's releases.
+// They run one after another rather than side by side, so the span from the
+// first activation to the last verdict grows with the number of services the
+// attempt edited, while no single release runs any longer than it otherwise
+// would. Charging that whole span to one budget would fail an attempt whose
+// releases are all healthy, purely for having touched more than one service —
+// and a release that has already answered is not waiting on anything, so it
+// spends nothing further while the next one runs.
+//
+// The wait is still bounded: a queue that never advances is a stopped pipeline,
+// and a release that runs and then wedges is caught by its own budget from the
+// moment it started.
+func (r *Reconciler) failIfVerificationExpired(ctx context.Context, v proposal.View, runningSince []time.Time) {
+	now := r.clock.Now()
+	for _, since := range runningSince {
+		if now.Sub(since) < r.timeout {
+			continue
+		}
+		// A timeout names no failing node, so the next attempt is started over
+		// the attempt's whole failing set: nothing was judged, so nothing is
+		// fixed.
+		r.rejected(ctx, v, timedOutError, nil)
 		return
 	}
-	// A timeout names no failing node, so the next attempt is started over the
-	// attempt's whole failing set: nothing was judged, so nothing is fixed.
-	r.rejected(ctx, v, timedOutError, nil)
 }
 
 // failIfUnreadableTooLong ends an attempt one of whose shadow releases has not

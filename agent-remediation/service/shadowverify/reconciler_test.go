@@ -785,6 +785,52 @@ func TestReconcileOnce_NonTerminalPastTheTimeoutFailsTheAttempt(t *testing.T) {
 	assert.Len(t, h.proposer.triggers, 1)
 }
 
+// TestReconcileOnce_SerialVerificationsAreBudgetedIndividually pins that the
+// verification budget is spent per shadow release rather than across the
+// attempt as a whole.
+//
+// Shadow releases join one global release queue and run one at a time, so an
+// attempt that edited several services waits its releases out one after
+// another: the span from the first release's activation to the last one's
+// verdict grows with the number of services, while no single release runs any
+// longer than it otherwise would. Charging that whole span to one budget would
+// fail an attempt whose releases are all perfectly healthy, purely for having
+// touched more than one service.
+func TestReconcileOnce_SerialVerificationsAreBudgetedIndividually(t *testing.T) {
+	row := verifyingRow("p1", 1, testTimeout+time.Hour)
+	row.Verifications = []proposal.Verification{
+		{Service: "svc", Kind: "dbt", ShadowReleaseID: "shadow-rel-1-svc-a1"},
+		{Service: "other", Kind: "dbt", ShadowReleaseID: "shadow-rel-1-other-a1"},
+	}
+	h := newHarness(row)
+	// The first service's release started half an hour ago and has already
+	// answered; the second's started five minutes ago and is still running.
+	h.gateway.verdicts["shadow-rel-1-svc-a1"] = ports.ShadowVerdict{
+		Terminal: true, Validated: true, ActivatedAt: testNow.Add(-30 * time.Minute),
+	}
+	h.gateway.verdicts["shadow-rel-1-other-a1"] = ports.ShadowVerdict{
+		ActivatedAt: testNow.Add(-5 * time.Minute),
+	}
+
+	h.rec.ReconcileOnce(context.Background())
+
+	assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status,
+		"only the release still running spends a budget, and it has spent five minutes of its own")
+	assert.Empty(t, h.proposer.triggers)
+	assert.Zero(t, h.uow.commits)
+
+	// That release now wedges: on its own activation it is past the budget.
+	h.gateway.verdicts["shadow-rel-1-other-a1"] = ports.ShadowVerdict{
+		ActivatedAt: testNow.Add(-(testTimeout + 5*time.Minute)),
+	}
+
+	h.rec.ReconcileOnce(context.Background())
+
+	assert.Equal(t, proposal.StatusFailed, h.repo.row("p1").Status)
+	assert.Equal(t, "shadow verification timed out", h.repo.row("p1").VerifyError)
+	assert.Len(t, h.proposer.triggers, 1)
+}
+
 // TestReconcileOnce_QueuedTimeDoesNotSpendTheVerificationBudget pins what the
 // timeout is a budget FOR.
 //
