@@ -84,6 +84,11 @@ describe('CreatePrModal', () => {
     expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
   });
 
+  it('joins every resolved node for a batched proposal, not just the representative node_id', () => {
+    renderModal({ node_id: 's.a', resolved_node_ids: ['s.a', 's.b'] });
+    expect(screen.getByText(/s\.a, s\.b/)).toBeInTheDocument();
+  });
+
   it('closes on Cancel button click', () => {
     const { onClose } = renderModal();
     fireEvent.click(screen.getByRole('button', { name: /Cancel/i }));

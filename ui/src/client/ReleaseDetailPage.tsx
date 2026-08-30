@@ -56,6 +56,12 @@ function isFixState(status: string): status is FixState {
   return status in FIX_STATE_RANK;
 }
 
+// Per-node statuses that mean a fix attempt has nothing left to report: a
+// fix ready for review, or one of the terminal-but-blank outcomes rendered
+// as a fixNote (see refresh() below). 'generating'/'verifying' are the only
+// non-terminal statuses a node can carry.
+const TERMINAL_NODE_STATUSES = new Set(['proposed', 'skipped', 'failed', 'escalated']);
+
 // effectiveRound is the remediation round a proposal belongs to. The gRPC
 // client (ui/src/server/remediation-client.ts) loads the proto with
 // `defaults: true`, so a proposal recorded before remediation_round existed
@@ -342,9 +348,37 @@ export default function ReleaseDetailPage() {
           }
           setFixNote(noteByKey);
           verifying = failed.some(k => byKey.get(k) === 'verifying');
-          // Stop only when every failed node has a ready fix; keep polling through
-          // the generating→proposed swap and until the cap for unhealable nodes.
-          if (failed.every(k => byKey.get(k) === 'proposed')) stop();
+          // Stop once every failed node has settled *for the release's current
+          // remediation round*: its latest current-round attempt landed on
+          // 'proposed', or on a terminal-but-blank outcome ('skipped'/
+          // 'failed'/'escalated'). A node still 'generating'/'verifying', or
+          // with no current-round proposal at all yet, is not settled and
+          // keeps the poll alive (up to the cap below, suspended by
+          // `verifying`). Scoping to the current round (rather than reusing
+          // byKey/noteByKey above, which intentionally span every round so
+          // the FIX cell keeps showing the furthest-along attempt) matters
+          // right after "Try again": the round bumps before its first
+          // proposal is written, and the previous round's now-stale terminal
+          // outcome must not read as settled during that gap — otherwise
+          // polling would stop before ever seeing the retry's fix.
+          const currentRound = rel?.remediation_round;
+          const currentRoundProposals = currentRound === undefined
+            ? releaseProposals
+            : releaseProposals.filter(p => effectiveRound(p) === currentRound);
+          const latestCurrentRoundByKey = new Map<string, { proposal: ProposalDTO; nodeId: string }>();
+          for (const p of currentRoundProposals) {
+            for (const nid of proposalNodeIds(p)) {
+              const k = proposalKey(p.source, nid);
+              const latest = latestCurrentRoundByKey.get(k);
+              if (!latest || p.attempt > latest.proposal.attempt) latestCurrentRoundByKey.set(k, { proposal: p, nodeId: nid });
+            }
+          }
+          const settled = (k: string) => {
+            const entry = latestCurrentRoundByKey.get(k);
+            if (!entry) return false;
+            return TERMINAL_NODE_STATUSES.has(proposalStatusForNode(entry.proposal, entry.nodeId));
+          };
+          if (failed.every(settled)) stop();
         })
         .catch(() => {});
     };

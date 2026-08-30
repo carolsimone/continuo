@@ -508,6 +508,62 @@ describe('ReleaseDetailPage — proposal polling gated on rejected', () => {
   });
 });
 
+describe('ReleaseDetailPage — proposal polling settles per node on a batched attempt', () => {
+  it('stops after the first refresh once every failed node is terminal (one proposed, one skipped)', async () => {
+    vi.useFakeTimers();
+    try {
+      mockFetchProposals.mockResolvedValue([proposal({
+        source: 'validation', node_id: 's.a', status: 'proposed',
+        resolved_node_ids: ['s.a', 's.b'],
+        node_outcomes: { 's.a': { status: 'proposed', reason: '' }, 's.b': { status: 'skipped', reason: 'No source to fix at this commit.' } },
+      })]);
+      renderPage(makeRelease([
+        node({ stage: 'validation', node_id: 's.a' }),
+        node({ stage: 'validation', node_id: 's.b' }),
+      ], 'validation_failed'));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(mockFetchProposals).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Proposed fix available/)).toBeInTheDocument();
+      expect(screen.getByText(/No source to fix at this commit\. Fix it in the repository\./)).toBeInTheDocument();
+
+      // Both failed nodes settled on the first refresh (proposed / skipped),
+      // so the interval must have been cleared — advancing several more poll
+      // intervals issues no further fetch.
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000 * 4); });
+      expect(mockFetchProposals).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps polling while one resolved node is still verifying, even though another is already proposed', async () => {
+    vi.useFakeTimers();
+    try {
+      mockFetchProposals.mockResolvedValue([proposal({
+        source: 'validation', node_id: 's.a', status: 'proposed',
+        resolved_node_ids: ['s.a', 's.b'],
+        node_outcomes: { 's.a': { status: 'proposed', reason: '' }, 's.b': { status: 'verifying', reason: '' } },
+      })]);
+      renderPage(makeRelease([
+        node({ stage: 'validation', node_id: 's.a' }),
+        node({ stage: 'validation', node_id: 's.b' }),
+      ], 'validation_failed'));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(mockFetchProposals).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Verifying fix/)).toBeInTheDocument();
+
+      // s.b is still 'verifying' — not settled — so the next tick must still
+      // issue a fetch (the cap is also suspended while any node verifies).
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(mockFetchProposals).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
   it('shows Try again for a rejected release at a dead end and posts the retry', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, rationale: '' })]);
