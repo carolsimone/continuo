@@ -21,12 +21,19 @@ import (
 // without a second LLM fixture. Round 2 then reaches the model again: a new
 // trigger carries remediation_round=2 and the proposal continues the attempt
 // numbering. A retry while that proposal is open is refused with the link.
+//
+// Each round's proposal reaches 'proposed' only after its own shadow release
+// has compiled and validated the proposed source, so both round waits below
+// cover a full release pipeline rather than just a model call.
 func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	// 35 minutes: strictly greater than the 34 this test's stage budgets sum to
+	// (rejection 10 + round-1 proposal 12 + round-2 proposal 12), each of the
+	// last two covering a shadow release of its own.
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -86,9 +93,10 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
-	// 2. Round 1 proposes a fix (stub LLM answers high confidence).
+	// 2. Round 1 proposes a fix (stub LLM answers high confidence) once the
+	//    shadow release verifying it has validated.
 	var round1 retryProposalRow
-	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
+	pollUntil(t, ctx, 12*time.Minute, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &round1,
 			`SELECT source, release_id, node_id, status, attempt, remediation_round FROM proposal
 			  WHERE release_id=$1 AND node_id=$2 AND status='proposed'`, releaseID, ftableEUniqueID)
@@ -118,9 +126,9 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	require.Equal(t, "retry_in_progress", body["error"])
 
 	// 7. A round-2 trigger reaches the agent and a new proposal continues the
-	//    attempt numbering.
+	//    attempt numbering, once its own shadow release has validated.
 	var round2 retryProposalRow
-	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
+	pollUntil(t, ctx, 12*time.Minute, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &round2,
 			`SELECT source, release_id, node_id, status, attempt, remediation_round FROM proposal
 			  WHERE release_id=$1 AND node_id=$2 AND remediation_round=2 AND status='proposed'`, releaseID, ftableEUniqueID)

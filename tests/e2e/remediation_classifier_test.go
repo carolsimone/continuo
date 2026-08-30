@@ -28,7 +28,8 @@ const ftableEUniqueID = "e2e_schema.ftable_e"
 //	→ ftable_e fails (references public.wrong_name which does not exist)
 //	→ validation.result:v1 terminal (kind=complete, release rejected)
 //	→ release.rejected:v1 → remediation classifier classifies the node
-//	→ remediation.requested:v1 emitted with category=logic
+//	→ remediation.requested:v2 emitted for the release, its ftable_e entry
+//	  carrying category=logic
 //	→ classification_decision row: source=validation, decision=emit, category=logic
 //
 // The changed node is ftable_e (service-2), whose SQL body is:
@@ -146,13 +147,15 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 		"ftable_e must carry run_results_uri on release.rejected:v1 (structured validation result)")
 	t.Logf("✅ release.rejected:v1 carries run_results_uri=%s for ftable_e", rejectedRunResultsURI)
 
-	// 7. Poll remediation.requested:v1 for a trigger whose payload matches this
-	//    release + node. The classifier receives release.rejected:v1, fetches the
-	//    dbt log from S3, classifies the "does not exist" error as logic, and
-	//    publishes the trigger via the outbox publisher.
+	// 7. Poll remediation.requested:v2 for the release's batched trigger and
+	//    the entry it carries for ftable_e. The classifier receives
+	//    release.rejected:v1, fetches the dbt log from S3, classifies the
+	//    "does not exist" error as logic, and publishes one trigger for the
+	//    whole rejected release via the outbox publisher.
 	var trigger remediationRequestedPayload
+	var node remediationNodeEntry
 	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV1, "-", "+").Result()
+		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
 		if err != nil {
 			return false, nil
 		}
@@ -165,24 +168,27 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 			if json.Unmarshal([]byte(raw), &p) != nil {
 				continue
 			}
-			if p.ReleaseID == releaseID && p.NodeID == ftableEUniqueID {
-				trigger = p
+			if p.ReleaseID != releaseID {
+				continue
+			}
+			if n, ok := p.findNode(ftableEUniqueID); ok {
+				trigger, node = p, n
 				return true, nil
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.requested:v1 for release %s node %s", releaseID, ftableEUniqueID))
+	}, fmt.Sprintf("timeout waiting for remediation.requested:v2 for release %s node %s", releaseID, ftableEUniqueID))
 
 	// 8. Assert trigger payload fields.
 	require.Equal(t, releaseID, trigger.ReleaseID, "trigger release_id")
-	require.Equal(t, ftableEUniqueID, trigger.NodeID, "trigger node_id")
-	require.Equal(t, "logic", trigger.Category,
-		"ftable_e references public.wrong_name → structured status=error, message 'does not exist' → category=logic")
 	require.Equal(t, "validation", trigger.Source,
 		"trigger source must be the literal 'validation', not the stream name")
-	require.NotEmpty(t, trigger.ErrorSignature, "trigger must carry a non-empty error_signature")
-	require.NotEmpty(t, trigger.DBTLogURI, "trigger must carry a non-empty dbt_log_uri")
-	t.Logf("✅ remediation.requested:v1 received: category=%s signature=%s", trigger.Category, trigger.ErrorSignature)
+	require.Equal(t, ftableEUniqueID, node.NodeID, "trigger node_id")
+	require.Equal(t, "logic", node.Category,
+		"ftable_e references public.wrong_name → structured status=error, message 'does not exist' → category=logic")
+	require.NotEmpty(t, node.ErrorSignature, "trigger must carry a non-empty error_signature")
+	require.NotEmpty(t, node.DBTLogURI, "trigger must carry a non-empty dbt_log_uri")
+	t.Logf("✅ remediation.requested:v2 received: category=%s signature=%s", node.Category, node.ErrorSignature)
 
 	// 9. Query classification_decision in continuo_remediation to confirm the
 	//    decision was persisted.
@@ -233,16 +239,39 @@ func waitForReleaseRejected(t *testing.T, ctx context.Context, clients *testClie
 	t.Logf("✅ release %s reached rejected status (ftable_e failed validation as expected)", releaseID)
 }
 
-// remediationRequestedPayload mirrors the remediation.requested:v1 wire shape
-// produced by the remediation classifier's outbox publisher.
+// remediationRequestedPayload mirrors the remediation.requested:v2 wire shape
+// produced by the remediation classifier's outbox publisher: one batched
+// trigger per rejected release, carrying release-level facts plus one entry in
+// Nodes per healable failure the classifier decided to emit.
 type remediationRequestedPayload struct {
-	EventID        string `json:"event_id"`
-	Source         string `json:"source"`
-	ReleaseID      string `json:"release_id"`
-	NodeID         string `json:"node_id"`
-	Category       string `json:"category"`
-	ErrorSignature string `json:"error_signature"`
-	DBTLogURI      string `json:"dbt_log_uri"`
+	EventID          string                 `json:"event_id"`
+	Source           string                 `json:"source"`
+	ReleaseID        string                 `json:"release_id"`
+	RemediationRound int                    `json:"remediation_round"`
+	Nodes            []remediationNodeEntry `json:"nodes"`
+}
+
+// remediationNodeEntry is one failing node inside a batched trigger.
+// ChangedAncestorIDs is what lets the agent group several failures that share
+// one changed ancestor into a single upstream fix.
+type remediationNodeEntry struct {
+	NodeID             string   `json:"node_id"`
+	Category           string   `json:"category"`
+	ErrorSignature     string   `json:"error_signature"`
+	DBTLogURI          string   `json:"dbt_log_uri"`
+	ChangedAncestorIDs []string `json:"changed_ancestor_ids"`
+}
+
+// findNode returns the trigger's entry for a node id, and whether it is
+// present. Callers assert on the entry rather than on the trigger as a whole,
+// because one batched trigger can carry several failing nodes.
+func (p remediationRequestedPayload) findNode(nodeID string) (remediationNodeEntry, bool) {
+	for _, n := range p.Nodes {
+		if n.NodeID == nodeID {
+			return n, true
+		}
+	}
+	return remediationNodeEntry{}, false
 }
 
 // classificationDecisionRow captures the fields asserted from

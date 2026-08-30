@@ -41,9 +41,12 @@ import (
 //	→ release-controller TransitionToRejected("compile_failed"), RecordStageResults("compile")
 //	→ release.rejected:v1 {stage:"compile", per_node:[{node_id:<service>, status:"failed", dbt_log_uri}]}
 //	→ remediation classifier maps stage→SourceCompile, ExtractDbtFilePath(log)→file_path,
-//	  classifies the parse/compilation error as healable → remediation.requested:v1 (source="compile")
+//	  classifies the parse/compilation error as healable → remediation.requested:v2 (source="compile")
 //	→ agent-remediation proposeFromSource: reads model source from GitHub (stub-github),
-//	  asks stub-llm to fix it → proposal row (source="compile", file_path) → remediation.proposed:v1.
+//	  asks stub-llm to fix it → proposal row (source="compile", file_path)
+//	→ a shadow release lays the corrected file over the fixture service's dbt
+//	  project and compiles and validates it; when it reports validated the
+//	  proposal is finalized → remediation.proposed:v1.
 //
 // Unlike the validation path, the compile leg is the FIRST leg and rejects
 // before any change-derivation, so no current_prod/service_prod baseline seeding
@@ -75,7 +78,11 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	require.NotEmpty(t, fixtureImageTag,
 		"COMPILE_FIXTURE_IMAGE_TAG must be set alongside COMPILE_FIXTURE_SERVICE")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	// 35 minutes: strictly greater than the 34 this test's stage budgets sum to
+	// (rejection 12 + rejected event 2 + trigger 4 + decision 0.5 + proposal 15
+	// + proposal row 0.5). The proposal budget covers the shadow release that
+	// lays the corrected file over the fixture project and compiles it.
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -109,12 +116,13 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	//    discriminator the remediation classifier maps to SourceCompile.
 	assertRejectedStageCompile(t, ctx, clients, releaseID)
 
-	// 4. remediation.requested:v1 must be emitted with source=="compile" and a
-	//    non-empty file_path (derived by the classifier via ExtractDbtFilePath on
-	//    the dbt compile log). The compile node_id is the service name.
-	var trigger compileTriggerPayload
+	// 4. remediation.requested:v2 must be emitted with source=="compile" and an
+	//    entry carrying a non-empty file_path (derived by the classifier via
+	//    ExtractDbtFilePath on the dbt compile log). The compile node_id is the
+	//    service name.
+	var node compileNodeEntry
 	pollUntil(t, ctx, 4*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV1, "-", "+").Result()
+		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
 		if err != nil {
 			return false, nil
 		}
@@ -127,27 +135,31 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 			if json.Unmarshal([]byte(raw), &p) != nil {
 				continue
 			}
-			if p.ReleaseID == releaseID && p.NodeID == fixtureService && p.Source == "compile" {
-				trigger = p
-				return true, nil
+			if p.ReleaseID != releaseID || p.Source != "compile" {
+				continue
+			}
+			for _, n := range p.Nodes {
+				if n.NodeID == fixtureService {
+					node = n
+					return true, nil
+				}
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.requested:v1 (source=compile) for release %s", releaseID))
+	}, fmt.Sprintf("timeout waiting for remediation.requested:v2 (source=compile) for release %s", releaseID))
 
-	require.Equal(t, "compile", trigger.Source, "compile-stage trigger source must be 'compile'")
-	require.Equal(t, fixtureService, trigger.NodeID, "compile trigger node_id is the service name")
-	require.NotEmpty(t, trigger.FilePath,
+	require.Equal(t, fixtureService, node.NodeID, "compile trigger node_id is the service name")
+	require.NotEmpty(t, node.FilePath,
 		"compile trigger must carry a file_path extracted from the dbt compile log")
-	require.NotEmpty(t, trigger.DBTLogURI, "compile trigger must carry a dbt_log_uri")
+	require.NotEmpty(t, node.DBTLogURI, "compile trigger must carry a dbt_log_uri")
 	// The excerpt is the text the signature was derived from and what the case
 	// base records as precedent. On a real dbt log it must be the compilation
 	// message naming the broken model — not dbt's `Encountered an error:`
 	// lead-in, which precedes every error and would give every compile failure
 	// of a service the same signature.
-	require.Contains(t, trigger.ErrorExcerpt, "Compilation Error in model daily_transactions",
-		"compile trigger error_excerpt must carry the compilation message, got %q", trigger.ErrorExcerpt)
-	t.Logf("✅ remediation.requested:v1 (compile): file_path=%s signature=%s excerpt=%q", trigger.FilePath, trigger.ErrorSignature, trigger.ErrorExcerpt)
+	require.Contains(t, node.ErrorExcerpt, "Compilation Error in model daily_transactions",
+		"compile trigger error_excerpt must carry the compilation message, got %q", node.ErrorExcerpt)
+	t.Logf("✅ remediation.requested:v2 (compile): file_path=%s signature=%s excerpt=%q", node.FilePath, node.ErrorSignature, node.ErrorExcerpt)
 
 	// 5. classification_decision row must record source=='compile'.
 	var decision classificationDecisionRow
@@ -164,9 +176,12 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	require.Equal(t, "emit", decision.Decision, "a compile parse/syntax error must route to emit, not drop")
 
 	// 6. remediation.proposed:v1 must be emitted for the compile failure with
-	//    source=="compile".
+	//    source=="compile". The agent posts a shadow release that lays the
+	//    corrected file over the fixture service's dbt project and compiles it;
+	//    the event follows only once that release reports validated, so this
+	//    budget covers a whole second release pipeline.
 	var proposed remediationProposedPayload
-	pollUntil(t, ctx, 6*time.Minute, 3*time.Second, func() (bool, error) {
+	pollUntil(t, ctx, 15*time.Minute, 3*time.Second, func() (bool, error) {
 		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationProposedV1, "-", "+").Result()
 		if err != nil {
 			return false, nil
@@ -283,12 +298,20 @@ func assertRejectedStageCompile(t *testing.T, ctx context.Context, clients *test
 	}, fmt.Sprintf("timeout waiting for release.rejected:v1 with stage=compile for release %s", releaseID))
 }
 
-// compileTriggerPayload mirrors remediation.requested:v1 including the file_path
-// field the compile path populates (the shared remediationRequestedPayload in
-// remediation_classifier_test.go omits file_path, which is empty for validation).
+// compileTriggerPayload mirrors remediation.requested:v2 including the
+// file_path and error_excerpt fields the compile path populates (the shared
+// remediationNodeEntry in remediation_classifier_test.go omits both, which are
+// empty for a validation failure).
 type compileTriggerPayload struct {
-	Source         string `json:"source"`
-	ReleaseID      string `json:"release_id"`
+	Source    string             `json:"source"`
+	ReleaseID string             `json:"release_id"`
+	Nodes     []compileNodeEntry `json:"nodes"`
+}
+
+// compileNodeEntry is one failing node inside a compile-stage batched trigger.
+// A compile abort fails the whole service project, so the node id is the
+// service name and the batch carries a single entry.
+type compileNodeEntry struct {
 	NodeID         string `json:"node_id"`
 	Category       string `json:"category"`
 	ErrorSignature string `json:"error_signature"`
