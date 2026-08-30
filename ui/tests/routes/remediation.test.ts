@@ -216,6 +216,39 @@ describe('remediation router', () => {
     );
   });
 
+  it('titles a single-node proposal by its one node_id, as before batching existed', async () => {
+    const remediation = makeRemediation({
+      beginPullRequest: vi.fn().mockResolvedValue({
+        proposed_sql_uri: 's3://continuo/proposals/p1/fix.sql',
+        diff_uri: 's3://continuo/proposals/p1/fix.diff',
+        branch: 'remediation/p1',
+        file_path: 'models/mymodel.sql',
+        repo: 'owner/repo',
+        commit_sha: 'abc123',
+        claimed_at: '2026-06-24T00:00:00Z',
+        node_id: 'svc.schema.mymodel',
+        release_id: 'rel-1',
+        // No resolved_node_ids — a legacy row, or a proposal predating batching.
+        edits: [
+          {
+            path: 'models/mymodel.sql',
+            content_uri: 's3://continuo/proposals/p1/fix.sql',
+            diff_uri: 's3://continuo/proposals/p1/fix.diff',
+          },
+        ],
+      }),
+    });
+    const prCreator = makePrCreator();
+    const getObject = makeGetObject('SELECT 1 -- fixed');
+    const app = appWith({ remediation, prCreator, getObject });
+
+    await request(app).post('/api/remediation/proposals/p1/pull-request');
+
+    const call = (prCreator.create as any).mock.calls[0][0];
+    expect(call.title).toBe('[remediation] fix svc.schema.mymodel (release rel-1)');
+    expect(call.body).toContain('**Nodes:** `svc.schema.mymodel`');
+  });
+
   it('strips s3:// prefix when fetching the proposed SQL content', async () => {
     const remediation = makeRemediation({
       beginPullRequest: vi.fn().mockResolvedValue({
@@ -256,16 +289,19 @@ describe('remediation router', () => {
         claimed_at: '2026-06-24T00:00:00Z',
         node_id: 'svc.schema.a',
         release_id: 'rel-1',
+        resolved_node_ids: ['s.a', 's.b'],
         edits: [
           {
             path: 'contracts/a.yml',
             content_uri: 's3://continuo/proposals/p1/contract.yml',
             diff_uri: 's3://continuo/proposals/p1/contract.diff',
+            target_node_id: 's.a',
           },
           {
             path: 'scripts/a.py',
             content_uri: 's3://continuo/proposals/p1/script.py',
             diff_uri: 's3://continuo/proposals/p1/script.diff',
+            target_node_id: 's.b',
           },
         ],
       }),
@@ -286,8 +322,8 @@ describe('remediation router', () => {
     expect(prCreator.create).toHaveBeenCalledWith(
       expect.objectContaining({
         files: [
-          { path: 'contracts/a.yml', content: 'content of proposals/p1/contract.yml' },
-          { path: 'scripts/a.py', content: 'content of proposals/p1/script.py' },
+          { path: 'contracts/a.yml', content: 'content of proposals/p1/contract.yml', target_node_id: 's.a' },
+          { path: 'scripts/a.py', content: 'content of proposals/p1/script.py', target_node_id: 's.b' },
         ],
       }),
     );
@@ -308,6 +344,23 @@ describe('remediation router', () => {
     expect(getObject).toHaveBeenCalledWith('proposals/p1/contract.diff');
     expect(getObject).not.toHaveBeenCalledWith('proposals/p1/script.diff');
     expect(body).toContain('content of proposals/p1/contract.diff');
+  });
+
+  it('titles a batched proposal by node count and lists every resolved node and its target file in the body', async () => {
+    const remediation = multiEditRemediation();
+    const prCreator = makePrCreator();
+    const getObject = vi.fn().mockImplementation(async (key: string) => `content of ${key}`);
+    const app = appWith({ remediation, prCreator, getObject });
+
+    await request(app).post('/api/remediation/proposals/p1/pull-request');
+
+    const call = (prCreator.create as any).mock.calls[0][0];
+    expect(call.title).toBe('[remediation] fix 2 nodes (release rel-1)');
+    expect(call.body).toContain('**Nodes:**');
+    expect(call.body).toContain('`s.a`');
+    expect(call.body).toContain('`s.b`');
+    expect(call.body).toContain('`contracts/a.yml` (fixes `s.a`)');
+    expect(call.body).toContain('`scripts/a.py` (fixes `s.b`)');
   });
 
   it('calls failPullRequest and returns 502 when a single edit content fetch rejects', async () => {

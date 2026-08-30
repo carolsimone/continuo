@@ -199,6 +199,36 @@ describe('ReleaseDetailPage — FIX cell is status-aware', () => {
     expect(screen.queryByText(/Proposed fix available/)).toBeNull();
     expect(screen.queryByText(/Generating fix/)).toBeNull();
   });
+
+  it('lights every node a batched proposal resolves and stops polling once all are proposed', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({
+      source: 'validation', node_id: 's.a', status: 'proposed',
+      resolved_node_ids: ['s.a', 's.b'],
+      node_outcomes: { 's.a': { status: 'proposed', reason: '' }, 's.b': { status: 'proposed', reason: '' } },
+    })]);
+    renderPage(makeRelease([
+      node({ stage: 'validation', node_id: 's.a' }),
+      node({ stage: 'validation', node_id: 's.b' }),
+    ], 'validation_failed'));
+    await screen.findByText('s.b');
+    await waitFor(() => expect(screen.getAllByText(/Proposed fix available/)).toHaveLength(2));
+    expect(screen.queryByText(/Try again/)).toBeNull();
+  });
+
+  it('shows a per-node note for a member the batched attempt skipped while another verifies', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({
+      source: 'validation', node_id: 's.a', status: 'verifying',
+      resolved_node_ids: ['s.a', 's.b'],
+      node_outcomes: { 's.a': { status: 'verifying', reason: '' }, 's.b': { status: 'skipped', reason: 'No source to fix at this commit.' } },
+    })]);
+    renderPage(makeRelease([
+      node({ stage: 'validation', node_id: 's.a' }),
+      node({ stage: 'validation', node_id: 's.b' }),
+    ], 'validation_failed'));
+    await screen.findByText('s.b');
+    expect(await screen.findByText(/Verifying fix/)).toBeInTheDocument();
+    expect(await screen.findByText(/No source to fix at this commit\. Fix it in the repository\./)).toBeInTheDocument();
+  });
 });
 
 describe('ReleaseDetailPage — live polling while non-terminal', () => {

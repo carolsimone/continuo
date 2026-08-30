@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import { ReleaseDetail, NodeValidationResult, ProposalDTO } from './types';
-import { releasePillClass, groupByStage, stageLabel, proposalKey, reasonLabel } from './release-helpers';
+import {
+  releasePillClass, groupByStage, stageLabel, proposalKey, reasonLabel,
+  proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
+} from './release-helpers';
 import { fetchProposals } from './remediation-api';
 
 // A remediation round is capped at this many attempts; the release-controller
@@ -73,11 +76,16 @@ function effectiveRound(p: ProposalDTO): number {
 function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
   const byKey = new Map<string, FixState>();
   for (const p of list) {
-    if (!isFixState(p.status)) continue;
+    // A rejected PR is a dead end for every node this proposal resolves, not
+    // just its representative one.
     if (p.status === 'proposed' && p.pr_state === 'rejected') continue;
-    const k = proposalKey(p.source, p.node_id);
-    const current = byKey.get(k);
-    if (!current || FIX_STATE_RANK[p.status] > FIX_STATE_RANK[current]) byKey.set(k, p.status);
+    for (const nid of proposalNodeIds(p)) {
+      const status = proposalStatusForNode(p, nid);
+      if (!isFixState(status)) continue;
+      const k = proposalKey(p.source, nid);
+      const current = byKey.get(k);
+      if (!current || FIX_STATE_RANK[status] > FIX_STATE_RANK[current]) byKey.set(k, status);
+    }
   }
   return failedKeys.some(k => byKey.has(k));
 }
@@ -302,26 +310,35 @@ export default function ReleaseDetailPage() {
           // Bucket each failed node by its proposals, keeping the furthest-along
           // state any of its attempts reached; terminal-but-blank statuses
           // (skipped/failed/escalated) leave the node without an entry here —
-          // see fixNote below for those.
+          // see fixNote below for those. A batched proposal is unpacked into
+          // every node it resolves, each read against its own per-node
+          // outcome rather than the proposal's overall status.
           const byKey = new Map<string, FixState>();
-          // Latest attempt per node, so fixNote explains why remediation
-          // stopped rather than why an earlier attempt did.
-          const latestByKey = new Map<string, ProposalDTO>();
+          // Latest attempt per node (proposal + which resolved node it was),
+          // so fixNote explains why remediation stopped for that node rather
+          // than why an earlier attempt, or a different node in the same
+          // batched attempt, did.
+          const latestByKey = new Map<string, { proposal: ProposalDTO; nodeId: string }>();
           for (const p of releaseProposals) {
-            const k = proposalKey(p.source, p.node_id);
-            if (isFixState(p.status)) {
-              const current = byKey.get(k);
-              if (!current || FIX_STATE_RANK[p.status] > FIX_STATE_RANK[current]) byKey.set(k, p.status);
+            for (const nid of proposalNodeIds(p)) {
+              const k = proposalKey(p.source, nid);
+              const status = proposalStatusForNode(p, nid);
+              if (isFixState(status)) {
+                const current = byKey.get(k);
+                if (!current || FIX_STATE_RANK[status] > FIX_STATE_RANK[current]) byKey.set(k, status);
+              }
+              const latest = latestByKey.get(k);
+              if (!latest || p.attempt > latest.proposal.attempt) latestByKey.set(k, { proposal: p, nodeId: nid });
             }
-            const latest = latestByKey.get(k);
-            if (!latest || p.attempt > latest.attempt) latestByKey.set(k, p);
           }
           setFixState(byKey);
           const noteByKey = new Map<string, string>();
-          for (const [k, p] of latestByKey) {
-            if (p.status === 'escalated') noteByKey.set(k, 'Attempt budget spent.');
-            else if (p.status === 'failed') noteByKey.set(k, p.rationale || 'The model could not produce a safe fix.');
-            else if (p.status === 'skipped') noteByKey.set(k, `${p.rationale || 'No source to fix at this commit.'} Fix it in the repository.`);
+          for (const [k, { proposal: p, nodeId: nid }] of latestByKey) {
+            const status = proposalStatusForNode(p, nid);
+            const reason = proposalReasonForNode(p, nid);
+            if (status === 'escalated') noteByKey.set(k, 'Attempt budget spent.');
+            else if (status === 'failed') noteByKey.set(k, reason || 'The model could not produce a safe fix.');
+            else if (status === 'skipped') noteByKey.set(k, `${reason || 'No source to fix at this commit.'} Fix it in the repository.`);
           }
           setFixNote(noteByKey);
           verifying = failed.some(k => byKey.get(k) === 'verifying');

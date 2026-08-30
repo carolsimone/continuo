@@ -200,11 +200,30 @@ export type NodeDetailFrom =
   | { type: 'nodes' };
 
 // One file a proposal changes. content_uri and diff_uri address S3 objects
-// holding the full corrected file and its unified diff.
+// holding the full corrected file and its unified diff. target_node_id names
+// the specific resolved node this edit fixes, when a batched proposal's
+// edits map one-to-one to the nodes it resolves; absent when the edit is not
+// attributable to a single node (e.g. a shared contract file).
 export interface FileEditDTO {
   path: string;
   content_uri: string;
   diff_uri: string;
+  target_node_id?: string;
+}
+
+// How a batched remediation attempt ended for one specific node it resolved.
+export interface NodeOutcomeDTO {
+  status: string;
+  reason: string;
+}
+
+// One shadow release a batched attempt ran to verify its fix for one edited
+// service. A multi-service proposal can carry several: one per service whose
+// edits needed a shadow release to judge.
+export interface VerificationDTO {
+  service: string;
+  kind: string;
+  shadow_release_id: string;
 }
 
 export interface ProposalDTO {
@@ -255,4 +274,19 @@ export interface ProposalDTO {
   // belongs to. Absent on a proposal from before rounds existed, which the
   // reader treats the same as round 1.
   remediation_round?: number;
+  // resolved_node_ids lists every failing node this attempt addresses. Absent
+  // or empty on a legacy single-node proposal (or one from before batching
+  // existed), in which case node_id — the representative (first resolved)
+  // node — is the attempt's sole member. See proposalNodeIds.
+  resolved_node_ids?: string[];
+  // node_outcomes carries how this attempt ended for each node it resolved,
+  // keyed by node id. Absent or missing an entry for a legacy row or a node
+  // the attempt did not record separately, in which case the proposal's own
+  // status/rationale describe that node too. See proposalStatusForNode /
+  // proposalReasonForNode.
+  node_outcomes?: Record<string, NodeOutcomeDTO>;
+  // verifications lists the shadow releases this attempt ran, one per edited
+  // service that needed verification. Empty on a proposal judged without one,
+  // or a legacy row that only ever tracked a single shadow_release_id.
+  verifications?: VerificationDTO[];
 }

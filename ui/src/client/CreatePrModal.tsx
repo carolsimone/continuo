@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ProposalDTO } from './types';
 import { createPullRequest } from './remediation-api';
+import { proposalNodeIds } from './release-helpers';
 
 interface Props {
   proposal: ProposalDTO;
@@ -68,7 +69,7 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
         <h2 className="dialog-title" id="create-pr-dialog-title">Create Pull Request</h2>
 
         <p>
-          <strong>{proposal.node_id}</strong> · release {proposal.release_id}
+          <strong>{proposalNodeIds(proposal).join(', ')}</strong> · release {proposal.release_id}
         </p>
         <p>This opens a GitHub PR applying the proposed fix; it will not be merged.</p>
 
