@@ -23,3 +23,19 @@ models:
       +tags: ["e2e-schedule-failure"]
     xprobe_down:
       +tags: ["xprobe"]
+    # The batched-remediation fixtures. A model with no tags is dropped by
+    # topology-controller (an untagged model has no schedule, and only seeds
+    # have a default one), so it never reaches a candidate topology and no
+    # release can compile, validate or fail on it. These four therefore need a
+    # tag purely to exist. They get their own rather than joining
+    # e2e-schedule-failure, whose node set the e2e suite pins model by model and
+    # whose schedule other tests trigger — ftable_k fails by construction, so
+    # putting it there would break runs that have nothing to do with it.
+    ftable_k:
+      +tags: ["e2e-remediation-batch"]
+    ftable_u:
+      +tags: ["e2e-remediation-batch"]
+    ftable_v:
+      +tags: ["e2e-remediation-batch"]
+    ftable_w:
+      +tags: ["e2e-remediation-batch"]
