@@ -216,14 +216,17 @@ type ProposalRepository interface {
 	ListVerifying(ctx context.Context) ([]proposal.View, error)
 
 	// MarkVerified finalizes a proposal whose shadow release validated the
-	// fix, transitioning status 'verifying' -> 'proposed'. hit reports
-	// whether the CAS fired; false means the row was no longer 'verifying' —
-	// already finalized by a concurrent or repeated reconciler pass.
+	// fix, transitioning status 'verifying' -> 'proposed'. It also rewrites
+	// every node_outcomes entry still at 'verifying' to 'proposed', so a
+	// per-node reader agrees with the row's own status. hit reports whether
+	// the CAS fired; false means the row was no longer 'verifying' — already
+	// finalized by a concurrent or repeated reconciler pass.
 	MarkVerified(ctx context.Context, id string) (hit bool, err error)
 
 	// MarkVerifyFailed finalizes a proposal whose shadow release failed to
 	// validate the fix, transitioning status 'verifying' -> 'failed' and
-	// recording verifyErr so the next attempt can use it as evidence. hit
+	// recording verifyErr so the next attempt can use it as evidence. It also
+	// rewrites every node_outcomes entry still at 'verifying' to 'failed'. hit
 	// reports whether the CAS fired, with the same semantics as MarkVerified.
 	MarkVerifyFailed(ctx context.Context, id, verifyErr string) (hit bool, err error)
 }

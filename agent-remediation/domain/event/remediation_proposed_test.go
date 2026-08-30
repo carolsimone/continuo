@@ -25,7 +25,9 @@ func TestRemediationEventID_KeyedOnReleaseAndAttempt(t *testing.T) {
 	if RemediationEventID("r", 1) == RemediationEventID("r", 2) {
 		t.Fatal("attempts must mint distinct ids")
 	}
-	if RemediationEventID("r", 1) != RemediationEventID("r", 1) {
+	first := RemediationEventID("r", 1)
+	second := RemediationEventID("r", 1)
+	if first != second {
 		t.Fatal("must be stable")
 	}
 }

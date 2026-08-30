@@ -74,25 +74,32 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 			ReleaseID:        "rel-1",
 			RemediationRound: 2,
 			NodeID:           "node-1",
+			ResolvedNodeIDs:  []string{"s.a", "s.b"},
 			ErrorSignature:   "sig",
 			Attempt:          1,
 			Status:           proposal.Status("pending"),
-			Confidence:       proposal.Confidence("high"),
-			Rationale:        "reason",
-			ProposedSQLURI:   "s3://bucket/proposed.sql",
-			DiffURI:          "s3://bucket/diff.txt",
-			SourceResolved:   true,
-			Repo:             "my-repo",
-			CommitSHA:        "abc123",
-			FilePath:         "models/foo.sql",
-			Model:            "my_model",
-			CreatedAt:        ts,
-			PrURL:            "https://gh/pr/1",
-			PrNumber:         42,
-			PrState:          "open",
-			PrOpenedBy:       "user1",
+			NodeOutcomes: map[string]proposal.NodeOutcome{
+				"s.a": {Status: proposal.StatusProposed, Reason: "fixed"},
+			},
+			Verifications: []proposal.Verification{
+				{Service: "service-1", Kind: "dbt", ShadowReleaseID: "shadow-x"},
+			},
+			Confidence:     proposal.Confidence("high"),
+			Rationale:      "reason",
+			ProposedSQLURI: "s3://bucket/proposed.sql",
+			DiffURI:        "s3://bucket/diff.txt",
+			SourceResolved: true,
+			Repo:           "my-repo",
+			CommitSHA:      "abc123",
+			FilePath:       "models/foo.sql",
+			Model:          "my_model",
+			CreatedAt:      ts,
+			PrURL:          "https://gh/pr/1",
+			PrNumber:       42,
+			PrState:        "open",
+			PrOpenedBy:     "user1",
 			Edits: []proposal.FileEdit{
-				{Path: "models/foo.sql", ContentURI: "s3://bucket/foo.sql", DiffURI: "s3://bucket/foo.diff"},
+				{Path: "models/foo.sql", ContentURI: "s3://bucket/foo.sql", DiffURI: "s3://bucket/foo.diff", TargetNodeID: "s.u"},
 				{Path: "models/bar.sql", ContentURI: "s3://bucket/bar.sql", DiffURI: "s3://bucket/bar.diff"},
 			},
 		},
@@ -133,9 +140,20 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 	assert.Equal(t, "models/foo.sql", p.Edits[0].Path)
 	assert.Equal(t, "s3://bucket/foo.sql", p.Edits[0].ContentUri)
 	assert.Equal(t, "s3://bucket/foo.diff", p.Edits[0].DiffUri)
+	assert.Equal(t, "s.u", p.Edits[0].TargetNodeId, "edits[0]'s target_node_id must be carried onto the wire")
 	assert.Equal(t, "models/bar.sql", p.Edits[1].Path)
 	assert.Equal(t, "s3://bucket/bar.sql", p.Edits[1].ContentUri)
 	assert.Equal(t, "s3://bucket/bar.diff", p.Edits[1].DiffUri)
+	assert.Equal(t, "", p.Edits[1].TargetNodeId, "an edit with no TargetNodeID must produce an empty string")
+
+	assert.Equal(t, []string{"s.a", "s.b"}, p.ResolvedNodeIds, "resolved_node_ids must be carried onto the wire")
+	require.Contains(t, p.NodeOutcomes, "s.a")
+	assert.Equal(t, "proposed", p.NodeOutcomes["s.a"].Status)
+	assert.Equal(t, "fixed", p.NodeOutcomes["s.a"].Reason)
+	require.Len(t, p.Verifications, 1)
+	assert.Equal(t, "service-1", p.Verifications[0].Service)
+	assert.Equal(t, "dbt", p.Verifications[0].Kind)
+	assert.Equal(t, "shadow-x", p.Verifications[0].ShadowReleaseId)
 }
 
 func TestProposalsServer_ListProposals_InternalError(t *testing.T) {
@@ -215,15 +233,16 @@ func TestProposalsServer_GetProposal_InternalError(t *testing.T) {
 func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 	claimedAt := time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC)
 	claim := proposal.PRClaim{
-		ID:             "p3",
-		Repo:           "repo-x",
-		CommitSHA:      "sha999",
-		FilePath:       "models/bar.sql",
-		ProposedSQLURI: "s3://bucket/bar.sql",
-		DiffURI:        "s3://bucket/bar.diff",
-		ReleaseID:      "rel-3",
-		NodeID:         "node-3",
-		Attempt:        2,
+		ID:              "p3",
+		Repo:            "repo-x",
+		CommitSHA:       "sha999",
+		FilePath:        "models/bar.sql",
+		ProposedSQLURI:  "s3://bucket/bar.sql",
+		DiffURI:         "s3://bucket/bar.diff",
+		ReleaseID:       "rel-3",
+		NodeID:          "node-3",
+		ResolvedNodeIDs: []string{"node-3", "node-4"},
+		Attempt:         2,
 		Rationale:      "fix bar",
 		Confidence:     proposal.Confidence("medium"),
 		Model:          "bar_model",
@@ -252,6 +271,7 @@ func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, "medium", resp.Confidence)
 	assert.Equal(t, "bar_model", resp.Model)
 	assert.Equal(t, "remediation/rel-3/node-3-attempt2", resp.Branch)
+	assert.Equal(t, []string{"node-3", "node-4"}, resp.ResolvedNodeIds, "resolved_node_ids must be carried onto the wire")
 	assert.Equal(t, claimedAt.Format(time.RFC3339), resp.ClaimedAt,
 		"the response must carry the claim's persisted ClaimedAt so FailPullRequest can CAS on it later")
 
