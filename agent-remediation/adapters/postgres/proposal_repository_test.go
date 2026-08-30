@@ -1501,6 +1501,109 @@ func TestProposalRepositoryMarkVerifyFailed(t *testing.T) {
 		"the no-op call must not overwrite the already-recorded verify_error")
 }
 
+// TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes verifies that the
+// UPDATE finalizing an attempt also finalizes its per-node outcomes: every node
+// that was waiting on a shadow release becomes 'proposed', while a node the
+// attempt had already settled keeps the status and reason it was recorded with.
+// Without the rewrite the row would report itself proposed while its own nodes
+// still read as verifying, and every reader of node_outcomes would keep showing
+// them as in flight.
+func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	id := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "rel-verify-outcomes-1",
+		NodeID:          "model.p.a",
+		ResolvedNodeIDs: []string{"model.p.a", "model.p.b"},
+		ErrorSignature:  "sig-verify-outcomes-1",
+		Attempt:         1,
+		Status:          proposal.StatusVerifying,
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"model.p.a": {Status: proposal.StatusVerifying},
+			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+		},
+		ShadowReleaseID: "shadow-rel-verify-outcomes-1",
+		CreatedAt:       time.Now().UTC(),
+	})
+
+	hit, err := repo.MarkVerified(ctx, id)
+	require.NoError(t, err)
+	require.True(t, hit, "MarkVerified must fire the CAS")
+
+	got, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, string(proposal.StatusProposed), string(got.Status))
+	require.Equal(t, map[string]proposal.NodeOutcome{
+		"model.p.a": {Status: proposal.StatusProposed},
+		"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+	}, got.NodeOutcomes, "every verifying node becomes proposed; a settled node is untouched")
+
+	// A row carrying no per-node outcomes at all: the rewrite aggregates over
+	// zero entries, which must still write an empty object rather than the SQL
+	// NULL the column forbids.
+	emptyID := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "rel-verify-outcomes-1",
+		NodeID:          "model.p.no_outcomes",
+		ErrorSignature:  "sig-verify-outcomes-1",
+		Attempt:         2,
+		Status:          proposal.StatusVerifying,
+		ShadowReleaseID: "shadow-rel-verify-outcomes-2",
+		CreatedAt:       time.Now().UTC(),
+	})
+
+	hit, err = repo.MarkVerified(ctx, emptyID)
+	require.NoError(t, err)
+	require.True(t, hit, "a row with no per-node outcomes must still finalize")
+
+	var stored string
+	require.NoError(t, db.GetContext(ctx, &stored,
+		`SELECT node_outcomes::text FROM proposal WHERE id=$1`, emptyID))
+	require.JSONEq(t, `{}`, stored, "an outcome-less row must keep an empty object, never NULL")
+}
+
+// TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes is the mirror of
+// the rewrite above for a rejected attempt: every node that was waiting on a
+// shadow release becomes 'failed', and a node the attempt had already settled
+// keeps its own outcome.
+func TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	id := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "rel-verify-outcomes-2",
+		NodeID:          "model.p.a",
+		ResolvedNodeIDs: []string{"model.p.a", "model.p.b"},
+		ErrorSignature:  "sig-verify-outcomes-2",
+		Attempt:         1,
+		Status:          proposal.StatusVerifying,
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"model.p.a": {Status: proposal.StatusVerifying},
+			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+		},
+		ShadowReleaseID: "shadow-rel-verify-outcomes-3",
+		CreatedAt:       time.Now().UTC(),
+	})
+
+	hit, err := repo.MarkVerifyFailed(ctx, id, "model.p.a: still broken")
+	require.NoError(t, err)
+	require.True(t, hit, "MarkVerifyFailed must fire the CAS")
+
+	got, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, string(proposal.StatusFailed), string(got.Status))
+	require.Equal(t, "model.p.a: still broken", got.VerifyError)
+	require.Equal(t, map[string]proposal.NodeOutcome{
+		"model.p.a": {Status: proposal.StatusFailed},
+		"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+	}, got.NodeOutcomes, "every verifying node becomes failed; a settled node is untouched")
+}
+
 // TestListVerifying_OrderedOldestFirstAndLimited seeds 25 verifying proposals
 // with distinct, staggered created_at values and verifies that ListVerifying
 // returns exactly 20 of them (its documented cap), ordered oldest first — the

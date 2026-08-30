@@ -753,16 +753,33 @@ func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View
 	return views, nil
 }
 
-// MarkVerified finalizes a proposal whose shadow release validated the fix,
-// transitioning status 'verifying' -> 'proposed'. The WHERE status='verifying'
-// guard is the same compare-and-set contract as every other state transition
-// in this file: a row already finalized by a concurrent or repeated
-// reconciler pass leaves 0 rows affected rather than a blind overwrite. hit
-// reports whether the CAS fired.
+// rewriteVerifyingOutcomes is the node_outcomes assignment that carries an
+// attempt's per-node outcomes along with the attempt itself: every node still
+// waiting on a shadow release takes the status the attempt just reached, while
+// a node the attempt had already settled — skipped, or failed while being
+// fixed — keeps the entry it was recorded with, since no release judged it.
+//
+// The COALESCE is what keeps the column (NOT NULL) writable: aggregating over a
+// row that recorded no per-node outcome at all yields SQL NULL, not an empty
+// object.
+const rewriteVerifyingOutcomes = `
+	node_outcomes = COALESCE((
+		SELECT jsonb_object_agg(k, CASE WHEN v->>'status' = $2
+			THEN jsonb_set(v, '{status}', to_jsonb($3::text)) ELSE v END)
+		FROM jsonb_each(node_outcomes) AS e(k, v)
+	), '{}'::jsonb)`
+
+// MarkVerified finalizes a proposal whose shadow releases validated the fix,
+// transitioning status 'verifying' -> 'proposed' and carrying every node that
+// was waiting on those releases to 'proposed' with it. The WHERE
+// status='verifying' guard is the same compare-and-set contract as every other
+// state transition in this file: a row already finalized by a concurrent or
+// repeated reconciler pass leaves 0 rows affected rather than a blind
+// overwrite. hit reports whether the CAS fired.
 func (r *ProposalRepository) MarkVerified(ctx context.Context, id string) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$2 WHERE id=$1 AND status=$3`,
-		id, proposal.StatusProposed, proposal.StatusVerifying)
+		`UPDATE proposal SET status=$3, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		id, proposal.StatusVerifying, proposal.StatusProposed)
 	if err != nil {
 		return false, fmt.Errorf("mark verified: %w", err)
 	}
@@ -773,14 +790,15 @@ func (r *ProposalRepository) MarkVerified(ctx context.Context, id string) (bool,
 	return n > 0, nil
 }
 
-// MarkVerifyFailed finalizes a proposal whose shadow release failed to
-// validate the fix, transitioning status 'verifying' -> 'failed' and
+// MarkVerifyFailed finalizes a proposal whose shadow releases failed to
+// validate the fix, transitioning status 'verifying' -> 'failed', carrying
+// every node that was waiting on those releases to 'failed' with it, and
 // recording verifyErr so the next attempt can use it as evidence. The CAS
 // guard and hit semantics mirror MarkVerified.
 func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$2, verify_error=$3 WHERE id=$1 AND status=$4`,
-		id, proposal.StatusFailed, verifyErr, proposal.StatusVerifying)
+		`UPDATE proposal SET status=$3, verify_error=$4, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		id, proposal.StatusVerifying, proposal.StatusFailed, verifyErr)
 	if err != nil {
 		return false, fmt.Errorf("mark verify failed: %w", err)
 	}
