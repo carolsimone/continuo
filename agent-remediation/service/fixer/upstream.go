@@ -42,6 +42,9 @@ type UpstreamInput struct {
 // skipped and the driver falls back to fixing the members independently. A
 // non-dbt ancestor is skipped the same way.
 func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Result, error) {
+	if len(in.Members) == 0 {
+		return skipUpstream(svc, in, "an upstream cluster needs at least one failing member"), nil
+	}
 	src, err := svc.CandidateSource.NodeSource(ctx, in.CodeBundleURI, in.TargetNodeID, in.ReleaseID)
 	if errors.Is(err, ports.ErrNotFound) {
 		return skipUpstream(svc, in, "the changed ancestor's source is not in the release's code bundle"), nil

@@ -91,3 +91,42 @@ func TestProposeUpstreamFix_LowConfidenceFails(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, proposal.StatusFailed, res.Proposal.Status)
 }
+
+// TestProposeUpstreamFix_NoMembersSkips verifies that a cluster with no
+// failing members is skipped before any collaborator is touched: an upstream
+// fix exists to repair the shared cause of listed descendants, and with none
+// listed there is nothing to name in the prompt (in.Members[0] would panic)
+// and nothing for the resulting edit to be justified by.
+func TestProposeUpstreamFix_NoMembersSkips(t *testing.T) {
+	svc, llm := upstreamSvc()
+	cs := &fakeCandidateSource{src: ports.CandidateSource{RawCode: "select id from s.base", Runtime: ports.RuntimeDbt}}
+	svc.CandidateSource = cs
+	loc := &countingLocator{filePath: "models/u.sql", serviceName: "svc"}
+	svc.Locator = loc
+
+	in := upstreamInput()
+	in.Members = nil
+
+	res, err := ProposeUpstreamFix(context.Background(), svc, in)
+	require.NoError(t, err)
+	assert.Equal(t, proposal.StatusSkipped, res.Proposal.Status)
+	assert.Contains(t, res.Proposal.Rationale, "at least one failing member")
+	assert.Equal(t, 0, llm.calls, "no model call is worth making for a cluster with nothing to repair")
+	assert.Equal(t, 0, cs.calls, "the code bundle must not be read before the cluster is known to have members")
+	assert.Equal(t, 0, loc.calls, "the promoted graph must not be queried before the cluster is known to have members")
+}
+
+// TestProposeUpstreamFix_UnmappedServiceSkips covers the ServiceRepoPaths miss
+// branch: the promoted graph locates the changed ancestor, but its owning
+// service has no repository-path mapping, so the fix has nowhere to write the
+// edit's path from.
+func TestProposeUpstreamFix_UnmappedServiceSkips(t *testing.T) {
+	svc, _ := upstreamSvc()
+	svc.Locator = fakeLocator{filePath: "models/u.sql", serviceName: "unmapped-svc"}
+
+	res, err := ProposeUpstreamFix(context.Background(), svc, upstreamInput())
+	require.NoError(t, err)
+	assert.Equal(t, proposal.StatusSkipped, res.Proposal.Status)
+	assert.Contains(t, res.Proposal.Rationale, "unmapped-svc")
+	assert.Contains(t, res.Proposal.Rationale, "no repository path mapping")
+}
