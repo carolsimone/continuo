@@ -144,9 +144,12 @@ var (
 
 // stubPRState is one opened stub PR's full lifecycle state. Head is the
 // branch name as posted (no "owner:" prefix — see listPulls for how a
-// GET ...?head=owner:branch query is matched against it).
+// GET ...?head=owner:branch query is matched against it). Title is stored as
+// posted and echoed back on every read, so a test can assert what the pull
+// request the system opened is actually called.
 type stubPRState struct {
 	Number    int
+	Title     string
 	Head      string
 	Base      string
 	CreatedAt string
@@ -607,8 +610,9 @@ func handlePulls(w http.ResponseWriter, r *http.Request) {
 
 	case after == "" && r.Method == http.MethodPost:
 		var body struct {
-			Head string `json:"head"`
-			Base string `json:"base"`
+			Title string `json:"title"`
+			Head  string `json:"head"`
+			Base  string `json:"base"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 
@@ -617,6 +621,7 @@ func handlePulls(w http.ResponseWriter, r *http.Request) {
 		nextPRNumber++
 		st := &stubPRState{
 			Number:    n,
+			Title:     body.Title,
 			Head:      body.Head,
 			Base:      body.Base,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -723,6 +728,7 @@ func pullJSON(st *stubPRState) map[string]interface{} {
 	}
 	return map[string]interface{}{
 		"number":     st.Number,
+		"title":      st.Title,
 		"state":      state,
 		"merged":     st.Merged,
 		"merged_at":  mergedAt,

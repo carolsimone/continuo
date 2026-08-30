@@ -530,10 +530,14 @@ func waitForProposal(
 }
 
 // pyFileEdit mirrors one element of the proposal's file_edits column.
+// TargetNodeID names the node whose source the edit changes, which for a
+// batched attempt is the only thing that says which file repairs which
+// failure — the representative node_id column cannot stand for all of them.
 type pyFileEdit struct {
-	Path       string `json:"path"`
-	ContentURI string `json:"content_uri"`
-	DiffURI    string `json:"diff_uri"`
+	Path         string `json:"path"`
+	ContentURI   string `json:"content_uri"`
+	DiffURI      string `json:"diff_uri"`
+	TargetNodeID string `json:"target_node_id"`
 }
 
 // decodeFileEdits reads the proposal row's file_edits column.

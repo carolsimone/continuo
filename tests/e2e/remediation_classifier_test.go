@@ -255,9 +255,13 @@ type remediationRequestedPayload struct {
 // ChangedAncestorIDs is what lets the agent group several failures that share
 // one changed ancestor into a single upstream fix.
 type remediationNodeEntry struct {
-	NodeID             string   `json:"node_id"`
-	Category           string   `json:"category"`
-	ErrorSignature     string   `json:"error_signature"`
+	NodeID         string `json:"node_id"`
+	Category       string `json:"category"`
+	ErrorSignature string `json:"error_signature"`
+	// ErrorExcerpt is the key error line the signature was folded from. It is
+	// what makes a signature mismatch between two nodes diagnosable: the hashes
+	// themselves say only that they differ, the excerpts say why.
+	ErrorExcerpt       string   `json:"error_excerpt"`
 	DBTLogURI          string   `json:"dbt_log_uri"`
 	ChangedAncestorIDs []string `json:"changed_ancestor_ids"`
 }
