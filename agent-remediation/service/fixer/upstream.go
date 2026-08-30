@@ -87,9 +87,13 @@ func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Re
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
 	}
-	if res.ProposedSQL == "" || res.ProposedSQL == src.RawCode || isLowConfidence(res.Confidence) {
-		return Result{Proposal: proposal.Proposal{Status: proposal.StatusFailed,
-			Rationale: "the model could not produce a safe fix for the changed ancestor " + in.TargetNodeID}}, nil
+	// An answer the ancestor cannot be repaired from ends the cluster skipped,
+	// not failed: each member can still be fixed in its own source, and the
+	// driver only falls back to that when the upstream attempt skips. Failing
+	// here would abandon every member on one declined answer.
+	if why := declined(res, src.RawCode); why != "" {
+		return skipUpstream(svc, in, fmt.Sprintf(
+			"the model could not produce a safe fix for the changed ancestor %s: %s", in.TargetNodeID, why)), nil
 	}
 	edit, err := writeSourceArtifacts(ctx, svc, Input{ReleaseID: in.ReleaseID, NodeID: in.TargetNodeID, Attempt: in.Attempt},
 		fullPath, src.RawCode, res.ProposedSQL)
@@ -102,6 +106,22 @@ func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Re
 		ProposedSQLURI: edit.ContentURI, DiffURI: edit.DiffURI, SourceResolved: true, Model: res.Model,
 		Repo: in.Repo, CommitSHA: in.CommitSHA, FilePath: fullPath, Edits: []proposal.FileEdit{edit},
 	}}, nil
+}
+
+// declined names why the model's answer cannot repair the changed ancestor, or
+// "" when it can: an empty answer, the ancestor's own source returned
+// unchanged, and an answer the model itself rates low are all the model
+// declining to fix the shared cause.
+func declined(res ports.ProposeResult, original string) string {
+	switch {
+	case res.ProposedSQL == "":
+		return "it returned no source"
+	case res.ProposedSQL == original:
+		return "it returned the ancestor's source unchanged"
+	case isLowConfidence(res.Confidence):
+		return "it reported low confidence in its answer"
+	}
+	return ""
 }
 
 func skipUpstream(svc Services, in UpstreamInput, reason string) Result {

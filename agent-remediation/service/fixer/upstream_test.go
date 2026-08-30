@@ -81,15 +81,35 @@ func TestProposeUpstreamFix_UnlocatableTargetSkips(t *testing.T) {
 	assert.Equal(t, proposal.StatusSkipped, res.Proposal.Status)
 }
 
-func TestProposeUpstreamFix_LowConfidenceFails(t *testing.T) {
-	svc, _ := upstreamSvc()
-	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
-		ProposedSQL: "select id from s.base", Confidence: "low",
-	}}}
+// TestProposeUpstreamFix_LowConfidenceSkipsToIndependent covers the answers a
+// cluster cannot be repaired from: no source, the ancestor's source returned
+// unchanged, or an answer the model itself has low confidence in. Each ends the
+// cluster skipped rather than failed, because the members can still be fixed in
+// their own source — and the driver only falls back to that when the upstream
+// attempt skips. Failing here would abandon every member on one declined answer.
+func TestProposeUpstreamFix_LowConfidenceSkipsToIndependent(t *testing.T) {
+	cases := []struct {
+		name   string
+		answer ports.ProposeResult
+		reason string
+	}{
+		{"low_confidence", ports.ProposeResult{ProposedSQL: "select id, amount from s.base", Confidence: "low"}, "low confidence"},
+		{"no_source", ports.ProposeResult{ProposedSQL: "", Confidence: "high"}, "no source"},
+		{"unchanged_source", ports.ProposeResult{ProposedSQL: "select id from s.base", Confidence: "high"}, "unchanged"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, _ := upstreamSvc()
+			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{tc.answer}}
 
-	res, err := ProposeUpstreamFix(context.Background(), svc, upstreamInput())
-	require.NoError(t, err)
-	assert.Equal(t, proposal.StatusFailed, res.Proposal.Status)
+			res, err := ProposeUpstreamFix(context.Background(), svc, upstreamInput())
+			require.NoError(t, err)
+			assert.Equal(t, proposal.StatusSkipped, res.Proposal.Status)
+			assert.Contains(t, res.Proposal.Rationale, "s.u")
+			assert.Contains(t, res.Proposal.Rationale, tc.reason)
+			assert.Empty(t, res.Proposal.Edits, "a declined cluster proposes no edit")
+		})
+	}
 }
 
 // TestProposeUpstreamFix_NoMembersSkips verifies that a cluster with no
