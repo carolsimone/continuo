@@ -7,6 +7,6 @@ USER root
 RUN ln -s "$(command -v dbt)" /usr/local/bin/wise-dbt
 USER dbt
 
-COPY dbt_project.yml profiles.yml ./
-COPY models/ ./models/
-COPY seeds/ ./seeds/
+COPY --chown=dbt:dbt dbt_project.yml profiles.yml ./
+COPY --chown=dbt:dbt models/ ./models/
+COPY --chown=dbt:dbt seeds/ ./seeds/

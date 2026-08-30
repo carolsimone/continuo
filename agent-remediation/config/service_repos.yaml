@@ -14,3 +14,8 @@ services:
   service-1: services/service-1
   service-2: services/service-2
   service-3: services/service-3
+  # The e2e python-node fixture services. A shadow release is routed by the
+  # project root that owns the edited file, so a service missing here has its
+  # fix recorded as unverifiable rather than being verified.
+  svc-py-e2e: services/svc-py-e2e
+  svc-py-e2e-loop: services/svc-py-e2e-loop
