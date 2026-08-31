@@ -215,6 +215,64 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 		"the pr_opened payload must carry the view's ResolvedNodeIDs")
 }
 
+// TestService_Record_PROpenedNamesOnlyTheFixedNodes covers the mixed batch: one
+// attempt addressed two failing nodes, repaired one and skipped the other, and
+// the pull request therefore carries a fix for one of them only. Naming both
+// would attach the PR to a rejection it does nothing about — the orchestrator
+// records it against every node the event names.
+func TestService_Record_PROpenedNamesOnlyTheFixedNodes(t *testing.T) {
+	repo := &fakeRepo{
+		view: proposal.View{
+			ID:              "p1",
+			ReleaseID:       "r-1",
+			NodeID:          "model.p.orders_d",
+			ResolvedNodeIDs: []string{"model.p.orders_d", "model.p.orders_e"},
+			NodeOutcomes: map[string]proposal.NodeOutcome{
+				"model.p.orders_d": {Status: proposal.StatusProposed},
+				"model.p.orders_e": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+			},
+			Attempt: 1,
+		},
+		recordPRCASHit: true,
+	}
+	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
+
+	require.NoError(t, svc.Record(context.Background(), proposals.RecordInput{
+		ProposalID: "p1", PrURL: "u", PrNumber: 7, OpenedBy: "dev|local",
+	}))
+
+	var payload event.PROpened
+	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
+	require.Equal(t, []string{"model.p.orders_d"}, payload.ResolvedNodeIDs,
+		"the skipped node's rejection has no fix, so the PR must not be attached to it")
+}
+
+// TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes is the same
+// invariant on the closing half: the PR's outcome may only be mirrored onto the
+// nodes it actually carried a fix for.
+func TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes(t *testing.T) {
+	repo := &fakeRepo{
+		view: proposal.View{
+			ID: "p1", ReleaseID: "r-1", NodeID: "model.p.orders_d",
+			ResolvedNodeIDs: []string{"model.p.orders_d", "model.p.orders_e"},
+			NodeOutcomes: map[string]proposal.NodeOutcome{
+				"model.p.orders_d": {Status: proposal.StatusProposed},
+				"model.p.orders_e": {Status: proposal.StatusFailed, Reason: "nothing to verify"},
+			},
+			Attempt: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
+		},
+		outcomeCASHit: true,
+	}
+	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
+
+	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
+	require.NoError(t, svc.RecordOutcome(context.Background(), "p1", proposal.PROutcomeMerged, closedAt))
+
+	var payload event.PRClosed
+	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
+	require.Equal(t, []string{"model.p.orders_d"}, payload.ResolvedNodeIDs)
+}
+
 // TestService_Record_UsesProvidedOpenedAt verifies that a non-zero
 // RecordInput.OpenedAt — as the opening sweep supplies from GitHub's own
 // created_at when recovering a stranded PR — is written through to

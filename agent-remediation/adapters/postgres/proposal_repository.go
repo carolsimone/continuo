@@ -428,6 +428,7 @@ type claimRow struct {
 	ReleaseID       string    `db:"release_id"`
 	NodeID          string    `db:"node_id"`
 	ResolvedNodeIDs []byte    `db:"resolved_node_ids"`
+	NodeOutcomes    []byte    `db:"node_outcomes"`
 	Attempt         int       `db:"attempt"`
 	Rationale       string    `db:"rationale"`
 	Confidence      string    `db:"confidence"`
@@ -435,6 +436,11 @@ type claimRow struct {
 	ClaimedAt       time.Time `db:"pr_claimed_at"`
 }
 
+// toClaim projects a claimed row onto the claim the caller opens a pull request
+// from. ResolvedNodeIDs is narrowed to the nodes the attempt actually repaired:
+// the claim is what names the pull request and writes its body, and a node the
+// attempt skipped or failed carries no fix to describe. Every consumer of a
+// claim reads it through this projection, so the narrowing cannot be bypassed.
 func (row claimRow) toClaim(branch string) proposal.PRClaim {
 	return proposal.PRClaim{
 		ID:              row.ID,
@@ -446,7 +452,8 @@ func (row claimRow) toClaim(branch string) proposal.PRClaim {
 		Edits:           editsOrLegacy(row.FileEdits, row.FilePath, row.ProposedSQLURI, row.DiffURI),
 		ReleaseID:       row.ReleaseID,
 		NodeID:          row.NodeID,
-		ResolvedNodeIDs: resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID),
+		ResolvedNodeIDs: proposal.FixedNodeIDs(
+			resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID), unmarshalNodeOutcomes(row.NodeOutcomes)),
 		Attempt:         row.Attempt,
 		Rationale:       row.Rationale,
 		Confidence:      proposal.Confidence(row.Confidence),
@@ -558,7 +565,7 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, cla
 		  AND pr_state IN ('', 'failed')
 		RETURNING id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
 		          file_edits,
-		          release_id, node_id, resolved_node_ids, attempt, rationale, confidence, model,
+		          release_id, node_id, resolved_node_ids, node_outcomes, attempt, rationale, confidence, model,
 		          pr_claimed_at`
 	var row claimRow
 	if err := r.q.GetContext(ctx, &row, stmt, id, claimedAt, proposal.StatusProposed); err != nil {

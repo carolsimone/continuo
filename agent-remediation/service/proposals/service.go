@@ -188,14 +188,17 @@ func (s *Service) RecordOutcome(ctx context.Context, id string, outcome proposal
 }
 
 // enqueuePRClosed builds the deterministic remediation.pr_closed:v1 outbox
-// entry and creates it on the repository bound to the caller's transaction.
+// entry and creates it on the repository bound to the caller's transaction. It
+// names the nodes the attempt actually fixed, not every node it addressed: a
+// node the attempt skipped or failed carries no fix, so the pull request's
+// outcome says nothing about its rejection.
 func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v proposal.View, outcome proposal.PROutcome, closedAt time.Time) error {
 	eventID := event.PRClosedEventID(v.ReleaseID, v.Attempt)
 	payload := event.PRClosed{
 		ProposalID:      v.ID,
 		ReleaseID:       v.ReleaseID,
 		NodeID:          v.NodeID,
-		ResolvedNodeIDs: v.ResolvedNodeIDs,
+		ResolvedNodeIDs: v.FixedNodeIDs(),
 		PrURL:           v.PrURL,
 		PrNumber:        v.PrNumber,
 		Outcome:         string(outcome),
@@ -220,7 +223,8 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 }
 
 // enqueuePROpened builds the deterministic remediation.pr_opened:v1 outbox
-// entry and creates it on the repository bound to the caller's transaction.
+// entry and creates it on the repository bound to the caller's transaction. As
+// with pr_closed, it names only the nodes the attempt actually fixed.
 // now is the outbox row's own bookkeeping timestamp; openedAt is the PR's
 // actual creation time, which the two can legitimately differ on — recovering
 // a stranded PR through the opening sweep resolves it long after GitHub
@@ -231,7 +235,7 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 		ProposalID:      in.ProposalID,
 		ReleaseID:       v.ReleaseID,
 		NodeID:          v.NodeID,
-		ResolvedNodeIDs: v.ResolvedNodeIDs,
+		ResolvedNodeIDs: v.FixedNodeIDs(),
 		PrURL:           in.PrURL,
 		PrNumber:        in.PrNumber,
 		OpenedBy:        in.OpenedBy,
