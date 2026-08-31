@@ -161,12 +161,16 @@ func renderPrecedents(b *strings.Builder, ps []Precedent) {
 
 // renderPrecedentResolution writes the diff(s) that resolved a precedent. The
 // precedent's own resolution diff, when present, renders exactly as before
-// (no upstream wording). Edited entries for a node other than the
-// precedent's own are additionally rendered with a line naming that upstream
-// node and its path; when there is no own-node resolution diff at all, the
-// Edited entries stand in as the rendered resolution. An Edited entry with
-// Amended set carries a diff computed from merged truth rather than the
-// original proposal, so its rendering is preceded by a caveat saying so.
+// (no upstream wording); when there is no own-node resolution diff at all,
+// the matching own-node Edited entry stands in as the rendered resolution.
+// Either way, an own-node Edited entry's Amended flag governs the caveat
+// independently of which of the two supplied the diff text: a precedent can
+// carry both a non-empty ResolutionDiff (an own-timeline NodeVersion
+// resolution) and an own-node Edited entry with Amended set (a merged-PR
+// edit to that same node) at once, and the caveat must render in that case
+// too. Edited entries for a node other than the precedent's own are
+// additionally rendered with a line naming that upstream node and its path,
+// each with its own Amended-governed caveat.
 func renderPrecedentResolution(b *strings.Builder, p Precedent) {
 	var own *EditedPrecedent
 	for i := range p.Edited {
@@ -178,7 +182,7 @@ func renderPrecedentResolution(b *strings.Builder, p Precedent) {
 
 	switch {
 	case p.ResolutionDiff != "":
-		fmt.Fprintf(b, "```diff\n%s\n```\n", p.ResolutionDiff)
+		renderDiffBlock(b, p.ResolutionDiff, own != nil && own.Amended)
 	case own != nil:
 		renderEditedDiff(b, *own)
 	}
@@ -196,10 +200,16 @@ func renderPrecedentResolution(b *strings.Builder, p Precedent) {
 // caveat when the entry's diff was computed from merged truth rather than
 // the original proposal.
 func renderEditedDiff(b *strings.Builder, e EditedPrecedent) {
-	if e.Amended {
+	renderDiffBlock(b, e.Diff, e.Amended)
+}
+
+// renderDiffBlock writes one diff fence, preceded by the amended caveat when
+// amended is true.
+func renderDiffBlock(b *strings.Builder, diff string, amended bool) {
+	if amended {
 		b.WriteString("  note: a human amended the proposed fix before merge; the diff below is what shipped.\n")
 	}
-	fmt.Fprintf(b, "```diff\n%s\n```\n", e.Diff)
+	fmt.Fprintf(b, "```diff\n%s\n```\n", diff)
 }
 
 const compileFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt project that failed to compile.

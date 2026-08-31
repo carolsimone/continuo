@@ -314,6 +314,73 @@ func TestRenderPrecedents_EditedDiffAsResolutionWhenResolutionDiffEmpty(t *testi
 	}
 }
 
+// TestRenderPrecedents_OwnNodeEditedDiffAsResolutionWhenResolutionDiffEmpty
+// verifies that an own-node Edited entry (NodeID == the precedent's own
+// node), not just an upstream one, stands in as the rendered resolution when
+// ResolutionDiff is empty.
+func TestRenderPrecedents_OwnNodeEditedDiffAsResolutionWhenResolutionDiffEmpty(t *testing.T) {
+	ps := []Precedent{{
+		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
+		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
+		Resolved: true,
+		Edited: []EditedPrecedent{
+			{NodeID: "analytics.orders", Path: "models/orders.sql", Diff: "-select a\n+select a, x"},
+		},
+	}}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if !strings.Contains(out, "-select a\n+select a, x") {
+		t.Fatalf("own-node edited diff must be rendered as the resolution when ResolutionDiff is empty:\n%s", out)
+	}
+}
+
+// TestRenderPrecedents_AmendedCaveat_CoexistsWithResolutionDiff verifies that
+// an own-node Edited entry's Amended caveat still renders even when the
+// precedent also carries a non-empty ResolutionDiff (an own-timeline
+// NodeVersion resolution and a merged-PR edit to the same node are not
+// mutually exclusive) — the caveat must not be silently dropped just because
+// ResolutionDiff supplied the diff text.
+func TestRenderPrecedents_AmendedCaveat_CoexistsWithResolutionDiff(t *testing.T) {
+	ps := []Precedent{{
+		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
+		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
+		Resolved: true, ResolutionDiff: "-select a\n+select a, x",
+		Edited: []EditedPrecedent{
+			{NodeID: "analytics.orders", Path: "models/orders.sql", Amended: true, Diff: "-select a\n+select a, x"},
+		},
+	}}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if !strings.Contains(out, "-select a\n+select a, x") {
+		t.Fatalf("missing resolution diff:\n%s", out)
+	}
+	if !strings.Contains(out, "note: a human amended the proposed fix before merge; the diff below is what shipped.") {
+		t.Fatalf("amended caveat must render even when ResolutionDiff supplied the diff text:\n%s", out)
+	}
+}
+
+// TestRenderPrecedents_NoCaveat_OwnNodeNotAmended guards against
+// over-rendering: an own-node Edited entry with Amended==false alongside a
+// non-empty ResolutionDiff must render no caveat at all.
+func TestRenderPrecedents_NoCaveat_OwnNodeNotAmended(t *testing.T) {
+	ps := []Precedent{{
+		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
+		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
+		Resolved: true, ResolutionDiff: "-select a\n+select a, x",
+		Edited: []EditedPrecedent{
+			{NodeID: "analytics.orders", Path: "models/orders.sql", Amended: false, Diff: "-select a\n+select a, x"},
+		},
+	}}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if strings.Contains(out, "note: a human amended") {
+		t.Fatalf("must not render the amended caveat when the own-node edit is not amended:\n%s", out)
+	}
+}
+
 func TestAssembleSeedFix_RendersPrecedents(t *testing.T) {
 	req := AssembleSeedFix("seeds/ref.csv", "id,name\n1,a", "seed err", "service-1", precedentFixture())
 	for _, want := range []string{"How similar failures were fixed before", "-select a\n+select a, x"} {
