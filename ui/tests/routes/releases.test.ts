@@ -20,11 +20,20 @@ describe('releases router', () => {
     expect(client.listReleases).toHaveBeenCalledWith(expect.objectContaining({ status: 'promoted' }));
   });
 
-  it('rate-limits the router (the list route fans out to GitHub)', async () => {
-    const client = { listReleases: vi.fn().mockResolvedValue({ releases: [], next_cursor: '' }) };
+  it('rate-limits the GitHub-backed list route but not the other release routes', async () => {
+    const client = {
+      listReleases: vi.fn().mockResolvedValue({ releases: [], next_cursor: '' }),
+      getCurrentProd: vi.fn().mockResolvedValue({ current_prod_release_id: 'r', node_count: 1 }),
+    };
     const app = appWith({ client, getLog: vi.fn() });
-    const res = await request(app).get('/api/releases');
-    expect(res.headers['ratelimit-limit']).toBeDefined();
+
+    const list = await request(app).get('/api/releases');
+    expect(list.headers['ratelimit-limit']).toBeDefined();
+
+    // current-prod is polled every 5s and must not share the list's budget.
+    const cp = await request(app).get('/api/releases/current-prod');
+    expect(cp.status).toBe(200);
+    expect(cp.headers['ratelimit-limit']).toBeUndefined();
   });
 
   it('enriches each release with its commit author', async () => {

@@ -48,21 +48,20 @@ export function createReleasesRouter(
 ) {
   const router = Router();
 
-  // Bound every releases route per client IP. The list route fans out to GitHub
-  // (one getCommit per distinct commit) and every route performs authorization,
-  // so an authenticated client must not be able to hammer it. The panel polls
-  // current-prod every 5s and loads the list on demand, both far under this.
-  // xForwardedForHeader validation is off because the service runs behind an
-  // ingress that always sets the header while Express has no trust proxy.
-  router.use(
-    rateLimit({
-      windowMs: 60 * 1000,
-      limit: 120,
-      standardHeaders: true,
-      legacyHeaders: false,
-      validate: { xForwardedForHeader: false },
-    }),
-  );
+  // Bound the list route only: it is the one that fans out to GitHub (one
+  // getCommit per distinct commit), so an authenticated client must not be able
+  // to hammer it. The other release routes are left unlimited — current-prod is
+  // polled every 5s and would otherwise share this budget. The key is the
+  // authenticated user (this router is mounted behind the /api auth guard), not
+  // the client IP: behind an ingress with no `trust proxy` the IP is the
+  // ingress socket, which would bucket every operator together.
+  const listLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.user?.userId ?? 'anon',
+  });
 
   // GET /api/releases/log?key=  — registered before /:id so "log" is not treated as an id.
   router.get('/log', async (req, res) => {
@@ -87,7 +86,7 @@ export function createReleasesRouter(
   });
 
   // GET /api/releases?status=&limit=&cursor=
-  router.get('/', async (req, res) => {
+  router.get('/', listLimiter, async (req, res) => {
     const query: Record<string, string> = {};
     for (const k of ['status', 'limit', 'cursor']) {
       const v = req.query[k];

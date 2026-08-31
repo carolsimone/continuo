@@ -100,6 +100,33 @@ func verifyUIService(t *testing.T, ctx context.Context, scheduleID string) {
 	}
 
 	t.Logf("✅ ui /api/schedulers/%s/tasks: %d tasks present, all succeeded", scheduleID, len(tasksList))
+
+	// ── GET /api/releases — verify the commit-author enrichment resolves ──
+	// ui resolves each release's author from its (repo, commit_sha) via GitHub;
+	// in e2e that points at stub-github, which returns a deterministic login.
+	// This is the end-to-end check that release-controller's provenance fields,
+	// the ui resolver, and the stub's REST commits endpoint all line up — a
+	// stub missing that endpoint would leave every author empty. Must match
+	// stubAuthorLogin in tests/e2e/stub-github/main.go.
+	const stubAuthorLogin = "continuo-e2e"
+	releasesBody := mustGetJSON(t, base+"/api/releases")
+	releasesList, ok := releasesBody["releases"].([]interface{})
+	require.True(t, ok, "GET /api/releases: 'releases' field missing or wrong type")
+	require.NotEmpty(t, releasesList, "GET /api/releases: expected at least one release")
+
+	var authoredLogin string
+	for _, item := range releasesList {
+		rel, _ := item.(map[string]interface{})
+		author, _ := rel["author"].(map[string]interface{})
+		if login, _ := author["login"].(string); login != "" {
+			authoredLogin = login
+			break
+		}
+	}
+	assert.Equal(t, stubAuthorLogin, authoredLogin,
+		"GET /api/releases: at least one release should carry the enriched commit-author login")
+
+	t.Logf("✅ ui /api/releases: commit-author enrichment resolved login=%q", authoredLogin)
 }
 
 // getJSON performs a GET request and returns the parsed JSON body.

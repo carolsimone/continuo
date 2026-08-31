@@ -29,7 +29,27 @@ describe('commit-author resolver', () => {
       avatar_url: 'https://avatars/octocat.png',
       html_url: 'https://github.com/octocat',
     });
-    expect(getCommit).toHaveBeenCalledWith({ owner: 'acme', repo: 'dbt', ref: 'abc123' });
+    expect(getCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: 'acme', repo: 'dbt', ref: 'abc123' }),
+    );
+  });
+
+  it('resolves null when a lookup stalls past the timeout (never holds the response)', async () => {
+    const getCommit = vi.fn(() => new Promise(() => {})); // never settles
+    const resolver = makeCommitAuthorResolver(octokitWith(getCommit as never), { timeoutMs: 20 });
+    expect(await resolver.resolve('acme/dbt', 'sha')).toBeNull();
+  });
+
+  it('passes an abort signal so a stalled request is cancelled', async () => {
+    let seenSignal: AbortSignal | undefined;
+    const getCommit = vi.fn((params: { request?: { signal?: AbortSignal } }) => {
+      seenSignal = params.request?.signal;
+      return new Promise(() => {});
+    });
+    const resolver = makeCommitAuthorResolver(octokitWith(getCommit as never), { timeoutMs: 20 });
+    await resolver.resolve('acme/dbt', 'sha');
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
+    expect(seenSignal?.aborted).toBe(true);
   });
 
   it('falls back to the git commit author name when the account is unlinked', async () => {

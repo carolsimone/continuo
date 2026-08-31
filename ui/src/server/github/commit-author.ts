@@ -26,7 +26,12 @@ export interface CommitAuthorResolver {
  */
 export interface CommitOctokitLike {
   repos: {
-    getCommit(params: { owner: string; repo: string; ref: string }): Promise<{
+    getCommit(params: {
+      owner: string;
+      repo: string;
+      ref: string;
+      request?: { signal?: AbortSignal };
+    }): Promise<{
       data: {
         author: { login: string; avatar_url: string; html_url: string } | null;
         commit: { author: { name: string } | null };
@@ -34,6 +39,12 @@ export interface CommitOctokitLike {
     }>;
   };
 }
+
+// Default per-lookup deadline. Author enrichment is optional and best-effort, so
+// a slow GitHub call must never hold the release-list response open — past this
+// the lookup is abandoned (and the request aborted) and the release renders
+// without that author.
+const DEFAULT_TIMEOUT_MS = 2500;
 
 /**
  * Resolves a release's commit author from the (repo, commit_sha) already stored
@@ -45,7 +56,11 @@ export interface CommitOctokitLike {
  * commit rather than one per row. A failed lookup resolves to null and is NOT
  * cached, so a transient GitHub error is retried on the next request.
  */
-export function makeCommitAuthorResolver(octokit: CommitOctokitLike): CommitAuthorResolver {
+export function makeCommitAuthorResolver(
+  octokit: CommitOctokitLike,
+  opts: { timeoutMs?: number } = {},
+): CommitAuthorResolver {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const cache = new Map<string, Promise<ReleaseAuthor | null>>();
   return {
     resolve(repo, sha) {
@@ -57,25 +72,40 @@ export function makeCommitAuthorResolver(octokit: CommitOctokitLike): CommitAuth
       const cached = cache.get(key);
       if (cached) return cached;
 
-      const pending = octokit.repos
-        .getCommit({ owner, repo: name, ref: sha })
-        .then(({ data }): ReleaseAuthor | null => {
-          if (data.author) {
-            return {
-              login: data.author.login,
-              avatar_url: data.author.avatar_url,
-              html_url: data.author.html_url,
-            };
-          }
-          const gitName = data.commit?.author?.name;
-          return gitName ? { name: gitName } : null;
-        })
-        .catch(() => {
-          // Drop the failed lookup so the next request can retry rather than
-          // serving a cached null forever.
+      const controller = new AbortController();
+      const pending = new Promise<ReleaseAuthor | null>((resolve) => {
+        // The timer bounds the lookup even if the underlying request ignores
+        // the abort: on expiry, abort (to release the socket), forget the
+        // in-flight promise so a later request retries, and resolve null.
+        const timer = setTimeout(() => {
+          controller.abort();
           cache.delete(key);
-          return null;
-        });
+          resolve(null);
+        }, timeoutMs);
+
+        octokit.repos
+          .getCommit({ owner, repo: name, ref: sha, request: { signal: controller.signal } })
+          .then(({ data }) => {
+            clearTimeout(timer);
+            if (data.author) {
+              resolve({
+                login: data.author.login,
+                avatar_url: data.author.avatar_url,
+                html_url: data.author.html_url,
+              });
+            } else {
+              const gitName = data.commit?.author?.name;
+              resolve(gitName ? { name: gitName } : null);
+            }
+          })
+          .catch(() => {
+            // Failed or aborted lookup — drop it so the next request retries
+            // rather than serving a cached null forever.
+            clearTimeout(timer);
+            cache.delete(key);
+            resolve(null);
+          });
+      });
 
       cache.set(key, pending);
       return pending;
