@@ -78,7 +78,7 @@ const (
 	RemediationProposedV1 = "remediation.proposed:v1"
 	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by orchestrator's case-base proposals group.
 	RemediationPrOpenedV1 = "remediation.pr_opened:v1"
-	// RemediationPrClosedV1 — Audit event emitted when a remediation PR reaches a terminal outcome on GitHub (merged, or closed without merge); pointer-only, no consumer in this slice.
+	// RemediationPrClosedV1 — Terminal PR outcome (merged, or closed without merge), one per (release, attempt, service); merged outcomes carry per-edit amended flags and diffs, and orchestrator's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
 	RemediationPrClosedV1 = "remediation.pr_closed:v1"
 )
 
@@ -166,6 +166,8 @@ const (
 	OrchestratorRemediationRequestedRejections = "orchestrator-remediation-requested-rejections"
 	// OrchestratorRemediationPrOpenedProposals — orchestrator consumer group on remediation.pr_opened:v1.
 	OrchestratorRemediationPrOpenedProposals = "orchestrator-remediation-pr-opened-proposals"
+	// OrchestratorRemediationPrClosedProvenance — orchestrator consumer group on remediation.pr_closed:v1.
+	OrchestratorRemediationPrClosedProvenance = "orchestrator-remediation-pr-closed-provenance"
 )
 
 // All is every stream name from contract.yaml, in contract order — for callers
