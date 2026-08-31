@@ -247,12 +247,13 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
    change. Nothing is submitted and nothing is announced.
 
 6. Otherwise submit verifications (submitVerifications) — one shadow release
-   per edited service. See "Shadow verification" below. Two failures there are
+   per edited service. See "Shadow verification" below. Three failures there are
    PERMANENT and end the attempt as 'failed' with the reason recorded rather
    than being redelivered: an edit whose path lies outside every configured
-   service, and a service whose edits mix a packaged python contract with
-   non-contract edits (a release parses one manifest kind, so half the change
-   would be silently ignored). Everything else is transient and retried.
+   service, two edits changing the same path, and a service whose edits mix a
+   packaged python contract with non-contract edits (a release parses one
+   manifest kind, so half the change would be silently ignored). Everything
+   else is transient and retried.
 
 7. Persist the outcome (one Postgres transaction):
    a. Claim the inbound message in message_processing (keyed on the Redis
@@ -283,6 +284,7 @@ One strategy is wired today, `SharedUpstreamCause`:
 - Nodes are bucketed by `error_signature`. An empty signature never groups, and a bucket of one is left for the independent default — one node is not evidence of a shared cause.
 - Within a bucket, candidate changed ancestors are considered in ascending id order; for each, the still-unclaimed members that list it in `changed_ancestor_ids` are gathered, and a candidate with **at least two** such members becomes one `KindSharedUpstream` cluster targeting it. Taking the smallest ancestor id first makes both the assignment and the target choice independent of map iteration and input order.
 - A bucket can therefore yield several clusters: the same failure reaching two unrelated changed ancestors gives `{a,b}→u` and `{c,d}→v` rather than falling through to four independent fixes. Members are disjoint across clusters, and clusters are emitted ordered by their smallest member.
+- Because bucketing is per signature, one ancestor that broke its descendants in two DIFFERENT ways yields one cluster per signature, both targeting it. The driver's `coalesceUpstream` (`service/handlers/propose_fix.go`) merges shared-upstream clusters naming the same target into one — members unioned and sorted, first occurrence keeping its position — before any fixing starts. Fixing them separately would call the model twice for one file and have both fixes write the target's single artifact key, so the attempt would record two edits for one path of which only the last written exists. An independent cluster cannot collide this way: its target is the failing node itself, and a node appears in the failing set once.
 
 Identical signatures are what make this safe, and they are only identical because the classifier strips the database's echoed `LINE n: <statement>` from the signature — that statement names the failing relation, so without the strip two siblings broken by one upstream change would never sign alike (see `services/remediation.md` § Error Signature Normalization).
 
@@ -297,7 +299,10 @@ The target of a shared-upstream cluster is a node that **may never have failed a
    path against ServiceRepoPaths, choosing the service whose project root is
    the LONGEST prefix of the path (so a nested project resolves to the nearest
    one), ties broken on the smaller service name. A path no service claims is
-   errUnmappedEdit — permanent.
+   errUnmappedEdit — permanent. Two edits to ONE path is errDuplicateEditPath —
+   also permanent: an overlay holds one file per path, so the second edit would
+   silently replace the first and the shadow would run a file the attempt does
+   not describe.
 2. Check EVERY service before submitting ANY of them: a service that packaged a
    python contract may not also carry an edit that is not a python node's
    contract (errMixedManifestKinds — permanent). Checking first means an

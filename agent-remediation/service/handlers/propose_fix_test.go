@@ -1232,6 +1232,90 @@ func TestProposeFix_SharedUpstream_OneEditToTheAncestor(t *testing.T) {
 		"the ancestor's corrected source is what the shadow release runs")
 }
 
+// twoSignatureUpstreamTrigger is the batch that groups into two same-signature
+// buckets, both of which reach the SAME changed ancestor: four nodes failing in
+// two different ways, every one of them descending from s.u.
+func twoSignatureUpstreamTrigger() Trigger {
+	tr := baseTrigger()
+	tr.Nodes = nil
+	for _, n := range []struct{ id, sig string }{
+		{"s.v", "sig-1"}, {"s.w", "sig-1"}, {"s.x", "sig-2"}, {"s.y", "sig-2"},
+	} {
+		tr.Nodes = append(tr.Nodes, TriggerNode{
+			NodeID: n.id, ErrorSignature: n.sig, Category: "logic",
+			ErrorExcerpt: "column u.amount does not exist",
+			DBTLogURI:    "s3://b/log", CandidateArtifactURI: "s3://b/sql-" + n.id,
+			FilePath: "models/" + strings.TrimPrefix(n.id, "s.") + ".sql",
+			Service:  "svc", NodeType: "dbt-model", ChangedAncestorIDs: []string{"s.u"},
+		})
+	}
+	return tr
+}
+
+// TestProposeFix_TwoSignaturesOneAncestor_IsOneCluster covers the batch whose
+// failures group into two same-signature buckets that both reach the same
+// changed ancestor. Grouped per bucket they would produce two clusters with the
+// same fix target, and each of them would edit — and overwrite — the ancestor's
+// single artifact key, leaving the attempt recording two edits for one file.
+// The two are coalesced into one cluster instead: one model call, one edit, and
+// every one of the four failures resolved by it.
+func TestProposeFix_TwoSignaturesOneAncestor_IsOneCluster(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{"s3://b/log": "column u.amount does not exist",
+		"s3://art/proposed-fix/r1/s.u/attempt-1.source.sql": "select id, amount from s.base"}}
+	llm := newFakeLLM(ports.ProposeResult{ProposedSQL: "select id, amount from s.base", Rationale: "restored amount", Confidence: "high", Model: "m"}, nil)
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "tag-1"}
+	d := deps(u, ev, &llm, art)
+	d.Releases = gw
+	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select id from s.base", Runtime: ports.RuntimeDbt}}
+	d.Versions = fakeVersions{v: ports.CurrentVersion{RawCode: "select id, amount from s.base"}, ok: true}
+	d.Locator = fakeLocator{filePath: "models/u.sql", serviceName: "svc"}
+
+	require.NoError(t, ProposeFix(context.Background(), d, twoSignatureUpstreamTrigger()))
+
+	require.Len(t, u.pr.inserted, 1)
+	p := u.pr.inserted[0]
+	assert.Equal(t, 1, llm.calls, "one shared cause is one model call, however many ways it broke its descendants")
+	require.Len(t, p.Edits, 1, "one target node is one edit; two would name the same path twice")
+	assert.Equal(t, "s.u", p.Edits[0].TargetNodeID)
+	assert.Equal(t, "services/svc/models/u.sql", p.Edits[0].Path)
+	assert.Equal(t, []string{"s.v", "s.w", "s.x", "s.y"}, p.ResolvedNodeIDs)
+	for _, id := range []string{"s.v", "s.w", "s.x", "s.y"} {
+		assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes[id].Status, "every member is resolved by the one edit")
+	}
+	require.Len(t, gw.submitted, 1)
+	assert.Equal(t, []string{"models/u.sql"},
+		tarNames(t, []byte(art.written["svc/shadow-r1-svc-a1/source-overlay.tar.gz"])))
+}
+
+// TestSubmitVerifications_DuplicateEditPathIsPermanent is the backstop under the
+// coalescing above: whatever produced them, two edits to one path cannot both be
+// verified — a source overlay holds one file per path, so the later edit would
+// silently replace the earlier one and the attempt would record a fix nothing
+// ever ran. The attempt fails permanently with the path named instead, spending
+// no release slot.
+func TestSubmitVerifications_DuplicateEditPathIsPermanent(t *testing.T) {
+	gw := &fakeGateway{imageTag: "tag-1"}
+	art := &fakeArtifacts{}
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+	d := deps(newFakeUoW(), fakeEvidence{vals: map[string]string{"s3://a/1": "select 1", "s3://a/2": "select 2"}}, &llm, art)
+	d.Releases = gw
+	edits := []proposal.FileEdit{
+		{Path: "services/svc/models/u.sql", ContentURI: "s3://a/1", TargetNodeID: "s.u"},
+		{Path: "services/svc/models/u.sql", ContentURI: "s3://a/2", TargetNodeID: "s.u"},
+	}
+
+	_, err := submitVerifications(context.Background(), d, baseTrigger(), 1, edits, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errDuplicateEditPath)
+	assert.True(t, unverifiable(err), "a redelivery would produce the same collision, so the attempt is not retried")
+	assert.Contains(t, err.Error(), "services/svc/models/u.sql")
+	assert.Empty(t, gw.submitted, "no release slot is spent on edits that cannot all be run")
+	assert.Empty(t, art.written, "nothing is uploaded either")
+}
+
 // TestProposeFix_UpstreamTargetUnlocatable_FallsBackToIndependent: the changed
 // ancestor cannot be placed in the promoted graph (a brand-new node), so the
 // upstream fix skips and each member is repaired in its own source instead.

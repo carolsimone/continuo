@@ -27,11 +27,20 @@ var errUnmappedEdit = errors.New("edit belongs to no configured service")
 // change and silently ignore the rest.
 var errMixedManifestKinds = errors.New("mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind")
 
+// errDuplicateEditPath marks an attempt carrying two edits to one repository
+// path. A source overlay holds one file per path and a python service is
+// verified by one packaged contract, so the second edit would silently replace
+// the first: the shadow release would run a file the attempt does not describe,
+// and the proposal would record an edit nothing ever verified.
+var errDuplicateEditPath = errors.New("two edits change the same file")
+
 // unverifiable reports whether a verification failure is permanent — the edits
 // themselves are unrunnable, so a redelivery would fail identically. The caller
 // records the attempt rather than returning the error for redelivery.
 func unverifiable(err error) bool {
-	return errors.Is(err, errUnmappedEdit) || errors.Is(err, errMixedManifestKinds)
+	return errors.Is(err, errUnmappedEdit) ||
+		errors.Is(err, errMixedManifestKinds) ||
+		errors.Is(err, errDuplicateEditPath)
 }
 
 // submitVerifications posts one shadow verification release per service the
@@ -56,11 +65,21 @@ func submitVerifications(
 ) ([]proposal.Verification, error) {
 	byService := map[string][]proposal.FileEdit{}
 	prefixes := map[string]string{}
+	seen := map[string]bool{}
 	for _, e := range edits {
 		service, prefix, ok := serviceForPath(deps.ServiceRepoPaths, e.Path)
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", errUnmappedEdit, e.Path)
 		}
+		// One path may be changed once per attempt. Two edits to it cannot both
+		// be verified, and choosing one silently would verify a fix the attempt
+		// does not describe.
+		if seen[e.Path] {
+			deps.Logger.Error("two of the attempt's edits change the same file; the attempt cannot be verified",
+				"release", t.ReleaseID, "attempt", attempt, "path", e.Path, "target", e.TargetNodeID)
+			return nil, fmt.Errorf("%w: %s", errDuplicateEditPath, e.Path)
+		}
+		seen[e.Path] = true
 		byService[service] = append(byService[service], e)
 		prefixes[service] = prefix
 	}

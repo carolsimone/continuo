@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -284,7 +285,42 @@ func groupClusters(t Trigger) []typology.Cluster {
 		})
 		dag.ChangedAncestorsByNode[n.NodeID] = n.ChangedAncestorIDs
 	}
-	return typology.Group(nodes, dag, typology.SharedUpstreamCause{})
+	return coalesceUpstream(typology.Group(nodes, dag, typology.SharedUpstreamCause{}))
+}
+
+// coalesceUpstream merges shared-upstream clusters that name the same fix
+// target. Grouping partitions the failing set per error signature, so one
+// changed ancestor that broke its descendants in two different ways yields one
+// cluster per signature — both targeting that ancestor. Fixing them separately
+// would call the model twice for one file and, worse, have both fixes write the
+// artifact key the target's edit is keyed on, so the attempt would record two
+// edits for one path of which only the last one written actually exists. The
+// members are unioned instead and the ancestor is repaired once, with every
+// failure it caused shown to the model in the same call.
+//
+// Only shared-upstream clusters can collide this way: an independent cluster's
+// target is the failing node itself, and a node appears in the failing set once.
+// Order is preserved (each merged cluster keeps the position of its first
+// occurrence) and members are sorted, so the result stays deterministic.
+func coalesceUpstream(clusters []typology.Cluster) []typology.Cluster {
+	at := map[string]int{}
+	out := make([]typology.Cluster, 0, len(clusters))
+	for _, c := range clusters {
+		if c.Kind != typology.KindSharedUpstream {
+			out = append(out, c)
+			continue
+		}
+		i, seen := at[c.TargetNodeID]
+		if !seen {
+			at[c.TargetNodeID] = len(out)
+			out = append(out, c)
+			continue
+		}
+		merged := append(append([]string(nil), out[i].Members...), c.Members...)
+		sort.Strings(merged)
+		out[i].Members = merged
+	}
+	return out
 }
 
 // clusterOutcome is what fixing one cluster produced, projected onto the fields
