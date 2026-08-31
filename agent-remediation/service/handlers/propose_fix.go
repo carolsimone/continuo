@@ -188,6 +188,9 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 			}
 			continue
 		}
+		for i := range out.edits {
+			out.edits[i].MemberNodeIDs = append([]string(nil), c.Members...)
+		}
 		edits = append(edits, out.edits...)
 		for _, m := range c.Members {
 			outcomes[m] = proposal.NodeOutcome{Status: proposal.StatusVerifying}

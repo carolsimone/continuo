@@ -1291,6 +1291,65 @@ func TestProposeFix_TwoSignaturesOneAncestor_IsOneCluster(t *testing.T) {
 		tarNames(t, []byte(art.written["svc/shadow-r1-svc-a1/source-overlay.tar.gz"])))
 }
 
+// editByTarget returns the edit whose TargetNodeID matches target, or the zero
+// FileEdit if none does.
+func editByTarget(edits []proposal.FileEdit, target string) proposal.FileEdit {
+	for _, e := range edits {
+		if e.TargetNodeID == target {
+			return e
+		}
+	}
+	return proposal.FileEdit{}
+}
+
+// TestProposeFix_EditsCarryTheirClusterMembers proves every edit an attempt
+// records is stamped with the failing nodes its own cluster resolves, not just
+// the release's whole resolved set: a shared-upstream cluster (na, nb sharing
+// changed ancestor nu) produces one edit whose members are exactly [na, nb],
+// and the independent node nc produces its own edit whose only member is
+// itself. The per-service PR split (a later task) attributes a node to the PR
+// carrying its fixing edit by reading this field, so a cluster's members must
+// never leak onto another cluster's edit.
+func TestProposeFix_EditsCarryTheirClusterMembers(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{
+		"s3://b/log": "column u.amount does not exist",
+		"s3://art/proposed-fix/r1/nu/attempt-1.source.sql": "select id, amount from s.base",
+		"s3://b/sql-c": "select c",
+		"s3://art/proposed-fix/r1/nc/attempt-1.source.sql": "select c2",
+	}}
+	llm := newFakeLLM(ports.ProposeResult{}, nil)
+	llm.queue = []ports.ProposeResult{
+		{ProposedSQL: "select id, amount from s.base", Rationale: "restored amount", Confidence: "high", Model: "m"}, // shared-upstream cluster (nu)
+		{ProposedSQL: "select c2", Rationale: "fixed c", Confidence: "high", Model: "m"},                             // independent cluster (nc), steps 1 & 2
+	}
+	d := deps(u, ev, &llm, &fakeArtifacts{})
+	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select x", Runtime: ports.RuntimeDbt}}
+
+	tr := baseTrigger()
+	tr.Nodes = []TriggerNode{
+		{NodeID: "na", ErrorSignature: "sig", Category: "logic", ErrorExcerpt: "column u.amount does not exist",
+			DBTLogURI: "s3://b/log", CandidateArtifactURI: "s3://b/sql-na", FilePath: "models/na.sql",
+			Service: "svc", NodeType: "dbt-model",
+			ChangedAncestors: []ChangedAncestor{{NodeID: "nu", FilePath: "models/nu.sql", Service: "svc"}}},
+		{NodeID: "nb", ErrorSignature: "sig", Category: "logic", ErrorExcerpt: "column u.amount does not exist",
+			DBTLogURI: "s3://b/log", CandidateArtifactURI: "s3://b/sql-nb", FilePath: "models/nb.sql",
+			Service: "svc", NodeType: "dbt-model",
+			ChangedAncestors: []ChangedAncestor{{NodeID: "nu", FilePath: "models/nu.sql", Service: "svc"}}},
+		{NodeID: "nc", ErrorSignature: "sig-c", Category: "logic",
+			DBTLogURI: "s3://b/log", CandidateArtifactURI: "s3://b/sql-c", FilePath: "models/nc.sql",
+			Service: "svc", NodeType: "dbt-model"},
+	}
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+
+	require.Len(t, u.pr.inserted, 1)
+	got := u.pr.inserted[0]
+	require.Len(t, got.Edits, 2)
+	require.ElementsMatch(t, []string{"na", "nb"}, editByTarget(got.Edits, "nu").MemberNodeIDs)
+	require.ElementsMatch(t, []string{"nc"}, editByTarget(got.Edits, "nc").MemberNodeIDs)
+}
+
 // TestSubmitVerifications_DuplicateEditPathIsPermanent is the backstop under the
 // coalescing above: whatever produced them, two edits to one path cannot both be
 // verified — a source overlay holds one file per path, so the later edit would
