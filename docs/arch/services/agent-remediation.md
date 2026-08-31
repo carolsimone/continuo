@@ -2,7 +2,15 @@
 
 ## Purpose
 
-`agent-remediation` acts on healable failures surfaced by the `remediation` classifier, across all four failure sources: `validation`, `compile`, `seed_build`, and `duplicate_table`. It consumes `remediation.requested:v1` — one trigger per failing node — and produces a fix proposal. A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, persistence, and the outbox emit; it dispatches each trigger to a `Fixer` chosen by the trigger's error class and, for a validation failure, the failing node's kind. Each `Fixer` decides which source files to read, whether it needs the dbt log (each class fetches and sanitizes it itself, only when needed), which prompt to send, and how to interpret the model's answer. Every fixer's prompt also carries precedent — how similar past failures (by exact error signature, or the broader category/reason class) were resolved before, read from the orchestrator's failure case base. A dbt node's validation failure carries a pre-compiled candidate SQL and uses a two-step LLM flow: a Step-1 diagnosis against the candidate SQL, the diff of what this release itself changed in the failing model (last promoted version vs. candidate), the diffs of its recently-changed upstreams, and precedent; then a best-effort Step-2 pass that applies the diagnosis to the failing node's real source, resolved primarily from the release's code bundle in object storage. A **python** node's validation failure runs a different lane entirely, because a python node is not a SQL file but an entry in a contract yaml declaring the relations it reads and the columns it produces: the agent fetches the team's repository at the failing commit, searches it for the file declaring the node, asks the model for that file's corrected content, packages the result with the same CLI the team's own release CI runs after a merge, and submits it to release-controller as a **shadow release** — a real release that runs the full parse → candidate-schema → validation pipeline but stops at the terminal `validated` status instead of promoting. That attempt is recorded `verifying` and finalized asynchronously by a reconciler: `proposed` when the shadow release validated the fix, `failed` with the shadow's own error when it did not — and that error becomes the evidence the next attempt is shown. Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. Duplicate-table failures carry no dbt log at all — the rejection happens at parse time, before any Job runs — so the agent reads only the claimant the release changed, names the competing producer by service and path without reading its source, and asks the model for a rename in a single LLM call. For each successful proposal the driver — or, for a shadow-verified one, the reconciler — enqueues a pointer-only `remediation.proposed:v1` trigger so a downstream approver can review and apply the fix. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
+`agent-remediation` acts on healable failures surfaced by the `remediation` classifier, across all four failure sources: `validation`, `compile`, `seed_build`, and `duplicate_table`. **The rejected release, not the failing node, is its unit of work.** It consumes `remediation.requested:v2` — one trigger per (release, remediation round), carrying that rejection's whole healable failing set — and answers it with **one fix attempt, one proposal row, and one pull request**, however many nodes failed.
+
+A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, grouping, verification, and persistence. It first partitions the failing set into **clusters** (`domain/typology`): nodes that fail with an identical error signature *and* share an ancestor this release changed become one cluster targeting that ancestor — so a single upstream break is repaired once, at its source, rather than once in each victim — and every other node becomes its own independent cluster. Each cluster is then dispatched to a `Fixer` chosen by the trigger's error class and, for a validation failure, the failing node's kind; a shared-upstream cluster goes to the upstream fixer instead. Each `Fixer` decides which source files to read, whether it needs the dbt log (each class fetches and sanitizes it itself, only when needed), which prompt to send, and how to interpret the model's answer — and returns **edits only**. It submits nothing.
+
+**Every fix is verified by actually running it.** Once the clusters have produced their edits, the driver submits one **shadow release** per edited service — a real release that runs the full parse → candidate-schema → validation pipeline but stops at the terminal `validated` status instead of promoting. A python service is verified by the contract yaml its fix packaged; a dbt service is verified by re-running its own project with the proposed files laid over it, packed into a `source-overlay.tar.gz` whose S3 URI travels to the compile Job as `source_overlay_uri`. The attempt is recorded `verifying` and finalized asynchronously by the shadow-verify reconciler: `proposed` when **every** shadow release validated, `failed` with the releases' own errors when any did not — and that error becomes the evidence the next attempt is shown, narrowed to the nodes still failing.
+
+The per-class fixers are otherwise unchanged. Every fixer's prompt carries precedent — how similar past failures (by exact error signature, or the broader category/reason class) were resolved before, read from the orchestrator's failure case base. A dbt node's validation failure carries a pre-compiled candidate SQL and uses a two-step LLM flow: a Step-1 diagnosis against the candidate SQL, the diff of what this release itself changed in the failing model (last promoted version vs. candidate), the diffs of its recently-changed upstreams, and precedent; then a best-effort Step-2 pass that applies the diagnosis to the failing node's real source, resolved primarily from the release's code bundle in object storage. A **python** node's validation failure runs a different lane entirely, because a python node is not a SQL file but an entry in a contract yaml declaring the relations it reads and the columns it produces: the agent fetches the team's repository at the failing commit, searches it for the file declaring the node, asks the model for that file's corrected content, and packages the result with the same CLI the team's own release CI runs after a merge. Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. Duplicate-table failures carry no dbt log at all — the rejection happens at parse time, before any Job runs — so the agent reads only the claimant the release changed, names the competing producer by service and path without reading its source, and asks the model for a rename in a single LLM call.
+
+Only the reconciler enqueues the pointer-only `remediation.proposed:v1` event, and only once every shadow release validated the attempt; the driver announces nothing. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
 **Runtime**: Go service. HTTP `/healthz` on port 8092. gRPC `RemediationProposals` server on port 50054. Depends on Postgres (`continuo_agent_remediation`), Redis, S3, the orchestrator gRPC endpoint (four narrow read RPCs — `GetNodeLocation`, `GetUpstreamChanges`, `GetNodeVersions`, `GetPrecedents` — behind one `GraphClient`, port 50052), release-controller's HTTP API (shadow-release submission and verdict polling), and GitHub, exclusively via read-only GETs against the Contents API (source file/directory reads), the repository tarball endpoint (whole-tree fetch for the python lane), and the Pulls API (PR status polling for the outcome reconciler, and by-branch PR lookup for its opening sweep). The service image also carries the `continuo-runtime` CLI, which the packaging adapter runs as a subprocess to merge and hash-fold a corrected contract directory.
 
@@ -12,11 +20,11 @@ Postgres database `continuo_agent_remediation`. Tables:
 
 | Table | Purpose |
 |---|---|
-| `proposal` | One row per attempt. Records `source` (`validation`, `compile`, `seed_build`, or `duplicate_table`), `release_id`, `remediation_round` (default `1`; the release's remediation round this attempt belongs to — a human's "try again" on a rejected release starts a new round with its own attempt budget), `node_id`, `error_signature`, `attempt`, `status`, `confidence`, `rationale`, `proposed_sql_uri`, `diff_uri`, `source_resolved`, `model`, `created_at`, source-location columns (`repo`, `commit_sha`, `file_path` — populated when `source_resolved=true`), and `file_edits` (JSONB, default `'[]'`) — the list of files this attempt changes, each `{path, content_uri, diff_uri}`, populated alongside `repo`/`commit_sha`/`file_path` under the same `source_resolved=true` condition. A row whose `file_edits` is empty and whose `file_path` is non-empty (a row written before this column existed) is read as a single edit synthesized from `file_path`/`proposed_sql_uri`/`diff_uri`, so every reader sees a uniform edits list regardless of which schema version wrote the row. Shadow-verification columns: `shadow_release_id` (the release judging this attempt's fix, empty for every attempt judged synchronously), `verify_error` (why that release rejected the fix — the evidence the next attempt is shown), and `trigger_payload` (JSONB, default `'{}'`: the raw inbound trigger, stored only while an attempt is awaiting a verdict so the reconciler can rebuild it to start the next attempt). `status` lifecycle: a row is written `generating` (in flight, just before the model is called) and then either finalized directly to one terminal state — `proposed`, `skipped`, `failed`, or `escalated` — or, when the fix's correctness can only be judged by running it, written `verifying` and finalized later by the shadow-verify reconciler to `proposed` or `failed`. `verifying` is the one non-terminal status a fixer can return, and it is excluded from the attempt count exactly as `generating` is, so an in-flight verification neither inflates the cap nor shifts the attempt number. `candidate_fix_sql_uri`/`candidate_fix_diff_uri` are populated only for `validation` proposals (the Step-1 fix applied to the pre-compiled candidate SQL); always empty for `compile`/`seed_build`/`duplicate_table`, which have no candidate SQL. PR-tracking columns: `pr_url`, `pr_number`, `pr_state`, `pr_opened_at`, `pr_opened_by`, `pr_closed_at`, `pr_claimed_at`. `pr_state` lifecycle: `'' → opening → open → merged | rejected`, with `opening → failed` as a retryable error path; `merged` and `rejected` are terminal. Entering `opening` requires `source_resolved=true` **and** `status='proposed'`, both carried by the claim's own compare-and-set: a python contract fix is written `verifying` with `source_resolved=true` while a shadow release is judging it, and a rejection changes nothing but the status, so status is the only thing that separates a fix a human may open a PR for from one that is unverified or already refused. `pr_claimed_at` (nullable) is stamped with the claiming wall-clock time whenever `BeginPullRequest` moves a row into `'opening'`, and cleared back to `NULL` on every exit from `'opening'` (`RecordPullRequest`, `FailPullRequest`) — so a row re-claimed after `opening → failed → opening` always carries the second claim's time, and the reconciler's opening sweep can measure a claim's exact age. This clear-on-exit guarantee is enforced at the database boundary, not by each writer individually: a `BEFORE UPDATE` trigger (`proposal_stamp_pr_claimed_at`, `V10__stamp_pr_claimed_at_on_opening.sql` + `V11__clear_pr_claimed_at_on_opening_exit.sql`) stamps `pr_claimed_at` with `clock_timestamp()` whenever a row's `pr_state` is becoming `'opening'` and the column is still `NULL` at that point — so every claim carries a value regardless of which binary version performed the `UPDATE`, including one that predates the column and never sets it itself — and unconditionally clears `pr_claimed_at` back to `NULL` on every transition out of `'opening'`, regardless of what value (if any) the transitioning statement itself wrote to the column. The clear-on-exit clause exists because the fill-when-NULL clause alone is not enough across a rolling upgrade: a binary that predates the column writes its `RecordPullRequest`/`FailPullRequest`-equivalent `UPDATE` without mentioning `pr_claimed_at` at all, so without an unconditional clear the column would keep the exiting claim's stale value in place, and a subsequent re-claim by that same old binary — whose `UPDATE` also never mentions the column — would inherit it instead of getting a fresh stamp. A row that is `'opening'` with `pr_claimed_at IS NULL` is therefore expected only under schema corruption or a manual edit; the sweep still treats it as unmeasurable and never sweeps it, as a defensive backstop. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked — the reconciler's outcome pass only watches `open` rows (its opening sweep separately watches `opening` rows, to recover or release a stuck claim). Unique on `(release_id, source, node_id, attempt)`; the terminal write upserts on this key so it finalizes the in-flight generating row (`remediation_round` is not part of the conflict key — it is carried onto the row and left unmodified by that upsert, since a redelivery of the same attempt is always the same round). A secondary index on `(release_id, remediation_round, source, node_id, error_signature)` (`idx_proposal_round_node_signature`, `V15__proposal_remediation_round.sql`) supports the attempt-count lookup, which counts terminal rows only (`status NOT IN ('generating','verifying')`) for one release *and* remediation round: the cap is a budget per release per round, so a later release's or a later round's attempts at the same failure are never charged to an earlier release's or round's count. |
+| `proposal` | **One row per attempt of a release** — unique on `(release_id, attempt)`. The attempt addresses the rejection's whole failing set, so the batched columns describe it: `resolved_node_ids` (JSONB array, default `'[]'`) is the failing nodes this attempt covers, sorted; `node_outcomes` (JSONB object, default `'{}'`) maps each of them to `{status, reason}` — how the attempt ended *for that node*, so a cluster whose fixer skipped leaves its members `skipped` while the rest verify; and `verifications` (JSONB array, default `'[]'`) is one `{service, kind, shadow_release_id}` per edited service. `node_id`, `shadow_release_id`, `file_path`, `proposed_sql_uri`, and `diff_uri` are kept as the **representative single-value views** of those lists (first resolved node, first verification, first edit), derived by `Proposal.NormalizeRepresentativeViews()` at every write so the row and the events built from it can never disagree. Also records `source` (`validation`, `compile`, `seed_build`, or `duplicate_table`), `remediation_round` (default `1`; the release's remediation round this attempt belongs to — a human's "try again" starts a new round with its own attempt budget), `error_signature` (the representative node's), `attempt`, `status`, `confidence` (the *weakest* cluster's — a reviewer judges the whole change at once), `rationale` (one `"<target>: <why>"` line per cluster), `source_resolved`, `model`, `created_at`, source-location columns (`repo`, `commit_sha`), and `file_edits` (JSONB, default `'[]'`) — every file this attempt changes, each `{path, content_uri, diff_uri, target_node_id}`. `target_node_id` is what says which node an edit repairs, and for a shared-upstream cluster it names an ancestor that never appears in `resolved_node_ids` at all. A row whose `file_edits` is empty and whose `file_path` is non-empty (a row written before that column existed) is read as a single edit synthesized from `file_path`/`proposed_sql_uri`/`diff_uri`, so every reader sees a uniform edits list regardless of which schema version wrote the row. Shadow-verification columns: `verify_error` (why the releases rejected the fix — the evidence the next attempt is shown) and `trigger_payload` (JSONB, default `'{}'`: the raw inbound trigger, stored only while an attempt is awaiting a verdict so the reconciler can rebuild it — narrowed to the still-failing subset — to start the next attempt). `status` lifecycle: a row is written `generating` (in flight, just before the first model call) and then either finalized directly to a terminal state — `skipped`, `failed`, or `escalated` — or, once at least one edit exists, written `verifying` and finalized later by the shadow-verify reconciler to `proposed` or `failed`. **Nothing reaches `proposed` without a shadow release having validated it.** `verifying` is excluded from the attempt count exactly as `generating` is, so an in-flight verification neither inflates the cap nor shifts the attempt number. `candidate_fix_sql_uri`/`candidate_fix_diff_uri` are populated only for `validation` proposals (the Step-1 fix applied to the pre-compiled candidate SQL); always empty for `compile`/`seed_build`/`duplicate_table`, which have no candidate SQL. PR-tracking columns: `pr_url`, `pr_number`, `pr_state`, `pr_opened_at`, `pr_opened_by`, `pr_closed_at`, `pr_claimed_at`. `pr_state` lifecycle: `'' → opening → open → merged | rejected`, with `opening → failed` as a retryable error path; `merged` and `rejected` are terminal. Entering `opening` requires `source_resolved=true` **and** `status='proposed'`, both carried by the claim's own compare-and-set: an attempt is written `verifying` with `source_resolved=true` while its shadow releases are judging it, and a rejection changes nothing but the status, so status is the only thing that separates a fix a human may open a PR for from one that is unverified or already refused. `pr_claimed_at` (nullable) is stamped with the claiming wall-clock time whenever `BeginPullRequest` moves a row into `'opening'`, and cleared back to `NULL` on every exit from `'opening'` (`RecordPullRequest`, `FailPullRequest`) — so a row re-claimed after `opening → failed → opening` always carries the second claim's time, and the reconciler's opening sweep can measure a claim's exact age. This clear-on-exit guarantee is enforced at the database boundary, not by each writer individually: a `BEFORE UPDATE` trigger (`proposal_stamp_pr_claimed_at`, `V10__stamp_pr_claimed_at_on_opening.sql` + `V11__clear_pr_claimed_at_on_opening_exit.sql`) stamps `pr_claimed_at` with `clock_timestamp()` whenever a row's `pr_state` is becoming `'opening'` and the column is still `NULL` at that point — so every claim carries a value regardless of which binary version performed the `UPDATE`, including one that predates the column and never sets it itself — and unconditionally clears `pr_claimed_at` back to `NULL` on every transition out of `'opening'`, regardless of what value (if any) the transitioning statement itself wrote to the column. The clear-on-exit clause exists because the fill-when-NULL clause alone is not enough across a rolling upgrade: a binary that predates the column writes its `RecordPullRequest`/`FailPullRequest`-equivalent `UPDATE` without mentioning `pr_claimed_at` at all, so without an unconditional clear the column would keep the exiting claim's stale value in place, and a subsequent re-claim by that same old binary — whose `UPDATE` also never mentions the column — would inherit it instead of getting a fresh stamp. A row that is `'opening'` with `pr_claimed_at IS NULL` is therefore expected only under schema corruption or a manual edit; the sweep still treats it as unmeasurable and never sweeps it, as a defensive backstop. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked — the reconciler's outcome pass only watches `open` rows (its opening sweep separately watches `opening` rows, to recover or release a stuck claim). Unique on `(release_id, attempt)` (`proposal_uniq`, narrowed from the old `(release_id, source, node_id, attempt)` by `V16__proposal_batched_identity.sql`); the terminal write upserts on this key so it finalizes the in-flight generating row (`remediation_round` is not part of the conflict key — it is carried onto the row and left unmodified by that upsert, since a redelivery of the same attempt is always the same round). `idx_proposal_release_round` supports the attempt-count lookup, which counts terminal rows only (`status NOT IN ('generating','verifying')`) for one release *and* remediation round: the cap is a budget per release per round, so a later release's or a later round's attempts are never charged to an earlier one's count. A GIN index on `resolved_node_ids` supports finding every attempt that addressed a given node. `V16` also backfills existing rows — `resolved_node_ids`/`node_outcomes`/`verifications` are derived from the row's own `node_id`/`status`/`shadow_release_id`, and rows are **renumbered per release** (`row_number() OVER (PARTITION BY release_id ORDER BY created_at, attempt, node_id)`) so the new identity holds; the old constraint is dropped before the renumbering, since Postgres checks a non-deferrable unique constraint per row and renumbering under the old key can transiently collide mid-statement. A consequence worth knowing: a legacy row that was mid-claim (`pr_state='opening'`) at upgrade time gets a new attempt number, so the branch name recomputed for it differs from the one the claim actually pushed. |
 | `remediation_agent_outbox` | Transactional outbox; one row per emitted event (`remediation.proposed:v1`, `remediation.pr_opened:v1`, or `remediation.pr_closed:v1`), drained by the outbox publisher. Status: `pending`, `processed`, `failed`. |
 | `message_processing` | Shared shape consumed by `pkg/messageprocessing`; FK target of `remediation_agent_outbox.message_processing_id`. |
 
-The `proposal` table records one row per attempt: it is written `generating` when the model call begins and finalized in place to a terminal outcome. All terminal outcomes — proposed, escalations, skips, and LLM failures — are recorded so the full attempt history is queryable.
+The `proposal` table records one row per attempt of a release: it is written `generating` when the first model call begins and finalized in place to a terminal outcome, or to `verifying` while shadow releases judge it. All terminal outcomes — proposed, escalations, skips, and LLM failures — are recorded so the full attempt history is queryable, and `node_outcomes` keeps that history readable per node even when one attempt ended differently for different members of the failing set.
 
 ## Inbound Interfaces
 
@@ -24,17 +32,19 @@ The `proposal` table records one row per attempt: it is written `generating` whe
 
 | Stream | Group | Description |
 |---|---|---|
-| `remediation.requested:v1` | `agent-remediation-remediation-requested` | Emitted by the `remediation` classifier for each healable failing node. Each message drives one `ProposeFix` invocation. |
+| `remediation.requested:v2` | `agent-remediation-remediation-requested` | Emitted by the `remediation` classifier once per rejected release per remediation round, carrying that rejection's whole healable failing set in `nodes[]`. Each message drives exactly one `ProposeFix` invocation, which produces exactly one `proposal` row. A message with an empty `nodes[]` is logged and ACKed without writing anything. |
 
 ### gRPC server — `RemediationProposals` (port 50054)
 
-Exposes proposal data and the PR lifecycle to ui. Handlers are thin and delegate to application services; all persistence goes through the `ProposalRepository` port. Every `Proposal` and `BeginPullRequestResponse` message carries a `repeated FileEdit edits` field, mapped from the domain object's `Edits` list — a nil or empty list produces an absent repeated field, never a list containing a zero-valued element. The single-file fields on the same messages (`file_path`, `proposed_sql_uri`, `diff_uri`) are populated straight from the domain object's own same-named fields, not derived from `edits[0]`: they equal `edits[0]` whenever `edits` is non-empty, and for a validation proposal whose real-source step did not resolve they describe the candidate fix artifact while `edits` is empty. The `Proposal` message also carries `shadow_release_id` and `verify_error`, mapped verbatim from the row: the release that ran this attempt's fix through the validation pipeline (set while the attempt is `verifying` and kept on the `proposed`/`failed` row it became) and why that release rejected it. Both are empty on an attempt judged without a release. They are on the wire because they are what lets a reader connect a proposal to the release deciding it, and say why a failed one failed, instead of showing a status word with the reason unread in the database. It also carries `remediation_round`, mapped verbatim from the row, so a caller can tell which round's attempt budget a given proposal was charged against.
+Exposes proposal data and the PR lifecycle to ui. Handlers are thin and delegate to application services; all persistence goes through the `ProposalRepository` port. Every `Proposal` and `BeginPullRequestResponse` message carries a `repeated FileEdit edits` field, mapped from the domain object's `Edits` list — a nil or empty list produces an absent repeated field, never a list containing a zero-valued element — and each `FileEdit` carries `target_node_id`, the node whose source that edit changes. The single-file fields on the same messages (`file_path`, `proposed_sql_uri`, `diff_uri`) are populated straight from the domain object's own same-named fields, not derived from `edits[0]`: they equal `edits[0]` whenever `edits` is non-empty, and for a validation proposal whose real-source step did not resolve they describe the candidate fix artifact while `edits` is empty.
+
+Because one attempt now addresses a whole failing set, the `Proposal` message also carries the batched fields verbatim from the row: `resolved_node_ids` (every failing node the attempt addresses, sorted — `node_id` is their representative), `node_outcomes` (a map of node id → `{status, reason}`, so a caller can render one node's outcome without inferring it from the attempt's overall status), and `verifications` (one `{service, kind, shadow_release_id}` per edited service; the first is the one mirrored onto the scalar `shadow_release_id`). `BeginPullRequestResponse` carries `resolved_node_ids` too, because the PR title and body name every node the change fixes. `shadow_release_id` and `verify_error` are likewise mapped verbatim: the release that ran this attempt's fix through the validation pipeline (set while the attempt is `verifying` and kept on the `proposed`/`failed` row it became) and why the verification rejected it. They are on the wire because they are what lets a reader connect a proposal to the release deciding it, and say why a failed one failed, instead of showing a status word with the reason unread in the database. `remediation_round` is mapped verbatim too, so a caller can tell which round's attempt budget a given proposal was charged against.
 
 | Method | Description |
 |---|---|
 | `ListProposals(filter)` | Returns proposals ordered `created_at DESC`, all fields including `pr_*`. Supports filtering by `status`, `pr_state`, and/or `release_id` (inbox view: `status='proposed'` AND `pr_state IN ('', 'failed')`; a release page passes `release_id` alone to see its own remediation history across every round). |
 | `GetProposal(id)` | Returns a single proposal. Returns `NOT_FOUND` when the id is unknown. |
-| `BeginPullRequest(id)` | Atomic compare-and-set: transitions `pr_state` from `''` or `'failed'` to `'opening'`, allowed only when `source_resolved=true`, and stamps `pr_claimed_at` with the current time read from the service's `Clock` port. Returns `{repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, rationale, confidence, diff_uri, model, claimed_at, edits}` on success — `edits` is the same list carried on the proposal row (or its single-file-field synthesis) — `claimed_at` (RFC3339) is `pr_claimed_at` read back from the row, not the client's own clock, and the caller must present it back to `FailPullRequest` to release this exact claim. Returns `FAILED_PRECONDITION` with the existing `pr_url` when the proposal is already `opening` or `open`; also returns `FAILED_PRECONDITION` when `source_resolved=false`. This is the single-winner idempotency guard that prevents concurrent duplicate PRs. |
+| `BeginPullRequest(id)` | Atomic compare-and-set: transitions `pr_state` from `''` or `'failed'` to `'opening'`, allowed only when `source_resolved=true`, and stamps `pr_claimed_at` with the current time read from the service's `Clock` port. Returns `{repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, resolved_node_ids, rationale, confidence, diff_uri, model, claimed_at, edits}` on success — `edits` is the same list carried on the proposal row (or its single-file-field synthesis), each naming its `target_node_id`, and `resolved_node_ids` is every failing node this attempt fixes, which is what the PR title and body are written from — `branch_name` is `remediation/<release_id>/attempt<n>`, derived from the attempt's own identity rather than from any one node — `claimed_at` (RFC3339) is `pr_claimed_at` read back from the row, not the client's own clock, and the caller must present it back to `FailPullRequest` to release this exact claim. Returns `FAILED_PRECONDITION` with the existing `pr_url` when the proposal is already `opening` or `open`; also returns `FAILED_PRECONDITION` when `source_resolved=false`. This is the single-winner idempotency guard that prevents concurrent duplicate PRs. |
 | `RecordPullRequest(id, pr_url, pr_number, opened_by)` | Sets `pr_state='open'`, `pr_url`, `pr_number`, `pr_opened_at=now()`, `pr_opened_by`, and clears `pr_claimed_at` back to `NULL`. Emits `remediation.pr_opened:v1` via the transactional outbox. |
 | `FailPullRequest(id, claimed_at)` | Compare-and-set: resets `pr_state` from `'opening'` to `'failed'` and clears `pr_claimed_at` back to `NULL`, but only when the row's current `pr_claimed_at` still equals the `claimed_at` argument — the same repository CAS the reconciler's opening sweep uses (`FailStuckOpeningPR`, via `Service.FailStuckClaim`). Called by ui after its own `BeginPullRequest` claim, passing back the `claimed_at` that call returned. Returns `{released: bool}`; `released=false` is not an error — it means the claim already moved on (recorded, or already released by the opening sweep) by the time this call ran, which can happen when the S3/GitHub round trip between `BeginPullRequest` and this call outlives `REMEDIATION_PR_OPENING_GRACE_PERIOD`. Returns `INVALID_ARGUMENT` when `claimed_at` is missing or not RFC3339. |
 
@@ -43,7 +53,7 @@ Exposes proposal data and the PR lifecycle to ui. Handlers are thin and delegate
 Two health endpoints backed by the `pkg/liveness` registry, with readiness and
 liveness deliberately split:
 
-- `GET /healthz` — readiness. Fails (503) when the `remediation.requested:v1`
+- `GET /healthz` — readiness. Fails (503) when the `remediation.requested:v2`
   consumer or the outbox publisher has exited with an error, the consumer
   read-loop heartbeat has gone stale, **or** any dependency probe (Redis,
   Postgres) fails. A dependency outage pulls the pod out of the Service
@@ -62,7 +72,7 @@ The Kubernetes `readinessProbe` points at `/healthz` and the `livenessProbe` at
 
 | Stream | Consumed by | Emitted when |
 |---|---|---|
-| `remediation.proposed:v1` | (approval surface) | A fix becomes ready for human review. Two writers reach this point and both build the event through one shared helper, so they cannot drift apart: the driver, when the dispatched `Fixer` returns a `status=proposed` outcome it could judge on the spot (compile, seed_build, duplicate_table, dbt validation); and the shadow-verify reconciler, when the release judging a python contract fix reports `validated`. |
+| `remediation.proposed:v1` | (approval surface) | A fix becomes ready for human review — **only** when every shadow release judging the attempt reported `validated`. There is exactly one writer: the shadow-verify reconciler, in the same transaction as the `verifying → proposed` compare-and-set, so the row and the announcement cannot disagree. The driver emits nothing; a fix nobody ran is not a proposal. One event per attempt, naming every node it resolves and every file it changes. |
 | `remediation.pr_opened:v1` | `orchestrator` (group `orchestrator-remediation-pr-opened-proposals`) | `RecordPullRequest` is called; payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `opened_by`, `opened_at`. Orchestrator's case-base proposals consumer records the opened PR as a `:Proposal` node linked from the corresponding `:Rejection`. |
 | `remediation.pr_closed:v1` | (no consumer; audit seam) | The PR-outcome reconciler observes a terminal GitHub PR state and `RecordOutcome` performs the CAS `open → merged | rejected`; payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`, `pr_number`, `outcome` (`merged` or `rejected`), `closed_at` (RFC 3339). `event_id` is a deterministic SHA1 UUID keyed on `release_id|node_id|attempt`, distinct from the `pr_opened` id derived from the same triple. |
 
@@ -112,135 +122,206 @@ This is the only GitHub write-adjacent surface agent-remediation reads from besi
 
 ### Outbound HTTP — release-controller
 
-The `ReleaseGateway` port (`adapters/releasehttp`) is the python lane's client of release-controller's public HTTP API. It is the only place in this service that issues a non-GET request to another service, and everything it can create is a shadow release — one that never promotes.
+The `ReleaseGateway` port (`adapters/releasehttp`) is the verification lane's client of release-controller's public HTTP API. It is the only place in this service that issues a non-GET request to another service, and everything it can create is a shadow release — one that never promotes. Submitting and polling belong to the driver and the reconciler; a `Fixer` only ever *reads* a verdict through it (to check whether a sibling node it would package alongside its own also failed).
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /releases` | Submits a shadow verification release for a packaged contract fix. The body always carries `kind: "python"`, `bootstrap: false`, and `shadow: true` — a shadow submission never varies them, so none is a caller-supplied field — plus the shadow's own `release_id`, the failing node's `service`, the `image_tag` read back from the original failing release, and that release's `repo`/`commit_sha`. `202 Accepted` is success, including release-controller's idempotent-duplicate case where a row for this release id already exists, so a redelivered attempt resubmits harmlessly. |
-| `GET /releases/{shadow_id}` | Polls a submitted shadow release for its verdict. `validated` is a terminal pass; `rejected` is a terminal fail, and its per-node error text is read from each failing validation node's `run_results_uri` through the same S3 evidence reader the fixers use (falling back to the release-level `reject_reason`/`reject_detail` when that structured result is missing or unreadable). Every other status is non-terminal and the read is repeated on the next pass. |
-| `GET /releases/{original_id}` | Read twice against the ORIGINAL failing release, for two different fields. Its verdict's per-node errors name every node that release rejected, which is how the fixer finds out whether another node it would package alongside the one it is fixing also failed — a fix that could never be verified is skipped before any model call. And `image_tags[service]` is read before submitting. The trigger carries no image tag, and a shadow release needs one to be accepted; reusing the failing release's tag is safe precisely because a shadow release never promotes, so the tag never reaches the production pointer an image tag otherwise drives. An absent or empty tag for the service is an error and the attempt is retried. |
+| `POST /releases` | Submits a shadow verification release for one edited service. The body always carries `bootstrap: false` and `shadow: true` — a shadow submission never varies them — plus the shadow's own `release_id` (see `ShadowReleaseID` below), the edited `service`, the `image_tag` read back from the original failing release, and that release's `repo`/`commit_sha`. Two fields vary with the service's manifest kind: `kind` is `"python"` for a service whose fix packaged a contract yaml (uploaded under the shadow's own canonical key before the POST), and `"dbt"` otherwise, in which case `source_overlay_uri` names the `source-overlay.tar.gz` this attempt wrote for that service — release-controller accepts that field only together with `shadow: true`. `202 Accepted` is success, including release-controller's idempotent-duplicate case where a row for this release id already exists, so a redelivered attempt resubmits harmlessly. |
+| `GET /releases/{shadow_id}` | Polls a submitted shadow release for its verdict. `validated` is a terminal pass; `rejected` is a terminal fail, and its per-node error text is read from each failing validation node's `run_results_uri` through the same S3 evidence reader the fixers use (falling back to the release-level `reject_reason`/`reject_detail` when that structured result is missing or unreadable). The verdict also carries the release's activation moment, which is what the reconciler's per-release timeout is measured from. Every other status is non-terminal and the read is repeated on the next pass. |
+| `GET /releases/{original_id}` | Read against the ORIGINAL failing release, for two different fields. Its verdict's per-node errors name every node that release rejected, which is how a python contract fixer finds out whether another node it would package alongside the one it is fixing also failed — a fix that could never be verified is skipped before any model call. And `image_tags[service]` is read by the driver once per edited service before submitting. The trigger carries no image tag, and a shadow release needs one to be accepted; reusing the failing release's tag is safe precisely because a shadow release never promotes, so the tag never reaches the production pointer an image tag otherwise drives. An absent or empty tag for the service is an error and the attempt is retried. |
 
 ## Data Flow
 
-### Shared driver — `ProposeFix`
+### Batched driver — `ProposeFix`
 
-The driver in `service/handlers/propose_fix.go` runs for every trigger regardless of error class. It owns everything that is not class-specific; the class-specific work is delegated to a `Fixer`.
+The driver in `service/handlers/propose_fix.go` turns one rejected release's healable failing set into a single fix attempt. It owns everything that is not class-specific — the attempt cap, inbound dedup, grouping, shadow submission, persistence — and delegates the class-specific work to a `Fixer`. **It announces nothing**: a fix is a proposal only once a shadow release has run it, and the shadow-verify reconciler is what emits.
 
 ```
-1. Decode trigger: extract source, release_id, remediation_round, node_id,
+1. Decode trigger (remediation.requested:v2): the release-level header —
+   source, release_id, remediation_round, repo, commit_sha, code_bundle_uri,
+   shadow — plus one TriggerNode per failing node carrying node_id,
    relation_id, error_signature, category, reason, error_excerpt, dbt_log_uri,
-   candidate_artifact_uri, code_bundle_uri, file_path, service, node_type,
-   other_service, other_file_path, repo, commit_sha.
+   candidate_artifact_uri, file_path, service, node_type, other_service,
+   other_file_path, and changed_ancestor_ids.
    remediation_round is the release's remediation round this trigger belongs
    to; missing or 0 (a trigger predating this field) normalizes to 1, the
-   round every rejection starts a release at. It is threaded onto every
-   proposal row this trigger produces and onto the remediation.proposed:v1
-   event it emits.
-   node_type is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
-   python-model, python-csv), set on duplicate_table and validation triggers.
-   It selects the Fixer for a validation trigger — a python-model node goes to
+   round every rejection starts a release at. It is threaded onto the proposal
+   row this trigger produces and onto the remediation.proposed:v1 event.
+   An empty nodes[] is logged and ACKed: there is nothing to fix.
+   Per node: node_type is its kind (dbt-model, dbt-seed, dbt-snapshot,
+   python-model, python-csv), set on duplicate_table and validation triggers,
+   and selects the Fixer for a validation node — a python-model node goes to
    the python contract fixer, a python-csv node to its own dedicated contract
-   fixer — and the duplicate-table fixer skips either python kind on it.
-   error_excerpt is the classifier's key error line for this failure, capped at
-   4 KiB; it is the python contract fixer's primary evidence, since a python
-   validation failure's message is the engine's own text rather than a dbt log
-   the fixer can re-read. file_path/service are the node's source location,
-   set on seed_build, duplicate_table, and validation triggers, all three from
-   the candidate topology. other_service/other_file_path locate the competing
-   node that also produces the contested relation. relation_id is the contested
-   physical relation itself, distinct from node_id (the target claimant's own
-   unique_id) — the two differ whenever the target already carries an alias.
-   other_service, other_file_path, and relation_id are all set
-   only on a duplicate_table trigger, empty otherwise. reason is the
-   classifier's finer-grained rule (e.g. logic:missing_object); with category
-   it forms the fallback precedent-lookup key when error_signature has no
-   recorded matches. code_bundle_uri locates the release's code-bundle
-   document; empty only for compile-stage rejections, which precede the parse
-   that produces the bundle (duplicate_table, seed_build, and validation
-   rejections all follow a completed parse and carry it), and consumed only
-   by the validation fixer to resolve the failing node's real source.
+   fixer — while the duplicate-table fixer skips either python kind on it.
+   error_excerpt is the classifier's key error line, capped at 4 KiB; it is
+   the python contract fixer's primary evidence, since a python validation
+   failure's message is the engine's own text rather than a dbt log the fixer
+   can re-read. file_path/service are the node's source location, set on
+   seed_build, duplicate_table, and validation triggers, all from the
+   candidate topology. other_service/other_file_path locate the competing node
+   that also produces the contested relation; relation_id is that relation
+   itself, distinct from node_id whenever the target carries an alias — all
+   three set only on a duplicate_table trigger. reason is the classifier's
+   finer-grained rule (e.g. logic:missing_object); with category it forms the
+   fallback precedent-lookup key when error_signature has no recorded matches.
+   changed_ancestor_ids is what grouping (step 3) reads.
+   Release-level code_bundle_uri locates the release's code-bundle document;
+   empty only for compile-stage rejections, which precede the parse that
+   produces the bundle, and consumed by the validation and upstream fixers to
+   resolve a node's real source.
 
 1a. Read-only dedup pre-check (no write): before any row is written, check
-    whether this trigger was already handled, on either dedup axis scoped to the
-    consuming stream — a message_processing row matching (message_id, stream_name)
-    OR (outbox_entry_id, stream_name). If found, ACK and return without writing
-    anything. This
-    keeps a re-emitted completed trigger (fresh Redis message id, same
-    outbox_entry_id) from minting a phantom in-flight 'generating' row for a
-    fresh attempt number that the terminal claim would then abandon.
+    whether this trigger was already handled, on either dedup axis scoped to
+    the consuming stream — a message_processing row matching (message_id,
+    stream_name) OR (outbox_entry_id, stream_name). If found, ACK and return
+    without writing anything. This keeps a re-emitted completed trigger (fresh
+    Redis message id, same outbox_entry_id) from minting a phantom in-flight
+    'generating' row for a fresh attempt number that the terminal claim would
+    then abandon.
 
-2. Count prior TERMINAL attempts for (release_id, remediation_round, source,
-   node_id, error_signature). The release is part of the key: a later release
-   is new code, so the same node failing with the same signature under it
-   starts a fresh count at attempt 1 instead of inheriting an exhausted one.
-   The remediation round is part of the key for the same reason within one
-   release: a human's "try again" on a rejected release starts a fresh round
-   with its own count, though the attempt number itself keeps incrementing
-   across rounds of the same release (attempt is scoped to (release_id,
-   source, node_id) alone). In-flight 'generating' and 'verifying' rows are
-   excluded, so neither the in-progress attempt nor one still awaiting a
-   shadow release's verdict inflates the cap or shifts the attempt number
-   across a redelivery.
-   - attempts >= MaxAttempts (default 3): insert proposal(status=escalated),
-     emit nothing, done. (This path is before markGenerating, so an unhealable
-     escalated node never shows the "Generating fix…" indicator.)
+2. Count prior TERMINAL attempts for this release, twice: inRound (this
+   trigger's own remediation round) and total (every round of the release so
+   far). The attempt number is total+1; the cap is checked against inRound.
+   The release is the key: a later release is new code, so it starts a fresh
+   count at attempt 1 instead of inheriting an exhausted one; a human's "try
+   again" starts a fresh round with its own count, while the attempt NUMBER
+   keeps incrementing across rounds because the proposal table's uniqueness is
+   (release_id, attempt) and a restarted sequence would collide with — and
+   silently overwrite — a row an earlier round already wrote. In-flight
+   'generating' and 'verifying' rows are excluded from both counts, so neither
+   the in-progress attempt nor one still awaiting a verdict inflates the cap
+   or shifts the attempt number across a redelivery.
+   - inRound >= MaxAttempts (default 3): record proposal(status=escalated)
+     over the WHOLE failing set — every node's outcome is 'escalated' — and
+     return. (This path is before markGenerating, so an unhealable set never
+     shows the "Generating fix..." indicator.)
 
-3. Resolve the Fixer via fixer.For(source, node_type): compileFixer, seedFixer,
-   duplicateTableFixer, or — for a validation trigger — validationFixer for a dbt
-   node, pythonValidationFixer when node_type is python-model, and
-   csvValidationFixer when node_type is python-csv. node_type selects a lane
-   only for validation failures, where the three node kinds need entirely
-   different fixes; every other class ignores it and refuses either python
-   node kind in its own way. An unrecognized source is a programming error —
-   the classifier only ever emits the four known values — and is returned
-   loudly, not swallowed.
+3. Group the failing set into clusters (groupClusters -> domain/typology;
+   pure, reading only what the trigger already carries). See "Grouping the
+   failing set" below. Output is one Cluster{TargetNodeID, Members, Kind} per
+   fix target, deterministically ordered.
 
-3a. markGenerating(attempt): in its own committed transaction, insert an in-flight
-    proposal(status=generating) row for this attempt (idempotent — ON CONFLICT on
-    (release_id, source, node_id, attempt) DO NOTHING, so a redelivery of an
-    in-flight attempt re-uses the row). This is the explicit "fix in flight" signal
-    the release UI reads to show a disabled "Generating fix…" chip while the model
-    runs. A Fixer that then skips internally finalizes the row to a terminal state
-    (a brief generating→blank flicker for that case is accepted).
+3a. markGenerating(attempt): in its own committed transaction, insert an
+    in-flight proposal(status=generating) row for this attempt (idempotent —
+    ON CONFLICT on (release_id, attempt) DO NOTHING, so a redelivery of an
+    in-flight attempt re-uses the row). The row already names the whole
+    failing set, with every node's outcome 'generating', so the release page
+    can show every one of them as being worked on. A cluster that then skips
+    internally finalizes the row to a terminal state (a brief
+    generating->blank flicker for that case is accepted).
 
-4. Call fx.Propose(ctx, services, input) — see the per-class flows below. The
-   trigger's dbt_log_uri is passed through unfetched: each Fixer reads and
-   sanitizes the dbt log itself (via the shared loadDBTLog helper: not-found → ""
-   for a log-unavailable proposal; any other error → return, message stays in the
-   PEL and is retried) only when its error class needs the log, and only after it
-   has decided to produce a fix. This keeps the read off the paths that skip
-   before proposing anything — most importantly a validation trigger with no
-   candidate SQL, which must skip even when its log URI is transiently unreadable.
-   A returned error means a transient failure (LLM error, a non-404 source read,
-   or a non-not-found log read); the driver returns it unchanged so the trigger is
-   redelivered.
+4. Fix each cluster, in order, over a work queue:
+   - KindSharedUpstream -> fixer.ProposeUpstreamFix: one model call repairing
+     the changed ancestor. A skip here (ancestor absent from the bundle, not a
+     dbt model, unlocatable in the promoted graph, no repo mapping, or an
+     answer the model itself declined) is NOT a failure: the cluster is
+     replaced by one independent cluster per member, APPENDED to the same
+     queue, so each member is then fixed in its own source through the
+     identical path.
+   - KindIndependent -> fixer.For(source, node_type).Propose, exactly as
+     before: compileFixer, seedFixer, duplicateTableFixer, or — for a
+     validation trigger — validationFixer for a dbt node,
+     pythonValidationFixer for python-model, csvValidationFixer for
+     python-csv. An unrecognized source is a programming error and is returned
+     loudly, not swallowed.
+   Each Fixer returns EDITS ONLY (plus, for a python contract fix, the
+   packaged contract bytes); none of them submits a release. A proposed result
+   that named no file is downgraded to failed — a fix with no edit changes
+   nothing a shadow release could run, and no pull request could carry it.
+   The trigger's dbt_log_uri is passed through unfetched: each Fixer reads and
+   sanitizes the log itself (via loadDBTLog: not-found -> "" for a
+   log-unavailable proposal; any other error -> return and retry) only when
+   its error class needs it and only after it has decided to produce a fix.
+   A returned error is transient (LLM error, a non-404 source read, a
+   non-not-found log read); the driver returns it unchanged so the trigger is
+   redelivered — and the LLM response cache replays the clusters that already
+   finished.
+   Accumulated across clusters: every edit (each stamped with its
+   target_node_id — the failing node for an independent cluster, the ancestor
+   for a shared-upstream one), each member's NodeOutcome, one rationale line
+   per cluster, the WEAKEST confidence, the first model id, and sourceResolved
+   AND-ed over the clusters that produced edits.
 
-5. Persist the terminal outcome (shared for every class, one Postgres transaction):
+5. No edits at all -> record the attempt as settled: 'skipped' when every node
+   was skipped, 'failed' as soon as one node was attempted and yielded no
+   change. Nothing is submitted and nothing is announced.
+
+6. Otherwise submit verifications (submitVerifications) — one shadow release
+   per edited service. See "Shadow verification" below. Two failures there are
+   PERMANENT and end the attempt as 'failed' with the reason recorded rather
+   than being redelivered: an edit whose path lies outside every configured
+   service, and a service whose edits mix a packaged python contract with
+   non-contract edits (a release parses one manifest kind, so half the change
+   would be silently ignored). Everything else is transient and retried.
+
+7. Persist the outcome (one Postgres transaction):
    a. Claim the inbound message in message_processing (keyed on the Redis
       message id and the upstream outbox_entry_id); if the claim conflicts the
       trigger was already handled, so roll back and ACK without re-proposing.
-   b. Upsert the proposal row returned by the Fixer on (release_id, source,
-      node_id, attempt): this finalizes the in-flight 'generating' row from
-      step 3a in place (status, confidence, rationale, proposed_sql_uri, diff_uri,
-      source_resolved, model, and — for validation only —
-      candidate_fix_sql_uri/candidate_fix_diff_uri). A 'verifying' outcome also
-      stores shadow_release_id and the raw inbound trigger in trigger_payload,
-      so the reconciler that resolves that release can rebuild the trigger and
-      start the next attempt from it; every other status resolves inside this
-      call and needs nothing to replay. repo/commit_sha/file_path
-      and edits — the same file list, one FileEdit{path, content_uri, diff_uri}
-      per changed file — are populated only when the Fixer reports
-      source_resolved=true; every single-shot Fixer (compile, seed,
-      duplicate_table) always reports source_resolved=true on a proposed
-      outcome and writes exactly one edit, while validation's edits list is
-      empty whenever its Step 2 real-source fix did not resolve (the Step-1
-      candidate proposal stands alone).
-   c. When the Fixer's outcome is status=proposed, enqueue a
-      remediation_agent_outbox row (stream=remediation.proposed:v1,
-      message_processing_id = the claim row, event_id = deterministic SHA1
-      UUID keyed on release_id+"|"+node_id+"|"+attempt).
-   d. Commit.
+   b. Upsert the proposal row on (release_id, attempt), finalizing the
+      in-flight 'generating' row from step 3a in place: status ('verifying'
+      when edits were submitted, else the settled status), resolved_node_ids,
+      node_outcomes, verifications, edits, confidence, rationale, model,
+      source_resolved, repo/commit_sha, and the representative single-value
+      views derived by NormalizeRepresentativeViews(). A 'verifying' outcome
+      also stores the raw inbound trigger in trigger_payload, so the
+      reconciler resolving those releases can rebuild it — narrowed to the
+      still-failing subset — and start the next attempt; every other status
+      resolves inside this call and needs nothing to replay.
+   c. Commit. No outbox row is enqueued here: the announcement belongs to the
+      reconciler, once a release has judged the fix.
 ```
+
+### Grouping the failing set
+
+`domain/typology` partitions the trigger's nodes into fix targets before any port is touched. It is pure — it reads the failing set and a `DagView` built entirely from the trigger's own `changed_ancestor_ids` — so the routing decision is testable without the LLM or any adapter.
+
+`Group(nodes, dag, strategies...)` runs each strategy in order; every node no strategy claims becomes its own `KindIndependent` cluster targeting itself. Output is deterministic: claimed clusters in strategy order, then the independents sorted by node id.
+
+One strategy is wired today, `SharedUpstreamCause`:
+
+- Nodes are bucketed by `error_signature`. An empty signature never groups, and a bucket of one is left for the independent default — one node is not evidence of a shared cause.
+- Within a bucket, candidate changed ancestors are considered in ascending id order; for each, the still-unclaimed members that list it in `changed_ancestor_ids` are gathered, and a candidate with **at least two** such members becomes one `KindSharedUpstream` cluster targeting it. Taking the smallest ancestor id first makes both the assignment and the target choice independent of map iteration and input order.
+- A bucket can therefore yield several clusters: the same failure reaching two unrelated changed ancestors gives `{a,b}→u` and `{c,d}→v` rather than falling through to four independent fixes. Members are disjoint across clusters, and clusters are emitted ordered by their smallest member.
+
+Identical signatures are what make this safe, and they are only identical because the classifier strips the database's echoed `LINE n: <statement>` from the signature — that statement names the failing relation, so without the strip two siblings broken by one upstream change would never sign alike (see `services/remediation.md` § Error Signature Normalization).
+
+The target of a shared-upstream cluster is a node that **may never have failed at all** — it changed, its descendants broke. It is therefore absent from `resolved_node_ids` while appearing as an edit's `target_node_id`, which is exactly the shape a reviewer needs: two broken nodes, one file changed.
+
+### Shadow verification
+
+`submitVerifications` (`service/handlers/verify.go`) posts one shadow release per service the attempt edits, and returns one `Verification{Service, Kind, ShadowReleaseID}` per submission.
+
+```
+1. Bucket the edits by service: serviceForPath resolves an edit's repository
+   path against ServiceRepoPaths, choosing the service whose project root is
+   the LONGEST prefix of the path (so a nested project resolves to the nearest
+   one), ties broken on the smaller service name. A path no service claims is
+   errUnmappedEdit — permanent.
+2. Check EVERY service before submitting ANY of them: a service that packaged a
+   python contract may not also carry an edit that is not a python node's
+   contract (errMixedManifestKinds — permanent). Checking first means an
+   attempt one service cannot verify spends no release slot on the others, and
+   never leaves shadow releases running for a fix that was never recorded.
+3. Per service, in sorted order:
+   - shadowID = ShadowReleaseID(release_id, service, attempt).
+   - python (the cluster produced a packaged contract): write it to
+     <service>/<shadowID>/contract.yaml — the canonical per-release key
+     release-controller reads a python service's artifact from — BEFORE
+     submitting, because that object is read as soon as the submission is
+     accepted. kind=python, no overlay.
+   - dbt: read each edit's proposed content back from the artifact the Fixer
+     wrote, key it by its path RELATIVE to the service's project root, build a
+     deterministic gzip tarball (overlay.Build), and write it to
+     <service>/<shadowID>/source-overlay.tar.gz. kind=dbt,
+     source_overlay_uri = that object.
+   - Read the ORIGINAL release's image_tag for the service and POST the shadow
+     release under shadowID.
+```
+
+`overlay.Build` is pure and deterministic: members are written sorted by path with a fixed mode, zero timestamp, and zero ownership, so the same set of files always produces the same bytes and a redelivery overwrites the object it wrote before rather than leaving two archives to choose between. An empty, absolute, or upward-traversing member path is refused rather than written, since the archive is unpacked over a real project.
+
+`ShadowReleaseID(release, service, attempt)` mints `shadow-<release>-<service>-a<n>`, with every character outside `[A-Za-z0-9._-]` replaced by a dash. It is unique per (service, attempt), legible in every log line and release listing, and stable across a redelivery — release-controller's submission is idempotent on it. The id is capped at 52 bytes: release-controller derives the release's candidate schema as `"_candidate_"` plus the id, and PostgreSQL truncates an identifier past 63 bytes rather than rejecting it, cutting the attempt suffix and then the service name — two attempts would then share one schema and each validate against the other's leftovers. Past the cap the release-and-service middle is shortened and given an 8-hex digest of what it held, so the prefix and attempt number stay whole and two services whose names diverge only past the cut still get separate schemas.
 
 ### Compile fixer
 
@@ -490,13 +571,51 @@ When no claimant belongs to the changed service — a bootstrap release, or two 
       proposed-fix/<release_id>/<node_id>/attempt-<attempt>.source.diff
     Promote: proposed_sql_uri / diff_uri now point at the source artifacts
     (source_resolved=true).
-15. Build the proposal: confidence, rationale, model, and suspected_root_cause_node
-    all come from the Step-1 result. source_resolved, repo, commit_sha, and
-    file_path reflect whether Step 2 succeeded (step 14) or was skipped (steps
-    12–13), keeping the Step-1 candidate proposal in the latter case.
+15. Build the proposal: confidence, rationale, and model all come from the
+    Step-1 result. source_resolved, repo, commit_sha, and file_path reflect
+    whether Step 2 succeeded (step 14) or was skipped (steps 12–13), keeping
+    the Step-1 candidate proposal in the latter case. The Step-1 answer's
+    suspected_root_cause_node is carried on the fixer Result but goes no
+    further — the driver drops it, and neither the proposal row nor the
+    remediation.proposed:v1 event records it. Root cause is now decided by
+    grouping (shared changed ancestors, from the release's own topology) and
+    proved by a shadow release, not guessed by the model.
 ```
 
 The degrade-don't-fail design means any failure in source resolution or Step 2 — a permanent code-bundle miss, a repo-read error, a missing file_path/service_name, no repo mapping, or an empty/unchanged/low-confidence LLM result — silently falls back to the candidate proposal. None of these ever lose or retry the trigger: only a transient code-bundle fetch error (step 4), Step 1 itself (steps 8–10), and the offending-file reads in the compile/seed/duplicate-table fixers are load-bearing enough to cause a retry.
+
+One batched consequence: a validation proposal whose Step 2 did not resolve carries **no edits**, and the driver downgrades an edit-less "proposed" result to `failed` for that cluster's members. The Step-1 candidate fix is still written to S3 as an audit artifact, but it patches compiled SQL rather than version-controlled source, so there is nothing a shadow release could run and nothing a pull request could carry.
+
+### Upstream fixer — repair the shared cause once
+
+`ProposeUpstreamFix` (`service/fixer/upstream.go`) is what a `KindSharedUpstream` cluster runs. Its target is the changed ancestor every member descends from, which may never have failed itself.
+
+```
+1. No members: skip (an upstream cluster needs at least one failing member).
+2. Read the ancestor's source from the release's CODE BUNDLE
+   (CandidateSource.NodeSource, keyed by the target id and the trigger's
+   release_id). It changed in this release, so the bundle holds it whether or
+   not it failed. A permanent miss skips; a transient fetch error is returned
+   and the trigger is redelivered. A non-dbt runtime skips.
+3. Locate the ancestor via the orchestrator's GetNodeLocation. This is the
+   promoted graph, so a brand-new ancestor cannot be placed and the cluster
+   skips. A service with no service_repos.yaml mapping skips too.
+4. Best-effort own-change diff: GetNodeVersions(current_only) against the
+   bundle source, sanitized and truncated. A lookup error just omits it.
+5. Precedent is loaded from the FIRST member's signature/category/reason —
+   every member shares the signature by construction.
+6. One forced propose_fix call (AssembleUpstreamFix) showing the ancestor's
+   source, its own-change diff, each member's node id and error excerpt, and
+   precedent.
+7. An answer that returns nothing, returns the ancestor's source unchanged, or
+   reports low confidence is a SKIP, not a failure — each member can still be
+   fixed in its own source, and failing here would abandon every member on one
+   declined answer.
+8. Otherwise write the corrected source and its diff under the ancestor's own
+   attempt keys and return one edit whose target_node_id is the ANCESTOR.
+```
+
+Every skip path returns `status=skipped`, which the driver reads as the signal to re-queue each member as an independent cluster. Only a genuinely transient error (the bundle fetch, the model call, an artifact write) is returned for redelivery.
 
 ### Python validation fixer — repair the contract, then run it
 
@@ -628,61 +747,61 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
    packaging failure — a missing binary, a context deadline, a killed process —
    is transient and the trigger is redelivered. The adapter draws the line
    (`ports.ErrContractRejected`), so the fixer never string-matches stderr.
-11. Mint the shadow release id — shadow-<original_release_id>-<node_id>-a<n>,
-    with every character outside [A-Za-z0-9._-] replaced by a dash. It is
-    unique per attempt, legible in every log line and release listing, and
-    stable across a redelivery of the same attempt (release-controller's
-    submission is idempotent on it). The id is capped at 52 bytes: the release
-    it names gets a candidate schema of "_candidate_" plus the id, and
-    PostgreSQL truncates an identifier past 63 bytes rather than rejecting it —
-    which would cut the attempt suffix and the node name, letting two attempts
-    share one schema and validate against each other's leftovers. Past the cap
-    the release-and-node middle is shortened and given an 8-hex digest of what
-    it held, so the prefix and attempt number stay whole and two nodes whose
-    names diverge only past the cut still get separate schemas.
-12. Upload the merged contract to <service>/<shadow_id>/contract.yaml — the
-    canonical per-release key release-controller reads a python service's
-    release artifact from — BEFORE submitting, because release-controller
-    reads that object as soon as the submission is accepted.
-13. Read the ORIGINAL failing release's image tag for the service
-    (ReleaseGateway.ImageTag), then submit the shadow release
-    (ReleaseGateway.Submit) under the minted id.
-14. Write one audit artifact pair per edited file:
+11. Write one audit artifact pair per edited file:
       proposed-fix/<release_id>/<node_id>/attempt-<n>/edit-<i>.content
       proposed-fix/<release_id>/<node_id>/attempt-<n>/edit-<i>.diff
     Edits of one attempt share a directory and are numbered within it, so two
-    edits can never write the same key.
-15. Return proposal(status=verifying) naming the shadow release, with the edits
-    list, source_resolved=true (the edits name real files at a real commit,
-    which is what a pull request needs — the shadow release decides whether
-    they are right), and the single-file view (file_path/proposed_sql_uri/
-    diff_uri) normalized from the first edit.
+    edits can never write the same key. Each edit's target_node_id is the node
+    under repair.
+12. Return proposal(status=proposed) with the edits list, source_resolved=true
+    (the edits name real files at a real commit, which is what a pull request
+    needs), the single-file view normalized from the first edit, and the
+    MERGED CONTRACT BYTES on Result.ShadowContract. The fixer submits nothing
+    and mints no release id: the driver keys the contract by the service its
+    edits belong to, uploads it under that service's shadow release id, and
+    posts the release (see "Shadow verification" above). A fixer that submitted
+    its own release would give a batched attempt one release per node instead
+    of one per service.
 ```
 
 ### CSV validation fixer — same shadow-release lane, a contract-only node
 
 `csvValidationFixer` (`service/fixer/csv_validation.go`) handles a validation rejection whose failing node is a python-csv node. A python-csv node has no script at all: it is an entry in a contract yaml naming its schema and table, a single `csv` read whose value is the uri of the file the runtime loads, and the `output_columns` it promises that file to carry. Validation fetches the file's header line and rejects the node when a declared output column is missing from it. The CSV file is the source of truth, so the fix corrects the contract to match it — rename or drop a mis-declared `output_columns` entry, or, only when the evidence shows the uri itself is stale, correct the `csv:` uri.
 
-Steps 1–4 (split node id, fetch the repo, locate the declaring yaml, check no sibling in the same contract directory also failed) are not merely identical in shape to the python-model lane's — `csvValidationFixer.Propose` and `pythonValidationFixer.Propose` both call one function for them, `locateContractForFix`, which returns either the located contract (schema, table, checkout root, and `Located`) or an already-decided `proposal(status=skipped)`/error for the caller to return as-is. Steps 6–15 (one forced LLM tool call, refuse an unusable answer, apply then package, mint and submit the shadow release, write audit artifacts, return `proposal(status=verifying)`) are likewise one shared function, `proposeContractFixViaShadow`. The two lanes differ only in the two seams passed into it: what evidence step 5 shows the model, and what step 9's post-apply guard checks.
+Steps 1–4 (split node id, fetch the repo, locate the declaring yaml, check no sibling in the same contract directory also failed) are not merely identical in shape to the python-model lane's — `csvValidationFixer.Propose` and `pythonValidationFixer.Propose` both call one function for them, `locateContractForFix`, which returns either the located contract (schema, table, checkout root, and `Located`) or an already-decided `proposal(status=skipped)`/error for the caller to return as-is. Steps 6–12 (one forced LLM tool call, refuse an unusable answer, apply then package, write audit artifacts, return `proposal(status=proposed)` carrying the merged contract for the driver to verify) are likewise one shared function, `proposeContractFixViaShadow`. The two lanes differ only in the two seams passed into it: what evidence step 5 shows the model, and what step 9's post-apply guard checks.
 
 - **Step 5 (evidence)** reuses the python lane's evidence assembly (`pythonEvidence`) verbatim — a csv node runs on the same python-runtime image and its code-bundle entry is read the same way — and converts the result to `CsvEvidence`, which mirrors `PythonEvidence` field for field. Only the prompt built from it differs: `propose_csv_fix` (vs. `propose_python_fix`), telling the model the file is the source of truth, that there is no script to preserve, and that the single `csv` read may have its uri corrected but never be deleted or renamed.
 - **Step 9 (post-apply guard)** shares its identity check with the python lane — every node the answer's own files declared before the edit must still be declared, with schema, table, script, **kind**, owner, schedule, and criticality unchanged (`identityBreach`, factored out of the python lane's guard as `buildDeclarationMaps` + `identityBreach` so both lanes enforce it identically, and checked *before* either lane's read rule — a re-identified entry is refused on that alone before its reads are even compared). Kind flipping a node's declared kind — most dangerously python-csv into python-model or back — is refused here the same as renaming its table would be, since a flipped kind changes which of these two rule sets governs the node. What differs is the *read* rule applied to the failing node itself: a python-model node's script may perform any number of reads, so `declarationBreach` refuses dropping any of them for every node it checks; a python-csv node has exactly one, always named `csv`, and correcting its value is the expected fix. So for a node that declares a `csv` key, `csvDeclarationBreach` gives dropping that key a csv-specific message naming the read by name — fired first, ahead of the generic one. It does not replace the generic rule: every node, csv node included, is still run through the same blanket "no read may be dropped" rule (`droppedReadBreach`) the python-model lane applies everywhere, including every read of a python-model sibling packaged alongside the csv node, whose script this fix never touches. For the failing csv node itself, which declares exactly one read, the two checks catch the identical breach; the csv-specific message only gets to report it first.
 
 ### Shadow-verify reconciler
 
-`service/shadowverify` resolves every attempt left in `verifying`. It ticks every `SHADOW_VERIFY_POLL_INTERVAL` (default 15s), lists up to 20 such proposals oldest-first, and for each reads its shadow release's verdict:
+`service/shadowverify` resolves every attempt left in `verifying`. It ticks every `SHADOW_VERIFY_POLL_INTERVAL` (default 15s), lists such proposals oldest-first, and for each reads the verdict of **every** shadow release judging it (`verifications`, falling back to the single `shadow_release_id` on a row that recorded no list).
 
-- **Validated** — `MarkVerified` performs the CAS `verifying → proposed` and, in the same transaction, enqueues the `remediation.proposed:v1` outbox row that surfaces the fix for review, so the row and the announcement cannot disagree. A repeated pass over an already-finalized row writes nothing and emits nothing. Because no inbound message drove this write, the outbox entry carries no `message_processing` provenance.
-- **Rejected** — `MarkVerifyFailed` performs the CAS `verifying → failed`, recording as `verify_error` the failing node's own error text; when the fixed node itself passed and other nodes did not — a fix that broke something downstream of itself — every failing node is named instead, in a stable order. That transaction commits **before** the next attempt is started, because the driver counts terminal attempts to decide both the next attempt's number and whether the cap has been reached. Only the pass that actually wins the CAS starts a next attempt.
-- **Neither** — the release is still working, and the row is left exactly as it is unless it has been RUNNING longer than `SHADOW_VERIFY_TIMEOUT` (default 20m), in which case it is failed with `shadow verification timed out`. The budget is measured from the release's activation moment — the timestamp of its first transition past `received`, read from the verdict — not from when the attempt was recorded. A shadow release joins the same global FIFO queue as every other release and only one release runs at a time, so measuring from the proposal would fail an attempt whose release never ran, and would do the same to every retry behind it. A release still queued (no activation moment yet) is left alone however old the attempt is.
+One attempt is one proposal over one set of edits, so the verdicts are combined rather than acted on individually:
 
-A verdict that cannot be *read* is deliberately not treated as a rejection: the gateway reports a briefly unreachable release-controller and a release id it will never know with the same error, so counting either as a failed attempt would let one outage burn the attempt budget on fixes that were never judged. The read is retried next pass, and the same timeout ends one whose verdict never becomes readable — measured there from when the attempt was recorded, since an unreadable release has no activation moment to measure from and this is the path that must stay bounded regardless: a submission that was lost would otherwise sit in `verifying` for as long as the row exists.
+- **Any rejection** — the attempt fails. The edits cannot be split, and the errors of every rejected release together are the evidence the next attempt reads.
+- **Every release terminal and none rejected** — the attempt is verified.
+- **Otherwise** — still working; the row is left alone unless a budget has elapsed.
 
-The next attempt is started from the trigger stored on the failed attempt's own row, decoded by the same decoder the stream consumer uses, and given a fresh dedup identity — `shadow-verify:<shadow_release_id>`, with the upstream outbox entry id dropped. Replaying the stored payload verbatim would collide with the claim the first attempt's own transaction already made and return having done nothing, leaving no attempt, no row, and no error to show for it. There is exactly one shadow release per attempt, so this identity is both fresh per attempt and stable across repeated passes over the same one. A next attempt that fails to start is logged rather than retried: the row it would follow is already terminal, so the following pass no longer lists it, and the failure stands as the recorded outcome. The driver commits an in-flight `generating` row of its own just before calling the model, so when it errors here that row is failed with the reason (`FailGenerating` on the (release_id, source, node_id, error_signature) attempt). The release is part of the match: the same node failing the same way under two releases at once shares a source, node id and error signature, so a triple-only match would fail the OTHER release's in-flight attempt and spend one of the attempts that release was allowed. On the stream consumer's path the unacknowledged message is redelivered and reuses that row; nothing redelivers an attempt started from a release's verdict, so without this step the row would report a fix as still being generated indefinitely.
+The three outcomes:
+
+- **Validated** — `MarkVerified` performs the CAS `verifying → proposed` and, in the same transaction, enqueues the `remediation.proposed:v1` outbox row that surfaces the fix for review, so the row and the announcement cannot disagree. Each node's `node_outcomes` entry that was `verifying` becomes `proposed`; a node the attempt had already settled (skipped for want of source, or failed while being fixed) keeps the outcome and reason it was recorded with, since no release judged it. A repeated pass over an already-finalized row writes nothing and emits nothing. Because no inbound message drove this write, the outbox entry carries no `message_processing` provenance.
+- **Rejected** — `MarkVerifyFailed` performs the CAS `verifying → failed`, recording as `verify_error` the errors of the attempt's OWN nodes that the rejection still names, each as `"<node>: <message>"` in a stable order; when every node the attempt fixed passed and other nodes did not — a fix that broke something downstream of itself — every failing node is named instead; and a rejection carrying no per-node error at all still records which release rejected it, so the attempt never ends with a blank reason. That transaction commits **before** the next attempt is started, because the driver counts terminal attempts to decide both the next attempt's number and whether the cap has been reached. Only the pass that actually wins the CAS starts a next attempt.
+- **Neither** — the row is left exactly as it is unless one of its releases has been RUNNING longer than `SHADOW_VERIFY_TIMEOUT` (default 20m), in which case the attempt is failed with `shadow verification timed out`. The budget belongs to **each release individually**, measured from that release's own activation moment — the timestamp of its first transition past `received`, read from the verdict — not from when the attempt was recorded and not shared across the attempt's releases. Two things follow. A shadow release joins the same global FIFO queue as every other release and only one runs at a time, so measuring from the proposal would fail an attempt whose release never ran, and would do the same to every retry behind it; a release still queued (no activation moment) is therefore left alone however old the attempt is. And because the releases run one after another rather than side by side, charging the whole span from the first activation to the last verdict to one budget would fail an attempt whose releases are all healthy, purely for having touched more than one service.
+
+A verdict that cannot be *read* is deliberately not treated as a rejection: the gateway reports a briefly unreachable release-controller and a release id it will never know with the same error, so counting either as a failed attempt would let one outage burn the attempt budget on fixes that were never judged. The read is retried next pass, and a separate budget ends one whose verdict never becomes readable — measured there from when the attempt was recorded, since an unreadable release has no activation moment to measure from and this is the path that must stay bounded regardless: a submission that was lost would otherwise sit in `verifying` for as long as the row exists.
+
+**The next attempt re-groups only what is still failing.** A shadow release judges every node the attempt addressed at once, so its rejection also says which of them the fix DID repair: the nodes it no longer reports an error for. The stored trigger is decoded by the same decoder the stream consumer uses and narrowed with `Trigger.Subset(stillFailing)` — same release-level header, only the nodes the rejection still names, and a `RawPayload` re-marshalled to the same wire shape so a caller storing it can replay the narrowed trigger through the adapter's decoder. The next attempt therefore re-groups a smaller set (a shared-upstream cluster whose members have shrunk to one becomes an independent fix) and spends no model call on source already proven correct. The narrowing needs a fixed node to be named: a rejection naming none of the attempt's own nodes — the fix held, and something downstream of it failed instead — narrows to nothing and retries the whole failing set, since no node has been shown right or wrong.
+
+The rebuilt trigger is given a fresh dedup identity — `shadow-verify:<proposal_id>`, with the upstream outbox entry id dropped. Replaying the stored payload verbatim would collide with the claim the first attempt's own transaction already made and return having done nothing, leaving no attempt, no row, and no error to show for it. There is exactly one row per attempt, so the proposal id is both fresh per attempt and stable across repeated passes over the same one. A next attempt that fails to start is logged rather than retried: the row it would follow is already terminal, so the following pass no longer lists it, and the failure stands as the recorded outcome. The driver commits an in-flight `generating` row of its own just before calling the model, so when it errors here that row is failed with the reason (`FailGenerating`, matched on the **release id** — one attempt covers a release's whole failing set, so the release alone identifies the row unambiguously, and an attempt in flight for a different release is neither failed nor charged). On the stream consumer's path the unacknowledged message is redelivered and reuses that row; nothing redelivers an attempt started from a release's verdict, so without this step the row would report a fix as still being generated indefinitely.
+
+Rows are handled best-effort and sequentially: one row that cannot be resolved is logged and skipped, so no row's failure ends the pass. Slowness is not isolated the same way — a rejected row runs the next attempt's whole fix pipeline, model calls included, inline in the pass — so one slow retry delays every row behind it until the next tick.
 
 ### Artifact keys
 
-The single-file fixers (compile, seed, duplicate_table, and validation's real-source step) write their corrected file and unified diff under the attempt-level keys `proposed-fix/<release_id>/<node_id>/attempt-<n>.source.sql` and `.source.diff` (or, for validation's Step-1 candidate, `attempt-<n>.sql`/`.diff`), and every proposed outcome from them carries exactly one edit built from that pair. The python contract fixer, whose answer is a list of files, writes one pair per edit under `proposed-fix/<release_id>/<node_id>/attempt-<n>/edit-<i>.content` and `.diff`.
+The single-file fixers (compile, seed, duplicate_table, validation's real-source step, and the upstream fixer) write their corrected file and unified diff under the attempt-level keys `proposed-fix/<release_id>/<node_id>/attempt-<n>.source.sql` and `.source.diff` (or, for validation's Step-1 candidate, `attempt-<n>.sql`/`.diff`), and every proposed outcome from them carries exactly one edit built from that pair. For an upstream fix the `<node_id>` in the key is the **ancestor** being repaired, not any of the nodes that failed. The python contract fixers, whose answer is a list of files, write one pair per edit under `proposed-fix/<release_id>/<node_id>/attempt-<n>/edit-<i>.content` and `.diff`.
+
+Verification artifacts are keyed by the shadow release instead of the attempt: a packaged contract goes to `<service>/<shadow_id>/contract.yaml` (the canonical per-release key release-controller reads a python service's artifact from) and a dbt source overlay to `<service>/<shadow_id>/source-overlay.tar.gz`. Both are idempotent on a redelivery, the shadow id being a pure function of (release, service, attempt) and the overlay's bytes a pure function of its files.
 
 ### Outbox publisher
 
@@ -698,23 +817,28 @@ The `LLMProvider` port is backed by one of three adapters selected at boot via `
 | `openai` | OpenAI API (`https://api.openai.com`) | Model from `LLM_MODEL`. |
 | `openai-compatible` | Operator-supplied endpoint (`LLM_BASE_URL`) | Used for local stub-llm in dev and e2e environments; model from `LLM_MODEL`. |
 
-Every adapter forces a tool call on every call — no streaming, no free-form text response. Four of the five fixers force `propose_fix`, whose answer describes one file; the python contract fixer forces `propose_python_fix`, whose answer is an `updated_files` array of `{path, content}` objects. Both tools' parameter schemas are rendered by one builder, which gives an array parameter an `items` subschema whose properties are all required, so the model is told an element's exact shape rather than inferring it from the parameter description. The number of calls and which tool fields are populated differ per error class:
+Every adapter forces a tool call on every call — no streaming, no free-form text response. The single-file lanes (compile, seed, duplicate_table, dbt validation, and the shared-upstream fixer) force `propose_fix`, whose answer describes one file; the python contract lanes force `propose_python_fix` / `propose_csv_fix`, whose answer is an `updated_files` array of `{path, content}` objects. Every tool's parameter schema is rendered by one builder, which gives an array parameter an `items` subschema whose properties are all required, so the model is told an element's exact shape rather than inferring it from the parameter description.
+
+**One trigger now makes several calls: one per cluster.** A rejected release with three independent failures makes three calls; one whose three failures share a changed ancestor makes one. The response cache keys on the request as well as the trigger, so the calls of one trigger do not collide under its single idempotency key.
+
+The number of calls and which tool fields are populated differ per error class:
 
 - **Python validation** (a validation trigger whose `node_type` is `python-model`): one non-streaming `propose_python_fix` call per attempt. The adapter is given the failure text, the runner log, the node's contract entry as the release parsed it, the verbatim contract yaml declaring it, upstream contract diffs, precedent, and every earlier attempt's diffs and shadow-release error, and returns `updated_files` (each changed file's complete new content), `rationale`, and `confidence`. The prompt constrains the model to what validation actually checks — the node's declared reads, `output_columns`, and config — and forbids touching the fields that identify the node (schema, table, script path, owner, schedule, criticality), since changing one makes it a different node rather than a fixed one. There is no `suspected_root_cause_node` field: the verdict comes from a real release, not from the model's guess.
-- **Validation (dbt)**: two non-streaming calls per proposal. Step 1 is given the candidate SQL, sanitized dbt log, the diff of what this release itself changed in the failing model (last promoted version vs. candidate, from the orchestrator's `GetNodeVersions`), the diffs of its recently-changed upstreams (from `GetUpstreamChanges`, server-capped at 5 ancestors/8 KiB each), and precedent, and returns `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node`. Step 2 is given the failing node's resolved real source (the release's code bundle, or a GitHub repo read on a permanent bundle miss) and the Step-1 rationale, and returns a corrected version of it. Step 2 is made only when that source, the file path, and the service all resolve; a failure, empty result, unchanged result, or low-confidence result falls back silently to the Step-1 candidate proposal.
+- **Validation (dbt)**: two non-streaming calls per cluster. Step 1 is given the candidate SQL, sanitized dbt log, the diff of what this release itself changed in the failing model (last promoted version vs. candidate, from the orchestrator's `GetNodeVersions`), the diffs of its recently-changed upstreams (from `GetUpstreamChanges`, server-capped at 5 ancestors/8 KiB each), and precedent, and returns `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node`. Step 2 is given the failing node's resolved real source (the release's code bundle, or a GitHub repo read on a permanent bundle miss) and the Step-1 rationale, and returns a corrected version of it. Step 2 is made only when that source, the file path, and the service all resolve; a failure, empty result, unchanged result, or low-confidence result falls back silently to the Step-1 candidate proposal.
+- **Shared upstream**: one non-streaming `propose_fix` call per cluster. The adapter is given the changed ancestor's source (from the release's code bundle), the diff of what this release changed in it, the node id and sanitized error excerpt of every failing descendant that shares the cause, and precedent (loaded from the first member — every member shares the signature by construction). It returns `proposed_sql` (the ancestor's complete corrected source), `rationale`, and `confidence`. An empty answer, the ancestor's source returned unchanged, or a low-confidence answer are all read as the model declining, and the cluster falls back to independent per-node fixes rather than failing.
 - **Compile**: one non-streaming call per proposal. The adapter is given every gathered file (the offending file plus any co-located `.yml`/`.yaml` siblings and `dbt_project.yml`), the sanitized dbt compile error, and precedent, and returns `target_file` (which shown file to change), `proposed_content` (that file's complete corrected content), `rationale`, `confidence`, and `suspected_root_cause_node`.
 - **Seed**: one non-streaming call per proposal. The adapter is given the failing CSV, the sanitized dbt seed error, and precedent, and returns `proposed_content` (the complete corrected CSV), `rationale`, and `confidence`. The seed prompt has no `suspected_root_cause_node` field — a bad seed value has no upstream node to blame.
 - **Duplicate table**: one non-streaming call per proposal, made only when the target claimant's `node_type` is `dbt-model` or `dbt-snapshot` — a python or dbt-seed target is skipped before any call (a python node's relation lives in contract.yaml, not the named file; a seed's relation name comes from its CSV filename or project config, not the CSV's own content, and treating an edited CSV as a proposal would mean accepting a data edit). The adapter is given the offending file (the claimant the release changed), the contested relation (`relation_id`, not `node_id` — the two differ once the target carries an alias), the competing producer's `other_service`/`other_file_path` — never the competing file's content — and precedent, and returns `target_file`, `proposed_content` (the complete corrected file, renaming what it produces), `rationale`, and `confidence`. No dbt log is involved (there is none) and no `suspected_root_cause_node` field (a naming collision has no upstream node to blame).
 
 Every fixer's precedent section (`loadPrecedents`, described under gRPC calls to `orchestrator` above) is fetched via `GetPrecedents` and rendered the same way regardless of class: the first few resolved precedents in full (excerpt, resolution diff, fix-PR link), every other match as a one-line mention.
 
-The `ProposeResult` struct carries every possible field (`proposed_sql`, `proposed_content`, `target_file`, `files` — the multi-file answer — plus `rationale`/`confidence`/`suspected_root_cause_node`/`model`) regardless of class; each fixer reads only the fields its prompt asked for. Both the Anthropic and the OpenAI-compatible adapter parse `target_file`, `proposed_content`, and `updated_files` from the tool-call arguments alongside `proposed_sql`.
+The `ProposeResult` struct carries every possible field (`proposed_sql`, `proposed_content`, `target_file`, `files` — the multi-file answer — plus `rationale`/`confidence`/`suspected_root_cause_node`/`model`) regardless of class; each fixer reads only the fields its prompt asked for. Both the Anthropic and the OpenAI-compatible adapter parse `target_file`, `proposed_content`, and `updated_files` from the tool-call arguments alongside `proposed_sql`. `suspected_root_cause_node` is still in the two single-file prompts' schemas and still parsed onto the fixer `Result`, but it is **not persisted and not emitted**: the driver drops it. Root cause is decided by grouping on the release's own changed-ancestor topology and proved by a shadow release, not taken from the model's guess.
 
 If a response contains no tool call (or no choices), the adapter returns an error; the caller propagates it so the Redis message is redelivered and retried. If the tool call is present but the class-relevant content field (`proposed_sql` for validation, `proposed_content` for compile/seed/duplicate_table) is empty or unchanged from the original, the fixer records the attempt as `failed` with no outbox emission (for validation Step 1 this also aborts the proposal entirely; for validation Step 2, compile, seed, and duplicate_table this is a normal empty/unchanged outcome as described above).
 
 ### Idempotency-keyed response cache
 
-The concrete `LLMProvider` is wrapped at boot by a best-effort caching decorator (`service/llmcache.CachingLLMProvider`) before it enters the fixers. `remediation.requested:v1` is consumed at least once; if the terminal write transaction fails after the LLM call, the *same* trigger is redelivered and the whole handler re-runs, which would re-pay the expensive completion. The decorator makes the external LLM call effectively-once **per trigger**: it keys each request on `sha256(LLM_MODEL ‖ inbound-idempotency-key ‖ canonical-JSON(ProposeRequest))` (hex, prefixed `llmcache:`), returns a cached `ProposeResult` on a hit, and on a miss calls the wrapped provider and caches the result. The model id is folded in so results from different models never collide.
+The concrete `LLMProvider` is wrapped at boot by a best-effort caching decorator (`service/llmcache.CachingLLMProvider`) before it enters the fixers. `remediation.requested:v2` is consumed at least once; if the terminal write transaction fails after the LLM call, the *same* trigger is redelivered and the whole handler re-runs, which would re-pay the expensive completion. The decorator makes the external LLM call effectively-once **per trigger**: it keys each request on `sha256(LLM_MODEL ‖ inbound-idempotency-key ‖ canonical-JSON(ProposeRequest))` (hex, prefixed `llmcache:`), returns a cached `ProposeResult` on a hit, and on a miss calls the wrapped provider and caches the result. The model id is folded in so results from different models never collide.
 
 The inbound idempotency key scopes the cache to a specific trigger. The driver derives it from the same identity that drives message-processing dedup — the upstream `outbox_entry_id` when present (stable across a Redis republish of the same logical trigger), otherwise the Redis message id — and threads it to the decorator through the request `context` (`llmcache.ContextWithIdempotencyKey`), so the `LLMProvider` port signature is unchanged and the fixers are untouched. This distinction matters: keying by request content alone would let two genuinely distinct triggers — for example successive remediation attempts for the same failure, which build a byte-identical prompt — collide, replaying an earlier (possibly failed) result and burning the attempt cap without re-consulting the model. With trigger-scoped keys, only a redelivery of the *same* trigger reuses the completion; a new attempt always gets a fresh call. If no idempotency key is present on the context, the decorator cannot tell a redelivery from a new trigger and bypasses the cache (calls the provider directly).
 
@@ -730,40 +854,44 @@ The `LogSanitizer` port sits between the raw S3/GitHub/orchestrator reads and pr
 
 ## Payload Shape (`remediation.proposed:v1`)
 
-The trigger is pointer-only: it carries no SQL/CSV text, no log content, and no warehouse data. Consumers fetch the artifacts from S3 using the supplied URIs.
+One event per verified attempt — never per node. It is pointer-only: it carries no SQL/CSV text, no log content, and no warehouse data. Consumers fetch the artifacts from S3 using the supplied URIs. It is emitted only by the shadow-verify reconciler, in the same transaction as the `verifying → proposed` transition.
 
 | Field | Description |
 |---|---|
-| `event_id` | Deterministic SHA1 UUID keyed on `release_id\|node_id\|attempt`. Stable on redelivery. |
+| `event_id` | Deterministic SHA1 UUID keyed on `release_id\|attempt` — the attempt's own identity, since one attempt covers a whole failing set. Stable on redelivery. |
 | `source` | Origin pipeline: `validation`, `compile`, `seed_build`, or `duplicate_table`. |
 | `release_id` | The release identifier from the inbound trigger. |
 | `remediation_round` | The release's remediation round this attempt belongs to; `1` for the rejection itself, incremented by each human "try again". |
-| `node_id` | The unique_id of the failing node. |
-| `error_signature` | Release-stable normalized dedup key from the classifier (SHA-256 hex). |
-| `proposed_sql_uri` | S3 URI of the best available proposed fix content. For compile, seed_build, and duplicate_table, always the source artifact (`attempt-<n>.source.sql`, containing the corrected file's content whether it is SQL, YAML, or CSV). For a dbt validation proposal, points to the real-source artifact (`attempt-<n>.source.sql`) when `source_resolved=true`; falls back to the candidate artifact (`attempt-<n>.sql`) when `source_resolved=false`. For a python contract fix, the first edit's content artifact (`attempt-<n>/edit-0.content`); the full list is on the proposal row and its gRPC projection. |
-| `diff_uri` | S3 URI of the unified diff corresponding to `proposed_sql_uri` (`attempt-<n>.source.diff`, a validation candidate fallback's `attempt-<n>.diff`, or a python contract fix's `attempt-<n>/edit-0.diff`). |
-| `source_resolved` | `true` when the URIs above point at a real-source artifact. Always `true` for a compile, seed_build, duplicate_table, or python contract proposal. For a dbt validation proposal, `true` only when Step 2 succeeded; `false` when only the Step-1 candidate proposal is available. |
-| `rationale` | Short rationale from the LLM (no warehouse data). |
-| `confidence` | `low`, `medium`, or `high`. |
-| `suspected_root_cause_node` | Optional node_id the LLM identified as the root cause. Populated by validation and compile; never set by seed_build or duplicate_table (neither has an upstream node to blame). |
+| `node_id` | The representative failing node — the first of `resolved_node_ids`. Kept so a single-node consumer reads the same shape it always did. |
+| `resolved_node_ids` | Every failing node this attempt addresses, sorted. A node an edit *targets* but that never failed — the changed ancestor of a shared-upstream fix — is **not** here; it appears only as an edit's `target_node_id`. |
+| `error_signature` | Release-stable normalized dedup key from the classifier (SHA-256 hex), the representative node's. |
+| `proposed_sql_uri` | S3 URI of the best available proposed fix content — the first edit's content artifact. For compile, seed_build, duplicate_table, and the upstream fixer, the source artifact (`attempt-<n>.source.sql`, containing the corrected file's content whether it is SQL, YAML, or CSV). For a python contract fix, `attempt-<n>/edit-0.content`. |
+| `diff_uri` | S3 URI of the unified diff corresponding to `proposed_sql_uri`. |
+| `edits` | The full multi-file description of the change: one `{path, content_uri, diff_uri, target_node_id}` per changed file. `target_node_id` is what says which failure each file repairs, and for a shared-upstream fix it names an ancestor absent from `resolved_node_ids`. A batched attempt is only readable through this list — no single node stands for the cause of all of them. |
+| `source_resolved` | `true` when the URIs above point at real version-controlled source. Every fixer that produces an edit reports it, and an edit-less result is downgraded to `failed` before it could ever be verified, so in practice every emitted event carries `true`. |
+| `rationale` | Short rationale from the LLM (no warehouse data); one `"<target>: <why>"` line per cluster. |
+| `confidence` | `low`, `medium`, or `high` — the **weakest** cluster's, since a reviewer judges the whole change at once. |
 | `model` | The LLM model identifier used for this proposal. |
-| `attempt` | Monotonically increasing attempt number for this `(release_id, node_id)`, spanning every remediation round of the release — it never resets when a round bumps (see below). |
+| `attempt` | Monotonically increasing attempt number for this `release_id`, spanning every remediation round of the release — it never resets when a round bumps (see below). |
 | `proposed_at` | RFC 3339 timestamp of the proposal. |
+
+There is no `suspected_root_cause_node`. The model's guess at a root cause is neither persisted nor emitted; a shared cause is identified from the release's own changed-ancestor topology, targeted by an edit, and proved by a shadow release.
 
 ## Attempt Cap and Escalation
 
-For each `(release_id, remediation_round, source, node_id, error_signature)` key the service enforces a cap (default `AGENT_REMEDIATION_MAX_ATTEMPTS=3`). Before any S3 fetch or LLM call, the handler counts existing terminal `proposal` rows matching the key. If the count is already at or above the cap, it inserts a `proposal(status=escalated)` row and emits nothing. The trigger is consumed and ACKed; escalation is auditable in the `proposal` table.
+For each `(release_id, remediation_round)` the service enforces a cap (default `AGENT_REMEDIATION_MAX_ATTEMPTS=3`). Before any S3 fetch or LLM call, the driver counts existing terminal `proposal` rows for that release and round. If the count is already at or above the cap, it records a `proposal(status=escalated)` covering the **whole failing set** — every node's `node_outcomes` entry is `escalated` — and emits nothing. The trigger is consumed and ACKed; escalation is auditable in the `proposal` table.
 
-The cap is a budget per release and per remediation round, not per failure across releases or rounds. Within one release the count grows through the shadow-verification loop, where a python node's rejected fix is retried with the shadow's error as new evidence; a compile, seed, or dbt validation failure is judged synchronously and normally records one attempt per release per round. A later release that fails the same node with the same signature is a new change and gets its own budget — a rejected fix for an earlier release is precedent for it (via the case base), not a spent attempt. `remediation_round` is decoded from the inbound trigger (missing or `0` normalizes to `1`, the round every rejection starts a release at) and is what release-controller bumps when a human asks a rejected release to "try again" — that request replays the same failing nodes' `remediation.requested:v1` triggers with the incremented round, giving each one a fresh attempt budget for the same failure.
+The cap is a budget per release and per remediation round, not per node and not per failure across releases. This is a direct consequence of batching: one attempt fixes everything that failed, so three attempts is three whole-release tries, not three tries per broken node. Within one release the count grows through the shadow-verification loop, where a rejected fix is retried with the releases' errors as new evidence and **narrowed to the nodes still failing**. A later release that fails the same nodes is new code and gets its own budget — a rejected fix for an earlier release is precedent for it (via the case base), not a spent attempt. `remediation_round` is decoded from the inbound trigger (missing or `0` normalizes to `1`) and is what release-controller bumps when a human asks a rejected release to "try again", giving the release a fresh budget.
 
-The `attempt` number itself, by contrast, is not round-scoped: the `proposal` table's uniqueness (`release_id, source, node_id, attempt`) spans every round of a release, so the handler numbers each attempt from the cumulative TERMINAL count across every round so far (`countAttempts` sums the per-round query from round 1 up to the trigger's own round), not from the round-scoped count the cap check uses. A round's first attempt therefore continues the release's existing sequence — the ordinary case being a round-2 retry of a node round 1 already escalated — rather than restarting at 1 and colliding with (and silently overwriting, via the terminal upsert's `ON CONFLICT`) a row an earlier round already wrote at that attempt number.
+The `attempt` number itself, by contrast, is not round-scoped: the `proposal` table's uniqueness (`release_id, attempt`) spans every round of a release, so the driver numbers each attempt from the cumulative TERMINAL count across every round so far (`countAttempts` sums the per-round query from round 1 up to the trigger's own round), not from the round-scoped count the cap check uses. A round's first attempt therefore continues the release's existing sequence — the ordinary case being a round-2 retry of a set round 1 already escalated — rather than restarting at 1 and colliding with (and silently overwriting, via the terminal upsert's `ON CONFLICT`) a row an earlier round already wrote at that attempt number.
 
 ## Consumer Reliability
 
-- **Inbound idempotency**: the write transaction first claims the inbound message in `message_processing`, keyed on both the Redis message id and the upstream `outbox_entry_id`. The first key catches a Redis replay (a message redelivered after the work committed but before the ACK); the second catches an outbox republish (the classifier re-emitting the same row with a fresh Redis message id). On either conflict the transaction rolls back and the message is ACKed, so a redelivered trigger produces no second `proposal` row and no second `remediation.proposed` emit. A transient error before commit rolls the claim back with the rest of the work, so the message stays in the PEL for a clean retry. Permanent decode failures (malformed payload) are ACKed by returning nil (not retried).
-- **Transactional consistency**: the `message_processing` claim, the `proposal` row insert, and the `remediation_agent_outbox` enqueue are performed in one transaction. The LLM call and S3 writes happen before the transaction opens, so no transaction is held across the external call. A crash between the proposal insert and the outbox enqueue cannot occur — both commit together or not at all.
-- **Effectively-once LLM call**: because the whole handler re-runs on a redelivery (the LLM call precedes the write transaction), the external completion is protected by the best-effort idempotency-keyed response cache described under LLM Integration. A redelivery of the same trigger (same inbound idempotency key and request) hits the cache and skips the provider, so a failed terminal commit does not re-pay the expensive call. A genuinely new trigger — including a later remediation attempt for the same failure — uses a different key and always calls the model afresh.
-- **Outbox dedup**: the `remediation.proposed:v1` entry carries a deterministic `event_id` (SHA1 UUID on `release_id|node_id|attempt`) so a redelivered downstream consumer can detect and suppress duplicates.
+- **Inbound idempotency**: the write transaction first claims the inbound message in `message_processing`, keyed on both the Redis message id and the upstream `outbox_entry_id`. The first key catches a Redis replay (a message redelivered after the work committed but before the ACK); the second catches an outbox republish (the classifier re-emitting the same row with a fresh Redis message id). On either conflict the transaction rolls back and the message is ACKed, so a redelivered trigger produces no second `proposal` row. A read-only pre-check on the same two axes runs before anything is written, so a re-emitted completed trigger never even mints an in-flight row. A transient error before commit rolls the claim back with the rest of the work, so the message stays in the PEL for a clean retry. Permanent decode failures (malformed payload) are ACKed by returning nil (not retried).
+- **Transactional consistency**: the `message_processing` claim and the `proposal` row upsert are performed in one transaction. The LLM calls, the S3 writes, and the shadow-release submissions all happen before it opens, so no transaction is held across an external call. The `remediation_agent_outbox` enqueue that announces the fix happens later, in the reconciler's own transaction with the `verifying → proposed` CAS, so the row and the announcement still commit together.
+- **Idempotent verification**: both the artifact writes and the shadow submissions are pure functions of the attempt's identity — the shadow id is `(release, service, attempt)` and the overlay's bytes are determined by its files — so a redelivery repeats them harmlessly, overwriting the same objects and hitting release-controller's idempotent-duplicate path.
+- **Effectively-once LLM calls**: because the whole handler re-runs on a redelivery (the model calls precede the write transaction), each completion is protected by the best-effort idempotency-keyed response cache described under LLM Integration. A redelivery of the same trigger (same inbound idempotency key and same request) hits the cache for every cluster that already finished, so a failed terminal commit does not re-pay them. A genuinely new trigger — including the next attempt for the same release — uses a different key and always calls the model afresh.
+- **Outbox dedup**: the `remediation.proposed:v1` entry carries a deterministic `event_id` (SHA1 UUID on `release_id|attempt`) so a redelivered downstream consumer can detect and suppress duplicates.
 
 ## Non-Responsibilities
 
@@ -773,7 +901,7 @@ The `attempt` number itself, by contrast, is not round-scoped: the `proposal` ta
 - Write to, commit to, or push any git repository. GitHub access is read-only.
 - Auto-apply or merge any proposed SQL change.
 - Merge, close, or comment on any pull request; the PR-outcome reconciler only reads PR status via GitHub's Pulls API. It observes GitHub's own merge/close decision, made by human reviewers, and mirrors it onto `pr_state`.
-- Promote anything to production. The one write it issues to another service is `POST /releases` with `shadow: true`, and release-controller stops such a release at `validated`: it never touches `current_prod`, `service_prod`, the Neo4j topology, or the promoted code-version history. Verifying a fix and shipping it stay separate acts, the second still requiring a human-approved pull request.
+- Promote anything to production. The one write it issues to another service is `POST /releases` with `shadow: true` (and, for a dbt service, a `source_overlay_uri` release-controller accepts only on a shadow), and release-controller stops such a release at `validated`: it never touches `current_prod`, `service_prod`, the Neo4j topology, or the promoted code-version history. Verifying a fix and shipping it stay separate acts, the second still requiring a human-approved pull request.
 - Open a pull request via the opening sweep. The sweep only looks an already-created PR up by branch to recover its URL onto a stranded proposal row; the PR itself was created by ui through the GitHub App, exactly as in the normal flow.
 - Track whether a proposal was accepted or resulted in a passing release.
 
@@ -783,11 +911,11 @@ All code-change decisions — review, approval, and PR creation — are human ac
 
 | Loop | Description |
 |---|---|
-| `remediation.requested:v1` consumer | Dispatches each inbound message to the `ProposeFix` handler. |
+| `remediation.requested:v2` consumer | Dispatches each inbound message — one rejected release's whole healable failing set — to the `ProposeFix` handler, which produces exactly one attempt from it. |
 | Outbox publisher | Drains `remediation_agent_outbox` and XADDs each pending row to `remediation.proposed:v1`, `remediation.pr_opened:v1`, or `remediation.pr_closed:v1` depending on the row's stream field. |
-| Shadow-verify reconciler | Ticks every `SHADOW_VERIFY_POLL_INTERVAL` (default 15s). Each pass lists up to 20 proposals with `status='verifying'`, oldest first, and reads each one's shadow release through the `ReleaseGateway`. A validated release finalizes the attempt (`verifying → proposed`) and enqueues its `remediation.proposed:v1` outbox row in one transaction; a rejected release finalizes it (`verifying → failed`) with the shadow's per-node error recorded as `verify_error`, commits, and only then starts the next attempt from the trigger stored on the row. A non-terminal release leaves the row untouched until the release has been RUNNING longer than `SHADOW_VERIFY_TIMEOUT` (default 20m, counted from its first transition past `received`, so queued time never spends it); a verdict that cannot be read leaves it untouched until the same budget elapses from when the attempt was recorded, there being no readable activation moment. Either way the attempt is then failed with `shadow verification timed out`. Both transitions are compare-and-set, so a repeated pass over an already-finalized row writes nothing, emits nothing, and starts no second attempt. A next attempt that cannot be started leaves no in-flight row behind: the `generating` row the driver committed for it is failed with the reason. Per-row errors are logged and skipped, so no row's failure ends the pass — though a pass does run each retry's fix pipeline synchronously, so one slow retry delays the rows behind it until the next tick. |
+| Shadow-verify reconciler | Ticks every `SHADOW_VERIFY_POLL_INTERVAL` (default 15s). Each pass lists proposals with `status='verifying'`, oldest first, and reads the verdict of **every** shadow release judging each one through the `ReleaseGateway`. Every release validated finalizes the attempt (`verifying → proposed`, every waiting node's outcome becoming `proposed`) and enqueues its `remediation.proposed:v1` outbox row in one transaction; **any** rejection finalizes it (`verifying → failed`) with the rejected releases' per-node errors recorded as `verify_error`, commits, and only then starts the next attempt from the trigger stored on the row — narrowed to the nodes those releases still reject, so a fix that repaired some of the set is not thrown away. A non-terminal release leaves the row untouched until **that release** has been RUNNING longer than `SHADOW_VERIFY_TIMEOUT` (default 20m, counted from its own first transition past `received`, so neither queued time nor a sibling release's runtime spends it); a verdict that cannot be read leaves it untouched until the same budget elapses from when the attempt was recorded, there being no readable activation moment. Either way the attempt is then failed with `shadow verification timed out` and retried over its whole failing set, nothing having been judged. Both transitions are compare-and-set, so a repeated pass over an already-finalized row writes nothing, emits nothing, and starts no second attempt. A next attempt that cannot be started leaves no in-flight row behind: the `generating` row the driver committed for that release is failed with the reason. Per-row errors are logged and skipped, so no row's failure ends the pass — though a pass does run each retry's fix pipeline synchronously, so one slow retry delays the rows behind it until the next tick. |
 | PR-outcome reconciler | Ticks every `REMEDIATION_PR_POLL_INTERVAL` (default 60s). Each pass lists up to 50 proposals with `pr_state='open'`, oldest-opened first; for each it calls `GET /repos/{repo}/pulls/{number}` (GitHub Pulls API) and maps a merged PR to `merged` and a closed-unmerged PR to `rejected`. A closed PR calls `Service.RecordOutcome`, which performs the single-winner CAS `pr_state: open → merged|rejected` and enqueues the `remediation.pr_closed:v1` outbox row in one transaction; a CAS miss (the row already left `open`) is a no-op. Per-row errors (a failed GitHub read or a failed `RecordOutcome`) are logged and skipped — one bad row never blocks the rest of the batch — and are retried on the next pass. A `401`, or a `403` that is not rate limiting (no `Retry-After` header and `X-RateLimit-Remaining` != 0), signals the token lacks `Pull requests: Read` and is classified as a permission error that flips the reconciler to a degraded state; rate-limited `403`s and `429`s are treated as transient and simply retried. While degraded, an actionable ERROR log (`grant the GitHub token 'Pull requests: Read'`) fires only on the healthy→degraded transition — not every pass — and a subsequent clean read clears it (recovery logged once). This distinguishes a standing permission gap — which stalls the whole close-loop and never self-resolves — from transient errors or genuinely still-open PRs. |
-| Opening sweep (same reconciler, same tick) | Recovers `pr_state='opening'` claims left stranded when ui's `RecordPullRequest` call fails after the PR was already created on GitHub (that step is explicitly best-effort; see `ui/src/server/routes/remediation.ts`), and releases genuinely abandoned claims for retry. Each pass reads one page of up to 50 proposals with `pr_state='opening'`, ordered `(created_at, id)` and resuming after the keyset cursor (`repository.OpeningCursor`) the previous pass returned — not always the same oldest 50 rows — each carrying its `pr_claimed_at`; for each row the sweep recomputes the deterministic branch name (`remediation/<release_id>/<node_sanitized>-attempt<n>`, `proposals.BuildBranch`) and calls `GET /repos/{repo}/pulls?head=…` (GitHub Pulls API). A found PR — at any claim age — is recorded via `Service.Record` exactly as the client-side flow would have, closing the gap: a CAS guarded on `pr_state='opening'` (the same guard `RecordPullRequest`'s own call to `Service.Record` uses) transitions `opening → open` with `pr_url`/`pr_number` set and `pr_claimed_at` cleared to `NULL`, so the UI stops inviting a duplicate PR; if ui's own `RecordPullRequest` call for this exact claim reaches the row first, this call's CAS misses and is a no-op, never a second write or a second `pr_opened` event. When no PR is found, the sweep compares `now - pr_claimed_at` (wall-clock, via the reconciler's `Clock` port) directly against `REMEDIATION_PR_OPENING_GRACE_PERIOD`: a claim younger than the grace period is left untouched and retried next pass, while one older than it calls `Service.FailStuckClaim(id, observedClaimedAt)` — the repository's `FailStuckOpeningPR` compare-and-set, guarded on the exact `pr_claimed_at` this pass observed (`opening → failed`, `pr_claimed_at` cleared to `NULL` only on a CAS hit), which ui's claim guard (`pr_state IN ('', 'failed')`) accepts as retryable once it fires. The CAS is what keeps a second reconciler instance (or an operator's retry) from clobbering a claim released and re-claimed since this pass listed it: a miss (row already left `'opening'`, or re-claimed with a different `pr_claimed_at`) is logged and left alone, never treated as an error. `pr_claimed_at` is stamped by `BeginPullRequest` from the service's own clock — or, for a claim taken by a binary that does not set the column itself, by the `proposal_stamp_pr_claimed_at` trigger (see the `proposal` table above) — and cleared on every exit from `'opening'` (`RecordPullRequest`, `FailPullRequest`, `FailStuckOpeningPR`), so a proposal re-claimed after a prior failure (`opening → failed → opening`) always ages from its own, second claim. A row with `pr_claimed_at IS NULL` is left untouched rather than failed, since an unmeasurable claim can never safely be judged stale; a warn log fires on every pass such a row is seen. Age is read from a stored timestamp, so a claim taken moments before a pass runs is never raced: its age is always far short of the grace period regardless of poll interval. A per-row GitHub error leaves the row untouched — an inconclusive read is not a confirmed miss — and does not block the rest of the batch; because the pass has already advanced its cursor past this page before handling any row in it, an error or a left-alone row here never re-anchors the following pass at the same prefix. When a page comes back short of the 50-row limit, the reconciler wraps its cursor back to the start, so a full rotation through every stuck `'opening'` row repeats indefinitely and a handful of persistently unresolvable rows (a standing GitHub error, for instance) can never keep the rows behind them out of every pass. A permission error (401, or a non-rate-limited 403) from the branch lookup feeds the same degraded signal as the outcome loop's `PRStatus` reads (see `updateHealth` below): either loop hitting a permission error marks the reconciler degraded, and a clean read from either loop clears it. |
+| Opening sweep (same reconciler, same tick) | Recovers `pr_state='opening'` claims left stranded when ui's `RecordPullRequest` call fails after the PR was already created on GitHub (that step is explicitly best-effort; see `ui/src/server/routes/remediation.ts`), and releases genuinely abandoned claims for retry. Each pass reads one page of up to 50 proposals with `pr_state='opening'`, ordered `(created_at, id)` and resuming after the keyset cursor (`repository.OpeningCursor`) the previous pass returned — not always the same oldest 50 rows — each carrying its `pr_claimed_at`; for each row the sweep recomputes the deterministic branch name (`remediation/<release_id>/attempt<n>`, `proposals.BuildBranch` — derived from the attempt's own identity, since one attempt fixes a whole failing set and no single node names it) and calls `GET /repos/{repo}/pulls?head=…` (GitHub Pulls API). A found PR — at any claim age — is recorded via `Service.Record` exactly as the client-side flow would have, closing the gap: a CAS guarded on `pr_state='opening'` (the same guard `RecordPullRequest`'s own call to `Service.Record` uses) transitions `opening → open` with `pr_url`/`pr_number` set and `pr_claimed_at` cleared to `NULL`, so the UI stops inviting a duplicate PR; if ui's own `RecordPullRequest` call for this exact claim reaches the row first, this call's CAS misses and is a no-op, never a second write or a second `pr_opened` event. When no PR is found, the sweep compares `now - pr_claimed_at` (wall-clock, via the reconciler's `Clock` port) directly against `REMEDIATION_PR_OPENING_GRACE_PERIOD`: a claim younger than the grace period is left untouched and retried next pass, while one older than it calls `Service.FailStuckClaim(id, observedClaimedAt)` — the repository's `FailStuckOpeningPR` compare-and-set, guarded on the exact `pr_claimed_at` this pass observed (`opening → failed`, `pr_claimed_at` cleared to `NULL` only on a CAS hit), which ui's claim guard (`pr_state IN ('', 'failed')`) accepts as retryable once it fires. The CAS is what keeps a second reconciler instance (or an operator's retry) from clobbering a claim released and re-claimed since this pass listed it: a miss (row already left `'opening'`, or re-claimed with a different `pr_claimed_at`) is logged and left alone, never treated as an error. `pr_claimed_at` is stamped by `BeginPullRequest` from the service's own clock — or, for a claim taken by a binary that does not set the column itself, by the `proposal_stamp_pr_claimed_at` trigger (see the `proposal` table above) — and cleared on every exit from `'opening'` (`RecordPullRequest`, `FailPullRequest`, `FailStuckOpeningPR`), so a proposal re-claimed after a prior failure (`opening → failed → opening`) always ages from its own, second claim. A row with `pr_claimed_at IS NULL` is left untouched rather than failed, since an unmeasurable claim can never safely be judged stale; a warn log fires on every pass such a row is seen. Age is read from a stored timestamp, so a claim taken moments before a pass runs is never raced: its age is always far short of the grace period regardless of poll interval. A per-row GitHub error leaves the row untouched — an inconclusive read is not a confirmed miss — and does not block the rest of the batch; because the pass has already advanced its cursor past this page before handling any row in it, an error or a left-alone row here never re-anchors the following pass at the same prefix. When a page comes back short of the 50-row limit, the reconciler wraps its cursor back to the start, so a full rotation through every stuck `'opening'` row repeats indefinitely and a handful of persistently unresolvable rows (a standing GitHub error, for instance) can never keep the rows behind them out of every pass. A permission error (401, or a non-rate-limited 403) from the branch lookup feeds the same degraded signal as the outcome loop's `PRStatus` reads (see `updateHealth` below): either loop hitting a permission error marks the reconciler degraded, and a clean read from either loop clears it. |
 
 ## Configuration Reference
 
@@ -826,17 +954,26 @@ All code-change decisions — review, approval, and PR creation — are human ac
 |---|---|
 | Proposal entity + unified diff | `agent-remediation/domain/proposal/proposal.go` |
 | Prompt assembly (validation candidate + real-source, compile, seed, duplicate table) | `agent-remediation/domain/prompt/prompt.go` (`Assemble`, `AssembleSourceFix`, `AssembleCompileFix`, `AssembleSeedFix`, `AssembleDuplicateTableFix`) |
+| Prompt assembly (shared-upstream fix) | `agent-remediation/domain/prompt/upstream.go` (`AssembleUpstreamFix`) |
+| Prompt assembly (python-csv contract fix) | `agent-remediation/domain/prompt/csv.go` (`AssembleCsvContractFix`) |
 | Prompt assembly (python contract fix, incl. the prior-attempts section) | `agent-remediation/domain/prompt/python.go` (`AssemblePythonContractFix`) |
 | Event payloads + deterministic IDs | `agent-remediation/domain/event/` (proposed, pr_opened, pr_closed) |
-| Shared driver — attempt cap, dedup, persistence, outbox emit (each Fixer fetches its own dbt log) | `agent-remediation/service/handlers/propose_fix.go` |
+| Batched driver — attempt cap, dedup, cluster grouping, per-cluster dispatch, one proposal per (release, attempt); each Fixer fetches its own dbt log | `agent-remediation/service/handlers/propose_fix.go` |
+| Inbound trigger type, `NodeIDs`, `Subset` (narrow a batched trigger to the still-failing nodes), and the `remediation.requested:v2` wire shape | `agent-remediation/service/handlers/trigger.go` |
+| Failing-set grouping — `Group`, the `Typology` strategy seam, and `SharedUpstreamCause` (same signature + shared changed ancestor) | `agent-remediation/domain/typology/` |
+| Shadow verification — bucket edits by service, refuse unrunnable ones, build the overlay or upload the contract, submit one release per service | `agent-remediation/service/handlers/verify.go` |
+| Shadow release id minting, with the candidate-schema length cap | `agent-remediation/service/handlers/shadow_id.go` |
+| Deterministic source-overlay tarball builder | `agent-remediation/service/overlay/overlay.go` |
 | Per-error-class fixers — `Fixer` interface, `For` factory, shared single-shot pipeline | `agent-remediation/service/fixer/fixer.go` |
 | Compile fixer (offending file + co-located YAML/`dbt_project.yml` context, one LLM call) | `agent-remediation/service/fixer/compile.go` |
 | Seed fixer (CSV read, one LLM call) | `agent-remediation/service/fixer/seed.go` |
 | Duplicate-table fixer (single-file rename, no dbt log, shares `singleFileInterpret` with compile) | `agent-remediation/service/fixer/duplicate_table.go` |
 | Validation fixer, dbt node (two-step candidate + real-source flow, best-effort upstream-diff gather) | `agent-remediation/service/fixer/validation.go` |
-| Validation fixer, python node (repo checkout, contract repair, packaging, shadow submission) | `agent-remediation/service/fixer/python_validation.go` |
+| Validation fixer, python-model node (repo checkout, contract repair, packaging) | `agent-remediation/service/fixer/python_validation.go` |
+| Validation fixer, python-csv node (shares `locateContractForFix` and `proposeContractFixViaShadow` with the python-model lane) | `agent-remediation/service/fixer/csv_validation.go` |
+| Shared-upstream fixer (repair the changed ancestor once; skip so members fall back to independent fixes) | `agent-remediation/service/fixer/upstream.go` |
 | Contract-yaml search across a repository checkout, and the node-declaration read (identity fields + declared read names) a proposed edit is checked against (`ContractLocator` + `ContractInspector`) | `agent-remediation/adapters/repofs/contract_locator.go` |
-| Shadow-verify reconciler loop (verdict polling, CAS finalization, next-attempt start) | `agent-remediation/service/shadowverify/reconciler.go` |
+| Shadow-verify reconciler loop (poll every verification, combine verdicts, CAS finalization, re-group only the still-failing subset, per-release timeout budget) | `agent-remediation/service/shadowverify/reconciler.go` |
 | PR lifecycle application service (claim/record/fail/fail-stuck-claim/record-outcome + outbox) | `agent-remediation/service/proposals/service.go` |
 | PR-outcome reconciler loop, incl. permission-gap degraded signal and the opening sweep (recover-or-fail stuck `pr_state='opening'` claims, CAS-guarded fail, cursor-paginated rotation) | `agent-remediation/service/proposals/reconciler.go` |
 | Deterministic branch-name builder (`BuildBranch`), shared by `Service.Begin` and the opening sweep so they never drift apart | `agent-remediation/service/proposals/service.go` |
@@ -862,4 +999,4 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Redis LLM response cache adapter | `agent-remediation/adapters/redis/llm_response_cache.go` |
 | Pass-through log sanitizer | `agent-remediation/adapters/sanitizer/passthrough.go` |
 | Redis consumer + outbox publisher | `agent-remediation/adapters/redis/` |
-| DB migrations | `db/migration/agent_remediation/` (`V1__init_remediation_agent.sql` through `V15__proposal_remediation_round.sql`), including `V3__pr_creation.sql` for the PR-tracking columns, `V6__add_generating_proposal_status.sql` for the in-flight `generating` status, `V9__proposal_pr_claimed_at.sql` for the `pr_claimed_at` column, `V10__stamp_pr_claimed_at_on_opening.sql` for the `proposal_stamp_pr_claimed_at` trigger's fill-when-NULL clause, `V11__clear_pr_claimed_at_on_opening_exit.sql` for the same trigger's unconditional clear-on-exit clause, `V12__proposal_file_edits.sql` for the `file_edits` column, `V13__proposal_verification.sql` for the `verifying` status and the `shadow_release_id`/`verify_error`/`trigger_payload` columns, `V14__proposal_attempts_per_release.sql` for the `(release_id, source, node_id, error_signature)` index behind the per-release attempt count, and `V15__proposal_remediation_round.sql` for the `remediation_round` column and its `(release_id, remediation_round, source, node_id, error_signature)` index behind the per-round attempt count |
+| DB migrations | `db/migration/agent_remediation/` (`V1__init_remediation_agent.sql` through `V16__proposal_batched_identity.sql`), including `V3__pr_creation.sql` for the PR-tracking columns, `V6__add_generating_proposal_status.sql` for the in-flight `generating` status, `V9__proposal_pr_claimed_at.sql` for the `pr_claimed_at` column, `V10__stamp_pr_claimed_at_on_opening.sql` for the `proposal_stamp_pr_claimed_at` trigger's fill-when-NULL clause, `V11__clear_pr_claimed_at_on_opening_exit.sql` for the same trigger's unconditional clear-on-exit clause, `V12__proposal_file_edits.sql` for the `file_edits` column, `V13__proposal_verification.sql` for the `verifying` status and the `shadow_release_id`/`verify_error`/`trigger_payload` columns, `V14__proposal_attempts_per_release.sql` for the `(release_id, source, node_id, error_signature)` index behind the per-release attempt count, `V15__proposal_remediation_round.sql` for the `remediation_round` column, and `V16__proposal_batched_identity.sql` for the batched identity — the `resolved_node_ids`/`node_outcomes`/`verifications` columns (backfilled from each existing row's own `node_id`/`status`/`shadow_release_id`), the per-release renumbering of `attempt`, the narrowed `proposal_uniq (release_id, attempt)`, the `resolved_node_ids` GIN index, and `idx_proposal_release_round` replacing the dropped `idx_proposal_round_node_signature` |

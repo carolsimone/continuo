@@ -434,9 +434,9 @@ sequenceDiagram
     RC->>R: publish release.rejected:v1
     R->>RM: consume release.rejected:v1
     alt reason is parse_rehearsal_failed or artifact_upload_failed
-      Note over RM: continuo-internal failure, not a model defect — no FailureEvidence built,<br/>no classification_decision row, no remediation.requested:v1 (excluded before classification)
+      Note over RM: continuo-internal failure, not a model defect — no FailureEvidence built,<br/>no classification_decision row, no remediation.requested:v2 (excluded before classification)
     else reason is compile_failed
-      Note over RM: stage="compile" → SourceCompile — ExtractDbtFilePath(log) → file_path<br/>classify + emit remediation.requested:v1 with file_path (no candidate SQL)
+      Note over RM: stage="compile" → SourceCompile — ExtractDbtFilePath(log) → file_path<br/>classify + emit ONE remediation.requested:v2 whose nodes[] carries file_path (no candidate SQL)
     end
   else compile ok
     Note over RC: TransitionFromCompiling → Parsing, re-assemble manifest set
@@ -483,7 +483,7 @@ sequenceDiagram
         Note over RC: RecordStageResults("seed_build") + Reject(seed_build_failed)<br/>emit release.rejected:v1 {release_id, stage="seed_build", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri}], repo, commit_sha,<br/>code_bundle_uri, candidate_schema}
         RC->>R: publish release.rejected:v1
         R->>RM: consume release.rejected:v1
-        Note over RM: stage="seed_build" → SourceSeed — ExtractDbtFilePath(log) → file_path<br/>classify + emit remediation.requested:v1 with file_path (no candidate SQL)
+        Note over RM: stage="seed_build" → SourceSeed — ExtractDbtFilePath(log) → file_path<br/>classify EVERY failed seed + emit ONE remediation.requested:v2 carrying them all (no candidate SQL)
       else seed_build ok
         Note over RC: TransitionFromSeedBuilding → Validating
         RC->>R: publish validation.requested:v1<br/>{candidate_schema=_candidate_{id}, per node:<br/>node_type, image_tag, candidate_artifact_uri, upstream_node_ids}
@@ -522,7 +522,7 @@ sequenceDiagram
     Note over RC: Reject(validation_failed) using stored per-node results<br/>emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri,candidate_artifact_uri,<br/>node_type,file_path,service}], repo, commit_sha,<br/>code_bundle_uri}
     RC->>R: publish release.rejected:v1
     R->>RM: consume release.rejected:v1
-    Note over RM: stage="validation" → SourceValidation — node_type/file_path/service carried directly from the payload<br/>classify + emit remediation.requested:v1 (forwarded verbatim — the agent falls back to orchestrator GetNodeLocation only when file_path is absent)
+    Note over RM: stage="validation" → SourceValidation — node_type/file_path/service/changed_ancestor_ids carried directly from the payload<br/>classify EVERY failed node + emit ONE remediation.requested:v2 carrying them all (forwarded verbatim — the agent falls back to orchestrator GetNodeLocation only when file_path is absent)
   end
   Note over RC: advance FIFO queue
 
@@ -558,7 +558,7 @@ sequenceDiagram
 
 **Reject reasons.** A release ends in `Rejected` for one of eight reasons, each emitted as `release.rejected:v1`. The event is uniform across all legs: it always carries `release_id`, `stage`, `reason`, `repo`, `commit_sha`, `failing_nodes`, and `per_node[]` (each entry: `node_id`, `status`, `dbt_log_uri`, optional `run_results_uri`). A top-level `code_bundle_uri` (the release's code-bundle S3 URI) is threaded onto six of the eight: set (non-empty) for `duplicate_table`, `seed_build_failed`, and `validation_failed`, all of which follow a completed parse; present but empty for `compile_failed`, `parse_rehearsal_failed`, and `artifact_upload_failed`, which precede the parse that produces the bundle. The remaining two reasons, `parse_failed` and `unbuildable_cross_service_upstream`, carry no `code_bundle_uri` key at all — their payload is the narrower `{release_id, reason, error_class, error_detail}`, without `stage`, `repo`, `commit_sha`, `failing_nodes`, or `per_node[]` either. The eight reasons are: `compile_failed` (dbt compile job failed for a reason other than the two below; `stage="compile"`), `parse_rehearsal_failed` (the compile Job's `parse-prod` or `parse-candidate` initContainer failed — partial parsing is disabled for the project, or the project re-parses under run-pod conditions; `stage="compile"`), `artifact_upload_failed` (the compile Job's `upload` main container failed to publish an artifact to S3; `stage="compile"`), `parse_failed` (a malformed dbt manifest or python contract, an unrecognized manifest kind, an unqualified table reference, a node's runtime having no candidate-artifact builder, a candidate-artifact S3 upload failure, or a code-bundle S3 upload failure; no explicit stage), `duplicate_table` (the assembled candidate topology has a relation collision — two or more nodes write the same `<schema>.<table>` — or an identity collision — two or more nodes share a `unique_id` without all resolving to the same relation; no explicit stage; `error_class: DuplicatedTable`; `per_node[]` carries the rename target's `service`/`file_path`/`node_type`, the contested `relation_id`, and the competing `other_service`/`other_file_path` — but only for a relation collision with exactly two claimants; an identity collision, or a relation collision with three or more claimants, produces no `per_node` entry and therefore no heal trigger, though it still names every claimant in `failing_nodes`/`error_detail`), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology; no explicit stage), `seed_build_failed` (a candidate seed-build job failed; `stage="seed_build"`), and `validation_failed` (one or more validation jobs failed; `stage="validation"`). For `validation_failed`, per-node entries additionally carry `candidate_artifact_uri` plus the candidate topology's `node_type`, `file_path`, and `service` for that node — the kind is what routes the failure to the right fixer in agent-remediation (a python node's contract fix, described in Flow 11a, rather than a dbt source fix), and the location is the path *this* candidate declares, which no promoted-topology lookup can supply for a release that was rejected. Every rejection payload also carries a top-level `shadow` boolean, true only for a fix-verification release (Flow 11a); the remediation classifier records such a rejection and emits nothing for it. `parse_rehearsal_failed` and `artifact_upload_failed` are release-controller's `compileRejection` mapping of the compile Job's `failed_container` attribution (see Flow 11 above) onto a reject reason distinct from `compile_failed`, so a rehearsal-gate miss or an internal upload failure is never presented as a dbt SQL error. Remediation consumes every leg's rejection and discriminates by `stage` (falling back to `reason` when `stage` is absent) to build `FailureEvidence` with the appropriate source (`SourceCompile`, `SourceSeed`, `SourceValidation`, or `SourceDuplicateTable`) — except `parse_rehearsal_failed` and `artifact_upload_failed`, which it excludes entirely (no evidence built, no classification, no trigger) before source resolution, since neither is a model defect a heal proposal could fix. For compile, the evidence-producing reasons extract `file_path` from the dbt log so the agent can read the real source file directly; `seed_build`, `validation`, and `duplicate_table` need no extraction — release-controller already threads `file_path`/`service` from the candidate topology onto each `per_node[]` entry, plus `node_type` for validation and duplicate_table, and `other_service`/`other_file_path` for duplicate_table's competing claimant.
 
-**Failure-precedent case base.** `remediation.requested:v1` (emitted by `remediation` for every healable classified failure) and `remediation.pr_opened:v1` (emitted by `agent-remediation` when an operator records a fix PR) each carry a second consumer group on `orchestrator`, alongside their existing one — `agent-remediation`'s trigger consumer and `orchestrator`'s case-base rejections consumer both read `remediation.requested:v1`; `orchestrator`'s case-base proposals consumer reads `remediation.pr_opened:v1`. The rejections consumer records each classified failure as a `:Rejection`, linked to a global `:ErrorSignature` hub keyed on the classifier's `error_signature` and anchored `[:FAILED {release_id}]` from the node's `:Table` when one exists; the proposals consumer records each opened PR as a `:Proposal`, `[:PROPOSED]` from its rejection (MERGing a stub rejection first if the PR arrives before it). `[:RESOLVED_BY]` — linking a rejection to the code version that fixed it — converges from both directions: the versions consumer (Phase 6 above) forward-links every still-open rejection of a node the moment a new version becomes its `:CURRENT`, stamping the edge with that promotion's own timestamp; the rejections consumer back-links a newly-recorded rejection to an already-promoted version when the fix landed first — ordinarily the oldest version promoted after the rejection, or, for a revert (a promotion that reuses an existing, older version node), the node's `:CURRENT` version instead. Both writers guard on "no existing `[:RESOLVED_BY]`", so whichever direction arrives first wins; a race between them still leaving two edges is resolved deterministically on read (oldest-by-`promoted_at` wins). `GetPrecedents` (gRPC) and `continuo precedents` (CLI) read this case base by signature or `(category, reason)` — both filtered on each `:Rejection`'s own properties — resolved-first then newest.
+**Failure-precedent case base.** `remediation.requested:v2` (emitted by `remediation` once per rejected release, carrying every healable classified failure) and `remediation.pr_opened:v1` (emitted by `agent-remediation` when an operator records a fix PR) each carry a second consumer group on `orchestrator`, alongside their existing one — `agent-remediation`'s trigger consumer and `orchestrator`'s case-base rejections consumer both read `remediation.requested:v2`; `orchestrator`'s case-base proposals consumer reads `remediation.pr_opened:v1`. The rejections consumer loops the message's `nodes[]` and records each classified failure as its own `:Rejection`, linked to a global `:ErrorSignature` hub keyed on the classifier's `error_signature` and anchored `[:FAILED {release_id}]` from the node's `:Table` when one exists; the proposals consumer records each opened PR as a `:Proposal`, `[:PROPOSED]` from its rejection (MERGing a stub rejection first if the PR arrives before it). `[:RESOLVED_BY]` — linking a rejection to the code version that fixed it — converges from both directions: the versions consumer (Phase 6 above) forward-links every still-open rejection of a node the moment a new version becomes its `:CURRENT`, stamping the edge with that promotion's own timestamp; the rejections consumer back-links a newly-recorded rejection to an already-promoted version when the fix landed first — ordinarily the oldest version promoted after the rejection, or, for a revert (a promotion that reuses an existing, older version node), the node's `:CURRENT` version instead. Both writers guard on "no existing `[:RESOLVED_BY]`", so whichever direction arrives first wins; a race between them still leaving two edges is resolved deterministically on read (oldest-by-`promoted_at` wins). `GetPrecedents` (gRPC) and `continuo precedents` (CLI) read this case base by signature or `(category, reason)` — both filtered on each `:Rejection`'s own properties — resolved-first then newest.
 
 **Bootstrap and empty-diff short-circuits.** A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes — the initial cutover (or a trusted re-baseline) against an empty or mismatched snapshot. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology. A release whose diff is empty (e.g. an image-tag-only bump) trivially passes the gate and promotes directly. All three promotion paths point `current_prod` at the candidate topology and upsert the changed service's `service_prod` pointer, so the next release's change-detection diff is correct and any other service's next release assembles against the refreshed pointer.
 
@@ -568,62 +568,88 @@ sequenceDiagram
 
 **Promotion is a lazy generation switch.** `PromoteRelease` swaps the live `:Table` topology using retire-then-orphan-cleanup — retired nodes still referenced by a `:Run-[:EXECUTES]` edge are kept, preserving run history; only truly orphaned retired nodes are deleted. The handler never reads or writes `:Run` nodes or `EXECUTES` edges, so in-flight runs are unaffected: an existing run keeps its `topology_generation` and its edges keep their pinned `image_tag`. The next scheduled run's `Snapshot(LatestFullDAG)` reads `:TopologyRoot` at call time and picks up the new generation and image tags. See **Flow 7 (Topology Versioning — Lazy Generation Switch)** for the consumption-side detail. `node_type` is threaded through the promotion MERGE so promoted seeds are typed correctly and seed-backed schedules dispatch their `dbt seed` jobs without stalling.
 
-### 11a. Python-Node Fix Verification (Shadow Release Loop)
+### 11a. Batched Remediation and Shadow Verification
 
-A python node is declared in a contract yaml — the relations it reads, the columns it produces, the script that produces them — and blue/green validation rejects it when what the contract promises does not hold against the candidate schema. The fix therefore belongs in that yaml, and it cannot be judged by reading it back: whether a corrected contract binds and builds is only knowable by running the same pipeline that rejected it. So agent-remediation does exactly that, on a **shadow release** — a real release that runs parse → candidate-schema → validation and then stops at the terminal `validated` status instead of promoting.
+One rejected release is one unit of remediation. However many nodes it failed on, the classifier emits **one** trigger, the agent produces **one** attempt, and a human reviews **one** pull request. And no fix is offered for review until a real release has run it: every attempt ends by submitting a **shadow release** per edited service — a real release that runs parse → candidate-schema → validation and then stops at the terminal `validated` status instead of promoting.
+
+Two facts make the batching more than bookkeeping. `release.rejected:v1` stamps each failing node's `changed_ancestor_ids` — the ancestors this release changed that the failure descends from — so the agent can see that several failures share one cause. And the classifier's `error_signature` ignores the database's echoed `LINE n: <statement>`, so two siblings broken by the same upstream change sign identically instead of being keyed on the relation each of them happened to be building. Together they let one edit, to a node that may never have failed, resolve several failures.
 
 ```mermaid
 sequenceDiagram
   participant RC as release-controller
   participant RM as remediation (classifier)
+  participant OR as orchestrator (case base)
   participant RA as agent-remediation
   participant GH as GitHub (read-only)
   participant LLM as LLM provider
   participant S3 as S3
 
-  Note over RC: a python node fails validation (Flow 11)
-  RC->>RM: release.rejected:v1 { stage=validation, shadow=false,<br/>per_node[node_type=python-model, service, file_path] }
-  RM->>RA: remediation.requested:v1 { source=validation, node_type=python-model,<br/>repo, commit_sha, error_excerpt, code_bundle_uri }
+  Note over RC: a release fails validation on several nodes (Flow 11)
+  RC->>RM: release.rejected:v1 { stage=validation, shadow=false,<br/>per_node[node_id, node_type, service, file_path,<br/>changed_ancestor_ids] }
+  Note over RM: classify EVERY failing node, record one classification_decision each,<br/>then emit ONE trigger for the whole healable set
+  RM->>RA: remediation.requested:v2 { release_id, remediation_round, repo,<br/>commit_sha, code_bundle_uri, nodes[...] }
+  RM->>OR: (same message, case-base group) one :Rejection per node in the batch
 
-  Note over RA: attempt n — fixer.For(validation, python-model) → python contract fixer
-  RA->>GH: GET /repos/{repo}/tarball/{commit_sha}
-  Note over RA: extract — search every *.yml for the entry declaring <schema>.<table><br/>0 matches or >1 match → skipped, reason recorded
-  RA->>S3: GetObject code bundle (contract entry), runner log, prior attempts' diffs
-  RA->>LLM: propose_python_fix (failure text, contract entry, declaring yaml,<br/>upstream diffs, precedent, EVERY earlier attempt + its shadow error)
-  LLM-->>RA: updated_files[{path, content}]
-  Note over RA: refuse a path outside the contract directory, or a repeated path<br/>apply the files to the checkout, THEN package
-  RA->>RA: continuo-runtime merge <contractDir> --repo-root <appRoot><br/>--service <svc> --dialect <engine dialect>
-  RA->>S3: PutObject <service>/shadow-<release>-<node>-a<n>/contract.yaml
-  RA->>RC: GET /releases/{original_id} (image tag for the service)
-  RA->>RC: POST /releases { shadow:true, kind:python, release_id=shadow-… }
-  Note over RA: proposal recorded status=verifying, carrying shadow_release_id<br/>and the raw trigger for a possible retry
+  Note over RA: attempt n — group the failing set (domain/typology)
+  Note over RA: same signature + shared changed ancestor → ONE cluster targeting<br/>that ancestor; everything else → one independent cluster each
+  RA->>RA: proposal(status=generating) over the whole failing set
 
-  Note over RC: the shadow release runs the full pipeline (Flow 11)
-
-  loop shadow-verify reconciler, every SHADOW_VERIFY_POLL_INTERVAL
-    RA->>RC: GET /releases/{shadow_id}
+  loop one per cluster
+    alt shared upstream
+      RA->>S3: GetObject code bundle (the changed ancestor's source)
+      RA->>LLM: propose_fix (ancestor source, own-change diff,<br/>every member's error excerpt, precedent)
+      Note over RA: a declined answer is a SKIP, not a failure —<br/>each member is re-queued as an independent cluster
+    else independent
+      RA->>GH: read the failing node's source (or the repo tarball, python lane)
+      RA->>LLM: propose_fix / propose_python_fix / propose_csv_fix
+    end
+    Note over RA: the Fixer returns EDITS ONLY, each naming its target_node_id
   end
 
-  alt shadow status = validated
-    Note over RA: CAS verifying → proposed + enqueue remediation.proposed:v1<br/>in one transaction
+  Note over RA: bucket the edits by service (longest project-root prefix wins)
+  loop one shadow release per edited service
+    alt python service
+      RA->>S3: PutObject <service>/<shadow_id>/contract.yaml (packaged contract)
+    else dbt service
+      RA->>S3: PutObject <service>/<shadow_id>/source-overlay.tar.gz<br/>(proposed files, keyed relative to the project root)
+    end
+    RA->>RC: GET /releases/{original_id} (image tag for the service)
+    RA->>RC: POST /releases { shadow:true, kind, release_id=<shadow_id>,<br/>source_overlay_uri (dbt only) }
+  end
+  Note over RA: ONE proposal(status=verifying) — resolved_node_ids, node_outcomes,<br/>verifications[], file_edits[], and the raw trigger for a possible retry
+
+  Note over RC: each shadow release runs the full pipeline (Flow 11).<br/>A dbt one's compile Job lays the overlay over the team project first.
+
+  loop shadow-verify reconciler, every SHADOW_VERIFY_POLL_INTERVAL
+    RA->>RC: GET /releases/{shadow_id} — for EVERY verification on the row
+  end
+
+  alt every shadow release validated
+    Note over RA: CAS verifying → proposed + enqueue remediation.proposed:v1<br/>in one transaction; each waiting node's outcome becomes proposed
     RA->>RA: remediation.proposed:v1 → the human review surface (Flow 12)
-  else shadow status = rejected
+  else any shadow release rejected
     RC->>RM: release.rejected:v1 { shadow=true }
     Note over RM: decision recorded as drop / shadow_verification — NOTHING emitted
-    Note over RA: CAS verifying → failed, verify_error = the shadow's per-node error<br/>commit, THEN start attempt n+1 from the stored trigger
-    RA->>RA: attempt n+1 (its prompt now carries attempt n's diffs and error)
-  else not terminal, and the attempt is older than SHADOW_VERIFY_TIMEOUT
-    Note over RA: verifying → failed, verify_error = "shadow verification timed out"
+    Note over RA: CAS verifying → failed, verify_error = the rejections' per-node errors<br/>commit, THEN start attempt n+1 from the stored trigger,<br/>narrowed to the nodes still failing
+    RA->>RA: attempt n+1 (re-grouped over the smaller set)
+  else a release has been RUNNING longer than SHADOW_VERIFY_TIMEOUT
+    Note over RA: verifying → failed, verify_error = "shadow verification timed out"<br/>(the budget is per release, from its own activation — queueing spends nothing)
   end
 ```
 
-**The same flow for a python-csv node.** A python-csv node carries `node_type=python-csv` instead, has no script at all, and rejects for a different reason — its declared `output_columns` name a column the CSV file's own header does not carry. `fixer.For(validation, python-csv)` resolves to its own `csvValidationFixer` rather than the python contract fixer, and the LLM call becomes `propose_csv_fix` with a prompt telling the model the CSV file is the source of truth (fix the contract to match it, not the other way round) and that there is no script whose reads must be preserved. The repository search, apply-then-package ordering, shadow submission, and the reconciler loop below it are not merely the same shape — `csvValidationFixer` and `pythonValidationFixer` call the same two functions, `locateContractForFix` and `proposeContractFixViaShadow`. Only the evidence shown to the model and the post-apply guard differ, and the guard differs only for the failing node's own `csv` read: that key's uri may be corrected without refusing the fix, but every other read on every node the answer touches — including a python-model sibling's, in a directory the fix packages whole — is still held to the same "no read may be dropped" rule the python-model lane applies everywhere. See **CSV validation fixer** in `docs/arch/services/agent-remediation.md` for the full delta.
+**How a dbt fix is verified.** A python service's fix packages a contract yaml, which *is* the release artifact, so the shadow release simply reads it. A dbt service has no such artifact: the fix changes files inside a project that lives in a team image the release runs. So the agent packs the proposed files into a deterministic `source-overlay.tar.gz`, keyed by each file's path within that project, and release-controller threads its URI onto `compile.requested:v1`. Executor-controller then adds an `overlay` init container (the s3-sidecar's `overlay_fetcher.py`) ahead of every team-image container of the compile Job and prefixes each of their commands with `cp -R /shared/overlay/. ./`, so the manifest, both parse artifacts, and the candidate SQL the release validates all describe the proposed source. This is why every `dbt/services/*/Dockerfile` must `COPY --chown=dbt:dbt`: a root-owned project makes that copy fail with `EACCES`, and only on the shadow path, so it would ship unnoticed until the first fix was proposed.
 
-**Why the loop cannot eat itself.** A rejected shadow release emits `release.rejected:v1` like any other, and that event reaches the same classifier. Without a marker it would be classified healable and turned into a fresh trigger, remediating a failed fix attempt as though it were a new failure someone had shipped. The agent is already handling that verdict through its own reconciler, so the trigger would drive a second, independent retry chain for the same node — one keyed on the shadow release's id rather than the original's, which is the id the attempt history, the release page, and the operator's review are all anchored on. The `shadow` flag on the payload is what stops it: the classifier still writes its `classification_decision` row — no drop in that service is invisible — with the category and signature the rules produced, then overrides the routing to `drop` / `shadow_verification` and emits nothing. Polling the release it submitted is the agent's only path back from a verdict.
+**One rejection, one pull request.** The attempt's row carries `resolved_node_ids` (every failing node it addresses), `node_outcomes` (how it ended for each of them — a cluster whose fixer skipped leaves its members skipped while the rest verify), `verifications` (one shadow release per edited service), and `file_edits` with each edit's `target_node_id`. The release page joins each proposal to every node in `resolved_node_ids` and reads that node's own outcome; the Create PR route titles the pull request `fix N nodes` and lists them all in its body, on a branch named for the attempt (`remediation/<release_id>/attempt<n>`) rather than for any one node.
 
-**Why nothing shadow reaches production.** The gate is one branch at the top of `promoteToProduction`, the single function every promoting path funnels through: a shadow release transitions to `validated` and saves there, so the `current_prod` read, the `service_prod` pointer upsert, the changed-node derivation, and the `release.promoted:v1` emit are all skipped rather than made conditional further downstream. No `release.promoted:v1` means no Neo4j topology swap and no `:NodeVersion` written for the shadow's id, so an unapproved contract can never enter production history. Shipping the fix stays a separate, human act: the verified proposal goes to the same operator-gated Create PR surface as every other proposal (Flow 12).
+**The same flow for a python-csv node.** A python-csv node carries `node_type=python-csv` instead, has no script at all, and rejects for a different reason — its declared `output_columns` name a column the CSV file's own header does not carry. `fixer.For(validation, python-csv)` resolves to its own `csvValidationFixer` rather than the python contract fixer, and the LLM call becomes `propose_csv_fix` with a prompt telling the model the CSV file is the source of truth (fix the contract to match it, not the other way round) and that there is no script whose reads must be preserved. The repository search, apply-then-package ordering, and the reconciler loop below it are not merely the same shape — `csvValidationFixer` and `pythonValidationFixer` call the same two functions, `locateContractForFix` and `proposeContractFixViaShadow`. Only the evidence shown to the model and the post-apply guard differ, and the guard differs only for the failing node's own `csv` read: that key's uri may be corrected without refusing the fix, but every other read on every node the answer touches — including a python-model sibling's, in a directory the fix packages whole — is still held to the same "no read may be dropped" rule the python-model lane applies everywhere. See **CSV validation fixer** in `docs/arch/services/agent-remediation.md` for the full delta.
 
-**Why attempt n+1 is better informed.** A failed attempt's row keeps both the diffs it applied (as S3 artifacts) and the error its shadow release reported. The next attempt's prompt renders every earlier attempt with both, so the model is told what has already been tried and rejected rather than re-proposing it. The retry is driven from the trigger stored on that row, given a dedup identity derived from the shadow release id — the original message id was already claimed by the first attempt's own transaction, so replaying it verbatim would be reported as "already processed" and quietly do nothing.
+**Why the loop cannot eat itself.** A rejected shadow release emits `release.rejected:v1` like any other, and that event reaches the same classifier. Without a marker it would be classified healable and turned into a fresh trigger, remediating a failed fix attempt as though it were a new failure someone had shipped. The agent is already handling that verdict through its own reconciler, so the trigger would drive a second, independent retry chain — one keyed on the shadow release's id rather than the original's, which is the id the attempt history, the release page, and the operator's review are all anchored on. The `shadow` flag on the payload is what stops it: the classifier still writes its `classification_decision` row — no drop in that service is invisible — with the category and signature the rules produced, then overrides the routing to `drop` / `shadow_verification` and emits nothing. Polling the releases it submitted is the agent's only path back from a verdict.
+
+**Why nothing shadow reaches production.** The gate is one branch at the top of `promoteToProduction`, the single function every promoting path funnels through: a shadow release transitions to `validated` and saves there, so the `current_prod` read, the `service_prod` pointer upsert, the changed-node derivation, and the `release.promoted:v1` emit are all skipped rather than made conditional further downstream. No `release.promoted:v1` means no Neo4j topology swap and no `:NodeVersion` written for the shadow's id, so an unapproved fix can never enter production history. Shipping the fix stays a separate, human act: the verified proposal goes to the same operator-gated Create PR surface as every other proposal (Flow 12).
+
+**Why attempt n+1 is better informed, and smaller.** A failed attempt's row keeps both the diffs it applied (as S3 artifacts) and the errors its shadow releases reported. The python lanes' prompts render every earlier attempt with both, so the model is told what has already been tried and rejected rather than re-proposing it. The retry is also narrowed: a shadow release judges every node the attempt addressed at once, so its rejection says which of them the fix *did* repair — the nodes it no longer reports an error for — and `Trigger.Subset` drops those before the next attempt re-groups. A rejection naming none of the attempt's own nodes (the fix held; something downstream broke instead) narrows to nothing and retries the whole set, since no node has been shown right or wrong. The retry is driven from the trigger stored on that row, given a dedup identity derived from the proposal id — the original message id was already claimed by the first attempt's own transaction, so replaying it verbatim would be reported as "already processed" and quietly do nothing.
+
+**The attempt budget is per release, per round.** `AGENT_REMEDIATION_MAX_ATTEMPTS` (default 3) counts terminal attempts for `(release_id, remediation_round)` — three whole-release tries, not three tries per broken node. Exhausting it records one `escalated` attempt covering the whole failing set and calls no model.
 
 ### 11b. Remediation Retry Round (Try Again on a Rejected Release)
 
@@ -669,7 +695,7 @@ sequenceDiagram
 
       Note over RM: classifyRejectionMessages — the same handler that reads<br/>release.rejected:v1 (Flow 11) — decodes the identical payload shape<br/>and classifies every per_node entry again
       RM->>RM: classification_decision upsert keyed (source, release_id,<br/>remediation_round, node_id) — a fresh slot, independent of round 1's rows
-      RM->>RA: remediation.requested:v1 { ...as Flow 11, remediation_round=round }<br/>(event_id suffixed "|round|N" so it never collides with round 1's trigger)
+      RM->>RA: remediation.requested:v2 { ...as Flow 11, remediation_round=round }<br/>(event_id suffixed "|round|N" so it never collides with round 1's trigger)
       Note over RA: attempt cap resets for this round's key (release_id,<br/>remediation_round, source, node_id, error_signature); the attempt NUMBER<br/>itself keeps the release's one running sequence — see Flow 11a and<br/>docs/arch/services/agent-remediation.md
     end
   end

@@ -84,7 +84,7 @@ flowchart TD
   MLC[manifest.loaded.candidate:v1]
   RP[release.promoted:v1]
   RREJ[release.rejected:v1]
-  REMREQ[remediation.requested:v1]
+  REMREQ[remediation.requested:v2]
   REMPROP[remediation.proposed:v1]
   PROPENED[remediation.pr_opened:v1]
   SL[schedules.loaded:v1]

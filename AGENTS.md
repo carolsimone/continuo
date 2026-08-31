@@ -7,8 +7,8 @@ This is a monorepo with multiple microservices.
 * `executor-controller` — schedules dbt task execution; emits K8s Job specs and publishes execution events downstream.
 * `k8s-controller` — watches Kubernetes Jobs and surfaces their terminal status back into the run lifecycle.
 * `release-controller` — manages blue/green candidate-release lifecycle; tracks the `current_prod` pointer and drives promotion/rejection.
-* `remediation` — failure classifier; triages validation rejections and emits heal triggers for fixable failures.
-* `agent-remediation` — LLM fix-proposer; receives heal triggers, reads the failing node's source from GitHub (read-only) for compile/seed_build/duplicate_table failures, and for validation failures reads it primarily from the release's code bundle in S3 (falling back to GitHub only on a permanent bundle miss); also reads narrow graph context (source location, upstream diffs, current version, failure precedent) from orchestrator; proposes a fix PR for human approval.
+* `remediation` — failure classifier; triages a rejected release's failing nodes one by one, records every decision, and emits ONE `remediation.requested:v2` heal trigger per (release, remediation round) carrying every fixable failure.
+* `agent-remediation` — LLM fix-proposer; works a whole rejected release at a time. Receives one batched heal trigger, groups the failing set (same error signature + a shared changed ancestor become one cluster fixed at that ancestor), calls the LLM once per cluster, and reads source from GitHub (read-only) for compile/seed_build/duplicate_table failures and primarily from the release's code bundle in S3 for validation failures (falling back to GitHub only on a permanent bundle miss); also reads narrow graph context (source location, upstream diffs, current version, failure precedent) from orchestrator. Every fix is verified by a real shadow release per edited service before it is offered, and one attempt yields one proposal and one fix PR for human approval.
 * `agent-chat` — chat and agent gRPC backend; hosts the conversational LLM interface used by the UI.
 
 ## Python service (1)
