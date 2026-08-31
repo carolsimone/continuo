@@ -146,3 +146,80 @@ func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Prop
 	}
 	return nil
 }
+
+// RecordPullRequestOutcome stamps a fix PR's terminal state on its
+// :PullRequest node — the same node RecordProposal opened, matched through
+// [:HAS_PR] on (proposal_id, service) so the outcome updates it rather than
+// minting a second one. On a merged outcome it also draws the case-base
+// provenance edges in the same write: [:RESOLVED_BY] from each resolved
+// :Rejection to the shared :Proposal (a stub :Rejection is MERGEd when the
+// rejection has not landed yet, exactly as RecordProposal does), and [:EDITED]
+// from that :Proposal to each edit's :Table. The [:EDITED] edge is skipped
+// when its target :Table is absent — this writer must never mint a :Table,
+// which would leak a non-promoted node into scheduler snapshots (same guard as
+// RecordRejection's [:FAILED] anchor). A rejected outcome passes empty resolved
+// and edits, so it updates only the terminal state and draws no edges. Every
+// resolved node's [:RESOLVED_BY] edge carries the same amended flag: whether a
+// human amended any of the PR's edits before it merged. All writes are
+// MERGE/SET, so a redelivery converges rather than duplicating.
+func (r *CaseBaseRepository) RecordPullRequestOutcome(ctx context.Context, o casebase.PullRequestOutcome) error {
+	// Only a merged PR draws provenance edges; a rejected outcome updates the
+	// terminal state and nothing else, regardless of what its payload carried.
+	resolved := []string{}
+	edits := []map[string]any{}
+	amendedAny := false
+	if o.Outcome == "merged" {
+		resolved = o.ResolvedNodeIDs
+		for _, e := range o.Edits {
+			edits = append(edits, map[string]any{
+				"path":           e.Path,
+				"target_node_id": e.TargetNodeID,
+				"amended":        e.Amended,
+				"diff":           e.Diff,
+			})
+			amendedAny = amendedAny || e.Amended
+		}
+	}
+
+	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer func() { _ = session.Close(ctx) }()
+
+	// FOREACH over $resolved preserves the single (pr) row even when the list
+	// is empty, so the [:EDITED] UNWIND that follows still runs against one row
+	// rather than the per-resolved-node fan-out. Writes made before an empty
+	// UNWIND/FOREACH persist, so the :PullRequest state update lands for a
+	// rejected outcome carrying neither resolved nodes nor edits.
+	res, err := session.Run(ctx, `
+		MERGE (pr:Proposal {proposal_id: $proposal_id})
+		MERGE (pr)-[:HAS_PR]->(pull:PullRequest {proposal_id: $proposal_id, service: $service})
+		SET pull.pr_state = $outcome, pull.closed_at = $closed_at
+		WITH pr
+		FOREACH (nid IN $resolved |
+		  MERGE (rej:Rejection {release_id: $release_id, node_id: nid})
+		  ON CREATE SET rej.at = $closed_at, rej.stub = true
+		  MERGE (rej)-[rb:RESOLVED_BY]->(pr)
+		  SET rb.amended = $amended_any)
+		WITH pr
+		UNWIND $edits AS e
+		OPTIONAL MATCH (t:Table {unique_id: e.target_node_id})
+		FOREACH (_ IN CASE WHEN t IS NULL THEN [] ELSE [1] END |
+		  MERGE (pr)-[ed:EDITED {path: e.path}]->(t)
+		  SET ed.amended = e.amended, ed.diff = e.diff, ed.service = $service)
+	`, map[string]any{
+		"proposal_id": o.ProposalID,
+		"release_id":  o.ReleaseID,
+		"service":     o.Service,
+		"outcome":     o.Outcome,
+		"closed_at":   o.ClosedAt.UTC(),
+		"resolved":    resolved,
+		"edits":       edits,
+		"amended_any": amendedAny,
+	})
+	if err != nil {
+		return fmt.Errorf("record pull request outcome %s/%s: %w", o.ReleaseID, o.ProposalID, err)
+	}
+	if _, err := res.Consume(ctx); err != nil {
+		return fmt.Errorf("record pull request outcome %s/%s: %w", o.ReleaseID, o.ProposalID, err)
+	}
+	return nil
+}

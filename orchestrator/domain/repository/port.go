@@ -82,4 +82,12 @@ type CaseBaseRepository interface {
 	// RecordProposal upserts the proposal, its [:PROPOSED] edge, and the PR
 	// facts on the linked :PullRequest node (keyed by proposal_id + service).
 	RecordProposal(ctx context.Context, p casebase.Proposal, pr casebase.PullRequest) error
+	// RecordPullRequestOutcome stamps a fix PR's terminal state on its
+	// :PullRequest node and, on a merged outcome, draws the case-base
+	// provenance edges: [:RESOLVED_BY] from each resolved :Rejection to the
+	// shared :Proposal (creating stub rejections when absent) and [:EDITED]
+	// from that :Proposal to each edit's :Table (skipped when the :Table is
+	// absent, never creating one). A rejected outcome only stamps the terminal
+	// state. Idempotent under redelivery.
+	RecordPullRequestOutcome(ctx context.Context, o casebase.PullRequestOutcome) error
 }
