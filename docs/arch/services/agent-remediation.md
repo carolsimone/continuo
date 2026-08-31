@@ -908,7 +908,7 @@ The `attempt` number itself, by contrast, is not round-scoped: the `proposal` ta
 
 `agent-remediation` generates proposals and exposes their lifecycle over gRPC. It does not:
 
-- Create GitHub pull requests or open code review branches. PR creation is performed by ui, which holds the GitHub App write credential.
+- Create GitHub pull requests or open code review branches. PR creation is performed by ui, which holds the GitHub App credential.
 - Write to, commit to, or push any git repository. GitHub access is read-only.
 - Auto-apply or merge any proposed SQL change.
 - Merge, close, or comment on any pull request; the PR-outcome reconciler only reads PR status via GitHub's Pulls API. It observes GitHub's own merge/close decision, made by human reviewers, and mirrors it onto `pr_state`.

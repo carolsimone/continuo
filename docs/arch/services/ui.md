@@ -224,7 +224,7 @@ All `/api` routes below require an authenticated session; mutating methods (ever
 
 | Route | Method | Backend |
 |---|---|---|
-| `/api/releases` | GET | Proxies `GET /releases` on release-controller (passes through `status`, `limit`, `cursor` query params). Returns paginated history. |
+| `/api/releases` | GET | Proxies `GET /releases` on release-controller (passes through `status`, `limit`, `cursor` query params). Returns paginated history. When the GitHub App is configured, each release is enriched server-side with an `author` object (the commit author resolved from its `repo`/`commit_sha`; see GitHub App below) — best-effort, so a GitHub failure returns the list without that release's author rather than failing the request. This route (the only one that fans out to GitHub) is rate-limited to 120 requests/minute **per authenticated user** — keyed on the session identity, not the client IP, since behind an ingress the IP is the shared ingress socket — and answers `429` when a user exceeds it. The other `/api/releases/*` routes are not limited. |
 | `/api/releases/current-prod` | GET | Proxies `GET /current-prod` on release-controller. |
 | `/api/releases/:id` | GET | Proxies `GET /releases/{id}` on release-controller. Returns full detail including `per_node_results`. |
 | `/api/releases/:id/retry-remediation` | POST | Proxies `POST /releases/{id}/retry-remediation` on release-controller. Passes through its status and body verbatim: `202 {release_id, remediation_round}` on success, `404 {error: "not_found"}`, `409 {error, ...}` (`not_rejected`, `not_healable`, `not_retryable`, `rounds_exhausted`, `retry_in_progress`, or `proposal_open` with `proposal_id`/`pr_url`), `502 {error: "proposal_reader_unavailable"}`, or `500 {error: "internal"}`. On a request that never reaches release-controller (e.g. a network error) the route itself answers `502 {error: "release-controller request failed"}`. |
@@ -307,9 +307,13 @@ Each WebSocket connection opens one bidirectional `AgentChat.Chat` gRPC stream. 
 | `RecordPullRequest` | `POST /api/remediation/proposals/:id/pull-request` (after GitHub PR created) |
 | `FailPullRequest` | `POST /api/remediation/proposals/:id/pull-request` (on GitHub error, to reset `pr_state` to `failed`) |
 
-### GitHub App (write credential, minted per-request)
+### GitHub App (installation credential, minted per-request)
 
-ui holds the GitHub App ID, private key, and installation ID (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`). For each Create PR request it mints a short-lived (~1h) installation token and performs:
+ui holds the GitHub App ID, private key, and installation ID (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_INSTALLATION_ID`). The same credential backs two paths: the operator-gated **Create PR** write below, and a read-only **commit-author** lookup for the Releases tab.
+
+**Commit-author read (Releases tab).** `GET /api/releases` enriches each release with its commit author, resolved from the `repo`/`commit_sha` that release-controller now carries on every list row. The resolver (`ui/src/server/github/commit-author.ts`) calls the Repos API `getCommit(owner, repo, commit_sha)` and returns `{login, avatar_url, html_url}` from the linked GitHub account, or `{name}` from the git commit metadata when the commit email is not linked to an account. A commit's author never changes, so each `(repo, commit_sha)` is resolved at most once and cached in-process for the process lifetime — a page of releases repeats commits, so this collapses to roughly one call per distinct commit rather than one per row; a failed lookup is not cached, so a transient error retries on the next request. Each lookup is time-bounded (~2.5s) with an `AbortSignal`: a stalled GitHub call is abandoned (and the request cancelled) so it can never hold the release-list response open, and all lookups for a page run in parallel, so the enrichment adds at most that bound to the response. The whole path is best-effort and off entirely when the App is unconfigured or the key cannot sign (`resolveGithubAppCommitAuthorResolver` returns undefined, mirroring the PR-creator gate without re-logging the same startup line), in which case the Author column simply stays empty.
+
+For each Create PR request it mints a short-lived (~1h) installation token and performs:
 
 1. Resolve the commit to branch from: the proposal's `commit_sha` when the claim carries one, otherwise `main`'s current HEAD SHA (`git.getRef`).
 2. Create branch `remediation/<release_id>/attempt<n>` from that commit (deterministic; a 422 "Reference already exists" is treated as idempotent). The branch is named for the attempt, not for a node: one attempt repairs a whole rejected release, so no single node identifies it.

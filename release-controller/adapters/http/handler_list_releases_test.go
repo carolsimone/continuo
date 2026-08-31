@@ -29,3 +29,20 @@ func TestResolvedAt_ValidatedIsResolved(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, at, got.UTC())
 }
+
+// TestToReleaseListItem_CarriesProvenance verifies the list row exposes the
+// release's source repo and commit SHA, so the UI can resolve the commit author
+// without a follow-up per-release detail fetch.
+func TestToReleaseListItem_CarriesProvenance(t *testing.T) {
+	r := release.Rehydrate(release.RehydrateInput{
+		ID:        "rel-1",
+		Status:    release.StatusPromoted,
+		Repo:      "acme/dbt",
+		CommitSHA: "abc123",
+	})
+
+	item := toReleaseListItem(r)
+
+	assert.Equal(t, "acme/dbt", item.Repo)
+	assert.Equal(t, "abc123", item.CommitSHA)
+}
