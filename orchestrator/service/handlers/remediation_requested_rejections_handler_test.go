@@ -24,6 +24,7 @@ type fakeCaseBaseRepository struct {
 	recordRejectionCalls []casebase.Rejection
 	recordRejectionErr   error
 	recordProposalCalls  []casebase.Proposal
+	recordProposalPRs    []casebase.PullRequest
 	recordProposalErr    error
 }
 
@@ -32,8 +33,9 @@ func (f *fakeCaseBaseRepository) RecordRejection(_ context.Context, r casebase.R
 	return f.recordRejectionErr
 }
 
-func (f *fakeCaseBaseRepository) RecordProposal(_ context.Context, p casebase.Proposal) error {
+func (f *fakeCaseBaseRepository) RecordProposal(_ context.Context, p casebase.Proposal, pr casebase.PullRequest) error {
 	f.recordProposalCalls = append(f.recordProposalCalls, p)
+	f.recordProposalPRs = append(f.recordProposalPRs, pr)
 	return f.recordProposalErr
 }
 

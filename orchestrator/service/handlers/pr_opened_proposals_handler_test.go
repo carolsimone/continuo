@@ -24,6 +24,7 @@ func prOpenedInput() domainEvent.PROpened {
 		PrNumber:   42,
 		OpenedBy:   "agent-remediation",
 		OpenedAt:   "2026-08-12T09:05:00Z",
+		Service:    "core",
 	}
 }
 
@@ -48,13 +49,18 @@ func TestProposalsHandler_RecordsProposal(t *testing.T) {
 	assert.Equal(t, "prop-1", p.ProposalID)
 	assert.Equal(t, "rel-1", p.ReleaseID)
 	assert.Equal(t, "analytics.revenue", p.NodeID)
-	assert.Equal(t, "https://github.com/org/repo/pull/42", p.PrURL)
-	assert.Equal(t, 42, p.PrNumber)
-	assert.Equal(t, "open", p.PrState)
-	assert.Equal(t, "agent-remediation", p.OpenedBy)
+
+	require.Len(t, repo.recordProposalPRs, 1)
+	pr := repo.recordProposalPRs[0]
+	assert.Equal(t, "prop-1", pr.ProposalID)
+	assert.Equal(t, "core", pr.Service)
+	assert.Equal(t, "https://github.com/org/repo/pull/42", pr.PrURL)
+	assert.Equal(t, 42, pr.PrNumber)
+	assert.Equal(t, "open", pr.State)
+	assert.Equal(t, "agent-remediation", pr.OpenedBy)
 	wantAt, err := time.Parse(time.RFC3339, in.OpenedAt)
 	require.NoError(t, err)
-	assert.Equal(t, wantAt, p.OpenedAt)
+	assert.Equal(t, wantAt, pr.OpenedAt)
 	assert.True(t, uow.CommittedTx)
 }
 
@@ -121,10 +127,16 @@ func TestProposalsHandler_RecordsOneProposalPerResolvedNode(t *testing.T) {
 	for _, p := range repo.recordProposalCalls {
 		assert.Equal(t, "prop-1", p.ProposalID, "every node shares the one PR's proposal id")
 		assert.Equal(t, "rel-1", p.ReleaseID)
-		assert.Equal(t, "https://github.com/org/repo/pull/42", p.PrURL)
-		assert.Equal(t, 42, p.PrNumber)
-		assert.Equal(t, "open", p.PrState)
-		assert.Equal(t, "agent-remediation", p.OpenedBy)
+	}
+
+	require.Len(t, repo.recordProposalPRs, 2)
+	for _, pr := range repo.recordProposalPRs {
+		assert.Equal(t, "prop-1", pr.ProposalID)
+		assert.Equal(t, "core", pr.Service, "every resolved node shares the one PR's service")
+		assert.Equal(t, "https://github.com/org/repo/pull/42", pr.PrURL)
+		assert.Equal(t, 42, pr.PrNumber)
+		assert.Equal(t, "open", pr.State)
+		assert.Equal(t, "agent-remediation", pr.OpenedBy)
 	}
 	assert.True(t, uow.CommittedTx)
 }

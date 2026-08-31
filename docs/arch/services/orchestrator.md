@@ -28,9 +28,11 @@ It is responsible for:
 | `USES_CODE` relationship | Points a `NodeVersion` at every `CodeUnitVersion` in scope when that code ran — the transitive closure, so "the model did not change but its hash flipped" resolves to the exact unit that did |
 | `Rejection` node | One classified failure of one node in one rejected release, identified by (`release_id`, `node_id`). Carries `stage` (`validation`, `seed_build`, `compile`, or `duplicate_table`), `category`, `reason`, `error_excerpt`, `dbt_log_uri`, `at` (the classifier's `classified_at`), `raw_code`, `content_hash` (both empty for a compile-stage failure, which precedes the parse that produces a code bundle), and `stub` (`true` for a placeholder a proposal created ahead of its rejection, completed to `false` once the rejection itself lands). See "Failure-precedent case base — graph model" below. |
 | `ErrorSignature` node | Global precedent hub keyed by `signature`; carries `category` and `reason`, set once `ON CREATE` — first-seen metadata only, since a later `:Rejection` sharing the signature can carry a different `reason` (the classifier's rules match the whole lowercased log, not just the key error line). `GetPrecedents`' category+reason fallback therefore filters on each `:Rejection`'s own properties, never the hub's. Every `:Rejection` sharing a signature links to the same hub, which is what makes a signature (or a `(category, reason)` pair) a cross-release, cross-node lookup key. |
-| `Proposal` node | One fix PR opened for a rejection, identified by `proposal_id`. Carries `pr_url`, `pr_number`, `pr_state` (`open` at creation), `opened_by`, `opened_at`. |
+| `Proposal` node | One fix attempt for a rejection, identified by `proposal_id`. Carries no PR facts itself — those live on the linked `:PullRequest` — so a batched fix spanning several nodes MERGEs onto the same `:Proposal` from each node's `:Rejection`. |
+| `PullRequest` node | One fix PR's facts, identified by (`proposal_id`, `service`) — a proposal that touches several services gets one `:PullRequest` per service. Carries `pr_url`, `pr_number`, `pr_state` (`open` at creation), `opened_by`, `opened_at`. Pre-existing `:Proposal` nodes written before this split still carry their own `pr_url`/`pr_number`/`pr_state`/`opened_by`/`opened_at` inline — those legacy properties are read, never written, going forward. |
 | `HAS_SIGNATURE` relationship | `(:Rejection)-[:HAS_SIGNATURE]->(:ErrorSignature)` — links a rejection to its global signature hub. |
-| `PROPOSED` relationship | `(:Rejection)-[:PROPOSED]->(:Proposal)` — links a rejection to a fix PR opened for it. |
+| `PROPOSED` relationship | `(:Rejection)-[:PROPOSED]->(:Proposal)` — links a rejection to the fix proposed for it. |
+| `HAS_PR` relationship | `(:Proposal)-[:HAS_PR]->(:PullRequest)` — links a proposal to the PR facts for the service it fixes. |
 | `RESOLVED_BY` relationship | `(:Rejection)-[:RESOLVED_BY]->(:NodeVersion)` — links a rejection to the version that resolved it. Two consumers converge on this edge from opposite directions, each guarded on "no existing `RESOLVED_BY`" so whichever reaches an open rejection first wins. The versions consumer forward-links every still-open rejection of a node the moment a new version becomes that node's `CURRENT`, and stamps the edge (`ON CREATE`) with `promoted_at`/`release_id` from that promotion — the detail read path uses the edge's own `promoted_at` as its diff baseline, since a reverted-to `:NodeVersion` keeps its original, earlier `promoted_at` forever. The rejections consumer back-links when the fix already landed before the rejection was recorded, in two cases: ordinarily, the oldest `:NodeVersion` whose own `promoted_at` is after the rejection; for a revert (a promotion reusing an existing, older version node), detected instead through the node's `:CURRENT` edge, whose `promoted_at` the version writer always overwrites. A revert followed by a further promotion can still lose attribution to the version that actually reintroduced the fix — recovering full promotion history is a known gap, not attempted here. |
 | `FAILED` relationship | `(:Table)-[:FAILED {release_id}]->(:Rejection)` — anchors a rejection to the failing node's `:Table`, written only when that `:Table` already exists; this writer never mints one. |
 
@@ -76,6 +78,7 @@ Task UUIDs are pre-assigned when the `EXECUTES` edges are created during run sna
 | `error_signature_unique` | constraint, `:ErrorSignature(signature)` unique | The global precedent hub's MERGE key, and `GetPrecedents`' signature lookup. |
 | `error_signature_category_reason` | index, `:ErrorSignature(category, reason)` | No longer backs a read path — the category+reason precedent lookup filters `:Rejection` now (see `rejection_category_reason`) — but stays: `:ErrorSignature` nodes are few (one per distinct signature), so the write cost is negligible, and the hub's category/reason remain accurate first-seen metadata worth indexing for direct hub lookups. |
 | `proposal_unique` | constraint, `:Proposal(proposal_id)` unique | A proposal's identity, so a redelivered `remediation.pr_opened:v1` MERGEs onto the row it already wrote. |
+| `pull_request_unique` | constraint, `:PullRequest(proposal_id, service)` unique | One PR node per (proposal, service), so a redelivered `remediation.pr_opened:v1` MERGEs onto the PR facts it already wrote instead of overwriting them with the open-time snapshot on every replay. |
 
 After the DDL is applied and the indexes are online, `InitSchema` runs a set of idempotent data migrations:
 
@@ -418,7 +421,7 @@ Writes are batched (100 nodes per explicit transaction), and each batch reads th
 
 ```
 (:Table)──[:FAILED {release_id}]──▶(:Rejection)──[:HAS_SIGNATURE]──▶(:ErrorSignature)
-(:Rejection)──[:PROPOSED]──▶(:Proposal)
+(:Rejection)──[:PROPOSED]──▶(:Proposal)──[:HAS_PR]──▶(:PullRequest)
 (:Rejection)──[:RESOLVED_BY]──▶(:NodeVersion)
 ```
 
@@ -522,8 +525,8 @@ Consumes `remediation.requested:v2` on the case-base group (`orchestrator-remedi
 Consumes `remediation.pr_opened:v1` on the case-base group (`orchestrator-remediation-pr-opened-proposals`) and records each opened fix PR as a `:Proposal`. No outbox entry is produced.
 
 1. Dedup on `message_processing`, scoped by the consumer-group name.
-2. Parses `proposal_id`, `release_id`, `node_id` (all required), `resolved_node_ids` (optional), and `opened_at` (RFC3339).
-3. One PR fixes a whole failing set, so the handler records a proposal for **every node in `resolved_node_ids`** — falling back to the single `node_id` when the payload carries no resolved set. For each node, `CaseBaseRepository.RecordProposal` MERGEs a `:Rejection` stub for `(release_id, node_id)` when one does not already exist (`stub: true`, `at` = this PR's `opened_at` as an approximation until the real rejection lands and corrects it), MERGEs the `:Proposal` on `proposal_id` (`pr_state: "open"` on create), and links it `[:PROPOSED]` from that rejection. The `:Proposal` is therefore a single node with one `[:PROPOSED]` edge per node it fixes, so precedent for every one of them reports the fix PR.
+2. Parses `proposal_id`, `release_id`, `node_id` (all required), `resolved_node_ids` (optional), `service`, and `opened_at` (RFC3339).
+3. One PR fixes a whole failing set in one service, so the handler records a proposal for **every node in `resolved_node_ids`** — falling back to the single `node_id` when the payload carries no resolved set — all sharing the same PR facts. For each node, `CaseBaseRepository.RecordProposal` MERGEs a `:Rejection` stub for `(release_id, node_id)` when one does not already exist (`stub: true`, `at` = this PR's `opened_at` as an approximation until the real rejection lands and corrects it), MERGEs the `:Proposal` on `proposal_id`, links it `[:PROPOSED]` from that rejection, and MERGEs the `:PullRequest` on (`proposal_id`, `service`) linked `[:HAS_PR]` from the `:Proposal` (`pr_state: "open"` on create). The `:Proposal` is therefore a single node with one `[:PROPOSED]` edge per node it fixes and one `[:HAS_PR]` edge to its PR facts, so precedent for every fixed node reports the same fix PR.
 
 ## Background Loops
 

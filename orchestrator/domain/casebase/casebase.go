@@ -29,14 +29,27 @@ type Rejection struct {
 	ContentHash string
 }
 
-// Proposal is one fix PR opened for a rejection.
+// Proposal is one fix PR opened for a rejection. Its identity here is
+// (ReleaseID, NodeID): one :Proposal per resolved node, all sharing the one
+// PR's facts, which now live on the linked PullRequest instead of inline on
+// this type — pre-existing :Proposal nodes keep their own pr_* properties for
+// legacy reads.
 type Proposal struct {
 	ProposalID string
 	ReleaseID  string
 	NodeID     string
+}
+
+// PullRequest is the PR facts for one proposal's fix, scoped to the service
+// the PR targets. A batched proposal resolves many nodes with one PR, so the
+// PR's facts are recorded once on this node — [:HAS_PR] from the shared
+// :Proposal — rather than duplicated per resolved node.
+type PullRequest struct {
+	ProposalID string
+	Service    string
 	PrURL      string
 	PrNumber   int
-	PrState    string
+	State      string
 	OpenedBy   string
 	OpenedAt   time.Time
 }

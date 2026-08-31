@@ -74,20 +74,26 @@ func (h *PrOpenedProposalsHandler) Handle(
 	// One PR fixes every node it resolves, so each of those nodes gets its own
 	// :Proposal attached to its own rejection. Recording only the representative
 	// node would leave the rest of a batched fix's rejections without a PROPOSED
-	// edge, and precedent for them would stop reporting the fix PR.
+	// edge, and precedent for them would stop reporting the fix PR. The PR facts
+	// themselves are the same for every node in the batch — one PR, one
+	// service — so the same PullRequest value is recorded on each call.
+	pr := casebase.PullRequest{
+		ProposalID: in.ProposalID,
+		Service:    in.Service,
+		PrURL:      in.PrURL,
+		PrNumber:   in.PrNumber,
+		State:      "open",
+		OpenedBy:   in.OpenedBy,
+		OpenedAt:   openedAt,
+	}
 	resolved := in.ResolvedNodes()
 	for _, nodeID := range resolved {
 		p := casebase.Proposal{
 			ProposalID: in.ProposalID,
 			ReleaseID:  in.ReleaseID,
 			NodeID:     nodeID,
-			PrURL:      in.PrURL,
-			PrNumber:   in.PrNumber,
-			PrState:    "open",
-			OpenedBy:   in.OpenedBy,
-			OpenedAt:   openedAt,
 		}
-		if err := h.caseBase.RecordProposal(ctx, p); err != nil {
+		if err := h.caseBase.RecordProposal(ctx, p, pr); err != nil {
 			return fmt.Errorf("record proposal %s/%s: %w", in.ReleaseID, nodeID, err)
 		}
 	}

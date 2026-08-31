@@ -79,6 +79,7 @@ type CaseBaseRepository interface {
 	// topology handler owns that lifecycle), and back-links [:RESOLVED_BY] when
 	// a version newer than the rejection is already recorded.
 	RecordRejection(ctx context.Context, r casebase.Rejection) error
-	// RecordProposal upserts the proposal and its [:PROPOSED] edge.
-	RecordProposal(ctx context.Context, p casebase.Proposal) error
+	// RecordProposal upserts the proposal, its [:PROPOSED] edge, and the PR
+	// facts on the linked :PullRequest node (keyed by proposal_id + service).
+	RecordProposal(ctx context.Context, p casebase.Proposal, pr casebase.PullRequest) error
 }

@@ -104,33 +104,39 @@ func (r *CaseBaseRepository) RecordRejection(ctx context.Context, rej casebase.R
 	return nil
 }
 
-// RecordProposal upserts one proposal and its [:PROPOSED] edge. When the
-// rejection has not landed yet, a stub :Rejection is MERGEd so the edge has an
-// anchor; the stub's at is the proposal's opened_at (approximate) and
-// RecordRejection later corrects it when the rejection itself arrives.
-func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Proposal) error {
+// RecordProposal upserts one proposal, its [:PROPOSED] edge, and the PR facts
+// on the linked :PullRequest node. When the rejection has not landed yet, a
+// stub :Rejection is MERGEd so the edge has an anchor; the stub's at is the
+// proposal's opened_at (approximate) and RecordRejection later corrects it
+// when the rejection itself arrives. The PR facts land on :PullRequest rather
+// than inline on :Proposal — MERGEd on (proposal_id, service) so a redelivery
+// converges onto the one PR node instead of overwriting its state with the
+// open-time snapshot every replay.
+func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Proposal, pr casebase.PullRequest) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer func() { _ = session.Close(ctx) }()
 
 	res, err := session.Run(ctx, `
 		MERGE (rej:Rejection {release_id: $release_id, node_id: $node_id})
 		ON CREATE SET rej.at = $opened_at, rej.stub = true
-		MERGE (pr:Proposal {proposal_id: $proposal_id})
-		ON CREATE SET pr.pr_url = $pr_url,
-		              pr.pr_number = $pr_number,
-		              pr.pr_state = $pr_state,
-		              pr.opened_by = $opened_by,
-		              pr.opened_at = $opened_at
-		MERGE (rej)-[:PROPOSED]->(pr)
+		MERGE (prop:Proposal {proposal_id: $proposal_id})
+		MERGE (rej)-[:PROPOSED]->(prop)
+		MERGE (prop)-[:HAS_PR]->(pull:PullRequest {proposal_id: $proposal_id, service: $service})
+		ON CREATE SET pull.pr_url = $pr_url,
+		              pull.pr_number = $pr_number,
+		              pull.pr_state = $pr_state,
+		              pull.opened_by = $opened_by,
+		              pull.opened_at = $opened_at
 	`, map[string]any{
 		"release_id":  p.ReleaseID,
 		"node_id":     p.NodeID,
 		"proposal_id": p.ProposalID,
-		"pr_url":      p.PrURL,
-		"pr_number":   p.PrNumber,
-		"pr_state":    p.PrState,
-		"opened_by":   p.OpenedBy,
-		"opened_at":   p.OpenedAt.UTC(),
+		"service":     pr.Service,
+		"pr_url":      pr.PrURL,
+		"pr_number":   pr.PrNumber,
+		"pr_state":    pr.State,
+		"opened_by":   pr.OpenedBy,
+		"opened_at":   pr.OpenedAt.UTC(),
 	})
 	if err != nil {
 		return fmt.Errorf("record proposal %s: %w", p.ProposalID, err)

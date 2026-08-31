@@ -14,6 +14,9 @@ type PROpened struct {
 	PrNumber        int      `json:"pr_number"`
 	OpenedBy        string   `json:"opened_by"`
 	OpenedAt        string   `json:"opened_at"` // RFC3339
+	// Service is the service whose fix this PR carries. One PR always targets
+	// exactly one service, shared by every node in ResolvedNodeIDs.
+	Service string `json:"service"`
 }
 
 // ResolvedNodes returns the nodes the PR fixes: the resolved set when the
