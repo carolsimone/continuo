@@ -17,15 +17,11 @@ COPY macros/ /project/macros/
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# dbt needs to create target/ and logs/ under /project at run time; own the
-# project tree so the image can run unprivileged.
-#
-# This chown covers only what this stage copied. A service image built FROM here
-# must COPY --chown=dbt:dbt, because a plain COPY writes root-owned files
-# regardless of USER and would leave /project unwritable by the user the
-# container runs as. A shadow release verifying a proposed fix lays its source
-# overlay over the project with `cp -R /shared/overlay/. ./` as that user, so a
-# root-owned project silently fails every fix verification.
+# dbt needs to create target/ and logs/ under /project at run time; owning the
+# project directory itself lets the image run unprivileged. A service image
+# built FROM here copies its own project files in with a plain COPY, which
+# leaves those files root-owned — dbt reads them and writes its output beside
+# them, so nothing here requires a derived image to change how it copies.
 RUN useradd --uid 1000 --create-home dbt && chown -R dbt:dbt /project
 USER dbt
 

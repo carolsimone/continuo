@@ -66,13 +66,14 @@ func seedOverlayParams() ValidationJobParams {
 	}
 }
 
-// TestCreateSeedBuildJob_SourceOverlayAddsFetcherAndCopiesOverProject verifies
-// the seed leg gets the same overlay treatment as the compile leg: an "overlay"
+// TestCreateSeedBuildJob_SourceOverlayStagesProjectInWorkdir verifies the seed
+// leg gets the same overlay treatment as the compile leg: an "overlay"
 // initContainer fetches the proposed source into /shared/overlay, and the team
-// image's seed command copies it over the checked-in project first. Without
-// this, a proposed fix to a seed CSV is verified against the very file it
-// replaces and can never pass.
-func TestCreateSeedBuildJob_SourceOverlayAddsFetcherAndCopiesOverProject(t *testing.T) {
+// image's seed command stages the project into the writable workdir emptyDir,
+// lays the proposed files over the copy, and runs dbt from there. Without this,
+// a proposed fix to a seed CSV is verified against the very file it replaces
+// and can never pass.
+func TestCreateSeedBuildJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	t.Setenv("S3_BUCKET", "")
@@ -96,16 +97,42 @@ func TestCreateSeedBuildJob_SourceOverlayAddsFetcherAndCopiesOverProject(t *test
 
 	require.Len(t, spec.Containers, 1)
 	team := spec.Containers[0]
-	assert.Equal(t, []string{"sh", "-c", "cp -R /shared/overlay/. ./ && dbt seed --select fx"}, team.Command)
-	require.NotEmpty(t, team.VolumeMounts)
-	assert.Equal(t, "shared", team.VolumeMounts[0].Name, "the team container must see /shared to copy the overlay")
+	assert.Equal(t, []string{"sh", "-c", expectedStagePrefix + "dbt seed --select fx"}, team.Command,
+		"the seed command must run against the staged copy, never against the image's own project dir")
+
+	mounts := make([]string, len(team.VolumeMounts))
+	for i, m := range team.VolumeMounts {
+		mounts[i] = m.Name
+	}
+	assert.Contains(t, mounts, "shared", "the team container must see /shared to read the overlay")
+	assert.Contains(t, mounts, "workdir-dbt-job", "the team container needs a writable workdir to stage into")
+	for _, m := range team.VolumeMounts {
+		if m.Name == "workdir-dbt-job" {
+			assert.Equal(t, "/work", m.MountPath)
+		}
+	}
 
 	names := make([]string, len(spec.Volumes))
 	for i, v := range spec.Volumes {
 		names[i] = v.Name
 	}
 	assert.Contains(t, names, "shared")
+	assert.Contains(t, names, "workdir-dbt-job")
+	for _, v := range spec.Volumes {
+		if v.Name == "workdir-dbt-job" {
+			assert.NotNil(t, v.EmptyDir, "the workdir must be an emptyDir")
+		}
+	}
 }
+
+// expectedStagePrefix is the shell prologue every team-image command carries
+// when the Job runs under a source overlay. It stages the image's project
+// directory (the shell's starting directory) into the workdir emptyDir at the
+// same absolute path under /work, lays the proposed files over the copy, and
+// moves the shell there — so the proposed fix is never written into the image's
+// own project directory, whoever owns it.
+const expectedStagePrefix = `mkdir -p "/work${PWD%/*}" && cp -R "$PWD" "/work${PWD%/*}/" && ` +
+	`cp -R /shared/overlay/. "/work$PWD/" && cd "/work$PWD" && `
 
 // TestBuildSeedBuildPodSpec_OverlayAndParseCacheCoexist verifies that when both
 // the overlay and the parse-cache hydration apply, the overlay fetcher runs
@@ -129,14 +156,14 @@ func TestBuildSeedBuildPodSpec_OverlayAndParseCacheCoexist(t *testing.T) {
 	for i, v := range spec.Volumes {
 		volNames[i] = v.Name
 	}
-	assert.ElementsMatch(t, []string{"shared", "parse-cache"}, volNames)
+	assert.ElementsMatch(t, []string{"shared", "workdir-dbt-job", "parse-cache"}, volNames)
 
 	mountNames := make([]string, len(spec.Containers[0].VolumeMounts))
 	for i, m := range spec.Containers[0].VolumeMounts {
 		mountNames[i] = m.Name
 	}
-	assert.ElementsMatch(t, []string{"shared", "parse-cache"}, mountNames)
-	assert.Equal(t, []string{"sh", "-c", "cp -R /shared/overlay/. ./ && dbt seed --select fx"},
+	assert.ElementsMatch(t, []string{"shared", "workdir-dbt-job", "parse-cache"}, mountNames)
+	assert.Equal(t, []string{"sh", "-c", expectedStagePrefix + "dbt seed --select fx"},
 		spec.Containers[0].Command)
 }
 
