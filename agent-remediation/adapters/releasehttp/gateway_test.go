@@ -69,6 +69,7 @@ func TestSubmit_AcceptedPostsExactShadowBody(t *testing.T) {
 	require.Equal(t, "python", gotBody["kind"])
 	require.Equal(t, true, gotBody["shadow"])
 	require.NotContains(t, gotBody, "source_overlay_uri", "a python submission must omit source_overlay_uri entirely")
+	require.NotContains(t, gotBody, "verifies_release_id", "a submission naming no verified release omits the field entirely")
 }
 
 // TestSubmit_DbtCarriesSourceOverlayURI covers the dbt shadow case: the
@@ -330,4 +331,27 @@ func TestVerdict_AQueuedReleaseHasNoActivationMoment(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, v.Terminal)
 	require.True(t, v.ActivatedAt.IsZero(), "a release still in the queue has not started being verified")
+}
+
+// TestSubmit_CarriesVerifiesReleaseID pins the field that tells
+// release-controller which rejected release this shadow is judging. Without it
+// the shadow assembles every other service from production, so a fix in a
+// DOWNSTREAM service would be validated against the upstream service's
+// production code rather than the candidate whose rejection it answers.
+func TestSubmit_CarriesVerifiesReleaseID(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"release_id":"shadow-1","status":"received"}`))
+	}))
+	defer srv.Close()
+
+	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
+	require.NoError(t, g.Submit(context.Background(), ports.ShadowSubmission{
+		ReleaseID: "shadow-1", Service: "svc-b", ImageTag: "img:1",
+		Repo: "acme/dbt-repo", CommitSHA: "deadbeef", Kind: ports.ShadowKindDbt,
+		VerifiesReleaseID: "rel-rejected",
+	}))
+	require.Equal(t, "rel-rejected", gotBody["verifies_release_id"])
 }

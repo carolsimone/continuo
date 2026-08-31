@@ -231,7 +231,7 @@ func changedAncestorsFromWire(in []ChangedAncestorWire) []ChangedAncestor {
 	}
 	out := make([]ChangedAncestor, 0, len(in))
 	for _, a := range in {
-		out = append(out, ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service})
+		out = append(out, ChangedAncestor(a))
 	}
 	return out
 }

@@ -127,6 +127,9 @@ func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 	require.Equal(t, ports.ShadowSubmission{
 		ReleaseID: "shadow-r1-svc-a1", Service: "svc", ImageTag: "ghcr.io/o/svc:v9",
 		Repo: "o/r", CommitSHA: "abc", Kind: ports.ShadowKindPython,
+		// The shadow names the rejected release it judges, so release-controller
+		// assembles that release's candidate for the service it changed.
+		VerifiesReleaseID: "r1",
 	}, gw.submitted[0])
 	require.Empty(t, u.ob.entries, "an unverified fix must not be announced")
 }

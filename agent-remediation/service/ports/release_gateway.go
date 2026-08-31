@@ -26,6 +26,13 @@ type ShadowSubmission struct {
 	// leg lays over the project; empty for a python shadow, whose artifact is
 	// the contract yaml written under the shadow's own id.
 	SourceOverlayURI string
+	// VerifiesReleaseID is the rejected release this shadow verifies a fix for.
+	// The shadow's own service is the one the fix edits, which need not be the
+	// service whose release was rejected; naming the release lets
+	// release-controller assemble THAT release's candidate for its changed
+	// service instead of the live production manifest, so the fix is judged on
+	// the graph the failure actually occurred in.
+	VerifiesReleaseID string
 }
 
 // Shadow submission manifest kinds: the value of ShadowSubmission.Kind.

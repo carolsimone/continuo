@@ -1181,6 +1181,8 @@ func TestProposeFix_TwoIndependentNodes_OneVerifyingProposalWithTwoEdits(t *test
 	assert.Equal(t, "tag-1", sub.ImageTag)
 	assert.Equal(t, ports.ShadowKindDbt, sub.Kind)
 	assert.Equal(t, "s3://art/svc/shadow-r1-svc-a1/source-overlay.tar.gz", sub.SourceOverlayURI)
+	assert.Equal(t, "r1", sub.VerifiesReleaseID,
+		"the shadow must name the rejected release it verifies, so release-controller assembles that release's candidate for the service it changed")
 	overlayBytes := art.written["svc/shadow-r1-svc-a1/source-overlay.tar.gz"]
 	names := tarNames(t, []byte(overlayBytes))
 	assert.Equal(t, []string{"models/a.sql", "models/b.sql"}, names, "overlay paths are project-relative")

@@ -159,6 +159,11 @@ func submitVerifications(
 			CommitSHA:        t.CommitSHA,
 			Kind:             kind,
 			SourceOverlayURI: overlayURI,
+			// The shadow verifies THIS release's rejection. When the fix edits a
+			// different service than the rejected release changed, that release's
+			// own candidate is what the shadow must run its edited service
+			// against, not the service's production manifest.
+			VerifiesReleaseID: t.ReleaseID,
 		}); err != nil {
 			return nil, fmt.Errorf("submit shadow release %s: %w", shadowID, err)
 		}

@@ -101,7 +101,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 
 	now := d.Clock.Now()
 	imageTag := next.ImageTags()[next.ChangedService()]
-	set := AssembleManifestSet(pointers, d.Bucket, next.ChangedService(), next.ID(), imageTag, next.ManifestKind())
+	set := assembleFor(ctx, u, d.Logger, next, pointers, d.Bucket)
 	next.SetAssembledImageTags(set.ImageTags)
 
 	if next.ManifestKind() == release.ManifestKindPython {

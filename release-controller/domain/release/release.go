@@ -130,6 +130,7 @@ type Release struct {
 	remediationRound    int
 	rejectionPayload    []byte
 	sourceOverlayURI    string
+	verifiesReleaseID   string
 }
 
 // New creates a new Release for a single-service delta. imageTags is initialised
@@ -180,6 +181,16 @@ func (r *Release) SetCodeBundleURI(uri string) { r.codeBundleURI = uri }
 // source. Empty for every non-shadow release.
 func (r *Release) SourceOverlayURI() string       { return r.sourceOverlayURI }
 func (r *Release) SetSourceOverlayURI(uri string) { r.sourceOverlayURI = uri }
+
+// VerifiesReleaseID names the rejected release a shadow release was posted to
+// verify a fix for. The shadow carries the fix in its OWN service, which is not
+// necessarily the service whose release was rejected — a fix to a downstream
+// service repairs an upstream rejection — so the rejected release's changed
+// service is assembled from THAT release's candidate rather than from the live
+// production pointer. Empty for every non-shadow release, and for a shadow
+// posted without naming what it verifies.
+func (r *Release) VerifiesReleaseID() string      { return r.verifiesReleaseID }
+func (r *Release) SetVerifiesReleaseID(id string) { r.verifiesReleaseID = id }
 func (r *Release) CandidateTopology() Topology    { return r.candidateTopology }
 func (r *Release) ValidationNodeIDs() []string    { return r.validationNodeIDs }
 func (r *Release) RejectReason() string           { return r.rejectReason }
@@ -430,6 +441,7 @@ type RehydrateInput struct {
 	RemediationRound  int
 	RejectionPayload  []byte
 	SourceOverlayURI  string
+	VerifiesReleaseID string
 }
 
 // Rehydrate reconstructs a Release from persistence. Bypasses state-machine
@@ -457,6 +469,7 @@ func Rehydrate(in RehydrateInput) *Release {
 		remediationRound:  in.RemediationRound,
 		rejectionPayload:  in.RejectionPayload,
 		sourceOverlayURI:  in.SourceOverlayURI,
+		verifiesReleaseID: in.VerifiesReleaseID,
 	}
 	if r.remediationRound < 1 {
 		r.remediationRound = 1

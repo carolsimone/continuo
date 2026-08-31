@@ -59,6 +59,10 @@ type shadowSubmissionBody struct {
 	Kind             string `json:"kind"`
 	Shadow           bool   `json:"shadow"`
 	SourceOverlayURI string `json:"source_overlay_uri,omitempty"`
+	// VerifiesReleaseID names the rejected release this shadow verifies, so
+	// release-controller assembles that release's candidate for its own changed
+	// service rather than the live production manifest.
+	VerifiesReleaseID string `json:"verifies_release_id,omitempty"`
 }
 
 // Submit posts s as a shadow verification release. A 202 Accepted response is
@@ -70,15 +74,16 @@ func (g *Gateway) Submit(ctx context.Context, s ports.ShadowSubmission) error {
 		return fmt.Errorf("submit shadow release %s: kind is required", s.ReleaseID)
 	}
 	body := shadowSubmissionBody{
-		ReleaseID:        s.ReleaseID,
-		Service:          s.Service,
-		ImageTag:         s.ImageTag,
-		Bootstrap:        false,
-		Repo:             s.Repo,
-		CommitSHA:        s.CommitSHA,
-		Kind:             s.Kind,
-		Shadow:           true,
-		SourceOverlayURI: s.SourceOverlayURI,
+		ReleaseID:         s.ReleaseID,
+		Service:           s.Service,
+		ImageTag:          s.ImageTag,
+		Bootstrap:         false,
+		Repo:              s.Repo,
+		CommitSHA:         s.CommitSHA,
+		Kind:              s.Kind,
+		Shadow:            true,
+		SourceOverlayURI:  s.SourceOverlayURI,
+		VerifiesReleaseID: s.VerifiesReleaseID,
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
