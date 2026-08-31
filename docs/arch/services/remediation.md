@@ -82,7 +82,7 @@ The signature is derived from one piece of the log: the key error line (`keyErro
 
 `NormalizeSignature` (`remediation/domain/failure/signature.go`) then produces a stable dedup key from that text. It strips the parts that do not identify the failure itself:
 
-- The database's echoed statement: everything from the first `LINE <n>:` marker to the end of the message, newlines included. Cut **first**, before the normalizations below.
+- The database's echoed statement: everything from a `LINE <n>:` marker that **opens its own line** to the end of the message, newlines included. Cut **first**, before the normalizations below.
 - Candidate schema names (`candidate_<hex>`  → `candidate_schema`)
 - UUIDs and invocation IDs
 - ISO timestamps and clock times
@@ -90,7 +90,7 @@ The signature is derived from one piece of the log: the key error line (`keyErro
 - Source line/column positions
 - Remaining standalone digit runs
 
-The echoed statement matters as much as the volatile tokens. Postgres appends the failing statement to its error as `LINE n: <sql>`, and for a model build that statement is `CREATE TABLE "<schema>"."<node>" AS (SELECT ...)` — so it embeds the failing node's **own relation name**, plus a caret line whose indentation tracks that name's length. Keeping it keyed the signature on the victim rather than on the fault: two models broken by a single upstream change signed differently, and `SharedUpstreamCause` in `agent-remediation` — which clusters only on identical signatures — could never group them, so the shared cause was repaired once per victim instead of once at the source, silently. Everything the database says *ahead* of the marker is the diagnosis and is kept, so distinct faults (a missing column vs a missing relation, or two different tokens named by `at or near "x"`) still sign distinctly.
+The echoed statement matters as much as the volatile tokens. Postgres appends the failing statement to its error as `LINE n: <sql>`, and for a model build that statement is `CREATE TABLE "<schema>"."<node>" AS (SELECT ...)` — so it embeds the failing node's **own relation name**, plus a caret line whose indentation tracks that name's length. Keeping it keyed the signature on the victim rather than on the fault: two models broken by a single upstream change signed differently, and `SharedUpstreamCause` in `agent-remediation` — which clusters only on identical signatures — could never group them, so the shared cause was repaired once per victim instead of once at the source, silently. Everything the database says *ahead* of the marker is the diagnosis and is kept, so distinct faults (a missing column vs a missing relation, or two different tokens named by `at or near "x"`) still sign distinctly. The line anchor is what keeps the cut to echoed context: an engine that states the position inline instead of on its own line — Trino's `Query failed: line 5:8: <diagnosis>` — keeps its whole message, and that position is normalized with the other line/column numbers below rather than taking the diagnosis with it.
 
 After stripping, it folds the category with the normalized error text and returns a SHA-256 hex digest. The same underlying error yields an identical `error_signature` in two different releases, and also across two different nodes that failed for the same reason — which is what lets the downstream agent correlate recurring failures and group co-caused ones.
 

@@ -87,3 +87,29 @@ func TestNormalizeSignatureKeepsDiagnosticBeforeTheLineMarker(t *testing.T) {
 		t.Fatal(`the token named in "at or near" precedes the line marker and must stay in the signature`)
 	}
 }
+
+// Only a marker that opens its own line is the database's echoed statement.
+// Trino states its position inline — "Query failed: line 5:8: <diagnosis>" —
+// so an unanchored cut deleted the diagnosis itself and every Trino failure of
+// one model signed identically, clustering unrelated faults into one fix.
+func TestNormalizeSignatureKeepsAnInlineTrinoPosition(t *testing.T) {
+	header := "Database Error in model ftable_v (models/ftable_v.sql)\n"
+	missingColumn := header + "  Query failed: line 5:8: Column 'u.amount' cannot be resolved"
+	badOperator := header + "  Query failed: line 5:8: '=' cannot be applied to varchar, integer"
+
+	if NormalizeSignature(CategoryLogic, missingColumn) == NormalizeSignature(CategoryLogic, badOperator) {
+		t.Fatal("a Trino diagnosis stated after an inline position marker must stay in the signature")
+	}
+}
+
+// The same Trino fault hit by two sibling models must still collapse to one
+// signature: the inline position is normalized like any other line/column
+// number, so only the diagnosis text decides.
+func TestNormalizeSignatureGroupsTheSameTrinoFaultAcrossNodes(t *testing.T) {
+	forV := "Query failed: line 5:8: Column 'u.amount' cannot be resolved"
+	forW := "Query failed: line 7:3: Column 'u.amount' cannot be resolved"
+
+	if NormalizeSignature(CategoryLogic, forV) != NormalizeSignature(CategoryLogic, forW) {
+		t.Fatal("the same Trino fault at two positions must share one signature")
+	}
+}

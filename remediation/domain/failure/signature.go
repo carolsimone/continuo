@@ -8,9 +8,9 @@ import (
 )
 
 var (
-	// The database's echoed statement context: everything from the first
-	// "LINE <n>:" marker to the end of the message. Postgres appends the
-	// statement that failed, which for a model build is
+	// The database's echoed statement context: everything from a "LINE <n>:"
+	// marker that opens its own line to the end of the message. Postgres appends
+	// the statement that failed, which for a model build is
 	// `CREATE TABLE "<schema>"."<node>" AS (SELECT ...)` — so the text embeds
 	// the failing node's OWN relation name, plus a caret line whose indentation
 	// tracks that name's length. Two models broken by one upstream change then
@@ -18,7 +18,13 @@ var (
 	// grouping downstream (which clusters only on identical signatures) can
 	// never form a cluster. The marker onwards is echoed context, not diagnosis,
 	// so it is cut. Spans newlines so the caret line goes with it.
-	reEchoedStatement = regexp.MustCompile(`(?is)\s+line\s+\d+:.*$`)
+	//
+	// The leading newline is what makes it echoed context rather than diagnosis:
+	// only a marker that opens its own line is the statement Postgres appends.
+	// Engines that state the position inline instead — Trino's
+	// "Query failed: line 5:8: <diagnosis>" — keep their whole message, and the
+	// position itself is normalized later by reLineCol like any other one.
+	reEchoedStatement = regexp.MustCompile(`(?is)\n\s*line\s+\d+:.*$`)
 	// candidate_<hex|digits> — the per-release validation schema name.
 	reCandidateSchema = regexp.MustCompile(`candidate_[a-z0-9]+`)
 	// UUIDs / invocation ids.
