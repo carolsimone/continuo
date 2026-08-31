@@ -235,9 +235,9 @@ func main() {
 		// and reading the declarations a file holds are one yaml shape.
 		ContractInspector: contracts,
 		Packager:          packager,
-		Releases:         releaseGateway,
-		PriorAttempts:    proposalRepo,
-		SQLDialect:       cfg.SQLDialect,
+		Releases:          releaseGateway,
+		PriorAttempts:     proposalRepo,
+		SQLDialect:        cfg.SQLDialect,
 	}
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
@@ -299,6 +299,15 @@ func main() {
 		OpeningRecorder:    proposalSvc,
 		Failer:             proposalSvc,
 		OpeningGracePeriod: cfg.PROpeningGracePeriod,
+		// At a merged PR the reconciler byte-compares each edited file at the
+		// merge commit against the proposal to stamp per-edit amend flags on
+		// pr_closed: the source reader reads the merged file from GitHub, the S3
+		// store the proposed content and diff, the getter loads the proposal's
+		// edits, and ServiceRepoPaths splits them by owning service.
+		Getter:           proposalRepo,
+		Sources:          gh,
+		Evidence:         store,
+		ServiceRepoPaths: cfg.ServiceRepoPaths,
 	})
 	go reconciler.Run(ctx)
 

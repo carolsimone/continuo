@@ -125,10 +125,19 @@ func (s *Service) PRServices(v proposal.View) []string {
 // and enqueuePRClosed derive the resolved set through here, so pr_opened and
 // pr_closed name the same nodes as the claim the repository handed the caller.
 func (s *Service) resolvedForService(v proposal.View, service string) []string {
+	return resolvedNodesForService(s.serviceRepoPaths, v, service)
+}
+
+// resolvedNodesForService is the single implementation of the per-service
+// resolved-node subset, shared by the Service (pr_opened / pr_closed emission)
+// and the reconciler (which computes it directly from the View it loads when
+// mirroring a terminal outcome). Keeping one implementation guarantees
+// pr_opened and pr_closed name the same nodes however the outcome is recorded.
+func resolvedNodesForService(serviceRepoPaths map[string]string, v proposal.View, service string) []string {
 	if service == "" {
 		return v.FixedNodeIDs()
 	}
-	edits := proposal.GroupEditsByService(s.serviceRepoPaths, v.Edits)[service]
+	edits := proposal.GroupEditsByService(serviceRepoPaths, v.Edits)[service]
 	return proposal.IntersectSorted(proposal.MembersOfEdits(edits, nil), v.FixedNodeIDs())
 }
 

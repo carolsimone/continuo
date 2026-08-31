@@ -65,9 +65,70 @@ func newReconciler(l *fakeLister, c *fakeChecker, r *fakeRecorder) *proposals.Re
 		Lister:   l,
 		Checker:  c,
 		Recorder: r,
+		Getter:   &fakeGetter{},
+		Sources:  &fakeSourceReader{},
+		Evidence: &fakeEvidence{},
 		Clock:    fixedClock{},
 		Logger:   slog.Default(),
 	})
+}
+
+// fakeGetter returns a canned proposal View per id (or an injected error).
+type fakeGetter struct {
+	views map[string]proposal.View
+	errs  map[string]error
+}
+
+func (f *fakeGetter) Get(_ context.Context, id string) (proposal.View, error) {
+	if err, ok := f.errs[id]; ok {
+		return proposal.View{}, err
+	}
+	return f.views[id], nil
+}
+
+// fakeSourceReader returns canned merged file content keyed on ref+"\x00"+path;
+// an unset key returns ErrSourceNotFound (the adapter's 404 shape). reads counts
+// ReadFile calls so a test can assert the compare was skipped entirely.
+type fakeSourceReader struct {
+	files map[string]string
+	errs  map[string]error
+	reads int
+}
+
+func (f *fakeSourceReader) ReadFile(_ context.Context, _, ref, path string) (string, error) {
+	f.reads++
+	key := ref + "\x00" + path
+	if err, ok := f.errs[key]; ok {
+		return "", err
+	}
+	c, ok := f.files[key]
+	if !ok {
+		return "", ports.ErrSourceNotFound
+	}
+	return c, nil
+}
+
+func (f *fakeSourceReader) ListDir(context.Context, string, string, string) ([]string, error) {
+	return nil, nil
+}
+
+// fakeEvidence returns canned S3 object text per URI; fetches counts calls.
+type fakeEvidence struct {
+	objs    map[string]string
+	errs    map[string]error
+	fetches int
+}
+
+func (f *fakeEvidence) Fetch(_ context.Context, uri string) (string, error) {
+	f.fetches++
+	if err, ok := f.errs[uri]; ok {
+		return "", err
+	}
+	c, ok := f.objs[uri]
+	if !ok {
+		return "", ports.ErrNotFound
+	}
+	return c, nil
 }
 
 // TestReconcileOnce_MapsOutcomes verifies merged -> merged, closed-unmerged ->
@@ -126,6 +187,165 @@ func TestReconcileOnce_ZeroClosedAtFallsBackToClock(t *testing.T) {
 
 	require.Len(t, recorder.calls, 1)
 	require.Equal(t, fixedClock{}.Now(), recorder.calls[0].ClosedAt)
+}
+
+// amendServiceRepoPaths and amendView build a split proposal whose two edits
+// land under different services ("core" and "finance"), each fixing one node,
+// so a per-service PR's compare and resolved subset can be asserted to cover
+// only its own files and nodes.
+func amendServiceRepoPaths() map[string]string {
+	return map[string]string{"core": "services/core", "finance": "services/finance"}
+}
+
+func amendView() proposal.View {
+	return proposal.View{
+		ID:              "prop-1",
+		ReleaseID:       "rel-1",
+		Attempt:         1,
+		ResolvedNodeIDs: []string{"model.core.a", "model.finance.b"},
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"model.core.a":    {Status: proposal.StatusProposed},
+			"model.finance.b": {Status: proposal.StatusProposed},
+		},
+		Edits: []proposal.FileEdit{
+			{Path: "services/core/models/a.sql", ContentURI: "s3://b/core-content", DiffURI: "s3://b/core-diff",
+				TargetNodeID: "model.core.a", MemberNodeIDs: []string{"model.core.a"}},
+			{Path: "services/finance/models/b.sql", ContentURI: "s3://b/fin-content", DiffURI: "s3://b/fin-diff",
+				TargetNodeID: "model.finance.b", MemberNodeIDs: []string{"model.finance.b"}},
+		},
+	}
+}
+
+// TestReconcileOnce_MergedRunsAmendCompareOverServiceSubset verifies a merged
+// per-service PR drives resolveClosedEdits over ONLY that service's edits (the
+// finance edit is never fetched), stamps the human amendment it finds, and
+// passes both the resolved close detail and the per-service resolved node set
+// into RecordOutcome — the non-empty subset, not the empty-fallback the
+// outcome-mirror pass relies on.
+func TestReconcileOnce_MergedRunsAmendCompareOverServiceSubset(t *testing.T) {
+	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
+	lister := &fakeLister{prs: []proposal.OpenPR{
+		{ID: "prop-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Service: "core"},
+	}}
+	checker := &fakeChecker{statuses: map[int]ports.PRStatus{
+		7: {Closed: true, Merged: true, ClosedAt: closedAt, MergeCommitSHA: "mergesha"},
+	}}
+	getter := &fakeGetter{views: map[string]proposal.View{"prop-1": amendView()}}
+	// The merged core file differs from the proposal -> amended. Only the core
+	// URIs are stocked: were the finance edit compared, its content/diff fetch
+	// would miss and abort the whole resolution, so RecordOutcome would never
+	// fire — the assertions below would then fail, guarding the subset.
+	sources := &fakeSourceReader{files: map[string]string{
+		"mergesha\x00services/core/models/a.sql": "SELECT amended\n",
+	}}
+	evidence := &fakeEvidence{objs: map[string]string{
+		"s3://b/core-content": "SELECT original\n",
+		"s3://b/core-diff":    "core diff text",
+	}}
+	recorder := &fakeRecorder{}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:           lister,
+		Checker:          checker,
+		Recorder:         recorder,
+		Getter:           getter,
+		Sources:          sources,
+		Evidence:         evidence,
+		ServiceRepoPaths: amendServiceRepoPaths(),
+		Clock:            fixedClock{},
+		Logger:           slog.Default(),
+	})
+	rec.ReconcileOnce(context.Background())
+
+	require.Len(t, recorder.calls, 1)
+	call := recorder.calls[0]
+	require.Equal(t, "prop-1", call.ID)
+	require.Equal(t, "core", call.Service)
+	require.Equal(t, proposal.PROutcomeMerged, call.Outcome)
+	require.Equal(t, closedAt, call.ClosedAt)
+	require.Len(t, call.Edits, 1, "only the core service's edit is compared, not finance")
+	require.Equal(t, "services/core/models/a.sql", call.Edits[0].Path)
+	require.True(t, call.Edits[0].Amended, "the merged core file differs from the proposal")
+	require.Equal(t, "core diff text", call.Edits[0].Diff)
+	require.Equal(t, []string{"model.core.a"}, call.Resolved,
+		"RecordOutcome must receive the non-empty per-service resolved subset, not rely on the empty-fallback")
+}
+
+// TestReconcileOnce_MergedAmendCompareErrorRecordsNothing verifies a transient
+// fetch error during the amend compare leaves the row untouched — no
+// RecordOutcome this tick, so it stays 'open' for the next pass — and does NOT
+// flip the reconciler to degraded (only a PRStatus permission error does that).
+func TestReconcileOnce_MergedAmendCompareErrorRecordsNothing(t *testing.T) {
+	lister := &fakeLister{prs: []proposal.OpenPR{
+		{ID: "prop-1", Repo: "acme/r", PRNumber: 7, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Service: "core"},
+	}}
+	checker := &fakeChecker{statuses: map[int]ports.PRStatus{
+		7: {Closed: true, Merged: true, MergeCommitSHA: "mergesha"},
+	}}
+	getter := &fakeGetter{views: map[string]proposal.View{"prop-1": amendView()}}
+	sources := &fakeSourceReader{errs: map[string]error{
+		"mergesha\x00services/core/models/a.sql": errors.New("502 bad gateway"),
+	}}
+	evidence := &fakeEvidence{}
+	recorder := &fakeRecorder{}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:           lister,
+		Checker:          checker,
+		Recorder:         recorder,
+		Getter:           getter,
+		Sources:          sources,
+		Evidence:         evidence,
+		ServiceRepoPaths: amendServiceRepoPaths(),
+		Clock:            fixedClock{},
+		Logger:           slog.Default(),
+	})
+	rec.ReconcileOnce(context.Background())
+
+	require.Empty(t, recorder.calls, "a compare error must record nothing this tick")
+	require.False(t, rec.Degraded(), "a compare error must not flip the degraded health signal")
+}
+
+// TestReconcileOnce_RejectedSkipsAmendCompare verifies a rejected (closed but
+// not merged) PR records its outcome with no edits and never runs the amend
+// compare — no source or evidence read happens — while still naming the
+// per-service resolved node subset.
+func TestReconcileOnce_RejectedSkipsAmendCompare(t *testing.T) {
+	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
+	lister := &fakeLister{prs: []proposal.OpenPR{
+		{ID: "prop-1", Repo: "acme/r", PRNumber: 8, ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1, Service: "core"},
+	}}
+	checker := &fakeChecker{statuses: map[int]ports.PRStatus{
+		8: {Closed: true, Merged: false, ClosedAt: closedAt},
+	}}
+	getter := &fakeGetter{views: map[string]proposal.View{"prop-1": amendView()}}
+	// Would error if read, proving the compare is skipped for a rejected PR.
+	sources := &fakeSourceReader{errs: map[string]error{
+		"\x00services/core/models/a.sql": errors.New("must not be read"),
+	}}
+	evidence := &fakeEvidence{}
+	recorder := &fakeRecorder{}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:           lister,
+		Checker:          checker,
+		Recorder:         recorder,
+		Getter:           getter,
+		Sources:          sources,
+		Evidence:         evidence,
+		ServiceRepoPaths: amendServiceRepoPaths(),
+		Clock:            fixedClock{},
+		Logger:           slog.Default(),
+	})
+	rec.ReconcileOnce(context.Background())
+
+	require.Len(t, recorder.calls, 1)
+	call := recorder.calls[0]
+	require.Equal(t, proposal.PROutcomeRejected, call.Outcome)
+	require.Empty(t, call.Edits, "a rejected PR carries no per-file close detail")
+	require.Equal(t, []string{"model.core.a"}, call.Resolved)
+	require.Zero(t, sources.reads, "the amend compare must not read any source for a rejected PR")
+	require.Zero(t, evidence.fetches, "the amend compare must not fetch any evidence for a rejected PR")
 }
 
 // TestReconcileOnce_PermissionErrorMarksDegraded verifies a token that cannot

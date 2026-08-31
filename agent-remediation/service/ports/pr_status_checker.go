@@ -22,6 +22,10 @@ type PRStatus struct {
 	// ClosedAt is when GitHub closed the PR (the merge time for merged PRs).
 	// Zero while the PR is open or when GitHub omitted the timestamp.
 	ClosedAt time.Time
+	// MergeCommitSHA is the commit a merged PR produced on the base branch; the
+	// amend compare reads each edited file at this ref to check it against the
+	// proposal. Empty for an unmerged (rejected) PR.
+	MergeCommitSHA string
 }
 
 // PullRequestStatusChecker reads the current state of a pull request so the
