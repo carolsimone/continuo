@@ -83,6 +83,14 @@ type Proposal struct {
 	// verifications is one shadow release per edited service; the first entry
 	// is the view mirrored onto shadow_release_id.
 	Verifications []*Verification `protobuf:"bytes,32,rep,name=verifications,proto3" json:"verifications,omitempty"`
+	// pull_requests is one entry per (proposal, service) pull request; empty
+	// for a proposal that never entered the PR lifecycle. service = "" is the
+	// legacy whole-proposal group. The singular pr_* fields above mirror
+	// pull_requests[0] for old readers that predate the per-service split.
+	PullRequests []*PullRequest `protobuf:"bytes,33,rep,name=pull_requests,json=pullRequests,proto3" json:"pull_requests,omitempty"`
+	// pr_services is the sorted owning-service groups this proposal's pull
+	// requests split into; [""] for a legacy (unsplit) proposal.
+	PrServices    []string `protobuf:"bytes,34,rep,name=pr_services,json=prServices,proto3" json:"pr_services,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -341,6 +349,20 @@ func (x *Proposal) GetVerifications() []*Verification {
 	return nil
 }
 
+func (x *Proposal) GetPullRequests() []*PullRequest {
+	if x != nil {
+		return x.PullRequests
+	}
+	return nil
+}
+
+func (x *Proposal) GetPrServices() []string {
+	if x != nil {
+		return x.PrServices
+	}
+	return nil
+}
+
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
 type ListProposalsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -500,8 +522,11 @@ func (x *GetProposalRequest) GetId() string {
 
 // BeginPullRequestRequest identifies the proposal to claim for PR creation.
 type BeginPullRequestRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// service is the owning-service group to claim; "" is the legacy
+	// whole-proposal group. Must be one of the proposal's pr_services.
+	Service       string `protobuf:"bytes,2,opt,name=service,proto3" json:"service,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -543,6 +568,13 @@ func (x *BeginPullRequestRequest) GetId() string {
 	return ""
 }
 
+func (x *BeginPullRequestRequest) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
 // BeginPullRequestResponse carries all data needed to open a GitHub pull-request.
 type BeginPullRequestResponse struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
@@ -575,8 +607,11 @@ type BeginPullRequestResponse struct {
 	// resolved_node_ids is the failing nodes this attempt addresses, sorted;
 	// node_id is their representative.
 	ResolvedNodeIds []string `protobuf:"bytes,16,rep,name=resolved_node_ids,json=resolvedNodeIds,proto3" json:"resolved_node_ids,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// service is the owning-service group this claim covers, echoing the
+	// request's service; "" is the legacy whole-proposal group.
+	Service       string `protobuf:"bytes,17,opt,name=service,proto3" json:"service,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BeginPullRequestResponse) Reset() {
@@ -721,13 +756,23 @@ func (x *BeginPullRequestResponse) GetResolvedNodeIds() []string {
 	return nil
 }
 
+func (x *BeginPullRequestResponse) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
 type RecordPullRequestRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	PrUrl         string                 `protobuf:"bytes,2,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
-	PrNumber      int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
-	OpenedBy      string                 `protobuf:"bytes,4,opt,name=opened_by,json=openedBy,proto3" json:"opened_by,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	PrUrl    string                 `protobuf:"bytes,2,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
+	PrNumber int32                  `protobuf:"varint,3,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
+	OpenedBy string                 `protobuf:"bytes,4,opt,name=opened_by,json=openedBy,proto3" json:"opened_by,omitempty"`
+	// service is the owning-service group this PR covers; "" is the legacy
+	// whole-proposal group.
+	Service       string `protobuf:"bytes,5,opt,name=service,proto3" json:"service,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -790,6 +835,13 @@ func (x *RecordPullRequestRequest) GetOpenedBy() string {
 	return ""
 }
 
+func (x *RecordPullRequestRequest) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
 type RecordPullRequestResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -835,7 +887,10 @@ type FailPullRequestRequest struct {
 	// against the row's current pr_claimed_at before resetting anything, so a
 	// claim already released and re-claimed by someone else is left untouched
 	// instead of being reset out from under its new owner.
-	ClaimedAt     string `protobuf:"bytes,2,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
+	ClaimedAt string `protobuf:"bytes,2,opt,name=claimed_at,json=claimedAt,proto3" json:"claimed_at,omitempty"`
+	// service is the owning-service group this claim covers; "" is the legacy
+	// whole-proposal group.
+	Service       string `protobuf:"bytes,3,opt,name=service,proto3" json:"service,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -880,6 +935,13 @@ func (x *FailPullRequestRequest) GetId() string {
 func (x *FailPullRequestRequest) GetClaimedAt() string {
 	if x != nil {
 		return x.ClaimedAt
+	}
+	return ""
+}
+
+func (x *FailPullRequestRequest) GetService() string {
+	if x != nil {
+		return x.Service
 	}
 	return ""
 }
@@ -1120,11 +1182,129 @@ func (x *Verification) GetShadowReleaseId() string {
 	return ""
 }
 
+// PullRequest is one pull request opened from a proposal, mirroring
+// proposal.PullRequest. One entry per (proposal, service) split; service =
+// "" is the legacy whole-proposal group.
+type PullRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Service  string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
+	Repo     string                 `protobuf:"bytes,2,opt,name=repo,proto3" json:"repo,omitempty"`
+	Branch   string                 `protobuf:"bytes,3,opt,name=branch,proto3" json:"branch,omitempty"`
+	PrUrl    string                 `protobuf:"bytes,4,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
+	PrNumber int32                  `protobuf:"varint,5,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
+	// pr_state is the terminal state from GitHub: "merged" or "rejected", or
+	// "open" while the PR has not yet closed.
+	PrState string `protobuf:"bytes,6,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
+	// pr_opened_at is an RFC3339-formatted timestamp string, empty when not
+	// yet set.
+	PrOpenedAt string `protobuf:"bytes,7,opt,name=pr_opened_at,json=prOpenedAt,proto3" json:"pr_opened_at,omitempty"`
+	PrOpenedBy string `protobuf:"bytes,8,opt,name=pr_opened_by,json=prOpenedBy,proto3" json:"pr_opened_by,omitempty"`
+	// pr_closed_at is an RFC3339-formatted timestamp string, empty until the
+	// PR reaches a terminal outcome (pr_state 'merged' or 'rejected').
+	PrClosedAt    string `protobuf:"bytes,9,opt,name=pr_closed_at,json=prClosedAt,proto3" json:"pr_closed_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PullRequest) Reset() {
+	*x = PullRequest{}
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullRequest) ProtoMessage() {}
+
+func (x *PullRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_remediation_v1_remediation_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullRequest.ProtoReflect.Descriptor instead.
+func (*PullRequest) Descriptor() ([]byte, []int) {
+	return file_proto_remediation_v1_remediation_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PullRequest) GetService() string {
+	if x != nil {
+		return x.Service
+	}
+	return ""
+}
+
+func (x *PullRequest) GetRepo() string {
+	if x != nil {
+		return x.Repo
+	}
+	return ""
+}
+
+func (x *PullRequest) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
+}
+
+func (x *PullRequest) GetPrUrl() string {
+	if x != nil {
+		return x.PrUrl
+	}
+	return ""
+}
+
+func (x *PullRequest) GetPrNumber() int32 {
+	if x != nil {
+		return x.PrNumber
+	}
+	return 0
+}
+
+func (x *PullRequest) GetPrState() string {
+	if x != nil {
+		return x.PrState
+	}
+	return ""
+}
+
+func (x *PullRequest) GetPrOpenedAt() string {
+	if x != nil {
+		return x.PrOpenedAt
+	}
+	return ""
+}
+
+func (x *PullRequest) GetPrOpenedBy() string {
+	if x != nil {
+		return x.PrOpenedBy
+	}
+	return ""
+}
+
+func (x *PullRequest) GetPrClosedAt() string {
+	if x != nil {
+		return x.PrClosedAt
+	}
+	return ""
+}
+
 var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xde\t\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xc1\n" +
+	"\n" +
 	"\bProposal\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1d\n" +
@@ -1166,7 +1346,10 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x11remediation_round\x18\x1d \x01(\x05R\x10remediationRound\x12*\n" +
 	"\x11resolved_node_ids\x18\x1e \x03(\tR\x0fresolvedNodeIds\x12O\n" +
 	"\rnode_outcomes\x18\x1f \x03(\v2*.remediation.v1.Proposal.NodeOutcomesEntryR\fnodeOutcomes\x12B\n" +
-	"\rverifications\x18  \x03(\v2\x1c.remediation.v1.VerificationR\rverifications\x1a\\\n" +
+	"\rverifications\x18  \x03(\v2\x1c.remediation.v1.VerificationR\rverifications\x12@\n" +
+	"\rpull_requests\x18! \x03(\v2\x1b.remediation.v1.PullRequestR\fpullRequests\x12\x1f\n" +
+	"\vpr_services\x18\" \x03(\tR\n" +
+	"prServices\x1a\\\n" +
 	"\x11NodeOutcomesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
 	"\x05value\x18\x02 \x01(\v2\x1b.remediation.v1.NodeOutcomeR\x05value:\x028\x01\"~\n" +
@@ -1179,9 +1362,10 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x15ListProposalsResponse\x126\n" +
 	"\tproposals\x18\x01 \x03(\v2\x18.remediation.v1.ProposalR\tproposals\"$\n" +
 	"\x12GetProposalRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\")\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"C\n" +
 	"\x17BeginPullRequestRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"\x89\x04\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
+	"\aservice\x18\x02 \x01(\tR\aservice\"\xa3\x04\n" +
 	"\x18BeginPullRequestResponse\x12\x1f\n" +
 	"\vproposal_id\x18\x01 \x01(\tR\n" +
 	"proposalId\x12\x12\n" +
@@ -1205,17 +1389,20 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
 	"claimed_at\x18\x0e \x01(\tR\tclaimedAt\x12.\n" +
 	"\x05edits\x18\x0f \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12*\n" +
-	"\x11resolved_node_ids\x18\x10 \x03(\tR\x0fresolvedNodeIds\"{\n" +
+	"\x11resolved_node_ids\x18\x10 \x03(\tR\x0fresolvedNodeIds\x12\x18\n" +
+	"\aservice\x18\x11 \x01(\tR\aservice\"\x95\x01\n" +
 	"\x18RecordPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +
 	"\tpr_number\x18\x03 \x01(\x05R\bprNumber\x12\x1b\n" +
-	"\topened_by\x18\x04 \x01(\tR\bopenedBy\"\x1b\n" +
-	"\x19RecordPullRequestResponse\"G\n" +
+	"\topened_by\x18\x04 \x01(\tR\bopenedBy\x12\x18\n" +
+	"\aservice\x18\x05 \x01(\tR\aservice\"\x1b\n" +
+	"\x19RecordPullRequestResponse\"a\n" +
 	"\x16FailPullRequestRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
-	"claimed_at\x18\x02 \x01(\tR\tclaimedAt\"5\n" +
+	"claimed_at\x18\x02 \x01(\tR\tclaimedAt\x12\x18\n" +
+	"\aservice\x18\x03 \x01(\tR\aservice\"5\n" +
 	"\x17FailPullRequestResponse\x12\x1a\n" +
 	"\breleased\x18\x01 \x01(\bR\breleased\"\x80\x01\n" +
 	"\bFileEdit\x12\x12\n" +
@@ -1230,7 +1417,20 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\fVerification\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12*\n" +
-	"\x11shadow_release_id\x18\x03 \x01(\tR\x0fshadowReleaseId2\xf6\x03\n" +
+	"\x11shadow_release_id\x18\x03 \x01(\tR\x0fshadowReleaseId\"\x88\x02\n" +
+	"\vPullRequest\x12\x18\n" +
+	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
+	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x16\n" +
+	"\x06branch\x18\x03 \x01(\tR\x06branch\x12\x15\n" +
+	"\x06pr_url\x18\x04 \x01(\tR\x05prUrl\x12\x1b\n" +
+	"\tpr_number\x18\x05 \x01(\x05R\bprNumber\x12\x19\n" +
+	"\bpr_state\x18\x06 \x01(\tR\aprState\x12 \n" +
+	"\fpr_opened_at\x18\a \x01(\tR\n" +
+	"prOpenedAt\x12 \n" +
+	"\fpr_opened_by\x18\b \x01(\tR\n" +
+	"prOpenedBy\x12 \n" +
+	"\fpr_closed_at\x18\t \x01(\tR\n" +
+	"prClosedAt2\xf6\x03\n" +
 	"\x14RemediationProposals\x12\\\n" +
 	"\rListProposals\x12$.remediation.v1.ListProposalsRequest\x1a%.remediation.v1.ListProposalsResponse\x12K\n" +
 	"\vGetProposal\x12\".remediation.v1.GetProposalRequest\x1a\x18.remediation.v1.Proposal\x12e\n" +
@@ -1250,7 +1450,7 @@ func file_proto_remediation_v1_remediation_proto_rawDescGZIP() []byte {
 	return file_proto_remediation_v1_remediation_proto_rawDescData
 }
 
-var file_proto_remediation_v1_remediation_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_proto_remediation_v1_remediation_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_proto_remediation_v1_remediation_proto_goTypes = []any{
 	(*Proposal)(nil),                  // 0: remediation.v1.Proposal
 	(*ListProposalsRequest)(nil),      // 1: remediation.v1.ListProposalsRequest
@@ -1265,30 +1465,32 @@ var file_proto_remediation_v1_remediation_proto_goTypes = []any{
 	(*FileEdit)(nil),                  // 10: remediation.v1.FileEdit
 	(*NodeOutcome)(nil),               // 11: remediation.v1.NodeOutcome
 	(*Verification)(nil),              // 12: remediation.v1.Verification
-	nil,                               // 13: remediation.v1.Proposal.NodeOutcomesEntry
+	(*PullRequest)(nil),               // 13: remediation.v1.PullRequest
+	nil,                               // 14: remediation.v1.Proposal.NodeOutcomesEntry
 }
 var file_proto_remediation_v1_remediation_proto_depIdxs = []int32{
 	10, // 0: remediation.v1.Proposal.edits:type_name -> remediation.v1.FileEdit
-	13, // 1: remediation.v1.Proposal.node_outcomes:type_name -> remediation.v1.Proposal.NodeOutcomesEntry
+	14, // 1: remediation.v1.Proposal.node_outcomes:type_name -> remediation.v1.Proposal.NodeOutcomesEntry
 	12, // 2: remediation.v1.Proposal.verifications:type_name -> remediation.v1.Verification
-	0,  // 3: remediation.v1.ListProposalsResponse.proposals:type_name -> remediation.v1.Proposal
-	10, // 4: remediation.v1.BeginPullRequestResponse.edits:type_name -> remediation.v1.FileEdit
-	11, // 5: remediation.v1.Proposal.NodeOutcomesEntry.value:type_name -> remediation.v1.NodeOutcome
-	1,  // 6: remediation.v1.RemediationProposals.ListProposals:input_type -> remediation.v1.ListProposalsRequest
-	3,  // 7: remediation.v1.RemediationProposals.GetProposal:input_type -> remediation.v1.GetProposalRequest
-	4,  // 8: remediation.v1.RemediationProposals.BeginPullRequest:input_type -> remediation.v1.BeginPullRequestRequest
-	6,  // 9: remediation.v1.RemediationProposals.RecordPullRequest:input_type -> remediation.v1.RecordPullRequestRequest
-	8,  // 10: remediation.v1.RemediationProposals.FailPullRequest:input_type -> remediation.v1.FailPullRequestRequest
-	2,  // 11: remediation.v1.RemediationProposals.ListProposals:output_type -> remediation.v1.ListProposalsResponse
-	0,  // 12: remediation.v1.RemediationProposals.GetProposal:output_type -> remediation.v1.Proposal
-	5,  // 13: remediation.v1.RemediationProposals.BeginPullRequest:output_type -> remediation.v1.BeginPullRequestResponse
-	7,  // 14: remediation.v1.RemediationProposals.RecordPullRequest:output_type -> remediation.v1.RecordPullRequestResponse
-	9,  // 15: remediation.v1.RemediationProposals.FailPullRequest:output_type -> remediation.v1.FailPullRequestResponse
-	11, // [11:16] is the sub-list for method output_type
-	6,  // [6:11] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	13, // 3: remediation.v1.Proposal.pull_requests:type_name -> remediation.v1.PullRequest
+	0,  // 4: remediation.v1.ListProposalsResponse.proposals:type_name -> remediation.v1.Proposal
+	10, // 5: remediation.v1.BeginPullRequestResponse.edits:type_name -> remediation.v1.FileEdit
+	11, // 6: remediation.v1.Proposal.NodeOutcomesEntry.value:type_name -> remediation.v1.NodeOutcome
+	1,  // 7: remediation.v1.RemediationProposals.ListProposals:input_type -> remediation.v1.ListProposalsRequest
+	3,  // 8: remediation.v1.RemediationProposals.GetProposal:input_type -> remediation.v1.GetProposalRequest
+	4,  // 9: remediation.v1.RemediationProposals.BeginPullRequest:input_type -> remediation.v1.BeginPullRequestRequest
+	6,  // 10: remediation.v1.RemediationProposals.RecordPullRequest:input_type -> remediation.v1.RecordPullRequestRequest
+	8,  // 11: remediation.v1.RemediationProposals.FailPullRequest:input_type -> remediation.v1.FailPullRequestRequest
+	2,  // 12: remediation.v1.RemediationProposals.ListProposals:output_type -> remediation.v1.ListProposalsResponse
+	0,  // 13: remediation.v1.RemediationProposals.GetProposal:output_type -> remediation.v1.Proposal
+	5,  // 14: remediation.v1.RemediationProposals.BeginPullRequest:output_type -> remediation.v1.BeginPullRequestResponse
+	7,  // 15: remediation.v1.RemediationProposals.RecordPullRequest:output_type -> remediation.v1.RecordPullRequestResponse
+	9,  // 16: remediation.v1.RemediationProposals.FailPullRequest:output_type -> remediation.v1.FailPullRequestResponse
+	12, // [12:17] is the sub-list for method output_type
+	7,  // [7:12] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_proto_remediation_v1_remediation_proto_init() }
@@ -1302,7 +1504,7 @@ func file_proto_remediation_v1_remediation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_remediation_v1_remediation_proto_rawDesc), len(file_proto_remediation_v1_remediation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

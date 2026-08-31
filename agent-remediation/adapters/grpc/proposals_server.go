@@ -21,7 +21,7 @@ import (
 // ProposalService is the subset of proposals.Service methods consumed by the
 // gRPC server. Declaring it here (rather than accepting *proposals.Service
 // directly) keeps the adapter testable without a real database: any
-// struct implementing these five methods satisfies the interface.
+// struct implementing these methods satisfies the interface.
 type ProposalService interface {
 	List(ctx context.Context, filter repository.ProposalFilter) ([]proposal.View, error)
 	Get(ctx context.Context, id string) (proposal.View, error)
@@ -35,6 +35,10 @@ type ProposalService interface {
 	// resetting a claim someone else already took over. hit reports whether
 	// the CAS fired; false is not an error.
 	FailStuckClaim(ctx context.Context, id, service string, observedClaimedAt time.Time) (hit bool, err error)
+	// PRServices returns the owning-service groups v's pull requests split
+	// into, sorted; [""] for a legacy (unsplit) proposal. It is a pure
+	// passthrough over v, requiring no context or lookup.
+	PRServices(v proposal.View) []string
 }
 
 // Compile-time assertion: *proposals.Service satisfies ProposalService.
@@ -71,7 +75,7 @@ func (s *ProposalsServer) ListProposals(ctx context.Context, req *remediationv1.
 	}
 	proto := make([]*remediationv1.Proposal, 0, len(views))
 	for i := range views {
-		proto = append(proto, viewToProto(views[i]))
+		proto = append(proto, viewToProto(views[i], s.svc.PRServices(views[i])))
 	}
 	return &remediationv1.ListProposalsResponse{Proposals: proto}, nil
 }
@@ -83,22 +87,24 @@ func (s *ProposalsServer) GetProposal(ctx context.Context, req *remediationv1.Ge
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
-	return viewToProto(v), nil
+	return viewToProto(v, s.svc.PRServices(v)), nil
 }
 
-// BeginPullRequest atomically claims a proposal for PR creation and returns
-// the data needed to open the GitHub pull-request, including claimed_at — the
-// persisted pr_claimed_at for this claim, which the caller must present back
-// to FailPullRequest to release this exact claim. Returns FAILED_PRECONDITION
-// when the proposal is already claimed (carrying the existing pr_url in the
-// message), when source resolution has not completed, or when the attempt has
-// not reached 'proposed' — a fix still being generated or verified, or one a
-// shadow release rejected, is not one a pull request may be opened for. Returns
-// NOT_FOUND when the proposal does not exist.
+// BeginPullRequest atomically claims a proposal's (or one owning-service
+// group's) pull request for creation and returns the data needed to open the
+// GitHub pull-request, including claimed_at — the persisted pr_claimed_at for
+// this claim, which the caller must present back to FailPullRequest to
+// release this exact claim. req.Service selects the owning-service group to
+// claim; "" is the legacy whole-proposal group. Returns INVALID_ARGUMENT when
+// req.Service is not one of the proposal's PRServices. Returns
+// FAILED_PRECONDITION when the proposal is already claimed (carrying the
+// existing pr_url in the message), when source resolution has not completed,
+// or when the attempt has not reached 'proposed' — a fix still being
+// generated or verified, or one a shadow release rejected, is not one a pull
+// request may be opened for. Returns NOT_FOUND when the proposal does not
+// exist.
 func (s *ProposalsServer) BeginPullRequest(ctx context.Context, req *remediationv1.BeginPullRequestRequest) (*remediationv1.BeginPullRequestResponse, error) {
-	// The whole-proposal "" group until the request carries a service field and
-	// this server maps it through (Task 7); a legacy proposal is claimed here.
-	claim, err := s.svc.Begin(ctx, req.Id, "")
+	claim, err := s.svc.Begin(ctx, req.Id, req.Service)
 	if err != nil {
 		if errors.Is(err, repository.ErrPRConflict) {
 			// Attempt a best-effort fetch of the current pr_url so the caller
@@ -115,10 +121,13 @@ func (s *ProposalsServer) BeginPullRequest(ctx context.Context, req *remediation
 }
 
 // RecordPullRequest stores the PR URL, number, and opener after a PR is
-// opened. Returns NOT_FOUND when the proposal does not exist.
+// opened. req.Service identifies which owning-service group's PR this is;
+// "" is the legacy whole-proposal group. Returns NOT_FOUND when the proposal
+// does not exist.
 func (s *ProposalsServer) RecordPullRequest(ctx context.Context, req *remediationv1.RecordPullRequestRequest) (*remediationv1.RecordPullRequestResponse, error) {
 	in := proposals.RecordInput{
 		ProposalID: req.Id,
+		Service:    req.Service,
 		PrURL:      req.PrUrl,
 		PrNumber:   int(req.PrNumber),
 		OpenedBy:   req.OpenedBy,
@@ -129,15 +138,16 @@ func (s *ProposalsServer) RecordPullRequest(ctx context.Context, req *remediatio
 	return &remediationv1.RecordPullRequestResponse{}, nil
 }
 
-// FailPullRequest releases the 'opening' claim identified by req.Id back to
+// FailPullRequest releases the (req.Id, req.Service) 'opening' claim back to
 // 'failed' so it can be retried, but only if the row's current pr_claimed_at
 // still equals req.ClaimedAt — the compare-and-set guard that keeps a caller
 // from resetting a claim someone else (a re-claim, or the reconciler's
-// opening sweep) has already taken over since. req.ClaimedAt must be the
-// value BeginPullRequest returned for this same claim. Returns
-// INVALID_ARGUMENT when claimed_at is missing or not RFC3339. The response's
-// released field is false, not an error, when the CAS did not fire because
-// the claim had already moved on.
+// opening sweep) has already taken over since. req.Service is "" for the
+// legacy whole-proposal claim. req.ClaimedAt must be the value
+// BeginPullRequest returned for this same claim. Returns INVALID_ARGUMENT
+// when claimed_at is missing or not RFC3339. The response's released field is
+// false, not an error, when the CAS did not fire because the claim had
+// already moved on.
 func (s *ProposalsServer) FailPullRequest(ctx context.Context, req *remediationv1.FailPullRequestRequest) (*remediationv1.FailPullRequestResponse, error) {
 	if req.ClaimedAt == "" {
 		return nil, status.Error(codes.InvalidArgument, "claimed_at is required")
@@ -146,9 +156,7 @@ func (s *ProposalsServer) FailPullRequest(ctx context.Context, req *remediationv
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid claimed_at: %v", err)
 	}
-	// The whole-proposal "" group until the request carries a service field and
-	// this server maps it through (Task 7).
-	hit, err := s.svc.FailStuckClaim(ctx, req.Id, "", claimedAt)
+	hit, err := s.svc.FailStuckClaim(ctx, req.Id, req.Service, claimedAt)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -167,6 +175,11 @@ func toGRPCError(err error) error {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, repository.ErrNotProposed):
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, proposals.ErrUnknownService):
+		// The caller passed a service argument that names none of this
+		// proposal's PRServices — a malformed request, not a missing
+		// resource or a state conflict.
+		return status.Error(codes.InvalidArgument, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}
@@ -226,10 +239,46 @@ func verificationsToProto(verifications []proposal.Verification) []*remediationv
 	return out
 }
 
+// pullRequestsToProto converts a slice of domain proposal.PullRequest values
+// to the proto representation. A nil or empty input produces a nil slice
+// rather than a list containing a zero-valued element — a proposal that never
+// entered the PR lifecycle reaches this path.
+func pullRequestsToProto(prs []proposal.PullRequest) []*remediationv1.PullRequest {
+	if len(prs) == 0 {
+		return nil
+	}
+	out := make([]*remediationv1.PullRequest, 0, len(prs))
+	for _, p := range prs {
+		var openedAt string
+		if p.PrOpenedAt != nil {
+			openedAt = p.PrOpenedAt.Format(time.RFC3339)
+		}
+		var closedAt string
+		if p.PrClosedAt != nil {
+			closedAt = p.PrClosedAt.Format(time.RFC3339)
+		}
+		out = append(out, &remediationv1.PullRequest{
+			Service:    p.Service,
+			Repo:       p.Repo,
+			Branch:     p.Branch,
+			PrUrl:      p.PrURL,
+			PrNumber:   num.ClampInt32(p.PrNumber),
+			PrState:    p.PrState,
+			PrOpenedAt: openedAt,
+			PrOpenedBy: p.PrOpenedBy,
+			PrClosedAt: closedAt,
+		})
+	}
+	return out
+}
+
 // viewToProto converts a domain proposal.View to the proto Proposal message.
 // Timestamps are formatted as RFC3339 strings; a nil PrOpenedAt produces an
-// empty string.
-func viewToProto(v proposal.View) *remediationv1.Proposal {
+// empty string. pull_requests is mapped from v.PullRequests; prServices — the
+// caller's s.svc.PRServices(v) result — becomes pr_services verbatim. The
+// singular pr_* fields above are already the first child row's view (View
+// carries them mirrored per Task 4), so they need no extra mapping here.
+func viewToProto(v proposal.View, prServices []string) *remediationv1.Proposal {
 	var prOpenedAt string
 	if v.PrOpenedAt != nil {
 		prOpenedAt = v.PrOpenedAt.Format(time.RFC3339)
@@ -271,6 +320,8 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		ResolvedNodeIds:     v.ResolvedNodeIDs,
 		NodeOutcomes:        nodeOutcomesToProto(v.NodeOutcomes),
 		Verifications:       verificationsToProto(v.Verifications),
+		PullRequests:        pullRequestsToProto(v.PullRequests),
+		PrServices:          prServices,
 	}
 }
 
@@ -293,5 +344,6 @@ func claimToProto(c proposal.PRClaim) *remediationv1.BeginPullRequestResponse {
 		ClaimedAt:       c.ClaimedAt.Format(time.RFC3339),
 		Edits:           editsToProto(c.Edits),
 		ResolvedNodeIds: c.ResolvedNodeIDs,
+		Service:         c.Service,
 	}
 }
