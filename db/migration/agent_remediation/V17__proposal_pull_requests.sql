@@ -28,6 +28,12 @@ CREATE INDEX idx_ppr_live ON proposal_pull_request (pr_state)
 -- Backfill: every proposal that ever entered the PR lifecycle gets one legacy
 -- child row (service = '') carrying its singular columns verbatim. The branch
 -- reproduces BuildBranch(release_id, attempt) for the legacy shape.
+--
+-- The reconstructed branch is informational for backfilled rows: it reproduces
+-- the current naming scheme from today's release_id/attempt values, which for rows
+-- predating the batched-identity renumbering may not equal the branch actually
+-- pushed to GitHub. No code path uses this column to look up a legacy PR — recovery
+-- recomputes the branch and the close-loop polls by pr_number.
 INSERT INTO proposal_pull_request
     (proposal_id, service, repo, branch, pr_state, pr_url, pr_number,
      pr_claimed_at, pr_opened_at, pr_opened_by, pr_closed_at)
