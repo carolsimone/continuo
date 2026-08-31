@@ -136,7 +136,8 @@ func (r *PrecedentQueryRepository) Precedents(
 		       rej.at AS at,
 		       `+failingCode+`
 		       coalesce(rej.content_hash, '') AS content_hash,
-		       res { .* } AS res, prior { .* } AS prior, res_is_current, proposals
+		       res { .* } AS res, prior { .* } AS prior, res_is_current, proposals,
+		       exists { (rej)-[:RESOLVED_BY]->(:Proposal) } AS resolved_by_proposal
 	`, map[string]any{"keys": keys})
 	if err != nil {
 		return nil, fmt.Errorf("precedent detail query: %w", err)
@@ -166,6 +167,7 @@ func (r *PrecedentQueryRepository) Precedents(
 			v.ResolvingVersion.IsCurrent = recordBool(rec, "res_is_current")
 		}
 		v.PriorVersion = versionViewFromProps(rec, "prior")
+		v.ResolvedByProposal = recordBool(rec, "resolved_by_proposal")
 		if raw, ok := rec.Get("proposals"); ok {
 			if list, ok := raw.([]any); ok {
 				for _, item := range list {

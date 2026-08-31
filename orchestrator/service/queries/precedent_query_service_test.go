@@ -141,6 +141,31 @@ func TestPrecedentService_AmendedEditRendersMergedTruthDiff(t *testing.T) {
 	assert.Contains(t, p.Edited[0].Diff, "+select 2")
 }
 
+func TestPrecedentService_ProposalResolvedWithoutDrawnEditsIsResolved(t *testing.T) {
+	// A rejection resolved by a merged PR whose EDITED targets were all absent
+	// from the graph: the reader surfaces ResolvedByProposal=true but no Edited
+	// rows and no own-timeline version. The service must still report Resolved.
+	r := &fakePrecedentReader{views: []casebase.PrecedentView{
+		{
+			Rejection:          casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+			ResolvingVersion:   nil,
+			Edited:             nil,
+			ResolvedByProposal: true,
+		},
+	}}
+	svc := newPrecedentSvc(r)
+
+	out, err := svc.GetPrecedents(context.Background(), "sig-1", "", "", 5, true)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+
+	p := out[0]
+	assert.True(t, p.Resolved, "a proposal-resolved rejection is resolved even with no drawn edits")
+	assert.Nil(t, p.ResolvingVersion, "no own-timeline version to show")
+	assert.Empty(t, p.Edited, "no fabricated edited provenance when none was drawn")
+	assert.Empty(t, p.ResolutionDiff)
+}
+
 func TestPrecedentService_UnresolvedHasNoDiff(t *testing.T) {
 	r := &fakePrecedentReader{views: []casebase.PrecedentView{
 		{

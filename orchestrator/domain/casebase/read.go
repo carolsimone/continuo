@@ -36,12 +36,20 @@ type EditedView struct {
 // resolving version and the version it superseded (next-older by promoted_at)
 // so the service can render the resolution diff, plus any edited-node
 // provenance carried by a merged fix PR that resolved it.
+//
+// ResolvedByProposal reports whether the rejection carries a
+// [:RESOLVED_BY]->(:Proposal) edge — the same proposal-resolved signal the
+// identity query uses for resolved-first ordering. It is surfaced here so the
+// service's Resolved boolean agrees with that ordering even when the merged PR
+// drew no [:EDITED] edges (all edit targets were absent from the graph), so a
+// genuinely-fixed rejection is never rendered as unresolved.
 type PrecedentView struct {
-	Rejection        Rejection
-	ResolvingVersion *codeversion.VersionView
-	PriorVersion     *codeversion.VersionView
-	Proposals        []ProposalView
-	Edited           []EditedView
+	Rejection          Rejection
+	ResolvingVersion   *codeversion.VersionView
+	PriorVersion       *codeversion.VersionView
+	Proposals          []ProposalView
+	Edited             []EditedView
+	ResolvedByProposal bool
 }
 
 // Precedent is the rendered precedent entry served to frontends: the

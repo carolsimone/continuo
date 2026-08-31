@@ -52,8 +52,13 @@ func (s *PrecedentQueryService) GetPrecedents(
 	out := make([]casebase.Precedent, 0, len(views))
 	for _, v := range views {
 		p := casebase.Precedent{
-			Rejection:        v.Rejection,
-			Resolved:         v.ResolvingVersion != nil || len(v.Edited) > 0,
+			Rejection: v.Rejection,
+			// A precedent is resolved by an own-timeline version, by a merged
+			// PR's drawn edits, or — even when that PR drew no edits because
+			// every edit target was absent from the graph — by the presence of
+			// the [:RESOLVED_BY]->(:Proposal) edge itself, so Resolved agrees
+			// with the identity query's resolved-first ordering.
+			Resolved:         v.ResolvingVersion != nil || len(v.Edited) > 0 || v.ResolvedByProposal,
 			ResolvingVersion: v.ResolvingVersion,
 			Proposals:        v.Proposals,
 		}

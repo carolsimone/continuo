@@ -660,6 +660,90 @@ func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
 	assert.Equal(t, "select before", e.MergedPrior.RawCode)
 }
 
+// TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByProposal
+// verifies the detail query surfaces the proposal-resolved signal even when the
+// merged PR drew NO [:EDITED] edges — every edit target was absent from the
+// graph, so RecordPullRequestOutcome skipped them (it never mints a :Table).
+// The rejection is genuinely fixed and the identity query already counts it
+// resolved-first; ResolvedByProposal must be true so the service's Resolved
+// boolean agrees, with no Edited rows and no own-timeline version.
+func TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByProposal(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	relA, nodeA := marker+"-rel-a", marker+"-node-a"
+	proposalID := marker + "-proposal"
+	missing := marker + "-missing" // edit target that is NOT in the graph
+	closedAt := t0.Add(2 * time.Hour)
+
+	seedPrecedentRejection(t, client, relA, nodeA, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+
+	repo := newCaseBaseRepo(client)
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: relA, NodeID: nodeA},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/repo/pull/13", PrNumber: 13,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
+		}))
+	// Merged: resolves nodeA, but the sole edit's target :Table is absent, so no
+	// [:EDITED] edge is drawn.
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: relA, Service: "core",
+		Outcome: "merged", ClosedAt: closedAt,
+		ResolvedNodeIDs: []string{nodeA},
+		Edits: []casebase.EditOutcome{
+			{Path: "models/absent.sql", TargetNodeID: missing, Amended: false, Diff: "D-absent"},
+		},
+	}))
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	p := precedents[0]
+	assert.True(t, p.ResolvedByProposal,
+		"a RESOLVED_BY->(:Proposal) edge must surface even when no EDITED edge was drawn")
+	assert.Empty(t, p.Edited, "no EDITED edge was drawn for an absent target")
+	assert.Nil(t, p.ResolvingVersion, "there is no own-timeline resolving version")
+}
+
+// TestPrecedentReader_UnresolvedRejectionIsNotResolvedByProposal pins the
+// negative: a rejection with no [:RESOLVED_BY] edge at all reports
+// ResolvedByProposal=false.
+func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByProposal(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	rel, node := marker+"-rel", marker+"-node"
+
+	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	assert.False(t, precedents[0].ResolvedByProposal, "an unresolved rejection has no proposal edge")
+	assert.Nil(t, precedents[0].ResolvingVersion)
+	assert.Empty(t, precedents[0].Edited)
+}
+
 // TestPrecedentReader_NoMatchIsEmptyNotError verifies that a signature with no
 // recorded rejections is a valid, non-error answer: an empty slice, not an
 // error.
