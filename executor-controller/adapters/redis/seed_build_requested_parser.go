@@ -14,12 +14,13 @@ import (
 // seedBuildRequestedDTO mirrors the flat JSON body release-controller emits in
 // the "payload" field of a seed.build.requested:v1 message.
 type seedBuildRequestedDTO struct {
-	ReleaseID       string               `json:"release_id"`
-	Mode            string               `json:"mode"`
-	Seeds           []seedBuildNodeDTO   `json:"seeds"`
-	SeedIDsInOrder  []string             `json:"seed_ids_in_order"`
-	ImageTags       map[string]string    `json:"image_tags"`
-	CandidateSchema string               `json:"candidate_schema"`
+	ReleaseID        string             `json:"release_id"`
+	Mode             string             `json:"mode"`
+	Seeds            []seedBuildNodeDTO `json:"seeds"`
+	SeedIDsInOrder   []string           `json:"seed_ids_in_order"`
+	ImageTags        map[string]string  `json:"image_tags"`
+	CandidateSchema  string             `json:"candidate_schema"`
+	SourceOverlayURI string             `json:"source_overlay_uri"`
 }
 
 type seedBuildNodeDTO struct {
@@ -110,12 +111,13 @@ func ParseSeedBuildRequested(msg goredis.XMessage) (events.SeedBuildRequested, e
 	}
 
 	return events.SeedBuildRequested{
-		OutboxEntryID:   outboxEntryID,
-		ReleaseID:       dto.ReleaseID,
-		Mode:            dto.Mode,
-		Seeds:           seeds,
-		SeedIDsInOrder:  dto.SeedIDsInOrder,
-		ImageTags:       dto.ImageTags,
-		CandidateSchema: dto.CandidateSchema,
+		OutboxEntryID:    outboxEntryID,
+		ReleaseID:        dto.ReleaseID,
+		Mode:             dto.Mode,
+		Seeds:            seeds,
+		SeedIDsInOrder:   dto.SeedIDsInOrder,
+		ImageTags:        dto.ImageTags,
+		CandidateSchema:  dto.CandidateSchema,
+		SourceOverlayURI: dto.SourceOverlayURI,
 	}, nil
 }

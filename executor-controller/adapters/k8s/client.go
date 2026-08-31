@@ -944,6 +944,12 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
 // generate_schema_name macro materializes the seed into the candidate schema.
 // ImageTag must be non-empty — the team image must be explicitly versioned.
+// When p.SourceOverlayURI is non-empty (a shadow release verifying a proposed
+// fix), an "overlay" initContainer using the s3-sidecar image fetches the
+// proposed source files into /shared/overlay and the team container's command
+// is wrapped in `sh -c` and prefixed with `cp -R /shared/overlay/. ./` so
+// `dbt seed` loads the proposed CSV rather than the checked-in one — the same
+// treatment buildCompilePodSpec gives its team-image containers.
 // When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
 // that pre-seeds the candidate-context partial-parse artifact (see
 // parseCacheInitContainer); partialParsePath is the service's resolved
@@ -990,12 +996,36 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 		},
 	}
 
+	if p.SourceOverlayURI != "" {
+		// A shadow release verifies a proposed fix: the overlay fetcher lays the
+		// proposed files into /shared/overlay and the team container copies them
+		// over the checked-in project before `dbt seed` reads it, so a proposed
+		// seed CSV is what gets loaded.
+		mount := sharedVolumeMount()
+		spec.InitContainers = append(spec.InitContainers, corev1.Container{
+			Name:            "overlay",
+			Image:           s3SidecarImage(),
+			ImagePullPolicy: validationImagePullPolicy(),
+			Command:         []string{"python", "/overlay_fetcher.py"},
+			Env: append([]corev1.EnvVar{
+				{Name: "SOURCE_OVERLAY_URI", Value: p.SourceOverlayURI},
+				{Name: "OVERLAY_DEST", Value: "/shared/overlay"},
+			}, s3CredEnvVars()...),
+			VolumeMounts:    []corev1.VolumeMount{mount},
+			SecurityContext: continuoImageSecurityContext(),
+		})
+		spec.Volumes = append(spec.Volumes, sharedEmptyDirVolume())
+		spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, mount)
+		spec.Containers[0].Command = []string{"sh", "-c",
+			"cp -R /shared/overlay/. ./ && " + shellJoin(command)}
+	}
+
 	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
 		uri := artifacts.ParseCacheCandidateURI(bucket, p.ServiceName, p.ReleaseID)
 		init, vol, teamMount := parseCacheInitContainer(uri, path.Dir(partialParsePath))
-		spec.InitContainers = []corev1.Container{init}
-		spec.Volumes = []corev1.Volume{vol}
-		spec.Containers[0].VolumeMounts = []corev1.VolumeMount{teamMount}
+		spec.InitContainers = append(spec.InitContainers, init)
+		spec.Volumes = append(spec.Volumes, vol)
+		spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, teamMount)
 	}
 
 	return spec, nil

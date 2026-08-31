@@ -77,7 +77,9 @@ func (d *Deployer) DeployValidation(ctx context.Context, spec deploy.ValidationJ
 
 // DeploySeedBuild maps the domain ValidationJobSpec to K8s seed-build job
 // params and creates the Job (idempotent by job name). The job uses the team
-// image and runs `dbt seed --select <TableName>` into the candidate schema.
+// image and runs `dbt seed --select <TableName>` into the candidate schema; a
+// shadow release's SourceOverlayURI travels with it so the seed is loaded from
+// the proposed source rather than the checked-in project.
 // An unparseable node type can never succeed, so it is reported as a permanent error.
 func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJobSpec) error {
 	nodeType, err := pkg_model.ParseNodeType(spec.NodeType)
@@ -85,16 +87,17 @@ func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJo
 		return fmt.Errorf("invalid node type %q: %w", spec.NodeType, errors.Join(err, pkgevents.ErrPermanent))
 	}
 	return d.client.CreateSeedBuildJob(ctx, ValidationJobParams{
-		JobName:         spec.JobName,
-		ReleaseID:       spec.ReleaseID,
-		NodeID:          spec.NodeID,
-		ServiceName:     spec.ServiceName,
-		SchemaName:      spec.SchemaName,
-		TableName:       spec.TableName,
-		NodeType:        nodeType,
-		ImageTag:        spec.ImageTag,
-		CandidateSchema: spec.CandidateSchema,
-		Namespace:       d.namespace,
+		JobName:          spec.JobName,
+		ReleaseID:        spec.ReleaseID,
+		NodeID:           spec.NodeID,
+		ServiceName:      spec.ServiceName,
+		SchemaName:       spec.SchemaName,
+		TableName:        spec.TableName,
+		NodeType:         nodeType,
+		ImageTag:         spec.ImageTag,
+		CandidateSchema:  spec.CandidateSchema,
+		SourceOverlayURI: spec.SourceOverlayURI,
+		Namespace:        d.namespace,
 	})
 }
 

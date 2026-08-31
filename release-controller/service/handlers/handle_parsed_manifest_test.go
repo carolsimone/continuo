@@ -202,6 +202,15 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 // itself on a failed fix-verification attempt.
 func seedToParsingShadow(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
+	return seedToParsingShadowWithOverlay(t, releaseID, imageTags, "")
+}
+
+// seedToParsingShadowWithOverlay is seedToParsingShadow for a shadow release
+// that carries a source overlay: the S3 tarball of proposed source files the
+// release's dbt Jobs lay over the checked-in project before running. An empty
+// overlayURI registers the shadow without one.
+func seedToParsingShadowWithOverlay(t *testing.T, releaseID string, imageTags map[string]string, overlayURI string) (*handlers.Deps, *fakeStore) {
+	t.Helper()
 	if len(imageTags) != 1 {
 		t.Fatal("seedToParsingShadow: imageTags must have exactly one entry {service: tag}")
 	}
@@ -212,12 +221,13 @@ func seedToParsingShadow(t *testing.T, releaseID string, imageTags map[string]st
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   svc,
-		ReleaseID: releaseID,
-		ImageTag:  tag,
-		Repo:      "acme/demo",
-		CommitSHA: "deadbeef",
-		Shadow:    true,
+		Service:          svc,
+		ReleaseID:        releaseID,
+		ImageTag:         tag,
+		Repo:             "acme/demo",
+		CommitSHA:        "deadbeef",
+		Shadow:           true,
+		SourceOverlayURI: overlayURI,
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
@@ -1058,6 +1068,54 @@ func TestHandleParsedManifest_NewSeedRoutesToSeedBuild(t *testing.T) {
 		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName,
 			"validation.requested must not be emitted when seeds need building first")
 	}
+}
+
+// TestHandleParsedManifest_SeedBuildRequestedCarriesSourceOverlay verifies that
+// a shadow release's seed-build request carries its source overlay. A proposed
+// fix to a seed edits the team's CSV, so the seed Job must load the PROPOSED
+// file; without the overlay on this leg the Job reloads the checked-in CSV and
+// the fix fails its own verification.
+func TestHandleParsedManifest_SeedBuildRequestedCarriesSourceOverlay(t *testing.T) {
+	const overlay = "s3://continuo/core/shadow-rel-seed-1/source-overlay.tar.gz"
+	deps, store := seedToParsingShadowWithOverlay(t, "shadow-rel-seed-1",
+		map[string]string{"core": "sha-core"}, overlay)
+
+	topo := release.Topology{
+		{UniqueID: "seed.core.fx", ServiceName: "core", NodeType: "dbt-seed", SchemaName: "analytics", TableName: "fx", ContentHash: "hash-fx-NEW"},
+		{UniqueID: "model.fin.report", ServiceName: "core", NodeType: "dbt-model", SchemaName: "fin", TableName: "report", ContentHash: "hash-rep-NEW",
+			UpstreamUniqueIDs: []string{"seed.core.fx"}},
+	}
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "shadow-rel-seed-1", Status: "ok", Topology: topo,
+	}))
+
+	entry := findEntry(t, store, streams.SeedBuildRequestedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	assert.Equal(t, overlay, payload["source_overlay_uri"],
+		"the seed-build leg must carry the shadow's overlay, like the compile leg does")
+}
+
+// TestHandleParsedManifest_SeedBuildRequestedOmitsAbsentSourceOverlay verifies
+// that a production release (no overlay) emits the seed-build payload without
+// the key at all, leaving the pre-overlay wire format byte-identical.
+func TestHandleParsedManifest_SeedBuildRequestedOmitsAbsentSourceOverlay(t *testing.T) {
+	deps, store := seedToParsing(t, "rel-seed-nooverlay", map[string]string{"core": "sha-core"})
+
+	topo := release.Topology{
+		{UniqueID: "seed.core.fx", ServiceName: "core", NodeType: "dbt-seed", SchemaName: "analytics", TableName: "fx", ContentHash: "hash-fx-NEW"},
+	}
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-seed-nooverlay", Status: "ok", Topology: topo,
+	}))
+
+	entry := findEntry(t, store, streams.SeedBuildRequestedV1)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	_, present := payload["source_overlay_uri"]
+	assert.False(t, present, "a release without an overlay must not emit the key")
 }
 
 // TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation verifies that
