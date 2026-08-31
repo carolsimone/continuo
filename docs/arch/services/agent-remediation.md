@@ -122,7 +122,7 @@ This is the only GitHub write-adjacent surface agent-remediation reads from besi
 
 ### Outbound HTTP — release-controller
 
-The `ReleaseGateway` port (`adapters/releasehttp`) is the verification lane's client of release-controller's public HTTP API. It is the only place in this service that issues a non-GET request to another service, and everything it can create is a shadow release — one that never promotes. Submitting and polling belong to the driver and the reconciler; a `Fixer` only ever *reads* a verdict through it (to check whether a sibling node it would package alongside its own also failed).
+The `ReleaseGateway` port (`adapters/releasehttp`) is the verification lane's client of release-controller's public HTTP API. It is the only place in this service that issues a non-GET request to another service, and everything it can create is a shadow release — one that never promotes. Submitting and polling belong to the driver and the reconciler; a `Fixer` only ever *reads* a verdict through it (to check whether a sibling node it would package alongside its own also failed). On a cluster whose CNI enforces NetworkPolicy the chart's default-deny would block this edge, so the `allow-release-controller-http` policy admits `agent-remediation → release-controller:8088` explicitly.
 
 | Endpoint | Purpose |
 |---|---|

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Chart lint gate for deploy/continuo: helm lint + helm template across every
-# supported values topology, then kube-linter over each rendered manifest,
-# plus a bash -n syntax check on the release-flow scripts (they have no
-# other CI gate). Runs identically in CI (install-test.yml) and locally;
-# needs helm and Go.
+# supported values topology, then kube-linter over each rendered manifest, a
+# NetworkPolicy reachability check on the default render, plus a bash -n syntax
+# check on the release-flow scripts (they have no other CI gate). Runs
+# identically in CI (install-test.yml) and locally; needs helm, Go, and
+# Python 3 with PyYAML (both preinstalled on the CI runner).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -42,6 +43,14 @@ for entry in "${renders[@]}"; do
   echo "--- kube-linter (${name})"
   "${KUBE_LINTER[@]}" lint --config "${CHART}/.kube-linter.yaml" "${tmp}/${name}.yaml"
 done
+
+# The chart default-denies ingress and re-opens exactly the edges the service
+# graph needs. A service that starts calling another without its allow rule
+# ships a platform that is "up" but silently unreachable on that path. Assert
+# the required cross-service edges are present in the default render (which has
+# networkPolicy.enabled=true).
+echo "--- network policy reachability (defaults)"
+python3 scripts/install-test/assert-netpol-reachability.py "${tmp}/defaults.yaml" continuo
 
 # Services read the shared ConfigMap through envFrom, and Kubernetes never
 # refreshes environment variables in a running pod when that ConfigMap changes.
