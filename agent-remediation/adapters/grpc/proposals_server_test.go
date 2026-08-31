@@ -49,7 +49,7 @@ func (f *fakeSvc) Get(_ context.Context, _ string) (proposal.View, error) {
 	return f.getView, f.getErr
 }
 
-func (f *fakeSvc) Begin(_ context.Context, _ string) (proposal.PRClaim, error) {
+func (f *fakeSvc) Begin(_ context.Context, _, _ string) (proposal.PRClaim, error) {
 	return f.beginClaim, f.beginErr
 }
 
@@ -57,7 +57,7 @@ func (f *fakeSvc) Record(_ context.Context, _ proposals.RecordInput) error {
 	return f.recordErr
 }
 
-func (f *fakeSvc) FailStuckClaim(_ context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+func (f *fakeSvc) FailStuckClaim(_ context.Context, id, _ string, observedClaimedAt time.Time) (bool, error) {
 	f.lastFailID = id
 	f.lastFailObserved = observedClaimedAt
 	return f.failHit, f.failErr

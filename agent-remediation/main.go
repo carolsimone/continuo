@@ -265,9 +265,10 @@ func main() {
 	// DB-bound (non-transactional) repository for reads and the UoW factory for
 	// write operations, matching the consumer's wiring above.
 	proposalSvc := proposals.New(proposals.Deps{
-		Repo:   proposalRepo,
-		NewUoW: func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
-		Clock:  ports.SystemClock{},
+		Repo:             proposalRepo,
+		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
+		Clock:            ports.SystemClock{},
+		ServiceRepoPaths: cfg.ServiceRepoPaths,
 	})
 	lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 	if err != nil {

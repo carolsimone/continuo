@@ -977,6 +977,41 @@ func TestListStuckOpening_CursorRotatesAcrossPages(t *testing.T) {
 	require.NotNil(t, next3)
 }
 
+// TestListStuckOpening_MultipleServicesSameProposalPaginateDistinctly is the
+// regression test for the F5 cursor fix: one proposal split across two services
+// has two 'opening' children that share the parent's (created_at, id). With a
+// page size of 1 the two siblings land on different pages, so resuming from the
+// first page's cursor must reach the second child, not skip past it. A
+// (created_at, id)-only cursor stranded the second sibling forever, because its
+// strict `>` excluded a row sharing that exact key; the service tiebreak fixes it.
+func TestListStuckOpening_MultipleServicesSameProposalPaginateDistinctly(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db, perServiceRepoPaths)
+
+	id := seedTwoServiceProposal(t, repo, db, "r-per-svc-cursor")
+	_, err := repo.BeginPR(ctx, id, "core", "remediation/r-per-svc-cursor/attempt1/core", time.Now().UTC())
+	require.NoError(t, err)
+	_, err = repo.BeginPR(ctx, id, "finance", "remediation/r-per-svc-cursor/attempt1/finance", time.Now().UTC())
+	require.NoError(t, err)
+
+	page1, next1, err := repo.ListStuckOpening(ctx, 1, nil)
+	require.NoError(t, err)
+	require.Len(t, page1, 1)
+	require.Equal(t, id, page1[0].ID)
+	require.NotNil(t, next1, "a sibling child remains, so a next cursor must be reported")
+
+	page2, next2, err := repo.ListStuckOpening(ctx, 1, next1)
+	require.NoError(t, err)
+	require.Len(t, page2, 1, "resuming after the first sibling must reach the second, not skip it")
+	require.Equal(t, id, page2[0].ID)
+	require.Nil(t, next2, "the second sibling is the last row, so no further cursor")
+
+	require.ElementsMatch(t, []string{"core", "finance"},
+		[]string{page1[0].Service, page2[0].Service},
+		"both per-service children of one proposal must be visited across the pages")
+}
+
 // TestBeginPR_RejectsUnresolvedSource verifies that BeginPR returns
 // ErrNotSourceResolved when source_resolved=false.
 func TestBeginPR_RejectsUnresolvedSource(t *testing.T) {

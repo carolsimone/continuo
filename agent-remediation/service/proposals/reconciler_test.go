@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -32,17 +33,23 @@ func (f *fakeChecker) PRStatus(_ context.Context, _ string, number int) (ports.P
 type fakeRecorder struct {
 	calls []struct {
 		ID       string
+		Service  string
 		Outcome  proposal.PROutcome
 		ClosedAt time.Time
+		Edits    []event.ClosedEdit
+		Resolved []string
 	}
 }
 
-func (f *fakeRecorder) RecordOutcome(_ context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) error {
+func (f *fakeRecorder) RecordOutcome(_ context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error {
 	f.calls = append(f.calls, struct {
 		ID       string
+		Service  string
 		Outcome  proposal.PROutcome
 		ClosedAt time.Time
-	}{id, outcome, closedAt})
+		Edits    []event.ClosedEdit
+		Resolved []string
+	}{id, service, outcome, closedAt, edits, resolved})
 	return nil
 }
 
@@ -207,14 +214,17 @@ func timePtr(t time.Time) *time.Time { return &t }
 type fakeOpeningLister struct{ opening []proposal.OpeningPR }
 
 // ListStuckOpening simulates the real repository's keyset pagination: rows
-// must already be sorted by (CreatedAt, ID) in f.opening, since callers rely
-// on that same ordering to build a resumable cursor.
+// must already be sorted by (CreatedAt, ID, Service) in f.opening, since
+// callers rely on that same ordering to build a resumable cursor. Service is
+// part of the key because one proposal can now have several 'opening' children
+// (one per owning service) that share a (CreatedAt, ID) — the service tiebreak
+// keeps a second child from being skipped past on the following page.
 func (f *fakeOpeningLister) ListStuckOpening(_ context.Context, limit int, cursor *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
 	start := 0
 	if cursor != nil {
 		start = len(f.opening)
 		for i, o := range f.opening {
-			if o.CreatedAt.After(cursor.CreatedAt) || (o.CreatedAt.Equal(cursor.CreatedAt) && o.ID > cursor.ID) {
+			if openingAfterCursor(o, cursor) {
 				start = i
 				break
 			}
@@ -231,9 +241,21 @@ func (f *fakeOpeningLister) ListStuckOpening(_ context.Context, limit int, curso
 	var next *repository.OpeningCursor
 	if end < len(f.opening) {
 		last := page[len(page)-1]
-		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID, Service: last.Service}
 	}
 	return page, next, nil
+}
+
+// openingAfterCursor reports whether o sorts strictly after the cursor under
+// the (CreatedAt, ID, Service) keyset the real repository orders by.
+func openingAfterCursor(o proposal.OpeningPR, c *repository.OpeningCursor) bool {
+	if !o.CreatedAt.Equal(c.CreatedAt) {
+		return o.CreatedAt.After(c.CreatedAt)
+	}
+	if o.ID != c.ID {
+		return o.ID > c.ID
+	}
+	return o.Service > c.Service
 }
 
 // fakeBranchFinder returns a canned PR ref (or error) per branch.
@@ -271,15 +293,18 @@ func (f *fakeOpeningRecorder) Record(_ context.Context, in proposals.RecordInput
 type fakeFailer struct {
 	calls         []string
 	observedClaim map[string]time.Time
+	observedSvc   map[string]string
 	reClaimed     map[string]bool
 	err           error
 }
 
-func (f *fakeFailer) FailStuckClaim(_ context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+func (f *fakeFailer) FailStuckClaim(_ context.Context, id, service string, observedClaimedAt time.Time) (bool, error) {
 	if f.observedClaim == nil {
 		f.observedClaim = map[string]time.Time{}
+		f.observedSvc = map[string]string{}
 	}
 	f.observedClaim[id] = observedClaimedAt
+	f.observedSvc[id] = service
 	if f.err != nil {
 		return false, f.err
 	}
@@ -295,7 +320,7 @@ func (f *fakeFailer) FailStuckClaim(_ context.Context, id string, observedClaime
 // very first pass — finding an existing PR is unambiguous and safe
 // regardless of how fresh the claim is.
 func TestReconcileOnce_OpeningSweep_PRFoundRecords(t *testing.T) {
-	branch := proposals.BuildBranch("rel-1", 1)
+	branch := proposals.BuildBranch("rel-1", 1, "")
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
 		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: timePtr(fixedClock{}.Now())},
 	}}
@@ -469,8 +494,8 @@ func TestReconcileOnce_OpeningSweep_NilClaimedAtLeftAlone(t *testing.T) {
 // never fails the errored row even when its claim has aged past the grace
 // period — an inconclusive read must not be treated as a confirmed miss.
 func TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues(t *testing.T) {
-	branchOK := proposals.BuildBranch("rel-2", 1)
-	branchErr := proposals.BuildBranch("rel-1", 1)
+	branchOK := proposals.BuildBranch("rel-2", 1, "")
+	branchErr := proposals.BuildBranch("rel-1", 1, "")
 	now := fixedClock{}.Now()
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
 		{ID: "p-err", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
@@ -512,7 +537,7 @@ func TestReconcileOnce_OpeningSweep_ErrorOnOneRowContinues(t *testing.T) {
 // same GitHub token, so a permission gap discovered by either loop must be
 // visible via Degraded(), not silently swallowed into a generic warn.
 func TestReconcileOnce_OpeningSweepPermissionErrorMarksDegraded(t *testing.T) {
-	branch := proposals.BuildBranch("rel-1", 1)
+	branch := proposals.BuildBranch("rel-1", 1, "")
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
 		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
 			ClaimedAt: timePtr(fixedClock{}.Now())},
@@ -620,7 +645,7 @@ func TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows(t *testi
 	// per-row branch lookup discriminates attempts of the SAME release, not
 	// just different releases.
 	const releaseID = "rel-p"
-	branch := func(attempt int) string { return proposals.BuildBranch(releaseID, attempt) }
+	branch := func(attempt int) string { return proposals.BuildBranch(releaseID, attempt, "") }
 
 	// Five rows, strictly increasing CreatedAt (and thus stable sweep order).
 	// attempt 1 and 2 error on every pass and never resolve; 3-5 succeed.
@@ -684,7 +709,7 @@ func TestReconcileOnce_OpeningSweep_RotatesPastPersistentlyErroringRows(t *testi
 // happened to run — a claim can be recovered minutes or hours after GitHub
 // actually created the PR, and pr_opened_at should reflect the true value.
 func TestReconcileOnce_OpeningSweepRecordsGitHubCreatedAt(t *testing.T) {
-	branch := proposals.BuildBranch("rel-1", 1)
+	branch := proposals.BuildBranch("rel-1", 1, "")
 	githubCreatedAt := fixedClock{}.Now().Add(-45 * time.Minute)
 	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
 		{ID: "p1", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1,
@@ -725,6 +750,60 @@ func TestReconcileOnce_OpeningSweepSkippedWithoutDeps(t *testing.T) {
 		newReconciler(lister, checker, recorder).ReconcileOnce(context.Background())
 	})
 	require.Len(t, recorder.calls, 1, "the open-PR mirror must still run when opening-sweep deps are absent")
+}
+
+// TestReconcileOnce_OpeningSweep_MultipleServicesSameProposalNotStarved is the
+// regression test for the F5 cursor fix: one proposal now has two 'opening'
+// children (a per-service PR each for "core" and "finance") that share the
+// parent's (created_at, id). With a batch limit small enough to split the two
+// children across pages, the sweep must still visit both — the keyset cursor
+// includes the service, so resuming after the first child does not skip past
+// the second. Under the old (created_at, id)-only cursor the second child was
+// stranded forever, since `> (created_at, id)` excluded a sibling sharing that
+// key.
+func TestReconcileOnce_OpeningSweep_MultipleServicesSameProposalNotStarved(t *testing.T) {
+	now := fixedClock{}.Now()
+	coreBranch := proposals.BuildBranch("rel-1", 1, "core")
+	financeBranch := proposals.BuildBranch("rel-1", 1, "finance")
+	// Two children of the SAME proposal (same ID and CreatedAt), sorted by the
+	// (CreatedAt, ID, Service) keyset the real repository orders by: core < finance.
+	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
+		{ID: "p1", Service: "core", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.core.a", Attempt: 1,
+			ClaimedAt: timePtr(now), CreatedAt: now},
+		{ID: "p1", Service: "finance", Repo: "acme/r", ReleaseID: "rel-1", NodeID: "model.finance.b", Attempt: 1,
+			ClaimedAt: timePtr(now), CreatedAt: now},
+	}}
+	finder := &fakeBranchFinder{refs: map[string]ports.PullRequestRef{
+		coreBranch:    {Number: 1, URL: "https://github.com/acme/r/pull/1"},
+		financeBranch: {Number: 2, URL: "https://github.com/acme/r/pull/2"},
+	}}
+	recorder := &fakeOpeningRecorder{}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:          &fakeLister{},
+		Checker:         &fakeChecker{},
+		Recorder:        &fakeRecorder{},
+		OpeningLister:   opening,
+		BranchFinder:    finder,
+		OpeningRecorder: recorder,
+		Failer:          &fakeFailer{},
+		Clock:           fixedClock{},
+		Logger:          slog.Default(),
+		BatchLimit:      1, // one child per page: the two siblings land on different pages
+	})
+
+	// Pass 1 records "core" and leaves a cursor keyed on (…, id=p1, service=core).
+	rec.ReconcileOnce(context.Background())
+	// Pass 2 must resume AFTER (p1, core) and reach (p1, finance), not skip it.
+	rec.ReconcileOnce(context.Background())
+
+	require.Len(t, recorder.calls, 2, "both per-service children of one proposal must be recovered")
+	got := make([][2]string, len(recorder.calls))
+	for i, c := range recorder.calls {
+		got[i] = [2]string{c.ProposalID, c.Service}
+	}
+	require.ElementsMatch(t, [][2]string{{"p1", "core"}, {"p1", "finance"}}, got,
+		"a second per-service child sharing the parent's (created_at, id) must not be starved by the cursor")
 }
 
 // levelCounter is a minimal slog.Handler that counts records by level.

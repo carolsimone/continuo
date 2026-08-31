@@ -25,14 +25,16 @@ import (
 type ProposalService interface {
 	List(ctx context.Context, filter repository.ProposalFilter) ([]proposal.View, error)
 	Get(ctx context.Context, id string) (proposal.View, error)
-	Begin(ctx context.Context, id string) (proposal.PRClaim, error)
+	// Begin claims the (proposal, service) pull request for creation; service
+	// selects the owning-service group ("" is the legacy whole-proposal group).
+	Begin(ctx context.Context, id, service string) (proposal.PRClaim, error)
 	Record(ctx context.Context, in proposals.RecordInput) error
-	// FailStuckClaim releases the 'opening' claim identified by id back to
-	// 'failed', but only if the row's current pr_claimed_at still equals
+	// FailStuckClaim releases the 'opening' claim identified by (id, service)
+	// back to 'failed', but only if the row's current pr_claimed_at still equals
 	// observedClaimedAt — the compare-and-set guard that keeps this call from
 	// resetting a claim someone else already took over. hit reports whether
 	// the CAS fired; false is not an error.
-	FailStuckClaim(ctx context.Context, id string, observedClaimedAt time.Time) (hit bool, err error)
+	FailStuckClaim(ctx context.Context, id, service string, observedClaimedAt time.Time) (hit bool, err error)
 }
 
 // Compile-time assertion: *proposals.Service satisfies ProposalService.
@@ -94,7 +96,9 @@ func (s *ProposalsServer) GetProposal(ctx context.Context, req *remediationv1.Ge
 // shadow release rejected, is not one a pull request may be opened for. Returns
 // NOT_FOUND when the proposal does not exist.
 func (s *ProposalsServer) BeginPullRequest(ctx context.Context, req *remediationv1.BeginPullRequestRequest) (*remediationv1.BeginPullRequestResponse, error) {
-	claim, err := s.svc.Begin(ctx, req.Id)
+	// The whole-proposal "" group until the request carries a service field and
+	// this server maps it through (Task 7); a legacy proposal is claimed here.
+	claim, err := s.svc.Begin(ctx, req.Id, "")
 	if err != nil {
 		if errors.Is(err, repository.ErrPRConflict) {
 			// Attempt a best-effort fetch of the current pr_url so the caller
@@ -142,7 +146,9 @@ func (s *ProposalsServer) FailPullRequest(ctx context.Context, req *remediationv
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid claimed_at: %v", err)
 	}
-	hit, err := s.svc.FailStuckClaim(ctx, req.Id, claimedAt)
+	// The whole-proposal "" group until the request carries a service field and
+	// this server maps it through (Task 7).
+	hit, err := s.svc.FailStuckClaim(ctx, req.Id, "", claimedAt)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}

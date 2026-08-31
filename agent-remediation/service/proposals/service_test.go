@@ -36,9 +36,12 @@ type fakeRepo struct {
 	lastClaimedAt time.Time
 	lastOutbox    *outbox.Entry
 	committed     bool
+	// BeginPR capture
+	lastBeginService string
 	// RecordPR capture
 	lastRecordPR struct {
 		id       string
+		service  string
 		prURL    string
 		prNumber int
 		openedBy string
@@ -48,12 +51,14 @@ type fakeRepo struct {
 	// so existing tests that do not care about the CAS outcome keep passing.
 	recordPRCASHit bool
 	// RecordPROutcome capture
-	lastOutcome   proposal.PROutcome
-	lastClosedAt  time.Time
-	outcomeCASHit bool
-	openPRs       []proposal.OpenPR
+	lastOutcome        proposal.PROutcome
+	lastOutcomeService string
+	lastClosedAt       time.Time
+	outcomeCASHit      bool
+	openPRs            []proposal.OpenPR
 	// FailStuckOpeningPR capture
 	lastFailStuckID        string
+	lastFailStuckService   string
 	lastFailStuckClaimedAt time.Time
 	failStuckHit           bool
 }
@@ -72,7 +77,8 @@ func (r *fakeRepo) Get(_ context.Context, _ string) (proposal.View, error) {
 func (r *fakeRepo) List(_ context.Context, _ repository.ProposalFilter) ([]proposal.View, error) {
 	return []proposal.View{r.view}, nil
 }
-func (r *fakeRepo) BeginPR(_ context.Context, _, _ string, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
+func (r *fakeRepo) BeginPR(_ context.Context, _, service string, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
+	r.lastBeginService = service
 	r.lastBranch = branch
 	r.lastClaimedAt = claimedAt
 	return proposal.PRClaim{
@@ -80,18 +86,21 @@ func (r *fakeRepo) BeginPR(_ context.Context, _, _ string, branch string, claime
 		ReleaseID: r.view.ReleaseID,
 		NodeID:    r.view.NodeID,
 		Attempt:   r.view.Attempt,
+		Service:   service,
 	}, nil
 }
-func (r *fakeRepo) RecordPR(_ context.Context, id, _, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
+func (r *fakeRepo) RecordPR(_ context.Context, id, service, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
 	r.lastRecordPR.id = id
+	r.lastRecordPR.service = service
 	r.lastRecordPR.prURL = prURL
 	r.lastRecordPR.prNumber = prNumber
 	r.lastRecordPR.openedBy = openedBy
 	r.lastRecordPR.openedAt = openedAt
 	return r.recordPRCASHit, nil
 }
-func (r *fakeRepo) FailStuckOpeningPR(_ context.Context, id, _ string, observedClaimedAt time.Time) (bool, error) {
+func (r *fakeRepo) FailStuckOpeningPR(_ context.Context, id, service string, observedClaimedAt time.Time) (bool, error) {
 	r.lastFailStuckID = id
+	r.lastFailStuckService = service
 	r.lastFailStuckClaimedAt = observedClaimedAt
 	return r.failStuckHit, nil
 }
@@ -101,8 +110,9 @@ func (r *fakeRepo) ListOpenPullRequests(_ context.Context, _ int) ([]proposal.Op
 func (r *fakeRepo) ListStuckOpening(_ context.Context, _ int, _ *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
 	return nil, nil, nil
 }
-func (r *fakeRepo) RecordPROutcome(_ context.Context, _, _ string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
+func (r *fakeRepo) RecordPROutcome(_ context.Context, _, service string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
 	r.lastOutcome = outcome
+	r.lastOutcomeService = service
 	r.lastClosedAt = closedAt
 	return r.outcomeCASHit, nil
 }
@@ -148,17 +158,31 @@ func (r *fakeRepo) uowFactory() uow.UnitOfWork {
 
 // TestBuildBranch_DistinctPerAttemptWithinARelease verifies that, with the
 // node segment gone, attempt is still enough to keep two attempts of the same
-// release on distinct branches.
+// release on distinct branches, and that a legacy service "" carries no
+// service suffix.
 func TestBuildBranch_DistinctPerAttemptWithinARelease(t *testing.T) {
-	b1 := proposals.BuildBranch("r", 1)
-	b2 := proposals.BuildBranch("r", 2)
+	b1 := proposals.BuildBranch("r", 1, "")
+	b2 := proposals.BuildBranch("r", 2, "")
 	require.Equal(t, "remediation/r/attempt1", b1)
 	require.Equal(t, "remediation/r/attempt2", b2)
 	require.NotEqual(t, b1, b2, "two attempts of the same release must not collide on branch")
 }
 
-// TestService_Begin_BuildsDeterministicBranch verifies that Begin derives the
-// branch name remediation/<release_id>/attempt<n>, with no node segment.
+// TestBuildBranch_PerServiceSuffix verifies a non-empty service appends a
+// "/<service>" segment, and the empty legacy service does not, so each owning
+// service's PR lands on its own branch.
+func TestBuildBranch_PerServiceSuffix(t *testing.T) {
+	require.Equal(t, "remediation/rel-1/attempt2/core", proposals.BuildBranch("rel-1", 2, "core"))
+	require.Equal(t, "remediation/rel-1/attempt2", proposals.BuildBranch("rel-1", 2, ""))
+	require.NotEqual(t,
+		proposals.BuildBranch("rel-1", 2, "core"),
+		proposals.BuildBranch("rel-1", 2, "finance"),
+		"two services of the same attempt must not collide on branch")
+}
+
+// TestService_Begin_BuildsDeterministicBranch verifies that Begin on a legacy
+// (unsplit) proposal derives the branch name remediation/<release_id>/attempt<n>,
+// with no service segment, and stamps the claim with the service clock.
 func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 	repo := &fakeRepo{view: proposal.View{
 		ReleaseID:      "r-1",
@@ -171,15 +195,100 @@ func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 		NewUoW: repo.uowFactory,
 		Clock:  fixedClock{},
 	})
-	_, err := svc.Begin(context.Background(), "p1")
+	_, err := svc.Begin(context.Background(), "p1", "")
 	require.NoError(t, err)
 	require.Equal(t, "remediation/r-1/attempt1", repo.lastBranch)
+	require.Equal(t, "", repo.lastBeginService, "a legacy proposal claims the whole-proposal \"\" group")
 	require.Equal(t, fixedClock{}.Now(), repo.lastClaimedAt, "Begin must stamp the claim with the service's clock")
+}
+
+// TestService_Begin_ThreadsService verifies Begin passes the requested owning
+// service through to the repository and builds that service's branch, when the
+// proposal's edits attribute an edit to that service.
+func TestService_Begin_ThreadsService(t *testing.T) {
+	repo := &fakeRepo{view: proposal.View{
+		ID:             "p1",
+		ReleaseID:      "r-1",
+		Attempt:        1,
+		SourceResolved: true,
+		Edits: []proposal.FileEdit{
+			{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
+		},
+	}}
+	svc := proposals.New(proposals.Deps{
+		Repo:             repo,
+		NewUoW:           repo.uowFactory,
+		Clock:            fixedClock{},
+		ServiceRepoPaths: map[string]string{"core": "services/core"},
+	})
+
+	claim, err := svc.Begin(context.Background(), "p1", "core")
+	require.NoError(t, err)
+	require.Equal(t, "core", repo.lastBeginService, "Begin must thread the requested service to BeginPR")
+	require.Equal(t, "remediation/r-1/attempt1/core", repo.lastBranch)
+	require.Equal(t, "remediation/r-1/attempt1/core", claim.Branch, "the returned claim carries the per-service branch")
+}
+
+// TestService_Begin_UnknownServiceRejected verifies Begin rejects a service the
+// proposal has no edits for: a split proposal (its edits attribute members) can
+// only be claimed on one of its real owning-service keys, never on "" or a name
+// with no edits.
+func TestService_Begin_UnknownServiceRejected(t *testing.T) {
+	repo := &fakeRepo{view: proposal.View{
+		ID:             "p1",
+		ReleaseID:      "r-1",
+		Attempt:        1,
+		SourceResolved: true,
+		Edits: []proposal.FileEdit{
+			{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
+		},
+	}}
+	svc := proposals.New(proposals.Deps{
+		Repo:             repo,
+		NewUoW:           repo.uowFactory,
+		Clock:            fixedClock{},
+		ServiceRepoPaths: map[string]string{"core": "services/core"},
+	})
+
+	_, err := svc.Begin(context.Background(), "p1", "finance")
+	require.ErrorIs(t, err, proposals.ErrUnknownService)
+	require.Empty(t, repo.lastBeginService, "a rejected service must never reach the repository")
+
+	// A split proposal has no legacy "" group, so "" is also rejected.
+	_, err = svc.Begin(context.Background(), "p1", "")
+	require.ErrorIs(t, err, proposals.ErrUnknownService)
+}
+
+// TestService_PRServices_LegacyProposalSingleGroup verifies ruling 1: a
+// proposal whose edits carry NO members is never split — PRServices returns the
+// single legacy [""] group — while a proposal whose edits attribute members
+// returns the sorted owning-service keys.
+func TestService_PRServices_LegacyProposalSingleGroup(t *testing.T) {
+	svc := proposals.New(proposals.Deps{
+		Repo:             &fakeRepo{},
+		NewUoW:           (&fakeRepo{}).uowFactory,
+		Clock:            fixedClock{},
+		ServiceRepoPaths: map[string]string{"core": "services/core", "finance": "services/finance"},
+	})
+
+	legacy := proposal.View{Edits: []proposal.FileEdit{
+		{Path: "services/core/models/a.sql"}, // no MemberNodeIDs
+	}}
+	require.Equal(t, []string{""}, svc.PRServices(legacy),
+		"a proposal with no per-edit members must never be split")
+
+	split := proposal.View{Edits: []proposal.FileEdit{
+		{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
+		{Path: "services/finance/models/b.sql", MemberNodeIDs: []string{"model.finance.b"}},
+	}}
+	require.Equal(t, []string{"core", "finance"}, svc.PRServices(split),
+		"a proposal whose edits attribute members returns the sorted owning-service keys")
 }
 
 // TestService_Record_EmitsPROpenedAtomically verifies that Record writes an
 // outbox entry with StreamName == streams.RemediationPrOpenedV1, whose payload
-// carries the view's ResolvedNodeIDs, and commits the unit of work.
+// carries the view's ResolvedNodeIDs (legacy "" group = the whole fixed set),
+// and commits the unit of work.
 func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	repo := &fakeRepo{
 		view: proposal.View{
@@ -213,6 +322,57 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
 	require.Equal(t, repo.view.ResolvedNodeIDs, payload.ResolvedNodeIDs,
 		"the pr_opened payload must carry the view's ResolvedNodeIDs")
+	require.Empty(t, payload.Service, "a legacy record carries no service")
+}
+
+// TestService_Record_PROpenedPerServiceResolvedSet verifies a per-service
+// Record: the pr_opened payload carries the requested service, its
+// resolved_node_ids are narrowed to the members that service's edits address
+// (not the whole fixed set), and the outbox entry id derives from the
+// three-arg (release, attempt, service) event id.
+func TestService_Record_PROpenedPerServiceResolvedSet(t *testing.T) {
+	repo := &fakeRepo{
+		view: proposal.View{
+			ID:              "p1",
+			ReleaseID:       "r-1",
+			NodeID:          "model.core.a",
+			ResolvedNodeIDs: []string{"model.core.a", "model.finance.b"},
+			NodeOutcomes: map[string]proposal.NodeOutcome{
+				"model.core.a":    {Status: proposal.StatusProposed},
+				"model.finance.b": {Status: proposal.StatusProposed},
+			},
+			Attempt: 1,
+			Edits: []proposal.FileEdit{
+				{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
+				{Path: "services/finance/models/b.sql", MemberNodeIDs: []string{"model.finance.b"}},
+			},
+		},
+		recordPRCASHit: true,
+	}
+	svc := proposals.New(proposals.Deps{
+		Repo:             repo,
+		NewUoW:           repo.uowFactory,
+		Clock:            fixedClock{},
+		ServiceRepoPaths: map[string]string{"core": "services/core", "finance": "services/finance"},
+	})
+
+	require.NoError(t, svc.Record(context.Background(), proposals.RecordInput{
+		ProposalID: "p1", Service: "core", PrURL: "u", PrNumber: 7, OpenedBy: "dev|local",
+	}))
+
+	require.Equal(t, "core", repo.lastRecordPR.service, "Record must thread the service to RecordPR")
+	require.NotNil(t, repo.lastOutbox)
+	require.Equal(t, streams.RemediationPrOpenedV1, repo.lastOutbox.StreamName)
+
+	var payload event.PROpened
+	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
+	require.Equal(t, "core", payload.Service)
+	require.Equal(t, []string{"model.core.a"}, payload.ResolvedNodeIDs,
+		"a per-service pr_opened resolves only the members that service's edits address")
+
+	wantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(event.PROpenedEventID("r-1", 1, "core").String()))
+	require.Equal(t, wantID, repo.lastOutbox.ID,
+		"the outbox entry id must derive from the three-arg per-service event id")
 }
 
 // TestService_Record_PROpenedNamesOnlyTheFixedNodes covers the mixed batch: one
@@ -248,8 +408,9 @@ func TestService_Record_PROpenedNamesOnlyTheFixedNodes(t *testing.T) {
 }
 
 // TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes is the same
-// invariant on the closing half: the PR's outcome may only be mirrored onto the
-// nodes it actually carried a fix for.
+// invariant on the closing half: with the caller passing an empty resolved
+// subset (the Task-5 close loop), the PR's outcome falls back to the same
+// per-service resolved set the pr_opened event used, so the two agree exactly.
 func TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes(t *testing.T) {
 	repo := &fakeRepo{
 		view: proposal.View{
@@ -266,11 +427,57 @@ func TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes(t *testing.T) {
 	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
 
 	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
-	require.NoError(t, svc.RecordOutcome(context.Background(), "p1", proposal.PROutcomeMerged, closedAt))
+	require.NoError(t, svc.RecordOutcome(context.Background(), "p1", "", proposal.PROutcomeMerged, closedAt, nil, nil))
 
 	var payload event.PRClosed
 	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
 	require.Equal(t, []string{"model.p.orders_d"}, payload.ResolvedNodeIDs)
+}
+
+// TestService_RecordOutcome_PRClosedCarriesServiceAndEdits verifies a
+// per-service close: the pr_closed payload carries the service, the outcome,
+// and — passed by the caller — the amended edits and resolved subset verbatim,
+// with the outbox id derived from the three-arg event id.
+func TestService_RecordOutcome_PRClosedCarriesServiceAndEdits(t *testing.T) {
+	repo := &fakeRepo{
+		view: proposal.View{
+			ID: "p1", ReleaseID: "r-1", NodeID: "model.core.a",
+			ResolvedNodeIDs: []string{"model.core.a", "model.finance.b"},
+			Attempt:         1, PrURL: "http://gh/pull/7", PrNumber: 7,
+			Edits: []proposal.FileEdit{
+				{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
+			},
+		},
+		outcomeCASHit: true,
+	}
+	svc := proposals.New(proposals.Deps{
+		Repo:             repo,
+		NewUoW:           repo.uowFactory,
+		Clock:            fixedClock{},
+		ServiceRepoPaths: map[string]string{"core": "services/core", "finance": "services/finance"},
+	})
+
+	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
+	edits := []event.ClosedEdit{
+		{Path: "services/core/models/a.sql", TargetNodeID: "model.core.a", Amended: true, Diff: "@@ -1 +1 @@"},
+	}
+	resolved := []string{"model.core.a"}
+	require.NoError(t, svc.RecordOutcome(context.Background(), "p1", "core", proposal.PROutcomeMerged, closedAt, edits, resolved))
+
+	require.Equal(t, "core", repo.lastOutcomeService, "RecordOutcome must thread the service to RecordPROutcome")
+	require.Equal(t, streams.RemediationPrClosedV1, repo.lastOutbox.StreamName)
+
+	var payload event.PRClosed
+	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
+	require.Equal(t, "core", payload.Service)
+	require.Equal(t, "merged", payload.Outcome)
+	require.Equal(t, resolved, payload.ResolvedNodeIDs, "a caller-supplied resolved subset is carried verbatim")
+	require.Len(t, payload.Edits, 1)
+	require.Equal(t, edits[0], payload.Edits[0])
+
+	wantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(event.PRClosedEventID("r-1", 1, "core").String()))
+	require.Equal(t, wantID, repo.lastOutbox.ID,
+		"the outbox entry id must derive from the three-arg per-service event id")
 }
 
 // TestService_Record_UsesProvidedOpenedAt verifies that a non-zero
@@ -340,7 +547,7 @@ func TestService_RecordOutcome_EmitsPRClosedAtomically(t *testing.T) {
 	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
 
 	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
-	require.NoError(t, svc.RecordOutcome(context.Background(), "p1", proposal.PROutcomeMerged, closedAt))
+	require.NoError(t, svc.RecordOutcome(context.Background(), "p1", "", proposal.PROutcomeMerged, closedAt, nil, nil))
 
 	require.Equal(t, proposal.PROutcomeMerged, repo.lastOutcome)
 	require.Equal(t, closedAt, repo.lastClosedAt)
@@ -358,33 +565,34 @@ func TestService_RecordOutcome_NoEventWhenAlreadyTerminal(t *testing.T) {
 	}
 	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
 
-	err := svc.RecordOutcome(context.Background(), "p1", proposal.PROutcomeRejected, time.Now())
+	err := svc.RecordOutcome(context.Background(), "p1", "", proposal.PROutcomeRejected, time.Now(), nil, nil)
 	require.NoError(t, err, "a CAS miss is an idempotent no-op, not an error")
 	require.Nil(t, repo.lastOutbox, "no event may be emitted when the CAS misses")
 }
 
-// TestService_FailStuckClaim_PassesThroughIDAndObservedClaimedAt verifies
-// FailStuckClaim delegates to the repository's CAS variant with the exact id
-// and observedClaimedAt it was given, and returns the repository's hit value
-// unchanged. Both of this method's callers rely on that pass-through to
-// distinguish "released" from "a fresher claim raced ahead of me": the
-// reconciler's opening sweep, and the gRPC FailPullRequest handler on the
-// ui PR-creation route's own failure callback.
-func TestService_FailStuckClaim_PassesThroughIDAndObservedClaimedAt(t *testing.T) {
+// TestService_FailStuckClaim_PassesThroughIDServiceAndObservedClaimedAt verifies
+// FailStuckClaim delegates to the repository's CAS variant with the exact id,
+// service, and observedClaimedAt it was given, and returns the repository's hit
+// value unchanged. Both callers rely on that pass-through to distinguish
+// "released" from "a fresher claim raced ahead of me": the reconciler's opening
+// sweep, and the gRPC FailPullRequest handler on the ui PR-creation route's own
+// failure callback.
+func TestService_FailStuckClaim_PassesThroughIDServiceAndObservedClaimedAt(t *testing.T) {
 	repo := &fakeRepo{failStuckHit: true}
 	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
 
 	observed := fixedClock{}.Now().Add(-time.Hour)
-	hit, err := svc.FailStuckClaim(context.Background(), "p1", observed)
+	hit, err := svc.FailStuckClaim(context.Background(), "p1", "core", observed)
 	require.NoError(t, err)
 	require.True(t, hit)
 	require.Equal(t, "p1", repo.lastFailStuckID)
+	require.Equal(t, "core", repo.lastFailStuckService)
 	require.Equal(t, observed, repo.lastFailStuckClaimedAt)
 
 	// A repository-reported miss (re-claimed since observed) passes through
 	// as false, not an error.
 	repo.failStuckHit = false
-	hit, err = svc.FailStuckClaim(context.Background(), "p1", observed)
+	hit, err = svc.FailStuckClaim(context.Background(), "p1", "core", observed)
 	require.NoError(t, err)
 	require.False(t, hit, "a CAS miss must surface as hit=false, never an error")
 }

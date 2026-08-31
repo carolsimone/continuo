@@ -57,16 +57,20 @@ type AttemptLister interface {
 }
 
 // OpeningCursor is the keyset position for paginating stuck 'opening' claims
-// oldest-first (created_at, id), mirroring release-controller's ListCursor.
-// It lets ListStuckOpening resume after the last row a previous page
-// returned instead of always re-reading the same oldest prefix: the
+// oldest-first by (created_at, id, service), mirroring release-controller's
+// ListCursor. It lets ListStuckOpening resume after the last row a previous
+// page returned instead of always re-reading the same oldest prefix: the
 // reconciler's opening sweep carries the cursor its previous pass returned
 // into the next call, so a persistently unresolvable row (a standing GitHub
-// error, for instance) never keeps every row behind it out of every pass. A
-// nil cursor requests the first page.
+// error, for instance) never keeps every row behind it out of every pass.
+// Service is part of the key because one proposal can now have several
+// 'opening' children — one per owning service — that share a (created_at, id);
+// without the service tiebreak, resuming after one child would skip past a
+// sibling sharing that key and strand it. A nil cursor requests the first page.
 type OpeningCursor struct {
 	CreatedAt time.Time
 	ID        string
+	Service   string
 }
 
 // OpenPRLister is the repository slice the reconciler's outcome-mirroring
@@ -201,8 +205,11 @@ type ProposalRepository interface {
 
 	// ListStuckOpening returns up to limit child pull requests claimed for
 	// creation but not yet recorded (pr_state='opening'), ordered oldest-created
-	// first by the parent proposal's (created_at, id), resuming strictly after
-	// cursor (nil for the first page). Each row carries its Service. next is the
+	// first by (parent proposal created_at, parent id, child service), resuming
+	// strictly after cursor (nil for the first page). Service is part of the key
+	// so a proposal's several per-service 'opening' children, which share a
+	// (created_at, id), are each visited rather than one skipping the others.
+	// Each row carries its Service. next is the
 	// cursor of the last row in this page, non-nil only when more rows exist
 	// beyond it — nil signals "reached the end of the 'opening' set", which the
 	// reconciler's opening sweep uses to wrap back to the first page so a full

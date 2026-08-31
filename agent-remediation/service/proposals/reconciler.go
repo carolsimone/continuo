@@ -6,15 +6,20 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
 // OutcomeRecorder is the Service slice the reconciler drives; the concrete
-// *Service satisfies it.
+// *Service satisfies it. service selects which per-service child PR the outcome
+// belongs to. edits and resolved carry the terminal-outcome detail the pr_closed
+// event names; the outcome-mirror pass leaves them empty (the amend compare that
+// fills them lands with the full close loop), and RecordOutcome falls back to
+// the per-service resolved set so pr_closed still matches pr_opened.
 type OutcomeRecorder interface {
-	RecordOutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) error
+	RecordOutcome(ctx context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error
 }
 
 // OpeningRecorder is the Service slice the opening sweep drives to record a
@@ -29,7 +34,7 @@ type OpeningRecorder interface {
 // listed earlier in the same pass, never a fresher one taken by a re-claim in
 // between; hit reports whether the CAS fired.
 type PRFailer interface {
-	FailStuckClaim(ctx context.Context, id string, observedClaimedAt time.Time) (hit bool, err error)
+	FailStuckClaim(ctx context.Context, id, service string, observedClaimedAt time.Time) (hit bool, err error)
 }
 
 // defaultOpeningGracePeriod bounds how long a pr_state='opening' claim can go
@@ -196,13 +201,16 @@ func (r *Reconciler) reconcileOpen(ctx context.Context) (permissionDenied, clean
 		if closedAt.IsZero() {
 			closedAt = r.clock.Now()
 		}
-		if err := r.recorder.RecordOutcome(ctx, pr.ID, outcome, closedAt); err != nil {
+		// The amend compare that fills edits and the resolved subset lands with
+		// the full close loop; the outcome-mirror pass records the bare terminal
+		// state, and RecordOutcome derives the per-service resolved set itself.
+		if err := r.recorder.RecordOutcome(ctx, pr.ID, pr.Service, outcome, closedAt, nil, nil); err != nil {
 			r.logger.Warn("pr reconciler: record outcome",
-				"proposal_id", pr.ID, "outcome", string(outcome), "error", err)
+				"proposal_id", pr.ID, "service", pr.Service, "outcome", string(outcome), "error", err)
 			continue
 		}
 		r.logger.Info("pr reconciler: proposal PR reached terminal outcome",
-			"proposal_id", pr.ID, "repo", pr.Repo, "pr_number", pr.PRNumber, "outcome", string(outcome))
+			"proposal_id", pr.ID, "service", pr.Service, "repo", pr.Repo, "pr_number", pr.PRNumber, "outcome", string(outcome))
 	}
 	return permissionDenied, cleanRead
 }
@@ -245,7 +253,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 
 	now := r.clock.Now()
 	for _, o := range stuck {
-		branch := BuildBranch(o.ReleaseID, o.Attempt)
+		branch := BuildBranch(o.ReleaseID, o.Attempt, o.Service)
 		ref, found, err := r.branchFinder.FindByBranch(ctx, o.Repo, branch)
 		if err != nil {
 			if errors.Is(err, ports.ErrPermissionDenied) {
@@ -259,6 +267,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 		if found {
 			if err := r.openingRecorder.Record(ctx, RecordInput{
 				ProposalID: o.ID,
+				Service:    o.Service,
 				PrURL:      ref.URL,
 				PrNumber:   ref.Number,
 				OpenedAt:   ref.CreatedAt,
@@ -285,7 +294,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 		if age < r.openingGracePeriod {
 			continue
 		}
-		hit, err := r.failer.FailStuckClaim(ctx, o.ID, *o.ClaimedAt)
+		hit, err := r.failer.FailStuckClaim(ctx, o.ID, o.Service, *o.ClaimedAt)
 		if err != nil {
 			r.logger.Warn("pr reconciler: fail stuck opening claim",
 				"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "error", err)

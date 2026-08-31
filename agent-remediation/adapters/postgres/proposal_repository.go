@@ -869,14 +869,17 @@ type openingRow struct {
 }
 
 // ListStuckOpening returns up to limit child pull requests with
-// pr_state='opening', ordered oldest-created first by the parent proposal's
-// (created_at, id) and resuming strictly after cursor (nil for the first page).
-// It over-fetches by one row to tell "more rows exist" apart from "this was the
-// last page": when limit+1 rows come back, the (limit+1)th is dropped from the
-// result and becomes next, the cursor of the row now at the end of the page;
-// otherwise next is nil. The keyset is the parent proposal's (created_at, id):
-// each proposal claimed today has a single 'opening' child, so the two agree
-// one-to-one.
+// pr_state='opening', ordered oldest-created first by (parent proposal
+// created_at, parent id, child service) and resuming strictly after cursor
+// (nil for the first page). It over-fetches by one row to tell "more rows
+// exist" apart from "this was the last page": when limit+1 rows come back, the
+// (limit+1)th is dropped from the result and becomes next, the cursor of the
+// row now at the end of the page; otherwise next is nil. Service is part of the
+// keyset because one proposal can have several 'opening' children — one per
+// owning service — that share a (created_at, id); ordering and resuming on
+// service too keeps a page boundary that lands between two siblings from
+// skipping the later one, which a (created_at, id)-only cursor would exclude
+// via its strict `>`.
 func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cursor *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
 	if limit <= 0 {
 		limit = 50
@@ -888,10 +891,10 @@ func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cu
 	      WHERE ppr.pr_state = 'opening'`
 	args := make([]any, 0, 6)
 	if cursor != nil {
-		args = append(args, cursor.CreatedAt, cursor.ID)
-		q += fmt.Sprintf(" AND (p.created_at, p.id) > ($%d, $%d)", len(args)-1, len(args))
+		args = append(args, cursor.CreatedAt, cursor.ID, cursor.Service)
+		q += fmt.Sprintf(" AND (p.created_at, p.id, ppr.service) > ($%d, $%d, $%d)", len(args)-2, len(args)-1, len(args))
 	}
-	q += " ORDER BY p.created_at ASC, p.id ASC"
+	q += " ORDER BY p.created_at ASC, p.id ASC, ppr.service ASC"
 	args = append(args, limit+1)
 	q += fmt.Sprintf(" LIMIT $%d", len(args))
 
@@ -903,7 +906,7 @@ func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cu
 	var next *repository.OpeningCursor
 	if len(rows) > limit {
 		last := rows[limit-1]
-		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID, Service: last.Service}
 		rows = rows[:limit]
 	}
 
