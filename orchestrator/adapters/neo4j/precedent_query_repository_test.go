@@ -510,6 +510,156 @@ func TestPrecedentReader_IncludeCodeFalseOmitsFailingCode(t *testing.T) {
 		"prior-version code is always fetched — the caller renders the diff from it")
 }
 
+// TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState
+// verifies the read path widened for Phase-4 provenance: a rejection resolved
+// by a MERGED PR (a [:RESOLVED_BY] edge to a :Proposal, not a :NodeVersion)
+// counts as resolved by the identity query — it must sort ahead of a still-open
+// rejection filed LATER on the same signature — and the detail path surfaces
+// the merged PR's [:EDITED] provenance and the :PullRequest's live pr_state.
+// The edited node (nu) is an UPSTREAM node distinct from the rejected node, so
+// the test also proves the edited target is carried faithfully rather than
+// assumed equal to the rejection node.
+func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	relA, nodeA := marker+"-rel-a", marker+"-node-a"
+	relOpen, nodeOpen := marker+"-rel-open", marker+"-node-open"
+	nu := marker + "-nu" // the edited upstream :Table, distinct from nodeA
+	proposalID := marker + "-proposal"
+	closedAt := t0.Add(2 * time.Hour)
+
+	// The proposal-resolved rejection, filed EARLIER than the open one.
+	seedPrecedentRejection(t, client, relA, nodeA, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+	// A still-open rejection on the same signature, filed LATER — resolved-first
+	// ordering must still rank the proposal-resolved rejection ahead of it.
+	seedPrecedentRejection(t, client, relOpen, nodeOpen, sig, "logic", "logic:missing_object",
+		t0.Add(30*time.Minute), "select open", "hash-open")
+
+	// The edit's target :Table must already exist; the writer never mints one.
+	seedEditTargetTable(t, client, nu, marker)
+
+	repo := newCaseBaseRepo(client)
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: relA, NodeID: nodeA},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/repo/pull/9", PrNumber: 9,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
+		}))
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: relA, Service: "core",
+		Outcome: "merged", ClosedAt: closedAt,
+		ResolvedNodeIDs: []string{nodeA},
+		Edits: []casebase.EditOutcome{
+			{Path: "models/upstream.sql", TargetNodeID: nu, Amended: false, Diff: "D1"},
+		},
+	}))
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 2, "both rejections on the signature match")
+
+	// The identity query counts the [:RESOLVED_BY]->(:Proposal) edge as
+	// resolved: nodeA sorts first despite being OLDER by `at`.
+	resolved, open := precedents[0], precedents[1]
+	assert.Equal(t, nodeA, resolved.Rejection.NodeID,
+		"a proposal-resolved rejection must rank resolved-first, ahead of a newer open one")
+	assert.Equal(t, nodeOpen, open.Rejection.NodeID)
+
+	require.Len(t, resolved.Edited, 1, "the merged PR's EDITED provenance is surfaced")
+	e := resolved.Edited[0]
+	assert.Equal(t, nu, e.NodeID, "the edited (upstream) node is carried, distinct from the rejected node")
+	assert.NotEqual(t, nodeA, e.NodeID)
+	assert.Equal(t, "models/upstream.sql", e.Path)
+	assert.False(t, e.Amended)
+	assert.Equal(t, "D1", e.Diff, "a non-amended edit keeps the edge's stored proposal diff")
+	assert.Nil(t, e.MergedVersion, "no straddling merged version selected for a non-amended edit")
+	assert.Nil(t, e.MergedPrior)
+
+	require.Len(t, resolved.Proposals, 1)
+	assert.Equal(t, proposalID, resolved.Proposals[0].ProposalID)
+	assert.Equal(t, "merged", resolved.Proposals[0].PrState,
+		"pr_state comes live from the :PullRequest node, not the open-time inline snapshot")
+
+	assert.Empty(t, open.Edited, "the still-open rejection carries no edited provenance")
+}
+
+// TestPrecedentReader_AmendedEditSelectsStraddlingVersions verifies the new
+// per-key edited query's straddling-version selection: for an AMENDED edit
+// whose target :Table has :NodeVersions promoted both before and after the PR
+// closed, MergedVersion is the FIRST version promoted after closed_at
+// (ascending) and MergedPrior is the NEWEST version promoted before it — the
+// two versions that bracket the human's merged truth.
+func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	relC, nodeC := marker+"-rel-c", marker+"-node-c"
+	nu := marker + "-nu"
+	proposalID := marker + "-proposal"
+	closedAt := t0.Add(2 * time.Hour)
+
+	seedPrecedentRejection(t, client, relC, nodeC, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+	seedEditTargetTable(t, client, nu, marker)
+
+	// Four versions on the edited node straddling closed_at. The selection must
+	// pick "hash-after" (first after closed_at) as merged and "hash-before"
+	// (newest before merged) as prior — never the way-before/way-after decoys.
+	seedPrecedentVersion(t, client, nu, marker, "hash-way-before", "select way before", closedAt.Add(-3*time.Hour))
+	seedPrecedentVersion(t, client, nu, marker, "hash-before", "select before", closedAt.Add(-1*time.Hour))
+	seedPrecedentVersion(t, client, nu, marker, "hash-after", "select after", closedAt.Add(1*time.Hour))
+	seedPrecedentVersion(t, client, nu, marker, "hash-way-after", "select way after", closedAt.Add(3*time.Hour))
+
+	repo := newCaseBaseRepo(client)
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: relC, NodeID: nodeC},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/repo/pull/11", PrNumber: 11,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
+		}))
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: relC, Service: "core",
+		Outcome: "merged", ClosedAt: closedAt,
+		ResolvedNodeIDs: []string{nodeC},
+		Edits: []casebase.EditOutcome{
+			{Path: "models/amended.sql", TargetNodeID: nu, Amended: true, Diff: "Dc"},
+		},
+	}))
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	require.Len(t, precedents[0].Edited, 1)
+	e := precedents[0].Edited[0]
+	assert.True(t, e.Amended)
+	require.NotNil(t, e.MergedVersion, "an amended edit with a straddling version selects the merged truth")
+	assert.Equal(t, "hash-after", e.MergedVersion.ContentHash,
+		"the FIRST version promoted after closed_at (ascending) is the merged version")
+	assert.Equal(t, "select after", e.MergedVersion.RawCode)
+	require.NotNil(t, e.MergedPrior, "the version the merge superseded is the newest one before it")
+	assert.Equal(t, "hash-before", e.MergedPrior.ContentHash)
+	assert.Equal(t, "select before", e.MergedPrior.RawCode)
+}
+
 // TestPrecedentReader_NoMatchIsEmptyNotError verifies that a signature with no
 // recorded rejections is a valid, non-error answer: an empty slice, not an
 // error.

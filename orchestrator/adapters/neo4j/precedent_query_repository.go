@@ -67,7 +67,8 @@ func (r *PrecedentQueryRepository) Precedents(
 		MATCH (rej:Rejection)-[:HAS_SIGNATURE]->(sig:ErrorSignature)
 		WHERE ($signature <> '' AND sig.signature = $signature)
 		   OR ($signature = '' AND rej.category = $category AND rej.reason = $reason)
-		OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res:NodeVersion)
+		OPTIONAL MATCH (rej)-[:RESOLVED_BY]->(res)
+		WHERE res:NodeVersion OR res:Proposal
 		WITH rej, sig.signature AS signature, count(res) > 0 AS resolved
 		ORDER BY resolved DESC, rej.at DESC
 		LIMIT $limit
@@ -117,8 +118,14 @@ func (r *PrecedentQueryRepository) Precedents(
 		  ORDER BY prior.promoted_at DESC
 		WITH rej, signature, res, res_is_current, head(collect(prior)) AS prior
 		OPTIONAL MATCH (rej)-[:PROPOSED]->(p:Proposal)
+		OPTIONAL MATCH (p)-[:HAS_PR]->(pl:PullRequest)
 		WITH rej, signature, res, prior, res_is_current,
-		     collect(p {.proposal_id, .pr_url, .pr_number, .pr_state}) AS proposals
+		     collect(DISTINCT p {
+		       .proposal_id,
+		       pr_url:    coalesce(pl.pr_url, p.pr_url),
+		       pr_number: coalesce(pl.pr_number, p.pr_number),
+		       pr_state:  coalesce(pl.pr_state, p.pr_state)
+		     }) AS proposals
 		RETURN rej.release_id AS release_id, rej.node_id AS node_id,
 		       signature,
 		       coalesce(rej.stage, '') AS stage,
@@ -183,13 +190,75 @@ func (r *PrecedentQueryRepository) Precedents(
 		return nil, fmt.Errorf("iterate precedent details: %w", err)
 	}
 
+	// Edited-node provenance for rejections resolved by a merged PR. Run
+	// alongside the detail query, keyed the same way: for each rejection
+	// RESOLVED_BY a :Proposal, walk its [:EDITED] edges to the touched :Table.
+	// For an amended edit, select the promoted :NodeVersion straddling the PR's
+	// close — the first version promoted after closed_at (merged) and the newest
+	// before it (prior) — so the service can render the merged-truth diff.
+	editedResult, err := session.Run(ctx, `
+		UNWIND $keys AS k
+		MATCH (rej:Rejection {release_id: k.release_id, node_id: k.node_id})-[rb:RESOLVED_BY]->(rp:Proposal)
+		MATCH (rp)-[ed:EDITED]->(t:Table)
+		OPTIONAL MATCH (rp)-[:HAS_PR]->(pl:PullRequest) WHERE pl.pr_state = 'merged'
+		OPTIONAL MATCH (mv:NodeVersion {unique_id: t.unique_id})
+		  WHERE ed.amended AND pl.closed_at IS NOT NULL AND mv.promoted_at > pl.closed_at
+		WITH rej, ed, t, pl, mv ORDER BY mv.promoted_at ASC
+		WITH rej, ed, t, pl, head(collect(mv)) AS merged
+		OPTIONAL MATCH (pv:NodeVersion {unique_id: t.unique_id})
+		  WHERE merged IS NOT NULL AND pv.promoted_at < merged.promoted_at
+		WITH rej, ed, t, merged, pv ORDER BY pv.promoted_at DESC
+		RETURN rej.release_id AS release_id, rej.node_id AS node_id,
+		       t.unique_id AS edited_node, ed.path AS path, ed.amended AS amended,
+		       ed.diff AS diff, merged, head(collect(pv)) AS prior
+	`, map[string]any{"keys": keys})
+	if err != nil {
+		return nil, fmt.Errorf("precedent edited-provenance query: %w", err)
+	}
+	editedByKey := make(map[key][]casebase.EditedView)
+	for editedResult.Next(ctx) {
+		rec := editedResult.Record()
+		rel, _ := recordString(rec, "release_id")
+		nod, _ := recordString(rec, "node_id")
+		e := casebase.EditedView{}
+		e.NodeID, _ = recordString(rec, "edited_node")
+		e.Path, _ = recordString(rec, "path")
+		e.Amended = recordBool(rec, "amended")
+		e.Diff, _ = recordString(rec, "diff")
+		e.MergedVersion = versionViewFromNode(rec, "merged")
+		e.MergedPrior = versionViewFromNode(rec, "prior")
+		k := key{rel, nod}
+		editedByKey[k] = append(editedByKey[k], e)
+	}
+	if err := editedResult.Err(); err != nil {
+		return nil, fmt.Errorf("iterate precedent edited provenance: %w", err)
+	}
+
 	out := make([]casebase.PrecedentView, 0, len(order))
 	for _, k := range order { // identity query's order is authoritative
 		if v, ok := byKey[k]; ok {
+			v.Edited = editedByKey[k]
 			out = append(out, v)
 		}
 	}
 	return out, nil
+}
+
+// versionViewFromNode maps a bare-node column (a `neo4j.Node`, as returned by
+// `RETURN merged` / `head(collect(pv))`) to a VersionView, reading its property
+// bag; nil when the column is null. The edited-provenance query returns the
+// straddling versions as whole nodes rather than `{ .* }` projections, so this
+// unwraps the node's Props before delegating to the shared mapper.
+func versionViewFromNode(rec *neo4j.Record, column string) *codeversion.VersionView {
+	raw, ok := rec.Get(column)
+	if !ok || raw == nil {
+		return nil
+	}
+	node, ok := raw.(neo4j.Node)
+	if !ok {
+		return nil
+	}
+	return versionViewFromMap(node.Props)
 }
 
 // versionViewFromProps maps a `node { .* }` projection column — a Neo4j
@@ -206,6 +275,17 @@ func versionViewFromProps(rec *neo4j.Record, column string) *codeversion.Version
 	}
 	m, ok := raw.(map[string]any)
 	if !ok {
+		return nil
+	}
+	return versionViewFromMap(m)
+}
+
+// versionViewFromMap maps a property bag — from either a `{ .* }` projection or
+// a bare node's Props — to a VersionView. It never returns nil for a non-nil
+// map: an empty map yields a zero-valued VersionView, so callers that already
+// know the column was non-null get a value back.
+func versionViewFromMap(m map[string]any) *codeversion.VersionView {
+	if m == nil {
 		return nil
 	}
 	v := &codeversion.VersionView{}

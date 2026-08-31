@@ -53,15 +53,19 @@ func (s *PrecedentQueryService) GetPrecedents(
 	for _, v := range views {
 		p := casebase.Precedent{
 			Rejection:        v.Rejection,
-			Resolved:         v.ResolvingVersion != nil,
+			Resolved:         v.ResolvingVersion != nil || len(v.Edited) > 0,
 			ResolvingVersion: v.ResolvingVersion,
 			Proposals:        v.Proposals,
 		}
+		// The own-timeline resolution diff is rendered as before and preferred
+		// when present: it is the authoritative record when a resolving version
+		// exists on the node's own timeline.
 		if v.ResolvingVersion != nil && v.PriorVersion != nil {
 			p.ResolutionDiff, p.ResolutionDiffTruncated = renderUnifiedDiff(
 				v.PriorVersion.RawCode, v.ResolvingVersion.RawCode,
 				v.PriorVersion.VersionSeq, v.ResolvingVersion.VersionSeq)
 		}
+		p.Edited = renderEditedDiffs(v.Edited)
 		if !includeCode && p.ResolvingVersion != nil {
 			stripped := *p.ResolvingVersion
 			stripped.RawCode, stripped.CompiledCode = "", ""
@@ -70,6 +74,30 @@ func (s *PrecedentQueryService) GetPrecedents(
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// renderEditedDiffs copies each edited-provenance entry, replacing its Diff
+// with the merged-truth diff (the version the merge superseded vs the promoted
+// merged version) when the edit was amended and a straddling version was
+// selected; otherwise it keeps the edge's own stored proposal diff. The merged
+// diff is capped at diffByteCap like every other rendered diff.
+func renderEditedDiffs(edited []casebase.EditedView) []casebase.EditedView {
+	if len(edited) == 0 {
+		return nil
+	}
+	out := make([]casebase.EditedView, 0, len(edited))
+	for _, e := range edited {
+		if e.MergedVersion != nil {
+			var priorCode string
+			var priorSeq int64
+			if e.MergedPrior != nil {
+				priorCode, priorSeq = e.MergedPrior.RawCode, e.MergedPrior.VersionSeq
+			}
+			e.Diff, _ = renderUnifiedDiff(priorCode, e.MergedVersion.RawCode, priorSeq, e.MergedVersion.VersionSeq)
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func clampPrecedentLimit(limit int32) int32 {

@@ -747,6 +747,32 @@ func TestGetPrecedents_MapsEntries(t *testing.T) {
 	assert.Equal(t, int32(5), pr.gotLimit)
 }
 
+func TestGetPrecedents_MapsEditedProvenance(t *testing.T) {
+	pr := &fakePrecedentHistoryReader{
+		precedents: []casebase.Precedent{
+			{
+				Rejection: casebase.Rejection{ReleaseID: "rel-1", NodeID: "svc.schema.tbl"},
+				Resolved:  true,
+				Edited: []casebase.EditedView{
+					{NodeID: "svc.schema.upstream", Path: "models/upstream.sql", Amended: true, Diff: "-a\n+b\n"},
+				},
+			},
+		},
+	}
+	h := newHandlerWithPrecedents(pr)
+	resp, err := h.GetPrecedents(context.Background(), &orchestratorv1.GetPrecedentsRequest{Signature: "sig-1"})
+	require.NoError(t, err)
+	require.Len(t, resp.Precedents, 1)
+
+	p := resp.Precedents[0]
+	assert.True(t, p.Resolved)
+	require.Len(t, p.Edited, 1)
+	assert.Equal(t, "svc.schema.upstream", p.Edited[0].NodeId)
+	assert.Equal(t, "models/upstream.sql", p.Edited[0].Path)
+	assert.True(t, p.Edited[0].Amended)
+	assert.Equal(t, "-a\n+b\n", p.Edited[0].Diff)
+}
+
 func TestGetPrecedents_EmptyIsOKNotNotFound(t *testing.T) {
 	h := newHandlerWithPrecedents(&fakePrecedentHistoryReader{precedents: []casebase.Precedent{}})
 	resp, err := h.GetPrecedents(context.Background(), &orchestratorv1.GetPrecedentsRequest{Signature: "sig-unknown"})

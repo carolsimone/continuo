@@ -432,6 +432,11 @@ func precedentToProto(p casebase.Precedent) *orchestratorv1.Precedent {
 			PrNumber: num.ClampInt32(pr.PrNumber), PrState: pr.PrState,
 		})
 	}
+	for _, e := range p.Edited {
+		pb.Edited = append(pb.Edited, &orchestratorv1.PrecedentEdit{
+			NodeId: e.NodeID, Path: e.Path, Amended: e.Amended, Diff: e.Diff,
+		})
+	}
 	return pb
 }
 
