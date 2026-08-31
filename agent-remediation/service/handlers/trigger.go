@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"sort"
 
 	"github.com/google/uuid"
@@ -110,44 +109,6 @@ func (t Trigger) NodeIDs() []string {
 	return ids
 }
 
-// Subset returns this trigger narrowed to the named nodes: the same
-// release-level header, only the nodes whose ids appear in ids (in the order
-// this trigger holds them), and a RawPayload re-marshalled to the same wire
-// shape the stream carries, so a caller storing it can replay the narrowed
-// trigger through the adapter's decoder. Ids the trigger does not carry are
-// ignored.
-//
-// The dedup identity of the message that delivered this trigger is deliberately
-// dropped: a replayed subset is a new piece of work, and the caller replaying it
-// supplies an identity of its own rather than reusing the one already claimed.
-func (t Trigger) Subset(ids []string) Trigger {
-	want := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		want[id] = true
-	}
-	sub := t
-	sub.MessageID = ""
-	sub.OutboxEntryID = nil
-	sub.Nodes = nil
-	for _, n := range t.Nodes {
-		if want[n.NodeID] {
-			sub.Nodes = append(sub.Nodes, n)
-		}
-	}
-	// A payload that cannot be marshalled would mean a node field this package
-	// declares is not serializable, which the wire types below rule out. If it
-	// ever happened, the subset carries no payload rather than the full batch's:
-	// replaying the whole batch under the guise of a subset would re-fix nodes
-	// the caller deliberately narrowed away.
-	raw, err := json.Marshal(sub.wire())
-	if err != nil {
-		sub.RawPayload = nil
-		return sub
-	}
-	sub.RawPayload = raw
-	return sub
-}
-
 // idempotencyKey identifies this inbound trigger for LLM response caching. It
 // mirrors the message-processing dedup identity: the upstream OutboxEntryID when
 // present (stable across a Redis republish of the same logical trigger with a
@@ -164,8 +125,8 @@ func (t Trigger) idempotencyKey() string {
 }
 
 // TriggerWire is the remediation.requested:v2 wire shape: what the classifier
-// publishes, what the stream adapter decodes, and what Subset re-marshals. It
-// is declared once here so the decoder and the re-encoder cannot drift apart.
+// publishes and what the stream adapter decodes. It is declared once here so
+// every reader of the payload agrees on its shape.
 type TriggerWire struct {
 	EventID   string `json:"event_id,omitempty"`
 	Source    string `json:"source"`
@@ -204,39 +165,6 @@ type TriggerNodeWire struct {
 	// ChangedAncestorIDs are the node's transitive upstream ancestors whose
 	// content changed in the rejected release.
 	ChangedAncestorIDs []string `json:"changed_ancestor_ids,omitempty"`
-}
-
-// wire projects the trigger back onto the wire shape it was decoded from.
-func (t Trigger) wire() TriggerWire {
-	nodes := make([]TriggerNodeWire, 0, len(t.Nodes))
-	for _, n := range t.Nodes {
-		nodes = append(nodes, TriggerNodeWire{
-			NodeID:               n.NodeID,
-			RelationID:           n.RelationID,
-			Category:             n.Category,
-			ErrorSignature:       n.ErrorSignature,
-			Reason:               n.Reason,
-			ErrorExcerpt:         n.ErrorExcerpt,
-			DBTLogURI:            n.DBTLogURI,
-			CandidateArtifactURI: n.CandidateArtifactURI,
-			FilePath:             n.FilePath,
-			Service:              n.Service,
-			NodeType:             n.NodeType,
-			OtherService:         n.OtherService,
-			OtherFilePath:        n.OtherFilePath,
-			ChangedAncestorIDs:   n.ChangedAncestorIDs,
-		})
-	}
-	return TriggerWire{
-		Source:           t.Source,
-		ReleaseID:        t.ReleaseID,
-		RemediationRound: t.RemediationRound,
-		Repo:             t.Repo,
-		CommitSHA:        t.CommitSHA,
-		CodeBundleURI:    t.CodeBundleURI,
-		Shadow:           t.Shadow,
-		Nodes:            nodes,
-	}
 }
 
 // TriggerFromWire builds a Trigger from a decoded v2 payload. The dedup

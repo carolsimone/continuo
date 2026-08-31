@@ -158,23 +158,3 @@ func TestTriggerFromPayload_LeavesTheDedupIdentityToTheCaller(t *testing.T) {
 	require.Empty(t, trigger.MessageID)
 	require.Nil(t, trigger.OutboxEntryID)
 }
-
-// TestTriggerFromPayload_RoundTripsASubset closes the loop between the decoder
-// here and handlers.Trigger.Subset: the payload a narrowed trigger carries must
-// decode back into that same narrowed trigger, since the reconciler stores it
-// and replays it through this decoder.
-func TestTriggerFromPayload_RoundTripsASubset(t *testing.T) {
-	raw, err := json.Marshal(requestedPayloadFixture)
-	require.NoError(t, err)
-	full, err := TriggerFromPayload(raw)
-	require.NoError(t, err)
-
-	replayed, err := TriggerFromPayload(full.Subset([]string{"orders.model.orders_daily"}).RawPayload)
-	require.NoError(t, err)
-
-	require.Equal(t, full.ReleaseID, replayed.ReleaseID)
-	require.Equal(t, full.RemediationRound, replayed.RemediationRound)
-	require.Equal(t, full.CommitSHA, replayed.CommitSHA)
-	require.Equal(t, full.CodeBundleURI, replayed.CodeBundleURI)
-	require.Equal(t, full.Nodes, replayed.Nodes)
-}

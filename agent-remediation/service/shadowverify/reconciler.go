@@ -13,9 +13,9 @@
 //
 // This package is the other half of that handoff: a polling loop that reads
 // each waiting attempt's releases and either finalizes it as a proposal, or
-// records why it failed and starts the next attempt over the nodes those
-// releases still reject — the nodes a shadow release accepted are left fixed
-// rather than being fixed again.
+// records why it failed and starts the next attempt over the same failing set —
+// the whole set, because the attempt's edits stand or fall together, and the
+// errors the releases reported are what the next attempt is shown.
 //
 // Those releases share one global queue and run one at a time, so an attempt's
 // shadow releases are answered one after another rather than together. Every
@@ -214,7 +214,7 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 	}
 	switch {
 	case anyRejected:
-		r.rejected(ctx, v, verifyError(v, nodeErrors), nodeErrors)
+		r.rejected(ctx, v, verifyError(v, nodeErrors))
 	case allTerminal:
 		r.verified(ctx, v)
 	default:
@@ -274,13 +274,13 @@ func (r *Reconciler) verified(ctx context.Context, v proposal.View) {
 
 // rejected finalizes an attempt whose fix did not hold up, recording verifyErr
 // as the evidence the next attempt is shown, and then starts that next attempt
-// over the nodes nodeErrors still names. The order matters: the failed row must
+// over the attempt's whole failing set. The order matters: the failed row must
 // be committed first, because the driver counts terminal attempts to decide
 // both the next attempt's number and whether the cap has been reached. The
 // transition is a compare-and-set, so only the pass that actually finalizes the
 // row starts a next attempt — a repeated pass finds the row already terminal
 // and does nothing.
-func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr string, nodeErrors map[string]string) {
+func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr string) {
 	u := r.newUoW()
 	if err := u.Begin(ctx); err != nil {
 		r.logger.Warn("shadow verify: begin (mark verify failed)", "proposal_id", v.ID, "error", err)
@@ -303,7 +303,7 @@ func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr st
 	r.logger.Info("shadow verify: a shadow release did not validate the fix",
 		"proposal_id", v.ID, "nodes", len(v.ResolvedNodeIDs), "release", v.ReleaseID,
 		"shadow_releases", len(verificationsOf(v)), "attempt", v.Attempt, "verify_error", verifyErr)
-	r.retry(ctx, v, nodeErrors)
+	r.retry(ctx, v)
 }
 
 // failIfVerificationExpired ends an attempt one of whose shadow releases has
@@ -341,10 +341,7 @@ func (r *Reconciler) failIfVerificationExpired(ctx context.Context, v proposal.V
 		if now.Sub(since) < r.timeout {
 			continue
 		}
-		// A timeout names no failing node, so the next attempt is started over
-		// the attempt's whole failing set: nothing was judged, so nothing is
-		// fixed.
-		r.rejected(ctx, v, timedOutError, nil)
+		r.rejected(ctx, v, timedOutError)
 		return
 	}
 }
@@ -361,20 +358,21 @@ func (r *Reconciler) failIfUnreadableTooLong(ctx context.Context, v proposal.Vie
 	if r.clock.Now().Sub(v.CreatedAt) < r.timeout {
 		return
 	}
-	r.rejected(ctx, v, timedOutError, nil)
+	r.rejected(ctx, v, timedOutError)
 }
 
-// retry starts the attempt that follows a failed verification, from the
-// trigger stored on the attempt's own row, narrowed to what still fails.
+// retry starts the attempt that follows a failed verification, from the trigger
+// stored on the attempt's own row, replayed in full.
 //
 // A shadow release judges every node the attempt addressed at once, so its
-// rejection also says which of them the fix DID repair: the nodes it no longer
-// reports an error for. Those are dropped from the retry, so the next attempt
-// re-fixes only what is still broken and spends no model call on source that is
-// already correct. The narrowing needs a node the attempt actually fixed to be
-// named: a rejection that names none of them — the fix held, and something
-// downstream of it failed instead — narrows to nothing and retries the whole
-// failing set, since no fixed node has been shown to be right or wrong.
+// rejection may well name only some of them. The retry still covers the whole
+// failing set, because the attempt is one proposal over one set of edits and it
+// failed as a unit: the edits for the nodes that did pass were never offered to
+// anyone, and are discarded with the failed attempt. Retrying only what still
+// fails would therefore end in a pull request carrying fixes for those nodes
+// alone, silently dropping the ones an earlier attempt had already got right.
+// Which nodes failed is not lost — it is recorded as the attempt's verify error,
+// which is exactly the evidence the next attempt is shown.
 //
 // The rebuilt trigger is given a dedup identity of its own. The driver opens
 // by asking whether this trigger was already handled, keyed on the Redis
@@ -393,7 +391,7 @@ func (r *Reconciler) failIfUnreadableTooLong(ctx context.Context, v proposal.Vie
 // failure stands as the recorded outcome for the release — but the driver has
 // by then committed an in-flight row for that attempt, which abandonInFlight
 // closes out so the failure is what the release's last row actually says.
-func (r *Reconciler) retry(ctx context.Context, v proposal.View, nodeErrors map[string]string) {
+func (r *Reconciler) retry(ctx context.Context, v proposal.View) {
 	if len(v.TriggerPayload) == 0 {
 		r.logger.Warn("shadow verify: attempt has no stored trigger; no further attempt can be started",
 			"proposal_id", v.ID, "release", v.ReleaseID)
@@ -404,11 +402,6 @@ func (r *Reconciler) retry(ctx context.Context, v proposal.View, nodeErrors map[
 		r.logger.Error("shadow verify: stored trigger cannot be decoded; no further attempt can be started",
 			"proposal_id", v.ID, "release", v.ReleaseID, "error", err)
 		return
-	}
-	if still := stillFailing(v.ResolvedNodeIDs, nodeErrors); len(still) > 0 && len(still) < len(t.Nodes) {
-		r.logger.Info("shadow verify: retrying only the nodes the shadow release still rejects",
-			"proposal_id", v.ID, "release", v.ReleaseID, "was", len(t.Nodes), "now", len(still))
-		t = t.Subset(still)
 	}
 	t.MessageID = retryMessageIDPrefix + v.ID
 	t.OutboxEntryID = nil

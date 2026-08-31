@@ -603,13 +603,15 @@ func TestReconcileOnce_RejectedShadowWithNoNodeErrorsStillRecordsAReason(t *test
 		h.repo.row("p1").VerifyError)
 }
 
-// TestReconcileOnce_RejectedShadowRegroupsOnlyTheStillFailingNodes covers the
-// partial rejection, which is the common shape once one attempt addresses a
-// whole failing set: the shadow release accepted the fix for some of the
-// attempt's nodes and still rejects others. Only the nodes it still rejects are
-// carried into the next attempt, so the ones already fixed are neither re-fixed
-// nor charged another model call.
-func TestReconcileOnce_RejectedShadowRegroupsOnlyTheStillFailingNodes(t *testing.T) {
+// TestReconcileOnce_RejectedShadowRetriesTheWholeBatch covers the partial
+// rejection, which is the common shape once one attempt addresses a whole
+// failing set: the shadow release accepted the fix for some of the attempt's
+// nodes and still rejects others. The attempt is one proposal over one set of
+// edits and it failed as a unit, so the whole batch is retried — the edits that
+// did hold up died with the rejected attempt, and a retry over the still-failing
+// nodes alone would end in a pull request missing them. The recorded evidence
+// still names exactly which node failed.
+func TestReconcileOnce_RejectedShadowRetriesTheWholeBatch(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.ResolvedNodeIDs = []string{"s.a", "s.b"}
 	row.TriggerPayload = batchPayload("s.a", "s.b")
@@ -622,18 +624,20 @@ func TestReconcileOnce_RejectedShadowRegroupsOnlyTheStillFailingNodes(t *testing
 	h.rec.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusFailed, h.repo.row("p1").Status)
-	assert.Equal(t, "s.b: still broken", h.repo.row("p1").VerifyError)
+	assert.Equal(t, "s.b: still broken", h.repo.row("p1").VerifyError,
+		"the evidence names the node that actually failed")
 	require.Len(t, h.proposer.triggers, 1)
-	assert.Equal(t, []string{"s.b"}, h.proposer.triggers[0].NodeIDs(),
-		"only the node the shadow still rejects is retried")
+	assert.Equal(t, []string{"s.a", "s.b"}, h.proposer.triggers[0].NodeIDs(),
+		"the retry replays the whole batch: a fix that passed is not carried over from a failed attempt")
 	assert.Equal(t, "shadow-verify:p1", h.proposer.triggers[0].MessageID)
+	assert.Nil(t, h.proposer.triggers[0].OutboxEntryID)
 }
 
 // TestReconcileOnce_RejectedShadowWithCollateralFailureRetriesEveryNode covers
 // the rejection that names no node this attempt fixed: every node it fixed
-// passed, and something else in the release failed. There is nothing to narrow
-// to — no fixed node is implicated — so the whole failing set is retried, with
-// the collateral failure recorded as the evidence the next attempt reads.
+// passed, and something else in the release failed. The whole failing set is
+// retried, with the collateral failure recorded as the evidence the next attempt
+// reads.
 func TestReconcileOnce_RejectedShadowWithCollateralFailureRetriesEveryNode(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.ResolvedNodeIDs = []string{"s.a", "s.b"}
