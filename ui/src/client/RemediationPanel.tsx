@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { ProposalDTO } from './types';
+import { ProposalDTO, PullRequestDTO } from './types';
 import { fetchProposals } from './remediation-api';
-import { proposalNodeIds } from './release-helpers';
+import type { CreatePullRequestResponse } from './remediation-api';
+import { proposalNodeIds, proposalPrServices, proposalPullRequests } from './release-helpers';
 import { useCurrentUser } from './auth/AuthContext';
 import CreatePrModal from './CreatePrModal';
 
@@ -71,16 +72,32 @@ function prStateBadge(prState: string) {
   return <>{prState}</>;
 }
 
+// prStateBadgeLabeled renders one pull request's state chip, labeled with
+// its owning service when the proposal is split across several — the
+// legacy (service '') group keeps today's unlabeled chip exactly as before,
+// unwrapped so its own text content is still just the bare state word.
+function prStateBadgeLabeled(pr: PullRequestDTO) {
+  const badge = prStateBadge(pr.pr_state);
+  if (!pr.service) return badge;
+  return <span className="pr-chip-labeled">{badge} ({pr.service})</span>;
+}
+
 // isActionable is the predicate for a proposal that still needs a human
-// decision: it has a source to fix, and its pr_state is a retryable claim
-// state — the same precondition the server's BeginPullRequest CAS enforces
-// ('' or 'failed'). A proposal whose pr_state is 'opening' already has an
-// in-flight or previously-recorded claim — offering another Create PR
-// would just 409. Such a proposal renders its detail card expanded in
-// place instead of waiting for a click.
+// decision: it has a source to fix, and at least one of its owning-service
+// groups is in a retryable claim state — the same precondition the server's
+// BeginPullRequest CAS enforces per service ('' or 'failed'). A service
+// group whose pr_state is 'opening' already has an in-flight or
+// previously-recorded claim, and 'open'/'merged'/'rejected' are settled —
+// offering another Create PR for those would just fail the claim. Such a
+// proposal renders its detail card expanded in place instead of waiting
+// for a click, as long as any group still needs a PR.
 function isActionable(p: ProposalDTO): boolean {
-  return p.status === 'proposed' && p.source_resolved
-    && (p.pr_state === '' || p.pr_state === 'failed');
+  if (!(p.status === 'proposed' && p.source_resolved)) return false;
+  const pullRequests = proposalPullRequests(p);
+  return proposalPrServices(p).some((service) => {
+    const state = pullRequests.find((pr) => pr.service === service)?.pr_state ?? '';
+    return state === '' || state === 'failed';
+  });
 }
 
 function ProposalDetailCard({
@@ -165,16 +182,19 @@ function ProposalDetailCard({
           </div>
         )}
 
-        {proposal.pr_url && (
-          <a
-            className="btn btn--secondary"
-            href={proposal.pr_url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            open PR ↗
-          </a>
-        )}
+        {proposalPullRequests(proposal)
+          .filter((pr) => pr.pr_url)
+          .map((pr) => (
+            <a
+              key={pr.service || 'legacy'}
+              className="btn btn--secondary"
+              href={pr.pr_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {pr.service ? `open PR (${pr.service}) ↗` : 'open PR ↗'}
+            </a>
+          ))}
 
         {isOperator && isActionable(proposal) && (
           <button
@@ -289,7 +309,14 @@ export default function RemediationPanel() {
                       <td>{p.release_id}</td>
                       <td>{p.confidence}</td>
                       <td>{sourceLabel(p.source_resolved)}</td>
-                      <td>{statusChip(p.status)}{p.pr_state ? <> · {prStateBadge(p.pr_state)}</> : null}</td>
+                      <td>
+                        {statusChip(p.status)}
+                        {proposalPullRequests(p)
+                          .filter((pr) => pr.pr_state)
+                          .map((pr) => (
+                            <Fragment key={pr.service || 'legacy'}> · {prStateBadgeLabeled(pr)}</Fragment>
+                          ))}
+                      </td>
                     </tr>
                     {showCard && (
                       <tr
@@ -317,22 +344,50 @@ export default function RemediationPanel() {
         <CreatePrModal
           proposal={createPrProposal}
           onClose={() => setCreatePrProposalId(null)}
-          onCreated={(prUrl) => {
-            // The GitHub PR itself is confirmed — show the link right away.
-            // Recording the PR against the proposal is best-effort server
-            // side, so 'open' is not guaranteed yet; 'opening' is the one
-            // state the claim step already guarantees, and it keeps
-            // isActionable false so this row doesn't offer another Create
-            // PR while the true state loads. A refetch right after replaces
+          onCreated={(result: CreatePullRequestResponse) => {
+            // Every GitHub PR in result.pull_requests is confirmed — show its
+            // link right away. Recording it against the proposal is
+            // best-effort server side, so 'open' is not guaranteed yet;
+            // 'opening' is the one state the claim step already guarantees.
+            // A service the server didn't touch this call (already settled,
+            // or one that failed and is still listed as an error) keeps its
+            // prior entry untouched. A refetch right after replaces all of
             // this with whatever the server actually recorded.
-            const updated = { ...createPrProposal, pr_url: prUrl, pr_state: 'opening' };
+            const priorPRs = proposalPullRequests(createPrProposal);
+            const newByService = new Map(result.pull_requests.map(r => [r.service, r]));
+            const mergedPRs: PullRequestDTO[] = priorPRs.map(pr => {
+              const created = newByService.get(pr.service);
+              return created ? { ...pr, pr_url: created.pr_url, pr_number: created.pr_number, pr_state: 'opening' } : pr;
+            });
+            for (const created of result.pull_requests) {
+              if (!mergedPRs.some(pr => pr.service === created.service)) {
+                mergedPRs.push({
+                  service: created.service,
+                  repo: '',
+                  branch: '',
+                  pr_url: created.pr_url,
+                  pr_number: created.pr_number,
+                  pr_state: 'opening',
+                  pr_opened_at: '',
+                  pr_opened_by: '',
+                  pr_closed_at: '',
+                });
+              }
+            }
+            const first = mergedPRs[0];
+            const updated: ProposalDTO = {
+              ...createPrProposal,
+              pull_requests: mergedPRs,
+              pr_url: first?.pr_url ?? createPrProposal.pr_url,
+              pr_number: first?.pr_number ?? createPrProposal.pr_number,
+              pr_state: first?.pr_state ?? createPrProposal.pr_state,
+            };
             setProposals(prev => prev.map(p => (p.id === updated.id ? updated : p)));
-            // The proposal just left the retryable-claim state (isActionable
-            // goes false), so it no longer auto-expands. Select it manually
-            // so its row stays open and shows the new "open PR ↗" link
-            // instead of collapsing.
+            // The proposal may have just left the retryable-claim state
+            // (isActionable goes false when every service settled), so it
+            // might no longer auto-expand. Select it manually so its row
+            // stays open and shows the new link(s) instead of collapsing.
             setSelected(updated);
-            setCreatePrProposalId(null);
             loadProposals();
           }}
         />

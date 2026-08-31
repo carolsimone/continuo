@@ -494,3 +494,121 @@ describe('RemediationPanel — a batched proposal spanning several nodes', () =>
     expect(link).toHaveAttribute('href', '/releases/shadow-rel-abc-svc.schema.my_model-a1');
   });
 });
+
+describe('RemediationPanel — pull requests split across owning services', () => {
+  it('renders one labeled open PR link per pull_requests entry', async () => {
+    const proposal = makeProposal({
+      status: 'proposed',
+      source_resolved: true,
+      resolved_node_ids: ['core.a', 'finance.b'],
+      pr_services: ['core', 'finance'],
+      pull_requests: [
+        {
+          service: 'core', repo: 'org/core-repo', branch: 'remediation/rel/attempt1/core',
+          pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open',
+          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
+        },
+        {
+          service: 'finance', repo: 'org/finance-repo', branch: 'remediation/rel/attempt1/finance',
+          pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'merged',
+          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z',
+        },
+      ],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('core.a, finance.b'));
+    fireEvent.click(screen.getByText('core.a, finance.b'));
+
+    const coreLink = screen.getByRole('link', { name: /open PR \(core\) ↗/i });
+    expect(coreLink).toHaveAttribute('href', 'https://github.com/org/core-repo/pull/10');
+    const financeLink = screen.getByRole('link', { name: /open PR \(finance\) ↗/i });
+    expect(financeLink).toHaveAttribute('href', 'https://github.com/org/finance-repo/pull/11');
+    // Not the legacy unlabeled form.
+    expect(screen.queryByRole('link', { name: /^open PR ↗$/i })).toBeNull();
+  });
+
+  it('shows a state chip per pull_requests entry, labeled by service', async () => {
+    const proposal = makeProposal({
+      status: 'proposed',
+      source_resolved: true,
+      pr_services: ['core', 'finance'],
+      pull_requests: [
+        {
+          service: 'core', repo: '', branch: '',
+          pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged',
+          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
+        },
+        {
+          service: 'finance', repo: '', branch: '',
+          pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'rejected',
+          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
+        },
+      ],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    const mergedChip = await screen.findByText('merged');
+    expect(mergedChip).toHaveClass('pr-chip', 'pr-chip--merged');
+    expect(mergedChip.closest('.pr-chip-labeled')).toHaveTextContent('merged (core)');
+
+    const rejectedChip = screen.getByText('rejected');
+    expect(rejectedChip).toHaveClass('pr-chip', 'pr-chip--rejected');
+    expect(rejectedChip.closest('.pr-chip-labeled')).toHaveTextContent('rejected (finance)');
+  });
+
+  it('stays actionable (auto-expanded) while one service still needs a PR, even though another already merged', async () => {
+    const proposal = makeProposal({
+      status: 'proposed',
+      source_resolved: true,
+      pr_services: ['core', 'finance'],
+      // core is already settled; finance has no entry at all yet.
+      pull_requests: [
+        {
+          service: 'core', repo: '', branch: '',
+          pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged',
+          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z',
+        },
+      ],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    // Auto-expanded with no click: the node id shows both in the compact
+    // row and the card title.
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+  });
+
+  it('is not actionable once every owning service has a settled (non-retryable) PR', async () => {
+    const proposal = makeProposal({
+      status: 'proposed',
+      source_resolved: true,
+      rationale: 'Adds the missing GROUP BY column.',
+      pr_services: ['core', 'finance'],
+      pull_requests: [
+        {
+          service: 'core', repo: '', branch: '',
+          pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open',
+          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
+        },
+        {
+          service: 'finance', repo: '', branch: '',
+          pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'merged',
+          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z',
+        },
+      ],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    // Not auto-expanded: the rationale is not visible without a click.
+    expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
+  });
+});

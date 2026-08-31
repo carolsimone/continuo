@@ -1,4 +1,4 @@
-import { NodeValidationResult, ProposalDTO, ReleaseListItem } from './types';
+import { NodeValidationResult, ProposalDTO, PullRequestDTO, ReleaseListItem } from './types';
 
 // In-flight = a release actively moving through the pipeline, in lifecycle order:
 // received -> compiling -> parsing -> seed_building -> validating.
@@ -110,4 +110,43 @@ export function proposalStatusForNode(p: ProposalDTO, nodeId: string): string {
 // specific node, falling back to the proposal's overall rationale.
 export function proposalReasonForNode(p: ProposalDTO, nodeId: string): string {
   return p.node_outcomes?.[nodeId]?.reason ?? p.rationale;
+}
+
+// proposalPullRequests lists every pull request opened from this proposal.
+// A proposal split across owning services carries one entry per service in
+// pull_requests; a legacy row (or one from before the per-service split
+// existed) has none, so its singular pr_* fields — which the server mirrors
+// from pull_requests[0] for exactly this reason — are synthesized into the
+// one (service '') entry they describe. A proposal with no pull request at
+// all (pr_url and pr_state both empty) yields an empty list either way.
+export function proposalPullRequests(p: ProposalDTO): PullRequestDTO[] {
+  if (p.pull_requests && p.pull_requests.length > 0) return p.pull_requests;
+  if (!p.pr_url && !p.pr_state) return [];
+  return [
+    {
+      service: '',
+      repo: p.repo,
+      branch: '',
+      pr_url: p.pr_url,
+      pr_number: p.pr_number,
+      pr_state: p.pr_state,
+      pr_opened_at: p.pr_opened_at,
+      pr_opened_by: p.pr_opened_by,
+      pr_closed_at: p.pr_closed_at,
+    },
+  ];
+}
+
+// proposalPrServices lists the owning-service groups this proposal's pull
+// requests split into. Absent or empty on a legacy row (or one predating the
+// per-service split), in which case it is a single group named '' — the same
+// default agent-remediation reports for such a row.
+export function proposalPrServices(p: ProposalDTO): string[] {
+  return p.pr_services && p.pr_services.length > 0 ? p.pr_services : [''];
+}
+
+// proposalPrStateForService reads the pr_state of one owning-service group's
+// pull request, '' when that service has none yet.
+export function proposalPrStateForService(p: ProposalDTO, service: string): string {
+  return proposalPullRequests(p).find((pr) => pr.service === service)?.pr_state ?? '';
 }
