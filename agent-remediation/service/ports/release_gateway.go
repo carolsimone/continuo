@@ -8,17 +8,38 @@ import (
 // ShadowSubmission is the release-controller POST /releases body for a shadow
 // verification release: a real release that runs the full parse →
 // candidate-schema → validation pipeline but stops at the terminal
-// "validated" status instead of promoting. Kind is always "python" (the
-// python fixer's corrected artifact is always a contract yaml), Bootstrap is
-// always false, and Shadow is always true — none of the three is exposed as a
-// field because a shadow submission never varies them.
+// "validated" status instead of promoting. Bootstrap is always false and
+// Shadow is always true — neither is exposed as a field because a shadow
+// submission never varies them. Kind and SourceOverlayURI do vary, per the
+// edited service's manifest kind.
 type ShadowSubmission struct {
 	ReleaseID string
 	Service   string
 	ImageTag  string
 	Repo      string
 	CommitSHA string
+	// Kind is the service's manifest kind, "dbt" or "python"; it selects how
+	// release-controller parses the shadow's artifact. Required — an empty
+	// Kind is a caller bug, not a default to "python".
+	Kind string
+	// SourceOverlayURI is the S3 URI of the tarball a dbt shadow's compile
+	// leg lays over the project; empty for a python shadow, whose artifact is
+	// the contract yaml written under the shadow's own id.
+	SourceOverlayURI string
+	// VerifiesReleaseID is the rejected release this shadow verifies a fix for.
+	// The shadow's own service is the one the fix edits, which need not be the
+	// service whose release was rejected; naming the release lets
+	// release-controller assemble THAT release's candidate for its changed
+	// service instead of the live production manifest, so the fix is judged on
+	// the graph the failure actually occurred in.
+	VerifiesReleaseID string
 }
+
+// Shadow submission manifest kinds: the value of ShadowSubmission.Kind.
+const (
+	ShadowKindDbt    = "dbt"
+	ShadowKindPython = "python"
+)
 
 // ShadowVerdict is the outcome of a shadow release, read from GET
 // /releases/{id}. Terminal is false while the release is still in a

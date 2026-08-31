@@ -34,10 +34,12 @@ var (
 type ProposalFilter struct {
 	Status  string
 	PRState string
-	// ReleaseID, Source, and NodeID together address the attempts recorded
-	// for one failing node in one release — the slice a fixer reads to show
-	// the model what earlier attempts tried and why they were rejected.
-	// ReleaseID, when set alone, restricts the listing to one release.
+	// ReleaseID, Source, and NodeID together address the attempts that
+	// addressed one failing node in one release — the slice a fixer reads to
+	// show the model what earlier attempts tried and why they were rejected.
+	// ReleaseID, when set alone, restricts the listing to one release. NodeID
+	// matches rows whose resolved_node_ids contains the id — the attempts
+	// that addressed that node, whether or not it is their representative.
 	ReleaseID string
 	Source    string
 	NodeID    string
@@ -90,29 +92,31 @@ type OpeningLister interface {
 // UnitOfWork, so methods take only ctx + domain types.
 type ProposalRepository interface {
 	// CountAttempts returns the number of TERMINAL proposal attempts recorded for
-	// the (releaseID, remediationRound, source, nodeID, errorSignature) key. The
-	// release is part of the key because the attempt cap bounds how often one
-	// release's failure is retried: a later release is new code, and its
-	// attempts at the same failure are its own, never charged to an earlier
-	// release's budget. The remediation round is part of the key for the same
-	// reason within one release: a human's "try again" on a rejected release
-	// starts a fresh round, and its attempts at the same failure are never
-	// charged to an earlier round's exhausted budget. In-flight rows —
-	// 'generating' (the model call has not resolved) and 'verifying' (a shadow
-	// release is still validating a proposed fix) — are excluded so an attempt
-	// that has not yet concluded neither inflates the attempt cap nor shifts the
-	// attempt number on a redelivery.
-	CountAttempts(ctx context.Context, releaseID string, remediationRound int, source, nodeID, errorSignature string) (int, error)
+	// one remediation round of one release: the attempt cap is a budget per
+	// (release_id, remediation_round), counted over the release's whole failing
+	// set rather than per node, since one attempt now addresses every node it
+	// covers at once. The release is part of the key because the attempt cap
+	// bounds how often one release's failure is retried: a later release is new
+	// code, and its attempts are its own, never charged to an earlier release's
+	// budget. The remediation round is part of the key for the same reason
+	// within one release: a human's "try again" on a rejected release starts a
+	// fresh round, and its attempts are never charged to an earlier round's
+	// exhausted budget. In-flight rows — 'generating' (the model call has not
+	// resolved) and 'verifying' (a shadow release is still validating a
+	// proposed fix) — are excluded so an attempt that has not yet concluded
+	// neither inflates the attempt cap nor shifts the attempt number on a
+	// redelivery.
+	CountAttempts(ctx context.Context, releaseID string, remediationRound int) (int, error)
 
 	// InsertGenerating persists an in-flight 'generating' row for the attempt just
 	// before the model is called. It is idempotent: a redelivery that re-runs the
-	// same attempt collides on (release_id, source, node_id, attempt) and is a
-	// no-op, so at most one generating row exists per attempt.
+	// same attempt collides on (release_id, attempt) and is a no-op, so at most
+	// one generating row exists per attempt.
 	InsertGenerating(ctx context.Context, p proposal.Proposal) error
 
-	// FailGenerating finalizes the in-flight 'generating' row recorded for the
-	// (releaseID, source, nodeID, errorSignature) attempt, transitioning it to
-	// 'failed' with reason as its rationale, and returns how many rows it moved.
+	// FailGenerating finalizes releaseID's in-flight 'generating' row,
+	// transitioning it to 'failed' with reason as its rationale, and returns how
+	// many rows it moved.
 	//
 	// It exists for the one writer that starts an attempt with nothing behind it
 	// to redeliver. A trigger consumed from the stream is redelivered when the
@@ -122,17 +126,16 @@ type ProposalRepository interface {
 	// stays in flight with nothing that will ever finish it — and every reader,
 	// the release page included, keeps reporting a fix as still being generated.
 	//
-	// releaseID scopes the write to the attempt that actually failed. The same
-	// node failing the same way under two releases at once shares a source, node
-	// id and error signature, so without it this would fail an unrelated
-	// release's in-flight attempt and spend one of that release's attempts.
-	FailGenerating(ctx context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error)
+	// The match is releaseID alone: one attempt now addresses the release's
+	// whole failing set, so at most one row can be generating for a release at
+	// a time, and the row it must finalize is unambiguous without a node or
+	// error-signature match.
+	FailGenerating(ctx context.Context, releaseID, reason string) (int, error)
 
 	// Upsert records the terminal outcome of an attempt on the natural key
-	// (release_id, source, node_id, attempt): it finalizes the in-flight
-	// generating row when one exists (ON CONFLICT … DO UPDATE), or plain-inserts
-	// for instant paths that never marked generating (e.g. the attempt-cap
-	// escalation).
+	// (release_id, attempt): it finalizes the in-flight generating row when one
+	// exists (ON CONFLICT … DO UPDATE), or plain-inserts for instant paths that
+	// never marked generating (e.g. the attempt-cap escalation).
 	Upsert(ctx context.Context, p proposal.Proposal) error
 
 	// Get returns the full View for the given proposal id.
@@ -213,14 +216,17 @@ type ProposalRepository interface {
 	ListVerifying(ctx context.Context) ([]proposal.View, error)
 
 	// MarkVerified finalizes a proposal whose shadow release validated the
-	// fix, transitioning status 'verifying' -> 'proposed'. hit reports
-	// whether the CAS fired; false means the row was no longer 'verifying' —
-	// already finalized by a concurrent or repeated reconciler pass.
+	// fix, transitioning status 'verifying' -> 'proposed'. It also rewrites
+	// every node_outcomes entry still at 'verifying' to 'proposed', so a
+	// per-node reader agrees with the row's own status. hit reports whether
+	// the CAS fired; false means the row was no longer 'verifying' — already
+	// finalized by a concurrent or repeated reconciler pass.
 	MarkVerified(ctx context.Context, id string) (hit bool, err error)
 
 	// MarkVerifyFailed finalizes a proposal whose shadow release failed to
 	// validate the fix, transitioning status 'verifying' -> 'failed' and
-	// recording verifyErr so the next attempt can use it as evidence. hit
+	// recording verifyErr so the next attempt can use it as evidence. It also
+	// rewrites every node_outcomes entry still at 'verifying' to 'failed'. hit
 	// reports whether the CAS fired, with the same semantics as MarkVerified.
 	MarkVerifyFailed(ctx context.Context, id, verifyErr string) (hit bool, err error)
 }

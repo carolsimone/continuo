@@ -72,9 +72,6 @@ func csvRepoTree(t *testing.T) string {
 	return root
 }
 
-const wantCsvShadowID = "shadow-rel-2-analytics.py_csv_orders-a1"
-const wantCsvArtifactKey = "svc-csv/" + wantCsvShadowID + "/contract.yaml"
-
 // csvInput is the trigger a rejected python-csv node produces.
 func csvInput() Input {
 	return Input{
@@ -92,10 +89,7 @@ func csvSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager, *
 	locator := repofs.NewLocator(testLogger())
 	pkgr := &fakePackager{merged: []byte("merged: contract\n")}
 	arts := &fakeArtifacts{}
-	rel := &fakeReleases{
-		tag: "ghcr.io/o/service-csv:v3", artifacts: arts,
-		artifactKey: func(id string) string { return "svc-csv/" + id + "/contract.yaml" },
-	}
+	rel := &fakeReleases{}
 	svc := Services{
 		LLM: &fakeLLM{queue: []ports.ProposeResult{{
 			Files: []ports.ProposedFile{
@@ -124,13 +118,14 @@ func csvSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager, *
 // --- tests ------------------------------------------------------------------
 
 // TestCsvValidation_HappyPath walks the whole lane end to end: an answer that
-// only corrects output_columns is applied, packaged from the whole contract
-// directory, uploaded, and submitted as a shadow release — and the LLM
-// request it was built from carries the csv-specific system prompt and tool
-// name, not the python-model ones.
+// only corrects output_columns is applied and packaged from the whole
+// contract directory into the merged contract returned as
+// Result.ShadowContract for the driver to submit — and the LLM request it
+// was built from carries the csv-specific system prompt and tool name, not
+// the python-model ones.
 func TestCsvValidation_HappyPath(t *testing.T) {
 	root := csvRepoTree(t)
-	svc, arch, pkgr, rel, arts := csvSvc(t, root)
+	svc, arch, pkgr, _, arts := csvSvc(t, root)
 	llm := svc.LLM.(*fakeLLM)
 
 	r, err := csvValidationFixer{}.Propose(context.Background(), svc, csvInput())
@@ -147,17 +142,19 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 	require.Equal(t, csvSiblingYAML, call.sawOnDisk["other.yml"],
 		"a file the model did not return must be left exactly as the repository holds it")
 
-	require.Equal(t, "merged: contract\n", arts.written[wantCsvArtifactKey])
-
-	require.Len(t, rel.submissions, 1)
-	require.Equal(t, wantCsvShadowID, rel.submissions[0].ReleaseID)
+	// The merged contract is returned in memory for the driver, not uploaded.
+	require.Equal(t, []byte("merged: contract\n"), r.ShadowContract)
 
 	p := r.Proposal
-	require.Equal(t, proposal.StatusVerifying, p.Status,
-		"an answer that only edits output_columns must reach a shadow release, not be refused as a false breach")
-	require.Equal(t, wantCsvShadowID, p.ShadowReleaseID)
+	require.Equal(t, proposal.StatusProposed, p.Status,
+		"an answer that only edits output_columns must be proposed, not refused as a false breach")
 	require.Len(t, p.Edits, 1)
 	require.Equal(t, "services/service-csv/contracts/py_csv_orders.yml", p.Edits[0].Path)
+	require.Equal(t, "analytics.py_csv_orders", p.Edits[0].TargetNodeID)
+	for key := range arts.written {
+		require.NotContains(t, key, "contract.yaml",
+			"this lane never uploads the merged contract itself; the driver does, from Result.ShadowContract")
+	}
 
 	// The prompt sent to the model is the csv lane's own: its rules, not the
 	// python-model script rules, and its own tool name.
@@ -176,7 +173,7 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 // reaches a shadow release exactly as an output_columns-only fix does.
 func TestCsvValidation_AnswerCorrectsTheCsvURI_Verifies(t *testing.T) {
 	root := csvRepoTree(t)
-	svc, _, pkgr, rel, _ := csvSvc(t, root)
+	svc, _, pkgr, _, _ := csvSvc(t, root)
 	const target = "services/service-csv/contracts/py_csv_orders.yml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{{Path: target, Content: `nodes:
@@ -194,10 +191,10 @@ func TestCsvValidation_AnswerCorrectsTheCsvURI_Verifies(t *testing.T) {
 
 	r, err := csvValidationFixer{}.Propose(context.Background(), svc, csvInput())
 	require.NoError(t, err)
-	require.Equal(t, proposal.StatusVerifying, r.Proposal.Status,
-		"correcting the csv read's uri is a sanctioned repair and must reach a shadow release")
+	require.Equal(t, proposal.StatusProposed, r.Proposal.Status,
+		"correcting the csv read's uri is a sanctioned repair and must be proposed")
 	require.Len(t, pkgr.calls, 1)
-	require.Len(t, rel.submissions, 1)
+	require.NotEmpty(t, r.ShadowContract)
 }
 
 // TestCsvValidation_AnswerDeletesTheCsvRead_Fails covers the cheapest way to
@@ -231,7 +228,7 @@ func TestCsvValidation_AnswerDeletesTheCsvRead_Fails(t *testing.T) {
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := csvRepoTree(t)
-			svc, _, pkgr, rel, arts := csvSvc(t, root)
+			svc, _, pkgr, _, arts := csvSvc(t, root)
 			svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 				Files:      []ports.ProposedFile{{Path: target, Content: content}},
 				Confidence: "high",
@@ -244,7 +241,6 @@ func TestCsvValidation_AnswerDeletesTheCsvRead_Fails(t *testing.T) {
 			require.Contains(t, r.Proposal.Rationale, "csv",
 				"a failed attempt must name the read the answer dropped")
 			require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
-			require.Empty(t, rel.submissions, "no release slot is spent proving a deletion")
 			require.Empty(t, arts.written, "a refused answer writes no artifacts")
 		})
 	}
@@ -261,7 +257,7 @@ func TestCsvValidation_AnswerDeletesTheCsvRead_Fails(t *testing.T) {
 // read would go unnoticed.
 func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
 	root := csvRepoTree(t)
-	svc, _, pkgr, rel, arts := csvSvc(t, root)
+	svc, _, pkgr, _, arts := csvSvc(t, root)
 	const sibling = "services/service-csv/contracts/other.yml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{
@@ -285,7 +281,6 @@ func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
 	require.Contains(t, r.Proposal.Rationale, "customers",
 		"a failed attempt must name the read the answer dropped")
 	require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
-	require.Empty(t, rel.submissions, "no release slot is spent proving a deletion")
 	require.Empty(t, arts.written)
 }
 
@@ -299,7 +294,7 @@ func TestCsvValidation_SiblingReadDropped_Fails(t *testing.T) {
 // node into a python-csv one.
 func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
 	root := csvRepoTree(t)
-	svc, _, pkgr, rel, arts := csvSvc(t, root)
+	svc, _, pkgr, _, arts := csvSvc(t, root)
 	const target = "services/service-csv/contracts/py_csv_orders.yml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{{Path: target, Content: `nodes:
@@ -322,7 +317,6 @@ func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
 	require.Contains(t, r.Proposal.Rationale, "kind")
 	require.Contains(t, r.Proposal.Rationale, "analytics.py_csv_orders")
 	require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
-	require.Empty(t, rel.submissions, "no release slot is spent proving a mislabeled node")
 	require.Empty(t, arts.written)
 }
 
@@ -332,7 +326,7 @@ func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
 // guard the python-model lane already enforces.
 func TestCsvValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 	root := csvRepoTree(t)
-	svc, _, pkgr, rel, arts := csvSvc(t, root)
+	svc, _, pkgr, _, arts := csvSvc(t, root)
 	const target = "services/service-csv/contracts/py_csv_orders.yml"
 	svc.LLM = &fakeLLM{queue: []ports.ProposeResult{{
 		Files: []ports.ProposedFile{{Path: target, Content: `nodes:
@@ -354,7 +348,6 @@ func TestCsvValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 		"an answer that re-identifies a node must never be verified as a fix")
 	require.Contains(t, r.Proposal.Rationale, "analytics.py_csv_orders")
 	require.Empty(t, pkgr.calls, "a refused answer must never be packaged")
-	require.Empty(t, rel.submissions, "no release slot is spent proving a deletion")
 	require.Empty(t, arts.written)
 }
 
@@ -380,7 +373,7 @@ func TestCsvValidation_MalformedNodeID_Skips(t *testing.T) {
 // rationale, and that nothing downstream of the search runs.
 func TestCsvValidation_NodeNotDeclared_Skips(t *testing.T) {
 	root := csvRepoTree(t)
-	svc, arch, pkgr, rel, _ := csvSvc(t, root)
+	svc, arch, pkgr, _, _ := csvSvc(t, root)
 	llm := &fakeLLM{}
 	svc.LLM = llm
 
@@ -393,7 +386,6 @@ func TestCsvValidation_NodeNotDeclared_Skips(t *testing.T) {
 	require.Contains(t, r.Proposal.Rationale, "not declared")
 	require.Equal(t, 0, llm.calls)
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, rel.submissions)
 	require.Equal(t, 1, arch.cleanups)
 }
 
@@ -404,7 +396,7 @@ func TestCsvValidation_NodeNotDeclared_Skips(t *testing.T) {
 // now shared by both python lanes.
 func TestCsvValidation_UnusableTrigger_Skips(t *testing.T) {
 	t.Run("no service", func(t *testing.T) {
-		svc, arch, _, rel, _ := csvSvc(t, csvRepoTree(t))
+		svc, arch, _, _, _ := csvSvc(t, csvRepoTree(t))
 		in := csvInput()
 		in.Service = ""
 
@@ -413,18 +405,16 @@ func TestCsvValidation_UnusableTrigger_Skips(t *testing.T) {
 		require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
 		require.Contains(t, r.Proposal.Rationale, "service")
 		require.Equal(t, 0, arch.calls)
-		require.Empty(t, rel.submissions)
 	})
 
 	t.Run("repository or commit gone", func(t *testing.T) {
-		svc, arch, _, rel, _ := csvSvc(t, csvRepoTree(t))
+		svc, arch, _, _, _ := csvSvc(t, csvRepoTree(t))
 		arch.err = ports.ErrSourceNotFound
 
 		r, err := csvValidationFixer{}.Propose(context.Background(), svc, csvInput())
 		require.NoError(t, err)
 		require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
 		require.NotEmpty(t, r.Proposal.Rationale)
-		require.Empty(t, rel.submissions)
 		require.Equal(t, 1, arch.calls, "the fetch was attempted once even though it failed")
 	})
 }
@@ -457,6 +447,6 @@ func TestCsvValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 		"the sibling check reads the ORIGINAL failing release, not a shadow")
 	require.Equal(t, 0, llm.calls, "no model call is worth making for an unverifiable fix")
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, rel.submissions, "no release slot is spent on a shadow that cannot pass")
+	require.Empty(t, r.ShadowContract, "no release slot is spent on a shadow that cannot pass")
 	require.Empty(t, arts.written)
 }

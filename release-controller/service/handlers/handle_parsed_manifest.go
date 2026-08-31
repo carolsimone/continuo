@@ -319,14 +319,21 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 	}
 
 	candidateSchema := CandidateSchemaFor(releaseID)
-	payload, err := json.Marshal(map[string]any{
+	body := map[string]any{
 		"release_id":        releaseID,
 		"mode":              "seed_build",
 		"candidate_schema":  candidateSchema,
 		"image_tags":        r.ImageTags(),
 		"seeds":             seedBuildNodesInOrder(topo, seedIDs),
 		"seed_ids_in_order": seedIDs,
-	})
+	}
+	// A shadow release verifying a proposed fix carries the overlay of proposed
+	// source files; the seed Job lays it over the checked-in project so a fixed
+	// seed CSV is what gets loaded. Omitted entirely for production releases.
+	if uri := r.SourceOverlayURI(); uri != "" {
+		body["source_overlay_uri"] = uri
+	}
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}

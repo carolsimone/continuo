@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { ProposalDTO } from './types';
 import { fetchProposals } from './remediation-api';
+import { proposalNodeIds } from './release-helpers';
 import { useCurrentUser } from './auth/AuthContext';
 import CreatePrModal from './CreatePrModal';
 
@@ -95,7 +96,7 @@ function ProposalDetailCard({
     <div className="detail-card remediation-detail">
       <div className="section-header">
         <div className="section-header__main">
-          <span className="section-header__title">{proposal.node_id}</span>
+          <span className="section-header__title">{proposalNodeIds(proposal).join(', ')}</span>
         </div>
         <div className="section-header__sub">
           release {proposal.release_id} · confidence {proposal.confidence}
@@ -117,18 +118,32 @@ function ProposalDetailCard({
           </div>
         )}
 
-        {/* The release that judged this fix. Without the link it is named on a
-            different screen with nothing connecting the two. */}
-        {proposal.shadow_release_id && (
-          <div className="detail-card__row">
-            <Link
-              to={`/releases/${proposal.shadow_release_id}`}
-              className="btn btn--secondary"
-            >
-              verification release {proposal.shadow_release_id} →
-            </Link>
-          </div>
-        )}
+        {/* The release(s) that judged this fix — one shadow release per edited
+            service for a batched proposal. Without the link(s) they are named
+            on a different screen with nothing connecting the two. A legacy
+            proposal that only ever tracked a single shadow_release_id falls
+            back to that one link. */}
+        {proposal.verifications && proposal.verifications.length > 0
+          ? proposal.verifications.map((v) => (
+              <div className="detail-card__row" key={v.shadow_release_id}>
+                <Link
+                  to={`/releases/${v.shadow_release_id}`}
+                  className="btn btn--secondary"
+                >
+                  verification release {v.shadow_release_id} ({v.service}) →
+                </Link>
+              </div>
+            ))
+          : proposal.shadow_release_id && (
+              <div className="detail-card__row">
+                <Link
+                  to={`/releases/${proposal.shadow_release_id}`}
+                  className="btn btn--secondary"
+                >
+                  verification release {proposal.shadow_release_id} →
+                </Link>
+              </div>
+            )}
 
         {proposal.edits && proposal.edits.length > 0
           ? proposal.edits.map((edit) => (
@@ -270,7 +285,7 @@ export default function RemediationPanel() {
                         }
                       }}
                     >
-                      <td>{p.node_id}</td>
+                      <td>{proposalNodeIds(p).join(', ')}</td>
                       <td>{p.release_id}</td>
                       <td>{p.confidence}</td>
                       <td>{sourceLabel(p.source_resolved)}</td>

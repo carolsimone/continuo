@@ -334,3 +334,30 @@ func TestEvidenceFromRejected_CarriesCodeBundleURI(t *testing.T) {
 	require.Len(t, evs, 1)
 	assert.Equal(t, "s3://b/code-bundles/rel-1/bundle.json", evs[0].CodeBundleURI)
 }
+
+// TestEvidenceFromRejected_CarriesChangedAncestorsWithTheirLocation pins the
+// object shape of changed_ancestors. An id alone would send an upstream fix to
+// wherever the PROMOTED graph places the ancestor, which for a node this
+// release renamed or moved is not where the candidate declares it; the payload
+// therefore carries the candidate's own path and service alongside each id.
+func TestEvidenceFromRejected_CarriesChangedAncestorsWithTheirLocation(t *testing.T) {
+	raw := []byte(`{
+		"release_id":"r1","stage":"validation","reason":"validation_failed",
+		"failing_nodes":["s.a"],"repo":"o/r","commit_sha":"abc",
+		"per_node":[
+			{"node_id":"s.a","status":"failed","dbt_log_uri":"s3://b/a.log",
+			 "changed_ancestors":[
+				{"node_id":"s.u","file_path":"models/marts/u_renamed.sql","service":"svc-b"},
+				{"node_id":"s.v","file_path":"models/v.sql","service":"svc-b"}]},
+			{"node_id":"s.ok","status":"ok"}
+		]}`)
+
+	got, err := evidenceFromRejected(raw)
+	require.NoError(t, err)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, []failure.ChangedAncestor{
+		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Service: "svc-b"},
+		{NodeID: "s.v", FilePath: "models/v.sql", Service: "svc-b"},
+	}, got[0].ChangedAncestors)
+}

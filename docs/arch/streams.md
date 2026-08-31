@@ -129,24 +129,35 @@ opening/open/merged PR for the release. See
 `docs/arch/services/release-controller.md` (`RetryRemediation`) and
 `docs/arch/services/remediation.md` for the full behavior.
 
-**`remediation.requested:v1`** — emitted by remediation for each healable
-failing node. The payload carries `reason` (the matched classifier rule, e.g.
-`logic:missing_object`) and `error_excerpt` (the classifier's key error line,
-capped at 4 KiB) inline, and points at the full log via `dbt_log_uri` and the
-failing code via `code_bundle_uri` (threaded from `release.rejected:v1`'s
-top-level `code_bundle_uri`; empty for compile-stage rejections, which precede
-the parse that produces the bundle) — kept pointer-first so the orchestrator's
-failure-precedent case base can record the rejection without pulling the full
-log or code inline. `agent-remediation` decodes both fields off the trigger:
-`reason`, together with `category`, is its fallback precedent-lookup key
-(`GetPrecedents`) when the exact `error_signature` has no recorded match, and
-`code_bundle_uri` is the validation fixer's primary source for the failing
-node's real code (falling back to a GitHub repo read only on a permanent
-bundle miss). The payload also includes a `file_path` field
-(project-relative source file, e.g. `models/order_items.sql`) that is
-non-empty for `compile` and `seed_build` sources; it is derived from the dbt
-log. For `validation` sources it is empty — the downstream agent resolves the
-path via the orchestrator's `GetNodeLocation` RPC. See
+**`remediation.requested:v2`** — emitted by remediation **once per rejected
+release per remediation round**, carrying every healable failing node of that
+rejection in a `nodes[]` array. The release, not the node, is the unit of
+remediation: one trigger becomes one fix attempt, one proposal, and one pull
+request downstream. Release-level fields (`source`, `release_id`,
+`remediation_round`, `repo`, `commit_sha`, `code_bundle_uri`, `shadow`,
+`classified_at`) sit at the top level; each `nodes[]` entry carries its own
+`category`, `error_signature`, `reason`, `error_excerpt` (the classifier's key
+error line, capped at 4 KiB), `dbt_log_uri`, `candidate_artifact_uri`,
+`file_path`/`service`/`node_type`, the duplicate-relation fields, and
+`changed_ancestors` (each `{node_id, file_path, service}`). The payload stays pointer-first — the full log lives
+behind each node's `dbt_log_uri` and the failing code behind
+`code_bundle_uri` (threaded from `release.rejected:v1`'s top-level
+`code_bundle_uri`; empty for compile-stage rejections, which precede the parse
+that produces the bundle) — so the orchestrator's failure-precedent case base
+can record every rejection in the batch without pulling the full log or code
+inline. `agent-remediation` decodes all of it: `reason`, together with
+`category`, is its fallback precedent-lookup key (`GetPrecedents`) when the
+exact `error_signature` has no recorded match; `code_bundle_uri` is the
+validation fixer's primary source for a failing node's real code (falling back
+to a GitHub repo read only on a permanent bundle miss); and
+`changed_ancestors` is what lets it group same-signature failures that
+descend from one changed ancestor and repair that ancestor once — and each
+entry's `file_path`/`service` are the location the REJECTED release's candidate
+declares for the ancestor, which is the file the fix edits: an ancestor this
+release renamed or moved still sits at its old path in the promoted graph. `file_path`
+is derived from the dbt log for `compile` sources and threaded from the
+candidate topology for `seed_build`, `validation`, and `duplicate_table`; an
+absent one falls back to the orchestrator's `GetNodeLocation` RPC. See
 `docs/arch/services/remediation.md` for the full payload shape.
 
 **`outbox.dead_letter:v1`** — emitted by every outbox-owning service's
@@ -165,11 +176,14 @@ classification and backoff mechanics.
 PR-outcome reconciler observes a terminal GitHub pull request state (merged,
 or closed without merge) for a proposal whose `pr_state` is `open`; the CAS
 `open → merged | rejected` and this outbox row commit in the same transaction.
-The payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`,
-`pr_number`, `outcome` (`merged` or `rejected`), `closed_at`. `event_id` is a
-deterministic SHA1 UUID derived from `(release_id, node_id, attempt)`, distinct
-from the `remediation.pr_opened:v1` id derived from the same triple, so the two
-events never collide. No consumer is wired to it. See
+The payload is pointer-only: `proposal_id`, `release_id`, `node_id`,
+`resolved_node_ids` (every failing node the PR addressed, sorted; `node_id` is
+that set's representative), `pr_url`, `pr_number`, `outcome` (`merged` or
+`rejected`), `closed_at`. `event_id` is a deterministic SHA1 UUID derived from
+`(release_id, attempt)` — one attempt fixes a whole failing set, so no single
+node is part of its identity — under a namespace distinct from the
+`remediation.pr_opened:v1` id derived from the same pair, so the two events
+never collide. No consumer is wired to it. See
 `docs/arch/services/agent-remediation.md` for the full payload shape.
 
 ## Out of scope

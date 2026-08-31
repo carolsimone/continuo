@@ -11,9 +11,19 @@ type View struct {
 	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
 	RemediationRound int
 	NodeID           string
-	ErrorSignature   string
-	Attempt          int
-	Status           Status
+	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted;
+	// NodeID is their representative.
+	ResolvedNodeIDs []string
+	ErrorSignature  string
+	Attempt         int
+	Status          Status
+	// NodeOutcomes is, per failing node, how this attempt ended for it — a
+	// cluster whose fixer skipped or failed leaves its members
+	// skipped/failed while other members verify.
+	NodeOutcomes map[string]NodeOutcome
+	// Verifications is one shadow release per edited service;
+	// ShadowReleaseID is the view of the first.
+	Verifications []Verification
 	// ShadowReleaseID is the id of the shadow release posted to verify this
 	// attempt's fix, written when Status is (or was) 'verifying'. It is kept
 	// when the attempt is finalized, so a resolved row still names the release
@@ -55,6 +65,37 @@ type View struct {
 	PrClosedAt *time.Time
 }
 
+// FixedNodeIDs is the failing nodes this attempt actually repaired: the
+// resolved nodes whose own outcome is 'proposed', in the resolved set's order.
+// It is what a pull request may be said to fix, and therefore what the
+// PR-lifecycle events name — an attempt that skipped or failed a node carries
+// no fix for it, so attaching the PR to that node's rejection would report a
+// remediation nobody proposed.
+//
+// A row carrying no per-node outcomes at all — one written before the column
+// existed — has nothing to filter on and reports its whole resolved set, which
+// is how such a row has always been read.
+func (v View) FixedNodeIDs() []string {
+	return FixedNodeIDs(v.ResolvedNodeIDs, v.NodeOutcomes)
+}
+
+// FixedNodeIDs filters a resolved node set to the nodes the attempt repaired,
+// keeping the resolved set's order. It is the one implementation behind every
+// reader of "which nodes does this pull request fix" — the View helper above
+// and the PR claim the repository hands to the caller that opens the PR.
+func FixedNodeIDs(resolved []string, outcomes map[string]NodeOutcome) []string {
+	if len(outcomes) == 0 {
+		return resolved
+	}
+	fixed := make([]string, 0, len(resolved))
+	for _, id := range resolved {
+		if outcomes[id].Status == StatusProposed {
+			fixed = append(fixed, id)
+		}
+	}
+	return fixed
+}
+
 // PRClaim carries the data needed to open a GitHub pull-request for a proposal
 // that has been atomically claimed by BeginPR. The Branch field is set by the
 // caller rather than read from the database.
@@ -67,13 +108,16 @@ type PRClaim struct {
 	DiffURI        string
 	// Edits is the list of proposed file changes for this attempt, with the
 	// same legacy-synthesis fallback as View.Edits.
-	Edits      []FileEdit
-	ReleaseID  string
-	NodeID     string
-	Attempt    int
-	Rationale  string
-	Confidence Confidence
-	Model      string
+	Edits     []FileEdit
+	ReleaseID string
+	NodeID    string
+	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted;
+	// NodeID is their representative.
+	ResolvedNodeIDs []string
+	Attempt         int
+	Rationale       string
+	Confidence      Confidence
+	Model           string
 	// ClaimedAt is the pr_claimed_at value BeginPR's CAS persisted for this
 	// claim, read back from the row rather than trusted from the caller's
 	// clock. The caller carries it forward and must present it back to

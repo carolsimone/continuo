@@ -41,7 +41,7 @@ func PkgConstantsForTest() map[string]string {
 		"ReleasePromotedV1": ReleasePromotedV1,
 		"ReleaseRejectedV1": ReleaseRejectedV1,
 		"RemediationRetryRequestedV1": RemediationRetryRequestedV1,
-		"RemediationRequestedV1": RemediationRequestedV1,
+		"RemediationRequestedV2": RemediationRequestedV2,
 		"RemediationProposedV1": RemediationProposedV1,
 		"RemediationPrOpenedV1": RemediationPrOpenedV1,
 		"RemediationPrClosedV1": RemediationPrClosedV1,

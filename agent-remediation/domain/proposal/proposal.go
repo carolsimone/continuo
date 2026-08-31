@@ -3,7 +3,10 @@
 // audit status of the attempt.
 package proposal
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // Status is the lifecycle outcome of one proposal attempt.
 type Status string
@@ -34,6 +37,25 @@ type FileEdit struct {
 	Path       string
 	ContentURI string
 	DiffURI    string
+	// TargetNodeID is the node whose source this edit changes; for a
+	// shared-upstream fix it is the changed ancestor, which may not itself
+	// have failed.
+	TargetNodeID string
+}
+
+// NodeOutcome is how one failing node's attempt ended: verifying, proposed,
+// failed, skipped, or escalated, with the reason for that outcome.
+type NodeOutcome struct {
+	Status Status
+	Reason string
+}
+
+// Verification is one shadow release posted to verify the edits made to a
+// single service.
+type Verification struct {
+	Service         string
+	Kind            string
+	ShadowReleaseID string
 }
 
 // Confidence is the model's self-reported confidence in the proposed fix.
@@ -45,17 +67,27 @@ const (
 	ConfidenceHigh   Confidence = "high"
 )
 
-// Proposal is the append-only record of one fix-proposal attempt for a failed
-// node. One row per attempt; unique on (release_id, node_id, attempt).
+// Proposal is the append-only record of one fix-proposal attempt for a
+// release. One row per attempt; unique on (release_id, attempt).
 type Proposal struct {
 	Source    string
 	ReleaseID string
 	// RemediationRound is the release's remediation round this attempt belongs to; the attempt cap is counted within a round.
 	RemediationRound int
 	NodeID           string
-	ErrorSignature   string
-	Attempt          int
-	Status           Status
+	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted;
+	// NodeID is their representative.
+	ResolvedNodeIDs []string
+	ErrorSignature  string
+	Attempt         int
+	Status          Status
+	// NodeOutcomes is, per failing node, how this attempt ended for it — a
+	// cluster whose fixer skipped or failed leaves its members
+	// skipped/failed while other members verify.
+	NodeOutcomes map[string]NodeOutcome
+	// Verifications is one shadow release per edited service;
+	// ShadowReleaseID is the view of the first.
+	Verifications []Verification
 	// ShadowReleaseID is the id of the shadow release posted to verify this
 	// attempt's fix, written when Status is (or was) StatusVerifying. It is
 	// kept when the attempt is finalized, so a resolved row still names the
@@ -122,4 +154,21 @@ func (p *Proposal) NormalizeSingleFileView() {
 	p.FilePath = first.Path
 	p.ProposedSQLURI = first.ContentURI
 	p.DiffURI = first.DiffURI
+}
+
+// NormalizeRepresentativeViews derives the single-value views of the batched
+// fields: ResolvedNodeIDs is sorted, NodeID defaults to its first entry,
+// ShadowReleaseID defaults to the first verification's release, and the
+// single-file scalars follow edits[0]. Every writer calls it before the
+// aggregate is persisted or turned into an event, so the row and the event
+// cannot disagree about which node or release represents the attempt.
+func (p *Proposal) NormalizeRepresentativeViews() {
+	sort.Strings(p.ResolvedNodeIDs)
+	if p.NodeID == "" && len(p.ResolvedNodeIDs) > 0 {
+		p.NodeID = p.ResolvedNodeIDs[0]
+	}
+	if p.ShadowReleaseID == "" && len(p.Verifications) > 0 {
+		p.ShadowReleaseID = p.Verifications[0].ShadowReleaseID
+	}
+	p.NormalizeSingleFileView()
 }

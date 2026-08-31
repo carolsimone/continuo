@@ -13,11 +13,14 @@
 //     their parameter schema, so the stub routes on the declared parameters:
 //     compile (target_file) → target_file + corrected proposed_content; seed
 //     (proposed_content, no target_file) → corrected CSV proposed_content;
-//     validation (proposed_sql) → the two-step candidate/source SQL fix, which
-//     further branches on whether the user message contains "Original model
-//     source" (Step-2 marker from prompt.AssembleSourceFix): if so it returns the
-//     corrected real model source (using {{ ref(...) }} macros), otherwise the
-//     Step-1 candidate-SQL fix (compiled SQL, no macros).
+//     validation (proposed_sql) → the candidate/source/upstream SQL fix, which
+//     further branches on the heading the prompt assembler rendered:
+//     "Upstream node source" (prompt.AssembleUpstreamFix) → the corrected
+//     source of the changed ancestor a whole cluster failed below;
+//     "Original model source" (prompt.AssembleSourceFix) → the corrected real
+//     model source; neither → the Step-1 candidate-SQL fix (compiled SQL).
+//     Every source answer uses physical schema.table names, because a shadow
+//     release lays it over the real dbt project and compiles it.
 //
 //  2. propose_python_fix mode: when the request body contains a tool named
 //     "propose_python_fix", the server returns a NON-STREAMING response whose
@@ -229,13 +232,30 @@ const seedFixContent = "id,name\n1,\"a,b\"\n"
 const step2Marker = "Original model source"
 
 // step2SourceFix is the corrected dbt model source returned by the stub when
-// the Step-2 marker is detected. It removes the bad join (public.silly_error /
-// public.wrong_name) while preserving the real {{ ref(...) }} macros from the
-// stub-github canned source.
+// the Step-2 marker is detected. It removes the bad join to public.wrong_name
+// and keeps the surviving read as a physical schema.table name.
+//
+// Physical names rather than {{ ref(...) }} macros because every proposed fix
+// is now verified by a shadow release that lays this exact text over the
+// service's dbt project and compiles it. A {{ ref('table_b') }} does not
+// resolve inside service-2 (table_b belongs to service-1's project), so the
+// overlay compile would abort and no fix could ever verify.
 const step2SourceFix = `{{ config(materialized='table') }}
-select *
-from {{ ref('table_b') }}
-join {{ ref('table_c') }} using (id)`
+SELECT c.id
+FROM e2e_schema.ftable_c c`
+
+// upstreamMarker is the string present in the user message when the
+// agent-remediation asks for a shared-upstream fix. It is produced by
+// prompt.AssembleUpstreamFix, which renders the changed ancestor's SQL under
+// an "Upstream node source:" heading.
+const upstreamMarker = "Upstream node source"
+
+// upstreamFixContent is the corrected ancestor source returned for a
+// shared-upstream cluster: e2e_schema.ftable_u with the amount column its
+// change dropped restored, so both descendants that select it validate again.
+const upstreamFixContent = `{{ config(materialized='table') }}
+SELECT id, 0 AS amount FROM e2e_schema.ftable_c
+`
 
 // Relation names the python-node contract fixtures declare and the stub
 // rewrites between. Only bindingRead names a relation the e2e test actually
@@ -401,8 +421,8 @@ func lastUserContent(messages []message) string {
 //     proposed_content, targeting the first file shown in the prompt.
 //   - seed (proposed_content, no target_file): the corrected CSV in
 //     proposed_content.
-//   - validation (proposed_sql): the two-step candidate/source SQL fix, branching
-//     on step2Marker as before.
+//   - validation (proposed_sql): the candidate/source/upstream SQL fix,
+//     branching on upstreamMarker first and then step2Marker.
 func writeProposeFixResponse(w http.ResponseWriter, userContent string, params map[string]bool) {
 	var toolArgs map[string]string
 	switch {
@@ -422,13 +442,21 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 			"confidence":       "high",
 		}
 	default:
-		// Validation fix: proposed_sql, branching on the Step-2 marker.
+		// Validation fix: proposed_sql, branching on which prompt was sent.
 		proposedSQL := "select c.id from e2e_schema.ftable_c c"
 		rationale := "removed reference to nonexistent relation public.wrong_name"
-		if strings.Contains(userContent, step2Marker) {
-			// Step-2: corrected real model source (preserves dbt macros).
+		switch {
+		case strings.Contains(userContent, upstreamMarker):
+			// Shared-upstream fix: the corrected source of the changed
+			// ancestor, which is a different node from any that failed.
+			// Matched first so this request can only ever be answered with
+			// the ancestor's source, whatever else a prompt happens to carry.
+			proposedSQL = upstreamFixContent
+			rationale = "restored the amount column the change dropped"
+		case strings.Contains(userContent, step2Marker):
+			// Step-2: corrected real model source.
 			proposedSQL = step2SourceFix
-			rationale = "removed join to nonexistent relation; preserved {{ ref(...) }} macros"
+			rationale = "removed join to nonexistent relation public.wrong_name"
 		}
 		toolArgs = map[string]string{
 			"proposed_sql": proposedSQL,

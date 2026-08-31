@@ -101,7 +101,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 
 	now := d.Clock.Now()
 	imageTag := next.ImageTags()[next.ChangedService()]
-	set := AssembleManifestSet(pointers, d.Bucket, next.ChangedService(), next.ID(), imageTag, next.ManifestKind())
+	set := assembleFor(ctx, u, d.Logger, next, pointers, d.Bucket)
 	next.SetAssembledImageTags(set.ImageTags)
 
 	if next.ManifestKind() == release.ManifestKindPython {
@@ -133,18 +133,20 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	}
 
 	type compileRequestedPayload struct {
-		ReleaseID       string `json:"release_id"`
-		Service         string `json:"service"`
-		ImageTag        string `json:"image_tag"`
-		Bucket          string `json:"bucket"`
-		CandidateSchema string `json:"candidate_schema"`
+		ReleaseID        string `json:"release_id"`
+		Service          string `json:"service"`
+		ImageTag         string `json:"image_tag"`
+		Bucket           string `json:"bucket"`
+		CandidateSchema  string `json:"candidate_schema"`
+		SourceOverlayURI string `json:"source_overlay_uri,omitempty"`
 	}
 	payload, err := json.Marshal(compileRequestedPayload{
-		ReleaseID:       next.ID(),
-		Service:         next.ChangedService(),
-		ImageTag:        imageTag,
-		Bucket:          d.Bucket,
-		CandidateSchema: CandidateSchemaFor(next.ID()),
+		ReleaseID:        next.ID(),
+		Service:          next.ChangedService(),
+		ImageTag:         imageTag,
+		Bucket:           d.Bucket,
+		CandidateSchema:  CandidateSchemaFor(next.ID()),
+		SourceOverlayURI: next.SourceOverlayURI(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

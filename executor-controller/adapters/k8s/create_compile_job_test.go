@@ -145,6 +145,7 @@ func TestBuildCompilePodSpec_ParseContainers(t *testing.T) {
 	assert.Equal(t, "/shared/parse/candidate/partial_parse.msgpack", envByName(spec, "PARSE_CANDIDATE_LOCAL_PATH"))
 	assert.Equal(t, p.ParseCandidateS3URI, envByName(spec, "PARSE_CANDIDATE_S3_URI"))
 }
+
 // TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty verifies that
 // when CandidateSchema is empty the parse-export leg is disabled and the pod
 // keeps the two-container layout: a single "compile" initContainer and an
@@ -171,4 +172,175 @@ func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 	for _, e := range spec.Containers[0].Env {
 		assert.False(t, strings.HasPrefix(e.Name, "PARSE_"), "no PARSE_* env when CandidateSchema is empty, got %s", e.Name)
 	}
+}
+
+// TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir verifies a shadow
+// release's compile Job fetches the proposed source into /shared/overlay and
+// then runs dbt from a staged copy of the team project under /work — never
+// writing the proposed files into the image's own project directory — and that
+// the manifest it hands to the upload container is the one dbt wrote in that
+// copy, not the configured path inside the image.
+func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	c := newValidationTestClient()
+	p := ValidationJobParams{
+		JobName: "compile-svc-shadow", ReleaseID: "shadow-rel-1-svc-a1", NodeID: "core",
+		ServiceName: "core", ImageTag: "abc123",
+		ManifestS3URI:    "s3://continuo/core/shadow-rel-1-svc-a1/manifest.json",
+		SourceOverlayURI: "s3://continuo/core/shadow-rel-1-svc-a1/source-overlay.tar.gz",
+		Namespace:        "default",
+	}
+	require.NoError(t, c.CreateCompileJob(context.Background(), p))
+	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
+
+	require.Len(t, spec.InitContainers, 2)
+	overlay := spec.InitContainers[0]
+	assert.Equal(t, "overlay", overlay.Name)
+	assert.Equal(t, "carolsimone/s3-sidecar:latest", overlay.Image)
+	assert.Equal(t, []string{"python", "/overlay_fetcher.py"}, overlay.Command)
+	assert.Equal(t, "s3://continuo/core/shadow-rel-1-svc-a1/source-overlay.tar.gz", envOf(overlay, "SOURCE_OVERLAY_URI"))
+	assert.Equal(t, "/shared/overlay", envOf(overlay, "OVERLAY_DEST"))
+	assert.Equal(t, "shared", overlay.VolumeMounts[0].Name)
+
+	compile := spec.InitContainers[1]
+	assert.Equal(t, "compile", compile.Name)
+	assert.Equal(t, expectedStagePrefix+
+		"dbt compile --profiles-dir /project"+
+		" && cp /work/project/target/manifest.json /shared/manifest.json"+
+		" && chmod 644 /shared/manifest.json", compile.Command[2])
+
+	mounts := make([]string, len(compile.VolumeMounts))
+	for i, m := range compile.VolumeMounts {
+		mounts[i] = m.Name
+	}
+	assert.Equal(t, []string{"shared", "workdir-compile"}, mounts)
+	assert.Equal(t, "/work", compile.VolumeMounts[1].MountPath)
+
+	volumes := make([]string, len(spec.Volumes))
+	for i, v := range spec.Volumes {
+		volumes[i] = v.Name
+	}
+	assert.Equal(t, []string{"shared", "workdir-compile"}, volumes)
+}
+
+// TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers verifies that
+// when a shadow release's overlay is set alongside CandidateSchema, every
+// team-image container stages the project into its own workdir — not just
+// compile — so parse rehearsal exercises the overlaid source rather than the
+// pristine checked-in project, and reads back the partial-parse artifact from
+// the copy dbt actually wrote it into. Each staging container gets its own
+// workdir emptyDir so one container's dbt output never leaks into the next
+// container's project.
+func TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	p := ValidationJobParams{
+		ServiceName:         "core",
+		ImageTag:            "abc123",
+		ManifestS3URI:       "s3://continuo/core/shadow-rel-1/manifest.json",
+		SourceOverlayURI:    "s3://continuo/core/shadow-rel-1/source-overlay.tar.gz",
+		CandidateSchema:     "candidate_x",
+		ParseProdS3URI:      "s3://continuo/core/shadow-rel-1/parse/prod.msgpack",
+		ParseCandidateS3URI: "s3://continuo/core/shadow-rel-1/parse/candidate.msgpack",
+	}
+	spec, err := buildCompilePodSpec(p, []string{"dbt", "compile"}, "/project/target/manifest.json",
+		[]string{"dbt", "parse"}, "/project/target/partial_parse.msgpack")
+	require.NoError(t, err)
+
+	names := make([]string, len(spec.InitContainers))
+	for i, ic := range spec.InitContainers {
+		names[i] = ic.Name
+	}
+	require.Equal(t, []string{"overlay", "compile", "parse-prod", "parse-candidate"}, names)
+
+	parseProd := spec.InitContainers[2]
+	parseCandidate := spec.InitContainers[3]
+	require.Len(t, parseProd.Command, 3)
+	require.Len(t, parseCandidate.Command, 3)
+	assert.True(t, strings.HasPrefix(parseProd.Command[2], expectedStagePrefix), parseProd.Command[2])
+	assert.True(t, strings.HasPrefix(parseCandidate.Command[2], expectedStagePrefix), parseCandidate.Command[2])
+	assert.Contains(t, parseProd.Command[2], "cp /work/project/target/partial_parse.msgpack /shared/parse/prod/partial_parse.msgpack",
+		"the exported artifact must be read from the staged copy dbt wrote it into")
+	assert.NotContains(t, parseProd.Command[2], "[ -f /project/target/partial_parse.msgpack ]",
+		"nothing may be read back from the image's own project dir once dbt ran in the workdir")
+
+	volumes := make([]string, len(spec.Volumes))
+	for i, v := range spec.Volumes {
+		volumes[i] = v.Name
+	}
+	assert.Equal(t, []string{"shared", "workdir-compile", "workdir-parse-prod", "workdir-parse-candidate"}, volumes,
+		"each staging container needs its own workdir so dbt output does not leak between them")
+	for _, ic := range spec.InitContainers[1:] {
+		mounts := make([]string, len(ic.VolumeMounts))
+		for i, m := range ic.VolumeMounts {
+			mounts[i] = m.Name
+		}
+		assert.Equal(t, []string{"shared", "workdir-" + ic.Name}, mounts, "container %s", ic.Name)
+	}
+	assert.Len(t, spec.Containers[0].VolumeMounts, 1,
+		"the upload container runs no dbt and needs no workdir")
+}
+
+func TestCreateCompileJob_NoOverlayKeepsSingleInitContainer(t *testing.T) {
+	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	c := newValidationTestClient()
+	p := ValidationJobParams{JobName: "compile-svc-rel", ReleaseID: "rel-1", NodeID: "core",
+		ServiceName: "core", ImageTag: "abc123", ManifestS3URI: "s3://continuo/core/rel-1/manifest.json", Namespace: "default"}
+	require.NoError(t, c.CreateCompileJob(context.Background(), p))
+	spec := fetchJob(t, c, p.Namespace, p.JobName).Spec.Template.Spec
+	require.Len(t, spec.InitContainers, 1)
+	assert.Equal(t, "compile", spec.InitContainers[0].Name)
+	assert.False(t, strings.Contains(spec.InitContainers[0].Command[2], "/shared/overlay"))
+
+	// A release without an overlay runs dbt in the image's own project dir,
+	// exactly as it did before the overlay existed: no staging, no workdir.
+	assert.Equal(t, "dbt compile --profiles-dir /project"+
+		" && cp /project/target/manifest.json /shared/manifest.json"+
+		" && chmod 644 /shared/manifest.json", spec.InitContainers[0].Command[2])
+	assert.NotContains(t, spec.InitContainers[0].Command[2], "/work")
+	require.Len(t, spec.Volumes, 1)
+	assert.Equal(t, "shared", spec.Volumes[0].Name)
+	require.Len(t, spec.InitContainers[0].VolumeMounts, 1)
+	assert.Equal(t, "shared", spec.InitContainers[0].VolumeMounts[0].Name)
+}
+
+// TestBuildCompilePodSpec_NoOverlayParseCommandsUnchanged pins the parse-leg
+// commands of an ordinary release: they read the partial-parse artifact back
+// from the configured path inside the team image, with no staging prologue.
+func TestBuildCompilePodSpec_NoOverlayParseCommandsUnchanged(t *testing.T) {
+	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
+	p := ValidationJobParams{
+		ServiceName:     "core",
+		ImageTag:        "abc123",
+		ManifestS3URI:   "s3://continuo/core/rel-1/manifest.json",
+		CandidateSchema: "candidate_x",
+	}
+	spec, err := buildCompilePodSpec(p, []string{"dbt", "compile"}, "/project/target/manifest.json",
+		[]string{"dbt", "parse"}, "/project/target/partial_parse.msgpack")
+	require.NoError(t, err)
+
+	for _, ic := range spec.InitContainers {
+		assert.NotContains(t, ic.Command[2], "/work", "container %s must not stage anything", ic.Name)
+		assert.NotContains(t, ic.Command[2], "/shared/overlay", "container %s", ic.Name)
+		mounts := make([]string, len(ic.VolumeMounts))
+		for i, m := range ic.VolumeMounts {
+			mounts[i] = m.Name
+		}
+		assert.Equal(t, []string{"shared"}, mounts, "container %s", ic.Name)
+	}
+	assert.Contains(t, spec.InitContainers[1].Command[2],
+		"cp /project/target/partial_parse.msgpack /shared/parse/prod/partial_parse.msgpack")
+	require.Len(t, spec.Volumes, 1)
+	assert.Equal(t, "shared", spec.Volumes[0].Name)
+}
+
+// envOf returns the value of the named env var on one container ("" when absent).
+func envOf(c corev1.Container, name string) string {
+	for _, e := range c.Env {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
 }

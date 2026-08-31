@@ -11,11 +11,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/carolsimone/continuo/pkg/num"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
+	"github.com/carolsimone/continuo/pkg/num"
 )
 
 // ProposalService is the subset of proposals.Service methods consumed by the
@@ -176,9 +176,45 @@ func editsToProto(edits []proposal.FileEdit) []*remediationv1.FileEdit {
 	out := make([]*remediationv1.FileEdit, 0, len(edits))
 	for _, e := range edits {
 		out = append(out, &remediationv1.FileEdit{
-			Path:       e.Path,
-			ContentUri: e.ContentURI,
-			DiffUri:    e.DiffURI,
+			Path:         e.Path,
+			ContentUri:   e.ContentURI,
+			DiffUri:      e.DiffURI,
+			TargetNodeId: e.TargetNodeID,
+		})
+	}
+	return out
+}
+
+// nodeOutcomesToProto converts the per-node outcome map to its proto
+// representation. A nil or empty input produces a nil map rather than an
+// empty non-nil one.
+func nodeOutcomesToProto(outcomes map[string]proposal.NodeOutcome) map[string]*remediationv1.NodeOutcome {
+	if len(outcomes) == 0 {
+		return nil
+	}
+	out := make(map[string]*remediationv1.NodeOutcome, len(outcomes))
+	for nodeID, o := range outcomes {
+		out[nodeID] = &remediationv1.NodeOutcome{
+			Status: string(o.Status),
+			Reason: o.Reason,
+		}
+	}
+	return out
+}
+
+// verificationsToProto converts a slice of domain Verification values to the
+// proto representation. A nil or empty input produces a nil slice rather
+// than a list containing a zero-valued element.
+func verificationsToProto(verifications []proposal.Verification) []*remediationv1.Verification {
+	if len(verifications) == 0 {
+		return nil
+	}
+	out := make([]*remediationv1.Verification, 0, len(verifications))
+	for _, v := range verifications {
+		out = append(out, &remediationv1.Verification{
+			Service:         v.Service,
+			Kind:            v.Kind,
+			ShadowReleaseId: v.ShadowReleaseID,
 		})
 	}
 	return out
@@ -226,26 +262,30 @@ func viewToProto(v proposal.View) *remediationv1.Proposal {
 		ShadowReleaseId:     v.ShadowReleaseID,
 		VerifyError:         v.VerifyError,
 		RemediationRound:    num.ClampInt32(v.RemediationRound),
+		ResolvedNodeIds:     v.ResolvedNodeIDs,
+		NodeOutcomes:        nodeOutcomesToProto(v.NodeOutcomes),
+		Verifications:       verificationsToProto(v.Verifications),
 	}
 }
 
 // claimToProto converts a domain proposal.PRClaim to the BeginPullRequestResponse.
 func claimToProto(c proposal.PRClaim) *remediationv1.BeginPullRequestResponse {
 	return &remediationv1.BeginPullRequestResponse{
-		ProposalId:     c.ID,
-		Repo:           c.Repo,
-		CommitSha:      c.CommitSHA,
-		FilePath:       c.FilePath,
-		ProposedSqlUri: c.ProposedSQLURI,
-		DiffUri:        c.DiffURI,
-		ReleaseId:      c.ReleaseID,
-		NodeId:         c.NodeID,
-		Attempt:        num.ClampInt32(c.Attempt),
-		Rationale:      c.Rationale,
-		Confidence:     string(c.Confidence),
-		Model:          c.Model,
-		Branch:         c.Branch,
-		ClaimedAt:      c.ClaimedAt.Format(time.RFC3339),
-		Edits:          editsToProto(c.Edits),
+		ProposalId:      c.ID,
+		Repo:            c.Repo,
+		CommitSha:       c.CommitSHA,
+		FilePath:        c.FilePath,
+		ProposedSqlUri:  c.ProposedSQLURI,
+		DiffUri:         c.DiffURI,
+		ReleaseId:       c.ReleaseID,
+		NodeId:          c.NodeID,
+		Attempt:         num.ClampInt32(c.Attempt),
+		Rationale:       c.Rationale,
+		Confidence:      string(c.Confidence),
+		Model:           c.Model,
+		Branch:          c.Branch,
+		ClaimedAt:       c.ClaimedAt.Format(time.RFC3339),
+		Edits:           editsToProto(c.Edits),
+		ResolvedNodeIds: c.ResolvedNodeIDs,
 	}
 }

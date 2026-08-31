@@ -72,6 +72,16 @@ message Proposal {
   string verify_error = 28;
   // remediation_round is the release's remediation round this attempt belongs to.
   int32 remediation_round = 29;
+  // resolved_node_ids is the failing nodes this attempt addresses, sorted;
+  // node_id is their representative.
+  repeated string resolved_node_ids = 30;
+  // node_outcomes is, per failing node, how this attempt ended for it — a
+  // cluster whose fixer skipped or failed leaves its members
+  // skipped/failed while other members verify.
+  map<string, NodeOutcome> node_outcomes = 31;
+  // verifications is one shadow release per edited service; the first entry
+  // is the view mirrored onto shadow_release_id.
+  repeated Verification verifications = 32;
 }
 
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
@@ -123,6 +133,9 @@ message BeginPullRequestResponse {
   // never a fresher one taken by someone else since.
   string claimed_at = 14;
   repeated FileEdit edits = 15;
+  // resolved_node_ids is the failing nodes this attempt addresses, sorted;
+  // node_id is their representative.
+  repeated string resolved_node_ids = 16;
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
@@ -160,4 +173,22 @@ message FileEdit {
   string path = 1;
   string content_uri = 2;
   string diff_uri = 3;
+  // target_node_id is the node whose source this edit changes; for a
+  // shared-upstream fix it is the changed ancestor, which may not have failed.
+  string target_node_id = 4;
+}
+
+// NodeOutcome is how one failing node's attempt ended: verifying, proposed,
+// failed, skipped, or escalated, with the reason for that outcome.
+message NodeOutcome {
+  string status = 1;
+  string reason = 2;
+}
+
+// Verification is one shadow release posted to verify the edits made to a
+// single service.
+message Verification {
+  string service = 1;
+  string kind = 2;
+  string shadow_release_id = 3;
 }

@@ -433,3 +433,64 @@ describe('RemediationPanel — a fix awaiting shadow verification', () => {
     expect(await screen.findByRole('button', { name: /Create PR/i })).toBeInTheDocument();
   });
 });
+
+describe('RemediationPanel — a batched proposal spanning several nodes', () => {
+  it('joins every resolved node in the row and the card title, not just the representative one', async () => {
+    const proposal = makeProposal({
+      node_id: 's.a',
+      status: 'skipped',
+      resolved_node_ids: ['s.a', 's.b'],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('s.a, s.b'));
+    fireEvent.click(screen.getByText('s.a, s.b'));
+    expect(screen.getAllByText('s.a, s.b').length).toBeGreaterThan(0);
+  });
+
+  it('still shows the single node_id for a legacy proposal with no resolved_node_ids', async () => {
+    const proposal = makeProposal({ node_id: 's.a', status: 'skipped' });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('s.a'));
+    expect(screen.queryByText('s.a, s.b')).toBeNull();
+  });
+
+  it('renders one verification link per entry in verifications, not just the single shadow_release_id', async () => {
+    const proposal = makeProposal({
+      status: 'proposed',
+      source_resolved: true,
+      resolved_node_ids: ['s.a', 's.b'],
+      verifications: [
+        { service: 'svc-a', kind: 'shadow', shadow_release_id: 'shadow-rel-a' },
+        { service: 'svc-b', kind: 'shadow', shadow_release_id: 'shadow-rel-b' },
+      ],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    const linkA = await screen.findByRole('link', { name: /shadow-rel-a/ });
+    const linkB = await screen.findByRole('link', { name: /shadow-rel-b/ });
+    expect(linkA).toHaveAttribute('href', '/releases/shadow-rel-a');
+    expect(linkB).toHaveAttribute('href', '/releases/shadow-rel-b');
+  });
+
+  it('falls back to the single shadow_release_id link when verifications is empty', async () => {
+    const proposal = makeProposal({
+      status: 'verifying',
+      shadow_release_id: 'shadow-rel-abc-svc.schema.my_model-a1',
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    fireEvent.click(await screen.findByText('svc.schema.my_model'));
+    const link = await screen.findByRole('link', { name: /shadow-rel-abc-svc.schema.my_model-a1/ });
+    expect(link).toHaveAttribute('href', '/releases/shadow-rel-abc-svc.schema.my_model-a1');
+  });
+});

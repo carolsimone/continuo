@@ -147,7 +147,7 @@ export function createRemediationRouter(
     // fields, which describe exactly the one file such a peer proposes. This
     // mirrors the synthesis the repository itself applies to a row stored
     // before the edits list existed.
-    let edits: Array<{ path: string; content_uri: string; diff_uri: string }> = claim.edits ?? [];
+    let edits: Array<{ path: string; content_uri: string; diff_uri: string; target_node_id?: string }> = claim.edits ?? [];
     // The Go read path (editsOrLegacy in agent-remediation's proposal
     // repository) already guarantees every PRClaim carries a non-empty edits
     // list, synthesizing one from the single-file fields when the row has
@@ -176,11 +176,12 @@ export function createRemediationRouter(
     }
 
     // Fetch the proposed content of every edited file from S3.
-    let files: Array<{ path: string; content: string }>;
+    let files: Array<{ path: string; content: string; target_node_id?: string }>;
     try {
       files = await Promise.all(
         edits.map(async (edit) => ({
           path: edit.path,
+          target_node_id: edit.target_node_id,
           content: await getObject(normalizeKey(edit.content_uri)),
         })),
       );
@@ -194,10 +195,17 @@ export function createRemediationRouter(
       return res.status(502).json({ error: 'failed to fetch proposed file content from S3' });
     }
 
-    // Build the PR title and body.
-    const nodeId = claim.node_id ?? id;
+    // Build the PR title and body. A batched proposal resolves several
+    // failing nodes under one attempt, so the title names how many rather
+    // than picking one; a single-node proposal (or a legacy row with no
+    // resolved_node_ids) still names that one node exactly as before.
+    const nodeIds: string[] = (claim.resolved_node_ids && claim.resolved_node_ids.length > 0)
+      ? claim.resolved_node_ids
+      : [claim.node_id ?? id];
     const releaseId = claim.release_id ?? '';
-    const title = `[remediation] fix ${nodeId} (release ${releaseId})`;
+    const title = nodeIds.length === 1
+      ? `[remediation] fix ${nodeIds[0]} (release ${releaseId})`
+      : `[remediation] fix ${nodeIds.length} nodes (release ${releaseId})`;
 
     // A single inline preview keeps the body readable on a multi-file proposal;
     // the rest of the diffs are one click away in the pull request itself.
@@ -220,14 +228,14 @@ export function createRemediationRouter(
     const body = [
       `## Automated remediation proposal`,
       ``,
-      `**Node:** \`${nodeId}\``,
+      `**Nodes:** ${nodeIds.map((n) => `\`${n}\``).join(', ')}`,
       `**Release:** \`${releaseId}\``,
       claim.error_signature ? `**Error signature:** ${claim.error_signature}` : '',
       claim.model ? `**Model:** ${claim.model}` : '',
       claim.confidence !== undefined ? `**Confidence:** ${claim.confidence}` : '',
       ``,
       `### Files changed`,
-      ...files.map((file) => `- \`${file.path}\``),
+      ...files.map((file) => `- \`${file.path}\`${file.target_node_id ? ` (fixes \`${file.target_node_id}\`)` : ''}`),
       ``,
       claim.rationale ? `### Rationale\n${claim.rationale}` : '',
       diffBlock,

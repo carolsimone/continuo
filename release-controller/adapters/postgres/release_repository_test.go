@@ -678,6 +678,7 @@ func TestReleaseRepository_ShadowRoundTrips(t *testing.T) {
 	ctx := context.Background()
 
 	shadow := release.New("r-shadow", "svc-a", "img-1", false, true, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	shadow.SetSourceOverlayURI("s3://bucket/svc-a/r-shadow/source-overlay.tar.gz")
 	require.NoError(t, repo.Save(ctx, shadow))
 	plain := release.New("r-plain-shadow", "svc-a", "img-1", false, false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
 	require.NoError(t, repo.Save(ctx, plain))
@@ -686,11 +687,13 @@ func TestReleaseRepository_ShadowRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, gotShadow)
 	assert.True(t, gotShadow.IsShadow())
+	assert.Equal(t, "s3://bucket/svc-a/r-shadow/source-overlay.tar.gz", gotShadow.SourceOverlayURI())
 
 	gotPlain, err := repo.Get(ctx, "r-plain-shadow")
 	require.NoError(t, err)
 	require.NotNil(t, gotPlain)
 	assert.False(t, gotPlain.IsShadow())
+	assert.Equal(t, "", gotPlain.SourceOverlayURI())
 }
 
 // TestReleaseRepository_DeleteResolvedBeforePrunesValidatedShadow verifies

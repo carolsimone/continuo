@@ -177,3 +177,37 @@ func TestUnbuildableCrossServiceUpstreams_NoneWhenAllInCandidate(t *testing.T) {
 	}
 	assert.Empty(t, release.UnbuildableCrossServiceUpstreams(candidate, []string{"a2"}))
 }
+
+func TestChangedAncestors_FiltersTransitiveAncestorsToChangedOnes(t *testing.T) {
+	topo := release.Topology{
+		{UniqueID: "s.u", ServiceName: "svcU", OriginalFilePath: "models/u.sql"},
+		{UniqueID: "s.m", UpstreamUniqueIDs: []string{"s.u"}},
+		{UniqueID: "s.x", UpstreamUniqueIDs: []string{"s.m"}},
+		{UniqueID: "s.other"},
+	}
+	changed := map[string]bool{"s.u": true, "s.x": true, "s.other": true}
+
+	got := release.ChangedAncestors(topo, "s.x", changed)
+
+	want := []release.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svcU"}}
+	assert.Equal(t, want, got, "m unchanged, x is itself, other unrelated")
+	assert.Nil(t, release.ChangedAncestors(topo, "s.unknown", changed), "unknown node must yield nil")
+}
+
+// TestChangedAncestors_CarriesTheLocationTheCandidateDeclares pins why the
+// ancestors travel as objects rather than ids: the fix has to edit the file
+// THIS release declares for the ancestor. A node moved or renamed in the
+// candidate is at its old path in the promoted graph, so an id alone would send
+// the fix to a file that no longer holds the node.
+func TestChangedAncestors_CarriesTheLocationTheCandidateDeclares(t *testing.T) {
+	topo := release.Topology{
+		{UniqueID: "s.u", ServiceName: "svcB", OriginalFilePath: "models/marts/u_renamed.sql"},
+		{UniqueID: "s.x", ServiceName: "svcA", UpstreamUniqueIDs: []string{"s.u"}},
+	}
+
+	got := release.ChangedAncestors(topo, "s.x", map[string]bool{"s.u": true})
+
+	assert.Equal(t, []release.ChangedAncestor{
+		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Service: "svcB"},
+	}, got)
+}

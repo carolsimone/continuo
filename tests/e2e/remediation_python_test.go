@@ -110,7 +110,7 @@ const (
 //
 //	POST /releases (kind=python, one node whose declared read cannot bind)
 //	→ the validation Job's bind check fails → release rejected
-//	→ classifier emits remediation.requested:v1 (node_type=python-model)
+//	→ classifier emits remediation.requested:v2 (one node, node_type=python-model)
 //	→ agent-remediation routes it to the python contract fixer: fetches the
 //	  repository tarball at the failing commit from stub-github, finds the yaml
 //	  declaring the node, has the model correct it, packages the directory with
@@ -184,6 +184,14 @@ func TestE2E_PythonValidationFailure_ShadowVerifiedFix(t *testing.T) {
 	require.Empty(t, proposed.VerifyError, "a verified fix records no verification error")
 	require.Equal(t, shadowID, proposed.ShadowReleaseID,
 		"finalizing an attempt must not change which release verified it")
+
+	verifications := decodeVerifications(t, proposed.Verifications)
+	require.Len(t, verifications, 1,
+		"the fix edits one service, so exactly one shadow release judged it")
+	require.Equal(t, pyBadReadService, verifications[0].Service,
+		"the verification must name the service whose files the attempt edited")
+	require.Equal(t, shadowID, verifications[0].ShadowReleaseID,
+		"the verification must name the same release the row parked on")
 
 	edits := decodeFileEdits(t, proposed.FileEdits)
 	require.Len(t, edits, 1, "the fix changes exactly the one file that declares the node")
@@ -486,6 +494,7 @@ type pyProposalRow struct {
 	VerifyError     string `db:"verify_error"`
 	FilePath        string `db:"file_path"`
 	FileEdits       []byte `db:"file_edits"`
+	Verifications   []byte `db:"verifications"`
 }
 
 // waitForProposal polls the agent-remediation's proposal table until the named
@@ -503,7 +512,7 @@ func waitForProposal(
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row, `
-			SELECT status, attempt, shadow_release_id, verify_error, file_path, file_edits
+			SELECT status, attempt, shadow_release_id, verify_error, file_path, file_edits, verifications
 			  FROM proposal
 			 WHERE release_id = $1 AND node_id = $2 AND attempt = $3`,
 			releaseID, nodeID, attempt)
@@ -521,10 +530,14 @@ func waitForProposal(
 }
 
 // pyFileEdit mirrors one element of the proposal's file_edits column.
+// TargetNodeID names the node whose source the edit changes, which for a
+// batched attempt is the only thing that says which file repairs which
+// failure — the representative node_id column cannot stand for all of them.
 type pyFileEdit struct {
-	Path       string `json:"path"`
-	ContentURI string `json:"content_uri"`
-	DiffURI    string `json:"diff_uri"`
+	Path         string `json:"path"`
+	ContentURI   string `json:"content_uri"`
+	DiffURI      string `json:"diff_uri"`
+	TargetNodeID string `json:"target_node_id"`
 }
 
 // decodeFileEdits reads the proposal row's file_edits column.
@@ -533,6 +546,24 @@ func decodeFileEdits(t *testing.T, raw []byte) []pyFileEdit {
 	var edits []pyFileEdit
 	require.NoError(t, json.Unmarshal(raw, &edits), "decode proposal file_edits: %s", raw)
 	return edits
+}
+
+// pyVerification mirrors one element of the proposal's verifications column:
+// the service whose edits a shadow release judged, the manifest kind it was
+// submitted under, and that release's id. An attempt posts one per edited
+// service, so the list is how a reader tells which verdict covered what.
+type pyVerification struct {
+	Service         string `json:"service"`
+	Kind            string `json:"kind"`
+	ShadowReleaseID string `json:"shadow_release_id"`
+}
+
+// decodeVerifications reads the proposal row's verifications column.
+func decodeVerifications(t *testing.T, raw []byte) []pyVerification {
+	t.Helper()
+	var verifications []pyVerification
+	require.NoError(t, json.Unmarshal(raw, &verifications), "decode proposal verifications: %s", raw)
+	return verifications
 }
 
 // assertReleaseListedAsShadow polls the release list until it carries the given
@@ -635,7 +666,7 @@ func waitForRemediationProposed(
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.proposed:v1 for release %s node %s", releaseID, nodeID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationProposedV1, releaseID, nodeID))
 }
 
 // assertNoRemediationTriggerFor fails if any remediation trigger names the
@@ -644,7 +675,7 @@ func waitForRemediationProposed(
 // heal, which is a loop with no exit.
 func assertNoRemediationTriggerFor(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
 	t.Helper()
-	msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV1, "-", "+").Result()
+	msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
 	require.NoError(t, err)
 	for _, msg := range msgs {
 		raw, _ := msg.Values["payload"].(string)
@@ -656,7 +687,8 @@ func assertNoRemediationTriggerFor(t *testing.T, ctx context.Context, clients *t
 			continue
 		}
 		require.NotEqual(t, releaseID, p.ReleaseID,
-			"shadow release %s must produce no remediation trigger, found one for node %s", releaseID, p.NodeID)
+			"shadow release %s must produce no remediation trigger, found one carrying %d node(s)",
+			releaseID, len(p.Nodes))
 	}
 }
 

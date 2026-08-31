@@ -1,13 +1,27 @@
 // Package shadowverify holds the reconciler that resolves fix proposals whose
-// correctness a shadow release is still judging.
+// correctness shadow releases are still judging.
 //
-// A fix for a python node cannot be judged by reading it back, only by running
-// it, so the fixer that produces one ends by submitting a shadow release — a
-// real release that runs the full parse -> candidate-schema -> validation
-// pipeline but stops at "validated" instead of promoting — and leaves the
-// attempt in 'verifying'. This package is the other half: a polling loop that
-// reads each waiting attempt's release, and either finalizes the attempt as a
-// fix a human can review, or records why it failed and starts the next one.
+// A fix cannot be judged by reading it back, only by running it, so the driver
+// that produces one ends by submitting a shadow release for every service it
+// edited — a real release that runs the full parse -> candidate-schema ->
+// validation pipeline but stops at "validated" instead of promoting — and
+// leaves the attempt in 'verifying'. One attempt addresses a rejected release's
+// whole failing set, so one proposal waits on all of those shadow releases at
+// once, and is resolved as a unit: it becomes a fix a human can review only
+// when every one of them validated, and a single rejection fails the whole
+// attempt.
+//
+// This package is the other half of that handoff: a polling loop that reads
+// each waiting attempt's releases and either finalizes it as a proposal, or
+// records why it failed and starts the next attempt over the same failing set —
+// the whole set, because the attempt's edits stand or fall together, and the
+// errors the releases reported are what the next attempt is shown.
+//
+// Those releases share one global queue and run one at a time, so an attempt's
+// shadow releases are answered one after another rather than together. Every
+// wait here is therefore bounded per release, from the moment that release
+// itself started running: queueing spends nothing, and an attempt is never
+// timed out for the accumulated wall-clock of several healthy releases.
 package shadowverify
 
 import (
@@ -153,7 +167,14 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 	}
 }
 
-// resolve routes one waiting attempt on its shadow release's current verdict.
+// resolve routes one waiting attempt on the current verdicts of every shadow
+// release judging it, read once each per pass.
+//
+// The attempt is one proposal over one set of edits, so the verdicts are
+// combined rather than acted on individually: one rejection fails it (the edits
+// cannot be split, and the errors of every rejected release together are the
+// evidence the next attempt reads), otherwise every release must have reached a
+// terminal verdict before it can be announced.
 //
 // A verdict that cannot be read is deliberately NOT treated as a rejection.
 // The gateway reports a release-controller that is briefly unreachable and a
@@ -164,29 +185,59 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 // release which never reaches a verdict also ends one whose verdict never
 // becomes readable.
 func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
-	verdict, err := r.releases.Verdict(ctx, v.ShadowReleaseID)
-	if err != nil {
-		r.logger.Warn("shadow verify: read shadow release verdict",
-			"proposal_id", v.ID, "shadow_release", v.ShadowReleaseID, "error", err)
-		r.failIfUnreadableTooLong(ctx, v)
-		return
+	nodeErrors := map[string]string{}
+	anyRejected, allTerminal := false, true
+	var runningSince []time.Time
+	for _, ver := range verificationsOf(v) {
+		verdict, err := r.releases.Verdict(ctx, ver.ShadowReleaseID)
+		if err != nil {
+			r.logger.Warn("shadow verify: read shadow release verdict",
+				"proposal_id", v.ID, "shadow_release", ver.ShadowReleaseID, "error", err)
+			r.failIfUnreadableTooLong(ctx, v)
+			return
+		}
+		switch {
+		case verdict.Terminal && !verdict.Validated:
+			anyRejected = true
+			for node, msg := range verdict.NodeErrors {
+				nodeErrors[node] = msg
+			}
+		case !verdict.Terminal:
+			allTerminal = false
+			// Each release carries its own budget, spent from its own
+			// activation. A release still queued has not started, so it has
+			// spent nothing and is not collected here.
+			if !verdict.ActivatedAt.IsZero() {
+				runningSince = append(runningSince, verdict.ActivatedAt)
+			}
+		}
 	}
 	switch {
-	case verdict.Terminal && verdict.Validated:
+	case anyRejected:
+		r.rejected(ctx, v, verifyError(v, nodeErrors))
+	case allTerminal:
 		r.verified(ctx, v)
-	case verdict.Terminal:
-		r.rejected(ctx, v, verifyError(v, verdict))
 	default:
-		r.failIfVerificationExpired(ctx, v, verdict.ActivatedAt)
+		r.failIfVerificationExpired(ctx, v, runningSince)
 	}
 }
 
-// verified finalizes an attempt whose shadow release validated the fix: the
-// proposal moves to 'proposed' and the remediation.proposed:v1 event that
-// surfaces it for human review is enqueued, both in one transaction so the
-// row and the announcement cannot disagree. The status transition is a
-// compare-and-set, so a repeated pass over an already-finalized row writes
-// nothing and emits nothing.
+// verificationsOf is the set of shadow releases judging one attempt. A row that
+// recorded per-service verifications names them all; a row that posted a single
+// shadow release names only ShadowReleaseID, and is that one verification.
+func verificationsOf(v proposal.View) []proposal.Verification {
+	if len(v.Verifications) > 0 {
+		return v.Verifications
+	}
+	return []proposal.Verification{{ShadowReleaseID: v.ShadowReleaseID}}
+}
+
+// verified finalizes an attempt every shadow release validated: the proposal
+// moves to 'proposed' — carrying each of its nodes with it — and the
+// remediation.proposed:v1 event that surfaces it for human review is enqueued,
+// both in one transaction so the row and the announcement cannot disagree. The
+// status transition is a compare-and-set, so a repeated pass over an
+// already-finalized row writes nothing and emits nothing.
 func (r *Reconciler) verified(ctx context.Context, v proposal.View) {
 	u := r.newUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -208,7 +259,7 @@ func (r *Reconciler) verified(ctx context.Context, v proposal.View) {
 	// There is no inbound message behind this write — the reconciler acts on a
 	// release's verdict, not on a consumed trigger — so the outbox entry
 	// carries no message_processing provenance.
-	if err := handlers.Enqueue(ctx, u, r.clock, proposedEvent(v), "", v.SourceResolved, uuid.Nil); err != nil {
+	if err := handlers.Enqueue(ctx, u, r.clock, proposedEvent(v), v.SourceResolved, uuid.Nil); err != nil {
 		r.logger.Warn("shadow verify: enqueue proposed event", "proposal_id", v.ID, "error", err)
 		return
 	}
@@ -216,18 +267,19 @@ func (r *Reconciler) verified(ctx context.Context, v proposal.View) {
 		r.logger.Warn("shadow verify: commit (mark verified)", "proposal_id", v.ID, "error", err)
 		return
 	}
-	r.logger.Info("shadow verify: shadow release validated the fix; proposal is ready for review",
-		"proposal_id", v.ID, "node", v.NodeID, "release", v.ReleaseID,
-		"shadow_release", v.ShadowReleaseID, "attempt", v.Attempt)
+	r.logger.Info("shadow verify: every shadow release validated the fix; proposal is ready for review",
+		"proposal_id", v.ID, "nodes", len(v.ResolvedNodeIDs), "release", v.ReleaseID,
+		"shadow_releases", len(verificationsOf(v)), "attempt", v.Attempt)
 }
 
 // rejected finalizes an attempt whose fix did not hold up, recording verifyErr
-// as the evidence the next attempt is shown, and then starts that next
-// attempt. The order matters: the failed row must be committed first, because
-// the driver counts terminal attempts to decide both the next attempt's number
-// and whether the cap has been reached. The transition is a compare-and-set,
-// so only the pass that actually finalizes the row starts a next attempt —
-// a repeated pass finds the row already terminal and does nothing.
+// as the evidence the next attempt is shown, and then starts that next attempt
+// over the attempt's whole failing set. The order matters: the failed row must
+// be committed first, because the driver counts terminal attempts to decide
+// both the next attempt's number and whether the cap has been reached. The
+// transition is a compare-and-set, so only the pass that actually finalizes the
+// row starts a next attempt — a repeated pass finds the row already terminal
+// and does nothing.
 func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr string) {
 	u := r.newUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -248,41 +300,60 @@ func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr st
 		r.logger.Warn("shadow verify: commit (mark verify failed)", "proposal_id", v.ID, "error", err)
 		return
 	}
-	r.logger.Info("shadow verify: shadow release did not validate the fix",
-		"proposal_id", v.ID, "node", v.NodeID, "release", v.ReleaseID,
-		"shadow_release", v.ShadowReleaseID, "attempt", v.Attempt, "verify_error", verifyErr)
+	r.logger.Info("shadow verify: a shadow release did not validate the fix",
+		"proposal_id", v.ID, "nodes", len(v.ResolvedNodeIDs), "release", v.ReleaseID,
+		"shadow_releases", len(verificationsOf(v)), "attempt", v.Attempt, "verify_error", verifyErr)
 	r.retry(ctx, v)
 }
 
-// failIfVerificationExpired ends an attempt whose shadow release has been
-// RUNNING longer than the verification budget. Inside the budget the row is
-// left exactly as it is, so a release still working is never cut short.
+// failIfVerificationExpired ends an attempt one of whose shadow releases has
+// been RUNNING longer than the verification budget. runningSince carries the
+// activation of every release that has started and not yet reached a verdict;
+// inside the budget the row is left exactly as it is, so a release still
+// working is never cut short.
 //
-// activatedAt is when the release left the queue, and the budget is measured
-// from there rather than from when the attempt was recorded. A shadow release
-// joins the same global FIFO queue as every other release and only one release
-// runs at a time, so measuring from the proposal would let a backlog fail an
-// attempt whose release never ran — and do the same to every retry behind it,
-// spending the whole per-failure budget on releases that were never given a
-// chance to answer. A release still queued (no activation) is therefore left
-// alone however long ago the attempt was recorded: it has not started, so it
-// has not spent anything. Its wait is still bounded, because a queue that never
-// advances is a stopped pipeline, and a release that runs and then wedges is
-// caught by this budget from the moment it started.
-func (r *Reconciler) failIfVerificationExpired(ctx context.Context, v proposal.View, activatedAt time.Time) {
-	if activatedAt.IsZero() || r.clock.Now().Sub(activatedAt) < r.timeout {
+// The budget belongs to each release individually, measured from when that
+// release itself left the queue. Two things follow, and both matter.
+//
+// A shadow release joins the same global FIFO queue as every other release and
+// only one release runs at a time, so measuring from when the attempt was
+// recorded would let a backlog fail an attempt whose release never ran — and do
+// the same to every retry behind it, spending the whole per-failure budget on
+// releases that were never given a chance to answer. A release still queued (no
+// activation) is therefore left alone however long ago the attempt was
+// recorded: it has not started, so it has not spent anything.
+//
+// For the same reason the budget is not shared across an attempt's releases.
+// They run one after another rather than side by side, so the span from the
+// first activation to the last verdict grows with the number of services the
+// attempt edited, while no single release runs any longer than it otherwise
+// would. Charging that whole span to one budget would fail an attempt whose
+// releases are all healthy, purely for having touched more than one service —
+// and a release that has already answered is not waiting on anything, so it
+// spends nothing further while the next one runs.
+//
+// The wait is still bounded: a queue that never advances is a stopped pipeline,
+// and a release that runs and then wedges is caught by its own budget from the
+// moment it started.
+func (r *Reconciler) failIfVerificationExpired(ctx context.Context, v proposal.View, runningSince []time.Time) {
+	now := r.clock.Now()
+	for _, since := range runningSince {
+		if now.Sub(since) < r.timeout {
+			continue
+		}
+		r.rejected(ctx, v, timedOutError)
 		return
 	}
-	r.rejected(ctx, v, timedOutError)
 }
 
-// failIfUnreadableTooLong ends an attempt whose shadow release has not produced
-// a READABLE verdict inside the budget. Here the budget runs from when the
-// attempt was recorded, because no verdict could be read there is nothing else
-// to measure from — and this is the path that must stay bounded regardless: a
-// release id release-controller will never know reads exactly like a release
-// controller that is briefly unreachable, so without this an attempt whose
-// submission was lost would sit in 'verifying' for as long as the row exists.
+// failIfUnreadableTooLong ends an attempt one of whose shadow releases has not
+// produced a READABLE verdict inside the budget. Here the budget runs from when
+// the attempt was recorded, because no verdict could be read there is nothing
+// else to measure from — and this is the path that must stay bounded
+// regardless: a release id release-controller will never know reads exactly
+// like a release controller that is briefly unreachable, so without this an
+// attempt whose submission was lost would sit in 'verifying' for as long as the
+// row exists.
 func (r *Reconciler) failIfUnreadableTooLong(ctx context.Context, v proposal.View) {
 	if r.clock.Now().Sub(v.CreatedAt) < r.timeout {
 		return
@@ -290,63 +361,86 @@ func (r *Reconciler) failIfUnreadableTooLong(ctx context.Context, v proposal.Vie
 	r.rejected(ctx, v, timedOutError)
 }
 
-// retry starts the attempt that follows a failed verification, from the
-// trigger stored on the attempt's own row.
+// retry starts the attempt that follows a failed verification, from the trigger
+// stored on the attempt's own row, replayed in full.
+//
+// A shadow release judges every node the attempt addressed at once, so its
+// rejection may well name only some of them. The retry still covers the whole
+// failing set, because the attempt is one proposal over one set of edits and it
+// failed as a unit: the edits for the nodes that did pass were never offered to
+// anyone, and are discarded with the failed attempt. Retrying only what still
+// fails would therefore end in a pull request carrying fixes for those nodes
+// alone, silently dropping the ones an earlier attempt had already got right.
+// Which nodes failed is not lost — it is recorded as the attempt's verify error,
+// which is exactly the evidence the next attempt is shown.
 //
 // The rebuilt trigger is given a dedup identity of its own. The driver opens
 // by asking whether this trigger was already handled, keyed on the Redis
 // message id it carries, and the first attempt's own transaction already
 // claimed the message that started it — so replaying the stored payload
 // verbatim would report "already processed" and return having done nothing,
-// with no attempt, no row, and no error anywhere to show for it. The shadow
-// release that judged the attempt being retried names this retry uniquely
-// (there is exactly one shadow release per attempt), so it is both a fresh key
-// for each attempt and a stable one for repeated passes over the same attempt.
-// The upstream outbox id is dropped for the same reason: it is the second
-// dedup axis, and the original value would collide on it just as the message
-// id would.
+// with no attempt, no row, and no error anywhere to show for it. The row of the
+// attempt being retried names this retry uniquely (there is exactly one row per
+// attempt), so it is both a fresh key for each attempt and a stable one for
+// repeated passes over the same attempt. The upstream outbox id is dropped for
+// the same reason: it is the second dedup axis, and the original value would
+// collide on it just as the message id would.
 //
 // A next attempt that fails to start is not retried here: the row it would
 // follow is already terminal, so the following pass no longer lists it. The
-// failure stands as the recorded outcome for the node — but the driver has by
-// then committed an in-flight row for that attempt, which abandonInFlight
-// closes out so the failure is what the node's last row actually says.
+// failure stands as the recorded outcome for the release — but the driver has
+// by then committed an in-flight row for that attempt, which abandonInFlight
+// closes out so the failure is what the release's last row actually says.
 func (r *Reconciler) retry(ctx context.Context, v proposal.View) {
 	if len(v.TriggerPayload) == 0 {
 		r.logger.Warn("shadow verify: attempt has no stored trigger; no further attempt can be started",
-			"proposal_id", v.ID, "node", v.NodeID, "release", v.ReleaseID)
+			"proposal_id", v.ID, "release", v.ReleaseID)
 		return
 	}
 	t, err := r.decode(v.TriggerPayload)
 	if err != nil {
 		r.logger.Error("shadow verify: stored trigger cannot be decoded; no further attempt can be started",
-			"proposal_id", v.ID, "node", v.NodeID, "release", v.ReleaseID, "error", err)
+			"proposal_id", v.ID, "release", v.ReleaseID, "error", err)
 		return
 	}
-	t.MessageID = retryMessageIDPrefix + v.ShadowReleaseID
+	t.MessageID = retryMessageIDPrefix + v.ID
 	t.OutboxEntryID = nil
 	if err := r.propose(ctx, t); err != nil {
 		r.logger.Error("shadow verify: could not start the next fix attempt",
-			"proposal_id", v.ID, "node", v.NodeID, "release", v.ReleaseID, "error", err)
+			"proposal_id", v.ID, "release", v.ReleaseID, "error", err)
 		r.abandonInFlight(ctx, v, err)
 	}
 }
 
+// stillFailing is the attempt's own nodes that the rejection still reports an
+// error for, in the order the attempt recorded them (sorted). Nodes the
+// rejection names that this attempt never addressed are not returned: the
+// trigger carries no failure for them, so there is nothing to re-fix.
+func stillFailing(resolved []string, nodeErrors map[string]string) []string {
+	still := make([]string, 0, len(resolved))
+	for _, id := range resolved {
+		if nodeErrors[id] != "" {
+			still = append(still, id)
+		}
+	}
+	return still
+}
+
 // abandonInFlight closes out the in-flight row a next attempt left behind when
-// it could not start. It names the release the attempt belongs to, so a
-// concurrent attempt at the same node and the same failure under a DIFFERENT
-// release — an ordinary situation, since the two share a source, node id and
-// error signature — is neither failed nor charged an attempt for this one.
+// it could not start. It names the release the attempt belongs to, so an
+// attempt in flight for a DIFFERENT release is neither failed nor charged an
+// attempt for this one. One attempt covers a release's whole failing set, so
+// the release alone identifies the row unambiguously.
 //
 // The driver commits a 'generating' row of its own, in its own transaction,
 // immediately before calling the model — that row is what the release page
-// renders as "Generating fix…" for the node. On the stream consumer's path a
-// driver error leaves the message unacknowledged, and the redelivery reuses
-// that row. Nothing redelivers this attempt: it was started by a release's
-// verdict, not by a consumed message. Left alone the row would report a fix as
-// still being generated for as long as the database keeps it, and no sweep
-// exists to notice. It is failed here instead, carrying why, so the node's last
-// row says what actually happened.
+// renders as "Generating fix…" for the nodes it covers. On the stream
+// consumer's path a driver error leaves the message unacknowledged, and the
+// redelivery reuses that row. Nothing redelivers this attempt: it was started
+// by a release's verdict, not by a consumed message. Left alone the row would
+// report a fix as still being generated for as long as the database keeps it,
+// and no sweep exists to notice. It is failed here instead, carrying why, so
+// the release's last row says what actually happened.
 func (r *Reconciler) abandonInFlight(ctx context.Context, v proposal.View, cause error) {
 	u := r.newUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -355,11 +449,11 @@ func (r *Reconciler) abandonInFlight(ctx context.Context, v proposal.View, cause
 	}
 	defer func() { _ = u.Rollback() }()
 
-	n, err := u.ProposalRepo().FailGenerating(ctx, v.ReleaseID, v.Source, v.NodeID, v.ErrorSignature,
+	n, err := u.ProposalRepo().FailGenerating(ctx, v.ReleaseID,
 		"the next fix attempt could not be started: "+cause.Error())
 	if err != nil {
 		r.logger.Warn("shadow verify: abandon in-flight attempt",
-			"proposal_id", v.ID, "node", v.NodeID, "error", err)
+			"proposal_id", v.ID, "release", v.ReleaseID, "error", err)
 		return
 	}
 	if n == 0 {
@@ -370,51 +464,91 @@ func (r *Reconciler) abandonInFlight(ctx context.Context, v proposal.View, cause
 		return
 	}
 	r.logger.Info("shadow verify: closed out the attempt that could not be started",
-		"proposal_id", v.ID, "node", v.NodeID, "release", v.ReleaseID, "rows", n)
+		"proposal_id", v.ID, "release", v.ReleaseID, "rows", n)
 }
 
-// proposedEvent projects a recorded attempt back onto the aggregate the
-// outbox event is built from. Only the fields that describe the proposed fix
-// are carried; the verification added no content of its own.
+// proposedEvent projects a recorded attempt back onto the aggregate the outbox
+// event is built from: the failure it addressed, every node it resolved, every
+// file it changed, and the shadow releases that judged it. The verification
+// added no content of its own — it decided only that the attempt may be shown —
+// so the only thing it changes is the status, on the attempt and on each of the
+// nodes that were waiting for it.
 func proposedEvent(v proposal.View) proposal.Proposal {
 	return proposal.Proposal{
 		Source:           v.Source,
 		ReleaseID:        v.ReleaseID,
+		RemediationRound: v.RemediationRound,
 		NodeID:           v.NodeID,
+		ResolvedNodeIDs:  append([]string(nil), v.ResolvedNodeIDs...),
 		ErrorSignature:   v.ErrorSignature,
 		Attempt:          v.Attempt,
 		Status:           proposal.StatusProposed,
+		NodeOutcomes:     proposedOutcomes(v.NodeOutcomes),
+		Verifications:    append([]proposal.Verification(nil), v.Verifications...),
+		ShadowReleaseID:  v.ShadowReleaseID,
 		Confidence:       v.Confidence,
 		Rationale:        v.Rationale,
 		ProposedSQLURI:   v.ProposedSQLURI,
 		DiffURI:          v.DiffURI,
+		Edits:            append([]proposal.FileEdit(nil), v.Edits...),
 		Model:            v.Model,
-		RemediationRound: v.RemediationRound,
 	}
 }
 
+// proposedOutcomes finalizes the per-node outcomes of a verified attempt: a
+// node that was waiting on a shadow release is now proposed, while a node the
+// attempt had already settled — skipped for want of source, or failed while
+// being fixed — keeps the outcome and reason it was recorded with, since no
+// release judged it.
+func proposedOutcomes(outcomes map[string]proposal.NodeOutcome) map[string]proposal.NodeOutcome {
+	if len(outcomes) == 0 {
+		return nil
+	}
+	out := make(map[string]proposal.NodeOutcome, len(outcomes))
+	for node, o := range outcomes {
+		if o.Status == proposal.StatusVerifying {
+			o.Status = proposal.StatusProposed
+		}
+		out[node] = o
+	}
+	return out
+}
+
 // verifyError is the text recorded on a rejected attempt, and the evidence the
-// next attempt is shown. The fixed node's own error is preferred; when the
-// fixed node passed and other nodes did not — a fix that broke something
-// downstream of itself — every failing node is named instead, in a stable
-// order, so the reason describes what actually failed. A rejection carrying no
-// per-node error at all still records which release rejected it, so the
-// attempt never ends with a blank reason.
-func verifyError(v proposal.View, verdict ports.ShadowVerdict) string {
-	if msg := verdict.NodeErrors[v.NodeID]; msg != "" {
-		return msg
+// next attempt is shown. The errors of the nodes this attempt fixed come first,
+// named and in a stable order; when every one of them passed and other nodes
+// did not — a fix that broke something downstream of itself — every failing
+// node is named instead, so the reason describes what actually failed. A
+// rejection carrying no per-node error at all still records which release
+// rejected it, so the attempt never ends with a blank reason.
+func verifyError(v proposal.View, nodeErrors map[string]string) string {
+	if own := namedErrors(nodeErrors, stillFailing(v.ResolvedNodeIDs, nodeErrors)); own != "" {
+		return own
 	}
-	if len(verdict.NodeErrors) > 0 {
-		nodes := make([]string, 0, len(verdict.NodeErrors))
-		for node := range verdict.NodeErrors {
-			nodes = append(nodes, node)
-		}
-		sort.Strings(nodes)
-		parts := make([]string, 0, len(nodes))
-		for _, node := range nodes {
-			parts = append(parts, node+": "+verdict.NodeErrors[node])
-		}
-		return strings.Join(parts, "; ")
+	if all := namedErrors(nodeErrors, sortedNodes(nodeErrors)); all != "" {
+		return all
 	}
-	return fmt.Sprintf("shadow release %s was rejected without a per-node error", v.ShadowReleaseID)
+	return fmt.Sprintf("shadow release %s was rejected without a per-node error",
+		verificationsOf(v)[0].ShadowReleaseID)
+}
+
+// namedErrors renders the errors of the given nodes as "node: message" joined
+// by "; ", in the order the nodes are given. It is empty when no node is given.
+func namedErrors(nodeErrors map[string]string, nodes []string) string {
+	parts := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		parts = append(parts, node+": "+nodeErrors[node])
+	}
+	return strings.Join(parts, "; ")
+}
+
+// sortedNodes is every node the rejection reports an error for, in a stable
+// order, so the recorded reason does not depend on map iteration order.
+func sortedNodes(nodeErrors map[string]string) []string {
+	nodes := make([]string, 0, len(nodeErrors))
+	for node := range nodeErrors {
+		nodes = append(nodes, node)
+	}
+	sort.Strings(nodes)
+	return nodes
 }

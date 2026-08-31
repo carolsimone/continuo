@@ -521,7 +521,12 @@ services:
       - SHADOW_VERIFY_TIMEOUT=${SHADOW_VERIFY_TIMEOUT:-20m}
       - SHADOW_VERIFY_POLL_INTERVAL=${SHADOW_VERIFY_POLL_INTERVAL:-5s}
     volumes:
-      - ./agent-remediation/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
+      # The local stack runs on the e2e map, which adds the suite's fixture
+      # services to the demo ones. The map agent-remediation documents for
+      # operators (agent-remediation/config/service_repos.yaml) and the one
+      # the chart ships (deploy/continuo/files/service_repos.yaml) stay free
+      # of test fixtures.
+      - ./tests/e2e/config/service_repos.yaml:/etc/continuo/service_repos.yaml:ro
     ports:
       # Host port 8094 avoids collision with other services.
       # The container-internal port remains 8092 (AGENT_REMEDIATION_HTTP_PORT).

@@ -42,14 +42,16 @@ func (fakeSanitizer) Sanitize(s string) string { return s }
 // fakeLLM returns results from a queue (one per Propose call, in order). When
 // the queue is exhausted, the last entry is repeated.
 type fakeLLM struct {
-	queue    []ports.ProposeResult
-	errs     []error
-	calls    int
-	requests []ports.ProposeRequest // records each request in call order
+	queue       []ports.ProposeResult
+	errs        []error
+	calls       int
+	requests    []ports.ProposeRequest // records each request in call order
+	lastRequest ports.ProposeRequest   // the most recent request, for a test that only cares about the last call
 }
 
 func (f *fakeLLM) Propose(_ context.Context, req ports.ProposeRequest) (ports.ProposeResult, error) {
 	f.requests = append(f.requests, req)
+	f.lastRequest = req
 	i := f.calls
 	if i >= len(f.queue) {
 		i = len(f.queue) - 1

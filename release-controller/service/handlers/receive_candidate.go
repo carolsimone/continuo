@@ -33,6 +33,19 @@ type ReceiveCandidateInput struct {
 	// instead of promoting to production. Absent means false — the default
 	// for every existing caller.
 	Shadow bool `json:"shadow"`
+	// SourceOverlayURI locates a tarball of project-relative source files the
+	// compile leg lays over the checked-in project before running, so the
+	// release verifies a proposed fix instead of the committed source. Accepted
+	// only together with Shadow; a production release always compiles exactly
+	// what is committed.
+	SourceOverlayURI string `json:"source_overlay_uri"`
+	// VerifiesReleaseID names the rejected release this shadow release verifies
+	// a fix for. The fix may edit a different service than the one whose release
+	// was rejected, so the rejected release's own changed service is assembled
+	// from ITS candidate instead of from the live production pointer — otherwise
+	// the fix would be judged against code the rejection was never about.
+	// Accepted only together with Shadow.
+	VerifiesReleaseID string `json:"verifies_release_id"`
 }
 
 func (i ReceiveCandidateInput) validate() error {
@@ -53,6 +66,12 @@ func (i ReceiveCandidateInput) validate() error {
 	}
 	if _, err := i.manifestKind(); err != nil {
 		return err
+	}
+	if i.SourceOverlayURI != "" && !i.Shadow {
+		return errors.New("source_overlay_uri is accepted only on a shadow release")
+	}
+	if i.VerifiesReleaseID != "" && !i.Shadow {
+		return errors.New("verifies_release_id is accepted only on a shadow release")
 	}
 	return nil
 }
@@ -88,6 +107,8 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	}
 
 	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Shadow, in.Repo, in.CommitSHA, kind, d.Clock.Now())
+	r.SetSourceOverlayURI(in.SourceOverlayURI)
+	r.SetVerifiesReleaseID(in.VerifiesReleaseID)
 	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}

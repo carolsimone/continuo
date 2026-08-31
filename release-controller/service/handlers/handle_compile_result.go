@@ -179,8 +179,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	if err != nil {
 		return fmt.Errorf("list service prod: %w", err)
 	}
-	imageTag := r.ImageTags()[r.ChangedService()]
-	set := AssembleManifestSet(pointers, d.Bucket, r.ChangedService(), in.ReleaseID, imageTag, r.ManifestKind())
+	set := assembleFor(ctx, u, d.Logger, r, pointers, d.Bucket)
 
 	if err := emitReleaseRequested(ctx, u, in.ReleaseID, set.ManifestKeys, now); err != nil {
 		return err

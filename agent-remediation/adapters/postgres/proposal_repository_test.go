@@ -322,7 +322,7 @@ func TestProposalRepositoryCountAttemptsExcludesGenerating(t *testing.T) {
 		Attempt: 3, Status: proposal.StatusGenerating, CreatedAt: now,
 	}))
 
-	n, err := repo.CountAttempts(ctx, "release-g", 1, source, nodeID, sig)
+	n, err := repo.CountAttempts(ctx, "release-g", 1)
 	require.NoError(t, err)
 	require.Equal(t, 2, n, "generating row must be excluded from the attempt count")
 
@@ -342,7 +342,7 @@ func TestMessageProcessingAlreadyProcessed(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 
 	repo := messageprocessing.NewPostgresRepository(tx, slog.Default())
-	const stream = streams.RemediationRequestedV1
+	const stream = streams.RemediationRequestedV2
 
 	// Axis 1: (message_id, stream_name).
 	_, inserted, err := repo.InsertIfNotExists(ctx, &messageprocessing.MessageProcessing{
@@ -393,7 +393,7 @@ func TestMessageProcessingAlreadyProcessedScopedByStream(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 
 	repo := messageprocessing.NewPostgresRepository(tx, slog.Default())
-	const streamA = streams.RemediationRequestedV1
+	const streamA = streams.RemediationRequestedV2
 	const streamB = streams.RemediationProposedV1
 
 	// Group A processed outbox entry `oe` on streamA (message m-A).
@@ -423,11 +423,14 @@ func TestMessageProcessingAlreadyProcessedScopedByStream(t *testing.T) {
 	require.NoError(t, tx.Commit())
 }
 
-// TestProposalRepositoryCountAttempts inserts 3 proposal attempts for one
-// (release_id, source, node_id, error_signature) key, 1 for a different node,
-// and 1 for the same node and signature under a different release, verifying
-// that CountAttempts counts per key: a later release's attempts at the same
-// failure are its own, never charged to an earlier release's budget.
+// TestProposalRepositoryCountAttempts inserts 3 attempts for release-1 round
+// 1 (across different nodes, since one attempt now addresses the release's
+// whole failing set rather than a single node), 1 for the same failure
+// signature under a later release, and 1 for a second round of release-1,
+// verifying that CountAttempts counts per (release_id, remediation_round): a
+// later release's attempts are its own, never charged to an earlier
+// release's budget, and a fresh round never inherits an earlier round's
+// exhausted count.
 func TestProposalRepositoryCountAttempts(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -439,16 +442,15 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 	repo := NewProposalRepository(tx)
 
 	const source = "validation"
-	const nodeID = "schema.model_a"
 	const sig = "err-sig-abc"
 	now := time.Now().UTC()
 
-	// Insert 3 attempts for the same (source, nodeID, sig).
+	// Insert 3 attempts for release-1 round 1, each addressing a different node.
 	for i := 1; i <= 3; i++ {
 		p := proposal.Proposal{
 			Source:         source,
 			ReleaseID:      "release-1",
-			NodeID:         nodeID,
+			NodeID:         fmt.Sprintf("schema.model_%d", i),
 			ErrorSignature: sig,
 			Attempt:        i,
 			Status:         proposal.StatusProposed,
@@ -462,53 +464,32 @@ func TestProposalRepositoryCountAttempts(t *testing.T) {
 		require.NoError(t, repo.Upsert(ctx, p), "insert attempt %d", i)
 	}
 
-	count, err := repo.CountAttempts(ctx, "release-1", 1, source, nodeID, sig)
+	count, err := repo.CountAttempts(ctx, "release-1", 1)
 	require.NoError(t, err)
-	require.Equal(t, 3, count, "expected 3 attempts for the original node")
+	require.Equal(t, 3, count, "expected 3 attempts for release-1 round 1")
 
-	// Insert a 4th proposal for a DIFFERENT node; the count for the first node must stay 3.
-	other := proposal.Proposal{
-		Source:         source,
-		ReleaseID:      "release-1",
-		NodeID:         "schema.model_b",
-		ErrorSignature: sig,
-		Attempt:        1,
-		Status:         proposal.StatusSkipped,
-		Confidence:     proposal.ConfidenceLow,
-		Rationale:      "other node",
-		ProposedSQLURI: "",
-		DiffURI:        "",
-		Model:          "claude-3-5-sonnet",
-		CreatedAt:      now,
-	}
-	require.NoError(t, repo.Upsert(ctx, other), "insert other node attempt")
-
-	count, err = repo.CountAttempts(ctx, "release-1", 1, source, nodeID, sig)
-	require.NoError(t, err)
-	require.Equal(t, 3, count, "count for original node must remain 3 after inserting different node")
-
-	// The same node failing with the same signature under a LATER release.
+	// The same failure signature under a LATER release starts its own budget.
 	require.NoError(t, repo.Upsert(ctx, proposal.Proposal{
-		Source: source, ReleaseID: "release-2", NodeID: nodeID, ErrorSignature: sig,
+		Source: source, ReleaseID: "release-2", NodeID: "schema.model_a", ErrorSignature: sig,
 		Attempt: 1, Status: proposal.StatusProposed, CreatedAt: now,
 	}), "insert later-release attempt")
 
-	count, err = repo.CountAttempts(ctx, "release-1", 1, source, nodeID, sig)
+	count, err = repo.CountAttempts(ctx, "release-1", 1)
 	require.NoError(t, err)
 	require.Equal(t, 3, count, "a later release's attempt must not be charged to release-1")
-	count, err = repo.CountAttempts(ctx, "release-2", 1, source, nodeID, sig)
+	count, err = repo.CountAttempts(ctx, "release-2", 1)
 	require.NoError(t, err)
 	require.Equal(t, 1, count, "release-2 has exactly its own attempt")
 
-	// Round 2 of release-1: a "try again" starts a fresh budget for the same failure.
+	// Round 2 of release-1: a "try again" starts a fresh budget.
 	require.NoError(t, repo.Upsert(ctx, proposal.Proposal{
-		Source: source, ReleaseID: "release-1", RemediationRound: 2, NodeID: nodeID, ErrorSignature: sig,
+		Source: source, ReleaseID: "release-1", RemediationRound: 2, NodeID: "schema.model_a", ErrorSignature: sig,
 		Attempt: 4, Status: proposal.StatusProposed, CreatedAt: now,
 	}))
-	count, err = repo.CountAttempts(ctx, "release-1", 1, source, nodeID, sig)
+	count, err = repo.CountAttempts(ctx, "release-1", 1)
 	require.NoError(t, err)
 	require.Equal(t, 3, count, "round 1 keeps its own count")
-	count, err = repo.CountAttempts(ctx, "release-1", 2, source, nodeID, sig)
+	count, err = repo.CountAttempts(ctx, "release-1", 2)
 	require.NoError(t, err)
 	require.Equal(t, 1, count, "round 2 counts only its own attempts")
 
@@ -949,7 +930,8 @@ func TestListStuckOpening_CursorRotatesAcrossPages(t *testing.T) {
 			ReleaseID:      "r-cursor-1",
 			NodeID:         node,
 			ErrorSignature: "sig",
-			Attempt:        1,
+			// Distinct attempt per row: (release_id, attempt) is the unique key.
+			Attempt:        i + 1,
 			Status:         proposal.StatusProposed,
 			SourceResolved: true,
 			Repo:           "owner/continuo-demo",
@@ -1226,7 +1208,9 @@ func TestRecordPROutcome_CASAndListOpen(t *testing.T) {
 }
 
 // TestProposalRepository_FileEditsRoundTripAndLegacySynthesis verifies that a
-// non-empty Edits slice round-trips through Get unchanged, and that a row
+// non-empty Edits slice — including TargetNodeID, the node whose source each
+// edit changes — round-trips through Get unchanged, along with the batched
+// ResolvedNodeIDs, NodeOutcomes, and Verifications fields, and that a row
 // written with Edits=nil but non-empty legacy scalar columns (file_path,
 // proposed_sql_uri, diff_uri) reads back as a single synthesized FileEdit.
 func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
@@ -1235,27 +1219,42 @@ func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
 	repo := NewProposalRepository(db)
 
 	edits := []proposal.FileEdit{
-		{Path: "contracts/a.yml", ContentURI: "s3://b/1.content", DiffURI: "s3://b/1.diff"},
-		{Path: "scripts/a.py", ContentURI: "s3://b/2.content", DiffURI: "s3://b/2.diff"},
+		{Path: "contracts/a.yml", ContentURI: "s3://b/1.content", DiffURI: "s3://b/1.diff", TargetNodeID: "model.p.multi_edit"},
+		{Path: "scripts/a.py", ContentURI: "s3://b/2.content", DiffURI: "s3://b/2.diff", TargetNodeID: "model.p.ancestor"},
+	}
+	resolvedNodeIDs := []string{"model.p.ancestor", "model.p.multi_edit"}
+	nodeOutcomes := map[string]proposal.NodeOutcome{
+		"model.p.multi_edit": {Status: proposal.StatusProposed},
+		"model.p.ancestor":   {Status: proposal.StatusSkipped, Reason: "no source"},
+	}
+	verifications := []proposal.Verification{
+		{Service: "service-1", Kind: "dbt", ShadowReleaseID: "shadow-r-service-1-a1"},
 	}
 	p := proposal.Proposal{
-		Source:         "validation",
-		ReleaseID:      "r-file-edits-1",
-		NodeID:         "model.p.multi_edit",
-		ErrorSignature: "sig",
-		Attempt:        1,
-		Status:         proposal.StatusProposed,
-		Confidence:     proposal.ConfidenceHigh,
-		Rationale:      "rationale",
-		Model:          "claude-3-5-sonnet",
-		CreatedAt:      time.Now().UTC(),
-		Edits:          edits,
+		Source:          "validation",
+		ReleaseID:       "r-file-edits-1",
+		NodeID:          "model.p.multi_edit",
+		ResolvedNodeIDs: resolvedNodeIDs,
+		ErrorSignature:  "sig",
+		Attempt:         1,
+		Status:          proposal.StatusProposed,
+		NodeOutcomes:    nodeOutcomes,
+		Verifications:   verifications,
+		Confidence:      proposal.ConfidenceHigh,
+		Rationale:       "rationale",
+		Model:           "claude-3-5-sonnet",
+		CreatedAt:       time.Now().UTC(),
+		Edits:           edits,
 	}
 	id := seedProposal(t, repo, db, p)
 
 	got, err := repo.Get(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, edits, got.Edits, "a non-empty Edits slice must round-trip unchanged")
+	require.Equal(t, edits, got.Edits, "a non-empty Edits slice, including TargetNodeID, must round-trip unchanged")
+	require.Equal(t, "model.p.multi_edit", got.Edits[0].TargetNodeID, "Edits[0].TargetNodeID must round-trip")
+	require.Equal(t, resolvedNodeIDs, got.ResolvedNodeIDs, "ResolvedNodeIDs must round-trip")
+	require.Equal(t, nodeOutcomes, got.NodeOutcomes, "NodeOutcomes must round-trip")
+	require.Equal(t, verifications, got.Verifications, "Verifications must round-trip")
 
 	// The stored JSONB must use the documented snake_case wire keys
 	// ("path", "content_uri", "diff_uri"), not the Go field names. A Go-level
@@ -1278,7 +1277,8 @@ func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
 		ReleaseID:      "r-file-edits-1",
 		NodeID:         "analytics.legacy_node",
 		ErrorSignature: "sig",
-		Attempt:        1,
+		// Distinct attempt: (release_id, attempt) is the unique key.
+		Attempt:        2,
 		Status:         proposal.StatusProposed,
 		Confidence:     proposal.ConfidenceHigh,
 		Rationale:      "rationale",
@@ -1298,6 +1298,8 @@ func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
 		got2.Edits,
 		"a row with an empty file_edits array must synthesize one edit from the legacy scalar columns",
 	)
+	require.Equal(t, []string{"analytics.legacy_node"}, got2.ResolvedNodeIDs,
+		"a row with an empty resolved_node_ids array must synthesize one entry from the legacy node_id column")
 }
 
 // TestRecordPROutcome_RejectedAndNonOpenRows verifies the rejected transition
@@ -1308,10 +1310,10 @@ func TestRecordPROutcome_RejectedAndNonOpenRows(t *testing.T) {
 	ctx := context.Background()
 	repo := NewProposalRepository(db)
 
-	seed := func(node string) string {
+	seed := func(node string, attempt int) string {
 		p := proposal.Proposal{
 			Source: "validation", ReleaseID: "rel-2", NodeID: node,
-			ErrorSignature: "sig", Attempt: 1, Status: "proposed",
+			ErrorSignature: "sig", Attempt: attempt, Status: "proposed",
 			SourceResolved: true, Repo: "acme/dbt-repo", CreatedAt: time.Now().UTC(),
 		}
 		require.NoError(t, repo.Upsert(ctx, p))
@@ -1322,7 +1324,7 @@ func TestRecordPROutcome_RejectedAndNonOpenRows(t *testing.T) {
 	}
 
 	// Row A reaches 'open' then is rejected.
-	a := seed("model.p.a")
+	a := seed("model.p.a", 1)
 	_, err := repo.BeginPR(ctx, a, "remediation/rel-2/model-p-a-attempt1", time.Now().UTC())
 	require.NoError(t, err)
 	_, err = repo.RecordPR(ctx, a, "http://gh/pull/2", 2, "dev", time.Now().UTC())
@@ -1335,7 +1337,8 @@ func TestRecordPROutcome_RejectedAndNonOpenRows(t *testing.T) {
 	require.Equal(t, "rejected", v.PrState)
 
 	// Row B stays in 'opening' (claimed, never recorded): not listed, CAS misses.
-	b := seed("model.p.b")
+	// Distinct attempt: (release_id, attempt) is the unique key.
+	b := seed("model.p.b", 2)
 	_, err = repo.BeginPR(ctx, b, "remediation/rel-2/model-p-b-attempt1", time.Now().UTC())
 	require.NoError(t, err)
 	open, err := repo.ListOpenPullRequests(ctx, 10)
@@ -1377,7 +1380,8 @@ func TestBeginPR_ClaimCarriesFileEdits(t *testing.T) {
 
 	legacyID := seedProposal(t, repo, db, proposal.Proposal{
 		Source: "validation", ReleaseID: "rel-claim-edits", NodeID: "model.p.single",
-		ErrorSignature: "sig", Attempt: 1, Status: proposal.StatusProposed,
+		// Distinct attempt: (release_id, attempt) is the unique key.
+		ErrorSignature: "sig", Attempt: 2, Status: proposal.StatusProposed,
 		SourceResolved: true, Repo: "acme/dbt-repo", CommitSHA: "sha1",
 		CreatedAt: time.Now().UTC(), Edits: nil,
 		FilePath: "models/x.sql", ProposedSQLURI: "s3://b/x.sql", DiffURI: "s3://b/x.diff",
@@ -1390,6 +1394,8 @@ func TestBeginPR_ClaimCarriesFileEdits(t *testing.T) {
 		legacyClaim.Edits,
 		"a row with no file_edits must claim as one edit synthesized from the single-file columns",
 	)
+	require.Equal(t, []string{"model.p.single"}, legacyClaim.ResolvedNodeIDs,
+		"a row with no resolved_node_ids must claim with one entry synthesized from node_id")
 }
 
 // TestProposalRepositoryVerifyingLifecycle verifies the round trip a shadow
@@ -1495,6 +1501,109 @@ func TestProposalRepositoryMarkVerifyFailed(t *testing.T) {
 		"the no-op call must not overwrite the already-recorded verify_error")
 }
 
+// TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes verifies that the
+// UPDATE finalizing an attempt also finalizes its per-node outcomes: every node
+// that was waiting on a shadow release becomes 'proposed', while a node the
+// attempt had already settled keeps the status and reason it was recorded with.
+// Without the rewrite the row would report itself proposed while its own nodes
+// still read as verifying, and every reader of node_outcomes would keep showing
+// them as in flight.
+func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	id := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "rel-verify-outcomes-1",
+		NodeID:          "model.p.a",
+		ResolvedNodeIDs: []string{"model.p.a", "model.p.b"},
+		ErrorSignature:  "sig-verify-outcomes-1",
+		Attempt:         1,
+		Status:          proposal.StatusVerifying,
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"model.p.a": {Status: proposal.StatusVerifying},
+			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+		},
+		ShadowReleaseID: "shadow-rel-verify-outcomes-1",
+		CreatedAt:       time.Now().UTC(),
+	})
+
+	hit, err := repo.MarkVerified(ctx, id)
+	require.NoError(t, err)
+	require.True(t, hit, "MarkVerified must fire the CAS")
+
+	got, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, string(proposal.StatusProposed), string(got.Status))
+	require.Equal(t, map[string]proposal.NodeOutcome{
+		"model.p.a": {Status: proposal.StatusProposed},
+		"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+	}, got.NodeOutcomes, "every verifying node becomes proposed; a settled node is untouched")
+
+	// A row carrying no per-node outcomes at all: the rewrite aggregates over
+	// zero entries, which must still write an empty object rather than the SQL
+	// NULL the column forbids.
+	emptyID := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "rel-verify-outcomes-1",
+		NodeID:          "model.p.no_outcomes",
+		ErrorSignature:  "sig-verify-outcomes-1",
+		Attempt:         2,
+		Status:          proposal.StatusVerifying,
+		ShadowReleaseID: "shadow-rel-verify-outcomes-2",
+		CreatedAt:       time.Now().UTC(),
+	})
+
+	hit, err = repo.MarkVerified(ctx, emptyID)
+	require.NoError(t, err)
+	require.True(t, hit, "a row with no per-node outcomes must still finalize")
+
+	var stored string
+	require.NoError(t, db.GetContext(ctx, &stored,
+		`SELECT node_outcomes::text FROM proposal WHERE id=$1`, emptyID))
+	require.JSONEq(t, `{}`, stored, "an outcome-less row must keep an empty object, never NULL")
+}
+
+// TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes is the mirror of
+// the rewrite above for a rejected attempt: every node that was waiting on a
+// shadow release becomes 'failed', and a node the attempt had already settled
+// keeps its own outcome.
+func TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	id := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "rel-verify-outcomes-2",
+		NodeID:          "model.p.a",
+		ResolvedNodeIDs: []string{"model.p.a", "model.p.b"},
+		ErrorSignature:  "sig-verify-outcomes-2",
+		Attempt:         1,
+		Status:          proposal.StatusVerifying,
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"model.p.a": {Status: proposal.StatusVerifying},
+			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+		},
+		ShadowReleaseID: "shadow-rel-verify-outcomes-3",
+		CreatedAt:       time.Now().UTC(),
+	})
+
+	hit, err := repo.MarkVerifyFailed(ctx, id, "model.p.a: still broken")
+	require.NoError(t, err)
+	require.True(t, hit, "MarkVerifyFailed must fire the CAS")
+
+	got, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, string(proposal.StatusFailed), string(got.Status))
+	require.Equal(t, "model.p.a: still broken", got.VerifyError)
+	require.Equal(t, map[string]proposal.NodeOutcome{
+		"model.p.a": {Status: proposal.StatusFailed},
+		"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+	}, got.NodeOutcomes, "every verifying node becomes failed; a settled node is untouched")
+}
+
 // TestListVerifying_OrderedOldestFirstAndLimited seeds 25 verifying proposals
 // with distinct, staggered created_at values and verifies that ListVerifying
 // returns exactly 20 of them (its documented cap), ordered oldest first — the
@@ -1509,11 +1618,12 @@ func TestListVerifying_OrderedOldestFirstAndLimited(t *testing.T) {
 	base := time.Now().UTC().Add(-time.Hour)
 	for i := 0; i < total; i++ {
 		seedProposal(t, repo, db, proposal.Proposal{
-			Source:          "validation",
-			ReleaseID:       "rel-verify-order",
-			NodeID:          fmt.Sprintf("model.p.node_%02d", i),
-			ErrorSignature:  "sig-verify-order",
-			Attempt:         1,
+			Source:         "validation",
+			ReleaseID:      "rel-verify-order",
+			NodeID:         fmt.Sprintf("model.p.node_%02d", i),
+			ErrorSignature: "sig-verify-order",
+			// Distinct attempt per row: (release_id, attempt) is the unique key.
+			Attempt:         i + 1,
 			Status:          proposal.StatusVerifying,
 			ShadowReleaseID: fmt.Sprintf("shadow-rel-%02d", i),
 			Confidence:      proposal.ConfidenceLow,
@@ -1566,18 +1676,19 @@ func TestProposalRepositoryCountAttemptsExcludesVerifying(t *testing.T) {
 		Attempt: 3, Status: proposal.StatusVerifying, ShadowReleaseID: "shadow-count-1", CreatedAt: now,
 	}))
 
-	n, err := repo.CountAttempts(ctx, "release-v", 1, source, nodeID, sig)
+	n, err := repo.CountAttempts(ctx, "release-v", 1)
 	require.NoError(t, err)
 	require.Equal(t, 2, n, "a verifying row must be excluded from the attempt count")
 
 	require.NoError(t, tx.Commit())
 }
 
-// TestList_FilterByFailingNode verifies that List can address the attempts of
-// one failing node in one release. A fixer assembling evidence for attempt N+1
-// reads exactly that slice; without the filter it would read the whole table
-// and show the model attempts from unrelated nodes and releases as if they were
-// its own history.
+// TestList_FilterByFailingNode verifies that List can address the attempts
+// that addressed one failing node in one release, matching on
+// resolved_node_ids containment rather than the representative node_id. A
+// fixer assembling evidence for attempt N+1 reads exactly that slice; without
+// the filter it would read the whole table and show the model attempts from
+// unrelated nodes and releases as if they were its own history.
 func TestList_FilterByFailingNode(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -1586,14 +1697,17 @@ func TestList_FilterByFailingNode(t *testing.T) {
 	base := func(release, source, node string, attempt int) proposal.Proposal {
 		return proposal.Proposal{
 			Source: source, ReleaseID: release, NodeID: node,
-			ErrorSignature: "sig", Attempt: attempt,
+			ResolvedNodeIDs: []string{node},
+			ErrorSignature:  "sig", Attempt: attempt,
 			Status: proposal.StatusFailed, CreatedAt: time.Now().UTC(),
 		}
 	}
+	// Distinct attempt per row within rel-node-a: (release_id, attempt) is
+	// the unique key.
 	_ = seedProposal(t, repo, db, base("rel-node-a", "validation", "analytics.py_kpis", 1))
 	_ = seedProposal(t, repo, db, base("rel-node-a", "validation", "analytics.py_kpis", 2))
-	_ = seedProposal(t, repo, db, base("rel-node-a", "validation", "analytics.other", 1))
-	_ = seedProposal(t, repo, db, base("rel-node-a", "compile", "analytics.py_kpis", 1))
+	_ = seedProposal(t, repo, db, base("rel-node-a", "validation", "analytics.other", 3))
+	_ = seedProposal(t, repo, db, base("rel-node-a", "compile", "analytics.py_kpis", 4))
 	_ = seedProposal(t, repo, db, base("rel-node-b", "validation", "analytics.py_kpis", 1))
 
 	views, err := repo.List(ctx, repository.ProposalFilter{
@@ -1604,7 +1718,7 @@ func TestList_FilterByFailingNode(t *testing.T) {
 	for _, v := range views {
 		require.Equal(t, "rel-node-a", v.ReleaseID)
 		require.Equal(t, "validation", v.Source)
-		require.Equal(t, "analytics.py_kpis", v.NodeID)
+		require.Contains(t, v.ResolvedNodeIDs, "analytics.py_kpis")
 	}
 }
 
@@ -1623,8 +1737,10 @@ func TestList_FilterByReleaseID(t *testing.T) {
 			Status: proposal.StatusFailed, CreatedAt: time.Now().UTC(),
 		}
 	}
+	// Distinct attempt per row within release-1: (release_id, attempt) is
+	// the unique key.
 	_ = seedProposal(t, repo, db, base("release-1", "validation", "analytics.py_kpis", 1))
-	_ = seedProposal(t, repo, db, base("release-1", "compile", "analytics.other", 1))
+	_ = seedProposal(t, repo, db, base("release-1", "compile", "analytics.other", 2))
 	_ = seedProposal(t, repo, db, base("release-2", "validation", "analytics.py_kpis", 1))
 
 	views, err := repo.List(ctx, repository.ProposalFilter{ReleaseID: "release-1"})
@@ -1635,11 +1751,44 @@ func TestList_FilterByReleaseID(t *testing.T) {
 	}
 }
 
+// TestList_FilterByNodeID_MatchesResolvedNodeIDsContainment verifies that
+// ProposalFilter.NodeID matches on JSONB containment against
+// resolved_node_ids rather than the representative node_id column: an
+// attempt whose resolved_node_ids is ["s.a","s.b"] is found by a filter on
+// "s.b" even though its representative NodeID is "s.a", and an attempt that
+// never addressed "s.b" is not.
+func TestList_FilterByNodeID_MatchesResolvedNodeIDsContainment(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db)
+
+	_ = seedProposal(t, repo, db, proposal.Proposal{
+		Source: "validation", ReleaseID: "rel-containment", NodeID: "s.a",
+		ResolvedNodeIDs: []string{"s.a", "s.b"},
+		ErrorSignature:  "sig", Attempt: 1,
+		Status: proposal.StatusFailed, CreatedAt: time.Now().UTC(),
+	})
+	_ = seedProposal(t, repo, db, proposal.Proposal{
+		Source: "validation", ReleaseID: "rel-containment", NodeID: "s.c",
+		ResolvedNodeIDs: []string{"s.c"},
+		ErrorSignature:  "sig", Attempt: 2,
+		Status: proposal.StatusFailed, CreatedAt: time.Now().UTC(),
+	})
+
+	views, err := repo.List(ctx, repository.ProposalFilter{
+		ReleaseID: "rel-containment", NodeID: "s.b",
+	})
+	require.NoError(t, err)
+	require.Len(t, views, 1, "only the attempt whose resolved_node_ids contains s.b must be returned")
+	require.Equal(t, []string{"s.a", "s.b"}, views[0].ResolvedNodeIDs)
+	require.Equal(t, "s.a", views[0].NodeID, "the representative node stays s.a even though the filter matched on s.b")
+}
+
 // TestProposalRepositoryFailGenerating verifies that FailGenerating closes out
-// only the in-flight row of the attempt it names: that row becomes 'failed'
-// with the reason as its rationale, while a row already terminal and a row
-// belonging to a different failure are both left exactly as they were. Running
-// it again moves nothing, since no row is generating any more.
+// only releaseID's in-flight row: that row becomes 'failed' with the reason
+// as its rationale, while a row of the same release already terminal is left
+// exactly as it was. Running it again moves nothing, since no row is
+// generating any more.
 func TestProposalRepositoryFailGenerating(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -1652,7 +1801,7 @@ func TestProposalRepositoryFailGenerating(t *testing.T) {
 	}
 	require.NoError(t, repo.InsertGenerating(ctx, inFlight))
 
-	// Same failure, already terminal — the attempt whose rejection started the
+	// Same release, already terminal — the attempt whose rejection started the
 	// one above. It must not be rewritten.
 	settled := inFlight
 	settled.Attempt = 1
@@ -1660,16 +1809,10 @@ func TestProposalRepositoryFailGenerating(t *testing.T) {
 	settled.Rationale = "the shadow release rejected this fix"
 	settledID := seedProposal(t, repo, db, settled)
 
-	// A different node's in-flight attempt must be untouched.
-	other := inFlight
-	other.NodeID = "analytics.py_other"
-	other.ErrorSignature = "sig-fg-2"
-	require.NoError(t, repo.InsertGenerating(ctx, other))
-
-	n, err := repo.FailGenerating(ctx, "rel-fg-1", "validation", "analytics.py_kpis", "sig-fg-1",
+	n, err := repo.FailGenerating(ctx, "rel-fg-1",
 		"the next fix attempt could not be started: github unreachable")
 	require.NoError(t, err)
-	require.Equal(t, 1, n, "only the named failure's in-flight row may move")
+	require.Equal(t, 1, n, "only the release's own in-flight row may move")
 
 	var got struct {
 		Status    string `db:"status"`
@@ -1686,28 +1829,23 @@ func TestProposalRepositoryFailGenerating(t *testing.T) {
 	require.Equal(t, "the shadow release rejected this fix", stillSettled.Rationale,
 		"a row that already reached a terminal state must not be rewritten")
 
-	var otherStatus string
-	require.NoError(t, db.GetContext(ctx, &otherStatus,
-		`SELECT status FROM proposal WHERE node_id=$1 AND attempt=$2`, "analytics.py_other", 2))
-	require.Equal(t, string(proposal.StatusGenerating), otherStatus,
-		"another failure's in-flight attempt must be left alone")
-
-	n, err = repo.FailGenerating(ctx, "rel-fg-1", "validation", "analytics.py_kpis", "sig-fg-1", "again")
+	n, err = repo.FailGenerating(ctx, "rel-fg-1", "again")
 	require.NoError(t, err)
 	require.Zero(t, n, "a second call moves nothing: no row is generating any more")
 }
 
-// TestProposalRepositoryFailGenerating_LeavesAnotherReleasesAttemptAlone is the
-// case a (source, node_id, error_signature) match cannot distinguish, and the
-// one that makes this write dangerous.
+// TestProposalRepositoryFailGenerating_LeavesAnotherReleasesAttemptAlone is
+// the case a bare status='generating' match cannot distinguish, and the one
+// that makes this write dangerous.
 //
 // The same node failing the same way in two releases at once is ordinary — a
-// re-release of the same broken commit, or two candidates in flight — and both
-// carry the same source, node id and error signature. A write matching on that
-// triple alone reaches into the other release and marks its in-flight attempt
-// failed, which is both a wrong record and a spent attempt: the driver counts
-// terminal rows, so a release loses one of the attempts it is allowed to a
-// failure that happened somewhere else entirely.
+// re-release of the same broken commit, or two candidates in flight — and
+// both releases can have their own attempt generating at the same moment. A
+// write matching on status alone, without the release id, reaches into the
+// other release's in-flight attempt and marks it failed, which is both a
+// wrong record and a spent attempt: the driver counts terminal rows, so a
+// release loses one of the attempts it is allowed to a failure that happened
+// somewhere else entirely.
 func TestProposalRepositoryFailGenerating_LeavesAnotherReleasesAttemptAlone(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -1726,7 +1864,7 @@ func TestProposalRepositoryFailGenerating_LeavesAnotherReleasesAttemptAlone(t *t
 	theirs.ReleaseID = "rel-theirs"
 	require.NoError(t, repo.InsertGenerating(ctx, theirs))
 
-	n, err := repo.FailGenerating(ctx, "rel-mine", "validation", "analytics.py_kpis", "sig-shared",
+	n, err := repo.FailGenerating(ctx, "rel-mine",
 		"the next fix attempt could not be started: github unreachable")
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "exactly one row — this release's own in-flight attempt — may move")
@@ -1738,11 +1876,11 @@ func TestProposalRepositoryFailGenerating_LeavesAnotherReleasesAttemptAlone(t *t
 	require.Equal(t, string(proposal.StatusGenerating), theirStatus,
 		"another release's in-flight attempt must not be failed, nor its attempt budget spent")
 
-	count, err := repo.CountAttempts(ctx, "rel-mine", 1, "validation", "analytics.py_kpis", "sig-shared")
+	count, err := repo.CountAttempts(ctx, "rel-mine", 1)
 	require.NoError(t, err)
 	require.Equal(t, 1, count,
 		"only the attempt that actually failed may count against this release's budget")
-	count, err = repo.CountAttempts(ctx, "rel-theirs", 1, "validation", "analytics.py_kpis", "sig-shared")
+	count, err = repo.CountAttempts(ctx, "rel-theirs", 1)
 	require.NoError(t, err)
 	require.Equal(t, 0, count,
 		"the other release's attempt is still in flight and its budget untouched")

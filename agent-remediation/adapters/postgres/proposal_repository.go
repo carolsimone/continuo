@@ -34,17 +34,17 @@ func NewProposalRepository(q Queryer) *ProposalRepository {
 }
 
 // CountAttempts returns the number of TERMINAL proposal attempts recorded for
-// the given (source, nodeID, errorSignature) triplet within one release's
-// remediation round. In-flight rows — 'generating' (the model call has not
-// resolved) and 'verifying' (a shadow release is still validating a proposed
-// fix) — are excluded so an attempt that has not yet concluded neither
-// inflates the attempt cap nor shifts the attempt number on a redelivery.
-func (r *ProposalRepository) CountAttempts(ctx context.Context, releaseID string, remediationRound int, source, nodeID, errorSignature string) (int, error) {
+// one remediation round of one release. In-flight rows — 'generating' (the
+// model call has not resolved) and 'verifying' (a shadow release is still
+// validating a proposed fix) — are excluded so an attempt that has not yet
+// concluded neither inflates the attempt cap nor shifts the attempt number on
+// a redelivery.
+func (r *ProposalRepository) CountAttempts(ctx context.Context, releaseID string, remediationRound int) (int, error) {
 	const query = `SELECT count(*) FROM proposal
-		WHERE release_id=$1 AND remediation_round=$2 AND source=$3 AND node_id=$4 AND error_signature=$5
+		WHERE release_id=$1 AND remediation_round=$2
 		  AND status NOT IN ('generating','verifying')`
 	var count int
-	if err := r.q.GetContext(ctx, &count, query, releaseID, remediationRound, source, nodeID, errorSignature); err != nil {
+	if err := r.q.GetContext(ctx, &count, query, releaseID, remediationRound); err != nil {
 		return 0, fmt.Errorf("count proposal attempts: %w", err)
 	}
 	return count, nil
@@ -63,52 +63,49 @@ func roundOrDefault(n int) int {
 
 // InsertGenerating persists an in-flight 'generating' row for the attempt right
 // before the model is called. It is idempotent: ON CONFLICT on the natural key
-// (release_id, source, node_id, attempt) DO NOTHING, so a redelivery that
-// re-runs the same attempt leaves the single generating row untouched. Only the
-// identity + status columns are written; the remaining columns take their
-// defaults and are populated when Insert finalizes the row.
+// (release_id, attempt) DO NOTHING, so a redelivery that re-runs the same
+// attempt leaves the single generating row untouched. Only the identity +
+// status columns, plus the resolved nodes and their initial outcomes, are
+// written; the remaining columns take their defaults and are populated when
+// Upsert finalizes the row.
 func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Proposal) error {
 	const stmt = `
 		INSERT INTO proposal
-			(source, release_id, remediation_round, node_id, error_signature, attempt, status, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-		ON CONFLICT (release_id, source, node_id, attempt) DO NOTHING`
-	_, err := r.q.ExecContext(ctx, stmt,
+			(source, release_id, remediation_round, node_id, error_signature, attempt, status, created_at,
+			 resolved_node_ids, node_outcomes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (release_id, attempt) DO NOTHING`
+	resolved, err := marshalResolved(p.ResolvedNodeIDs)
+	if err != nil {
+		return fmt.Errorf("marshal proposal resolved node ids: %w", err)
+	}
+	outcomes, err := marshalNodeOutcomes(p.NodeOutcomes)
+	if err != nil {
+		return fmt.Errorf("marshal proposal node outcomes: %w", err)
+	}
+	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
 		proposal.StatusGenerating, p.CreatedAt,
-	)
-	if err != nil {
+		resolved, outcomes,
+	); err != nil {
 		return fmt.Errorf("insert generating proposal: %w", err)
 	}
 	return nil
 }
 
-// FailGenerating finalizes the in-flight 'generating' row of the
-// (release_id, source, node_id, error_signature) attempt, recording reason as
-// the rationale, and returns how many rows moved.
+// FailGenerating finalizes releaseID's in-flight 'generating' row, recording
+// reason as the rationale, and returns how many rows moved.
 //
-// The release is part of the match, not a detail: the same node failing the
-// same way in two releases at once is ordinary, and both rows carry the same
-// source, node id and error signature. Without the release the update would
-// reach into another release's in-flight attempt, marking it failed and — since
-// the driver counts terminal rows — spending one of the attempts that release
-// was allowed on a failure that happened elsewhere. Within one release only one
-// attempt per (source, node) can be generating at a time, so this matches at
-// most one row.
-//
-// The predicate carries no remediation round because release-controller starts
-// a new round only once the current round has terminal rows and nothing in
-// flight, so at most one attempt per (release, source, node, signature) is
-// generating at any time.
+// One attempt now addresses a release's whole failing set, so at most one row
+// per release can be generating at a time: the release id alone identifies
+// the row unambiguously, with no node or error-signature match needed.
 //
 // The status filter is what makes it safe to run at any time: a row that has
 // already reached a terminal state is left exactly as it is.
-func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, source, nodeID, errorSignature, reason string) (int, error) {
+func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, reason string) (int, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$6, rationale=$5
-		  WHERE release_id=$1 AND source=$2 AND node_id=$3 AND error_signature=$4 AND status=$7`,
-		releaseID, source, nodeID, errorSignature, reason,
-		proposal.StatusFailed, proposal.StatusGenerating)
+		`UPDATE proposal SET status=$3, rationale=$2 WHERE release_id=$1 AND status=$4`,
+		releaseID, reason, proposal.StatusFailed, proposal.StatusGenerating)
 	if err != nil {
 		return 0, fmt.Errorf("fail generating proposals: %w", err)
 	}
@@ -120,10 +117,10 @@ func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, sour
 }
 
 // Upsert records the terminal outcome of a proposal attempt on the natural key
-// (release_id, source, node_id, attempt): when an in-flight generating row
-// exists (the common healable path) it is finalized in place via
-// ON CONFLICT … DO UPDATE; otherwise the row is plain-inserted (instant paths —
-// e.g. attempt-cap escalation — that never marked generating).
+// (release_id, attempt): when an in-flight generating row exists (the common
+// healable path) it is finalized in place via ON CONFLICT … DO UPDATE;
+// otherwise the row is plain-inserted (instant paths — e.g. attempt-cap
+// escalation — that never marked generating).
 func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) error {
 	const stmt = `
 		INSERT INTO proposal
@@ -132,9 +129,10 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			 confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
-			 repo, commit_sha, file_path, file_edits)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-		ON CONFLICT (release_id, source, node_id, attempt) DO UPDATE SET
+			 repo, commit_sha, file_path, file_edits,
+			 resolved_node_ids, node_outcomes, verifications)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+		ON CONFLICT (release_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
 			shadow_release_id      = EXCLUDED.shadow_release_id,
 			trigger_payload        = EXCLUDED.trigger_payload,
@@ -150,10 +148,25 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			repo                   = EXCLUDED.repo,
 			commit_sha             = EXCLUDED.commit_sha,
 			file_path              = EXCLUDED.file_path,
-			file_edits             = EXCLUDED.file_edits`
+			file_edits             = EXCLUDED.file_edits,
+			resolved_node_ids      = EXCLUDED.resolved_node_ids,
+			node_outcomes          = EXCLUDED.node_outcomes,
+			verifications          = EXCLUDED.verifications`
 	edits, err := marshalFileEdits(p.Edits)
 	if err != nil {
 		return fmt.Errorf("marshal proposal file edits: %w", err)
+	}
+	resolved, err := marshalResolved(p.ResolvedNodeIDs)
+	if err != nil {
+		return fmt.Errorf("marshal proposal resolved node ids: %w", err)
+	}
+	outcomes, err := marshalNodeOutcomes(p.NodeOutcomes)
+	if err != nil {
+		return fmt.Errorf("marshal proposal node outcomes: %w", err)
+	}
+	verifications, err := marshalVerifications(p.Verifications)
+	if err != nil {
+		return fmt.Errorf("marshal proposal verifications: %w", err)
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
@@ -162,6 +175,7 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
 		p.Repo, p.CommitSHA, p.FilePath, edits,
+		resolved, outcomes, verifications,
 	); err != nil {
 		return fmt.Errorf("insert proposal: %w", err)
 	}
@@ -205,6 +219,9 @@ type proposalRow struct {
 	CommitSHA           string     `db:"commit_sha"`
 	FilePath            string     `db:"file_path"`
 	FileEdits           []byte     `db:"file_edits"`
+	ResolvedNodeIDs     []byte     `db:"resolved_node_ids"`
+	NodeOutcomes        []byte     `db:"node_outcomes"`
+	Verifications       []byte     `db:"verifications"`
 	Model               string     `db:"model"`
 	CreatedAt           time.Time  `db:"created_at"`
 	PrURL               string     `db:"pr_url"`
@@ -218,11 +235,12 @@ type proposalRow struct {
 // fileEditRow is the persistence DTO for one element of the file_edits JSONB
 // column. The json tags — a storage concern — live here in the adapter so the
 // domain proposal.FileEdit carries no serialization annotations. The stored
-// shape is [{"path","content_uri","diff_uri"}, ...].
+// shape is [{"path","content_uri","diff_uri","target_node_id"}, ...].
 type fileEditRow struct {
-	Path       string `json:"path"`
-	ContentURI string `json:"content_uri"`
-	DiffURI    string `json:"diff_uri"`
+	Path         string `json:"path"`
+	ContentURI   string `json:"content_uri"`
+	DiffURI      string `json:"diff_uri"`
+	TargetNodeID string `json:"target_node_id,omitempty"`
 }
 
 // marshalFileEdits encodes the domain edits as the file_edits column value.
@@ -231,7 +249,7 @@ type fileEditRow struct {
 func marshalFileEdits(edits []proposal.FileEdit) ([]byte, error) {
 	rows := make([]fileEditRow, 0, len(edits))
 	for _, e := range edits {
-		rows = append(rows, fileEditRow{Path: e.Path, ContentURI: e.ContentURI, DiffURI: e.DiffURI})
+		rows = append(rows, fileEditRow{Path: e.Path, ContentURI: e.ContentURI, DiffURI: e.DiffURI, TargetNodeID: e.TargetNodeID})
 	}
 	return json.Marshal(rows)
 }
@@ -252,9 +270,104 @@ func editsOrLegacy(raw []byte, filePath, contentURI, diffURI string) []proposal.
 	}
 	edits := make([]proposal.FileEdit, 0, len(rows))
 	for _, r := range rows {
-		edits = append(edits, proposal.FileEdit{Path: r.Path, ContentURI: r.ContentURI, DiffURI: r.DiffURI})
+		edits = append(edits, proposal.FileEdit{Path: r.Path, ContentURI: r.ContentURI, DiffURI: r.DiffURI, TargetNodeID: r.TargetNodeID})
 	}
 	return edits
+}
+
+// nodeOutcomeRow is the persistence DTO for one entry of the node_outcomes
+// JSONB column. The json tags live here so the domain proposal.NodeOutcome
+// carries no serialization annotations.
+type nodeOutcomeRow struct {
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// marshalNodeOutcomes encodes the per-node outcomes map as the node_outcomes
+// column value. A nil or empty map encodes as an empty JSON object, so the
+// column is never written as SQL NULL.
+func marshalNodeOutcomes(m map[string]proposal.NodeOutcome) ([]byte, error) {
+	rows := make(map[string]nodeOutcomeRow, len(m))
+	for nodeID, o := range m {
+		rows[nodeID] = nodeOutcomeRow{Status: string(o.Status), Reason: o.Reason}
+	}
+	return json.Marshal(rows)
+}
+
+// unmarshalNodeOutcomes decodes the node_outcomes JSONB column. A malformed
+// or empty blob decodes as nil rather than an empty non-nil map, so a row
+// that never recorded any per-node outcome reads back as unset.
+func unmarshalNodeOutcomes(raw []byte) map[string]proposal.NodeOutcome {
+	var rows map[string]nodeOutcomeRow
+	_ = json.Unmarshal(raw, &rows)
+	if len(rows) == 0 {
+		return nil
+	}
+	outcomes := make(map[string]proposal.NodeOutcome, len(rows))
+	for nodeID, r := range rows {
+		outcomes[nodeID] = proposal.NodeOutcome{Status: proposal.Status(r.Status), Reason: r.Reason}
+	}
+	return outcomes
+}
+
+// verificationRow is the persistence DTO for one element of the
+// verifications JSONB column. The json tags live here so the domain
+// proposal.Verification carries no serialization annotations.
+type verificationRow struct {
+	Service         string `json:"service"`
+	Kind            string `json:"kind"`
+	ShadowReleaseID string `json:"shadow_release_id"`
+}
+
+// marshalVerifications encodes the domain verifications as the verifications
+// column value. A nil or empty slice encodes as an empty JSON array, so the
+// column is never written as SQL NULL.
+func marshalVerifications(v []proposal.Verification) ([]byte, error) {
+	rows := make([]verificationRow, 0, len(v))
+	for _, e := range v {
+		rows = append(rows, verificationRow{Service: e.Service, Kind: e.Kind, ShadowReleaseID: e.ShadowReleaseID})
+	}
+	return json.Marshal(rows)
+}
+
+// unmarshalVerifications decodes the verifications JSONB column. A malformed
+// or empty blob decodes as nil rather than an empty non-nil slice, so a row
+// that never posted a shadow release reads back as unset.
+func unmarshalVerifications(raw []byte) []proposal.Verification {
+	var rows []verificationRow
+	_ = json.Unmarshal(raw, &rows)
+	if len(rows) == 0 {
+		return nil
+	}
+	verifications := make([]proposal.Verification, 0, len(rows))
+	for _, r := range rows {
+		verifications = append(verifications, proposal.Verification{Service: r.Service, Kind: r.Kind, ShadowReleaseID: r.ShadowReleaseID})
+	}
+	return verifications
+}
+
+// marshalResolved encodes the resolved node ids as the resolved_node_ids
+// column value. A nil or empty slice encodes as an empty JSON array, so the
+// column is never written as SQL NULL.
+func marshalResolved(ids []string) ([]byte, error) {
+	if ids == nil {
+		ids = []string{}
+	}
+	return json.Marshal(ids)
+}
+
+// resolvedOrLegacy decodes the resolved_node_ids JSONB column into a
+// []string. When the decoded (or defaulted) list is empty and nodeID is
+// non-empty, one entry is synthesized from the legacy node_id column, which
+// is how a row written before resolved_node_ids existed keeps reading as the
+// single node it addressed.
+func resolvedOrLegacy(raw []byte, nodeID string) []string {
+	var ids []string
+	_ = json.Unmarshal(raw, &ids)
+	if len(ids) == 0 && nodeID != "" {
+		return []string{nodeID}
+	}
+	return ids
 }
 
 func (row proposalRow) toView() proposal.View {
@@ -264,9 +377,12 @@ func (row proposalRow) toView() proposal.View {
 		ReleaseID:           row.ReleaseID,
 		RemediationRound:    row.RemediationRound,
 		NodeID:              row.NodeID,
+		ResolvedNodeIDs:     resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID),
 		ErrorSignature:      row.ErrorSignature,
 		Attempt:             row.Attempt,
 		Status:              proposal.Status(row.Status),
+		NodeOutcomes:        unmarshalNodeOutcomes(row.NodeOutcomes),
+		Verifications:       unmarshalVerifications(row.Verifications),
 		ShadowReleaseID:     row.ShadowReleaseID,
 		VerifyError:         row.VerifyError,
 		TriggerPayload:      row.TriggerPayload,
@@ -297,43 +413,53 @@ const proposalColumns = `id, source, release_id, remediation_round, node_id, err
 		       confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, file_edits, model, created_at,
-		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at`
+		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at,
+		       resolved_node_ids, node_outcomes, verifications`
 
 // claimRow is the persistence DTO for the BeginPR RETURNING projection.
 type claimRow struct {
-	ID             string    `db:"id"`
-	Repo           string    `db:"repo"`
-	CommitSHA      string    `db:"commit_sha"`
-	FilePath       string    `db:"file_path"`
-	ProposedSQLURI string    `db:"proposed_sql_uri"`
-	DiffURI        string    `db:"diff_uri"`
-	FileEdits      []byte    `db:"file_edits"`
-	ReleaseID      string    `db:"release_id"`
-	NodeID         string    `db:"node_id"`
-	Attempt        int       `db:"attempt"`
-	Rationale      string    `db:"rationale"`
-	Confidence     string    `db:"confidence"`
-	Model          string    `db:"model"`
-	ClaimedAt      time.Time `db:"pr_claimed_at"`
+	ID              string    `db:"id"`
+	Repo            string    `db:"repo"`
+	CommitSHA       string    `db:"commit_sha"`
+	FilePath        string    `db:"file_path"`
+	ProposedSQLURI  string    `db:"proposed_sql_uri"`
+	DiffURI         string    `db:"diff_uri"`
+	FileEdits       []byte    `db:"file_edits"`
+	ReleaseID       string    `db:"release_id"`
+	NodeID          string    `db:"node_id"`
+	ResolvedNodeIDs []byte    `db:"resolved_node_ids"`
+	NodeOutcomes    []byte    `db:"node_outcomes"`
+	Attempt         int       `db:"attempt"`
+	Rationale       string    `db:"rationale"`
+	Confidence      string    `db:"confidence"`
+	Model           string    `db:"model"`
+	ClaimedAt       time.Time `db:"pr_claimed_at"`
 }
 
+// toClaim projects a claimed row onto the claim the caller opens a pull request
+// from. ResolvedNodeIDs is narrowed to the nodes the attempt actually repaired:
+// the claim is what names the pull request and writes its body, and a node the
+// attempt skipped or failed carries no fix to describe. Every consumer of a
+// claim reads it through this projection, so the narrowing cannot be bypassed.
 func (row claimRow) toClaim(branch string) proposal.PRClaim {
 	return proposal.PRClaim{
-		ID:             row.ID,
-		Repo:           row.Repo,
-		CommitSHA:      row.CommitSHA,
-		FilePath:       row.FilePath,
-		ProposedSQLURI: row.ProposedSQLURI,
-		DiffURI:        row.DiffURI,
-		Edits:          editsOrLegacy(row.FileEdits, row.FilePath, row.ProposedSQLURI, row.DiffURI),
-		ReleaseID:      row.ReleaseID,
-		NodeID:         row.NodeID,
-		Attempt:        row.Attempt,
-		Rationale:      row.Rationale,
-		Confidence:     proposal.Confidence(row.Confidence),
-		Model:          row.Model,
-		ClaimedAt:      row.ClaimedAt,
-		Branch:         branch,
+		ID:              row.ID,
+		Repo:            row.Repo,
+		CommitSHA:       row.CommitSHA,
+		FilePath:        row.FilePath,
+		ProposedSQLURI:  row.ProposedSQLURI,
+		DiffURI:         row.DiffURI,
+		Edits:           editsOrLegacy(row.FileEdits, row.FilePath, row.ProposedSQLURI, row.DiffURI),
+		ReleaseID:       row.ReleaseID,
+		NodeID:          row.NodeID,
+		ResolvedNodeIDs: proposal.FixedNodeIDs(
+			resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID), unmarshalNodeOutcomes(row.NodeOutcomes)),
+		Attempt:         row.Attempt,
+		Rationale:       row.Rationale,
+		Confidence:      proposal.Confidence(row.Confidence),
+		Model:           row.Model,
+		ClaimedAt:       row.ClaimedAt,
+		Branch:          branch,
 	}
 }
 
@@ -375,7 +501,7 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	}
 	if filter.NodeID != "" {
 		args = append(args, filter.NodeID)
-		q += fmt.Sprintf(" AND node_id = $%d", len(args))
+		q += fmt.Sprintf(" AND resolved_node_ids ? $%d", len(args))
 	}
 	q += " ORDER BY created_at DESC"
 	if filter.Limit > 0 {
@@ -439,7 +565,7 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, cla
 		  AND pr_state IN ('', 'failed')
 		RETURNING id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
 		          file_edits,
-		          release_id, node_id, attempt, rationale, confidence, model,
+		          release_id, node_id, resolved_node_ids, node_outcomes, attempt, rationale, confidence, model,
 		          pr_claimed_at`
 	var row claimRow
 	if err := r.q.GetContext(ctx, &row, stmt, id, claimedAt, proposal.StatusProposed); err != nil {
@@ -634,16 +760,33 @@ func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View
 	return views, nil
 }
 
-// MarkVerified finalizes a proposal whose shadow release validated the fix,
-// transitioning status 'verifying' -> 'proposed'. The WHERE status='verifying'
-// guard is the same compare-and-set contract as every other state transition
-// in this file: a row already finalized by a concurrent or repeated
-// reconciler pass leaves 0 rows affected rather than a blind overwrite. hit
-// reports whether the CAS fired.
+// rewriteVerifyingOutcomes is the node_outcomes assignment that carries an
+// attempt's per-node outcomes along with the attempt itself: every node still
+// waiting on a shadow release takes the status the attempt just reached, while
+// a node the attempt had already settled — skipped, or failed while being
+// fixed — keeps the entry it was recorded with, since no release judged it.
+//
+// The COALESCE is what keeps the column (NOT NULL) writable: aggregating over a
+// row that recorded no per-node outcome at all yields SQL NULL, not an empty
+// object.
+const rewriteVerifyingOutcomes = `
+	node_outcomes = COALESCE((
+		SELECT jsonb_object_agg(k, CASE WHEN v->>'status' = $2
+			THEN jsonb_set(v, '{status}', to_jsonb($3::text)) ELSE v END)
+		FROM jsonb_each(node_outcomes) AS e(k, v)
+	), '{}'::jsonb)`
+
+// MarkVerified finalizes a proposal whose shadow releases validated the fix,
+// transitioning status 'verifying' -> 'proposed' and carrying every node that
+// was waiting on those releases to 'proposed' with it. The WHERE
+// status='verifying' guard is the same compare-and-set contract as every other
+// state transition in this file: a row already finalized by a concurrent or
+// repeated reconciler pass leaves 0 rows affected rather than a blind
+// overwrite. hit reports whether the CAS fired.
 func (r *ProposalRepository) MarkVerified(ctx context.Context, id string) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$2 WHERE id=$1 AND status=$3`,
-		id, proposal.StatusProposed, proposal.StatusVerifying)
+		`UPDATE proposal SET status=$3, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		id, proposal.StatusVerifying, proposal.StatusProposed)
 	if err != nil {
 		return false, fmt.Errorf("mark verified: %w", err)
 	}
@@ -654,14 +797,15 @@ func (r *ProposalRepository) MarkVerified(ctx context.Context, id string) (bool,
 	return n > 0, nil
 }
 
-// MarkVerifyFailed finalizes a proposal whose shadow release failed to
-// validate the fix, transitioning status 'verifying' -> 'failed' and
+// MarkVerifyFailed finalizes a proposal whose shadow releases failed to
+// validate the fix, transitioning status 'verifying' -> 'failed', carrying
+// every node that was waiting on those releases to 'failed' with it, and
 // recording verifyErr so the next attempt can use it as evidence. The CAS
 // guard and hit semantics mirror MarkVerified.
 func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$2, verify_error=$3 WHERE id=$1 AND status=$4`,
-		id, proposal.StatusFailed, verifyErr, proposal.StatusVerifying)
+		`UPDATE proposal SET status=$3, verify_error=$4, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		id, proposal.StatusVerifying, proposal.StatusFailed, verifyErr)
 	if err != nil {
 		return false, fmt.Errorf("mark verify failed: %w", err)
 	}

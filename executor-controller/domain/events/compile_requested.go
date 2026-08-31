@@ -21,4 +21,8 @@ type CompileRequested struct {
 	// the wire (older messages) parses to empty, and the compile Job runs
 	// without parse-export containers.
 	CandidateSchema string
+	// SourceOverlayURI locates the source-overlay tarball a shadow release's
+	// compile Job lays over the project before compiling; empty for every
+	// production release.
+	SourceOverlayURI string
 }

@@ -57,6 +57,7 @@ func TestSubmit_AcceptedPostsExactShadowBody(t *testing.T) {
 		ImageTag:  "docker.io/x/svc-py:abc",
 		Repo:      "acme/dbt-repo",
 		CommitSHA: "deadbeef",
+		Kind:      ports.ShadowKindPython,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "shadow-1", gotBody["release_id"])
@@ -67,6 +68,59 @@ func TestSubmit_AcceptedPostsExactShadowBody(t *testing.T) {
 	require.Equal(t, "deadbeef", gotBody["commit_sha"])
 	require.Equal(t, "python", gotBody["kind"])
 	require.Equal(t, true, gotBody["shadow"])
+	require.NotContains(t, gotBody, "source_overlay_uri", "a python submission must omit source_overlay_uri entirely")
+	require.NotContains(t, gotBody, "verifies_release_id", "a submission naming no verified release omits the field entirely")
+}
+
+// TestSubmit_DbtCarriesSourceOverlayURI covers the dbt shadow case: the
+// compile leg lays a source overlay tarball over the project, and its S3 URI
+// travels in the POST body alongside kind:"dbt".
+func TestSubmit_DbtCarriesSourceOverlayURI(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"release_id":"shadow-1","status":"received"}`))
+	}))
+	defer srv.Close()
+
+	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
+	err := g.Submit(context.Background(), ports.ShadowSubmission{
+		ReleaseID:        "shadow-1",
+		Service:          "svc-dbt",
+		ImageTag:         "docker.io/x/svc-dbt:abc",
+		Repo:             "acme/dbt-repo",
+		CommitSHA:        "deadbeef",
+		Kind:             ports.ShadowKindDbt,
+		SourceOverlayURI: "s3://b/svc/shadow-1/source-overlay.tar.gz",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "dbt", gotBody["kind"])
+	require.Equal(t, "s3://b/svc/shadow-1/source-overlay.tar.gz", gotBody["source_overlay_uri"])
+}
+
+// TestSubmit_EmptyKindIsError pins that Submit refuses to silently default an
+// unset Kind to "python" — an empty Kind is a caller bug, and the request
+// must fail before any HTTP call is made.
+func TestSubmit_EmptyKindIsError(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
+	err := g.Submit(context.Background(), ports.ShadowSubmission{
+		ReleaseID: "shadow-1",
+		Service:   "svc-py",
+		ImageTag:  "docker.io/x/svc-py:abc",
+		Repo:      "acme/dbt-repo",
+		CommitSHA: "deadbeef",
+	})
+	require.Error(t, err)
+	require.False(t, called, "an empty Kind must fail before any HTTP call is made")
 }
 
 func TestSubmit_NonAcceptedIsError(t *testing.T) {
@@ -76,7 +130,7 @@ func TestSubmit_NonAcceptedIsError(t *testing.T) {
 	defer srv.Close()
 
 	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	err := g.Submit(context.Background(), ports.ShadowSubmission{ReleaseID: "shadow-1", Service: "svc-py", ImageTag: "t", Repo: "acme/r", CommitSHA: "sha"})
+	err := g.Submit(context.Background(), ports.ShadowSubmission{ReleaseID: "shadow-1", Service: "svc-py", ImageTag: "t", Repo: "acme/r", CommitSHA: "sha", Kind: ports.ShadowKindPython})
 	require.Error(t, err)
 }
 
@@ -277,4 +331,27 @@ func TestVerdict_AQueuedReleaseHasNoActivationMoment(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, v.Terminal)
 	require.True(t, v.ActivatedAt.IsZero(), "a release still in the queue has not started being verified")
+}
+
+// TestSubmit_CarriesVerifiesReleaseID pins the field that tells
+// release-controller which rejected release this shadow is judging. Without it
+// the shadow assembles every other service from production, so a fix in a
+// DOWNSTREAM service would be validated against the upstream service's
+// production code rather than the candidate whose rejection it answers.
+func TestSubmit_CarriesVerifiesReleaseID(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"release_id":"shadow-1","status":"received"}`))
+	}))
+	defer srv.Close()
+
+	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
+	require.NoError(t, g.Submit(context.Background(), ports.ShadowSubmission{
+		ReleaseID: "shadow-1", Service: "svc-b", ImageTag: "img:1",
+		Repo: "acme/dbt-repo", CommitSHA: "deadbeef", Kind: ports.ShadowKindDbt,
+		VerifiesReleaseID: "rel-rejected",
+	}))
+	require.Equal(t, "rel-rejected", gotBody["verifies_release_id"])
 }

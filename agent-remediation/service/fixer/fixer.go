@@ -1,9 +1,11 @@
 // Package fixer holds the per-error-class fix strategies for the
 // agent-remediation. Each error class (compile, seed_build, validation) is a
 // Fixer that decides which source files to read, which prompt to send, and how
-// to read the model's answer. The shared driver in service/handlers owns the
-// attempt cap, dedup, proposal row, and outbox emit; a Fixer only produces the
-// proposal. This package imports no adapter, and every collaborator is a port
+// to read the model's answer. A Fixer only produces the proposal — its edits
+// and, for a python contract fix, the packaged contract bytes — and never
+// submits anything; the driver in service/handlers collects a release's
+// proposals, submits one shadow release per edited service, and verifies
+// them. This package imports no adapter, and every collaborator is a port
 // with one exception: the python contract fixer writes the model's answer
 // straight onto the repository checkout RepoArchive extracted (see applyFiles),
 // because the packager it then runs is a subprocess that must see the corrected
@@ -107,8 +109,13 @@ type Services struct {
 	// Packager turns a directory of python-node contract yaml files into the
 	// merged wire contract a release is submitted with.
 	Packager ports.ContractPackager
-	// Releases submits a fix as a shadow verification release and reads the
-	// failing release's image tag.
+	// Releases reads a release's verdict. The python contract lanes use it to
+	// check whether another node declared in the same contract directory as
+	// the one being fixed also failed the original release (see
+	// siblingFailure): a fix that shares a shadow release with an
+	// already-broken sibling could never be verified, so it is skipped before
+	// any model call is made. Submitting and reading the image tag of a
+	// shadow release belong to the driver, not a Fixer.
 	Releases ports.ReleaseGateway
 	// PriorAttempts reads the attempts already recorded for the failing node,
 	// so a later attempt's prompt can show what earlier ones tried.
@@ -121,12 +128,18 @@ type Services struct {
 }
 
 // Result is what a Fixer returns: the proposal (Status always set; artifact
-// URIs, diff, and FilePath populated on a proposed outcome, and on a verifying
-// one whose fix a shadow release is still judging) plus the optional
-// suspected-root-cause node forwarded to the outbox event.
+// URIs, diff, FilePath, and Edits populated on a proposed outcome) plus the
+// optional suspected-root-cause node forwarded to the outbox event. A Fixer
+// only produces the proposal; the driver verifies it — every Fixer returns
+// Status=StatusProposed with Edits rather than submitting anything itself.
 type Result struct {
 	Proposal      proposal.Proposal
 	SuspectedRoot string
+	// ShadowContract is the packaged contract.yaml a python fix must be
+	// verified with, for the driver to upload alongside the shadow release it
+	// submits; nil for a dbt fix, whose edits are verified by re-running the
+	// project directly.
+	ShadowContract []byte
 }
 
 // Gathered holds every source file a single-shot Fixer read, keyed by

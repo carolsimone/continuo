@@ -247,6 +247,11 @@ type ValidationJobParams struct {
 	ParseProdS3URI      string
 	ParseCandidateS3URI string
 
+	// SourceOverlayURI locates the source-overlay tarball a shadow release lays
+	// over a staged copy of the team project before dbt runs. Populated only
+	// for mode=compile and mode=seed_build dispatches of a shadow release.
+	SourceOverlayURI string
+
 	Namespace string
 }
 
@@ -773,15 +778,23 @@ func parseCacheInitContainer(cacheURI, targetDir string) (corev1.Container, core
 // (exit 46) before ever reaching the rehearsal. Only a run 2 that hits none
 // of the three markers' failure conditions hands the exported artifact to
 // the upload container via /shared.
-func buildParseExportCommand(parseArgv []string, partialParsePath, ctx string) string {
+// When staged is true the container runs under a source overlay: dbt runs from
+// the workdir copy of the project, so the artifact is read back from there
+// rather than from the path configured inside the image. The diagnostic still
+// names the configured path, which is the one an operator would edit.
+func buildParseExportCommand(parseArgv []string, partialParsePath, ctx string, staged bool) string {
 	dir := "/shared/parse/" + ctx
 	parse := shellJoin(parseArgv)
+	configured := partialParsePath
+	if staged {
+		partialParsePath = overlayWorkdirPath(partialParsePath)
+	}
 	pp := shellQuote(partialParsePath)
 	return "set -e\n" +
 		"mkdir -p " + dir + "\n" +
 		"chmod 755 " + dir + "\n" +
 		parse + "\n" +
-		"[ -f " + pp + " ] || { echo 'continuo parse-export: the parse command completed without writing partial_parse.msgpack at " + pp + " — check compile.partial_parse_path in dbt-commands.yaml.' >&2; exit 46; }\n" +
+		"[ -f " + pp + " ] || { echo 'continuo parse-export: the parse command completed without writing partial_parse.msgpack at " + configured + " — check compile.partial_parse_path in dbt-commands.yaml.' >&2; exit 46; }\n" +
 		"DBT_LOG_LEVEL=debug " + parse + " > " + dir + "/rehearse.log 2>&1 || { cat " + dir + "/rehearse.log >&2; exit 44; }\n" +
 		"if grep -q 'Partial parsing not enabled' " + dir + "/rehearse.log; then\n" +
 		"  cat " + dir + "/rehearse.log >&2\n" +
@@ -798,6 +811,72 @@ func buildParseExportCommand(parseArgv []string, partialParsePath, ctx string) s
 		"fi\n" +
 		"cp " + pp + " " + dir + "/partial_parse.msgpack\n" +
 		"chmod 644 " + dir + "/partial_parse.msgpack\n"
+}
+
+// overlayWorkDir is where a team-image container running under a source overlay
+// stages a writable copy of the team project and runs dbt from.
+const overlayWorkDir = "/work"
+
+// overlayStagePrefix is prepended to the shell command of every team-image
+// container of a Job that carries a source overlay. It copies the image's
+// project directory — the directory the container's shell starts in — into the
+// workdir emptyDir at the same absolute path underneath it, lays the proposed
+// files over that copy, and moves the shell there, so everything after it runs
+// against the copy.
+//
+// The overlay is never applied in place. A team image's project files may be
+// owned by a user the container does not run as (a plain Dockerfile `COPY`
+// writes root-owned files whatever the image's USER is), which makes an
+// in-place copy fail with EACCES; copying first makes the running user the
+// owner of every staged file, so no team image needs a Dockerfile change to be
+// verifiable. Mirroring the project's absolute path under the workdir is what
+// lets overlayWorkdirPath re-point a configured artifact path at the copy
+// without the executor having to know where the team's project lives.
+func overlayStagePrefix() string {
+	work := overlayWorkDir
+	return "mkdir -p \"" + work + "${PWD%/*}\"" +
+		" && cp -R \"$PWD\" \"" + work + "${PWD%/*}/\"" +
+		" && cp -R /shared/overlay/. \"" + work + "$PWD/\"" +
+		" && cd \"" + work + "$PWD\" && "
+}
+
+// overlayWorkdirPath maps an absolute path configured under the team image's
+// project directory (the compile manifest, the partial-parse artifact) to where
+// dbt writes it when the container runs staged: overlayStagePrefix mirrors the
+// project's absolute path under the workdir, so the counterpart is that path
+// with the workdir prefixed.
+func overlayWorkdirPath(configured string) string {
+	return overlayWorkDir + configured
+}
+
+// workdirVolumeName is the name of the workdir emptyDir serving one container.
+// Each staging container gets its own, because they run sequentially against
+// the same project and a shared scratch dir would hand one container's dbt
+// output (a written target/) to the next one as if the image had shipped it.
+func workdirVolumeName(container string) string { return "workdir-" + container }
+
+// workdirVolume returns the scratch emptyDir a staging container runs dbt in.
+func workdirVolume(container string) corev1.Volume {
+	return corev1.Volume{
+		Name:         workdirVolumeName(container),
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+}
+
+// workdirVolumeMount mounts a container's workdir emptyDir at /work.
+func workdirVolumeMount(container string) corev1.VolumeMount {
+	return corev1.VolumeMount{Name: workdirVolumeName(container), MountPath: overlayWorkDir}
+}
+
+// stagingVolumeMounts returns the mounts of a team-image container: the shared
+// hand-off volume, plus its own workdir when the container stages the project
+// to run a source overlay. Without an overlay the mount list is exactly what it
+// was before staging existed.
+func stagingVolumeMounts(shared corev1.VolumeMount, container string, staged bool) []corev1.VolumeMount {
+	if !staged {
+		return []corev1.VolumeMount{shared}
+	}
+	return []corev1.VolumeMount{shared, workdirVolumeMount(container)}
 }
 
 // sharedEmptyDirVolume returns the "shared" emptyDir volume used as the hand-off
@@ -939,6 +1018,13 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
 // generate_schema_name macro materializes the seed into the candidate schema.
 // ImageTag must be non-empty — the team image must be explicitly versioned.
+// When p.SourceOverlayURI is non-empty (a shadow release verifying a proposed
+// fix), an "overlay" initContainer using the s3-sidecar image fetches the
+// proposed source files into /shared/overlay, the pod gets a writable workdir
+// emptyDir, and the team container's command is wrapped in `sh -c` and prefixed
+// with overlayStagePrefix, so `dbt seed` loads the proposed CSV from a staged
+// copy of the project rather than the checked-in one — the same treatment
+// buildCompilePodSpec gives its team-image containers.
 // When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
 // that pre-seeds the candidate-context partial-parse artifact (see
 // parseCacheInitContainer); partialParsePath is the service's resolved
@@ -985,12 +1071,41 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 		},
 	}
 
+	if p.SourceOverlayURI != "" {
+		// A shadow release verifies a proposed fix: the overlay fetcher lays the
+		// proposed files into /shared/overlay and the team container stages the
+		// project into its workdir, lays them over the copy, and seeds from
+		// there, so a proposed seed CSV is what gets loaded.
+		mount := sharedVolumeMount()
+		teamContainer := spec.Containers[0].Name
+		spec.InitContainers = append(spec.InitContainers, corev1.Container{
+			Name:            "overlay",
+			Image:           s3SidecarImage(),
+			ImagePullPolicy: validationImagePullPolicy(),
+			Command:         []string{"python", "/overlay_fetcher.py"},
+			Env: append([]corev1.EnvVar{
+				{Name: "SOURCE_OVERLAY_URI", Value: p.SourceOverlayURI},
+				{Name: "OVERLAY_DEST", Value: "/shared/overlay"},
+			}, s3CredEnvVars()...),
+			VolumeMounts:    []corev1.VolumeMount{mount},
+			SecurityContext: continuoImageSecurityContext(),
+		})
+		spec.Volumes = append(spec.Volumes, sharedEmptyDirVolume(), workdirVolume(teamContainer))
+		spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts,
+			mount, workdirVolumeMount(teamContainer))
+		spec.Containers[0].Command = []string{"sh", "-c", overlayStagePrefix() + shellJoin(command)}
+	}
+
 	if bucket := os.Getenv("S3_BUCKET"); bucket != "" {
+		// The cache is hydrated into the directory the team's dbt reads it from
+		// inside the image. Under a source overlay the staging copy runs after
+		// this initContainer and copies that directory along with the rest of
+		// the project, so the hydrated artifact reaches the workdir too.
 		uri := artifacts.ParseCacheCandidateURI(bucket, p.ServiceName, p.ReleaseID)
 		init, vol, teamMount := parseCacheInitContainer(uri, path.Dir(partialParsePath))
-		spec.InitContainers = []corev1.Container{init}
-		spec.Volumes = []corev1.Volume{vol}
-		spec.Containers[0].VolumeMounts = []corev1.VolumeMount{teamMount}
+		spec.InitContainers = append(spec.InitContainers, init)
+		spec.Volumes = append(spec.Volumes, vol)
+		spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, teamMount)
 	}
 
 	return spec, nil
@@ -999,13 +1114,22 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 // CreateCompileJob builds and creates a mode=compile K8s Job (idempotent by
 // job name). The Job pod has a shared emptyDir volume "shared" mounted at
 // /shared in every container:
+//   - when params.SourceOverlayURI is set, initContainer "overlay": the
+//     s3-sidecar image fetches a shadow release's proposed source files into
+//     /shared/overlay before any other team-image init container runs.
 //   - initContainer "compile": team image runs the service's resolved compile
 //     command and copies the manifest from its declared path into
-//     /shared/manifest.json, with the warehouse-Secret envFrom attached.
+//     /shared/manifest.json, with the warehouse-Secret envFrom attached; when
+//     the overlay ran, the command first stages the project into its own
+//     workdir emptyDir with /shared/overlay laid over it and compiles there,
+//     reading the manifest back from that copy.
 //   - when params.CandidateSchema is set, two more team-image initContainers,
 //     "parse-prod" and "parse-candidate", export and rehearse the service's
 //     partial-parse cache (see buildParseExportCommand) into
-//     /shared/parse/<prod|candidate>/partial_parse.msgpack.
+//     /shared/parse/<prod|candidate>/partial_parse.msgpack; when the overlay
+//     ran, both commands stage the project the same way into workdirs of their
+//     own, so the parse rehearsal exercises the same proposed source the
+//     compile container compiled, not the pristine checked-in one.
 //   - main container "upload": the shared s3-sidecar image (S3_SIDECAR_IMAGE
 //     env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest) runs
 //     `python /compile_uploader.py` with COMPILE_MANIFEST_PATH +
@@ -1072,18 +1196,32 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 
 // buildCompilePodSpec constructs the PodSpec for a compile Job. The pod has:
 //   - a shared emptyDir volume "shared" mounted at /shared in every container;
+//   - when p.SourceOverlayURI is non-empty, an initContainer "overlay" using
+//     the shared s3-sidecar image that runs `python /overlay_fetcher.py` with
+//     SOURCE_OVERLAY_URI, OVERLAY_DEST=/shared/overlay, and the S3 credential
+//     envs, laying a shadow release's proposed source files into
+//     /shared/overlay before any other team-image init container runs. Every
+//     team-image init container's shell command (compile and both parse legs
+//     below) is then prefixed with overlayStagePrefix and gets a workdir
+//     emptyDir of its own at /work, so the overlay is the project under test
+//     throughout the pod, not just in compile, and no container ever writes
+//     into the team image's own project directory;
 //   - an initContainer "compile" using the team image (ImageTag must be
-//     non-empty) that runs the service's resolved compile command, copies
-//     the manifest from its declared path into /shared/manifest.json, and
-//     chmods it 644 so it is world-readable regardless of the team image's
-//     uid/umask (the upload container below runs as a fixed, different uid);
+//     non-empty) that, when the overlay ran, first stages the project into its
+//     workdir with /shared/overlay laid over it, then runs the service's
+//     resolved compile command there, copies the manifest dbt wrote in that
+//     copy into /shared/manifest.json, and chmods it 644 so it is
+//     world-readable regardless of the team image's uid/umask (the upload
+//     container below runs as a fixed, different uid);
 //   - when p.CandidateSchema is non-empty, two more team-image initContainers,
-//     "parse-prod" and "parse-candidate", that export and rehearse the
+//     "parse-prod" and "parse-candidate", that (each staging the project into
+//     its own workdir first, when the overlay is set) export and rehearse the
 //     service's partial-parse cache under prod and candidate connection
 //     contexts respectively (see buildParseExportCommand) into
-//     /shared/parse/<ctx>/partial_parse.msgpack; when CandidateSchema is
-//     empty the parse-export leg is disabled and the pod keeps the
-//     two-container layout (compile initContainer + upload main container);
+//     /shared/parse/<ctx>/partial_parse.msgpack;
+//     when CandidateSchema is empty the parse-export leg is disabled and the
+//     pod keeps the two-container layout (compile initContainer + upload main
+//     container);
 //   - a main container "upload" using the shared s3-sidecar image (no dbt;
 //     S3_SIDECAR_IMAGE env, else <DOCKERHUB_USERNAME>/s3-sidecar:latest)
 //     that runs `python /compile_uploader.py` with COMPILE_MANIFEST_PATH,
@@ -1121,25 +1259,58 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
 	}, s3CredEnvVars()...)
 
+	// staged is true for a shadow release verifying a proposed fix. Every
+	// team-image init container then stages the project into its own workdir,
+	// lays the proposed files over the copy and runs dbt there, and reads the
+	// artifacts dbt wrote back from that copy rather than from the configured
+	// path inside the image. False (the common case) leaves every command
+	// exactly as it was before the overlay feature existed.
+	staged := p.SourceOverlayURI != ""
+	var overlayPrefix string
+	compiledManifestPath := manifestPath
+	if staged {
+		overlayPrefix = overlayStagePrefix()
+		compiledManifestPath = overlayWorkdirPath(manifestPath)
+	}
+	compileCmd := overlayPrefix + shellJoin(compileArgv) +
+		" && cp " + shellQuote(compiledManifestPath) + " /shared/manifest.json" +
+		" && chmod 644 /shared/manifest.json"
+	var initContainers []corev1.Container
+	if staged {
+		// The overlay fetcher lays the proposed files into /shared/overlay,
+		// where every team-image init container reads them from.
+		initContainers = append(initContainers, corev1.Container{
+			Name:            "overlay",
+			Image:           uploadImage,
+			ImagePullPolicy: validationImagePullPolicy(),
+			Command:         []string{"python", "/overlay_fetcher.py"},
+			Env: append([]corev1.EnvVar{
+				{Name: "SOURCE_OVERLAY_URI", Value: p.SourceOverlayURI},
+				{Name: "OVERLAY_DEST", Value: "/shared/overlay"},
+			}, s3CredEnvVars()...),
+			VolumeMounts:    []corev1.VolumeMount{mount},
+			SecurityContext: continuoImageSecurityContext(),
+		})
+	}
+	initContainers = append(initContainers, corev1.Container{
+		Name:            "compile",
+		Image:           teamImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"sh", "-c", compileCmd},
+		EnvFrom:         whFrom,
+		VolumeMounts:    stagingVolumeMounts(mount, "compile", staged),
+		SecurityContext: baseContainerSecurityContext(),
+	})
+
+	volumes := []corev1.Volume{sharedEmptyDirVolume()}
+	if staged {
+		volumes = append(volumes, workdirVolume("compile"))
+	}
 	spec := corev1.PodSpec{
 		RestartPolicy:   corev1.RestartPolicyNever,
 		SecurityContext: jobPodSecurityContext(),
-		Volumes:         []corev1.Volume{sharedEmptyDirVolume()},
-		InitContainers: []corev1.Container{
-			{
-				Name:            "compile",
-				Image:           teamImage,
-				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command: []string{
-					"sh", "-c",
-					shellJoin(compileArgv) + " && cp " + shellQuote(manifestPath) + " /shared/manifest.json" +
-						" && chmod 644 /shared/manifest.json",
-				},
-				EnvFrom:         whFrom,
-				VolumeMounts:    []corev1.VolumeMount{mount},
-				SecurityContext: baseContainerSecurityContext(),
-			},
-		},
+		Volumes:         volumes,
+		InitContainers:  initContainers,
 		Containers: []corev1.Container{
 			{
 				Name:            "upload",
@@ -1160,21 +1331,24 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 				Name:            "parse-prod",
 				Image:           teamImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "prod")},
+				Command:         []string{"sh", "-c", overlayPrefix + buildParseExportCommand(parseArgv, partialParsePath, "prod", staged)},
 				EnvFrom:         whFrom,
-				VolumeMounts:    []corev1.VolumeMount{mount},
+				VolumeMounts:    stagingVolumeMounts(mount, "parse-prod", staged),
 				SecurityContext: baseContainerSecurityContext(),
 			},
 			corev1.Container{
 				Name:            "parse-candidate",
 				Image:           teamImage,
 				ImagePullPolicy: corev1.PullIfNotPresent,
-				Command:         []string{"sh", "-c", buildParseExportCommand(parseArgv, partialParsePath, "candidate")},
+				Command:         []string{"sh", "-c", overlayPrefix + buildParseExportCommand(parseArgv, partialParsePath, "candidate", staged)},
 				Env:             candEnv,
 				EnvFrom:         whFrom,
-				VolumeMounts:    []corev1.VolumeMount{mount},
+				VolumeMounts:    stagingVolumeMounts(mount, "parse-candidate", staged),
 				SecurityContext: baseContainerSecurityContext(),
 			})
+		if staged {
+			spec.Volumes = append(spec.Volumes, workdirVolume("parse-prod"), workdirVolume("parse-candidate"))
+		}
 		spec.Containers[0].Env = append(spec.Containers[0].Env,
 			corev1.EnvVar{Name: "PARSE_PROD_LOCAL_PATH", Value: "/shared/parse/prod/partial_parse.msgpack"},
 			corev1.EnvVar{Name: "PARSE_PROD_S3_URI", Value: p.ParseProdS3URI},

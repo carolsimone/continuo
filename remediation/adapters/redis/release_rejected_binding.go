@@ -71,7 +71,36 @@ type rejectedPayload struct {
 		// nothing.
 		OtherService  string `json:"other_service"`
 		OtherFilePath string `json:"other_file_path"`
+		// ChangedAncestors are the node's changed transitive ancestors, stamped
+		// by release-controller from the candidate topology, each with the file
+		// path and service THAT topology declares for it — the location an
+		// upstream fix must edit, which for a node this release renamed or moved
+		// is not where the promoted graph places it.
+		ChangedAncestors []changedAncestorPayload `json:"changed_ancestors"`
 	} `json:"per_node"`
+}
+
+// changedAncestorPayload is one entry of a per_node entry's changed_ancestors
+// array: the changed upstream's id plus the file path and service the rejected
+// release's candidate topology declares for it.
+type changedAncestorPayload struct {
+	NodeID   string `json:"node_id"`
+	FilePath string `json:"file_path"`
+	Service  string `json:"service"`
+}
+
+// changedAncestors projects the decoded changed ancestors onto the domain
+// evidence, preserving the payload's order (release-controller sorts them by
+// id).
+func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]failure.ChangedAncestor, 0, len(in))
+	for _, a := range in {
+		out = append(out, failure.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service})
+	}
+	return out
 }
 
 // sourceFromPayload resolves the remediation Source from a release.rejected
@@ -155,6 +184,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			CommitSHA:            p.CommitSHA,
 			CodeBundleURI:        p.CodeBundleURI,
 			Shadow:               p.Shadow,
+			ChangedAncestors:     changedAncestors(n.ChangedAncestors),
 		})
 	}
 	return out, nil
@@ -162,12 +192,13 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 
 // classifyRejectionMessages builds a StreamConsumer over the given stream and
 // consumer group that decodes each message with the release.rejected:v1
-// payload shape and classifies every failed node via handlers.ClassifyFailure.
-// release.rejected:v1 and its per-round retry replay on
-// remediation.retry_requested:v1 share this exact shape (the retry payload
-// adds only the top-level remediation_round field), so one handler serves
-// both consumers. The consumer group is created idempotently by
-// StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
+// payload shape and classifies its whole failed-node set via one call to
+// handlers.ClassifyRejection, so one rejected release yields one batched
+// remediation.requested:v2 trigger. release.rejected:v1 and its per-round
+// retry replay on remediation.retry_requested:v1 share this exact shape (the
+// retry payload adds only the top-level remediation_round field), so one
+// handler serves both consumers. The consumer group is created idempotently
+// by StreamConsumer.Start; call Start(ctx) in a goroutine to begin consuming.
 func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
 	handler := func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
@@ -180,10 +211,8 @@ func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps ha
 			logger.Error(stream+" decode failure — discarding", "message_id", msg.ID, "error", err)
 			return nil // permanent: malformed payload cannot be retried
 		}
-		for _, ev := range evs {
-			if err := handlers.ClassifyFailure(ctx, deps, ev); err != nil {
-				return err // transient: do not ACK; allow redelivery via PEL sweep
-			}
+		if err := handlers.ClassifyRejection(ctx, deps, evs); err != nil {
+			return err // transient: do not ACK; allow redelivery via PEL sweep
 		}
 		return nil
 	}
@@ -191,7 +220,8 @@ func classifyRejectionMessages(rc *goredis.Client, stream, group string, deps ha
 }
 
 // NewReleaseRejectedConsumer constructs a StreamConsumer that reads
-// release.rejected:v1 and classifies each failed node via handlers.ClassifyFailure.
+// release.rejected:v1 and classifies its failed nodes via one call to
+// handlers.ClassifyRejection, emitting one batched trigger for the release.
 // The consumer group is created idempotently by StreamConsumer.Start; call
 // Start(ctx) in a goroutine to begin consuming.
 func NewReleaseRejectedConsumer(rc *goredis.Client, deps handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {

@@ -13,8 +13,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/carolsimone/continuo/pkg/streams"
 	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
@@ -26,11 +26,15 @@ import (
 //	POST /releases (service-2, ftable_e as changed node)
 //	→ validation fails (ftable_e references public.wrong_name)
 //	→ release reaches "rejected" status
-//	→ remediation classifier emits remediation.requested:v1
-//	→ agent-remediation consumes remediation.requested:v1
+//	→ remediation classifier emits one remediation.requested:v2 for the release
+//	→ agent-remediation consumes it and groups its failing set
 //	→ calls stub-llm (propose_fix tool call → deterministic SQL fix)
 //	→ writes proposed SQL and diff to S3
-//	→ inserts proposal row (status=proposed, attempt=1)
+//	→ inserts proposal row (status=verifying, attempt=1) and posts one shadow
+//	  release per edited service, which lays the proposed source over the
+//	  service's dbt project and runs the real compile + validation pipeline
+//	→ the shadow release stops at "validated"
+//	→ the shadow-verify reconciler flips the proposal to status=proposed
 //	→ emits remediation.proposed:v1 via outbox publisher
 //
 // The stub-llm (tests/e2e/stub-llm/main.go) detects the propose_fix tool in
@@ -41,7 +45,10 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	// 35 minutes: the rejected release and the shadow release that verifies
+	// the fix each run a full compile + validation pipeline in kind, and the
+	// shadow runs only after the model has answered.
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -105,11 +112,11 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	// 5. Wait for the release to reach "rejected" status.
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
-	// 6. Poll remediation.requested:v1 to confirm the classifier consumed the
-	//    rejection and emitted a trigger for ftable_e. This is a precondition for
-	//    the agent-remediation to pick it up.
+	// 6. Poll remediation.requested:v2 to confirm the classifier consumed the
+	//    rejection and emitted the release's batched trigger with an entry for
+	//    ftable_e. This is a precondition for the agent-remediation to pick it up.
 	pollUntil(t, ctx, 3*time.Minute, 2*time.Second, func() (bool, error) {
-		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV1, "-", "+").Result()
+		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationRequestedV2, "-", "+").Result()
 		if err != nil {
 			return false, nil
 		}
@@ -122,18 +129,24 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 			if json.Unmarshal([]byte(raw), &p) != nil {
 				continue
 			}
-			if p.ReleaseID == releaseID && p.NodeID == ftableEUniqueID {
+			if p.ReleaseID != releaseID {
+				continue
+			}
+			if _, ok := p.findNode(ftableEUniqueID); ok {
 				return true, nil
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.requested:v1 for release %s node %s", releaseID, ftableEUniqueID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationRequestedV2, releaseID, ftableEUniqueID))
 
 	// 7. Poll remediation.proposed:v1. The agent-remediation consumes the trigger,
 	//    calls the stub-llm (which returns a deterministic propose_fix tool call),
-	//    writes artifacts to S3, persists the proposal row, and publishes this event.
+	//    writes artifacts to S3, persists the proposal row, and posts a shadow
+	//    release that compiles and validates the proposed source. This event is
+	//    published only once that shadow release reports back validated, so the
+	//    budget covers a whole second release pipeline, not just the model call.
 	var proposed remediationProposedPayload
-	pollUntil(t, ctx, 5*time.Minute, 3*time.Second, func() (bool, error) {
+	pollUntil(t, ctx, 20*time.Minute, 3*time.Second, func() (bool, error) {
 		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationProposedV1, "-", "+").Result()
 		if err != nil {
 			return false, nil
@@ -153,16 +166,18 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.proposed:v1 for release %s node %s", releaseID, ftableEUniqueID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationProposedV1, releaseID, ftableEUniqueID))
 
 	// (a) Assert remediation.proposed:v1 payload fields.
 	require.Equal(t, ftableEUniqueID, proposed.NodeID, "proposed node_id")
 	require.Equal(t, releaseID, proposed.ReleaseID, "proposed release_id")
+	require.Equal(t, []string{ftableEUniqueID}, proposed.ResolvedNodeIDs,
+		"ftable_e is the release's only failing node, so the attempt resolves exactly it")
 	require.NotEmpty(t, proposed.ProposedSQLURI, "proposed_sql_uri must be non-empty")
 	require.NotEmpty(t, proposed.DiffURI, "diff_uri must be non-empty")
 	require.NotEmpty(t, proposed.Confidence, "confidence must be set")
 	require.Equal(t, "validation", proposed.Source, "source must be 'validation'")
-	t.Logf("remediation.proposed:v1 received: confidence=%s sql_uri=%s", proposed.Confidence, proposed.ProposedSQLURI)
+	t.Logf("%s received: confidence=%s sql_uri=%s", streams.RemediationProposedV1, proposed.Confidence, proposed.ProposedSQLURI)
 
 	// (b) Assert a proposal row in continuo_agent_remediation.
 	var row proposalRow
@@ -199,20 +214,42 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	//     the wire so downstream consumers can distinguish source-level proposals
 	//     from candidate-SQL proposals.
 	require.True(t, proposed.SourceResolved,
-		"remediation.proposed:v1 must carry source_resolved=true; stream=%s", streams.RemediationProposedV1)
+		"%s must carry source_resolved=true", streams.RemediationProposedV1)
 
-	// (c) Assert the proposed-SQL S3 object exists at proposed_sql_uri and
-	//     contains real dbt {{ ref(...) }} macros — confirming the Step-2 source
-	//     fix (not the Step-1 candidate SQL) was stored as the final proposal.
+	// (c) Assert the proposed-SQL S3 object exists at proposed_sql_uri and holds
+	//     the repaired model source: the surviving read of ftable_c is kept and
+	//     the join to the relation that does not exist is gone.
 	sqlKey := stripS3Prefix(proposed.ProposedSQLURI)
 	require.NotEmpty(t, sqlKey, "could not parse key from proposed_sql_uri=%s", proposed.ProposedSQLURI)
 	sqlBody := getS3ObjectByKey(t, ctx, clients, sqlKey)
 	require.NotEmpty(t, sqlBody, "proposed SQL object at %s must not be empty", proposed.ProposedSQLURI)
-	require.True(t,
-		strings.Contains(string(sqlBody), "{{ ref('table_b') }}"),
-		"proposed SQL at %s must contain {{ ref('table_b') }} (real source, not candidate schema); got %q",
+	require.Contains(t, string(sqlBody), "e2e_schema.ftable_c",
+		"proposed SQL at %s must keep reading the upstream the model depends on; got %q",
+		proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
+	require.NotContains(t, string(sqlBody), "wrong_name",
+		"proposed SQL at %s must no longer join the relation that does not exist; got %q",
 		proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 	t.Logf("proposed SQL object fetched from %s: %q", proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
+
+	// (c2) The proposal was verified by a real dbt shadow release, not accepted
+	//      on the model's word: the row names one verification, for a dbt-kind
+	//      manifest, and that release reached "validated". waitForReleaseStatus
+	//      returns immediately here — the event in (7) is emitted only after the
+	//      verdict — so this reads the verdict rather than waiting for it.
+	var verificationsJSON []byte
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &verificationsJSON,
+		`SELECT verifications FROM proposal WHERE release_id = $1 AND node_id = $2 AND attempt = 1`,
+		releaseID, ftableEUniqueID))
+	verifications := decodeVerifications(t, verificationsJSON)
+	require.Len(t, verifications, 1,
+		"the fix edits one service, so exactly one shadow release judged it")
+	require.Equal(t, "dbt", verifications[0].Kind,
+		"a dbt model's fix must be verified under a dbt manifest, not a python contract")
+	require.NotEmpty(t, verifications[0].ShadowReleaseID,
+		"a verification must name the release that produced its verdict")
+	waitForReleaseStatus(t, ctx, clients, verifications[0].ShadowReleaseID, "validated", 2*time.Minute)
+	t.Logf("shadow verification confirmed: service=%s kind=%s release=%s",
+		verifications[0].Service, verifications[0].Kind, verifications[0].ShadowReleaseID)
 
 	// (f) SELECT the proposal's id from the DB so we can call the PR-creation endpoint.
 	var proposalID string
@@ -441,19 +478,23 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 // remediationProposedPayload mirrors the remediation.proposed:v1 wire shape
 // produced by the agent-remediation's outbox publisher.
 type remediationProposedPayload struct {
-	EventID        string `json:"event_id"`
-	Source         string `json:"source"`
-	ReleaseID      string `json:"release_id"`
-	NodeID         string `json:"node_id"`
-	ErrorSignature string `json:"error_signature"`
-	ProposedSQLURI string `json:"proposed_sql_uri"`
-	DiffURI        string `json:"diff_uri"`
-	Rationale      string `json:"rationale"`
-	Confidence     string `json:"confidence"`
-	Model          string `json:"model"`
-	Attempt        int    `json:"attempt"`
-	SourceResolved bool   `json:"source_resolved"`
-	ProposedAt     string `json:"proposed_at"`
+	EventID   string `json:"event_id"`
+	Source    string `json:"source"`
+	ReleaseID string `json:"release_id"`
+	NodeID    string `json:"node_id"`
+	// ResolvedNodeIDs is every failing node this attempt addressed, sorted.
+	// One attempt now repairs a release's whole failing set, so NodeID is only
+	// the representative of this list.
+	ResolvedNodeIDs []string `json:"resolved_node_ids"`
+	ErrorSignature  string   `json:"error_signature"`
+	ProposedSQLURI  string   `json:"proposed_sql_uri"`
+	DiffURI         string   `json:"diff_uri"`
+	Rationale       string   `json:"rationale"`
+	Confidence      string   `json:"confidence"`
+	Model           string   `json:"model"`
+	Attempt         int      `json:"attempt"`
+	SourceResolved  bool     `json:"source_resolved"`
+	ProposedAt      string   `json:"proposed_at"`
 }
 
 // proposalRow captures the fields asserted from continuo_agent_remediation.proposal.

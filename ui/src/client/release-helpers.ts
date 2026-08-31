@@ -1,4 +1,4 @@
-import { NodeValidationResult, ReleaseListItem } from './types';
+import { NodeValidationResult, ProposalDTO, ReleaseListItem } from './types';
 
 // In-flight = a release actively moving through the pipeline, in lifecycle order:
 // received -> compiling -> parsing -> seed_building -> validating.
@@ -89,4 +89,25 @@ export function groupByStage(
 // (stage, node_id); stage and proposal.source share the same literals.
 export function proposalKey(stage: string, nodeId: string): string {
   return `${stage}|${nodeId}`;
+}
+
+// proposalNodeIds lists every failing node one remediation attempt addresses.
+// A batched attempt carries resolved_node_ids; a legacy single-node proposal
+// (or one from before batching existed) has none, so its representative
+// node_id is the sole member.
+export function proposalNodeIds(p: ProposalDTO): string[] {
+  return p.resolved_node_ids && p.resolved_node_ids.length > 0 ? p.resolved_node_ids : [p.node_id];
+}
+
+// proposalStatusForNode reads how a batched attempt ended for one specific
+// node, falling back to the proposal's overall status for a legacy row or a
+// node the attempt did not record a separate outcome for.
+export function proposalStatusForNode(p: ProposalDTO, nodeId: string): string {
+  return p.node_outcomes?.[nodeId]?.status ?? p.status;
+}
+
+// proposalReasonForNode reads why a batched attempt ended that way for one
+// specific node, falling back to the proposal's overall rationale.
+export function proposalReasonForNode(p: ProposalDTO, nodeId: string): string {
+  return p.node_outcomes?.[nodeId]?.reason ?? p.rationale;
 }

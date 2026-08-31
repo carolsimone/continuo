@@ -43,19 +43,26 @@ func NewGateway(baseURL string, evidence ports.EvidenceReader, hc *http.Client) 
 }
 
 // shadowSubmissionBody is the wire shape POST /releases expects for a shadow
-// verification release. Bootstrap, Kind, and Shadow are never caller-supplied
-// (see ports.ShadowSubmission) — a shadow submission always bootstraps
-// nothing, always parses a python contract, and always sets shadow:true so
-// release-controller stops it at "validated" instead of promoting.
+// verification release. Bootstrap and Shadow are never caller-supplied (see
+// ports.ShadowSubmission) — a shadow submission always bootstraps nothing and
+// always sets shadow:true so release-controller stops it at "validated"
+// instead of promoting. Kind and SourceOverlayURI vary per the edited
+// service's manifest kind; SourceOverlayURI is omitted from the wire body
+// entirely for a python submission, which carries none.
 type shadowSubmissionBody struct {
-	ReleaseID string `json:"release_id"`
-	Service   string `json:"service"`
-	ImageTag  string `json:"image_tag"`
-	Bootstrap bool   `json:"bootstrap"`
-	Repo      string `json:"repo"`
-	CommitSHA string `json:"commit_sha"`
-	Kind      string `json:"kind"`
-	Shadow    bool   `json:"shadow"`
+	ReleaseID        string `json:"release_id"`
+	Service          string `json:"service"`
+	ImageTag         string `json:"image_tag"`
+	Bootstrap        bool   `json:"bootstrap"`
+	Repo             string `json:"repo"`
+	CommitSHA        string `json:"commit_sha"`
+	Kind             string `json:"kind"`
+	Shadow           bool   `json:"shadow"`
+	SourceOverlayURI string `json:"source_overlay_uri,omitempty"`
+	// VerifiesReleaseID names the rejected release this shadow verifies, so
+	// release-controller assembles that release's candidate for its own changed
+	// service rather than the live production manifest.
+	VerifiesReleaseID string `json:"verifies_release_id,omitempty"`
 }
 
 // Submit posts s as a shadow verification release. A 202 Accepted response is
@@ -63,15 +70,20 @@ type shadowSubmissionBody struct {
 // an existing one for the same release id (its POST /releases handler is
 // idempotent on that id and returns 202 either way).
 func (g *Gateway) Submit(ctx context.Context, s ports.ShadowSubmission) error {
+	if s.Kind == "" {
+		return fmt.Errorf("submit shadow release %s: kind is required", s.ReleaseID)
+	}
 	body := shadowSubmissionBody{
-		ReleaseID: s.ReleaseID,
-		Service:   s.Service,
-		ImageTag:  s.ImageTag,
-		Bootstrap: false,
-		Repo:      s.Repo,
-		CommitSHA: s.CommitSHA,
-		Kind:      "python",
-		Shadow:    true,
+		ReleaseID:         s.ReleaseID,
+		Service:           s.Service,
+		ImageTag:          s.ImageTag,
+		Bootstrap:         false,
+		Repo:              s.Repo,
+		CommitSHA:         s.CommitSHA,
+		Kind:              s.Kind,
+		Shadow:            true,
+		SourceOverlayURI:  s.SourceOverlayURI,
+		VerifiesReleaseID: s.VerifiesReleaseID,
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {

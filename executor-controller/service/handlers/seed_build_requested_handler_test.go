@@ -118,3 +118,32 @@ func TestSeedBuildRequestedHandler_MsgProcIDNilAllowed(t *testing.T) {
 	// uuid.Nil msgProcID → nil pointer stored on deployment
 	assert.Nil(t, depl.added[0].MessageProcessingID())
 }
+
+// TestSeedBuildRequestedHandler_ThreadsSourceOverlayURI verifies the handler
+// puts the shadow release's source overlay on every enqueued seed-build task,
+// which is what carries it onto the seed Job's pod spec.
+func TestSeedBuildRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
+	depl := &stubDeploymentsRepo{}
+	u := &uow.FakeUnitOfWork{Deployments: depl}
+
+	evt := events.SeedBuildRequested{
+		ReleaseID:       "shadow-rel-seed-1-shop-a1",
+		Mode:            "seed_build",
+		CandidateSchema: "_candidate_shadow_rel_seed_1",
+		Seeds: []events.SeedBuildNode{
+			{NodeID: "seed.shop.country_codes", ServiceName: "shop", SchemaName: "public",
+				TableName: "country_codes", NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed1"},
+			{NodeID: "seed.shop.currencies", ServiceName: "shop", SchemaName: "public",
+				TableName: "currencies", NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "sha-seed1"},
+		},
+		SeedIDsInOrder:   []string{"seed.shop.country_codes", "seed.shop.currencies"},
+		SourceOverlayURI: "s3://continuo/shop/shadow-rel-seed-1-shop-a1/source-overlay.tar.gz",
+	}
+
+	h := handlers.NewSeedBuildRequestedHandler(discardLogger())
+	require.NoError(t, h.Handle(context.Background(), u, evt, uuid.Nil))
+	require.Len(t, depl.added, 2)
+	for _, dep := range depl.added {
+		assert.Equal(t, evt.SourceOverlayURI, dep.ValidationCommand().SourceOverlayURI)
+	}
+}

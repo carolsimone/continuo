@@ -1,16 +1,21 @@
 # config/service_repos.yaml
 # Maps a service name (orchestrator topology service_name; dbt or python) to
-# its project root within that service's own repository. Each team ships from
-# its own repo — the single shared layout below is a dev/e2e convenience, not
-# the deployed shape — so the remediation agent only ever resolves a claimant
-# belonging to the release's changed service, whose repo comes from the
-# remediation trigger. The agent joins <repo_path> with the offending file's
-# path to read the model source from GitHub. Edit this when adding a service
-# or changing a repo's layout, then restart agent-remediation.
+# its project root within that service's own repository. The agent joins
+# <repo_path> with the offending file's path to read the model source from
+# GitHub, and routes the shadow release that verifies a fix by the project
+# root that owns the edited file — so a service absent from the map has its
+# fix recorded as unverifiable, and its compile, seed, and duplicate-table
+# proposals skipped.
+#
+# This file is the documented shape of that map, not the map any deployment
+# reads. Point SERVICE_REPO_MAP_PATH at your own copy: a Helm install mounts
+# the ConfigMap built from deploy/continuo/files/service_repos.yaml, and the
+# local docker-compose stack mounts tests/e2e/config/service_repos.yaml. The
+# entries below are the demo services of the single shared checkout — a dev
+# convenience, not the deployed shape, since production is a data mesh of one
+# repository per team. Edit your own copy when adding a service or changing a
+# repo's layout, then restart agent-remediation.
 services:
   core: services/core
   finance: services/finance
   marketing: services/marketing
-  service-1: services/service-1
-  service-2: services/service-2
-  service-3: services/service-3

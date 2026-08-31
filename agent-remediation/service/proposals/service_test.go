@@ -2,19 +2,21 @@ package proposals_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/pkg/messageprocessing"
-	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // fixedClock returns a fixed time for deterministic tests.
@@ -56,11 +58,11 @@ type fakeRepo struct {
 	failStuckHit           bool
 }
 
-func (r *fakeRepo) CountAttempts(_ context.Context, _ string, _ int, _, _, _ string) (int, error) {
+func (r *fakeRepo) CountAttempts(_ context.Context, _ string, _ int) (int, error) {
 	return 0, nil
 }
 func (r *fakeRepo) InsertGenerating(_ context.Context, _ proposal.Proposal) error { return nil }
-func (r *fakeRepo) FailGenerating(_ context.Context, _, _, _, _, _ string) (int, error) {
+func (r *fakeRepo) FailGenerating(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
 func (r *fakeRepo) Upsert(_ context.Context, _ proposal.Proposal) error { return nil }
@@ -144,9 +146,19 @@ func (r *fakeRepo) uowFactory() uow.UnitOfWork {
 	return &fakeUoW{repo: r}
 }
 
+// TestBuildBranch_DistinctPerAttemptWithinARelease verifies that, with the
+// node segment gone, attempt is still enough to keep two attempts of the same
+// release on distinct branches.
+func TestBuildBranch_DistinctPerAttemptWithinARelease(t *testing.T) {
+	b1 := proposals.BuildBranch("r", 1)
+	b2 := proposals.BuildBranch("r", 2)
+	require.Equal(t, "remediation/r/attempt1", b1)
+	require.Equal(t, "remediation/r/attempt2", b2)
+	require.NotEqual(t, b1, b2, "two attempts of the same release must not collide on branch")
+}
+
 // TestService_Begin_BuildsDeterministicBranch verifies that Begin derives the
-// branch name remediation/<release_id>/<node_sanitized>-attempt<n> where every
-// rune outside [A-Za-z0-9_-] is replaced with '-'.
+// branch name remediation/<release_id>/attempt<n>, with no node segment.
 func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 	repo := &fakeRepo{view: proposal.View{
 		ReleaseID:      "r-1",
@@ -161,20 +173,21 @@ func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 	})
 	_, err := svc.Begin(context.Background(), "p1")
 	require.NoError(t, err)
-	require.Equal(t, "remediation/r-1/model-p-orders_d-attempt1", repo.lastBranch)
+	require.Equal(t, "remediation/r-1/attempt1", repo.lastBranch)
 	require.Equal(t, fixedClock{}.Now(), repo.lastClaimedAt, "Begin must stamp the claim with the service's clock")
 }
 
 // TestService_Record_EmitsPROpenedAtomically verifies that Record writes an
-// outbox entry with StreamName == streams.RemediationPrOpenedV1 and commits
-// the unit of work.
+// outbox entry with StreamName == streams.RemediationPrOpenedV1, whose payload
+// carries the view's ResolvedNodeIDs, and commits the unit of work.
 func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	repo := &fakeRepo{
 		view: proposal.View{
-			ID:        "p1",
-			ReleaseID: "r-1",
-			NodeID:    "model.p.orders_d",
-			Attempt:   1,
+			ID:              "p1",
+			ReleaseID:       "r-1",
+			NodeID:          "model.p.orders_d",
+			ResolvedNodeIDs: []string{"model.p.orders_d", "model.p.orders_e"},
+			Attempt:         1,
 		},
 		recordPRCASHit: true,
 	}
@@ -195,6 +208,69 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	require.True(t, repo.committed, "expected the unit of work to be committed")
 	require.Equal(t, fixedClock{}.Now(), repo.lastRecordPR.openedAt,
 		"an unset OpenedAt must fall back to the service clock, as the normal client-side flow relies on")
+
+	var payload event.PROpened
+	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
+	require.Equal(t, repo.view.ResolvedNodeIDs, payload.ResolvedNodeIDs,
+		"the pr_opened payload must carry the view's ResolvedNodeIDs")
+}
+
+// TestService_Record_PROpenedNamesOnlyTheFixedNodes covers the mixed batch: one
+// attempt addressed two failing nodes, repaired one and skipped the other, and
+// the pull request therefore carries a fix for one of them only. Naming both
+// would attach the PR to a rejection it does nothing about — the orchestrator
+// records it against every node the event names.
+func TestService_Record_PROpenedNamesOnlyTheFixedNodes(t *testing.T) {
+	repo := &fakeRepo{
+		view: proposal.View{
+			ID:              "p1",
+			ReleaseID:       "r-1",
+			NodeID:          "model.p.orders_d",
+			ResolvedNodeIDs: []string{"model.p.orders_d", "model.p.orders_e"},
+			NodeOutcomes: map[string]proposal.NodeOutcome{
+				"model.p.orders_d": {Status: proposal.StatusProposed},
+				"model.p.orders_e": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
+			},
+			Attempt: 1,
+		},
+		recordPRCASHit: true,
+	}
+	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
+
+	require.NoError(t, svc.Record(context.Background(), proposals.RecordInput{
+		ProposalID: "p1", PrURL: "u", PrNumber: 7, OpenedBy: "dev|local",
+	}))
+
+	var payload event.PROpened
+	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
+	require.Equal(t, []string{"model.p.orders_d"}, payload.ResolvedNodeIDs,
+		"the skipped node's rejection has no fix, so the PR must not be attached to it")
+}
+
+// TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes is the same
+// invariant on the closing half: the PR's outcome may only be mirrored onto the
+// nodes it actually carried a fix for.
+func TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes(t *testing.T) {
+	repo := &fakeRepo{
+		view: proposal.View{
+			ID: "p1", ReleaseID: "r-1", NodeID: "model.p.orders_d",
+			ResolvedNodeIDs: []string{"model.p.orders_d", "model.p.orders_e"},
+			NodeOutcomes: map[string]proposal.NodeOutcome{
+				"model.p.orders_d": {Status: proposal.StatusProposed},
+				"model.p.orders_e": {Status: proposal.StatusFailed, Reason: "nothing to verify"},
+			},
+			Attempt: 1, PrURL: "http://gh/pull/7", PrNumber: 7,
+		},
+		outcomeCASHit: true,
+	}
+	svc := proposals.New(proposals.Deps{Repo: repo, NewUoW: repo.uowFactory, Clock: fixedClock{}})
+
+	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
+	require.NoError(t, svc.RecordOutcome(context.Background(), "p1", proposal.PROutcomeMerged, closedAt))
+
+	var payload event.PRClosed
+	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
+	require.Equal(t, []string{"model.p.orders_d"}, payload.ResolvedNodeIDs)
 }
 
 // TestService_Record_UsesProvidedOpenedAt verifies that a non-zero

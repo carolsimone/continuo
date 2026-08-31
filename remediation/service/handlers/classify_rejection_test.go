@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/event"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/domain/repository"
@@ -54,10 +55,15 @@ func (fakeClock) Now() time.Time { return time.Date(2026, 6, 23, 0, 0, 0, 0, tim
 type fakeDecisionRepo struct {
 	saved    []repository.ClassificationDecision
 	inserted bool
+	// insertedByNode, when set, overrides inserted per node id.
+	insertedByNode map[string]bool
 }
 
 func (r *fakeDecisionRepo) Upsert(_ context.Context, d repository.ClassificationDecision) (bool, error) {
 	r.saved = append(r.saved, d)
+	if r.insertedByNode != nil {
+		return r.insertedByNode[d.NodeID], nil
+	}
 	return r.inserted, nil
 }
 
@@ -112,7 +118,7 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 		DBTLogURI:     "s3://b/k",
 		CodeBundleURI: "s3://b/code-bundles/rel-1/bundle.json",
 	}
-	err := ClassifyFailure(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), ev)
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,13 +130,17 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	}
 	var p event.RemediationRequested
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
-	if p.Category != "logic" || p.NodeID != "s.n" || p.EventID != event.RemediationEventID("r1", "s.n", 1).String() {
+	if len(p.Nodes) != 1 {
+		t.Fatalf("expected 1 node in batched trigger, got %d", len(p.Nodes))
+	}
+	n := p.Nodes[0]
+	if n.Category != "logic" || n.NodeID != "s.n" || p.EventID != event.RemediationEventID("r1", 1).String() {
 		t.Fatalf("bad trigger payload: %+v", p)
 	}
-	if p.Reason != "logic:missing_object" {
-		t.Fatalf("trigger reason = %q, want logic:missing_object", p.Reason)
+	if n.Reason != "logic:missing_object" {
+		t.Fatalf("trigger reason = %q, want logic:missing_object", n.Reason)
 	}
-	if p.ErrorExcerpt == "" {
+	if n.ErrorExcerpt == "" {
 		t.Fatal("trigger error_excerpt must not be empty")
 	}
 	if p.CodeBundleURI != "s3://b/code-bundles/rel-1/bundle.json" {
@@ -153,7 +163,7 @@ func TestClassifyFailure_ShadowRecordsDropAndEmitsNothing(t *testing.T) {
 		DBTLogURI: "s3://b/k",
 		Shadow:    true,
 	}
-	err := ClassifyFailure(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), ev)
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +194,7 @@ func TestClassifyFailure_NonShadowStillEmits(t *testing.T) {
 		DBTLogURI: "s3://b/k",
 		Shadow:    false,
 	}
-	err := ClassifyFailure(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), ev)
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +234,7 @@ func TestClassifyFailure_StructuredBranchWinsOverLog(t *testing.T) {
 		Clock:     fakeClock{},
 		Logger:    slog.Default(),
 	}
-	if err := ClassifyFailure(context.Background(), deps, ev); err != nil {
+	if err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
 	if len(u.dec.saved) != 1 || u.dec.saved[0].Category != failure.CategoryTest {
@@ -261,7 +271,7 @@ func TestClassifyFailure_MalformedRunResultsFallsBackToLog(t *testing.T) {
 		Clock:     fakeClock{},
 		Logger:    slog.Default(),
 	}
-	if err := ClassifyFailure(context.Background(), deps, ev); err != nil {
+	if err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
 	if len(u.dec.saved) != 1 || u.dec.saved[0].Category != failure.CategoryInfraTransient {
@@ -275,7 +285,7 @@ func TestClassifyFailure_MalformedRunResultsFallsBackToLog(t *testing.T) {
 func TestClassifyFailure_InfraDropsNoTrigger(t *testing.T) {
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n"}
-	err := ClassifyFailure(context.Background(), depsWith(u, "could not connect to database: connection refused", nil), ev)
+	err := ClassifyRejection(context.Background(), depsWith(u, "could not connect to database: connection refused", nil), []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +305,7 @@ func TestClassifyFailure_IdempotentSkipsTrigger(t *testing.T) {
 	// is a fresh insert (see TestClassifyFailure_DifferentRoundsBothInsertAndEmit).
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: false}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.n", RemediationRound: 1}
-	err := ClassifyFailure(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), ev)
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,11 +332,11 @@ func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 	}
 
 	ev.RemediationRound = 1
-	if err := ClassifyFailure(context.Background(), deps, ev); err != nil {
+	if err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
 	ev.RemediationRound = 2
-	if err := ClassifyFailure(context.Background(), deps, ev); err != nil {
+	if err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -352,8 +362,11 @@ func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 	if p1.EventID == p2.EventID {
 		t.Fatal("triggers from different rounds must have different event_id")
 	}
-	if p2.EventID != event.RemediationEventID("r1", "s.n", 2).String() {
-		t.Fatalf("second trigger event_id = %q, want RemediationEventID(r1,s.n,2)", p2.EventID)
+	if p1.EventID != event.RemediationEventID("r1", 1).String() {
+		t.Fatalf("first trigger event_id = %q, want RemediationEventID(r1,1)", p1.EventID)
+	}
+	if p2.EventID != event.RemediationEventID("r1", 2).String() {
+		t.Fatalf("second trigger event_id = %q, want RemediationEventID(r1,2)", p2.EventID)
 	}
 }
 
@@ -375,7 +388,7 @@ func TestClassifyFailure_SeedSourceFilePathIsEmpty(t *testing.T) {
 		CommitSHA: "abc123",
 		DBTLogURI: "s3://bucket/seed.log",
 	}
-	err := ClassifyFailure(context.Background(), depsWith(u, logText, nil), ev)
+	err := ClassifyRejection(context.Background(), depsWith(u, logText, nil), []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,11 +397,15 @@ func TestClassifyFailure_SeedSourceFilePathIsEmpty(t *testing.T) {
 	}
 	var p event.RemediationRequested
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
-	if p.FilePath != "" {
-		t.Fatalf("seed trigger must have empty file_path so agent routes via ancestry; got %q", p.FilePath)
+	if len(p.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(p.Nodes))
 	}
-	if p.NodeID != "analytics.seed_fx_rates_eur" {
-		t.Fatalf("node_id must be preserved, got %q", p.NodeID)
+	n := p.Nodes[0]
+	if n.FilePath != "" {
+		t.Fatalf("seed trigger must have empty file_path so agent routes via ancestry; got %q", n.FilePath)
+	}
+	if n.NodeID != "analytics.seed_fx_rates_eur" {
+		t.Fatalf("node_id must be preserved, got %q", n.NodeID)
 	}
 }
 
@@ -406,7 +423,7 @@ func TestClassifyFailure_CompileSourceThreadsFilePath(t *testing.T) {
 		CommitSHA: "def456",
 		DBTLogURI: "s3://bucket/compile.log",
 	}
-	err := ClassifyFailure(context.Background(), depsWith(u, logText, nil), ev)
+	err := ClassifyRejection(context.Background(), depsWith(u, logText, nil), []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,11 +437,15 @@ func TestClassifyFailure_CompileSourceThreadsFilePath(t *testing.T) {
 	}
 	var p event.RemediationRequested
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
-	if p.FilePath != "models/daily_transactions.sql" {
-		t.Fatalf("trigger payload file_path = %q, want %q", p.FilePath, "models/daily_transactions.sql")
+	if len(p.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(p.Nodes))
 	}
-	if p.NodeID != "svc.daily_transactions" {
-		t.Fatalf("trigger payload node_id = %q", p.NodeID)
+	n := p.Nodes[0]
+	if n.FilePath != "models/daily_transactions.sql" {
+		t.Fatalf("trigger payload file_path = %q, want %q", n.FilePath, "models/daily_transactions.sql")
+	}
+	if n.NodeID != "svc.daily_transactions" {
+		t.Fatalf("trigger payload node_id = %q", n.NodeID)
 	}
 }
 
@@ -456,7 +477,7 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 		Repo:          "owner/repo",
 		CommitSHA:     "abc123",
 	}
-	err := ClassifyFailure(context.Background(), deps, ev)
+	err := ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,25 +500,101 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	if p.Source != "duplicate_table" {
 		t.Fatalf("trigger source = %q, want duplicate_table", p.Source)
 	}
-	if p.NodeID != "analytics.orders_v2" {
-		t.Fatalf("trigger node_id = %q, want analytics.orders_v2", p.NodeID)
+	if len(p.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(p.Nodes))
 	}
-	if p.RelationID != "analytics.orders" {
-		t.Fatalf("trigger relation_id = %q, want analytics.orders", p.RelationID)
+	n := p.Nodes[0]
+	if n.NodeID != "analytics.orders_v2" {
+		t.Fatalf("trigger node_id = %q, want analytics.orders_v2", n.NodeID)
 	}
-	if p.Service != "marketing" {
-		t.Fatalf("trigger service = %q, want marketing", p.Service)
+	if n.RelationID != "analytics.orders" {
+		t.Fatalf("trigger relation_id = %q, want analytics.orders", n.RelationID)
 	}
-	if p.FilePath != "models/orders.sql" {
-		t.Fatalf("trigger file_path = %q, want models/orders.sql", p.FilePath)
+	if n.Service != "marketing" {
+		t.Fatalf("trigger service = %q, want marketing", n.Service)
 	}
-	if p.NodeType != "dbt-model" {
-		t.Fatalf("trigger node_type = %q, want dbt-model", p.NodeType)
+	if n.FilePath != "models/orders.sql" {
+		t.Fatalf("trigger file_path = %q, want models/orders.sql", n.FilePath)
 	}
-	if p.OtherService != "marketing" {
-		t.Fatalf("trigger other_service = %q, want marketing", p.OtherService)
+	if n.NodeType != "dbt-model" {
+		t.Fatalf("trigger node_type = %q, want dbt-model", n.NodeType)
 	}
-	if p.OtherFilePath != "models/orders_legacy.sql" {
-		t.Fatalf("trigger other_file_path = %q, want models/orders_legacy.sql", p.OtherFilePath)
+	if n.OtherService != "marketing" {
+		t.Fatalf("trigger other_service = %q, want marketing", n.OtherService)
+	}
+	if n.OtherFilePath != "models/orders_legacy.sql" {
+		t.Fatalf("trigger other_file_path = %q, want models/orders_legacy.sql", n.OtherFilePath)
+	}
+}
+
+func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	base := failure.FailureEvidence{
+		Source: failure.SourceValidation, ReleaseID: "r1", Repo: "o/r", CommitSHA: "abc",
+		DBTLogURI: "s3://b/k", CodeBundleURI: "s3://b/code-bundles/r1/bundle.json",
+	}
+	a, b := base, base
+	anc := []failure.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc"}}
+	a.NodeID, a.ChangedAncestors = "s.a", anc
+	b.NodeID, b.ChangedAncestors = "s.b", anc
+
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.dec.saved) != 2 {
+		t.Fatalf("both nodes must get a decision row, got %d", len(u.dec.saved))
+	}
+	if len(u.ob.entries) != 1 {
+		t.Fatalf("one rejected release emits ONE trigger, got %d", len(u.ob.entries))
+	}
+	if u.ob.entries[0].StreamName != streams.RemediationRequestedV2 {
+		t.Fatalf("stream = %q", u.ob.entries[0].StreamName)
+	}
+	var p event.RemediationRequested
+	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	if p.EventID != event.RemediationEventID("r1", 1).String() || p.ReleaseID != "r1" || p.Source != "validation" {
+		t.Fatalf("bad batch header: %+v", p)
+	}
+	if len(p.Nodes) != 2 || p.Nodes[0].NodeID != "s.a" || p.Nodes[1].NodeID != "s.b" {
+		t.Fatalf("nodes must be carried in evidence order: %+v", p.Nodes)
+	}
+	if len(p.Nodes[0].ChangedAncestors) != 1 || p.Nodes[0].ChangedAncestors[0].NodeID != "s.u" ||
+		p.Nodes[0].ChangedAncestors[0].FilePath != "models/u.sql" || p.Nodes[0].ChangedAncestors[0].Service != "svc" {
+		t.Fatalf("changed ancestors must travel onto the trigger with their candidate location: %+v", p.Nodes[0])
+	}
+	if p.Nodes[0].ErrorSignature == "" || p.Nodes[0].ErrorSignature != p.Nodes[1].ErrorSignature {
+		t.Fatalf("same error line must yield the same signature on both nodes: %+v", p.Nodes)
+	}
+}
+
+func TestClassifyRejection_OnlyNewlyRecordedEmitNodesAreCarried(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{insertedByNode: map[string]bool{"s.a": false, "s.b": true}}, ob: &fakeOutbox{}}
+	base := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", DBTLogURI: "s3://b/k"}
+	a, b := base, base
+	a.NodeID, b.NodeID = "s.a", "s.b"
+
+	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p event.RemediationRequested
+	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
+	if len(p.Nodes) != 1 || p.Nodes[0].NodeID != "s.b" {
+		t.Fatalf("a node already recorded must not be re-emitted: %+v", p.Nodes)
+	}
+}
+
+func TestClassifyRejection_NoEmitDecisionsWritesNoTrigger(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: false}, ob: &fakeOutbox{}}
+	ev := failure.FailureEvidence{Source: failure.SourceValidation, ReleaseID: "r1", NodeID: "s.a", DBTLogURI: "s3://b/k"}
+	if err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev}); err != nil {
+		t.Fatal(err)
+	}
+	if len(u.ob.entries) != 0 {
+		t.Fatal("a redelivered rejection must not re-emit")
+	}
+	if !u.committed {
+		t.Fatal("decisions are still committed")
 	}
 }

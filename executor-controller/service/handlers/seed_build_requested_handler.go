@@ -41,15 +41,19 @@ func (h *SeedBuildRequestedHandler) Handle(
 	now := time.Now()
 	for _, s := range evt.Seeds {
 		cmd := command.ValidationDeployTask{
-			ReleaseID:   evt.ReleaseID,
-			NodeID:      s.NodeID,
-			ServiceName: s.ServiceName,
-			SchemaName:  s.SchemaName,
-			TableName:   s.TableName,
-			NodeType:    string(s.NodeType),
-			ImageTag:    s.ImageTag,
-			JobName:     BuildValidationJobName(evt.ReleaseID, s.NodeID),
+			ReleaseID:       evt.ReleaseID,
+			NodeID:          s.NodeID,
+			ServiceName:     s.ServiceName,
+			SchemaName:      s.SchemaName,
+			TableName:       s.TableName,
+			NodeType:        string(s.NodeType),
+			ImageTag:        s.ImageTag,
+			JobName:         BuildValidationJobName(evt.ReleaseID, s.NodeID),
 			CandidateSchema: evt.CandidateSchema,
+			// A shadow release verifying a proposed fix carries the overlay of
+			// proposed source files; the seed Job lays it over the checked-in
+			// project so `dbt seed` loads the proposed CSV.
+			SourceOverlayURI: evt.SourceOverlayURI,
 			// Seed-build tasks have no SQL URI, upstreams, validation op, or prod schema.
 		}
 		var procID *uuid.UUID
