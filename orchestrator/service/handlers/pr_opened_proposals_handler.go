@@ -71,22 +71,29 @@ func (h *PrOpenedProposalsHandler) Handle(
 		return nil
 	}
 
-	p := casebase.Proposal{
-		ProposalID: in.ProposalID,
-		ReleaseID:  in.ReleaseID,
-		NodeID:     in.NodeID,
-		PrURL:      in.PrURL,
-		PrNumber:   in.PrNumber,
-		PrState:    "open",
-		OpenedBy:   in.OpenedBy,
-		OpenedAt:   openedAt,
-	}
-	if err := h.caseBase.RecordProposal(ctx, p); err != nil {
-		return fmt.Errorf("record proposal %s/%s: %w", in.ReleaseID, in.NodeID, err)
+	// One PR fixes every node it resolves, so each of those nodes gets its own
+	// :Proposal attached to its own rejection. Recording only the representative
+	// node would leave the rest of a batched fix's rejections without a PROPOSED
+	// edge, and precedent for them would stop reporting the fix PR.
+	resolved := in.ResolvedNodes()
+	for _, nodeID := range resolved {
+		p := casebase.Proposal{
+			ProposalID: in.ProposalID,
+			ReleaseID:  in.ReleaseID,
+			NodeID:     nodeID,
+			PrURL:      in.PrURL,
+			PrNumber:   in.PrNumber,
+			PrState:    "open",
+			OpenedBy:   in.OpenedBy,
+			OpenedAt:   openedAt,
+		}
+		if err := h.caseBase.RecordProposal(ctx, p); err != nil {
+			return fmt.Errorf("record proposal %s/%s: %w", in.ReleaseID, nodeID, err)
+		}
 	}
 
 	h.logger.Info("proposal recorded in case base",
-		"release_id", in.ReleaseID, "node_id", in.NodeID,
+		"release_id", in.ReleaseID, "node_ids", resolved,
 		"proposal_id", in.ProposalID, "pr_url", in.PrURL)
 	return h.complete(ctx, msgProcessingID)
 }

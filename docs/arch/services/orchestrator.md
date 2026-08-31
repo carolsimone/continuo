@@ -230,7 +230,7 @@ Goroutines started in `main.go` run for the process lifetime:
 | `release.promoted:v1` | `orchestrator-release-promoted-versions` | `ReleasePromotedVersionsHandler` — reads the release's code-bundle document from S3 and records the `:NodeVersion` / `:CodeUnitVersion` history behind the topology via `CodeVersionRepository.WriteVersions`; no outbox emission |
 | `trigger.promoted_seeds:v1` | `orchestrator-promoted-seeds` | `HandlePromotedSeedsRunHandler` — projects the run `state` created for a promoted release. Snapshots with the `NodeSet` selector over the seeds named on the message, then emits one `run.entries.dispatched:v1` carrying every task and one `query.model:v1` per task |
 | `remediation.requested:v2` | `orchestrator-remediation-requested-rejections` | `RemediationRequestedRejectionsHandler` — one message per rejected release carries the whole healable failing set; loops `nodes[]` and records each classified failure as a `:Rejection`, linking its `:ErrorSignature` hub, anchoring `[:FAILED]` to the node's `:Table` when one exists, and back-linking `[:RESOLVED_BY]` to an already-promoted version when the fix landed first; no outbox emission |
-| `remediation.pr_opened:v1` | `orchestrator-remediation-pr-opened-proposals` | `PrOpenedProposalsHandler` — records each opened fix PR as a `:Proposal` and links it from its `:Rejection` via `[:PROPOSED]` (MERGing a stub `:Rejection` first when the PR arrives ahead of the rejection); no outbox emission |
+| `remediation.pr_opened:v1` | `orchestrator-remediation-pr-opened-proposals` | `PrOpenedProposalsHandler` — records each opened fix PR as a `:Proposal` and links it via `[:PROPOSED]` from the `:Rejection` of every node in `resolved_node_ids` (falling back to `node_id` when the payload carries none), MERGing a stub `:Rejection` first when the PR arrives ahead of a rejection; no outbox emission |
 
 Each consumer is wired as a `parser → handler` binding under `adapters/redis/`: the parser extracts and validates the message's scalar fields defensively and returns an `events.ErrPermanent`-wrapped error on any malformed field (missing/non-string value, bad UUID, or cross-field rule violation), which the stream consumer ACKs and drops so a single poison message cannot crash-loop the process.
 
@@ -522,8 +522,8 @@ Consumes `remediation.requested:v2` on the case-base group (`orchestrator-remedi
 Consumes `remediation.pr_opened:v1` on the case-base group (`orchestrator-remediation-pr-opened-proposals`) and records each opened fix PR as a `:Proposal`. No outbox entry is produced.
 
 1. Dedup on `message_processing`, scoped by the consumer-group name.
-2. Parses `proposal_id`, `release_id`, `node_id` (all required) and `opened_at` (RFC3339).
-3. `CaseBaseRepository.RecordProposal` MERGEs a `:Rejection` stub for `(release_id, node_id)` when one does not already exist (`stub: true`, `at` = this PR's `opened_at` as an approximation until the real rejection lands and corrects it), MERGEs the `:Proposal` (`pr_state: "open"` on create), and links it `[:PROPOSED]` from the rejection.
+2. Parses `proposal_id`, `release_id`, `node_id` (all required), `resolved_node_ids` (optional), and `opened_at` (RFC3339).
+3. One PR fixes a whole failing set, so the handler records a proposal for **every node in `resolved_node_ids`** — falling back to the single `node_id` when the payload carries no resolved set. For each node, `CaseBaseRepository.RecordProposal` MERGEs a `:Rejection` stub for `(release_id, node_id)` when one does not already exist (`stub: true`, `at` = this PR's `opened_at` as an approximation until the real rejection lands and corrects it), MERGEs the `:Proposal` on `proposal_id` (`pr_state: "open"` on create), and links it `[:PROPOSED]` from that rejection. The `:Proposal` is therefore a single node with one `[:PROPOSED]` edge per node it fixes, so precedent for every one of them reports the fix PR.
 
 ## Background Loops
 

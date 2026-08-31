@@ -100,3 +100,45 @@ func TestProposalsHandler_DedupSkips(t *testing.T) {
 	require.NoError(t, handler.Handle(context.Background(), "1-0", nil, prOpenedInput()))
 	assert.Len(t, repo.recordProposalCalls, 1, "a redelivered message must not re-record")
 }
+
+// TestProposalsHandler_RecordsOneProposalPerResolvedNode verifies that a batched
+// fix PR — one PR resolving several failing nodes — records a :Proposal for
+// every node it resolves. Recording only the representative node would leave
+// the other rejections without a PROPOSED edge, so precedent for them would
+// stop reporting that a fix PR was ever opened.
+func TestProposalsHandler_RecordsOneProposalPerResolvedNode(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	repo := &fakeCaseBaseRepository{}
+
+	in := prOpenedInput()
+	in.ResolvedNodeIDs = []string{"analytics.revenue", "analytics.margin"}
+
+	require.NoError(t, newProposalsHandler(uow, repo).Handle(context.Background(), "1-0", nil, in))
+
+	require.Len(t, repo.recordProposalCalls, 2)
+	nodes := []string{repo.recordProposalCalls[0].NodeID, repo.recordProposalCalls[1].NodeID}
+	assert.ElementsMatch(t, []string{"analytics.revenue", "analytics.margin"}, nodes)
+	for _, p := range repo.recordProposalCalls {
+		assert.Equal(t, "prop-1", p.ProposalID, "every node shares the one PR's proposal id")
+		assert.Equal(t, "rel-1", p.ReleaseID)
+		assert.Equal(t, "https://github.com/org/repo/pull/42", p.PrURL)
+		assert.Equal(t, 42, p.PrNumber)
+		assert.Equal(t, "open", p.PrState)
+		assert.Equal(t, "agent-remediation", p.OpenedBy)
+	}
+	assert.True(t, uow.CommittedTx)
+}
+
+// TestProposalsHandler_EmptyResolvedNodeIDsFallsBackToNodeID verifies a payload
+// without resolved_node_ids — one emitted before the field existed — still
+// records exactly the one proposal for its node_id.
+func TestProposalsHandler_EmptyResolvedNodeIDsFallsBackToNodeID(t *testing.T) {
+	uow := newFakeUnitOfWork()
+	repo := &fakeCaseBaseRepository{}
+
+	in := prOpenedInput() // no ResolvedNodeIDs
+	require.NoError(t, newProposalsHandler(uow, repo).Handle(context.Background(), "1-0", nil, in))
+
+	require.Len(t, repo.recordProposalCalls, 1)
+	assert.Equal(t, "analytics.revenue", repo.recordProposalCalls[0].NodeID)
+}
