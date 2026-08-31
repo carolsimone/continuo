@@ -522,7 +522,7 @@ sequenceDiagram
     Note over RC: Reject(validation_failed) using stored per-node results<br/>emit release.rejected:v1 {release_id, stage="validation", reason, failing_nodes,<br/>per_node[{node_id,status,dbt_log_uri,run_results_uri,candidate_artifact_uri,<br/>node_type,file_path,service}], repo, commit_sha,<br/>code_bundle_uri}
     RC->>R: publish release.rejected:v1
     R->>RM: consume release.rejected:v1
-    Note over RM: stage="validation" → SourceValidation — node_type/file_path/service/changed_ancestor_ids carried directly from the payload<br/>classify EVERY failed node + emit ONE remediation.requested:v2 carrying them all (forwarded verbatim — the agent falls back to orchestrator GetNodeLocation only when file_path is absent)
+    Note over RM: stage="validation" → SourceValidation — node_type/file_path/service/changed_ancestors carried directly from the payload<br/>classify EVERY failed node + emit ONE remediation.requested:v2 carrying them all (forwarded verbatim — the agent falls back to orchestrator GetNodeLocation only when file_path is absent)
   end
   Note over RC: advance FIFO queue
 
@@ -572,7 +572,7 @@ sequenceDiagram
 
 One rejected release is one unit of remediation. However many nodes it failed on, the classifier emits **one** trigger, the agent produces **one** attempt, and a human reviews **one** pull request. And no fix is offered for review until a real release has run it: every attempt ends by submitting a **shadow release** per edited service — a real release that runs parse → candidate-schema → validation and then stops at the terminal `validated` status instead of promoting.
 
-Two facts make the batching more than bookkeeping. `release.rejected:v1` stamps each failing node's `changed_ancestor_ids` — the ancestors this release changed that the failure descends from — so the agent can see that several failures share one cause. And the classifier's `error_signature` ignores the database's echoed `LINE n: <statement>`, so two siblings broken by the same upstream change sign identically instead of being keyed on the relation each of them happened to be building. Together they let one edit, to a node that may never have failed, resolve several failures.
+Two facts make the batching more than bookkeeping. `release.rejected:v1` stamps each failing node's `changed_ancestors` — the ancestors this release changed that the failure descends from, each with the file path and service this candidate declares — so the agent can see that several failures share one cause, and can edit that ancestor where THIS release holds it rather than where the promoted graph still places it. And the classifier's `error_signature` ignores the database's echoed `LINE n: <statement>`, so two siblings broken by the same upstream change sign identically instead of being keyed on the relation each of them happened to be building. Together they let one edit, to a node that may never have failed, resolve several failures.
 
 ```mermaid
 sequenceDiagram
@@ -585,7 +585,7 @@ sequenceDiagram
   participant S3 as S3
 
   Note over RC: a release fails validation on several nodes (Flow 11)
-  RC->>RM: release.rejected:v1 { stage=validation, shadow=false,<br/>per_node[node_id, node_type, service, file_path,<br/>changed_ancestor_ids] }
+  RC->>RM: release.rejected:v1 { stage=validation, shadow=false,<br/>per_node[node_id, node_type, service, file_path,<br/>changed_ancestors{node_id,file_path,service}] }
   Note over RM: classify EVERY failing node, record one classification_decision each,<br/>then emit ONE trigger for the whole healable set
   RM->>RA: remediation.requested:v2 { release_id, remediation_round, repo,<br/>commit_sha, code_bundle_uri, nodes[...] }
   RM->>OR: (same message, case-base group) one :Rejection per node in the batch

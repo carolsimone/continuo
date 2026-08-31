@@ -71,10 +71,36 @@ type rejectedPayload struct {
 		// nothing.
 		OtherService  string `json:"other_service"`
 		OtherFilePath string `json:"other_file_path"`
-		// ChangedAncestorIDs are the node's changed transitive ancestors,
-		// stamped by release-controller from the candidate topology.
-		ChangedAncestorIDs []string `json:"changed_ancestor_ids"`
+		// ChangedAncestors are the node's changed transitive ancestors, stamped
+		// by release-controller from the candidate topology, each with the file
+		// path and service THAT topology declares for it — the location an
+		// upstream fix must edit, which for a node this release renamed or moved
+		// is not where the promoted graph places it.
+		ChangedAncestors []changedAncestorPayload `json:"changed_ancestors"`
 	} `json:"per_node"`
+}
+
+// changedAncestorPayload is one entry of a per_node entry's changed_ancestors
+// array: the changed upstream's id plus the file path and service the rejected
+// release's candidate topology declares for it.
+type changedAncestorPayload struct {
+	NodeID   string `json:"node_id"`
+	FilePath string `json:"file_path"`
+	Service  string `json:"service"`
+}
+
+// changedAncestors projects the decoded changed ancestors onto the domain
+// evidence, preserving the payload's order (release-controller sorts them by
+// id).
+func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]failure.ChangedAncestor, 0, len(in))
+	for _, a := range in {
+		out = append(out, failure.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service})
+	}
+	return out
 }
 
 // sourceFromPayload resolves the remediation Source from a release.rejected
@@ -158,7 +184,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			CommitSHA:            p.CommitSHA,
 			CodeBundleURI:        p.CodeBundleURI,
 			Shadow:               p.Shadow,
-			ChangedAncestorIDs:   n.ChangedAncestorIDs,
+			ChangedAncestors:     changedAncestors(n.ChangedAncestors),
 		})
 	}
 	return out, nil

@@ -252,8 +252,10 @@ type remediationRequestedPayload struct {
 }
 
 // remediationNodeEntry is one failing node inside a batched trigger.
-// ChangedAncestorIDs is what lets the agent group several failures that share
-// one changed ancestor into a single upstream fix.
+// ChangedAncestors is what lets the agent group several failures that share one
+// changed ancestor into a single upstream fix, and — because each entry carries
+// the location the rejected release's candidate declares — edit that ancestor
+// where THIS release holds it.
 type remediationNodeEntry struct {
 	NodeID         string `json:"node_id"`
 	Category       string `json:"category"`
@@ -261,9 +263,27 @@ type remediationNodeEntry struct {
 	// ErrorExcerpt is the key error line the signature was folded from. It is
 	// what makes a signature mismatch between two nodes diagnosable: the hashes
 	// themselves say only that they differ, the excerpts say why.
-	ErrorExcerpt       string   `json:"error_excerpt"`
-	DBTLogURI          string   `json:"dbt_log_uri"`
-	ChangedAncestorIDs []string `json:"changed_ancestor_ids"`
+	ErrorExcerpt     string                 `json:"error_excerpt"`
+	DBTLogURI        string                 `json:"dbt_log_uri"`
+	ChangedAncestors []changedAncestorEntry `json:"changed_ancestors"`
+}
+
+// changedAncestorEntry is one changed upstream of a failing node, with the file
+// path and service the rejected release's candidate topology declares for it.
+type changedAncestorEntry struct {
+	NodeID   string `json:"node_id"`
+	FilePath string `json:"file_path"`
+	Service  string `json:"service"`
+}
+
+// ancestorIDs is the entry's changed-ancestor ids, for assertions that only
+// care which ancestors were named.
+func (n remediationNodeEntry) ancestorIDs() []string {
+	ids := make([]string, 0, len(n.ChangedAncestors))
+	for _, a := range n.ChangedAncestors {
+		ids = append(ids, a.NodeID)
+	}
+	return ids
 }
 
 // findNode returns the trigger's entry for a node id, and whether it is

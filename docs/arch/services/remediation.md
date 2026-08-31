@@ -211,7 +211,7 @@ Both streams decode to the identical payload shape — `remediation.retry_reques
         (source, release_id, remediation_round, repo, commit_sha,
         code_bundle_uri, shadow, classified_at) taken from the first batched
         node's evidence, plus one nodes[] entry per batched node carrying its
-        own classification, pointers, source location, and changed_ancestor_ids.
+        own classification, pointers, source location, and changed_ancestors.
         It stays pointer-first: the full log stays behind each node's
         dbt_log_uri and the failing code behind code_bundle_uri, with only the
         capped error_excerpt inline.
@@ -265,7 +265,7 @@ Per-node fields (`nodes[]`):
 | `node_type` | The failing node's kind (`dbt-model`, `dbt-seed`, `dbt-snapshot`, `python-model`, or `python-csv`), threaded from `per_node[].node_type`. Non-empty for validation and duplicate_table failures. It is what lets the agent decide a python node's handling without a topology lookup of its own: a validation failure on a `python-model` node routes to the python contract fixer and on a `python-csv` node to its own dedicated contract fixer — both repair the yaml declaring the node and verify the repair with a shadow release — while the duplicate-table fixer skips either python kind outright because its relation is declared in the service's contract.yaml, not in `file_path`. Empty for compile and seed_build. |
 | `other_service` | Duplicate_table only: the competing claimant's service name — the node that also produces the contested relation (`relation_id`). Empty for every other source. |
 | `other_file_path` | Duplicate_table only: the competing claimant's file path. Carried alongside `other_service` because two nodes in the *same* service can collide, where the service name alone identifies nothing. Empty for every other source. |
-| `changed_ancestor_ids` | The node's transitive upstream ancestors — across service boundaries — whose content changed in this release, sorted, stamped by release-controller from the candidate topology (`release.ChangedAncestors`). The node itself is never listed. This is what lets the agent group nodes broken by one upstream change and repair that ancestor once instead of once per victim. Empty for a node with no changed ancestor, and absent for a compile-stage rejection, which has no per-node topology. |
+| `changed_ancestors` | The node's transitive upstream ancestors — across service boundaries — whose content changed in this release, sorted by id, stamped by release-controller from the candidate topology (`release.ChangedAncestors`). Each entry is `{node_id, file_path, service}`: the id the agent groups on, plus the location THIS release's candidate declares for the ancestor, which is the file an upstream fix edits — an ancestor the release renamed or moved is still at its old path in the promoted graph. The node itself is never listed. This is what lets the agent group nodes broken by one upstream change and repair that ancestor once instead of once per victim. Empty for a node with no changed ancestor, and absent for a compile-stage rejection, which has no per-node topology. |
 
 ## Consumer Reliability
 

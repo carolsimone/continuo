@@ -211,29 +211,44 @@ func UnbuildableCrossServiceUpstreams(candidate Topology, nodeIDs []string) []Cr
 	return out
 }
 
+// ChangedAncestor is one upstream node of a failing node whose content changed
+// in this release, carrying the location THIS candidate declares for it. The
+// location travels with the id because a fix has to edit the file the candidate
+// holds the node in: an ancestor renamed or moved in this release still sits at
+// its old path in the promoted graph, so resolving the id there would send the
+// fix to a file that no longer holds the node.
+type ChangedAncestor struct {
+	NodeID   string
+	FilePath string
+	Service  string
+}
+
 // ChangedAncestors returns the transitive upstream ancestors of nodeID — across
-// service boundaries — that are in changed, sorted by id. nodeID itself is
+// service boundaries — that are in changed, sorted by id, each with the file
+// path and service the candidate topology declares for it. nodeID itself is
 // never included even when it changed, and an unknown node yields nil. It
 // tells a remediation which changed nodes upstream of a failing node could be
-// the root cause of its failure.
-func ChangedAncestors(topo Topology, nodeID string, changed map[string]bool) []string {
-	known := false
+// the root cause of its failure, and where to edit them.
+func ChangedAncestors(topo Topology, nodeID string, changed map[string]bool) []ChangedAncestor {
+	byID := make(map[string]Node, len(topo))
 	for _, n := range topo {
-		if n.UniqueID == nodeID {
-			known = true
-			break
-		}
+		byID[n.UniqueID] = n
 	}
-	if !known {
+	if _, known := byID[nodeID]; !known {
 		return nil
 	}
-	var out []string
+	var out []ChangedAncestor
 	for _, id := range FullAncestorsClosure(topo, []string{nodeID}) {
-		if id != nodeID && changed[id] {
-			out = append(out, id)
+		if id == nodeID || !changed[id] {
+			continue
 		}
+		out = append(out, ChangedAncestor{
+			NodeID:   id,
+			FilePath: byID[id].OriginalFilePath,
+			Service:  byID[id].ServiceName,
+		})
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
 	return out
 }
 

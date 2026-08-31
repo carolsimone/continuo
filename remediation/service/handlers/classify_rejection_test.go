@@ -534,8 +534,9 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 		DBTLogURI: "s3://b/k", CodeBundleURI: "s3://b/code-bundles/r1/bundle.json",
 	}
 	a, b := base, base
-	a.NodeID, a.ChangedAncestorIDs = "s.a", []string{"s.u"}
-	b.NodeID, b.ChangedAncestorIDs = "s.b", []string{"s.u"}
+	anc := []failure.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc"}}
+	a.NodeID, a.ChangedAncestors = "s.a", anc
+	b.NodeID, b.ChangedAncestors = "s.b", anc
 
 	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{a, b})
 	if err != nil {
@@ -558,8 +559,9 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 	if len(p.Nodes) != 2 || p.Nodes[0].NodeID != "s.a" || p.Nodes[1].NodeID != "s.b" {
 		t.Fatalf("nodes must be carried in evidence order: %+v", p.Nodes)
 	}
-	if len(p.Nodes[0].ChangedAncestorIDs) != 1 || p.Nodes[0].ChangedAncestorIDs[0] != "s.u" {
-		t.Fatalf("changed ancestors must travel onto the trigger: %+v", p.Nodes[0])
+	if len(p.Nodes[0].ChangedAncestors) != 1 || p.Nodes[0].ChangedAncestors[0].NodeID != "s.u" ||
+		p.Nodes[0].ChangedAncestors[0].FilePath != "models/u.sql" || p.Nodes[0].ChangedAncestors[0].Service != "svc" {
+		t.Fatalf("changed ancestors must travel onto the trigger with their candidate location: %+v", p.Nodes[0])
 	}
 	if p.Nodes[0].ErrorSignature == "" || p.Nodes[0].ErrorSignature != p.Nodes[1].ErrorSignature {
 		t.Fatalf("same error line must yield the same signature on both nodes: %+v", p.Nodes)

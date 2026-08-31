@@ -152,9 +152,9 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	for _, nodeID := range []string{ftableEUniqueID, ftableKUniqueID} {
 		node, ok := trigger.findNode(nodeID)
 		require.True(t, ok, "trigger must carry an entry for %s", nodeID)
-		require.Empty(t, node.ChangedAncestorIDs,
+		require.Empty(t, node.ChangedAncestors,
 			"%s fails on its own body, not below a changed ancestor, so it must name none; got %v",
-			nodeID, node.ChangedAncestorIDs)
+			nodeID, node.ChangedAncestors)
 		require.NotEmpty(t, node.ErrorSignature, "%s must carry an error_signature", nodeID)
 	}
 	t.Logf("✅ one remediation.requested:v2 carries both independent failures")
@@ -308,9 +308,11 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
 
 	// 2. Place the changed ancestor in the graph. The upstream fixer edits a node
-	//    that never failed, so the trigger carries no location for it — it is
-	//    found through GetNodeLocation, and without this seed the cluster is
-	//    skipped and each descendant is repaired in its own source instead.
+	//    that never failed; its location now travels on the trigger (each failing
+	//    node's changed_ancestors carry the path THIS candidate declares), and the
+	//    promoted graph is only the fallback for a rejection that carries none.
+	//    The node is still seeded so the graph the fixer's other reads consult
+	//    knows the ancestor at all.
 	seedModelTopologyNodes(t, ctx, clients, topologyModel{
 		uniqueID: ftableUUniqueID, schema: "e2e_schema", table: "ftable_u",
 		service: changedService, filePath: "models/ftable_u.sql",
@@ -352,8 +354,11 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	require.Len(t, trigger.Nodes, 2,
 		"the trigger must carry exactly the two failing descendants; got %v", triggerNodeIDs(trigger))
 	for _, n := range []remediationNodeEntry{vNode, wNode} {
-		require.Equal(t, []string{ftableUUniqueID}, n.ChangedAncestorIDs,
+		require.Equal(t, []string{ftableUUniqueID}, n.ancestorIDs(),
 			"%s failed below the one node this release changed, so the trigger must say so", n.NodeID)
+		require.Equal(t, "models/ftable_u.sql", n.ChangedAncestors[0].FilePath,
+			"the ancestor must carry the path THIS candidate declares — the file the upstream fix edits")
+		require.Equal(t, changedService, n.ChangedAncestors[0].Service, "the ancestor's owning service")
 	}
 	t.Logf("✅ one remediation.requested:v2 names %s as the shared cause of both failures", ftableUUniqueID)
 

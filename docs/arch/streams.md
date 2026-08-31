@@ -139,7 +139,7 @@ request downstream. Release-level fields (`source`, `release_id`,
 `category`, `error_signature`, `reason`, `error_excerpt` (the classifier's key
 error line, capped at 4 KiB), `dbt_log_uri`, `candidate_artifact_uri`,
 `file_path`/`service`/`node_type`, the duplicate-relation fields, and
-`changed_ancestor_ids`. The payload stays pointer-first — the full log lives
+`changed_ancestors` (each `{node_id, file_path, service}`). The payload stays pointer-first — the full log lives
 behind each node's `dbt_log_uri` and the failing code behind
 `code_bundle_uri` (threaded from `release.rejected:v1`'s top-level
 `code_bundle_uri`; empty for compile-stage rejections, which precede the parse
@@ -150,8 +150,11 @@ inline. `agent-remediation` decodes all of it: `reason`, together with
 exact `error_signature` has no recorded match; `code_bundle_uri` is the
 validation fixer's primary source for a failing node's real code (falling back
 to a GitHub repo read only on a permanent bundle miss); and
-`changed_ancestor_ids` is what lets it group same-signature failures that
-descend from one changed ancestor and repair that ancestor once. `file_path`
+`changed_ancestors` is what lets it group same-signature failures that
+descend from one changed ancestor and repair that ancestor once — and each
+entry's `file_path`/`service` are the location the REJECTED release's candidate
+declares for the ancestor, which is the file the fix edits: an ancestor this
+release renamed or moved still sits at its old path in the promoted graph. `file_path`
 is derived from the dbt log for `compile` sources and threaded from the
 candidate topology for `seed_build`, `validation`, and `duplicate_table`; an
 absent one falls back to the orchestrator's `GetNodeLocation` RPC. See

@@ -892,14 +892,15 @@ func TestHandleValidationResult_Promote_EmitsTestCount(t *testing.T) {
 	assert.Equal(t, 3, p.Topology[0].TestCount, "release.promoted:v1 must carry per-node test_count")
 }
 
-// TestHandleValidationResult_Rejected_CarriesChangedAncestorIDs verifies that
+// TestHandleValidationResult_Rejected_CarriesChangedAncestors verifies that
 // each failing node's rejected per_node entry names its transitive candidate
-// ancestors whose content changed against production. The seeded topology is
-// rewired so "b" depends on "a", and current_prod is seeded with a stale hash
-// for "a" so it counts as changed; "b" then fails validation and must carry
-// "a" as its changed_ancestor_ids, while "a" itself (which has no ancestors)
-// must carry none.
-func TestHandleValidationResult_Rejected_CarriesChangedAncestorIDs(t *testing.T) {
+// ancestors whose content changed against production, each with the location
+// THIS candidate declares for it. The seeded topology is rewired so "b" depends
+// on "a", and current_prod is seeded with a stale hash for "a" so it counts as
+// changed; "b" then fails validation and must carry "a" — path and service
+// included — as its changed_ancestors, while "a" itself (which has no
+// ancestors) must carry none.
+func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 	deps, store := seedToValidatingWithURIs(t, "rAnc")
 	// Rewire the seeded candidate topology so b depends on a, and record a
 	// current-prod snapshot where a's content differs: a is the changed
@@ -960,16 +961,28 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestorIDs(t *testing.T)
 	require.Equal(t, streams.ReleaseRejectedV1, rej.StreamName)
 	var payload struct {
 		PerNode []struct {
-			NodeID             string   `json:"node_id"`
-			ChangedAncestorIDs []string `json:"changed_ancestor_ids"`
+			NodeID           string `json:"node_id"`
+			ChangedAncestors []struct {
+				NodeID   string `json:"node_id"`
+				FilePath string `json:"file_path"`
+				Service  string `json:"service"`
+			} `json:"changed_ancestors"`
 		} `json:"per_node"`
 	}
 	require.NoError(t, json.Unmarshal(rej.Payload, &payload))
-	byID := map[string][]string{}
+	byID := map[string][]struct {
+		NodeID   string `json:"node_id"`
+		FilePath string `json:"file_path"`
+		Service  string `json:"service"`
+	}{}
 	for _, pn := range payload.PerNode {
-		byID[pn.NodeID] = pn.ChangedAncestorIDs
+		byID[pn.NodeID] = pn.ChangedAncestors
 	}
-	assert.Equal(t, []string{"a"}, byID["b"], "b's changed ancestor is a")
+	require.Len(t, byID["b"], 1, "b's changed ancestor is a")
+	assert.Equal(t, "a", byID["b"][0].NodeID)
+	assert.Equal(t, "models/a.sql", byID["b"][0].FilePath,
+		"the ancestor carries the path THIS candidate declares, which is the file a fix must edit")
+	assert.Equal(t, "svc-a", byID["b"][0].Service)
 	assert.Empty(t, byID["a"], "a has no changed ancestors")
 }
 

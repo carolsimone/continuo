@@ -70,8 +70,21 @@ type FailureEvidence struct {
 	// is never invisible) but must not enqueue a remediation trigger for it,
 	// or a failed fix attempt would trigger a remediation of itself.
 	Shadow bool
-	// ChangedAncestorIDs are the node's changed transitive ancestors in the
-	// rejected release, as release-controller stamped them; forwarded onto the
-	// trigger so the agent can group failures by shared root cause.
-	ChangedAncestorIDs []string
+	// ChangedAncestors are the node's changed transitive ancestors in the
+	// rejected release, as release-controller stamped them, each with the
+	// location THIS release's candidate topology declares for it; forwarded onto
+	// the trigger so the agent can group failures by shared root cause and edit
+	// the ancestor where the candidate actually holds it.
+	ChangedAncestors []ChangedAncestor
+}
+
+// ChangedAncestor is one upstream node of a failing node whose content changed
+// in the rejected release. The location travels with the id because an upstream
+// fix has to edit the file the candidate declares: an ancestor renamed or moved
+// in this release still sits at its old path in the promoted graph, so
+// resolving the id there would edit a file that no longer holds the node.
+type ChangedAncestor struct {
+	NodeID   string
+	FilePath string
+	Service  string
 }

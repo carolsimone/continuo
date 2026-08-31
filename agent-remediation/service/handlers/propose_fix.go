@@ -283,7 +283,11 @@ func groupClusters(t Trigger) []typology.Cluster {
 			Category:       n.Category,
 			Reason:         n.Reason,
 		})
-		dag.ChangedAncestorsByNode[n.NodeID] = n.ChangedAncestorIDs
+		ids := make([]string, 0, len(n.ChangedAncestors))
+		for _, a := range n.ChangedAncestors {
+			ids = append(ids, a.NodeID)
+		}
+		dag.ChangedAncestorsByNode[n.NodeID] = ids
 	}
 	return coalesceUpstream(typology.Group(nodes, dag, typology.SharedUpstreamCause{}))
 }
@@ -471,15 +475,37 @@ func upstreamInputFor(t Trigger, c typology.Cluster, attempt int) fixer.Upstream
 			ErrorExcerpt:   n.ErrorExcerpt,
 		})
 	}
+	filePath, service := ancestorLocation(t, c.TargetNodeID)
 	return fixer.UpstreamInput{
-		ReleaseID:     t.ReleaseID,
-		Repo:          t.Repo,
-		CommitSHA:     t.CommitSHA,
-		CodeBundleURI: t.CodeBundleURI,
-		TargetNodeID:  c.TargetNodeID,
-		Attempt:       attempt,
-		Members:       members,
+		ReleaseID:      t.ReleaseID,
+		Repo:           t.Repo,
+		CommitSHA:      t.CommitSHA,
+		CodeBundleURI:  t.CodeBundleURI,
+		TargetNodeID:   c.TargetNodeID,
+		TargetFilePath: filePath,
+		TargetService:  service,
+		Attempt:        attempt,
+		Members:        members,
 	}
+}
+
+// ancestorLocation is where the rejected release's candidate topology declares
+// the changed ancestor, as the trigger carries it on the failing nodes that
+// descend from it. Empty when the rejection carried no location for it, and the
+// fixer then falls back to the promoted graph.
+//
+// A node this release renamed or moved is at its OLD path in the promoted
+// graph, so the candidate's own answer is the one an edit must use; the ids
+// travel with it, so no extra lookup is needed to find it.
+func ancestorLocation(t Trigger, ancestorID string) (filePath, service string) {
+	for _, n := range t.Nodes {
+		for _, a := range n.ChangedAncestors {
+			if a.NodeID == ancestorID && a.FilePath != "" && a.Service != "" {
+				return a.FilePath, a.Service
+			}
+		}
+	}
+	return "", ""
 }
 
 // fixerServices binds the driver's ports to the bundle every Fixer collaborates

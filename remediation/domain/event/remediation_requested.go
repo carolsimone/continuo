@@ -77,9 +77,19 @@ type FailingNode struct {
 	NodeType             string `json:"node_type,omitempty"`
 	OtherService         string `json:"other_service,omitempty"`
 	OtherFilePath        string `json:"other_file_path,omitempty"`
-	// ChangedAncestorIDs are the node's transitive upstream ancestors whose
+	// ChangedAncestors are the node's transitive upstream ancestors whose
 	// content changed in the rejected release, stamped by release-controller
 	// from the candidate topology. They let the agent group failures that share
-	// a changed ancestor and target that ancestor with one fix.
-	ChangedAncestorIDs []string `json:"changed_ancestor_ids,omitempty"`
+	// a changed ancestor and target that ancestor with one fix, and each carries
+	// the file path and service the candidate declares for it so the fix edits
+	// the ancestor where THIS release holds it.
+	ChangedAncestors []ChangedAncestor `json:"changed_ancestors,omitempty"`
+}
+
+// ChangedAncestor is one changed upstream of a failing node, with the location
+// the rejected release's candidate topology declares for it.
+type ChangedAncestor struct {
+	NodeID   string `json:"node_id"`
+	FilePath string `json:"file_path,omitempty"`
+	Service  string `json:"service,omitempty"`
 }

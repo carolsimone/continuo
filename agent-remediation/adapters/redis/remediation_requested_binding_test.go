@@ -7,18 +7,21 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 )
 
 func TestTriggerFromPayload_DecodesBatch(t *testing.T) {
 	raw := []byte(`{"event_id":"e","source":"validation","release_id":"r","remediation_round":1,"repo":"o/r","commit_sha":"sha","code_bundle_uri":"s3://b/bundle.json",
-	  "nodes":[{"node_id":"s.a","error_signature":"sig","category":"logic","reason":"logic:missing_object","dbt_log_uri":"s3://l/a","candidate_artifact_uri":"s3://c/a","file_path":"models/a.sql","service":"svc","node_type":"dbt-model","changed_ancestor_ids":["s.u"]},
+	  "nodes":[{"node_id":"s.a","error_signature":"sig","category":"logic","reason":"logic:missing_object","dbt_log_uri":"s3://l/a","candidate_artifact_uri":"s3://c/a","file_path":"models/a.sql","service":"svc","node_type":"dbt-model","changed_ancestors":[{"node_id":"s.u","file_path":"models/u.sql","service":"svc"}]},
 	           {"node_id":"s.b","error_signature":"sig","category":"logic","reason":"logic:missing_object","dbt_log_uri":"s3://l/b"}]}`)
 	tr, err := TriggerFromPayload(raw)
 	require.NoError(t, err)
 	assert.Equal(t, "r", tr.ReleaseID)
 	assert.Equal(t, "s3://b/bundle.json", tr.CodeBundleURI)
 	require.Len(t, tr.Nodes, 2)
-	assert.Equal(t, []string{"s.u"}, tr.Nodes[0].ChangedAncestorIDs)
+	assert.Equal(t, []handlers.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc"}},
+		tr.Nodes[0].ChangedAncestors)
 	assert.Equal(t, "svc", tr.Nodes[0].Service)
 	assert.Equal(t, raw, tr.RawPayload)
 }
@@ -49,7 +52,8 @@ var requestedPayloadFixture = map[string]any{
 			"node_type":              "dbt-model",
 			"other_service":          "svc-finance",
 			"other_file_path":        "models/orders_legacy.sql",
-			"changed_ancestor_ids":   []any{"orders.model.orders_base"},
+			"changed_ancestors": []any{map[string]any{
+				"node_id": "orders.model.orders_base", "file_path": "models/orders_base.sql", "service": "svc-orders"}},
 		},
 	},
 }
@@ -92,8 +96,9 @@ func TestTriggerFromRequested_AllFieldsMap(t *testing.T) {
 		"other_service must decode — the only datum identifying the competing claimant when both share one service")
 	require.Equal(t, "models/orders_legacy.sql", n.OtherFilePath,
 		"other_file_path must decode — deleting its mapping would leave this assertion, and every other assertion here, green")
-	require.Equal(t, []string{"orders.model.orders_base"}, n.ChangedAncestorIDs,
-		"changed_ancestor_ids must decode — without them every failure is fixed in its own source, never in the ancestor they share")
+	require.Equal(t, []handlers.ChangedAncestor{
+		{NodeID: "orders.model.orders_base", FilePath: "models/orders_base.sql", Service: "svc-orders"}}, n.ChangedAncestors,
+		"changed_ancestors must decode with their candidate location — without the ids every failure is fixed in its own source instead of the ancestor they share, and without the location the fix edits wherever the PROMOTED graph still places a renamed ancestor")
 }
 
 func TestTriggerFromRequested_InvalidJSON(t *testing.T) {

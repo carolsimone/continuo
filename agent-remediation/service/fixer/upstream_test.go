@@ -150,3 +150,36 @@ func TestProposeUpstreamFix_UnmappedServiceSkips(t *testing.T) {
 	assert.Contains(t, res.Proposal.Rationale, "unmapped-svc")
 	assert.Contains(t, res.Proposal.Rationale, "no repository path mapping")
 }
+
+// TestProposeUpstreamFix_PrefersTheCandidateLocation covers the ancestor this
+// release renamed or moved. The promoted graph still places it at its OLD path,
+// so a fix routed by the locator would rewrite a file that no longer holds the
+// node. The rejection carries the location the CANDIDATE declares, and that is
+// what the edit must use — without consulting the locator at all.
+func TestProposeUpstreamFix_PrefersTheCandidateLocation(t *testing.T) {
+	svc, _ := upstreamSvc()
+	svc.Locator = fakeLocator{filePath: "models/u_old.sql", serviceName: "svc"}
+	svc.ServiceRepoPaths = map[string]string{"svc": "services/svc", "svc-b": "services/svc-b"}
+	in := upstreamInput()
+	in.TargetFilePath, in.TargetService = "models/marts/u_renamed.sql", "svc-b"
+
+	res, err := ProposeUpstreamFix(context.Background(), svc, in)
+	require.NoError(t, err)
+	require.Len(t, res.Proposal.Edits, 1)
+	assert.Equal(t, "services/svc-b/models/marts/u_renamed.sql", res.Proposal.Edits[0].Path,
+		"the candidate's own path wins over the promoted graph's stale one")
+}
+
+// TestProposeUpstreamFix_FallsBackToTheLocatorWithoutACandidateLocation covers
+// the rejection that carries no location for the ancestor (a compile-stage
+// rejection has no per-node topology): the promoted graph is then the only
+// answer available, and is still consulted.
+func TestProposeUpstreamFix_FallsBackToTheLocatorWithoutACandidateLocation(t *testing.T) {
+	svc, _ := upstreamSvc()
+	svc.Locator = fakeLocator{filePath: "models/u.sql", serviceName: "svc"}
+
+	res, err := ProposeUpstreamFix(context.Background(), svc, upstreamInput())
+	require.NoError(t, err)
+	require.Len(t, res.Proposal.Edits, 1)
+	assert.Equal(t, "services/svc/models/u.sql", res.Proposal.Edits[0].Path)
+}

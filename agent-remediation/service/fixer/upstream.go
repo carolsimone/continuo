@@ -29,8 +29,14 @@ type UpstreamInput struct {
 	CommitSHA     string
 	CodeBundleURI string
 	TargetNodeID  string
-	Attempt       int
-	Members       []MemberFailure
+	// TargetFilePath and TargetService are where the rejected release's
+	// candidate topology declares the ancestor, carried on the trigger. Both
+	// empty when the rejection carried no location for it, and the promoted
+	// graph is consulted instead.
+	TargetFilePath string
+	TargetService  string
+	Attempt        int
+	Members        []MemberFailure
 }
 
 // ProposeUpstreamFix repairs the changed ancestor of a shared-upstream cluster
@@ -55,7 +61,7 @@ func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Re
 	if src.Runtime != ports.RuntimeDbt {
 		return skipUpstream(svc, in, fmt.Sprintf("the changed ancestor %s is not a dbt model (runtime %q)", in.TargetNodeID, src.Runtime)), nil
 	}
-	filePath, serviceName, err := svc.Locator.Locate(ctx, in.TargetNodeID)
+	filePath, serviceName, err := locateUpstreamTarget(ctx, svc, in)
 	if err != nil || filePath == "" || serviceName == "" {
 		return skipUpstream(svc, in, fmt.Sprintf("the changed ancestor %s cannot be located in the promoted graph", in.TargetNodeID)), nil
 	}
@@ -106,6 +112,19 @@ func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Re
 		ProposedSQLURI: edit.ContentURI, DiffURI: edit.DiffURI, SourceResolved: true, Model: res.Model,
 		Repo: in.Repo, CommitSHA: in.CommitSHA, FilePath: fullPath, Edits: []proposal.FileEdit{edit},
 	}}, nil
+}
+
+// locateUpstreamTarget resolves where to edit the changed ancestor. The
+// rejected release's own candidate location wins whenever the trigger carries
+// it: this release may have renamed or moved the ancestor, in which case the
+// promoted graph still points at the file it used to live in and an edit routed
+// there would rewrite source that no longer declares the node. The promoted
+// graph is the fallback for a rejection that carries no per-node topology.
+func locateUpstreamTarget(ctx context.Context, svc Services, in UpstreamInput) (filePath, serviceName string, err error) {
+	if in.TargetFilePath != "" && in.TargetService != "" {
+		return in.TargetFilePath, in.TargetService, nil
+	}
+	return svc.Locator.Locate(ctx, in.TargetNodeID)
 }
 
 // declined names why the model's answer cannot repair the changed ancestor, or

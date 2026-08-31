@@ -142,7 +142,7 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
    shadow — plus one TriggerNode per failing node carrying node_id,
    relation_id, error_signature, category, reason, error_excerpt, dbt_log_uri,
    candidate_artifact_uri, file_path, service, node_type, other_service,
-   other_file_path, and changed_ancestor_ids.
+   other_file_path, and changed_ancestors.
    remediation_round is the release's remediation round this trigger belongs
    to; missing or 0 (a trigger predating this field) normalizes to 1, the
    round every rejection starts a release at. It is threaded onto the proposal
@@ -164,7 +164,13 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
    three set only on a duplicate_table trigger. reason is the classifier's
    finer-grained rule (e.g. logic:missing_object); with category it forms the
    fallback precedent-lookup key when error_signature has no recorded matches.
-   changed_ancestor_ids is what grouping (step 3) reads.
+   changed_ancestors is what grouping (step 3) reads: each entry is
+   {node_id, file_path, service}, the id the grouping partitions on plus the
+   location the rejected release's candidate declares for that ancestor. The
+   upstream fixer edits the ancestor at that path, falling back to the promoted
+   graph's GetNodeLocation only when the trigger carries no location — an
+   ancestor this release renamed or moved is still at its OLD path in the
+   promoted graph, so the candidate's answer is the one an edit must use.
    Release-level code_bundle_uri locates the release's code-bundle document;
    empty only for compile-stage rejections, which precede the parse that
    produces the bundle, and consumed by the validation and upstream fixers to
@@ -275,14 +281,14 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
 
 ### Grouping the failing set
 
-`domain/typology` partitions the trigger's nodes into fix targets before any port is touched. It is pure — it reads the failing set and a `DagView` built entirely from the trigger's own `changed_ancestor_ids` — so the routing decision is testable without the LLM or any adapter.
+`domain/typology` partitions the trigger's nodes into fix targets before any port is touched. It is pure — it reads the failing set and a `DagView` built entirely from the ids in the trigger's own `changed_ancestors` — so the routing decision is testable without the LLM or any adapter.
 
 `Group(nodes, dag, strategies...)` runs each strategy in order; every node no strategy claims becomes its own `KindIndependent` cluster targeting itself. Output is deterministic: claimed clusters in strategy order, then the independents sorted by node id.
 
 One strategy is wired today, `SharedUpstreamCause`:
 
 - Nodes are bucketed by `error_signature`. An empty signature never groups, and a bucket of one is left for the independent default — one node is not evidence of a shared cause.
-- Within a bucket, candidate changed ancestors are considered in ascending id order; for each, the still-unclaimed members that list it in `changed_ancestor_ids` are gathered, and a candidate with **at least two** such members becomes one `KindSharedUpstream` cluster targeting it. Taking the smallest ancestor id first makes both the assignment and the target choice independent of map iteration and input order.
+- Within a bucket, candidate changed ancestors are considered in ascending id order; for each, the still-unclaimed members that list it in `changed_ancestors` are gathered, and a candidate with **at least two** such members becomes one `KindSharedUpstream` cluster targeting it. Taking the smallest ancestor id first makes both the assignment and the target choice independent of map iteration and input order.
 - A bucket can therefore yield several clusters: the same failure reaching two unrelated changed ancestors gives `{a,b}→u` and `{c,d}→v` rather than falling through to four independent fixes. Members are disjoint across clusters, and clusters are emitted ordered by their smallest member.
 - Because bucketing is per signature, one ancestor that broke its descendants in two DIFFERENT ways yields one cluster per signature, both targeting it. The driver's `coalesceUpstream` (`service/handlers/propose_fix.go`) merges shared-upstream clusters naming the same target into one — members unioned and sorted, first occurrence keeping its position — before any fixing starts. Fixing them separately would call the model twice for one file and have both fixes write the target's single artifact key, so the attempt would record two edits for one path of which only the last written exists. An independent cluster cannot collide this way: its target is the failing node itself, and a node appears in the failing set once.
 

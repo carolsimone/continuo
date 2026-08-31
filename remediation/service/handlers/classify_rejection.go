@@ -96,7 +96,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 				DBTLogURI: it.ev.DBTLogURI, CandidateArtifactURI: it.ev.CandidateArtifactURI,
 				FilePath: it.ev.FilePath, Service: it.ev.Service, NodeType: it.ev.NodeType,
 				OtherService: it.ev.OtherService, OtherFilePath: it.ev.OtherFilePath,
-				ChangedAncestorIDs: it.ev.ChangedAncestorIDs,
+				ChangedAncestors: changedAncestorsOf(it.ev),
 			})
 		}
 		body, err := json.Marshal(payload)
@@ -124,4 +124,19 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 	deps.Logger.Info("rejection classified", "release", evs[0].ReleaseID, "round", round,
 		"nodes", len(items), "emitted_nodes", len(emit))
 	return nil
+}
+
+// changedAncestorsOf projects an evidence's changed ancestors onto the trigger
+// event's own shape, keeping each ancestor's candidate location: the agent
+// fixes the ancestor in the file THIS release declares for it, not wherever the
+// promoted graph still places it.
+func changedAncestorsOf(ev failure.FailureEvidence) []event.ChangedAncestor {
+	if len(ev.ChangedAncestors) == 0 {
+		return nil
+	}
+	out := make([]event.ChangedAncestor, 0, len(ev.ChangedAncestors))
+	for _, a := range ev.ChangedAncestors {
+		out = append(out, event.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service})
+	}
+	return out
 }

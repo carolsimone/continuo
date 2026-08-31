@@ -89,11 +89,23 @@ type TriggerNode struct {
 	// failure.
 	OtherService  string
 	OtherFilePath string
-	// ChangedAncestorIDs are the node's transitive upstream ancestors whose
-	// content changed in the rejected release. They let the driver group
-	// failures that share a changed ancestor and target that ancestor with one
-	// fix.
-	ChangedAncestorIDs []string
+	// ChangedAncestors are the node's transitive upstream ancestors whose
+	// content changed in the rejected release, each with the location that
+	// release's candidate topology declares for it. They let the driver group
+	// failures that share a changed ancestor, target that ancestor with one fix,
+	// and edit it where THIS release holds it — an ancestor the release renamed
+	// or moved is still at its old path in the promoted graph.
+	ChangedAncestors []ChangedAncestor
+}
+
+// ChangedAncestor is one changed upstream of a failing node. FilePath and
+// Service are the location the rejected release's candidate topology declares;
+// both are empty on a rejection that carries no per-node topology, and the
+// upstream fixer then falls back to the promoted graph.
+type ChangedAncestor struct {
+	NodeID   string
+	FilePath string
+	Service  string
 }
 
 // NodeIDs returns the trigger's failing node ids, sorted. Every batched write
@@ -162,9 +174,17 @@ type TriggerNodeWire struct {
 	NodeType             string `json:"node_type,omitempty"`
 	OtherService         string `json:"other_service,omitempty"`
 	OtherFilePath        string `json:"other_file_path,omitempty"`
-	// ChangedAncestorIDs are the node's transitive upstream ancestors whose
-	// content changed in the rejected release.
-	ChangedAncestorIDs []string `json:"changed_ancestor_ids,omitempty"`
+	// ChangedAncestors are the node's transitive upstream ancestors whose
+	// content changed in the rejected release, each with the file path and
+	// service the candidate topology declares for it.
+	ChangedAncestors []ChangedAncestorWire `json:"changed_ancestors,omitempty"`
+}
+
+// ChangedAncestorWire is one entry of a failing node's changed_ancestors array.
+type ChangedAncestorWire struct {
+	NodeID   string `json:"node_id"`
+	FilePath string `json:"file_path,omitempty"`
+	Service  string `json:"service,omitempty"`
 }
 
 // TriggerFromWire builds a Trigger from a decoded v2 payload. The dedup
@@ -188,7 +208,7 @@ func TriggerFromWire(w TriggerWire) Trigger {
 			NodeType:             n.NodeType,
 			OtherService:         n.OtherService,
 			OtherFilePath:        n.OtherFilePath,
-			ChangedAncestorIDs:   n.ChangedAncestorIDs,
+			ChangedAncestors:     changedAncestorsFromWire(n.ChangedAncestors),
 		})
 	}
 	return Trigger{
@@ -201,4 +221,17 @@ func TriggerFromWire(w TriggerWire) Trigger {
 		Shadow:           w.Shadow,
 		Nodes:            nodes,
 	}
+}
+
+// changedAncestorsFromWire decodes a failing node's changed ancestors, keeping
+// the payload's order (release-controller sorts them by id).
+func changedAncestorsFromWire(in []ChangedAncestorWire) []ChangedAncestor {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ChangedAncestor, 0, len(in))
+	for _, a := range in {
+		out = append(out, ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service})
+	}
+	return out
 }

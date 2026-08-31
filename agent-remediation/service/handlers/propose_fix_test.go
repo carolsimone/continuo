@@ -1195,10 +1195,10 @@ func upstreamTrigger() Trigger {
 	tr.Nodes = []TriggerNode{
 		{NodeID: "s.v", ErrorSignature: "sig", Category: "logic", ErrorExcerpt: "column u.amount does not exist",
 			DBTLogURI: "s3://b/log", CandidateArtifactURI: "s3://b/sql-v", FilePath: "models/v.sql",
-			Service: "svc", NodeType: "dbt-model", ChangedAncestorIDs: []string{"s.u"}},
+			Service: "svc", NodeType: "dbt-model", ChangedAncestors: []ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc"}}},
 		{NodeID: "s.w", ErrorSignature: "sig", Category: "logic", ErrorExcerpt: "column u.amount does not exist",
 			DBTLogURI: "s3://b/log", CandidateArtifactURI: "s3://b/sql-w", FilePath: "models/w.sql",
-			Service: "svc", NodeType: "dbt-model", ChangedAncestorIDs: []string{"s.u"}},
+			Service: "svc", NodeType: "dbt-model", ChangedAncestors: []ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc"}}},
 	}
 	return tr
 }
@@ -1246,7 +1246,7 @@ func twoSignatureUpstreamTrigger() Trigger {
 			ErrorExcerpt: "column u.amount does not exist",
 			DBTLogURI:    "s3://b/log", CandidateArtifactURI: "s3://b/sql-" + n.id,
 			FilePath: "models/" + strings.TrimPrefix(n.id, "s.") + ".sql",
-			Service:  "svc", NodeType: "dbt-model", ChangedAncestorIDs: []string{"s.u"},
+			Service:  "svc", NodeType: "dbt-model", ChangedAncestors: []ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc"}},
 		})
 	}
 	return tr
@@ -1317,8 +1317,10 @@ func TestSubmitVerifications_DuplicateEditPathIsPermanent(t *testing.T) {
 }
 
 // TestProposeFix_UpstreamTargetUnlocatable_FallsBackToIndependent: the changed
-// ancestor cannot be placed in the promoted graph (a brand-new node), so the
-// upstream fix skips and each member is repaired in its own source instead.
+// ancestor cannot be placed anywhere — the rejection carried no location for it
+// (a compile-stage rejection has no per-node topology) and the promoted graph
+// does not know it either, as for a brand-new node. The upstream fix skips and
+// each member is repaired in its own source instead.
 func TestProposeFix_UpstreamTargetUnlocatable_FallsBackToIndependent(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
@@ -1334,8 +1336,12 @@ func TestProposeFix_UpstreamTargetUnlocatable_FallsBackToIndependent(t *testing.
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select id from s.base", Runtime: ports.RuntimeDbt}}
 	d.Versions = fakeVersions{v: ports.CurrentVersion{RawCode: "select id, amount from s.base"}, ok: true}
 	d.Locator = fakeLocator{err: fmt.Errorf("node s.u is not in the promoted graph")}
+	tr := upstreamTrigger()
+	for i := range tr.Nodes {
+		tr.Nodes[i].ChangedAncestors = []ChangedAncestor{{NodeID: "s.u"}}
+	}
 
-	require.NoError(t, ProposeFix(context.Background(), d, upstreamTrigger()))
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
 
 	p := u.pr.inserted[0]
 	assert.Equal(t, 4, llm.calls, "each member falls back to its own two-step fix")
