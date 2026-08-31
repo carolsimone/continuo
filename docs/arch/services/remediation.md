@@ -80,8 +80,9 @@ A `duplicate_table` rejection never reaches this table: `ClassifyDuplicateTable`
 
 The signature is derived from one piece of the log: the key error line (`keyErrorLine`, `remediation/domain/failure/classify.go`), which is also the `error_excerpt` carried on the trigger and recorded in the case base. It is the first line mentioning "error" or "failure" (else the first non-blank line), with ANSI colour codes removed — except when that line is dbt's lead-in `[ERROR]: Encountered an error:`, which precedes every error dbt reports and says nothing about the failure. Keyed on the lead-in, every failure a node ever raised would share one signature, which is how unrelated compile errors once exhausted the agent's attempt cap and polluted precedent lookup. When the error line is the lead-in, the key is the message block after it: its consecutive non-blank lines up to the next timestamped log line, at most three, joined with a space — for a compile failure, `Compilation Error in model <name> (models/<name>.sql) <detail> line N`. A log that ends at the lead-in keys on the lead-in itself. Fixture tests under `remediation/domain/failure/testdata/` pin the key line for verbatim logs captured from real dbt Jobs, and the compile e2e test asserts the excerpt on a live rejection.
 
-`NormalizeSignature` (`remediation/domain/failure/signature.go`) then produces a stable dedup key from that text. It strips the volatile parts that vary release-to-release:
+`NormalizeSignature` (`remediation/domain/failure/signature.go`) then produces a stable dedup key from that text. It strips the parts that do not identify the failure itself:
 
+- The database's echoed statement: everything from the first `LINE <n>:` marker to the end of the message, newlines included. Cut **first**, before the normalizations below.
 - Candidate schema names (`candidate_<hex>`  → `candidate_schema`)
 - UUIDs and invocation IDs
 - ISO timestamps and clock times
@@ -89,7 +90,9 @@ The signature is derived from one piece of the log: the key error line (`keyErro
 - Source line/column positions
 - Remaining standalone digit runs
 
-After stripping, it folds the category with the normalized error text and returns a SHA-256 hex digest. The same underlying error in two different releases yields an identical `error_signature`, enabling the downstream agent to correlate recurring failures across releases.
+The echoed statement matters as much as the volatile tokens. Postgres appends the failing statement to its error as `LINE n: <sql>`, and for a model build that statement is `CREATE TABLE "<schema>"."<node>" AS (SELECT ...)` — so it embeds the failing node's **own relation name**, plus a caret line whose indentation tracks that name's length. Keeping it keyed the signature on the victim rather than on the fault: two models broken by a single upstream change signed differently, and `SharedUpstreamCause` in `agent-remediation` — which clusters only on identical signatures — could never group them, so the shared cause was repaired once per victim instead of once at the source, silently. Everything the database says *ahead* of the marker is the diagnosis and is kept, so distinct faults (a missing column vs a missing relation, or two different tokens named by `at or near "x"`) still sign distinctly.
+
+After stripping, it folds the category with the normalized error text and returns a SHA-256 hex digest. The same underlying error yields an identical `error_signature` in two different releases, and also across two different nodes that failed for the same reason — which is what lets the downstream agent correlate recurring failures and group co-caused ones.
 
 ## Key Flows
 
