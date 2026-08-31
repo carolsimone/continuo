@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
@@ -1348,6 +1351,148 @@ func TestProposeFix_EditsCarryTheirClusterMembers(t *testing.T) {
 	require.Len(t, got.Edits, 2)
 	require.ElementsMatch(t, []string{"na", "nb"}, editByTarget(got.Edits, "nu").MemberNodeIDs)
 	require.ElementsMatch(t, []string{"nc"}, editByTarget(got.Edits, "nc").MemberNodeIDs)
+}
+
+// --- fakes for the python-contract lane's extra ports ------------------------
+// These exist only to drive TestProposeFix_EditsFromOnePythonClusterAreIndependentlyCopied
+// below. Every other fixer in this package edits exactly one file per
+// cluster, which makes the content-only assertions above unable to tell a
+// copying stamp from an aliasing one: with a single edit there is nothing
+// else in the same call that ever reads the cluster's Members slice again, so
+// `MemberNodeIDs = c.Members` (an alias) and
+// `MemberNodeIDs = append([]string(nil), c.Members...)` (a copy) read back
+// identically. pythonValidationFixer is the one fixer that can return more
+// than one FileEdit for a single independent cluster (one edit per file the
+// model's answer touches) — the vehicle this file uses to make the
+// distinction observable.
+
+// fakeRepoArchive hands out a pre-built checkout root as the repository tree
+// and never fails.
+type fakeRepoArchive struct{ root string }
+
+func (f fakeRepoArchive) Fetch(_ context.Context, _, _ string) (string, func(), error) {
+	return f.root, func() {}, nil
+}
+
+// fakeContractPackager returns a fixed merged contract for every Merge call.
+type fakeContractPackager struct{ merged []byte }
+
+func (f fakeContractPackager) Merge(_ context.Context, _, _, _, _ string) ([]byte, error) {
+	return f.merged, nil
+}
+
+// fakeAttemptLister answers every prior-attempt query with no attempts.
+type fakeAttemptLister struct{}
+
+func (fakeAttemptLister) List(_ context.Context, _ repository.ProposalFilter) ([]proposal.View, error) {
+	return nil, nil
+}
+
+const (
+	pythonDeclaringYAML = `nodes:
+  - schema: analytics
+    table: pynode
+    script: scripts/pynode.py
+    reads:
+      orders: select id from analytics.orders
+    output_columns:
+      - name: revenue
+`
+	pythonCorrectedYAML = `nodes:
+  - schema: analytics
+    table: pynode
+    script: scripts/pynode.py
+    reads:
+      orders: select id from analytics.orders
+    output_columns:
+      - name: revenue_total
+`
+	// pythonSiblingYAML declares a second node in the same contract
+	// directory. The model's answer below returns it unchanged — its only
+	// purpose is to give pythonValidationFixer a second file to edit, so the
+	// cluster produces two FileEdits instead of one.
+	pythonSiblingYAML = `nodes:
+  - schema: analytics
+    table: sibling
+    reads:
+      customers: select id from analytics.customers
+`
+)
+
+// pythonContractRepoTree writes a minimal repository checkout holding one
+// python-model node's declaring contract file alongside a second file in the
+// same contract directory, and returns the checkout root.
+func pythonContractRepoTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, content string) {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o750))
+		require.NoError(t, os.WriteFile(full, []byte(content), 0o600))
+	}
+	write("services/svc/contracts/pynode.yml", pythonDeclaringYAML)
+	write("services/svc/contracts/other.yml", pythonSiblingYAML)
+	write("services/svc/scripts/pynode.py", "print('hi')\n")
+	return root
+}
+
+// TestProposeFix_EditsFromOnePythonClusterAreIndependentlyCopied strengthens
+// the copy-not-alias requirement TestProposeFix_EditsCarryTheirClusterMembers
+// only checks the CONTENT of. That test would still pass if the driver's
+// stamp aliased the cluster's Members slice instead of copying it
+// (`out.edits[i].MemberNodeIDs = c.Members` rather than
+// `= append([]string(nil), c.Members...)`), because every cluster in it
+// produces exactly one edit, and nothing later in that same ProposeFix call
+// reads the cluster's Members slice again — an aliased stamp and a copied one
+// are indistinguishable from outside when there is only one edit to observe.
+//
+// A single independent python node whose answer touches two files in its
+// contract directory produces TWO edits from the SAME cluster (Members
+// ["analytics.pynode"]). If the stamp aliased, both edits' MemberNodeIDs
+// would be the exact same backing array, so mutating one would corrupt the
+// other; if it copies, as it does, each edit gets its own.
+func TestProposeFix_EditsFromOnePythonClusterAreIndependentlyCopied(t *testing.T) {
+	u := newFakeUoW()
+	root := pythonContractRepoTree(t)
+	ev := fakeEvidence{vals: map[string]string{"s3://b/log": "runner log body"}}
+	llm := newFakeLLM(ports.ProposeResult{
+		Files: []ports.ProposedFile{
+			{Path: "services/svc/contracts/pynode.yml", Content: pythonCorrectedYAML},
+			// Unchanged; present only to force a second edit out of one cluster.
+			{Path: "services/svc/contracts/other.yml", Content: pythonSiblingYAML},
+		},
+		Rationale: "declared the column the script produces", Confidence: "high", Model: "m",
+	}, nil)
+	d := deps(u, ev, &llm, &fakeArtifacts{})
+	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: `{"output_columns":[]}`, Runtime: "python"}}
+	d.RepoArchive = fakeRepoArchive{root: root}
+	loc := repofs.NewLocator(slog.Default())
+	d.ContractLocator = loc
+	d.ContractInspector = loc
+	d.Packager = fakeContractPackager{merged: []byte("merged: contract\n")}
+	d.PriorAttempts = fakeAttemptLister{}
+	d.SQLDialect = "postgres"
+
+	tr := baseTrigger()
+	tr.Nodes = []TriggerNode{{
+		NodeID: "analytics.pynode", ErrorSignature: "sig-py", Category: "logic",
+		NodeType: "python-model", Service: "svc", DBTLogURI: "s3://b/log",
+	}}
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+
+	require.Len(t, u.pr.inserted, 1)
+	edits := u.pr.inserted[0].Edits
+	require.Len(t, edits, 2, "the model's answer touched two files, one edit per file")
+	require.ElementsMatch(t, []string{"analytics.pynode"}, edits[0].MemberNodeIDs)
+	require.ElementsMatch(t, []string{"analytics.pynode"}, edits[1].MemberNodeIDs)
+
+	// The diagnostic step: an aliased stamp would give edits[0].MemberNodeIDs
+	// and edits[1].MemberNodeIDs the same backing array, so this mutation
+	// would leak into the sibling edit too.
+	edits[0].MemberNodeIDs[0] = "MUTATED"
+	assert.Equal(t, "analytics.pynode", edits[1].MemberNodeIDs[0],
+		"each edit's MemberNodeIDs must be its own copy; mutating one must not affect a sibling edit from the same cluster")
 }
 
 // TestSubmitVerifications_DuplicateEditPathIsPermanent is the backstop under the
