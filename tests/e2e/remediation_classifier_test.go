@@ -177,7 +177,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.requested:v2 for release %s node %s", releaseID, ftableEUniqueID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationRequestedV2, releaseID, ftableEUniqueID))
 
 	// 8. Assert trigger payload fields.
 	require.Equal(t, releaseID, trigger.ReleaseID, "trigger release_id")
@@ -188,7 +188,7 @@ func TestE2E_Remediation_ValidationRejectionEmitsTrigger(t *testing.T) {
 		"ftable_e references public.wrong_name → structured status=error, message 'does not exist' → category=logic")
 	require.NotEmpty(t, node.ErrorSignature, "trigger must carry a non-empty error_signature")
 	require.NotEmpty(t, node.DBTLogURI, "trigger must carry a non-empty dbt_log_uri")
-	t.Logf("✅ remediation.requested:v2 received: category=%s signature=%s", node.Category, node.ErrorSignature)
+	t.Logf("✅ %s received: category=%s signature=%s", streams.RemediationRequestedV2, node.Category, node.ErrorSignature)
 
 	// 9. Query classification_decision in continuo_remediation to confirm the
 	//    decision was persisted.

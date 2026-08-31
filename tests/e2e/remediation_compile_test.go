@@ -146,7 +146,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.requested:v2 (source=compile) for release %s", releaseID))
+	}, fmt.Sprintf("timeout waiting for %s (source=compile) for release %s", streams.RemediationRequestedV2, releaseID))
 
 	require.Equal(t, fixtureService, node.NodeID, "compile trigger node_id is the service name")
 	require.NotEmpty(t, node.FilePath,
@@ -159,7 +159,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	// of a service the same signature.
 	require.Contains(t, node.ErrorExcerpt, "Compilation Error in model daily_transactions",
 		"compile trigger error_excerpt must carry the compilation message, got %q", node.ErrorExcerpt)
-	t.Logf("✅ remediation.requested:v2 (compile): file_path=%s signature=%s excerpt=%q", node.FilePath, node.ErrorSignature, node.ErrorExcerpt)
+	t.Logf("✅ %s (compile): file_path=%s signature=%s excerpt=%q", streams.RemediationRequestedV2, node.FilePath, node.ErrorSignature, node.ErrorExcerpt)
 
 	// 5. classification_decision row must record source=='compile'.
 	var decision classificationDecisionRow
@@ -201,7 +201,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.proposed:v1 (compile) for release %s", releaseID))
+	}, fmt.Sprintf("timeout waiting for %s (compile) for release %s", streams.RemediationProposedV1, releaseID))
 
 	require.Equal(t, "compile", proposed.Source, "proposed event source must be 'compile'")
 	require.Equal(t, fixtureService, proposed.NodeID, "proposed node_id is the service name")

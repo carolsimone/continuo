@@ -144,7 +144,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID,
 		[]string{ftableEUniqueID, ftableKUniqueID}, batchTriggerBudget)
 	require.Len(t, triggersForRelease(t, ctx, clients, releaseID), 1,
-		"a rejected release must produce exactly one remediation.requested:v2")
+		"a rejected release must produce exactly one %s", streams.RemediationRequestedV2)
 	require.Len(t, trigger.Nodes, 2,
 		"the trigger must carry exactly the two failing models; got %v", triggerNodeIDs(trigger))
 	require.Equal(t, "validation", trigger.Source, "trigger source")
@@ -157,7 +157,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 			nodeID, node.ChangedAncestors)
 		require.NotEmpty(t, node.ErrorSignature, "%s must carry an error_signature", nodeID)
 	}
-	t.Logf("✅ one remediation.requested:v2 carries both independent failures")
+	t.Logf("✅ one %s carries both independent failures", streams.RemediationRequestedV2)
 
 	// 5. ONE proposal row for the whole release, reaching 'proposed' only after
 	//    its shadow release has judged the fix. The representative node_id is the
@@ -209,7 +209,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	require.Len(t, proposedEventsForRelease(t, ctx, clients, releaseID), 1,
 		"one verified attempt announces itself once")
 	require.Equal(t, []string{ftableEUniqueID, ftableKUniqueID}, proposed.ResolvedNodeIDs,
-		"remediation.proposed:v1 must announce the whole resolved set")
+		"%s must announce the whole resolved set", streams.RemediationProposedV1)
 	require.Len(t, proposed.Edits, 2, "the announcement must carry both file edits; got %+v", proposed.Edits)
 	require.Equal(t, ftableEUniqueID, proposed.NodeID,
 		"the representative node is the lowest resolved id")
@@ -360,7 +360,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 			"the ancestor must carry the path THIS candidate declares — the file the upstream fix edits")
 		require.Equal(t, changedService, n.ChangedAncestors[0].Service, "the ancestor's owning service")
 	}
-	t.Logf("✅ one remediation.requested:v2 names %s as the shared cause of both failures", ftableUUniqueID)
+	t.Logf("✅ one %s names %s as the shared cause of both failures", streams.RemediationRequestedV2, ftableUUniqueID)
 
 	// 6. ONE proposal, and — the point of the whole scenario — ONE edit, to a
 	//    node that never appeared in the failing set.
@@ -525,8 +525,8 @@ func waitForBatchedTrigger(
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for one remediation.requested:v2 for release %s carrying %v",
-		releaseID, nodeIDs))
+	}, fmt.Sprintf("timeout waiting for one %s for release %s carrying %v",
+		streams.RemediationRequestedV2, releaseID, nodeIDs))
 	return found
 }
 
@@ -595,7 +595,7 @@ func waitForBatchProposedEvent(
 		}
 		found = events[0]
 		return true, nil
-	}, fmt.Sprintf("timeout waiting for remediation.proposed:v1 for release %s", releaseID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s", streams.RemediationProposedV1, releaseID))
 	return found
 }
 

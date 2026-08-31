@@ -666,7 +666,7 @@ func waitForRemediationProposed(
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.proposed:v1 for release %s node %s", releaseID, nodeID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationProposedV1, releaseID, nodeID))
 }
 
 // assertNoRemediationTriggerFor fails if any remediation trigger names the

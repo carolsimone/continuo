@@ -137,7 +137,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.requested:v2 for release %s node %s", releaseID, ftableEUniqueID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationRequestedV2, releaseID, ftableEUniqueID))
 
 	// 7. Poll remediation.proposed:v1. The agent-remediation consumes the trigger,
 	//    calls the stub-llm (which returns a deterministic propose_fix tool call),
@@ -166,7 +166,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 			}
 		}
 		return false, nil
-	}, fmt.Sprintf("timeout waiting for remediation.proposed:v1 for release %s node %s", releaseID, ftableEUniqueID))
+	}, fmt.Sprintf("timeout waiting for %s for release %s node %s", streams.RemediationProposedV1, releaseID, ftableEUniqueID))
 
 	// (a) Assert remediation.proposed:v1 payload fields.
 	require.Equal(t, ftableEUniqueID, proposed.NodeID, "proposed node_id")
@@ -177,7 +177,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	require.NotEmpty(t, proposed.DiffURI, "diff_uri must be non-empty")
 	require.NotEmpty(t, proposed.Confidence, "confidence must be set")
 	require.Equal(t, "validation", proposed.Source, "source must be 'validation'")
-	t.Logf("remediation.proposed:v1 received: confidence=%s sql_uri=%s", proposed.Confidence, proposed.ProposedSQLURI)
+	t.Logf("%s received: confidence=%s sql_uri=%s", streams.RemediationProposedV1, proposed.Confidence, proposed.ProposedSQLURI)
 
 	// (b) Assert a proposal row in continuo_agent_remediation.
 	var row proposalRow
@@ -214,7 +214,7 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	//     the wire so downstream consumers can distinguish source-level proposals
 	//     from candidate-SQL proposals.
 	require.True(t, proposed.SourceResolved,
-		"remediation.proposed:v1 must carry source_resolved=true; stream=%s", streams.RemediationProposedV1)
+		"%s must carry source_resolved=true", streams.RemediationProposedV1)
 
 	// (c) Assert the proposed-SQL S3 object exists at proposed_sql_uri and holds
 	//     the repaired model source: the surviving read of ftable_c is kept and

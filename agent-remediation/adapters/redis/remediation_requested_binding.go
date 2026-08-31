@@ -53,12 +53,12 @@ func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, log
 	handler := func(ctx context.Context, msg goredis.XMessage) error {
 		raw, ok := msg.Values["payload"].(string)
 		if !ok {
-			logger.Error("remediation.requested:v2 missing payload — discarding", "message_id", msg.ID)
+			logger.Error(streams.RemediationRequestedV2+" missing payload — discarding", "message_id", msg.ID)
 			return nil // permanent: ACK by returning nil so the message is not left in the PEL
 		}
 		trigger, err := triggerFromRequested(msg, []byte(raw))
 		if err != nil {
-			logger.Error("remediation.requested:v2 decode failure — discarding", "message_id", msg.ID, "error", err)
+			logger.Error(streams.RemediationRequestedV2+" decode failure — discarding", "message_id", msg.ID, "error", err)
 			return nil // permanent: malformed payload cannot be retried
 		}
 		if err := handlers.ProposeFix(ctx, deps, trigger); err != nil {
