@@ -14,8 +14,9 @@ import (
 var (
 	// ErrNotFound is returned when a proposal row does not exist for the given id.
 	ErrNotFound = errors.New("proposal not found")
-	// ErrPRConflict is returned by BeginPR when the proposal is already claimed
-	// for PR creation (pr_state is 'opening' or 'open').
+	// ErrPRConflict is returned by BeginPR when the (proposal, service) pull
+	// request is already claimed for creation (its child pr_state is 'opening'
+	// or 'open').
 	ErrPRConflict = errors.New("proposal PR already claimed")
 	// ErrNotSourceResolved is returned by BeginPR when the proposal has not
 	// completed source resolution (source_resolved=false), so a PR cannot be opened.
@@ -146,68 +147,76 @@ type ProposalRepository interface {
 	// A zero ProposalFilter returns all rows (up to Limit, if set).
 	List(ctx context.Context, filter ProposalFilter) ([]proposal.View, error)
 
-	// BeginPR atomically claims a proposal for PR creation by transitioning
-	// pr_state from '' or 'failed' to 'opening', stamping pr_claimed_at with
-	// claimedAt. It returns the data needed to open the PR, including the
-	// claimed ClaimedAt read back from the row — the caller carries this value
-	// forward and hands it to FailStuckOpeningPR if it later needs to release
-	// this exact claim. Claiming requires status='proposed' as well as
-	// source_resolved, and the compare-and-set carries both conditions, so a
-	// fix still being generated or verified — or one a shadow release already
-	// rejected — can never be turned into a pull request. Returns
-	// ErrNotSourceResolved if source_resolved=false, ErrNotProposed if the
-	// attempt has not reached 'proposed', ErrPRConflict if already claimed,
-	// ErrNotFound if the id is unknown.
-	BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error)
+	// BeginPR atomically claims one (proposal, service) pull request for
+	// creation by transitioning the child proposal_pull_request row's pr_state
+	// from '' or 'failed' to 'opening', stamping pr_claimed_at with claimedAt.
+	// service selects which per-service PR to claim ("" is the legacy sentinel:
+	// one PR covering the whole proposal); the child row is created on first
+	// claim. It returns the data needed to open the PR, narrowed to that
+	// service's edits and the nodes it fixed, including the claimed ClaimedAt
+	// read back from the row — the caller carries this value forward and hands
+	// it to FailStuckOpeningPR if it later needs to release this exact claim.
+	// Claiming requires the parent's status='proposed' as well as
+	// source_resolved, so a fix still being generated or verified — or one a
+	// shadow release already rejected — can never be turned into a pull request.
+	// Returns ErrNotSourceResolved if source_resolved=false, ErrNotProposed if
+	// the attempt has not reached 'proposed', ErrPRConflict if that service is
+	// already claimed, ErrNotFound if the id is unknown.
+	BeginPR(ctx context.Context, id, service, branch string, claimedAt time.Time) (proposal.PRClaim, error)
 
-	// RecordPR atomically transitions pr_state 'opening' -> 'open', writing
-	// pr_url, pr_number, pr_opened_by, and pr_opened_at, and clearing
-	// pr_claimed_at back to NULL since the claim is resolved. hit reports
-	// whether the CAS fired; false means the row was no longer 'opening' —
-	// already recorded or failed by another caller since this one's own
-	// BeginPR claim — the same compare-and-set contract FailStuckOpeningPR and
-	// RecordPROutcome apply to every other write against an in-flight PR
-	// claim. Two callers race to record the same claim: the ui
+	// RecordPR atomically transitions the (proposal, service) child row's
+	// pr_state 'opening' -> 'open', writing pr_url, pr_number, pr_opened_by,
+	// and pr_opened_at, and clearing pr_claimed_at back to NULL since the claim
+	// is resolved. hit reports whether the CAS fired; false means the row was no
+	// longer 'opening' — already recorded or failed by another caller since this
+	// one's own BeginPR claim — the same compare-and-set contract
+	// FailStuckOpeningPR and RecordPROutcome apply to every other write against
+	// an in-flight PR claim. Two callers race to record the same claim: the ui
 	// PR-creation route, right after the GitHub PR it just created, and the
-	// reconciler's opening sweep, after finding that same PR already exists
-	// on GitHub for a claim it read as stuck. Whichever reaches the row first
-	// wins the CAS; the other's call is a harmless no-op, since both would
-	// have written the same pr_url and pr_number for the same branch.
-	RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) (hit bool, err error)
+	// reconciler's opening sweep, after finding that same PR already exists on
+	// GitHub for a claim it read as stuck. Whichever reaches the row first wins
+	// the CAS; the other's call is a harmless no-op, since both would have
+	// written the same pr_url and pr_number for the same branch.
+	RecordPR(ctx context.Context, id, service, prURL string, prNumber int, openedBy string, openedAt time.Time) (hit bool, err error)
 
-	// FailStuckOpeningPR resets a stuck 'opening' claim back to 'failed',
-	// clearing pr_claimed_at, but only when the row's current pr_claimed_at
-	// still equals observedClaimedAt — the compare-and-set guard that lets a
-	// caller release exactly the claim it itself acquired or observed, never a
-	// fresher one taken by someone else since. Two callers use it: the
-	// ui PR-creation route, with the ClaimedAt its own BeginPR
-	// returned, when a downstream S3 or GitHub step fails after the claim; and
-	// the reconciler's opening sweep, with the ClaimedAt it read while listing
-	// stuck claims. hit reports whether the CAS fired; false covers both "no
-	// longer opening" and "re-claimed with a different pr_claimed_at" — neither
-	// is an error, and in both cases the call has correctly left the row alone.
-	FailStuckOpeningPR(ctx context.Context, id string, observedClaimedAt time.Time) (hit bool, err error)
+	// FailStuckOpeningPR resets a stuck 'opening' claim on the (proposal,
+	// service) child row back to 'failed', clearing pr_claimed_at, but only when
+	// the row's current pr_claimed_at still equals observedClaimedAt — the
+	// compare-and-set guard that lets a caller release exactly the claim it
+	// itself acquired or observed, never a fresher one taken by someone else
+	// since. Two callers use it: the ui PR-creation route, with the ClaimedAt
+	// its own BeginPR returned, when a downstream S3 or GitHub step fails after
+	// the claim; and the reconciler's opening sweep, with the ClaimedAt it read
+	// while listing stuck claims. hit reports whether the CAS fired; false
+	// covers both "no longer opening" and "re-claimed with a different
+	// pr_claimed_at" — neither is an error, and in both cases the call has
+	// correctly left the row alone.
+	FailStuckOpeningPR(ctx context.Context, id, service string, observedClaimedAt time.Time) (hit bool, err error)
 
-	// ListOpenPullRequests returns proposals whose PR awaits a terminal outcome
-	// (pr_state='open'), oldest-opened first. limit<=0 means no limit.
+	// ListOpenPullRequests returns one entry per child pull request awaiting a
+	// terminal outcome (pr_state='open'), oldest-opened first; a proposal split
+	// into several per-service PRs yields one entry per open service. Each row
+	// carries its Service. limit<=0 means no limit.
 	ListOpenPullRequests(ctx context.Context, limit int) ([]proposal.OpenPR, error)
 
-	// ListStuckOpening returns up to limit proposals claimed for PR creation
-	// but not yet recorded (pr_state='opening'), ordered oldest-created first
-	// (created_at, id), resuming strictly after cursor (nil for the first
-	// page). next is the cursor of the last row in this page, non-nil only
-	// when more rows exist beyond it — nil signals "reached the end of the
-	// 'opening' set", which the reconciler's opening sweep uses to wrap back to
-	// the first page so a full rotation through every stuck row repeats
-	// indefinitely rather than starving rows past the batch limit. limit<=0
-	// defaults to 50. Each row carries its ClaimedAt (pr_claimed_at) — see
-	// proposal.OpeningPR for why it is essentially always non-nil.
+	// ListStuckOpening returns up to limit child pull requests claimed for
+	// creation but not yet recorded (pr_state='opening'), ordered oldest-created
+	// first by the parent proposal's (created_at, id), resuming strictly after
+	// cursor (nil for the first page). Each row carries its Service. next is the
+	// cursor of the last row in this page, non-nil only when more rows exist
+	// beyond it — nil signals "reached the end of the 'opening' set", which the
+	// reconciler's opening sweep uses to wrap back to the first page so a full
+	// rotation through every stuck row repeats indefinitely rather than starving
+	// rows past the batch limit. limit<=0 defaults to 50. Each row carries its
+	// ClaimedAt (pr_claimed_at) — see proposal.OpeningPR for why it is
+	// essentially always non-nil.
 	ListStuckOpening(ctx context.Context, limit int, cursor *OpeningCursor) (items []proposal.OpeningPR, next *OpeningCursor, err error)
 
-	// RecordPROutcome atomically transitions pr_state 'open' -> outcome and sets
-	// pr_closed_at. Returns true when the transition fired; false when the row is
-	// no longer in 'open' (already terminal or never opened) — an idempotent no-op.
-	RecordPROutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) (bool, error)
+	// RecordPROutcome atomically transitions the (proposal, service) child row's
+	// pr_state 'open' -> outcome and sets pr_closed_at. Returns true when the
+	// transition fired; false when the row is no longer in 'open' (already
+	// terminal or never opened) — an idempotent no-op.
+	RecordPROutcome(ctx context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time) (bool, error)
 
 	// ListVerifying returns proposals awaiting shadow-release verification
 	// (status='verifying'), oldest first, capped at 20 rows so the polling

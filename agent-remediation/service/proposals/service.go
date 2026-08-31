@@ -80,7 +80,9 @@ func (s *Service) Begin(ctx context.Context, id string) (proposal.PRClaim, error
 		return proposal.PRClaim{}, fmt.Errorf("get proposal: %w", err)
 	}
 	branch := BuildBranch(v.ReleaseID, v.Attempt)
-	claim, err := s.repo.BeginPR(ctx, id, branch, s.clock.Now())
+	// Task-4 bridge: the whole-proposal service group ("") until the per-service
+	// service-layer rework threads a real service through Begin (Task 5).
+	claim, err := s.repo.BeginPR(ctx, id, "", branch, s.clock.Now())
 	if err != nil {
 		return proposal.PRClaim{}, fmt.Errorf("begin pr: %w", err)
 	}
@@ -118,7 +120,9 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 	}
 	defer func() { _ = u.Rollback() }()
 
-	hit, err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, in.PrURL, in.PrNumber, in.OpenedBy, openedAt)
+	// Task-4 bridge: the whole-proposal service group ("") until Record threads
+	// a real service (Task 5).
+	hit, err := u.ProposalRepo().RecordPR(ctx, in.ProposalID, "", in.PrURL, in.PrNumber, in.OpenedBy, openedAt)
 	if err != nil {
 		return fmt.Errorf("record pr: %w", err)
 	}
@@ -149,7 +153,9 @@ func (s *Service) Record(ctx context.Context, in RecordInput) error {
 // reported via hit=false rather than an error: neither caller may ever
 // overwrite a claim it does not currently hold.
 func (s *Service) FailStuckClaim(ctx context.Context, id string, observedClaimedAt time.Time) (bool, error) {
-	return s.repo.FailStuckOpeningPR(ctx, id, observedClaimedAt)
+	// Task-4 bridge: the whole-proposal service group ("") until FailStuckClaim
+	// threads a real service (Task 5).
+	return s.repo.FailStuckOpeningPR(ctx, id, "", observedClaimedAt)
 }
 
 // RecordOutcome mirrors a terminal PR outcome observed on GitHub onto the
@@ -169,7 +175,9 @@ func (s *Service) RecordOutcome(ctx context.Context, id string, outcome proposal
 	}
 	defer func() { _ = u.Rollback() }()
 
-	transitioned, err := u.ProposalRepo().RecordPROutcome(ctx, id, outcome, closedAt)
+	// Task-4 bridge: the whole-proposal service group ("") until RecordOutcome
+	// threads a real service (Task 5).
+	transitioned, err := u.ProposalRepo().RecordPROutcome(ctx, id, "", outcome, closedAt)
 	if err != nil {
 		return fmt.Errorf("record pr outcome: %w", err)
 	}

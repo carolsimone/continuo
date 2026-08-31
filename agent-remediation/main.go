@@ -210,11 +210,11 @@ func main() {
 	// The proposal repository is bound to the DB rather than to a transaction:
 	// the gRPC read path, the reconciler, and the fixers' prior-attempt reads
 	// all use it outside any unit of work.
-	proposalRepo := postgres.NewProposalRepository(db)
+	proposalRepo := postgres.NewProposalRepository(db, cfg.ServiceRepoPaths)
 	contracts := repofs.NewLocator(logger)
 
 	deps := handlers.Deps{
-		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
 		LLM:              cachedLLM,
 		Evidence:         store,
 		Source:           gh,
@@ -266,7 +266,7 @@ func main() {
 	// write operations, matching the consumer's wiring above.
 	proposalSvc := proposals.New(proposals.Deps{
 		Repo:   proposalRepo,
-		NewUoW: func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		NewUoW: func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
 		Clock:  ports.SystemClock{},
 	})
 	lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
@@ -310,7 +310,7 @@ func main() {
 	shadowReconciler := shadowverify.New(shadowverify.Deps{
 		Lister:   proposalRepo,
 		Releases: releaseGateway,
-		NewUoW:   func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		NewUoW:   func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
 		Decode:   rredis.TriggerFromPayload,
 		Propose: func(ctx context.Context, t handlers.Trigger) error {
 			return handlers.ProposeFix(ctx, deps, t)

@@ -42,6 +42,32 @@ func GroupEditsByService(serviceRepoPaths map[string]string, edits []FileEdit) m
 	return groups
 }
 
+// IntersectSorted returns the sorted intersection of members and fixed: the
+// members an attempt actually repaired. A per-service PR claims only the nodes
+// that service's edits address AND the attempt fixed, so a member the attempt
+// skipped or failed is never claimed by a PR. Both inputs are treated as sets;
+// the result is sorted and free of duplicates.
+func IntersectSorted(members, fixed []string) []string {
+	want := make(map[string]struct{}, len(fixed))
+	for _, f := range fixed {
+		want[f] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(members))
+	out := make([]string, 0, len(members))
+	for _, m := range members {
+		if _, ok := want[m]; !ok {
+			continue
+		}
+		if _, dup := seen[m]; dup {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // MembersOfEdits is the sorted union of the edits' MemberNodeIDs. When no
 // edit carries members (rows written before the split), fallback is returned
 // so legacy single-PR flows keep resolving the whole set.

@@ -72,7 +72,7 @@ func (r *fakeRepo) Get(_ context.Context, _ string) (proposal.View, error) {
 func (r *fakeRepo) List(_ context.Context, _ repository.ProposalFilter) ([]proposal.View, error) {
 	return []proposal.View{r.view}, nil
 }
-func (r *fakeRepo) BeginPR(_ context.Context, _ string, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
+func (r *fakeRepo) BeginPR(_ context.Context, _, _ string, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
 	r.lastBranch = branch
 	r.lastClaimedAt = claimedAt
 	return proposal.PRClaim{
@@ -82,7 +82,7 @@ func (r *fakeRepo) BeginPR(_ context.Context, _ string, branch string, claimedAt
 		Attempt:   r.view.Attempt,
 	}, nil
 }
-func (r *fakeRepo) RecordPR(_ context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
+func (r *fakeRepo) RecordPR(_ context.Context, id, _, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
 	r.lastRecordPR.id = id
 	r.lastRecordPR.prURL = prURL
 	r.lastRecordPR.prNumber = prNumber
@@ -90,7 +90,7 @@ func (r *fakeRepo) RecordPR(_ context.Context, id, prURL string, prNumber int, o
 	r.lastRecordPR.openedAt = openedAt
 	return r.recordPRCASHit, nil
 }
-func (r *fakeRepo) FailStuckOpeningPR(_ context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+func (r *fakeRepo) FailStuckOpeningPR(_ context.Context, id, _ string, observedClaimedAt time.Time) (bool, error) {
 	r.lastFailStuckID = id
 	r.lastFailStuckClaimedAt = observedClaimedAt
 	return r.failStuckHit, nil
@@ -101,7 +101,7 @@ func (r *fakeRepo) ListOpenPullRequests(_ context.Context, _ int) ([]proposal.Op
 func (r *fakeRepo) ListStuckOpening(_ context.Context, _ int, _ *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
 	return nil, nil, nil
 }
-func (r *fakeRepo) RecordPROutcome(_ context.Context, _ string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
+func (r *fakeRepo) RecordPROutcome(_ context.Context, _, _ string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
 	r.lastOutcome = outcome
 	r.lastClosedAt = closedAt
 	return r.outcomeCASHit, nil
