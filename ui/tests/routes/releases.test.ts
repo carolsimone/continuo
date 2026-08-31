@@ -20,6 +20,13 @@ describe('releases router', () => {
     expect(client.listReleases).toHaveBeenCalledWith(expect.objectContaining({ status: 'promoted' }));
   });
 
+  it('rate-limits the router (the list route fans out to GitHub)', async () => {
+    const client = { listReleases: vi.fn().mockResolvedValue({ releases: [], next_cursor: '' }) };
+    const app = appWith({ client, getLog: vi.fn() });
+    const res = await request(app).get('/api/releases');
+    expect(res.headers['ratelimit-limit']).toBeDefined();
+  });
+
   it('enriches each release with its commit author', async () => {
     const client = {
       listReleases: vi.fn().mockResolvedValue({

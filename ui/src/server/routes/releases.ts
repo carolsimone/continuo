@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { ReleaseClient } from '../release-client';
 import type { CommitAuthorResolver, ReleaseAuthor } from '../github/commit-author';
 
@@ -46,6 +47,22 @@ export function createReleasesRouter(
   authorResolver?: CommitAuthorResolver,
 ) {
   const router = Router();
+
+  // Bound every releases route per client IP. The list route fans out to GitHub
+  // (one getCommit per distinct commit) and every route performs authorization,
+  // so an authenticated client must not be able to hammer it. The panel polls
+  // current-prod every 5s and loads the list on demand, both far under this.
+  // xForwardedForHeader validation is off because the service runs behind an
+  // ingress that always sets the header while Express has no trust proxy.
+  router.use(
+    rateLimit({
+      windowMs: 60 * 1000,
+      limit: 120,
+      standardHeaders: true,
+      legacyHeaders: false,
+      validate: { xForwardedForHeader: false },
+    }),
+  );
 
   // GET /api/releases/log?key=  — registered before /:id so "log" is not treated as an id.
   router.get('/log', async (req, res) => {
