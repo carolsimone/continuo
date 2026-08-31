@@ -358,13 +358,13 @@ streams:
 
   - name: remediation.proposed:v1
     const: RemediationProposedV1
-    description: Per-node fix proposal emitted by the remediation agent for a healable failure; consumed by the PR creator and approval surfaces.
+    description: One shadow-verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
     producers: [agent-remediation]
     consumers: []
 
   - name: remediation.pr_opened:v1
     const: RemediationPrOpenedV1
-    description: Emitted when an operator opens a GitHub PR from a fix proposal; consumed by orchestrator's case-base proposals group.
+    description: Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by orchestrator's case-base proposals group.
     producers: [agent-remediation]
     consumers:
       - service: orchestrator

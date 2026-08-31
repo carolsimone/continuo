@@ -173,11 +173,14 @@ classification and backoff mechanics.
 PR-outcome reconciler observes a terminal GitHub pull request state (merged,
 or closed without merge) for a proposal whose `pr_state` is `open`; the CAS
 `open → merged | rejected` and this outbox row commit in the same transaction.
-The payload is pointer-only: `proposal_id`, `release_id`, `node_id`, `pr_url`,
-`pr_number`, `outcome` (`merged` or `rejected`), `closed_at`. `event_id` is a
-deterministic SHA1 UUID derived from `(release_id, node_id, attempt)`, distinct
-from the `remediation.pr_opened:v1` id derived from the same triple, so the two
-events never collide. No consumer is wired to it. See
+The payload is pointer-only: `proposal_id`, `release_id`, `node_id`,
+`resolved_node_ids` (every failing node the PR addressed, sorted; `node_id` is
+that set's representative), `pr_url`, `pr_number`, `outcome` (`merged` or
+`rejected`), `closed_at`. `event_id` is a deterministic SHA1 UUID derived from
+`(release_id, attempt)` — one attempt fixes a whole failing set, so no single
+node is part of its identity — under a namespace distinct from the
+`remediation.pr_opened:v1` id derived from the same pair, so the two events
+never collide. No consumer is wired to it. See
 `docs/arch/services/agent-remediation.md` for the full payload shape.
 
 ## Out of scope
