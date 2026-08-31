@@ -67,6 +67,25 @@ func seedRejection(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeI
 	require.NoError(t, err)
 }
 
+// seedResolvedByProposal links a :Rejection directly to a :Proposal — the
+// merged-PR provenance edge RecordPullRequestOutcome draws (Task 10) — so a
+// forward-link test can prove its presence must not suppress the
+// promotion-time :NodeVersion back-link this repository draws.
+func seedResolvedByProposal(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeID, proposalID string) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `
+		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
+		MERGE (prop:Proposal {proposal_id: $proposal_id})
+		MERGE (rej)-[:RESOLVED_BY]->(prop)
+	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+}
+
 func newVersionRepo(client neo4jinfra.Neo4jClient) *neo4jinfra.CodeVersionRepository {
 	return neo4jinfra.NewCodeVersionRepository(client,
 		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -612,6 +631,71 @@ func TestWriteVersions_LinksOpenRejectionsToTheNewVersion(t *testing.T) {
 		"still exactly one [:RESOLVED_BY] edge on the already-resolved rejection")
 	assert.Equal(t, "sha256:v2", versionScalar(t, client, resolvedByQuery, map[string]any{"release_id": "rel-late"}),
 		"the previously-open rejection is now linked to the version that resolved it")
+}
+
+// TestWriteVersions_ForwardLinkGuardIsPerNodeVersionFamily verifies the
+// promotion-time back-link guard is keyed on the RESOLVED_BY edge's target
+// label, not raw edge existence: since Task 10, a merged fix PR draws its own
+// RESOLVED_BY->(:Proposal) provenance edge that coexists with the
+// own-timeline RESOLVED_BY->(:NodeVersion) edge this write draws, so a
+// rejection already carrying a Proposal link must still receive its own
+// NodeVersion link — while a rejection already linked to a :NodeVersion is
+// still left alone by a later promotion (existing skip behavior, pinned here
+// scoped to the same family).
+func TestWriteVersions_ForwardLinkGuardIsPerNodeVersionFamily(t *testing.T) {
+	ctx := context.Background()
+	client := newTestClient(t)
+	wipeVersionFixtures(t, client)
+	t.Cleanup(func() { wipeVersionFixtures(t, client) })
+	seedVersionTable(t, client, "analytics.revenue", "sha256:v0")
+	seedVersionTable(t, client, "analytics.margin", "sha256:v0")
+
+	t0 := time.Now().UTC()
+	repo := newVersionRepo(client)
+
+	// analytics.revenue: a rejection already carrying merged-PR provenance
+	// (RESOLVED_BY -> :Proposal) must still get its own-timeline
+	// RESOLVED_BY -> :NodeVersion link when the fix promotes.
+	seedRejection(t, client, "rel-proposal", "analytics.revenue", t0)
+	seedResolvedByProposal(t, client, "rel-proposal", "analytics.revenue", "prop-1")
+
+	// analytics.margin: an ordinary rejection used below to pin the skip
+	// behavior once its own-timeline link is established.
+	seedRejection(t, client, "rel-resolved", "analytics.margin", t0)
+
+	res, err := repo.WriteVersions(ctx, versionWriteInput("rel-1", t0.Add(time.Hour),
+		[]codeversion.NodeVersion{
+			nodeInput("analytics.revenue", "sha256:v1"),
+			nodeInput("analytics.margin", "sha256:v1"),
+		}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.RejectionsResolved,
+		"both rejections receive their own-timeline NodeVersion link, including the Proposal-linked one")
+
+	assert.Equal(t, "sha256:v1", versionScalar(t, client, `
+		MATCH (:Rejection {release_id:'rel-proposal', node_id:'analytics.revenue'})-[:RESOLVED_BY]->(v:NodeVersion)
+		RETURN v.content_hash AS v`, nil),
+		"the Proposal-linked rejection must still receive the promotion-time NodeVersion link")
+	assert.Equal(t, int64(1), versionScalar(t, client, `
+		MATCH (:Rejection {release_id:'rel-proposal', node_id:'analytics.revenue'})-[:RESOLVED_BY]->(:Proposal)
+		RETURN count(*) AS v`, nil),
+		"the pre-existing Proposal provenance edge is untouched")
+	assert.Equal(t, int64(2), versionScalar(t, client, `
+		MATCH (:Rejection {release_id:'rel-proposal', node_id:'analytics.revenue'})-[r:RESOLVED_BY]->()
+		RETURN count(r) AS v`, nil),
+		"the rejection now carries both the Proposal edge and the new NodeVersion edge")
+
+	// A second, later promotion of analytics.margin must not move or
+	// duplicate the NodeVersion link the first promotion just established.
+	res2, err := repo.WriteVersions(ctx, versionWriteInput("rel-2", t0.Add(2*time.Hour),
+		[]codeversion.NodeVersion{nodeInput("analytics.margin", "sha256:v2")}, nil))
+	require.NoError(t, err)
+	assert.Equal(t, 0, res2.RejectionsResolved,
+		"a rejection already linked to a :NodeVersion must still be skipped")
+	assert.Equal(t, "sha256:v1", versionScalar(t, client, `
+		MATCH (:Rejection {release_id:'rel-resolved', node_id:'analytics.margin'})-[:RESOLVED_BY]->(v:NodeVersion)
+		RETURN v.content_hash AS v`, nil),
+		"the already-established NodeVersion link must not move to the later version")
 }
 
 // A release whose promoted_at trails the node's watermark must not be able to

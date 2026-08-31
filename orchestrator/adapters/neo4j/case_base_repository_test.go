@@ -309,6 +309,109 @@ func TestCaseBaseRepository_BackLinksResolvedByWhenNewerVersionExists(t *testing
 		"still exactly one [:RESOLVED_BY] edge — the existing IS NULL guard must block a second link")
 }
 
+// seedStubResolvedByProposal MERGEs a stub :Rejection (the shape
+// RecordProposal itself would create) and links it directly to a :Proposal —
+// the merged-PR provenance edge RecordPullRequestOutcome draws (Task 10) — so
+// a back-link test can prove its presence must not suppress
+// RecordRejection's own-timeline :NodeVersion back-link.
+func seedStubResolvedByProposal(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeID, proposalID string, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `
+		MERGE (rej:Rejection {release_id: $release_id, node_id: $node_id})
+		ON CREATE SET rej.at = $at, rej.stub = true
+		MERGE (prop:Proposal {proposal_id: $proposal_id})
+		MERGE (rej)-[:RESOLVED_BY]->(prop)
+	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID, "at": at})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+}
+
+// TestCaseBaseRepository_BackLinkGuardIsPerNodeVersionFamily verifies the
+// back-link guard's existing-edge check is keyed on the RESOLVED_BY edge's
+// target-label family, not raw edge existence: since Task 10, a merged fix PR
+// can draw its own RESOLVED_BY->(:Proposal) provenance edge (via
+// RecordPullRequestOutcome) before the rejection itself lands through this
+// path, and that edge must not suppress the own-timeline
+// RESOLVED_BY->(:NodeVersion) link — while a rejection already linked to a
+// :NodeVersion is still left alone by a later call (existing skip behavior,
+// pinned here scoped to the same family).
+func TestCaseBaseRepository_BackLinkGuardIsPerNodeVersionFamily(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	repo := newCaseBaseRepo(client)
+
+	t0 := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+
+	// Node A: merged-PR provenance already landed (RESOLVED_BY -> :Proposal)
+	// before the rejection arrives through this path. A qualifying
+	// :NodeVersion exists too.
+	nodeA := marker + "-node-a"
+	releaseA := marker + "-rel-a"
+	seedNodeVersion(t, client, nodeA, marker, "hash-a1", t0.Add(time.Hour))
+	seedStubResolvedByProposal(t, client, releaseA, nodeA, marker+"-prop", t0)
+
+	require.NoError(t, repo.RecordRejection(ctx, casebase.Rejection{
+		ReleaseID: releaseA, NodeID: nodeA, Stage: "validation",
+		Category: "cat", Reason: "reason", Signature: marker + "-sig-a",
+		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
+	}))
+
+	assert.Equal(t, "hash-a1", runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
+		RETURN v.content_hash AS c
+	`, map[string]any{"release_id": releaseA, "node_id": nodeA}, "c"),
+		"the Proposal-linked rejection must still receive its own-timeline NodeVersion back-link")
+	assert.EqualValues(t, 1, runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(:Proposal)
+		RETURN count(*) AS c
+	`, map[string]any{"release_id": releaseA, "node_id": nodeA}, "c"),
+		"the pre-existing Proposal provenance edge is untouched")
+	assert.EqualValues(t, 2, runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->()
+		RETURN count(r) AS c
+	`, map[string]any{"release_id": releaseA, "node_id": nodeA}, "c"),
+		"the rejection now carries both the Proposal edge and the new NodeVersion edge")
+
+	// Node B: the ordinary case establishes a NodeVersion link on the first
+	// call; a later-arriving version, and a redelivery, must both leave it
+	// alone.
+	nodeB := marker + "-node-b"
+	releaseB := marker + "-rel-b"
+	seedNodeVersion(t, client, nodeB, marker, "hash-b1", t0.Add(time.Hour))
+
+	rejB := casebase.Rejection{
+		ReleaseID: releaseB, NodeID: nodeB, Stage: "validation",
+		Category: "cat", Reason: "reason", Signature: marker + "-sig-b",
+		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
+	}
+	require.NoError(t, repo.RecordRejection(ctx, rejB))
+
+	// A version older than the linked hash-b1 arrives after the link is
+	// established; the existing-edge guard must keep it from being moved.
+	seedNodeVersion(t, client, nodeB, marker, "hash-b2", t0.Add(30*time.Minute))
+	require.NoError(t, repo.RecordRejection(ctx, rejB))
+
+	assert.Equal(t, "hash-b1", runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
+		RETURN v.content_hash AS c
+	`, map[string]any{"release_id": releaseB, "node_id": nodeB}, "c"),
+		"a rejection already linked to a :NodeVersion must not be moved by a later call")
+	assert.EqualValues(t, 1, runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->()
+		RETURN count(r) AS c
+	`, map[string]any{"release_id": releaseB, "node_id": nodeB}, "c"),
+		"still exactly one RESOLVED_BY edge")
+}
+
 // seedCurrentPointerAt MERGEs a :Table's [:CURRENT] edge to the version
 // addressed by (unique_id, content_hash), stamped with promotedAt — the
 // property the revert branch of RecordRejection's back-link reads, which is

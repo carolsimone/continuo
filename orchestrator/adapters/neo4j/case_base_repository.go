@@ -31,8 +31,13 @@ func NewCaseBaseRepository(client Neo4jClient, logger *slog.Logger) *CaseBaseRep
 // MERGEs the signature hub and its edge, anchors [:FAILED] only when the
 // node's :Table exists (FOREACH-guarded — this writer must never mint a
 // :Table, which would leak a non-promoted node into scheduler snapshots), and
-// back-links [:RESOLVED_BY] when the fix already landed before this consumer
-// caught up. Two branches feed that back-link, and the first to match wins:
+// back-links [:RESOLVED_BY] to a :NodeVersion when the fix already landed
+// before this consumer caught up. The existing-edge guard is scoped to that
+// target-label family: RESOLVED_BY is a shared relationship type, and a
+// merged fix PR can draw its own RESOLVED_BY->(:Proposal) provenance edge
+// (RecordPullRequestOutcome) before the rejection lands through this path, so
+// that edge's presence must not suppress this own-timeline link. Two branches
+// feed the back-link, and the first to match wins:
 //   - the ordinary case links the OLDEST :NodeVersion whose own promoted_at is
 //     after the rejection;
 //   - the revert case covers a promotion that reuses an existing, older
@@ -71,7 +76,7 @@ func (r *CaseBaseRepository) RecordRejection(ctx context.Context, rej casebase.R
 		FOREACH (_ IN CASE WHEN t IS NULL THEN [] ELSE [1] END |
 		  MERGE (t)-[:FAILED {release_id: $release_id}]->(rej))
 		WITH rej
-		OPTIONAL MATCH (rej)-[existing:RESOLVED_BY]->()
+		OPTIONAL MATCH (rej)-[existing:RESOLVED_BY]->(:NodeVersion)
 		WITH rej, existing
 		OPTIONAL MATCH (v:NodeVersion {unique_id: $node_id})
 		  WHERE existing IS NULL AND v.promoted_at > $at
