@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -335,6 +336,36 @@ func TestHandleGitBlobs_Create(t *testing.T) {
 	}
 }
 
+// TestHandleGitBlobs_RecordsDecodedContent verifies that POST
+// /repos/.../git/blobs records the base64-decoded content under the returned
+// sha — retrievable via recordedBlobFor — so handleContents can later serve
+// it back as raw text for a path resolved through a written commit's tree.
+func TestHandleGitBlobs_RecordsDecodedContent(t *testing.T) {
+	resetGitWrites()
+
+	const want = "select 1\nfrom table_a\n"
+	body := fmt.Sprintf(`{"content":%q,"encoding":"base64"}`, base64.StdEncoding.EncodeToString([]byte(want)))
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPost, "/repos/o/r/git/blobs", strings.NewReader(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+	var resp struct {
+		SHA string `json:"sha"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := recordedBlobFor(resp.SHA)
+	if !ok {
+		t.Fatalf("expected blob %q to be recorded", resp.SHA)
+	}
+	if got != want {
+		t.Errorf("expected decoded content %q, got %q", want, got)
+	}
+}
+
 // TestHandleGitCommits_Get verifies GET /repos/.../git/commits/{sha} returns
 // the requested commit's sha plus a tree.sha, since the PR creator reads
 // baseCommit.data.tree.sha to use as the new tree's base_tree.
@@ -460,6 +491,181 @@ func TestHandleGitRefs_UpdatePatch(t *testing.T) {
 	}
 	if resp.Object.SHA != "newcommitsha0" {
 		t.Errorf("expected updated sha %q, got %q", "newcommitsha0", resp.Object.SHA)
+	}
+}
+
+// TestMergeResolvesHeadBranchTipAsMergeCommitSHA drives the full git-write
+// plus PR lifecycle a real amend-detection close-loop exercises: write a
+// blob, a tree and a commit for a branch, push that commit as the branch's
+// tip, open a PR with that branch as head, and merge it. The merge response
+// and the PR's merge_commit_sha must both report the written commit's sha
+// (not the fixed stubCommitSHA fallback), and the Contents API must serve
+// that commit's actual file content when asked for it at that sha. An
+// unknown ref still falls back to the canned fixture (today's behavior), and
+// a path absent from a known commit's tree is a 404.
+func TestMergeResolvesHeadBranchTipAsMergeCommitSHA(t *testing.T) {
+	resetPRs()
+	resetGitWrites()
+
+	const owner, repo, branch = "o", "r", "remediation/rel-1/model-attempt1"
+	const path = "models/x.sql"
+	const fileContent = "select 1\n"
+
+	post := func(url, body string) []byte {
+		rec := httptest.NewRecorder()
+		handleRepos(rec, httptest.NewRequest(http.MethodPost, url, strings.NewReader(body)))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("POST %s: got %d (%s)", url, rec.Code, rec.Body.String())
+		}
+		return rec.Body.Bytes()
+	}
+	shaOf := func(body []byte) string {
+		var resp struct {
+			SHA string `json:"sha"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp.SHA
+	}
+
+	// 1. Write a blob for the file's content.
+	blobBody := fmt.Sprintf(`{"content":%q,"encoding":"base64"}`,
+		base64.StdEncoding.EncodeToString([]byte(fileContent)))
+	blobSHA := shaOf(post(fmt.Sprintf("/repos/%s/%s/git/blobs", owner, repo), blobBody))
+
+	// 2. Write a tree layering that blob onto the base tree.
+	treeBody := fmt.Sprintf(`{"base_tree":%q,"tree":[{"path":%q,"mode":"100644","type":"blob","sha":%q}]}`,
+		stubBaseTreeSHA, path, blobSHA)
+	treeSHA := shaOf(post(fmt.Sprintf("/repos/%s/%s/git/trees", owner, repo), treeBody))
+
+	// 3. Write a commit onto that tree.
+	commitBody := fmt.Sprintf(`{"message":"fix %s","tree":%q,"parents":[%q]}`, path, treeSHA, stubBaseSHA)
+	commitSHA := shaOf(post(fmt.Sprintf("/repos/%s/%s/git/commits", owner, repo), commitBody))
+
+	// 4. Push the branch to that commit.
+	refBody := fmt.Sprintf(`{"sha":%q,"force":true}`, commitSHA)
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPatch,
+		fmt.Sprintf("/repos/%s/%s/git/refs/heads/%s", owner, repo, branch), strings.NewReader(refBody)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update ref: got %d", rec.Code)
+	}
+
+	// 5. Open a PR with that branch as head.
+	prBody := fmt.Sprintf(`{"title":"fix","head":%q,"base":"main"}`, branch)
+	created := post(fmt.Sprintf("/repos/%s/%s/pulls", owner, repo), prBody)
+	var pr struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(created, &pr); err != nil {
+		t.Fatal(err)
+	}
+
+	// 6. Merge it — the response sha must be the written commit's sha, not
+	// the fixed stubCommitSHA fallback.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", owner, repo, pr.Number), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("merge: got %d", rec.Code)
+	}
+	var mergeResp struct {
+		SHA    string `json:"sha"`
+		Merged bool   `json:"merged"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &mergeResp); err != nil {
+		t.Fatal(err)
+	}
+	if !mergeResp.Merged {
+		t.Fatal("expected merged=true")
+	}
+	if mergeResp.SHA != commitSHA {
+		t.Errorf("expected merge sha %q, got %q", commitSHA, mergeResp.SHA)
+	}
+
+	// 7. GET the PR: merge_commit_sha carries the same sha.
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, pr.Number), nil))
+	var prState struct {
+		MergeCommitSHA string `json:"merge_commit_sha"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &prState); err != nil {
+		t.Fatal(err)
+	}
+	if prState.MergeCommitSHA != commitSHA {
+		t.Errorf("expected merge_commit_sha %q, got %q", commitSHA, prState.MergeCommitSHA)
+	}
+
+	// 8. Contents at that written commit sha returns the actual blob text.
+	req := httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/repos/%s/%s/contents/%s?ref=%s", owner, repo, path, commitSHA), nil)
+	req.Header.Set("Accept", "application/vnd.github.raw+json")
+	rec = httptest.NewRecorder()
+	handleRepos(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("contents at written commit: got %d", rec.Code)
+	}
+	if rec.Body.String() != fileContent {
+		t.Errorf("expected written blob text %q, got %q", fileContent, rec.Body.String())
+	}
+
+	// 9. An unknown ref still serves the canned fixture (today's behavior).
+	req = httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/repos/%s/%s/contents/%s?ref=unknownsha0000", owner, repo, path), nil)
+	req.Header.Set("Accept", "application/vnd.github.raw+json")
+	rec = httptest.NewRecorder()
+	handleRepos(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("contents at unknown ref: got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "silly_error") {
+		t.Errorf("expected canned fixture source for unknown ref, got %q", rec.Body.String())
+	}
+
+	// 10. A path absent from the known commit's tree is a 404, so
+	// ErrSourceNotFound still fires for a genuinely-absent file.
+	req = httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/repos/%s/%s/contents/models/absent.sql?ref=%s", owner, repo, commitSHA), nil)
+	req.Header.Set("Accept", "application/vnd.github.raw+json")
+	rec = httptest.NewRecorder()
+	handleRepos(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a path absent at a known commit, got %d", rec.Code)
+	}
+}
+
+// TestMergeWithoutPushFallsBackToStubCommitSHA verifies that merging a PR
+// whose head branch never received a PATCH git/refs/heads update (nothing
+// was pushed to it) still returns the fixed stubCommitSHA constant — the
+// back-compat path for tests that merge without exercising the git-write
+// endpoints at all.
+func TestMergeWithoutPushFallsBackToStubCommitSHA(t *testing.T) {
+	resetPRs()
+	resetGitWrites()
+
+	rec := httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPost, "/repos/o/r/pulls",
+		strings.NewReader(`{"title":"fix","head":"unpushed-branch","base":"main"}`)))
+	var pr struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &pr); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	handleRepos(rec, httptest.NewRequest(http.MethodPut,
+		fmt.Sprintf("/repos/o/r/pulls/%d/merge", pr.Number), nil))
+	var mergeResp struct {
+		SHA string `json:"sha"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &mergeResp); err != nil {
+		t.Fatal(err)
+	}
+	if mergeResp.SHA != stubCommitSHA {
+		t.Errorf("expected fallback sha %q, got %q", stubCommitSHA, mergeResp.SHA)
 	}
 }
 
