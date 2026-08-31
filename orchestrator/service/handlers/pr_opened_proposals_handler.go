@@ -100,7 +100,7 @@ func (h *PrOpenedProposalsHandler) Handle(
 
 	h.logger.Info("proposal recorded in case base",
 		"release_id", in.ReleaseID, "node_ids", resolved,
-		"proposal_id", in.ProposalID, "pr_url", in.PrURL)
+		"proposal_id", in.ProposalID, "service", in.Service, "pr_url", in.PrURL)
 	return h.complete(ctx, msgProcessingID)
 }
 

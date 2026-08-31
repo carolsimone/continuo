@@ -29,11 +29,13 @@ type Rejection struct {
 	ContentHash string
 }
 
-// Proposal is one fix PR opened for a rejection. Its identity here is
-// (ReleaseID, NodeID): one :Proposal per resolved node, all sharing the one
-// PR's facts, which now live on the linked PullRequest instead of inline on
-// this type — pre-existing :Proposal nodes keep their own pr_* properties for
-// legacy reads.
+// Proposal is one fix attempt (identified by ProposalID) for a rejected
+// release. A batched attempt spanning several nodes MERGEs onto the same
+// :Proposal, reached by one [:PROPOSED] edge per resolved :Rejection —
+// ReleaseID and NodeID here identify that one rejection's edge, not the
+// :Proposal itself. PR facts (url/number/state/opened_*) live on the
+// [:HAS_PR]->(:PullRequest) node, not here; legacy pre-split :Proposal nodes
+// still carry them inline for backward reads.
 type Proposal struct {
 	ProposalID string
 	ReleaseID  string
