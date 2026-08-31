@@ -483,7 +483,11 @@ func (row claimRow) toClaim(service, branch string, serviceRepoPaths map[string]
 	resolved := fixed
 	if service != "" {
 		edits = proposal.GroupEditsByService(serviceRepoPaths, edits)[service]
-		resolved = proposal.IntersectSorted(proposal.MembersOfEdits(edits, fixed), fixed)
+		// The fallback is nil, not fixed: a per-service claim resolves ONLY the
+		// members its own edits explicitly attribute. An edit written before the
+		// member_node_ids codec carries no members, and falling back to the whole
+		// fixed set there would let one service's PR claim nodes it never touched.
+		resolved = proposal.IntersectSorted(proposal.MembersOfEdits(edits, nil), fixed)
 	}
 	return proposal.PRClaim{
 		ID:              row.ID,
@@ -617,7 +621,18 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	}
 	if filter.PRState != "" {
 		args = append(args, filter.PRState)
-		q += fmt.Sprintf(" AND pr_state = $%d", len(args))
+		n := len(args)
+		// pr_state now lives on the proposal_pull_request child rows; the
+		// parent's own pr_state column is a legacy read-mirror that nothing
+		// writes. A proposal matches when any of its child rows is in the
+		// requested state, or — for a legacy proposal that never split into
+		// child rows — when its own parent column is. This mirrors the derived
+		// singular pr_state readers see (the first child row ordered by service,
+		// else the parent column).
+		q += fmt.Sprintf(` AND (EXISTS (SELECT 1 FROM proposal_pull_request ppr`+
+			` WHERE ppr.proposal_id = proposal.id AND ppr.pr_state = $%d)`+
+			` OR (NOT EXISTS (SELECT 1 FROM proposal_pull_request ppr`+
+			` WHERE ppr.proposal_id = proposal.id) AND proposal.pr_state = $%d))`, n, n)
 	}
 	if filter.ReleaseID != "" {
 		args = append(args, filter.ReleaseID)
@@ -656,6 +671,24 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	}
 	return views, nil
 }
+
+// beginPRClaimCAS is the atomic claim BeginPR issues: it moves a (proposal,
+// service) child row from '' or 'failed' to 'opening' — stamping pr_claimed_at
+// — only while the parent proposal is still source-resolved and 'proposed'. The
+// correlated EXISTS re-checks those two preconditions inside the same UPDATE as
+// the pr_state guard, so a status or source_resolved change committed between
+// BeginPR's pre-read and this statement can never yield a claim: the UPDATE
+// simply matches 0 rows (surfacing as ErrPRConflict) rather than opening a PR
+// for a fix that is no longer proposed or resolved. Reading pr_claimed_at back
+// from the row is what makes the returned claim carry the value actually
+// persisted, not the caller's argument.
+const beginPRClaimCAS = `
+	UPDATE proposal_pull_request ppr
+	   SET pr_state='opening', pr_claimed_at=$3
+	 WHERE ppr.proposal_id=$1 AND ppr.service=$2 AND ppr.pr_state IN ('', 'failed')
+	   AND EXISTS (SELECT 1 FROM proposal p
+	                WHERE p.id=ppr.proposal_id AND p.source_resolved AND p.status='proposed')
+	RETURNING pr_claimed_at`
 
 // BeginPR atomically claims one (proposal, service) pull request for creation:
 // the child proposal_pull_request row's pr_state moves from ” or 'failed' to
@@ -715,10 +748,7 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, service, branch st
 	}
 
 	var persistedClaimedAt time.Time
-	if err := r.q.GetContext(ctx, &persistedClaimedAt,
-		`UPDATE proposal_pull_request SET pr_state='opening', pr_claimed_at=$3
-		 WHERE proposal_id=$1 AND service=$2 AND pr_state IN ('', 'failed')
-		 RETURNING pr_claimed_at`,
+	if err := r.q.GetContext(ctx, &persistedClaimedAt, beginPRClaimCAS,
 		id, service, claimedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrPRConflict

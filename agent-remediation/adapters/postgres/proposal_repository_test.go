@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
@@ -2131,4 +2132,154 @@ func TestGet_CarriesPerServicePullRequests(t *testing.T) {
 	require.Equal(t, "open", v.PrState)
 	require.Equal(t, "https://gh/pr/20", v.PrURL)
 	require.Equal(t, 20, v.PrNumber)
+}
+
+// TestBeginPR_ClaimCASReChecksParentPreconditionsAtomically pins F1: the claim
+// CAS re-checks source_resolved and status='proposed' on the parent inside the
+// same UPDATE that moves the child row to 'opening'. BeginPR's pre-read gives
+// the ErrNotProposed/ErrNotSourceResolved ladder for a bad state at call time,
+// but the correlated EXISTS is what closes the pre-read→CAS race: a status or
+// source_resolved change committed in that window must yield 0 rows, never a
+// claim. The test drives the exact CAS statement the repository issues
+// (beginPRClaimCAS) against a claimable child row while the parent is first
+// non-proposed and then not source-resolved — removing the EXISTS guard makes
+// the UPDATE match the row and this test fail.
+func TestBeginPR_ClaimCASReChecksParentPreconditionsAtomically(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db, perServiceRepoPaths)
+
+	id := seedTwoServiceProposal(t, repo, db, "r-cas-guard")
+
+	// A claimable child row (pr_state='' default) for the service.
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO proposal_pull_request (proposal_id, service, repo) VALUES ($1, 'core', 'owner/continuo-demo')`, id)
+	require.NoError(t, err)
+
+	// While the parent is proposed + source_resolved, the CAS claims the row.
+	var claimedAt time.Time
+	require.NoError(t, db.GetContext(ctx, &claimedAt, beginPRClaimCAS, id, "core", time.Now().UTC()),
+		"the CAS must claim a claimable child row while the parent is proposed and source-resolved")
+
+	// Reset the child row to claimable and flip the parent to a non-proposed
+	// status. The correlated EXISTS must now refuse the claim (0 rows), even
+	// though the child row itself is claimable.
+	resetChild := func() {
+		t.Helper()
+		_, e := db.ExecContext(ctx,
+			`UPDATE proposal_pull_request SET pr_state='', pr_claimed_at=NULL WHERE proposal_id=$1 AND service='core'`, id)
+		require.NoError(t, e)
+	}
+	resetChild()
+	_, err = db.ExecContext(ctx, `UPDATE proposal SET status='failed' WHERE id=$1`, id)
+	require.NoError(t, err)
+	var out time.Time
+	err = db.GetContext(ctx, &out, beginPRClaimCAS, id, "core", time.Now().UTC())
+	require.ErrorIs(t, err, sql.ErrNoRows, "the CAS must refuse a claim while the parent is not 'proposed'")
+
+	// Same guard for source_resolved=false.
+	_, err = db.ExecContext(ctx, `UPDATE proposal SET status='proposed', source_resolved=false WHERE id=$1`, id)
+	require.NoError(t, err)
+	resetChild()
+	err = db.GetContext(ctx, &out, beginPRClaimCAS, id, "core", time.Now().UTC())
+	require.ErrorIs(t, err, sql.ErrNoRows, "the CAS must refuse a claim while the parent is not source-resolved")
+
+	// The child row was never moved out of the claimable state by the refused CASes.
+	var state string
+	require.NoError(t, db.GetContext(ctx, &state,
+		`SELECT pr_state FROM proposal_pull_request WHERE proposal_id=$1 AND service='core'`, id))
+	require.Equal(t, "", state, "a refused CAS must leave the child row claimable")
+}
+
+// TestList_FilterPRStateMatchesChildRows pins F2: List's pr_state filter matches
+// the proposal_pull_request child rows (the parent's own pr_state column is a
+// legacy read-mirror nothing writes), with a fallback to the parent column for a
+// legacy proposal that never split into child rows.
+func TestList_FilterPRStateMatchesChildRows(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db, perServiceRepoPaths)
+
+	// A proposal with a merged child PR.
+	id := seedTwoServiceProposal(t, repo, db, "r-list-prstate")
+	_, err := repo.BeginPR(ctx, id, "core", "remediation/r-list-prstate/core", time.Now().UTC())
+	require.NoError(t, err)
+	_, err = repo.RecordPR(ctx, id, "core", "https://gh/pr/1", 1, "dev", time.Now().UTC())
+	require.NoError(t, err)
+	_, err = repo.RecordPROutcome(ctx, id, "core", proposal.PROutcomeMerged, time.Now().UTC())
+	require.NoError(t, err)
+
+	merged, err := repo.List(ctx, repository.ProposalFilter{PRState: "merged"})
+	require.NoError(t, err)
+	require.Len(t, merged, 1, "a proposal with a merged child PR must match pr_state=merged")
+	require.Equal(t, id, merged[0].ID)
+
+	open, err := repo.List(ctx, repository.ProposalFilter{PRState: "open"})
+	require.NoError(t, err)
+	require.Empty(t, open, "the same proposal must not match pr_state=open")
+
+	// Legacy fallback: a proposal with no child rows matches on its own (legacy)
+	// parent pr_state column.
+	legacyID := seedProposal(t, repo, db, proposal.Proposal{
+		Source: "validation", ReleaseID: "r-list-prstate", NodeID: "legacy.n",
+		ErrorSignature: "sig", Attempt: 2, Status: proposal.StatusProposed,
+		SourceResolved: true, Repo: "owner/continuo-demo", CreatedAt: time.Now().UTC(),
+	})
+	_, err = db.ExecContext(ctx, `UPDATE proposal SET pr_state='open' WHERE id=$1`, legacyID)
+	require.NoError(t, err)
+
+	openLegacy, err := repo.List(ctx, repository.ProposalFilter{PRState: "open"})
+	require.NoError(t, err)
+	require.Len(t, openLegacy, 1, "a legacy proposal with no child rows matches on its parent pr_state")
+	require.Equal(t, legacyID, openLegacy[0].ID)
+}
+
+// TestBeginPR_PerServiceClaimOverMemberlessEditsResolvesNoMembers pins F3: a
+// per-service claim whose filtered edits carry no member_node_ids (a proposal
+// generated before the codec fix) resolves NO members — never the whole fixed
+// set — so a service's PR can only claim nodes its edits explicitly attribute.
+// The legacy "" whole-proposal claim over the same row still resolves the full
+// fixed set.
+func TestBeginPR_PerServiceClaimOverMemberlessEditsResolvesNoMembers(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db, perServiceRepoPaths)
+
+	id := seedProposal(t, repo, db, proposal.Proposal{
+		Source:          "validation",
+		ReleaseID:       "r-memberless-edits",
+		NodeID:          "na",
+		ResolvedNodeIDs: []string{"na", "nb"},
+		ErrorSignature:  "sig",
+		Attempt:         1,
+		Status:          proposal.StatusProposed,
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"na": {Status: proposal.StatusProposed},
+			"nb": {Status: proposal.StatusProposed},
+		},
+		SourceResolved: true,
+		Repo:           "owner/continuo-demo",
+		CommitSHA:      "sha",
+		Model:          "m",
+		CreatedAt:      time.Now().UTC(),
+		// Edits carry NO MemberNodeIDs (pre-codec-fix shape) but map to services.
+		Edits: []proposal.FileEdit{
+			{Path: "services/core/models/a.sql", ContentURI: "s3://b/core.content", DiffURI: "s3://b/core.diff"},
+			{Path: "services/finance/models/b.sql", ContentURI: "s3://b/fin.content", DiffURI: "s3://b/fin.diff"},
+		},
+	})
+
+	coreClaim, err := repo.BeginPR(ctx, id, "core", "remediation/r-memberless-edits/core", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, "core", coreClaim.Service)
+	require.Empty(t, coreClaim.ResolvedNodeIDs, "a per-service claim over memberless edits resolves no members")
+	require.Len(t, coreClaim.Edits, 1, "the claim still carries only its service's edit")
+	require.Equal(t, "services/core/models/a.sql", coreClaim.Edits[0].Path)
+
+	legacyClaim, err := repo.BeginPR(ctx, id, "", "remediation/r-memberless-edits/all", time.Now().UTC())
+	require.NoError(t, err)
+	require.Equal(t, "", legacyClaim.Service)
+	require.Equal(t, []string{"na", "nb"}, legacyClaim.ResolvedNodeIDs,
+		"the whole-proposal claim still resolves the full fixed set")
+	require.Len(t, legacyClaim.Edits, 2)
 }
