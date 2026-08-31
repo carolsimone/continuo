@@ -85,6 +85,13 @@ func TestCaseBaseRepository_RecordPullRequestOutcomeMerged(t *testing.T) {
 	`, map[string]any{"proposal_id": proposalID, "service": "core"}, "c")
 	assert.EqualValues(t, 1, prCount, "the merged outcome updates the one :PullRequest, never a second")
 
+	// Exactly one :Proposal for the proposal_id — every resolved node's
+	// [:RESOLVED_BY] converges on one shared node, never a duplicate.
+	proposalCount := runScalar(t, client,
+		`MATCH (p:Proposal {proposal_id: $proposal_id}) RETURN count(p) AS c`,
+		map[string]any{"proposal_id": proposalID}, "c")
+	assert.EqualValues(t, 1, proposalCount, "the merged outcome converges on one shared :Proposal, never a duplicate")
+
 	// :PullRequest terminal state.
 	session := client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
@@ -236,4 +243,143 @@ func TestCaseBaseRepository_RecordPullRequestOutcomeRejected(t *testing.T) {
 		MATCH (:Proposal {proposal_id: $proposal_id})-[ed:EDITED]->() RETURN count(ed) AS c
 	`, map[string]any{"proposal_id": proposalID}, "c")
 	assert.EqualValues(t, 0, editedCount, "a rejected outcome draws no EDITED edge")
+}
+
+// TestCaseBaseRepository_RecordPullRequestOutcomeAmendedOrReduction proves the
+// `amended` flag on every [:RESOLVED_BY] edge is the OR-reduction across ALL of
+// the PR's edits, not a pass-through of a single value, while each [:EDITED]
+// edge keeps its own per-edit `amended`. Two present :Table targets receive two
+// edits: one amended, one not. Every RESOLVED_BY must read amended=true (some
+// edit was amended); the two EDITED edges keep true and false respectively.
+// The all-false case then shows RESOLVED_BY collapses to false only when NO
+// edit was amended.
+func TestCaseBaseRepository_RecordPullRequestOutcomeAmendedOrReduction(t *testing.T) {
+	runAmendedOrReductionCase := func(t *testing.T, editAmended []bool, wantResolvedAmended bool) {
+		t.Helper()
+		client := newTestClient(t)
+		ctx := context.Background()
+		marker := t.Name()
+		cleanup := caseBaseCleanup(t, client, marker)
+		cleanup()
+		defer cleanup()
+
+		repo := newCaseBaseRepo(client)
+
+		releaseID := marker + "-rel"
+		proposalID := marker + "-proposal"
+		na := marker + "-na"
+		nb := marker + "-nb"
+		nx := marker + "-nx" // first edit's target :Table
+		ny := marker + "-ny" // second edit's target :Table
+		closedAt := time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC)
+
+		// Both edits' target :Table nodes exist in the topology.
+		seedEditTargetTable(t, client, nx, marker)
+		seedEditTargetTable(t, client, ny, marker)
+
+		require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+			ProposalID: proposalID, ReleaseID: releaseID, Service: "core",
+			Outcome: "merged", ClosedAt: closedAt,
+			ResolvedNodeIDs: []string{na, nb},
+			Edits: []casebase.EditOutcome{
+				{Path: "models/x.sql", TargetNodeID: nx, Amended: editAmended[0], Diff: "dx"},
+				{Path: "models/y.sql", TargetNodeID: ny, Amended: editAmended[1], Diff: "dy"},
+			},
+		}))
+
+		// Every RESOLVED_BY edge carries the OR-reduced flag.
+		for _, node := range []string{na, nb} {
+			rbAmended := runScalar(t, client, `
+				MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id})
+				RETURN rb.amended AS amended
+			`, map[string]any{"release_id": releaseID, "node_id": node, "proposal_id": proposalID}, "amended")
+			assert.Equal(t, wantResolvedAmended, rbAmended,
+				"RESOLVED_BY.amended for %s must be the OR across all edits", node)
+		}
+
+		// Each EDITED edge keeps its own per-edit amended, independent of the OR.
+		for target, want := range map[string]bool{nx: editAmended[0], ny: editAmended[1]} {
+			edAmended := runScalar(t, client, `
+				MATCH (:Proposal {proposal_id: $proposal_id})-[ed:EDITED]->(:Table {unique_id: $uid})
+				RETURN ed.amended AS amended
+			`, map[string]any{"proposal_id": proposalID, "uid": target}, "amended")
+			assert.Equal(t, want, edAmended,
+				"EDITED.amended for %s is per-edit, not the OR-reduced value", target)
+		}
+	}
+
+	t.Run("mixed edits OR to true", func(t *testing.T) {
+		runAmendedOrReductionCase(t, []bool{true, false}, true)
+	})
+	t.Run("all-false edits OR to false", func(t *testing.T) {
+		runAmendedOrReductionCase(t, []bool{false, false}, false)
+	})
+}
+
+// TestCaseBaseRepository_RecordPullRequestOutcomeLegacyMergedEmptyLists proves
+// the merged-path Cypher is safe when the resolved set and edits are both empty
+// — a legacy payload emitted before those fields existed. The FOREACH/UNWIND
+// over empty lists must still stamp the :PullRequest terminal state (the write
+// before them persists) and draw zero provenance edges, without error.
+func TestCaseBaseRepository_RecordPullRequestOutcomeLegacyMergedEmptyLists(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	repo := newCaseBaseRepo(client)
+
+	releaseID := marker + "-rel"
+	proposalID := marker + "-proposal"
+	na := marker + "-na"
+	openedAt := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
+	closedAt := time.Date(2026, 8, 14, 11, 30, 0, 0, time.UTC)
+
+	// The :Proposal + :PullRequest exist via [:HAS_PR] from a prior pr_opened.
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: releaseID, NodeID: na},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/repo/pull/42", PrNumber: 42,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
+		}))
+
+	// A merged outcome with no resolved nodes and no edits — must not error.
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: releaseID, Service: "core",
+		Outcome: "merged", ClosedAt: closedAt,
+		ResolvedNodeIDs: nil,
+		Edits:           nil,
+	}))
+
+	// The :PullRequest terminal state still landed.
+	session := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+	prRes, err := session.Run(ctx, `
+		MATCH (:Proposal {proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {service: $service})
+		RETURN pl.pr_state AS pr_state, pl.closed_at AS closed_at
+	`, map[string]any{"proposal_id": proposalID, "service": "core"})
+	require.NoError(t, err)
+	prRecords, err := prRes.Collect(ctx)
+	require.NoError(t, err)
+	require.Len(t, prRecords, 1)
+	prState, _ := prRecords[0].Get("pr_state")
+	assert.Equal(t, "merged", prState, "a legacy merged outcome still advances pr_state")
+	closedAtGot, _ := prRecords[0].Get("closed_at")
+	closedAtTime, ok := closedAtGot.(time.Time)
+	require.True(t, ok, "closed_at must round-trip as a time.Time, got %T", closedAtGot)
+	assert.True(t, closedAt.Equal(closedAtTime), "a legacy merged outcome stamps closed_at")
+
+	// Zero provenance edges drawn.
+	rbCount := runScalar(t, client, `
+		MATCH (:Rejection)-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id}) RETURN count(rb) AS c
+	`, map[string]any{"proposal_id": proposalID}, "c")
+	assert.EqualValues(t, 0, rbCount, "a legacy merged outcome draws no RESOLVED_BY edge")
+
+	editedCount := runScalar(t, client, `
+		MATCH (:Proposal {proposal_id: $proposal_id})-[ed:EDITED]->() RETURN count(ed) AS c
+	`, map[string]any{"proposal_id": proposalID}, "c")
+	assert.EqualValues(t, 0, editedCount, "a legacy merged outcome draws no EDITED edge")
 }
