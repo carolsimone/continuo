@@ -33,6 +33,20 @@ type Precedent struct {
 	ResolutionDiff string
 	DiffTruncated  bool
 	PRURL          string
+	// Edited carries the provenance of a merged fix PR that resolved this
+	// precedent: one entry per node the PR touched, which may include nodes
+	// other than the precedent's own (an upstream ancestor edited instead of,
+	// or in addition to, the failing node itself).
+	Edited []EditedPrecedent
+}
+
+// EditedPrecedent is one node a merged fix PR edited while resolving a
+// precedent's rejection.
+type EditedPrecedent struct {
+	NodeID  string
+	Path    string
+	Amended bool
+	Diff    string
 }
 
 type Evidence struct {
@@ -122,10 +136,12 @@ func renderPrecedents(b *strings.Builder, ps []Precedent) {
 	b.WriteString("How similar failures were fixed before (same error shape, any service):\n")
 	diffs := 0
 	for _, p := range ps {
-		if p.Resolved && p.ResolutionDiff != "" && diffs < maxPrecedentDiffRender {
+		hasResolution := p.ResolutionDiff != "" || len(p.Edited) > 0
+		if p.Resolved && hasResolution && diffs < maxPrecedentDiffRender {
 			diffs++
 			fmt.Fprintf(b, "- %s (%s/%s, %s): %s\n", p.NodeID, p.Category, p.Reason, p.RejectedAt, p.ErrorExcerpt)
-			fmt.Fprintf(b, "  Fix that resolved it:\n```diff\n%s\n```\n", p.ResolutionDiff)
+			b.WriteString("  Fix that resolved it:\n")
+			renderPrecedentResolution(b, p)
 			if p.DiffTruncated {
 				b.WriteString("  (diff truncated)\n")
 			}
@@ -141,6 +157,49 @@ func renderPrecedents(b *strings.Builder, ps []Precedent) {
 		fmt.Fprintf(b, "- %s (%s/%s, %s, %s): %s\n", p.NodeID, p.Category, p.Reason, p.RejectedAt, status, p.ErrorExcerpt)
 	}
 	b.WriteString("\n")
+}
+
+// renderPrecedentResolution writes the diff(s) that resolved a precedent. The
+// precedent's own resolution diff, when present, renders exactly as before
+// (no upstream wording). Edited entries for a node other than the
+// precedent's own are additionally rendered with a line naming that upstream
+// node and its path; when there is no own-node resolution diff at all, the
+// Edited entries stand in as the rendered resolution. An Edited entry with
+// Amended set carries a diff computed from merged truth rather than the
+// original proposal, so its rendering is preceded by a caveat saying so.
+func renderPrecedentResolution(b *strings.Builder, p Precedent) {
+	var own *EditedPrecedent
+	for i := range p.Edited {
+		if p.Edited[i].NodeID == p.NodeID {
+			own = &p.Edited[i]
+			break
+		}
+	}
+
+	switch {
+	case p.ResolutionDiff != "":
+		fmt.Fprintf(b, "```diff\n%s\n```\n", p.ResolutionDiff)
+	case own != nil:
+		renderEditedDiff(b, *own)
+	}
+
+	for _, e := range p.Edited {
+		if e.NodeID == p.NodeID {
+			continue
+		}
+		fmt.Fprintf(b, "  resolved by editing upstream node %s (%s):\n", e.NodeID, e.Path)
+		renderEditedDiff(b, e)
+	}
+}
+
+// renderEditedDiff writes one Edited entry's diff, preceded by the amended
+// caveat when the entry's diff was computed from merged truth rather than
+// the original proposal.
+func renderEditedDiff(b *strings.Builder, e EditedPrecedent) {
+	if e.Amended {
+		b.WriteString("  note: a human amended the proposed fix before merge; the diff below is what shipped.\n")
+	}
+	fmt.Fprintf(b, "```diff\n%s\n```\n", e.Diff)
 }
 
 const compileFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt project that failed to compile.

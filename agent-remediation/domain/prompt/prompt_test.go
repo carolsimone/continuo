@@ -222,6 +222,98 @@ func TestRenderPrecedents_DiffsCappedAtFive(t *testing.T) {
 	}
 }
 
+// TestRenderPrecedents_UpstreamEdit verifies that a precedent resolved by
+// editing a node other than the precedent's own node renders a line naming
+// that upstream node and its path before the edited diff.
+func TestRenderPrecedents_UpstreamEdit(t *testing.T) {
+	ps := []Precedent{{
+		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
+		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
+		Resolved: true,
+		Edited: []EditedPrecedent{
+			{NodeID: "analytics.payments", Path: "models/payments.sql", Diff: "-old\n+new"},
+		},
+	}}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if !strings.Contains(out, "resolved by editing upstream node analytics.payments (models/payments.sql):") {
+		t.Fatalf("missing upstream-edit line:\n%s", out)
+	}
+	if !strings.Contains(out, "-old\n+new") {
+		t.Fatalf("missing edited diff:\n%s", out)
+	}
+}
+
+// TestRenderPrecedents_AmendedCaveat verifies that an Edited entry with
+// Amended==true renders the human-amendment caveat before its diff.
+func TestRenderPrecedents_AmendedCaveat(t *testing.T) {
+	ps := []Precedent{{
+		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
+		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
+		Resolved: true,
+		Edited: []EditedPrecedent{
+			{NodeID: "analytics.payments", Path: "models/payments.sql", Amended: true, Diff: "-old\n+new"},
+		},
+	}}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if !strings.Contains(out, "note: a human amended the proposed fix before merge; the diff below is what shipped.") {
+		t.Fatalf("missing amended caveat:\n%s", out)
+	}
+	if strings.Index(out, "note: a human amended") > strings.Index(out, "-old\n+new") {
+		t.Fatalf("caveat must precede the diff it describes:\n%s", out)
+	}
+}
+
+// TestRenderPrecedents_OwnNodeEdit_NoUpstreamWording verifies that a
+// precedent whose only Edited entry targets its own node renders exactly as
+// it did before Edited existed: no "resolved by editing upstream node" line.
+func TestRenderPrecedents_OwnNodeEdit_NoUpstreamWording(t *testing.T) {
+	ps := []Precedent{{
+		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
+		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
+		Resolved: true, ResolutionDiff: "-select a\n+select a, x",
+		Edited: []EditedPrecedent{
+			{NodeID: "analytics.orders", Path: "models/orders.sql", Diff: "-select a\n+select a, x"},
+		},
+	}}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if strings.Contains(out, "resolved by editing upstream node") {
+		t.Fatalf("own-node edit must not render upstream wording:\n%s", out)
+	}
+	if !strings.Contains(out, "-select a\n+select a, x") {
+		t.Fatalf("missing resolution diff:\n%s", out)
+	}
+}
+
+// TestRenderPrecedents_EditedDiffAsResolutionWhenResolutionDiffEmpty verifies
+// that a precedent with no ResolutionDiff but with Edited entries still
+// renders in full (excerpt + diff), using the edited diff as the resolution,
+// rather than falling back to the unresolved/resolved one-liner.
+func TestRenderPrecedents_EditedDiffAsResolutionWhenResolutionDiffEmpty(t *testing.T) {
+	ps := []Precedent{{
+		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
+		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
+		Resolved: true,
+		Edited: []EditedPrecedent{
+			{NodeID: "analytics.payments", Path: "models/payments.sql", Diff: "-old_upstream\n+new_upstream"},
+		},
+	}}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if !strings.Contains(out, "-old_upstream\n+new_upstream") {
+		t.Fatalf("edited diff must be rendered as the resolution when ResolutionDiff is empty:\n%s", out)
+	}
+	if strings.Contains(out, "analytics.orders (sql_error/missing_column, 2026-08-01T00:00:00Z, resolved): column x does not exist") {
+		t.Fatalf("must not fall back to the one-liner when Edited supplies a resolution:\n%s", out)
+	}
+}
+
 func TestAssembleSeedFix_RendersPrecedents(t *testing.T) {
 	req := AssembleSeedFix("seeds/ref.csv", "id,name\n1,a", "seed err", "service-1", precedentFixture())
 	for _, want := range []string{"How similar failures were fixed before", "-select a\n+select a, x"} {

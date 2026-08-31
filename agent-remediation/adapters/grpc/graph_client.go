@@ -133,6 +133,11 @@ func MapPrecedents(resp *orchestratorv1.GetPrecedentsResponse) []prompt.Preceden
 		if len(p.Proposals) > 0 {
 			pr.PRURL = p.Proposals[0].PrUrl
 		}
+		for _, e := range p.Edited {
+			pr.Edited = append(pr.Edited, prompt.EditedPrecedent{
+				NodeID: e.NodeId, Path: e.Path, Amended: e.Amended, Diff: e.Diff,
+			})
+		}
 		out = append(out, pr)
 	}
 	return out

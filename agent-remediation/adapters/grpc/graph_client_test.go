@@ -37,6 +37,39 @@ func TestMapPrecedents(t *testing.T) {
 	}
 }
 
+// TestMapPrecedents_CopiesEditedEntries verifies that every proto `edited`
+// entry (the provenance of a merged fix PR: which node it touched, that
+// node's path, whether a human amended it, and the diff that shipped) is
+// carried into prompt.Precedent.Edited, in the order the server returned
+// them.
+func TestMapPrecedents_CopiesEditedEntries(t *testing.T) {
+	resp := &orchestratorv1.GetPrecedentsResponse{Precedents: []*orchestratorv1.Precedent{{
+		ReleaseId: "rel-9", NodeId: "analytics.orders", Stage: "validation",
+		Category: "sql_error", Reason: "missing_column", ErrorExcerpt: "column x does not exist",
+		RejectedAt: "2026-08-01T00:00:00Z", Resolved: true,
+		Edited: []*orchestratorv1.PrecedentEdit{
+			{NodeId: "analytics.payments", Path: "models/payments.sql", Amended: true, Diff: "-old\n+new"},
+			{NodeId: "analytics.orders", Path: "models/orders.sql", Amended: false, Diff: "-a\n+b"},
+		},
+	}}}
+	got := grpcadapter.MapPrecedents(resp)
+	if len(got) != 1 {
+		t.Fatalf("got %d precedents, want 1", len(got))
+	}
+	want := []prompt.EditedPrecedent{
+		{NodeID: "analytics.payments", Path: "models/payments.sql", Amended: true, Diff: "-old\n+new"},
+		{NodeID: "analytics.orders", Path: "models/orders.sql", Amended: false, Diff: "-a\n+b"},
+	}
+	if len(got[0].Edited) != len(want) {
+		t.Fatalf("got %d edited entries, want %d: %+v", len(got[0].Edited), len(want), got[0].Edited)
+	}
+	for i := range want {
+		if got[0].Edited[i] != want[i] {
+			t.Fatalf("edited[%d] = %+v, want %+v", i, got[0].Edited[i], want[i])
+		}
+	}
+}
+
 func TestMapCurrentVersion_EmptyResponse_NotOK(t *testing.T) {
 	_, ok := grpcadapter.MapCurrentVersion(&orchestratorv1.GetNodeVersionsResponse{})
 	if ok {
