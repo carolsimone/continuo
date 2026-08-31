@@ -142,12 +142,28 @@ export function createRemediationRouter(
       claim = await remediation.beginPullRequest({ id, service });
     } catch (err: any) {
       if (err?.code === grpc.status.FAILED_PRECONDITION) {
-        // The service embeds the existing PR URL in the error message: this
-        // service already has a pull request, so skip creating a new one and
-        // report the existing one instead of losing it from the response.
+        // agent-remediation maps three distinct causes to FAILED_PRECONDITION:
+        // this service already has a pull request (the message embeds its
+        // URL), the proposal has no real source to fix, or the claim raced
+        // past 'proposed' (a shadow verdict landed, or the attempt budget was
+        // exhausted) since pr_services was read. Only the first is a
+        // success — skip creating a duplicate and report the existing PR
+        // instead of losing it from the response. The other two carry no
+        // URL and are genuine per-service failures, not an already-open PR;
+        // reporting them as a success would fabricate an empty-url entry
+        // and silently mask the real failure from the 200/207/502 accounting.
         const message: string = err.details ?? err.message ?? '';
-        const pr_url = extractPrUrl(message) ?? '';
-        return { ok: true, value: { service, pr_url, pr_number: extractPrNumber(pr_url) } };
+        const pr_url = extractPrUrl(message);
+        if (pr_url) {
+          return { ok: true, value: { service, pr_url, pr_number: extractPrNumber(pr_url) } };
+        }
+        console.error(
+          '[remediation] beginPullRequest refused for proposal %s service %s: %s',
+          id,
+          service,
+          message,
+        );
+        return { ok: false, error: { service, error: message } };
       }
       console.error(
         '[remediation] beginPullRequest failed for proposal %s service %s (status=%s): %s',

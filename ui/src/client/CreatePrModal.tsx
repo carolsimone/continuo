@@ -79,15 +79,17 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
         </p>
         <p>This opens a GitHub PR applying the proposed fix; it will not be merged.</p>
 
-        {result && result.pull_requests.length > 0 && (
+        {result && result.pull_requests.some(pr => pr.pr_url) && (
           <ul>
-            {result.pull_requests.map(pr => (
-              <li key={pr.service || 'legacy'}>
-                <a href={pr.pr_url} target="_blank" rel="noreferrer">
-                  {pr.service ? `${pr.service}: open PR ↗` : 'open PR ↗'}
-                </a>
-              </li>
-            ))}
+            {result.pull_requests
+              .filter(pr => pr.pr_url)
+              .map(pr => (
+                <li key={pr.service || 'legacy'}>
+                  <a href={pr.pr_url} target="_blank" rel="noreferrer">
+                    {pr.service ? `${pr.service}: open PR ↗` : 'open PR ↗'}
+                  </a>
+                </li>
+              ))}
           </ul>
         )}
 

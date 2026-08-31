@@ -190,6 +190,29 @@ describe('remediation router', () => {
     expect(prCreator.create).not.toHaveBeenCalled();
   });
 
+  // ── POST — a FAILED_PRECONDITION with no embedded URL is a genuine failure,
+  //    not an already-open PR (ErrNotSourceResolved / ErrNotProposed) ────────
+
+  it('reports a URL-less FAILED_PRECONDITION as a per-service failure, not a fabricated success', async () => {
+    const remediation = makeRemediation({
+      beginPullRequest: vi.fn().mockRejectedValue(
+        grpcFailedPrecondition('proposal is not in status proposed'),
+      ),
+    });
+    const prCreator = makePrCreator();
+    const app = appWith({ remediation, prCreator, getObject: makeGetObject() });
+
+    const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+    expect(res.status).toBe(502);
+    expect(res.body.pull_requests).toEqual([]);
+    expect(res.body.errors).toEqual([
+      { service: '', error: 'proposal is not in status proposed' },
+    ]);
+    expect(prCreator.create).not.toHaveBeenCalled();
+    // No dead link should ever be assembled for this service.
+    expect(res.body.pull_requests.some((pr: any) => pr.pr_url === '')).toBe(false);
+  });
+
   // ── POST — happy path ─────────────────────────────────────────────────────
 
   it('happy path: begin → getObject → create → record, returns 200 with one pull_requests entry', async () => {
@@ -893,6 +916,37 @@ describe('remediation router', () => {
         { service: 'core', error: 'failed to open pull request' },
         { service: 'finance', error: 'failed to open pull request' },
       ]);
+    });
+
+    it('reports 207 when one service is refused with a URL-less FAILED_PRECONDITION and the other succeeds', async () => {
+      const { remediation, claimsByService } = multiServiceRemediation();
+      (remediation.beginPullRequest as any).mockImplementation(async ({ service }: { service: string }) => {
+        if (service === 'core') {
+          // No URL embedded: a genuine refusal (e.g. ErrNotSourceResolved /
+          // ErrNotProposed), not an already-open PR.
+          throw grpcFailedPrecondition('proposal is not in status proposed');
+        }
+        return claimsByService.finance;
+      });
+      const prCreator = makePrCreator({
+        create: vi.fn().mockResolvedValue({ url: 'https://github.com/org/finance-repo/pull/11', number: 11 }),
+      });
+      const getObject = vi.fn().mockImplementation(async (key: string) => `content of ${key}`);
+      const app = appWith({ remediation, prCreator, getObject });
+
+      const res = await request(app).post('/api/remediation/proposals/p1/pull-request');
+      expect(res.status).toBe(207);
+      // Only the succeeding service lands in pull_requests — no fabricated
+      // empty-url entry for the refused one.
+      expect(res.body.pull_requests).toEqual([
+        { service: 'finance', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11 },
+      ]);
+      expect(res.body.errors).toEqual([
+        { service: 'core', error: 'proposal is not in status proposed' },
+      ]);
+      // core never reached GitHub at all.
+      expect(prCreator.create).toHaveBeenCalledTimes(1);
+      expect((prCreator.create as any).mock.calls[0][0].repo).toBe('org/finance-repo');
     });
   });
 });

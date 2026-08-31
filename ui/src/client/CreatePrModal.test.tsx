@@ -174,6 +174,24 @@ describe('CreatePrModal', () => {
     // The operator can retry the remaining service(s) immediately.
     expect(screen.getByRole('button', { name: /^Create PR$/i })).toBeEnabled();
   });
+
+  it('renders no link for a pull_requests entry with an empty pr_url', async () => {
+    // Defensive case: the server is not expected to send this (a URL-less
+    // FAILED_PRECONDITION is routed to errors[], not pull_requests), but the
+    // modal must never assemble a dead href="" link if it ever did.
+    mockCreatePullRequest.mockResolvedValue({
+      pull_requests: [{ service: 'core', pr_url: '', pr_number: 0 }],
+      errors: [],
+    });
+    renderModal();
+
+    fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Created/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('link', { name: /open PR/i })).toBeNull();
+  });
 });
 
 describe('RemediationPanel — Create PR trigger gating', () => {
