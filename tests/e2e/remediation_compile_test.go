@@ -59,7 +59,7 @@ import (
 // service whose image is built with the malformed-Jinja model source documented
 // above and loaded into kind,
 // whose image tag is reachable, and whose name is mapped in
-// agent-remediation/config/service_repos.yaml (so the agent resolves the repo
+// tests/e2e/config/service_repos.yaml (so the agent resolves the repo
 // prefix). Until a cold-stack harness provisions that fixture and exports
 // COMPILE_FIXTURE_SERVICE / COMPILE_FIXTURE_IMAGE_TAG, this test skips so it
 // never destabilises the green suite. See task-7.1-report.md.

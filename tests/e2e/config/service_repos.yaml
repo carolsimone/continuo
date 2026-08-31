@@ -1,0 +1,26 @@
+# tests/e2e/config/service_repos.yaml
+# The service→repo-path map the local docker-compose stack runs with, bound
+# into agent-remediation at /etc/continuo/service_repos.yaml via
+# SERVICE_REPO_MAP_PATH. It exists so the e2e fixture services below stay out
+# of the map the service documents for operators
+# (agent-remediation/config/service_repos.yaml) and out of the one the chart
+# ships (deploy/continuo/files/service_repos.yaml).
+#
+# Every service the compose stack can produce a fix for must appear here: a
+# shadow release is routed by the project root that owns the edited file, so a
+# service missing from the map has its fix recorded as unverifiable rather
+# than being verified, and compile, seed, and duplicate-table proposals for it
+# are skipped outright. Add a service here when a new e2e test proposes a fix
+# for it, then restart agent-remediation.
+services:
+  # Demo dbt services, from the shared local checkout.
+  core: services/core
+  finance: services/finance
+  marketing: services/marketing
+  # dbt fixture services the e2e suite releases and breaks on purpose.
+  service-1: services/service-1
+  service-2: services/service-2
+  service-3: services/service-3
+  # python-node fixture services; svc-py-e2e-loop drives the retry-round test.
+  svc-py-e2e: services/svc-py-e2e
+  svc-py-e2e-loop: services/svc-py-e2e-loop
