@@ -830,7 +830,7 @@ sequenceDiagram
   end
 ```
 
-> Per-row errors — a failed GitHub read or a failed `RecordOutcome` — are logged and skipped so one bad row never blocks the rest of the batch; that row is retried on the next pass. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked: the reconciler only lists `pr_state='open'` rows, so a terminal row is never re-examined. The outbox publisher drains the `remediation.pr_closed:v1` row on its own loop, same as every other outbox entry; no consumer is wired to the stream — it is an audit seam.
+> Per-row errors — a failed GitHub read or a failed `RecordOutcome` — are logged and skipped so one bad row never blocks the rest of the batch; that row is retried on the next pass. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked: the reconciler only lists `pr_state='open'` rows, so a terminal row is never re-examined. The outbox publisher drains the `remediation.pr_closed:v1` row on its own loop, same as every other outbox entry; orchestrator's case-base provenance consumer (group `orchestrator-remediation-pr-closed-provenance`) reads it to stamp the `:PullRequest`'s terminal state and, on a merged outcome, draw the `[:RESOLVED_BY]`/`[:EDITED]` provenance edges.
 
 ### 12b. Opening Sweep (Stranded-Claim Recovery)
 

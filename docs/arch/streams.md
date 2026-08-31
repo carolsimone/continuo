@@ -178,12 +178,20 @@ or closed without merge) for a proposal whose `pr_state` is `open`; the CAS
 `open → merged | rejected` and this outbox row commit in the same transaction.
 The payload is pointer-only: `proposal_id`, `release_id`, `node_id`,
 `resolved_node_ids` (every failing node the PR addressed, sorted; `node_id` is
-that set's representative), `pr_url`, `pr_number`, `outcome` (`merged` or
-`rejected`), `closed_at`. `event_id` is a deterministic SHA1 UUID derived from
-`(release_id, attempt)` — one attempt fixes a whole failing set, so no single
-node is part of its identity — under a namespace distinct from the
-`remediation.pr_opened:v1` id derived from the same pair, so the two events
-never collide. No consumer is wired to it. See
+that set's representative), `service`, `pr_url`, `pr_number`, `outcome`
+(`merged` or `rejected`), `closed_at`, and, on a merged outcome, `edits[]`
+(each `{path, target_node_id, amended, diff}` — whether a human amended that
+edit before merge, and the amendment diff). `event_id` is a deterministic SHA1
+UUID derived from `(release_id, attempt, service)` — one owning-service PR of a
+split proposal per id, with the legacy service `""` reproducing the pre-split
+`(release_id, attempt)` id byte-for-byte — under a namespace distinct from the
+`remediation.pr_opened:v1` id, so the two events never collide. Orchestrator's
+case-base provenance consumer (group
+`orchestrator-remediation-pr-closed-provenance`) records the resolution: it
+stamps the `:PullRequest`'s terminal `pr_state`/`closed_at`, and for a merged
+outcome draws `[:RESOLVED_BY {amended}]` from every resolved node's
+`:Rejection` to the shared `:Proposal` and `[:EDITED {path, amended, diff,
+service}]` from that `:Proposal` to each edit's `:Table`. See
 `docs/arch/services/agent-remediation.md` for the full payload shape.
 
 ## Out of scope
