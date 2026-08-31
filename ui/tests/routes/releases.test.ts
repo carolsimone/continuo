@@ -6,7 +6,7 @@ import { createReleasesRouter } from '../../src/server/routes/releases';
 function appWith(deps: any) {
   const app = express();
   app.use(express.json());
-  app.use('/api/releases', createReleasesRouter(deps.client, deps.getLog));
+  app.use('/api/releases', createReleasesRouter(deps.client, deps.getLog, deps.authorResolver));
   return app;
 }
 
@@ -18,6 +18,78 @@ describe('releases router', () => {
     expect(res.status).toBe(200);
     expect(res.body.releases[0].release_id).toBe('r1');
     expect(client.listReleases).toHaveBeenCalledWith(expect.objectContaining({ status: 'promoted' }));
+  });
+
+  it('enriches each release with its commit author', async () => {
+    const client = {
+      listReleases: vi.fn().mockResolvedValue({
+        releases: [
+          { release_id: 'r1', repo: 'acme/dbt', commit_sha: 'sha1' },
+          { release_id: 'r2', repo: 'acme/dbt', commit_sha: 'sha2' },
+        ],
+        next_cursor: '',
+      }),
+    };
+    const authorResolver = {
+      resolve: vi.fn(async (_repo: string, sha: string) => ({ login: sha === 'sha1' ? 'alice' : 'bob' })),
+    };
+    const app = appWith({ client, getLog: vi.fn(), authorResolver });
+    const res = await request(app).get('/api/releases');
+    expect(res.status).toBe(200);
+    expect(res.body.releases[0].author).toEqual({ login: 'alice' });
+    expect(res.body.releases[1].author).toEqual({ login: 'bob' });
+  });
+
+  it('resolves each distinct commit only once', async () => {
+    const client = {
+      listReleases: vi.fn().mockResolvedValue({
+        releases: [
+          { release_id: 'r1', repo: 'acme/dbt', commit_sha: 'same' },
+          { release_id: 'r2', repo: 'acme/dbt', commit_sha: 'same' },
+        ],
+        next_cursor: '',
+      }),
+    };
+    const authorResolver = { resolve: vi.fn().mockResolvedValue({ login: 'alice' }) };
+    const app = appWith({ client, getLog: vi.fn(), authorResolver });
+    await request(app).get('/api/releases');
+    expect(authorResolver.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the list even when one author lookup fails', async () => {
+    const client = {
+      listReleases: vi.fn().mockResolvedValue({
+        releases: [
+          { release_id: 'r1', repo: 'acme/dbt', commit_sha: 'bad' },
+          { release_id: 'r2', repo: 'acme/dbt', commit_sha: 'good' },
+        ],
+        next_cursor: '',
+      }),
+    };
+    const authorResolver = {
+      resolve: vi.fn(async (_repo: string, sha: string) => {
+        if (sha === 'bad') throw new Error('github down');
+        return { login: 'bob' };
+      }),
+    };
+    const app = appWith({ client, getLog: vi.fn(), authorResolver });
+    const res = await request(app).get('/api/releases');
+    expect(res.status).toBe(200);
+    expect(res.body.releases[0].author).toBeUndefined();
+    expect(res.body.releases[1].author).toEqual({ login: 'bob' });
+  });
+
+  it('passes the list through unchanged when no author resolver is configured', async () => {
+    const client = {
+      listReleases: vi.fn().mockResolvedValue({
+        releases: [{ release_id: 'r1', repo: 'acme/dbt', commit_sha: 'sha1' }],
+        next_cursor: '',
+      }),
+    };
+    const app = appWith({ client, getLog: vi.fn() });
+    const res = await request(app).get('/api/releases');
+    expect(res.status).toBe(200);
+    expect(res.body.releases[0].author).toBeUndefined();
   });
 
   it('streams a per-node log by key', async () => {

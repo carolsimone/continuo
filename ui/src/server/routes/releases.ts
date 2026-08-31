@@ -1,5 +1,11 @@
 import { Router } from 'express';
 import { ReleaseClient } from '../release-client';
+import type { CommitAuthorResolver, ReleaseAuthor } from '../github/commit-author';
+
+// The subset of a release list row enrichAuthors reads and writes. The list
+// itself crosses the release-controller→ui boundary untyped; this pins the two
+// provenance fields and the author it attaches.
+type EnrichableRelease = { repo?: string; commit_sha?: string; author?: ReleaseAuthor };
 
 // normalizeKey strips a leading s3://<bucket>/ so getLogObject receives a key.
 function normalizeKey(raw: string): string {
@@ -7,9 +13,37 @@ function normalizeKey(raw: string): string {
   return m ? m[1] : raw;
 }
 
+// enrichAuthors resolves the commit author for every release in place. Each
+// distinct (repo, commit_sha) is looked up once; a lookup that fails leaves that
+// release without an author rather than failing the whole list, so a GitHub
+// outage degrades to a missing column, not a broken page.
+async function enrichAuthors(releases: EnrichableRelease[], resolver: CommitAuthorResolver): Promise<void> {
+  const distinct = new Map<string, { repo: string; sha: string }>();
+  for (const r of releases) {
+    if (r && r.repo && r.commit_sha) distinct.set(`${r.repo}@${r.commit_sha}`, { repo: r.repo, sha: r.commit_sha });
+  }
+  const resolved = new Map<string, ReleaseAuthor>();
+  await Promise.all(
+    [...distinct].map(async ([key, { repo, sha }]) => {
+      try {
+        const author = await resolver.resolve(repo, sha);
+        if (author) resolved.set(key, author);
+      } catch {
+        // Leave this commit unresolved; other releases still get their author.
+      }
+    }),
+  );
+  for (const r of releases) {
+    if (!r || !r.repo || !r.commit_sha) continue;
+    const author = resolved.get(`${r.repo}@${r.commit_sha}`);
+    if (author) r.author = author;
+  }
+}
+
 export function createReleasesRouter(
   client: ReleaseClient,
   getLog: (key: string) => Promise<string>,
+  authorResolver?: CommitAuthorResolver,
 ) {
   const router = Router();
 
@@ -43,7 +77,11 @@ export function createReleasesRouter(
       if (typeof v === 'string' && v !== '') query[k] = v;
     }
     try {
-      res.json(await client.listReleases(query));
+      const data = await client.listReleases(query);
+      if (authorResolver && Array.isArray(data?.releases)) {
+        await enrichAuthors(data.releases, authorResolver);
+      }
+      res.json(data);
     } catch (err: any) {
       res.status(err.status || 502).json({ error: 'release-controller request failed' });
     }

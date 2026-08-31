@@ -7,6 +7,7 @@ import { createGrpcGraphClient } from './grpc-graph-client';
 import { createAgentClient } from './agent-client';
 import { createRemediationClient } from './remediation-client';
 import { resolveGithubAppPullRequestCreator } from './github/pull-request-creator';
+import { resolveGithubAppCommitAuthorResolver } from './github/commit-author';
 import { normalizePemPrivateKey } from './github/private-key';
 import { createApp } from './app';
 import { assertS3Config } from './s3';
@@ -50,14 +51,19 @@ async function main() {
   // resolveGithubAppPullRequestCreator rather than passing silently for the
   // same "absent" reason, because the operator dashboard as a whole must stay
   // up even though this one integration cannot.
-  const prCreator = resolveGithubAppPullRequestCreator({
+  const githubAppCfg = {
     appId: GITHUB_APP_ID,
     privateKey: GITHUB_APP_PRIVATE_KEY,
     installationId: GITHUB_APP_INSTALLATION_ID,
     baseUrl: GITHUB_API_BASE_URL,
-  });
+  };
+  const prCreator = resolveGithubAppPullRequestCreator(githubAppCfg);
+  // Resolves the Releases tab's commit author from the same GitHub App
+  // credentials; undefined (feature off) when they are absent or the key cannot
+  // sign, in which case the Author column simply stays empty.
+  const commitAuthorResolver = resolveGithubAppCommitAuthorResolver(githubAppCfg);
 
-  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator);
+  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator, commitAuthorResolver);
 
   if (process.env.NODE_ENV === 'production') {
     const staticDir = path.join(__dirname, '../dist');

@@ -16,6 +16,7 @@ import { getLogObject } from './s3';
 import type { AppAuth } from './auth/types';
 import type { RemediationClient } from './remediation-client';
 import type { PullRequestCreator } from './github/pull-request-creator';
+import type { CommitAuthorResolver } from './github/commit-author';
 
 export function createApp(
   client: GrpcClient,
@@ -26,6 +27,7 @@ export function createApp(
   chatBridgeEnabled = false,
   remediationClient?: RemediationClient,
   prCreator?: PullRequestCreator,
+  commitAuthorResolver?: CommitAuthorResolver,
 ) {
   const app = express();
   app.use(express.json());
@@ -49,7 +51,7 @@ export function createApp(
   app.use('/api/topology', createTopologyRouter(graphClient));
   app.use('/api/config', createConfigRouter(configFilePath));
   app.use('/api/features', createFeaturesRouter(chatBridgeEnabled));
-  app.use('/api/releases', createReleasesRouter(createReleaseClient(releaseControllerUrl), getLogObject));
+  app.use('/api/releases', createReleasesRouter(createReleaseClient(releaseControllerUrl), getLogObject, commitAuthorResolver));
   if (remediationClient) {
     app.use('/api/remediation', createRemediationRouter(remediationClient, prCreator, getLogObject));
   }
