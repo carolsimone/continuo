@@ -195,23 +195,9 @@ func nonContractEdit(t Trigger, edits []proposal.FileEdit) (proposal.FileEdit, b
 	return proposal.FileEdit{}, false
 }
 
-// serviceForPath resolves which configured service owns a repository path, and
-// returns that service's project root within the repo. The owner is the service
-// whose root is the longest prefix of the path, so a repo where one service's
-// root nests inside another's still resolves to the nearest one. A service
-// mapped to the repository root itself ("") owns any path no other service
-// claims. Ties between equally specific roots go to the smaller service name, so
-// the answer does not depend on map iteration order.
+// serviceForPath resolves which configured service owns a repository path.
+// It is a delegate to proposal.ServiceForPath, kept with an unexported name
+// so existing handler callers do not churn.
 func serviceForPath(serviceRepoPaths map[string]string, filePath string) (service, prefix string, ok bool) {
-	best := -1
-	for name, root := range serviceRepoPaths {
-		if root != "" && !strings.HasPrefix(filePath, root+"/") {
-			continue
-		}
-		if len(root) < best || (len(root) == best && name >= service) {
-			continue
-		}
-		service, prefix, best = name, root, len(root)
-	}
-	return service, prefix, best >= 0
+	return proposal.ServiceForPath(serviceRepoPaths, filePath)
 }
