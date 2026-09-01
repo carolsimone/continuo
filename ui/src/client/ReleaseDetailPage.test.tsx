@@ -574,6 +574,16 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/api/releases/rel-1/retry-remediation', expect.objectContaining({ method: 'POST' })));
   });
 
+  it('presents the retry as a titled action banner, not a bare button', async () => {
+    mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3, rationale: '' })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+    const btn = await screen.findByRole('button', { name: 'Try again (round 1 of 3)' });
+    // The action must read as the next thing to do: a banner that says what
+    // happened, with the retry as its primary call-to-action.
+    expect(screen.getByText(/No fix was produced for this release/i)).toBeTruthy();
+    expect(btn.closest('.action-banner')).not.toBeNull();
+  });
+
   it('bumps the round shown in the header and restarts proposal polling after a successful retry (202)', async () => {
     mockFetchProposals.mockResolvedValue([proposal({ source: 'compile', node_id: 'finance', status: 'escalated', attempt: 3 })]);
     mockPost.mockResolvedValue({ ok: true, status: 202, json: async () => ({ release_id: 'rel-1', remediation_round: 2 }) });
