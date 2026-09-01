@@ -13,6 +13,10 @@ body {
   color: #22c55e;
 }
 
+.live-badge--live { color: #22c55e; }
+.live-badge--reconnecting { color: #f59e0b; }
+.live-badge--connecting { color: #6b7280; }
+
 .empty {
   color: #6b7280;
   text-align: center;
