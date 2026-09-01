@@ -25,6 +25,15 @@ shipped in those.
   their stream and are processed once the new pod is up. No values or
   template change.
 
+### Fixed
+- `templates/networkpolicy.yaml`: added the two remediation reachability edges
+  the default-deny policy was missing — `agent-remediation → release-controller`
+  on 8088 (the shadow-verify lane: submitting/polling shadow releases and
+  reading the failing release's image tags) and `release-controller →
+  agent-remediation` on 50054 (`ListProposals` before a retry round). Without
+  them, on a cluster whose CNI enforces NetworkPolicy every proposed fix stalled
+  before verification and every "try again" failed. No values key change; PATCH.
+
 ## [0.4.1] - 2026-08-25
 
 ### Changed

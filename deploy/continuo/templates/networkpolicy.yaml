@@ -216,6 +216,60 @@ spec:
         - port: 50054
         - port: 8088
 ---
+# agent-remediation reaches release-controller's HTTP API (port 8088) to
+# submit shadow verification releases, poll their verdicts, and read the
+# original failing release's image tags — the whole shadow-verify lane. Only
+# ui is admitted by allow-ui-upstreams above, so without this edge every
+# proposed fix stalls before it can be verified.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" . }}-allow-release-controller-http
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $instance }}
+      app.kubernetes.io/name: release-controller
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $instance }}
+              app.kubernetes.io/name: agent-remediation
+      ports:
+        - port: 8088
+---
+# release-controller reaches agent-remediation's gRPC server (port 50054) to
+# read remediation attempts before starting a retry round (RetryRemediation →
+# ListProposals). allow-ui-upstreams admits only ui to this port, so without
+# this edge a "try again" on a rejected release fails with
+# proposal_reader_unavailable.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "continuo.fullname" . }}-allow-agent-remediation-grpc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "continuo.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $instance }}
+      app.kubernetes.io/name: agent-remediation
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ $instance }}
+              app.kubernetes.io/name: release-controller
+      ports:
+        - port: 50054
+---
 # Front door: ui accepts traffic from any source (ingress controller
 # namespaces vary per cluster; authentication is enforced in the app itself).
 apiVersion: networking.k8s.io/v1
