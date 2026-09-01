@@ -108,16 +108,38 @@ func (s *ProposalsServer) BeginPullRequest(ctx context.Context, req *remediation
 	if err != nil {
 		if errors.Is(err, repository.ErrPRConflict) {
 			// Attempt a best-effort fetch of the current pr_url so the caller
-			// can surface it in the UI without an extra round-trip.
+			// can surface it in the UI without an extra round-trip. It must be
+			// req.Service's own PR: a split proposal's other services can be at
+			// any state, so the conflicting service is not necessarily the one
+			// whose row the singular fields mirror.
 			msg := "proposal PR already claimed"
-			if v, getErr := s.svc.Get(ctx, req.Id); getErr == nil && v.PrURL != "" {
-				msg = fmt.Sprintf("proposal PR already claimed: existing pr_url=%s", v.PrURL)
+			if v, getErr := s.svc.Get(ctx, req.Id); getErr == nil {
+				if url := prURLForService(v, req.Service); url != "" {
+					msg = fmt.Sprintf("proposal PR already claimed: existing pr_url=%s", url)
+				}
 			}
 			return nil, status.Error(codes.FailedPrecondition, msg)
 		}
 		return nil, toGRPCError(err)
 	}
 	return claimToProto(claim), nil
+}
+
+// prURLForService returns the pr_url of the pull request v records for
+// service. "" is the legacy whole-proposal group, whose URL is v's singular
+// PrURL field (kept for a row with no child PullRequests at all). A named
+// service looks up its own entry in v.PullRequests, so a conflict on one
+// service can never surface a different service's URL.
+func prURLForService(v proposal.View, service string) string {
+	if service == "" {
+		return v.PrURL
+	}
+	for _, pr := range v.PullRequests {
+		if pr.Service == service {
+			return pr.PrURL
+		}
+	}
+	return ""
 }
 
 // RecordPullRequest stores the PR URL, number, and opener after a PR is

@@ -96,7 +96,9 @@ func (s *Service) Get(ctx context.Context, id string) (proposal.View, error) {
 // [""] group, so its per-service claim path is never entered and it keeps one
 // pull request for the whole proposal. Once at least one edit attributes
 // members, the groups are the sorted keys of GroupEditsByService, so each
-// owning service gets its own pull request.
+// owning service gets its own pull request — unless ServiceRepoPaths does not
+// cover every edit's path, in which case the whole proposal collapses back to
+// the single legacy group (see below).
 func (s *Service) PRServices(v proposal.View) []string {
 	hasMembers := false
 	for _, e := range v.Edits {
@@ -109,6 +111,18 @@ func (s *Service) PRServices(v proposal.View) []string {
 		return []string{""}
 	}
 	groups := proposal.GroupEditsByService(s.serviceRepoPaths, v.Edits)
+	if _, unmapped := groups[""]; unmapped && len(groups) > 1 {
+		// The "" key is overloaded: it means both "this proposal was never
+		// split" (handled above) and "this edit's path matched no configured
+		// service" (here). An unmapped edit alongside a mapped one would open
+		// a "" pull request — which the repository's claim path treats as the
+		// whole-proposal group, every edit included — next to a named-service
+		// pull request holding only the mapped edit, so that edit would be
+		// claimed by both. Collapse to the single legacy group instead: one
+		// pull request, carrying every edit, is the safe degradation for an
+		// incomplete map.
+		return []string{""}
+	}
 	keys := make([]string, 0, len(groups))
 	for k := range groups {
 		keys = append(keys, k)

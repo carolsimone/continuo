@@ -23,13 +23,12 @@ type fakeSvc struct {
 	listErr   error
 	// lastFilter captures the filter List was called with, so a test can
 	// verify the gRPC request's fields reach the service unchanged.
-	lastFilter  repository.ProposalFilter
-	getView     proposal.View
-	getErr      error
-	beginClaim  proposal.PRClaim
-	beginErr    error
-	existingURL string // returned by Get when beginErr == ErrPRConflict
-	recordErr   error
+	lastFilter repository.ProposalFilter
+	getView    proposal.View
+	getErr     error
+	beginClaim proposal.PRClaim
+	beginErr   error
+	recordErr  error
 	// Begin capture
 	lastBeginID      string
 	lastBeginService string
@@ -53,9 +52,6 @@ func (f *fakeSvc) List(_ context.Context, filter repository.ProposalFilter) ([]p
 }
 
 func (f *fakeSvc) Get(_ context.Context, _ string) (proposal.View, error) {
-	if f.beginErr == repository.ErrPRConflict && f.existingURL != "" {
-		return proposal.View{PrURL: f.existingURL}, nil
-	}
 	return f.getView, f.getErr
 }
 
@@ -400,7 +396,13 @@ func TestProposalsServer_BeginPullRequest_UnknownServiceMapsToInvalidArgument(t 
 }
 
 func TestProposalsServer_BeginPullRequest_ConflictMapsToFailedPrecondition(t *testing.T) {
-	svc := &fakeSvc{beginErr: repository.ErrPRConflict, existingURL: "https://gh/pr/7"}
+	svc := &fakeSvc{
+		beginErr: repository.ErrPRConflict,
+		getView: proposal.View{
+			PrURL:        "https://gh/pr/7",
+			PullRequests: []proposal.PullRequest{{Service: "", PrURL: "https://gh/pr/7", PrState: "open"}},
+		},
+	}
 	s := grpcadapter.NewProposalsServer(svc)
 
 	_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1"})
@@ -408,6 +410,55 @@ func TestProposalsServer_BeginPullRequest_ConflictMapsToFailedPrecondition(t *te
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	// The error message should carry the existing PR URL.
 	assert.Contains(t, err.Error(), "https://gh/pr/7")
+}
+
+// TestProposalsServer_BeginPullRequest_ConflictEmbedsTheConflictingServicesOwnURL
+// verifies that a conflict on a named service embeds THAT service's own
+// pr_url from v.PullRequests, never a different service's. The proposal's
+// singular pr_url field mirrors the first child row ordered by service
+// (here, "core"), so a naive read of it would report core's URL for a
+// finance conflict even though the two are unrelated pull requests.
+func TestProposalsServer_BeginPullRequest_ConflictEmbedsTheConflictingServicesOwnURL(t *testing.T) {
+	view := proposal.View{
+		PrURL: "https://gh/pr/core", // singular fields mirror the first child, "core"
+		PullRequests: []proposal.PullRequest{
+			{Service: "core", PrURL: "https://gh/pr/core", PrState: "open"},
+			{Service: "finance", PrState: "opening"}, // claimed but not yet opened: no URL
+		},
+	}
+
+	t.Run("finance conflict embeds finance's own state, never core's URL", func(t *testing.T) {
+		svc := &fakeSvc{beginErr: repository.ErrPRConflict, getView: view}
+		s := grpcadapter.NewProposalsServer(svc)
+
+		_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1", Service: "finance"})
+		require.Error(t, err)
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.NotContains(t, err.Error(), "https://gh/pr/core",
+			"a finance conflict must never surface core's PR URL")
+	})
+
+	t.Run("core conflict embeds core's own URL", func(t *testing.T) {
+		svc := &fakeSvc{beginErr: repository.ErrPRConflict, getView: view}
+		s := grpcadapter.NewProposalsServer(svc)
+
+		_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1", Service: "core"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "https://gh/pr/core")
+	})
+
+	t.Run("legacy service embeds the singular pr_url", func(t *testing.T) {
+		legacyView := proposal.View{
+			PrURL:        "https://gh/pr/legacy",
+			PullRequests: []proposal.PullRequest{{Service: "", PrURL: "https://gh/pr/legacy", PrState: "open"}},
+		}
+		svc := &fakeSvc{beginErr: repository.ErrPRConflict, getView: legacyView}
+		s := grpcadapter.NewProposalsServer(svc)
+
+		_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "https://gh/pr/legacy")
+	})
 }
 
 func TestProposalsServer_BeginPullRequest_NotSourceResolved(t *testing.T) {

@@ -285,6 +285,35 @@ func TestService_PRServices_LegacyProposalSingleGroup(t *testing.T) {
 		"a proposal whose edits attribute members returns the sorted owning-service keys")
 }
 
+// TestService_PRServices_CollapsesWhenAnEditIsUnmapped verifies the fix for
+// the legacy "" key being overloaded: it means both "this proposal was never
+// split" and "this edit's path matched no configured service". When
+// ServiceRepoPaths is missing an entry for one of a member-attributed
+// proposal's edits, GroupEditsByService buckets that edit under "" while the
+// other, mapped edit gets its own named key. Splitting on both groups as
+// written would open a "" pull request (which the repository's toClaim
+// treats as the whole-proposal group: every edit) alongside a named-service
+// pull request for the mapped edit alone — the mapped edit then appears in
+// both PRs. PRServices must instead collapse the whole proposal to the
+// single legacy group so exactly one PR opens, carrying every edit.
+func TestService_PRServices_CollapsesWhenAnEditIsUnmapped(t *testing.T) {
+	svc := proposals.New(proposals.Deps{
+		Repo:   &fakeRepo{},
+		NewUoW: (&fakeRepo{}).uowFactory,
+		Clock:  fixedClock{},
+		// Only "core" is mapped; the finance edit's path matches no entry and
+		// falls to the legacy "" key.
+		ServiceRepoPaths: map[string]string{"core": "services/core"},
+	})
+
+	incomplete := proposal.View{Edits: []proposal.FileEdit{
+		{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
+		{Path: "services/finance/models/b.sql", MemberNodeIDs: []string{"model.finance.b"}},
+	}}
+	require.Equal(t, []string{""}, svc.PRServices(incomplete),
+		"an unmapped edit must collapse the whole proposal to the legacy group, never split into overlapping PRs")
+}
+
 // TestService_Record_EmitsPROpenedAtomically verifies that Record writes an
 // outbox entry with StreamName == streams.RemediationPrOpenedV1, whose payload
 // carries the view's ResolvedNodeIDs (legacy "" group = the whole fixed set),
