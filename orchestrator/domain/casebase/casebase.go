@@ -57,8 +57,9 @@ type PullRequest struct {
 }
 
 // EditOutcome is one file a merged fix PR edited, as it stood at merge.
-// Amended reports whether a human changed this edit before merge; Diff carries
-// the unified diff of that amendment when one exists. TargetNodeID is the node
+// Amended reports whether a human changed this edit before merge; Diff is the
+// proposal-time unified diff of the edit (the precedent read renders the
+// merged-truth diff instead when the edit is amended). TargetNodeID is the node
 // the edit fixes — the :Table the [:EDITED] edge points at.
 type EditOutcome struct {
 	Path         string
