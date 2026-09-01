@@ -4,6 +4,7 @@ import { ReleaseDetail, NodeValidationResult, ProposalDTO } from './types';
 import {
   releasePillClass, groupByStage, stageLabel, proposalKey, reasonLabel,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
+  proposalPullRequests, proposalPrServices, proposalPrStateForService,
 } from './release-helpers';
 import { fetchProposals } from './remediation-api';
 
@@ -71,20 +72,30 @@ function effectiveRound(p: ProposalDTO): number {
   return p.remediation_round && p.remediation_round > 0 ? p.remediation_round : 1;
 }
 
+// proposalIsDeadEnd mirrors release-controller's isDeadEnd: a batched attempt
+// opens one pull request per owning service, so it is a dead end only once
+// every owning service's pull request has been rejected. An owning service
+// with no pull request yet, or one in any non-rejected state, means a fix
+// could still land. A legacy (unsplit) proposal has one owning service group
+// (''), whose pull request is synthesized from the singular pr_* fields.
+function proposalIsDeadEnd(p: ProposalDTO): boolean {
+  return proposalPrServices(p).every((service) => proposalPrStateForService(p, service) === 'rejected');
+}
+
 // hasActiveFix reports whether any failed node has a generating/verifying/
 // proposed fix among the given proposals — the same furthest-along ranking
 // FixCell uses, restricted to whatever list is passed in (all proposals, or
 // only the current remediation round's), so the dead-end check below can be
 // scoped to a single round without disturbing how the table renders. A
-// 'proposed' attempt whose PR was closed without merging is excluded: that PR
-// is a dead end for the attempt, not something still open for a human to act
-// on, so it must not keep the node counted as having an active fix.
+// 'proposed' attempt every one of whose owning-service PRs was closed
+// without merging is excluded: that attempt is a dead end for every node it
+// resolves, not just its representative one, so it must not keep those nodes
+// counted as having an active fix. A single owning service still open (or not
+// yet PR'd) keeps the whole attempt counted as active.
 function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
   const byKey = new Map<string, FixState>();
   for (const p of list) {
-    // A rejected PR is a dead end for every node this proposal resolves, not
-    // just its representative one.
-    if (p.status === 'proposed' && p.pr_state === 'rejected') continue;
+    if (p.status === 'proposed' && proposalIsDeadEnd(p)) continue;
     for (const nid of proposalNodeIds(p)) {
       const status = proposalStatusForNode(p, nid);
       if (!isFixState(status)) continue;
@@ -96,11 +107,15 @@ function hasActiveFix(list: ProposalDTO[], failedKeys: string[]): boolean {
   return failedKeys.some(k => byKey.has(k));
 }
 
-// anyOpenPR reports whether any proposal in the list has a PR out for review —
-// checked across every round, not just the current one, since a fix from an
-// earlier round is still the thing to look at instead of retrying.
+// anyOpenPR reports whether any proposal in the list has a pull request out
+// for review — checked across every round, not just the current one, since a
+// fix from an earlier round is still the thing to look at instead of
+// retrying. A batched attempt's pull requests are weighed per owning service
+// (proposalPullRequests), so one service's still-open PR counts even when a
+// sibling service's PR was rejected; a legacy (unsplit) proposal falls back
+// to its singular pr_state, so behavior for those is unchanged.
 function anyOpenPR(list: ProposalDTO[]): boolean {
-  return list.some(p => OPEN_PR_STATES.includes(p.pr_state ?? ''));
+  return list.some(p => proposalPullRequests(p).some(pr => OPEN_PR_STATES.includes(pr.pr_state ?? '')));
 }
 
 // FixCell renders one node's remediation state: a link to the proposal once a

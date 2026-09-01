@@ -276,8 +276,9 @@ func pullRequestsToProto(prs []proposal.PullRequest) []*remediationv1.PullReques
 // Timestamps are formatted as RFC3339 strings; a nil PrOpenedAt produces an
 // empty string. pull_requests is mapped from v.PullRequests; prServices — the
 // caller's s.svc.PRServices(v) result — becomes pr_services verbatim. The
-// singular pr_* fields above are already the first child row's view (View
-// carries them mirrored per Task 4), so they need no extra mapping here.
+// singular pr_* fields above are already the first child row's view (the
+// repository's applyChildPRs overrides them from PullRequests[0], ordered by
+// service), so they need no extra mapping here.
 func viewToProto(v proposal.View, prServices []string) *remediationv1.Proposal {
 	var prOpenedAt string
 	if v.PrOpenedAt != nil {

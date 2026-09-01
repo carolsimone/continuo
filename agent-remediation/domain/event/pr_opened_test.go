@@ -25,9 +25,11 @@ func TestPROpenedEventIDDiffersAcrossInputs(t *testing.T) {
 }
 
 // TestPROpenedEventID_LegacyServiceMatchesPreChangeValue pins the legacy ""
-// service to the exact id the pre-Phase-4 two-arg body produced, so a
-// pr_opened fact emitted for a whole-proposal (unsplit) PR keeps deduping to
-// the same downstream event id across the signature change.
+// service to the exact id the original two-argument PROpenedEventID(releaseID,
+// attempt) signature produced, so a pr_opened fact emitted for a
+// whole-proposal (unsplit) PR keeps deduping to the same downstream event id
+// across the signature change that added the per-service split's service
+// argument.
 func TestPROpenedEventID_LegacyServiceMatchesPreChangeValue(t *testing.T) {
 	// The pre-change body: NewSHA1(namespace, releaseID+"|"+itoa(attempt)).
 	legacy := uuid.NewSHA1(prOpenedNamespace, []byte("r"+"|"+itoa(1)))

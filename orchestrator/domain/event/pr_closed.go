@@ -2,8 +2,9 @@ package event
 
 // PRClosedEdit is one file edit a closed remediation PR carried, as it stood at
 // the terminal outcome. Amended reports whether a human changed this edit
-// before the PR merged; Diff is the unified diff of that amendment when one
-// exists. For a rejected PR the edits list is empty.
+// before the PR merged; Diff is always the edit's proposal-time unified diff —
+// the precedent read renders the merged-truth diff instead when the edit was
+// amended. For a rejected PR the edits list is empty.
 type PRClosedEdit struct {
 	Path         string `json:"path"`
 	TargetNodeID string `json:"target_node_id"`

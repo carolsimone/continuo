@@ -279,6 +279,7 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 	if len(resolved) == 0 {
 		resolved = s.resolvedForService(v, service)
 	}
+	prURL, prNumber := closingServicePR(v, service)
 	eventID := event.PRClosedEventID(v.ReleaseID, v.Attempt, service)
 	payload := event.PRClosed{
 		ProposalID:      v.ID,
@@ -286,8 +287,8 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 		NodeID:          v.NodeID,
 		ResolvedNodeIDs: resolved,
 		Service:         service,
-		PrURL:           v.PrURL,
-		PrNumber:        v.PrNumber,
+		PrURL:           prURL,
+		PrNumber:        prNumber,
 		Outcome:         string(outcome),
 		ClosedAt:        closedAt.Format(time.RFC3339),
 		Edits:           edits,
@@ -308,6 +309,20 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 		CreatedAt:     s.clock.Now(),
 	}
 	return u.OutboxRepo().Create(ctx, entry)
+}
+
+// closingServicePR is the URL and number of the pull request closing service
+// actually owns, read off v.PullRequests; it falls back to the View's
+// singular Pr* fields (the first child row — see applyChildPRs) when service
+// has no entry of its own, which is always true for a legacy (unsplit)
+// proposal.
+func closingServicePR(v proposal.View, service string) (string, int) {
+	for _, pr := range v.PullRequests {
+		if pr.Service == service {
+			return pr.PrURL, pr.PrNumber
+		}
+	}
+	return v.PrURL, v.PrNumber
 }
 
 // enqueuePROpened builds the deterministic remediation.pr_opened:v1 outbox

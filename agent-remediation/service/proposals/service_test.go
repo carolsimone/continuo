@@ -409,7 +409,8 @@ func TestService_Record_PROpenedNamesOnlyTheFixedNodes(t *testing.T) {
 
 // TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes is the same
 // invariant on the closing half: with the caller passing an empty resolved
-// subset (the Task-5 close loop), the PR's outcome falls back to the same
+// subset (the reconciler's outcome-mirror pass leaves it empty; only the
+// amend-compare pass fills it), the PR's outcome falls back to the same
 // per-service resolved set the pr_opened event used, so the two agree exactly.
 func TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes(t *testing.T) {
 	repo := &fakeRepo{

@@ -48,20 +48,6 @@ func queryNeo4jRows(t *testing.T, ctx context.Context, clients *testClients, cyp
 	return rows
 }
 
-// queryNeo4jScalar runs cypher expected to return exactly one row and returns
-// that row's column named col — e.g. RETURN count(r) AS n, or RETURN
-// pl.pr_state AS pr_state. Failing the single-row expectation is itself a
-// test failure: a provenance query returning zero or several rows means the
-// graph shape assumed by the caller does not hold.
-func queryNeo4jScalar(t *testing.T, ctx context.Context, clients *testClients, cypher, col string, params map[string]any) any {
-	t.Helper()
-	rows := queryNeo4jRows(t, ctx, clients, cypher, params)
-	require.Len(t, rows, 1, "expected exactly one row from cypher: %s (got %d)", cypher, len(rows))
-	v, ok := rows[0][col]
-	require.True(t, ok, "cypher result has no column %q: %s", col, cypher)
-	return v
-}
-
 // pollNeo4jPRState polls a (proposal, service) :PullRequest node's pr_state
 // until it reaches want. The orchestrator's pr_closed provenance handler
 // (orchestrator/adapters/neo4j/case_base_repository.go RecordPullRequestOutcome)

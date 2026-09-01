@@ -511,8 +511,9 @@ func TestPrecedentReader_IncludeCodeFalseOmitsFailingCode(t *testing.T) {
 }
 
 // TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState
-// verifies the read path widened for Phase-4 provenance: a rejection resolved
-// by a MERGED PR (a [:RESOLVED_BY] edge to a :Proposal, not a :NodeVersion)
+// verifies the read path widened to recognize proposal-level provenance: a
+// rejection resolved by a MERGED PR (a [:RESOLVED_BY] edge to a :Proposal,
+// not a :NodeVersion)
 // counts as resolved by the identity query — it must sort ahead of a still-open
 // rejection filed LATER on the same signature — and the detail path surfaces
 // the merged PR's [:EDITED] provenance and the :PullRequest's live pr_state.

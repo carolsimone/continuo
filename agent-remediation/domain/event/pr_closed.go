@@ -24,7 +24,9 @@ func PRClosedEventID(releaseID string, attempt int, service string) uuid.UUID {
 // ClosedEdit describes one of a closed PR's file edits at the moment it reached
 // its terminal outcome. Amended reports whether a human changed this edit
 // before the PR merged (the amend compare that sets it lands with the close
-// loop); Diff carries the unified diff of that amendment when one exists.
+// loop); Diff is always the edit's proposal-time unified diff, filled from the
+// same source regardless of Amended — the precedent read renders the
+// merged-truth diff instead when the edit was amended.
 type ClosedEdit struct {
 	Path         string `json:"path"`
 	TargetNodeID string `json:"target_node_id"`

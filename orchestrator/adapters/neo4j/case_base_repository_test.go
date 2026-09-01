@@ -311,9 +311,9 @@ func TestCaseBaseRepository_BackLinksResolvedByWhenNewerVersionExists(t *testing
 
 // seedStubResolvedByProposal MERGEs a stub :Rejection (the shape
 // RecordProposal itself would create) and links it directly to a :Proposal —
-// the merged-PR provenance edge RecordPullRequestOutcome draws (Task 10) — so
-// a back-link test can prove its presence must not suppress
-// RecordRejection's own-timeline :NodeVersion back-link.
+// the merged-PR provenance edge RecordPullRequestOutcome draws — so a
+// back-link test can prove its presence must not suppress RecordRejection's
+// own-timeline :NodeVersion back-link.
 func seedStubResolvedByProposal(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeID, proposalID string, at time.Time) {
 	t.Helper()
 	ctx := context.Background()
@@ -332,8 +332,8 @@ func seedStubResolvedByProposal(t *testing.T, client neo4jinfra.Neo4jClient, rel
 
 // TestCaseBaseRepository_BackLinkGuardIsPerNodeVersionFamily verifies the
 // back-link guard's existing-edge check is keyed on the RESOLVED_BY edge's
-// target-label family, not raw edge existence: since Task 10, a merged fix PR
-// can draw its own RESOLVED_BY->(:Proposal) provenance edge (via
+// target-label family, not raw edge existence: a merged fix PR can draw its
+// own RESOLVED_BY->(:Proposal) provenance edge (via
 // RecordPullRequestOutcome) before the rejection itself lands through this
 // path, and that edge must not suppress the own-timeline
 // RESOLVED_BY->(:NodeVersion) link — while a rejection already linked to a

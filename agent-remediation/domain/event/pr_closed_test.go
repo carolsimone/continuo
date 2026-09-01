@@ -20,7 +20,9 @@ func TestPRClosedEventID_Deterministic(t *testing.T) {
 }
 
 // TestPRClosedEventID_LegacyServiceMatchesPreChangeValue pins the legacy ""
-// service to the exact id the pre-Phase-4 two-arg body produced.
+// service to the exact id the original two-argument PRClosedEventID(releaseID,
+// attempt) signature produced, before the per-service split added the service
+// argument.
 func TestPRClosedEventID_LegacyServiceMatchesPreChangeValue(t *testing.T) {
 	legacy := uuid.NewSHA1(prClosedNamespace, []byte("rel-1"+"|"+itoa(1)))
 	require.Equal(t, legacy, PRClosedEventID("rel-1", 1, ""),

@@ -68,7 +68,7 @@ func seedRejection(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeI
 }
 
 // seedResolvedByProposal links a :Rejection directly to a :Proposal — the
-// merged-PR provenance edge RecordPullRequestOutcome draws (Task 10) — so a
+// merged-PR provenance edge RecordPullRequestOutcome draws — so a
 // forward-link test can prove its presence must not suppress the
 // promotion-time :NodeVersion back-link this repository draws.
 func seedResolvedByProposal(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeID, proposalID string) {
@@ -635,7 +635,7 @@ func TestWriteVersions_LinksOpenRejectionsToTheNewVersion(t *testing.T) {
 
 // TestWriteVersions_ForwardLinkGuardIsPerNodeVersionFamily verifies the
 // promotion-time back-link guard is keyed on the RESOLVED_BY edge's target
-// label, not raw edge existence: since Task 10, a merged fix PR draws its own
+// label, not raw edge existence: a merged fix PR draws its own
 // RESOLVED_BY->(:Proposal) provenance edge that coexists with the
 // own-timeline RESOLVED_BY->(:NodeVersion) edge this write draws, so a
 // rejection already carrying a Proposal link must still receive its own
