@@ -138,14 +138,16 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 		return fmt.Errorf("get current prod: %w", err)
 	}
 
-	// Derive the validation seed set from the content_hash diff against a
-	// baseline topology: candidate nodes that are new or whose hash changed.
-	// Bootstrap (no prod row) yields an empty prod snapshot, so every candidate
-	// node is treated as new and the whole topology is validated. For a shadow
-	// release verifying a fix, the baseline is production overlaid with the
-	// rejected candidate, so only the fix's own delta — not another service's
-	// still-unfixed failure the shadow assembles unchanged — is re-validated.
-	changed := release.DerivedChangedNodeIDs(topo, shadowBaseline(ctx, u, d, r, cp))
+	// Derive the validation seed set: candidate nodes that are new or whose
+	// content_hash changed. A production release measures that against
+	// current_prod alone (bootstrap, with no prod row, treats every candidate
+	// node as new and validates the whole topology). A shadow release verifying
+	// a fix measures the diff against BOTH current_prod and the rejected
+	// candidate and keeps only the nodes that differ from both — the fix's own
+	// delta, never a sibling service's still-unfixed failure the shadow
+	// assembles unchanged, nor an unrelated node another release promoted since
+	// the rejection.
+	changed := shadowChangedNodeIDs(ctx, u, d, r, topo, cp)
 
 	// Validate the changed-and-downstream closure plus the FULL transitive
 	// upstream closure (across service boundaries) so every upstream is built as an
@@ -262,51 +264,52 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	return nil
 }
 
-// shadowBaseline returns the topology a release's changed-set diff is measured
-// against. Every production release, and every shadow that names no verified
-// release, diffs against current_prod alone.
+// shadowChangedNodeIDs returns the release's validation seed set — the
+// candidate node ids whose content_hash marks them changed. Every production
+// release, and every shadow that names no verified release, returns the nodes
+// that differ from current_prod alone.
 //
 // A shadow release exists to verify a proposed fix, and a fix may span two
 // services: the whole failing set is repaired in one attempt but submitted as
 // one shadow release per edited service, because a release is one service's
 // delta. Each shadow therefore assembles the OTHER edited service's node
-// unchanged — still carrying its not-yet-fixed failure. Diffed against
-// current_prod, which never advanced past the rejection, that unchanged failure
-// reads as "changed" and gets re-validated, so it fails again and sinks a fix
-// that was never about it.
+// unchanged — still carrying its not-yet-fixed failure — at the very
+// content_hash that node had in the rejected candidate. A shadow that names the
+// rejected release it verifies re-validates a node ONLY IF the shadow's fix
+// changed it relative to BOTH current_prod AND that rejected candidate: the
+// intersection of the two diffs.
+//   - The fix's own edited node differs from current_prod (old or absent) and
+//     from the rejected candidate (broken) — in both, so validated.
+//   - A sibling service's still-unfixed failure differs from current_prod
+//     (which never advanced past the rejection, or holds the node at its
+//     pre-rejection hash) but is byte-identical to the rejected candidate — in
+//     only one, so excluded and not re-validated.
+//   - An unrelated node another release promoted since the rejection matches
+//     current_prod (even though it differs from the rejected candidate's stale
+//     copy) — in only one, so excluded, never dragged into a fix-only shadow.
 //
-// So a shadow that names the rejected release it verifies baselines on the
-// rejected candidate overlaid with current_prod: current_prod wins by
-// unique_id, and the rejected candidate only fills in nodes current_prod
-// doesn't have — the still-unpromoted nodes this shadow inherited from that
-// rejection, including the sibling's unfixed failure. current_prod winning
-// matters because it can have moved on since the rejection: an unrelated
-// release may have promoted a node the rejected candidate only remembers at
-// its older, since-superseded hash, and current_prod's is the one this
-// shadow's own assembled copy will match. A node the shadow still holds
-// byte-identical to the rejected candidate — the sibling's unfixed failure —
-// therefore matches the baseline and is not re-derived as changed, while the
-// fix's own edit departs from the candidate and still is. If the verified
-// release cannot be read, or never parsed far enough to hold a candidate
-// topology, the shadow falls back to diffing against production — a weaker but
-// still-running verification, mirroring assembleFor's graceful degradation.
-func shadowBaseline(ctx context.Context, u uow.UnitOfWork, d *Deps, r *release.Release, cp *release.CurrentProd) release.Topology {
-	prod := cp.TopologySnapshot()
+// If the verified release cannot be read, or never parsed far enough to hold a
+// candidate topology, the shadow falls back to the plain current_prod diff — a
+// weaker but still-running verification, mirroring assembleFor's graceful
+// degradation.
+func shadowChangedNodeIDs(ctx context.Context, u uow.UnitOfWork, d *Deps, r *release.Release, topo release.Topology, cp *release.CurrentProd) []string {
+	changedVsProd := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
 	if !r.IsShadow() || r.VerifiesReleaseID() == "" {
-		return prod
+		return changedVsProd
 	}
 	original, err := u.ReleaseRepo().Get(ctx, r.VerifiesReleaseID())
 	if err != nil || original == nil {
 		d.Logger.Warn("shadow release verifies a release that cannot be read; measuring its changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", r.VerifiesReleaseID(), "error", err)
-		return prod
+		return changedVsProd
 	}
 	if len(original.CandidateTopology()) == 0 {
 		d.Logger.Warn("the verified release has no candidate topology; measuring the shadow's changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", original.ID())
-		return prod
+		return changedVsProd
 	}
-	return release.OverlayTopology(original.CandidateTopology(), prod)
+	changedVsCandidate := release.DerivedChangedNodeIDs(topo, original.CandidateTopology())
+	return intersectSorted(changedVsProd, changedVsCandidate)
 }
 
 // newChangedSeedIDs returns the validation-set node IDs that are dbt-seeds in the
@@ -523,6 +526,25 @@ func unionSorted(a, b []string) []string {
 	out := make([]string, 0, len(seen))
 	for s := range seen {
 		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// intersectSorted returns the deduplicated, lexically-sorted set of ids present
+// in BOTH input slices.
+func intersectSorted(a, b []string) []string {
+	inB := make(map[string]bool, len(b))
+	for _, s := range b {
+		inB[s] = true
+	}
+	seen := make(map[string]bool, len(a))
+	out := make([]string, 0, len(a))
+	for _, s := range a {
+		if inB[s] && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
 	}
 	sort.Strings(out)
 	return out
