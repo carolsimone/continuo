@@ -922,6 +922,139 @@ func TestPrecedentReader_LegacyResolvedByWithoutServiceRendersEdit(t *testing.T)
 	assert.Equal(t, "D-legacy", precedents[0].Edited[0].Diff)
 }
 
+// TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService verifies
+// the per-proposing-service scoping of a precedent's PR facts. A single
+// :Proposal spans two services: a core rejection whose fix PR is core's, and a
+// finance rejection whose fix PR is finance's. Both rejections link to the
+// SHARED :Proposal, which carries both services' :PullRequest nodes. Without
+// scoping the read would fan EVERY :PullRequest into EVERY rejection's Proposals
+// list — a core rejection would surface finance's PR url/number/state (and a
+// duplicate proposal entry). The [:PROPOSED] edge's service stamp scopes the PR
+// join: the core rejection surfaces only core's PR, the finance rejection only
+// finance's.
+func TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	proposalID := marker + "-proposal"
+
+	coreRel, coreNode := marker+"-core-rel", marker+"-core-node"
+	finRel, finNode := marker+"-fin-rel", marker+"-fin-node"
+
+	// Two rejections on the SAME signature, resolved by the SAME proposal but by
+	// different services' PRs.
+	seedPrecedentRejection(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
+		t0, "select core", "hash-core")
+	seedPrecedentRejection(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
+		t0.Add(time.Minute), "select fin", "hash-fin")
+
+	repo := newCaseBaseRepo(client)
+
+	// pr_opened per service, sharing the one proposal. Each RecordProposal stamps
+	// its service on the [:PROPOSED] edge and lands its PR on its own
+	// :PullRequest node.
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: coreRel, NodeID: coreNode},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
+		}))
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: finRel, NodeID: finNode},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "finance",
+			PrURL: "https://github.com/org/finance/pull/7", PrNumber: 7,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
+		}))
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 2, "both rejections on the signature match")
+
+	byNode := map[string]casebase.PrecedentView{}
+	for _, p := range precedents {
+		byNode[p.Rejection.NodeID] = p
+	}
+	coreP, ok := byNode[coreNode]
+	require.True(t, ok, "the core rejection is present")
+	finP, ok := byNode[finNode]
+	require.True(t, ok, "the finance rejection is present")
+
+	// The core rejection surfaces ONLY core's PR — never finance's, and never a
+	// duplicate.
+	require.Len(t, coreP.Proposals, 1, "core rejection surfaces exactly its own service's PR")
+	assert.Equal(t, proposalID, coreP.Proposals[0].ProposalID)
+	assert.Equal(t, "https://github.com/org/core/pull/1", coreP.Proposals[0].PrURL,
+		"core must not surface finance's PR url")
+	assert.Equal(t, 1, coreP.Proposals[0].PrNumber)
+	assert.Equal(t, "open", coreP.Proposals[0].PrState)
+
+	// The finance rejection surfaces ONLY finance's PR.
+	require.Len(t, finP.Proposals, 1, "finance rejection surfaces exactly its own service's PR")
+	assert.Equal(t, "https://github.com/org/finance/pull/7", finP.Proposals[0].PrURL,
+		"finance must not surface core's PR url")
+	assert.Equal(t, 7, finP.Proposals[0].PrNumber)
+}
+
+// TestPrecedentReader_LegacyProposedWithoutServiceRendersPR pins the
+// backward-compatible fallback: a [:PROPOSED] edge written before the
+// per-service stamp existed carries no service. The scoped PR join must not
+// exclude such an edge — with a null prop.service it falls back to matching any
+// of the proposal's PRs, so the single-service legacy PR still renders.
+func TestPrecedentReader_LegacyProposedWithoutServiceRendersPR(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	rel, node := marker+"-rel", marker+"-node"
+	proposalID := marker + "-proposal"
+
+	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+
+	// A legacy [:PROPOSED] edge with NO service property, plus a :PullRequest on
+	// the proposal. The read must still render the PR via the null fallback.
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	res, err := s.Run(ctx, `
+		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
+		MERGE (p:Proposal {proposal_id: $proposal_id})
+		MERGE (rej)-[:PROPOSED]->(p)
+		MERGE (p)-[:HAS_PR]->(pl:PullRequest {proposal_id: $proposal_id, service: 'core'})
+		SET pl.pr_url = $pr_url, pl.pr_number = 5, pl.pr_state = 'merged'
+	`, map[string]any{
+		"release_id": rel, "node_id": node, "proposal_id": proposalID,
+		"pr_url": "https://github.com/org/legacy/pull/5",
+	})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+	s.Close(ctx)
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	require.Len(t, precedents[0].Proposals, 1,
+		"a legacy PROPOSED edge with no service still renders its PR via the null fallback")
+	assert.Equal(t, "https://github.com/org/legacy/pull/5", precedents[0].Proposals[0].PrURL)
+	assert.Equal(t, 5, precedents[0].Proposals[0].PrNumber)
+	assert.Equal(t, "merged", precedents[0].Proposals[0].PrState)
+}
+
 // TestPrecedentReader_NoMatchIsEmptyNotError verifies that a signature with no
 // recorded rejections is a valid, non-error answer: an empty slice, not an
 // error.

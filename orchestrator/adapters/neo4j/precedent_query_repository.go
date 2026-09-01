@@ -117,8 +117,16 @@ func (r *PrecedentQueryRepository) Precedents(
 		     (cur IS NOT NULL AND res IS NOT NULL AND cur.content_hash = res.content_hash) AS res_is_current
 		  ORDER BY prior.promoted_at DESC
 		WITH rej, signature, res, res_is_current, head(collect(prior)) AS prior
-		OPTIONAL MATCH (rej)-[:PROPOSED]->(p:Proposal)
+		// A proposal spanning several services is shared by their rejections, and
+		// each carries its own :PullRequest. The [:PROPOSED] edge stamps the
+		// proposing service, so the PR join is scoped to it: a rejection surfaces
+		// only its own service's PR facts, never a sibling service's. A legacy edge
+		// written before the service stamp existed has a null prop.service; it
+		// falls back to matching any of the proposal's PRs so its single-service PR
+		// still renders.
+		OPTIONAL MATCH (rej)-[prop:PROPOSED]->(p:Proposal)
 		OPTIONAL MATCH (p)-[:HAS_PR]->(pl:PullRequest)
+		  WHERE pl.service = prop.service OR prop.service IS NULL
 		WITH rej, signature, res, prior, res_is_current,
 		     collect(DISTINCT p {
 		       .proposal_id,

@@ -124,6 +124,12 @@ func (r *CaseBaseRepository) RecordRejection(ctx context.Context, rej casebase.R
 // still blank, but never touches pr_state: a close-first node already carries
 // its terminal 'merged'/'rejected', and opening it must not reset that to
 // 'open'.
+//
+// The [:PROPOSED] edge carries the proposing service, so a precedent read of a
+// proposal that spans services can scope each rejection's PR facts to the
+// service that proposed the fix for it: a proposal shared by several rejections
+// links them all to the one :Proposal, but each rejection's PR facts live on
+// its own service's :PullRequest, and the edge's service selects the right one.
 func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Proposal, pr casebase.PullRequest) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer func() { _ = session.Close(ctx) }()
@@ -132,7 +138,8 @@ func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Prop
 		MERGE (rej:Rejection {release_id: $release_id, node_id: $node_id})
 		ON CREATE SET rej.at = $opened_at, rej.stub = true
 		MERGE (prop:Proposal {proposal_id: $proposal_id})
-		MERGE (rej)-[:PROPOSED]->(prop)
+		MERGE (rej)-[pe:PROPOSED]->(prop)
+		SET pe.service = $service
 		MERGE (prop)-[:HAS_PR]->(pull:PullRequest {proposal_id: $proposal_id, service: $service})
 		ON CREATE SET pull.pr_url = $pr_url,
 		              pull.pr_number = $pr_number,
