@@ -564,6 +564,15 @@ body {
 
 .nodes-node-name  { font-weight: 600; color: #1e293b; font-size: 12.5px; text-decoration: none; }
 .nodes-node-schema { color: #94a3b8; font-size: 11px; margin-top: 1px; }
+
+/* Releases table Author cell: avatar + @login (linked to the GitHub profile),
+   or the plain git author name when the commit email is not linked. */
+.release-author { display: inline-flex; align-items: center; gap: 6px;
+                  color: #1e293b; font-size: 12.5px; text-decoration: none; }
+a.release-author:hover { text-decoration: underline; }
+.release-author__avatar { width: 16px; height: 16px; border-radius: 50%;
+                          background: #e2e8f0; flex: none; }
+.release-author--name { color: #475569; }
 /* Secondary line under a table cell's primary value (e.g. the offending
    source file under a compile/seed node id). */
 .nodes-node-subpath { font-size: 11.5px; color: #6b7280; margin-top: 2px;

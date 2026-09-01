@@ -19,6 +19,8 @@ type releaseListItem struct {
 	Bootstrap    bool    `json:"bootstrap"`
 	Shadow       bool    `json:"shadow"`
 	RejectReason string  `json:"reject_reason,omitempty"`
+	Repo         string  `json:"repo"`
+	CommitSHA    string  `json:"commit_sha"`
 }
 
 // handleListReleases returns paginated release history, newest-first.
@@ -56,21 +58,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]releaseListItem, 0, len(items))
 	for _, rel := range items {
-		var resolved *string
-		if t := resolvedAt(rel); t != nil {
-			resolvedStr := t.UTC().Format(time.RFC3339)
-			resolved = &resolvedStr
-		}
-		out = append(out, releaseListItem{
-			ReleaseID:    rel.ID(),
-			Status:       string(rel.Status()),
-			CreatedAt:    rel.CreatedAt().UTC().Format(time.RFC3339),
-			ResolvedAt:   resolved,
-			NodeCount:    len(rel.CandidateTopology()),
-			Bootstrap:    rel.IsBootstrap(),
-			Shadow:       rel.IsShadow(),
-			RejectReason: rel.RejectReason(),
-		})
+		out = append(out, toReleaseListItem(rel))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -78,6 +66,29 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 		"releases":    out,
 		"next_cursor": encodeCursor(next),
 	})
+}
+
+// toReleaseListItem projects a release aggregate onto the JSON list row. repo
+// and commit_sha are carried so the UI can resolve the commit author for the
+// Releases tab without a per-release detail fetch.
+func toReleaseListItem(rel *release.Release) releaseListItem {
+	var resolved *string
+	if t := resolvedAt(rel); t != nil {
+		resolvedStr := t.UTC().Format(time.RFC3339)
+		resolved = &resolvedStr
+	}
+	return releaseListItem{
+		ReleaseID:    rel.ID(),
+		Status:       string(rel.Status()),
+		CreatedAt:    rel.CreatedAt().UTC().Format(time.RFC3339),
+		ResolvedAt:   resolved,
+		NodeCount:    len(rel.CandidateTopology()),
+		Bootstrap:    rel.IsBootstrap(),
+		Shadow:       rel.IsShadow(),
+		RejectReason: rel.RejectReason(),
+		Repo:         rel.Repo(),
+		CommitSHA:    rel.CommitSHA(),
+	}
 }
 
 // resolvedAt returns the timestamp of the terminal transition, or nil if the

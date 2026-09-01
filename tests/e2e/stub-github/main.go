@@ -118,6 +118,11 @@ const (
 	stubToken     = "ghs_stubtoken"
 	stubBranch    = "stub"
 	stubPRNumber  = 1
+
+	// Deterministic commit-author identity returned by the REST commits
+	// endpoint, so the ui Releases tab's author enrichment resolves to a known
+	// login in e2e.
+	stubAuthorLogin = "continuo-e2e"
 )
 
 // stubClosedAt is the fixed terminal timestamp reported for closed stub PRs.
@@ -336,6 +341,8 @@ func handleRepos(w http.ResponseWriter, r *http.Request) {
 		handleGitBlobs(w, r)
 	case strings.HasPrefix(rest, "git/commits"):
 		handleGitCommits(w, r)
+	case strings.HasPrefix(rest, "commits/"):
+		handleRESTCommit(w, r)
 	case strings.HasPrefix(rest, "git/trees"):
 		handleGitTrees(w, r)
 	case strings.HasPrefix(rest, "contents/"):
@@ -369,6 +376,37 @@ func handleGitRef(w http.ResponseWriter, r *http.Request) {
 		"object": map[string]string{
 			"sha":  stubBaseSHA,
 			"type": "commit",
+		},
+	})
+}
+
+// handleRESTCommit responds to GET /repos/{owner}/{repo}/commits/{ref} — the
+// REST commits endpoint Octokit's repos.getCommit calls. The ui Releases tab
+// resolves each release's commit author through this; it returns a deterministic
+// linked account (login + avatar + profile) plus the git-metadata author name.
+func handleRESTCommit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ref := strings.TrimPrefix(r.URL.Path, "/repos/")
+	if i := strings.Index(ref, "/commits/"); i >= 0 {
+		ref = ref[i+len("/commits/"):]
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"sha": ref,
+		"author": map[string]string{
+			"login":      stubAuthorLogin,
+			"avatar_url": "https://avatars.githubusercontent.com/u/1?v=4",
+			"html_url":   "https://github.com/" + stubAuthorLogin,
+		},
+		"commit": map[string]interface{}{
+			"author": map[string]string{
+				"name":  "Continuo E2E",
+				"email": "e2e@continuo.local",
+			},
 		},
 	})
 }

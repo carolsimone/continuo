@@ -92,7 +92,7 @@ export default function ReleasesPanel() {
           </div>
           <table className="nodes-table">
             <thead>
-              <tr><th>Release</th><th>Status</th><th>Reason</th><th>When</th><th>Nodes</th></tr>
+              <tr><th>Release</th><th>Author</th><th>Status</th><th>Reason</th><th>When</th><th>Nodes</th></tr>
             </thead>
             <tbody>
               {items.map(r => (
@@ -118,6 +118,26 @@ export default function ReleasesPanel() {
                     </Link>
                     {r.shadow && (
                       <>{' '}<span className="pill-sm pill-sm--verification">verification</span></>
+                    )}
+                  </td>
+                  <td>
+                    {r.author?.login ? (
+                      <a
+                        className="release-author"
+                        href={r.author.html_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        {r.author.avatar_url && (
+                          <img className="release-author__avatar" src={r.author.avatar_url} alt="" width={16} height={16} />
+                        )}
+                        @{r.author.login}
+                      </a>
+                    ) : r.author?.name ? (
+                      <span className="release-author release-author--name">{r.author.name}</span>
+                    ) : (
+                      <span className="nodes-dash">—</span>
                     )}
                   </td>
                   <td>

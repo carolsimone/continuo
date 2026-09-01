@@ -122,6 +122,18 @@ export interface TopologyListResponse {
   schedules: ScheduleTopologySummary[];
 }
 
+// Who authored the release's commit. Resolved server-side from (repo, commit_sha)
+// via GitHub. `login` (with `avatar_url` and profile `html_url`) is present when
+// the commit email is linked to a GitHub account; otherwise only `name` — the
+// git commit author metadata — is available. Absent when GitHub is not
+// configured or the commit could not be resolved.
+export interface ReleaseAuthor {
+  login?: string;
+  name?: string;
+  avatar_url?: string;
+  html_url?: string;
+}
+
 export interface ReleaseListItem {
   release_id: string;
   status: string; // received|compiling|parsing|seed_building|validating|promoted|validated|rejected|superseded
@@ -131,6 +143,9 @@ export interface ReleaseListItem {
   bootstrap: boolean;
   shadow: boolean;
   reject_reason?: string;
+  repo?: string;
+  commit_sha?: string;
+  author?: ReleaseAuthor;
 }
 
 export interface ReleasesListResponse {

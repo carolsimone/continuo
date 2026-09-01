@@ -32,7 +32,10 @@ describe('ReleasesPanel — reason column', () => {
     expect(screen.queryByText('compile_failed')).toBeNull();
     expect(document.querySelector('.info-strip--error')).toBeNull();
     expect(document.querySelector('.nodes-reason')).not.toBeNull();
-    expect(document.querySelector('.nodes-dash')).toBeNull();
+    // The Reason cell (index 3: Release, Author, Status, Reason) is the reason,
+    // not a dash. The Author cell may still be a dash when no author resolved.
+    const reasonCell = document.querySelectorAll('tbody tr td')[3];
+    expect(reasonCell?.querySelector('.nodes-dash')).toBeNull();
   });
 
   it('renders a dash in the Reason column for a promoted row', async () => {
@@ -57,7 +60,38 @@ describe('ReleasesPanel — reason column', () => {
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText('rel-4')).toBeInTheDocument());
     const headers = Array.from(document.querySelectorAll('thead th')).map(th => th.textContent);
-    expect(headers).toEqual(['Release', 'Status', 'Reason', 'When', 'Nodes']);
+    expect(headers).toEqual(['Release', 'Author', 'Status', 'Reason', 'When', 'Nodes']);
+  });
+});
+
+describe('ReleasesPanel — author column', () => {
+  it('renders @login linked to the GitHub profile, with an avatar', async () => {
+    mockFetch([item({
+      release_id: 'rel-a', status: 'promoted',
+      author: { login: 'octocat', avatar_url: 'https://avatars/octocat.png', html_url: 'https://github.com/octocat' },
+    })]);
+    render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
+    const link = await screen.findByText('@octocat');
+    expect(link.closest('a')?.getAttribute('href')).toBe('https://github.com/octocat');
+    expect(document.querySelector('.release-author__avatar')?.getAttribute('src'))
+      .toBe('https://avatars/octocat.png');
+  });
+
+  it('renders the plain git author name (no link) when the account is unlinked', async () => {
+    mockFetch([item({ release_id: 'rel-b', status: 'promoted', author: { name: 'Grace Hopper' } })]);
+    render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
+    const name = await screen.findByText('Grace Hopper');
+    expect(name.closest('a')).toBeNull();
+  });
+
+  it('renders a dash when the release has no author', async () => {
+    mockFetch([item({ release_id: 'rel-c', status: 'promoted' })]);
+    render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
+    await screen.findByText('rel-c');
+    // Reason (promoted) and Author are both dashes; the author cell is the second.
+    const row = document.querySelector('tbody tr');
+    const dashes = row?.querySelectorAll('.nodes-dash');
+    expect(dashes && dashes.length).toBeGreaterThanOrEqual(2);
   });
 });
 
