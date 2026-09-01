@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	remediationv1 "github.com/carolsimone/continuo/agent-remediation/api/remediation/v1"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -28,6 +29,17 @@ const (
 	ftableVUniqueID = "e2e_schema.ftable_v"
 	ftableWUniqueID = "e2e_schema.ftable_w"
 )
+
+// ftableGUniqueID is service-3's fixture model for the cross-service batching
+// test: it joins public.wrong_name_2, a relation that does not exist, so it
+// fails validation independently of any service-2 failure. It is otherwise
+// reserved by build_operation_test.go / failure_test.go / rebase_test.go for a
+// scheduled-execution-failure fixture (schedule "e2e-schedule-failure"); that
+// use is unaffected here because a remediation PR's merge never writes back
+// to the real dbt/services/service-3/models/ftable_g.sql file — the whole PR
+// lifecycle, including the merge, is mediated by stub-github and never
+// touches the checked-out fixture.
+const ftableGUniqueID = "e2e_schema.ftable_g"
 
 // Budgets shared by both batched-remediation tests. Each drives two full
 // release pipelines in kind — the rejected release, then the shadow release
@@ -214,11 +226,15 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	require.Equal(t, ftableEUniqueID, proposed.NodeID,
 		"the representative node is the lowest resolved id")
 
-	// 9. ONE pull request for the release, named for the set it fixes.
-	prNumber := openRemediationPR(t, ctx, clients, row.ID, releaseID)
+	// 9. ONE pull request for the release, named for the set it fixes. Both
+	//    edits belong to service-2 and now carry cluster member ids, so
+	//    PRServices attributes the single group to that real service — the
+	//    title carries its " (service-2)" suffix, the same way it would for
+	//    any proposal split across more than the legacy "" group.
+	prNumber := openRemediationPR(t, ctx, clients, row.ID, releaseID, changedService)
 	pr := fetchStubPullRequest(t, ctx, row.Repo, prNumber)
-	require.Equal(t, fmt.Sprintf("[remediation] fix 2 nodes (release %s)", releaseID), pr.Title,
-		"a batched pull request must name how many nodes it fixes")
+	require.Equal(t, fmt.Sprintf("[remediation] fix 2 nodes (release %s) (%s)", releaseID, changedService), pr.Title,
+		"a batched pull request must name how many nodes it fixes and the service it was opened for")
 	t.Logf("✅ one pull request #%d: %q", pr.Number, pr.Title)
 
 	// 10. Opening the pull request must not have minted a second attempt: the
@@ -406,12 +422,435 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 		"the repaired ancestor must give back the amount column its change dropped; got %q", strings.TrimSpace(body))
 	t.Logf("proposed upstream source at %s: %q", edits[0].ContentURI, strings.TrimSpace(body))
 
-	// 9. ONE pull request, naming the two failures the one edit resolves.
-	prNumber := openRemediationPR(t, ctx, clients, row.ID, releaseID)
+	// 9. ONE pull request, naming the two failures the one edit resolves. The
+	//    edit's cluster carries member node ids, so PRServices attributes it
+	//    to the real owning service (service-2) rather than the legacy ""
+	//    group, and the title carries that service's suffix.
+	prNumber := openRemediationPR(t, ctx, clients, row.ID, releaseID, changedService)
 	pr := fetchStubPullRequest(t, ctx, row.Repo, prNumber)
-	require.Equal(t, fmt.Sprintf("[remediation] fix 2 nodes (release %s)", releaseID), pr.Title,
-		"the title names the failing nodes resolved, not the single file changed")
+	require.Equal(t, fmt.Sprintf("[remediation] fix 2 nodes (release %s) (%s)", releaseID, changedService), pr.Title,
+		"the title names the failing nodes resolved and the service it was opened for, not the single file changed")
 	t.Logf("✅ one pull request #%d fixes two nodes with one edit: %q", pr.Number, pr.Title)
+
+	// 10. Merging the pull request AS PROPOSED — no further human edit — must
+	//     draw the case-base provenance edges the orchestrator's pr_closed
+	//     consumer maintains: one RESOLVED_BY per resolved descendant to the
+	//     shared :Proposal, and one EDITED edge from that :Proposal to the
+	//     changed ancestor's :Table, both carrying amended=false. The stub
+	//     serves the PR's own written commit at the merge sha (nothing pushes
+	//     a further commit in this test), so the merged content is
+	//     byte-identical to what was proposed.
+	mergeCommitSHA := mergePullRequestViaStub(t, ctx, row.Repo, prNumber)
+	t.Logf("merged PR #%d via stub-github: merge_commit_sha=%s", prNumber, mergeCommitSHA)
+
+	closedRow := pollChildPRState(t, ctx, clients, row.ID, changedService, "merged", 60*time.Second)
+	require.NotNil(t, closedRow.PRClosedAt, "pr_closed_at must be set on merge")
+
+	closedPayload := latestPRClosedPayload(t, ctx, clients, row.ID, changedService)
+	require.Equal(t, "merged", closedPayload.Outcome, "pr_closed payload outcome")
+	for _, e := range closedPayload.Edits {
+		require.False(t, e.Amended, "an as-proposed merge must carry no amended edits; got %+v", closedPayload.Edits)
+	}
+	t.Logf("✅ close-loop confirmed: pr_state=merged, %d edit(s), none amended", len(closedPayload.Edits))
+
+	// 11. The provenance graph itself: one RESOLVED_BY per resolved node (both
+	//     descendants, neither of which was edited), all amended=false; one
+	//     EDITED edge naming the changed ancestor — not either failing
+	//     descendant — also amended=false; and the :PullRequest node
+	//     reflecting the terminal 'merged' state. pollNeo4jPRState waits for
+	//     the orchestrator's asynchronous consumption of
+	//     remediation.pr_closed:v1 to land; RecordPullRequestOutcome draws the
+	//     pr_state change and every edge below in the SAME Cypher statement, so
+	//     once the poll observes 'merged' the edges are already committed and
+	//     the plain reads that follow cannot race the write.
+	pollNeo4jPRState(t, ctx, clients, row.ID, changedService, "merged", 60*time.Second)
+
+	resolvedRows := queryNeo4jRows(t, ctx, clients, `
+		MATCH (r:Rejection {release_id: $release_id})-[rb:RESOLVED_BY]->(p:Proposal {proposal_id: $proposal_id})
+		RETURN count(r) AS n, collect(DISTINCT rb.amended) AS amended`,
+		map[string]any{"release_id": releaseID, "proposal_id": row.ID})
+	require.Len(t, resolvedRows, 1, "expected one summary row for the RESOLVED_BY query")
+	require.EqualValues(t, 2, resolvedRows[0]["n"],
+		"one RESOLVED_BY per resolved node (%s, %s); got %+v", ftableVUniqueID, ftableWUniqueID, resolvedRows[0])
+	require.Equal(t, []any{false}, resolvedRows[0]["amended"],
+		"every RESOLVED_BY drawn by an as-proposed merge must carry amended=false; got %+v", resolvedRows[0])
+
+	editRows := queryNeo4jRows(t, ctx, clients, `
+		MATCH (p:Proposal {proposal_id: $proposal_id})-[e:EDITED]->(t:Table)
+		RETURN t.unique_id AS unique_id, e.amended AS amended`,
+		map[string]any{"proposal_id": row.ID})
+	require.Len(t, editRows, 1, "the shared-upstream attempt drew one EDITED edge, to the ancestor it repaired; got %+v", editRows)
+	require.Equal(t, ftableUUniqueID, editRows[0]["unique_id"], "EDITED must target the changed ancestor, not either failing descendant")
+	require.Equal(t, false, editRows[0]["amended"], "an as-proposed merge's EDITED edge must carry amended=false")
+	t.Logf("✅ provenance confirmed: 2 RESOLVED_BY edges (amended=false), EDITED -> %s (amended=false), pr_state=merged",
+		ftableUUniqueID)
+}
+
+// TestE2E_BatchedRemediation_TwoServicesTwoPullRequests proves that a release
+// whose failing set spans two services opens two independent pull requests —
+// one per owning service — and that each is reviewed and closed on its own:
+// merging one draws case-base provenance for its members while the other,
+// closed without merging, draws none.
+//
+// ftable_e (service-2) and ftable_g (service-3) are both held back from
+// current_prod, so a release posted for service-2 sees BOTH as changed — the
+// same cross-service assembly TestE2E_ReleasePromote_GatedCrossServiceUpstream
+// exercises with a genuine dependency edge, here with none: the two failures
+// share no ancestor and no error signature (they reference different
+// nonexistent relations), so the driver forms two independent clusters, one
+// edit each, grouped by owning service into two pull requests:
+//
+//	POST /releases (service-2; ftable_e and ftable_g both held back from prod)
+//	→ validation fails on both nodes → release "rejected"
+//	→ ONE remediation.requested:v2 carrying both nodes
+//	→ ONE proposal row (attempt 1) holding TWO file edits, one per service
+//	→ TWO dbt shadow releases (one per edited service) that both validate
+//	→ ONE remediation.proposed:v1
+//	→ POST /proposals/:id/pull-request opens TWO pull requests, distinct
+//	  branches and numbers, one per service
+//	→ merge the service-2 PR, close-without-merging the service-3 PR
+//	→ the merged PR's member (ftable_e) gets a RESOLVED_BY edge; the rejected
+//	  PR's member (ftable_g) gets none; each :PullRequest node carries its own
+//	  terminal pr_state
+func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), batchCtxBudget)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-rem-2svc-" + uuid.NewString()[:8]
+	changedService := "service-2"
+	otherService := "service-3"
+	t.Logf("release_id=%s changed_service=%s other_service=%s changed_nodes=%s,%s",
+		releaseID, changedService, otherService, ftableEUniqueID, ftableGUniqueID)
+
+	// 1. Hold BOTH ftable_e (service-2) and ftable_g (service-3) back from
+	//    current_prod. Neither service's own manifest is what makes them
+	//    "changed" — that comes purely from their absence in current_prod
+	//    against the assembled candidate topology, which is why this works
+	//    for ftable_g even though the release is posted for service-2, not
+	//    service-3 (see TestE2E_ReleasePromote_GatedCrossServiceUpstream's
+	//    identical assembly for a cross-service pair WITH a dependency edge —
+	//    here there is none, so the two failures stay independent).
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices,
+		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+
+	changedImageTag := allServices[changedService].imageTag
+	require.NotEmpty(t, changedImageTag,
+		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+
+	held := map[string]bool{ftableEUniqueID: false, ftableGUniqueID: false}
+	var prodNodes []map[string]string
+	for _, si := range allServices {
+		for _, n := range si.nodes {
+			if _, excluded := held[n.uniqueID]; excluded {
+				held[n.uniqueID] = true
+				continue
+			}
+			prodNodes = append(prodNodes, map[string]string{
+				"unique_id":    n.uniqueID,
+				"content_hash": n.contentHash,
+			})
+		}
+	}
+	for nodeID, found := range held {
+		require.True(t, found, "%s not found in any baseline manifest", nodeID)
+	}
+	t.Logf("seeded prod snapshot with %d nodes (%s and %s excluded)",
+		len(prodNodes), ftableEUniqueID, ftableGUniqueID)
+
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+
+	// 2. Seed both broken models' :Table nodes in Neo4j so the Locator can
+	//    resolve each one's file path and owning service.
+	seedFTableETopologyNode(t, ctx, clients)
+	seedModelTopologyNodes(t, ctx, clients, topologyModel{
+		uniqueID: ftableGUniqueID, schema: "e2e_schema", table: "ftable_g",
+		service: otherService, filePath: "models/ftable_g.sql",
+	})
+
+	// 3. Drive the release to rejection.
+	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	waitForReleaseRejected(t, ctx, clients, releaseID, batchRejectBudget)
+
+	failing := releaseFailingNodes(t, ctx, clients, releaseID)
+	require.Subset(t, failing, []string{ftableEUniqueID, ftableGUniqueID},
+		"both deliberately-broken cross-service models must be reported as failing; got %v", failing)
+	t.Logf("release %s failing_nodes=%v", releaseID, failing)
+
+	// 4. ONE trigger carrying both failing nodes, from two different services.
+	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID,
+		[]string{ftableEUniqueID, ftableGUniqueID}, batchTriggerBudget)
+	require.Len(t, trigger.Nodes, 2, "the trigger must carry exactly the two cross-service failures; got %v",
+		triggerNodeIDs(trigger))
+	require.Equal(t, "validation", trigger.Source, "trigger source")
+
+	// 5. ONE proposal for the release, TWO independent edits.
+	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
+	require.Equal(t, 1, countProposalsForRelease(t, ctx, clients, releaseID),
+		"one release yields one fix attempt, even split across two services")
+
+	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
+	require.Equal(t, []string{ftableEUniqueID, ftableGUniqueID}, resolved,
+		"the attempt must address the release's whole cross-service failing set")
+
+	edits := decodeFileEdits(t, row.FileEdits)
+	require.Len(t, edits, 2, "two independent cross-service failures are repaired in two files; got %+v", edits)
+	targetsByPath := map[string]string{}
+	for _, e := range edits {
+		targetsByPath[e.Path] = e.TargetNodeID
+	}
+	require.Equal(t, map[string]string{
+		"services/service-2/models/ftable_e.sql": ftableEUniqueID,
+		"services/service-3/models/ftable_g.sql": ftableGUniqueID,
+	}, targetsByPath, "each edit must name the node whose source it changes, in its own service's path")
+
+	// pr_services is derived from the edits' cluster member ids
+	// (agent-remediation/service/proposals/service.go's PRServices), so it is
+	// readable straight off the GetProposal RPC once the edits above exist —
+	// this is the same computation the create-PR route below drives from.
+	proposalPB, err := clients.agentRemediationClient.GetProposal(ctx,
+		&remediationv1.GetProposalRequest{Id: row.ID})
+	require.NoError(t, err, "GetProposal %s", row.ID)
+	require.ElementsMatch(t, []string{changedService, otherService}, proposalPB.GetPrServices(),
+		"a proposal split across two services must report both in pr_services; got %v", proposalPB.GetPrServices())
+
+	// 6. TWO shadow releases, one per edited service.
+	verifications := decodeVerifications(t, row.Verifications)
+	require.Len(t, verifications, 2, "two edited services must be verified by two independent shadow releases; got %+v", verifications)
+	verificationsByService := map[string]pyVerification{}
+	for _, v := range verifications {
+		require.Equal(t, "dbt", v.Kind, "a dbt model's fix is verified under a dbt manifest")
+		verificationsByService[v.Service] = v
+	}
+	require.Contains(t, verificationsByService, changedService)
+	require.Contains(t, verificationsByService, otherService)
+	for svc, v := range verificationsByService {
+		require.NotEmpty(t, v.ShadowReleaseID, "verification for %s must name the release that judged it", svc)
+		waitForReleaseStatus(t, ctx, clients, v.ShadowReleaseID, "validated", batchShadowBudget)
+		assertReleaseListedAsShadow(t, ctx, clients, v.ShadowReleaseID)
+	}
+	t.Logf("✅ two shadow releases validated: %s=%s %s=%s",
+		changedService, verificationsByService[changedService].ShadowReleaseID,
+		otherService, verificationsByService[otherService].ShadowReleaseID)
+
+	// 7. pr_services names both owning-service groups, and the route opens
+	//    two pull requests with distinct branches and numbers.
+	createPRResp := callCreatePREndpoint(t, ctx, clients.uiBase, row.ID, http.StatusOK)
+	require.Empty(t, createPRResp.Errors, "no per-service group should fail to open a pull request; got %+v", createPRResp.Errors)
+	require.Len(t, createPRResp.PullRequests, 2,
+		"a proposal split across two services must open two pull requests; got %+v", createPRResp.PullRequests)
+
+	byService := map[string]pullRequestResult{}
+	for _, pr := range createPRResp.PullRequests {
+		byService[pr.Service] = pr
+	}
+	require.Contains(t, byService, changedService)
+	require.Contains(t, byService, otherService)
+	require.NotEqual(t, byService[changedService].PRNumber, byService[otherService].PRNumber,
+		"the two per-service pull requests must be distinct PRs")
+
+	changedRow := pollChildPRState(t, ctx, clients, row.ID, changedService, "open", 30*time.Second)
+	otherRow := pollChildPRState(t, ctx, clients, row.ID, otherService, "open", 30*time.Second)
+	require.True(t, strings.HasSuffix(changedRow.Branch, "/"+changedService),
+		"the %s pull request's branch must carry the /%s suffix; got %q", changedService, changedService, changedRow.Branch)
+	require.True(t, strings.HasSuffix(otherRow.Branch, "/"+otherService),
+		"the %s pull request's branch must carry the /%s suffix; got %q", otherService, otherService, otherRow.Branch)
+	require.NotEqual(t, changedRow.Branch, otherRow.Branch, "the two per-service pull requests must use distinct branches")
+	t.Logf("✅ two pull requests opened: %s=#%d branch=%s, %s=#%d branch=%s",
+		changedService, changedRow.PRNumber, changedRow.Branch, otherService, otherRow.PRNumber, otherRow.Branch)
+
+	// 8. Merge the service-2 PR; close the service-3 PR without merging. repo
+	//    is a single column on the parent proposal row — the same monorepo
+	//    both per-service PRs were opened against.
+	var repoName string
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &repoName,
+		`SELECT repo FROM proposal WHERE id = $1`, row.ID))
+
+	mergedSHA := mergePullRequestViaStub(t, ctx, repoName, changedRow.PRNumber)
+	t.Logf("merged %s PR #%d via stub-github: merge_commit_sha=%s", changedService, changedRow.PRNumber, mergedSHA)
+	closePullRequestViaStub(t, ctx, repoName, otherRow.PRNumber)
+	t.Logf("closed %s PR #%d via stub-github without merging", otherService, otherRow.PRNumber)
+
+	pollChildPRState(t, ctx, clients, row.ID, changedService, "merged", 60*time.Second)
+	pollChildPRState(t, ctx, clients, row.ID, otherService, "rejected", 60*time.Second)
+
+	// 9. Provenance: the merged PR's member gets RESOLVED_BY; the rejected
+	//    PR's member gets none; each :PullRequest carries its own terminal
+	//    pr_state. pollNeo4jPRState waits out the orchestrator's asynchronous
+	//    consumption of remediation.pr_closed:v1 for EACH service
+	//    independently — the two PRs close through two separate events.
+	pollNeo4jPRState(t, ctx, clients, row.ID, changedService, "merged", 60*time.Second)
+	pollNeo4jPRState(t, ctx, clients, row.ID, otherService, "rejected", 60*time.Second)
+
+	mergedResolved := queryNeo4jRows(t, ctx, clients, `
+		MATCH (r:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id})
+		RETURN rb.amended AS amended`,
+		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "proposal_id": row.ID})
+	require.Len(t, mergedResolved, 1,
+		"the merged PR's member %s must have exactly one RESOLVED_BY edge to the shared proposal", ftableEUniqueID)
+	require.Equal(t, false, mergedResolved[0]["amended"], "an as-proposed merge's RESOLVED_BY edge must carry amended=false")
+
+	rejectedResolved := queryNeo4jRows(t, ctx, clients, `
+		MATCH (r:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id})
+		RETURN rb.amended AS amended`,
+		map[string]any{"release_id": releaseID, "node_id": ftableGUniqueID, "proposal_id": row.ID})
+	require.Empty(t, rejectedResolved,
+		"the rejected PR's member %s must draw NO RESOLVED_BY edge; got %+v", ftableGUniqueID, rejectedResolved)
+
+	t.Logf("✅ provenance confirmed: %s has RESOLVED_BY (merged), %s has none (rejected)", ftableEUniqueID, ftableGUniqueID)
+}
+
+// TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended proves that a
+// human edit pushed to a remediation PR's branch before it merges is recorded
+// as such all the way into the case-base: the agent-remediation's merge-time
+// byte-compare (agent-remediation/service/proposals/amend.go) flags the edit
+// amended, and the orchestrator's pr_closed provenance handler carries that
+// flag onto both the RESOLVED_BY edge (from the fixed node's :Rejection) and
+// the EDITED edge (from the shared :Proposal).
+//
+// The scenario reuses TestE2E_AgentRemediation_ProposesFixForRejection's
+// single-node ftable_e setup (service-2 only) — the amend mechanic itself
+// does not depend on batching or cross-service routing, so the simplest
+// fixture that reaches a mergeable PR is enough to isolate it.
+func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), batchCtxBudget)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-rem-amend-" + uuid.NewString()[:8]
+	changedService := "service-2"
+	t.Logf("release_id=%s changed_service=%s changed_node=%s", releaseID, changedService, ftableEUniqueID)
+
+	// 1. ftable_e is the release's only changed node.
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices,
+		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+
+	changedImageTag := allServices[changedService].imageTag
+	require.NotEmpty(t, changedImageTag,
+		"image_tag missing for %s — setup.sh must seed service_prod", changedService)
+
+	var prodNodes []map[string]string
+	ftableFound := false
+	for _, si := range allServices {
+		for _, n := range si.nodes {
+			if n.uniqueID == ftableEUniqueID {
+				ftableFound = true
+				continue
+			}
+			prodNodes = append(prodNodes, map[string]string{
+				"unique_id":    n.uniqueID,
+				"content_hash": n.contentHash,
+			})
+		}
+	}
+	require.True(t, ftableFound, "ftable_e not found in any manifest")
+	t.Logf("seeded prod snapshot with %d nodes (ftable_e excluded)", len(prodNodes))
+
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProdExcept(t, ctx, clients, allServices, changedService)
+	seedFTableETopologyNode(t, ctx, clients)
+
+	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
+	waitForReleaseRejected(t, ctx, clients, releaseID, batchRejectBudget)
+
+	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID, []string{ftableEUniqueID}, batchTriggerBudget)
+	require.Len(t, trigger.Nodes, 1, "the trigger must carry exactly ftable_e; got %v", triggerNodeIDs(trigger))
+
+	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
+	resolved := decodeNodeIDs(t, row.ResolvedNodeIDs)
+	require.Equal(t, []string{ftableEUniqueID}, resolved, "the attempt must resolve exactly ftable_e")
+
+	edits := decodeFileEdits(t, row.FileEdits)
+	require.Len(t, edits, 1, "one failure is repaired by one edit; got %+v", edits)
+	require.Equal(t, "services/service-2/models/ftable_e.sql", edits[0].Path, "the edit's path")
+	require.Equal(t, ftableEUniqueID, edits[0].TargetNodeID, "the edit's target node")
+
+	verifications := decodeVerifications(t, row.Verifications)
+	require.Len(t, verifications, 1, "one edited service, so one shadow release; got %+v", verifications)
+	waitForReleaseStatus(t, ctx, clients, verifications[0].ShadowReleaseID, "validated", batchShadowBudget)
+
+	// 2. Open the pull request as usual.
+	prNumber := openRemediationPR(t, ctx, clients, row.ID, releaseID, changedService)
+	openRow := pollChildPRState(t, ctx, clients, row.ID, changedService, "open", 5*time.Second)
+	require.NotEmpty(t, openRow.Branch, "branch must be recorded before it can be amended")
+
+	var repoName string
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &repoName,
+		`SELECT repo FROM proposal WHERE id = $1`, row.ID))
+
+	// 3. Push a SECOND, human-authored commit to the PR branch through the
+	//    stub's git-write endpoints, changing the one edited file's content —
+	//    before merging, simulating a reviewer amending the PR. The stub does
+	//    not inherit a tree's base_tree entries (tests/e2e/stub-github/main.go
+	//    records exactly the entries a given POST git/trees call is given), so
+	//    every path this commit should resolve to must be listed explicitly;
+	//    here that is only the one file this PR touches.
+	const amendedContent = `{{ config(materialized='table') }}
+SELECT c.id, 'human-amended' AS note
+FROM e2e_schema.ftable_c c`
+	pushAmendedCommit(t, ctx, repoName, openRow.Branch, []amendedFile{
+		{Path: "services/service-2/models/ftable_e.sql", Content: amendedContent},
+	})
+
+	// 4. Merge over the amended commit.
+	mergeCommitSHA := mergePullRequestViaStub(t, ctx, repoName, prNumber)
+	t.Logf("merged amended PR #%d via stub-github: merge_commit_sha=%s", prNumber, mergeCommitSHA)
+
+	closedRow := pollChildPRState(t, ctx, clients, row.ID, changedService, "merged", 60*time.Second)
+	require.NotNil(t, closedRow.PRClosedAt, "pr_closed_at must be set on merge")
+
+	closedPayload := latestPRClosedPayload(t, ctx, clients, row.ID, changedService)
+	require.Equal(t, "merged", closedPayload.Outcome, "pr_closed payload outcome")
+	require.Len(t, closedPayload.Edits, 1, "one edited file; got %+v", closedPayload.Edits)
+	require.True(t, closedPayload.Edits[0].Amended,
+		"a merge over a human-pushed second commit must be recorded amended=true; got %+v", closedPayload.Edits[0])
+	t.Logf("✅ close-loop confirmed: pr_state=merged, edit amended=%v", closedPayload.Edits[0].Amended)
+
+	// 5. Provenance: rb.amended=true on the RESOLVED_BY edge, ed.amended=true
+	//    on the EDITED edge. pollNeo4jPRState gates on the SAME Cypher
+	//    statement that draws both, so the reads below cannot race the write.
+	pollNeo4jPRState(t, ctx, clients, row.ID, changedService, "merged", 60*time.Second)
+
+	resolvedRows := queryNeo4jRows(t, ctx, clients, `
+		MATCH (r:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id})
+		RETURN rb.amended AS amended`,
+		map[string]any{"release_id": releaseID, "node_id": ftableEUniqueID, "proposal_id": row.ID})
+	require.Len(t, resolvedRows, 1, "ftable_e must have exactly one RESOLVED_BY edge to the proposal")
+	require.Equal(t, true, resolvedRows[0]["amended"], "an amended merge's RESOLVED_BY edge must carry amended=true")
+
+	editRows := queryNeo4jRows(t, ctx, clients, `
+		MATCH (:Proposal {proposal_id: $proposal_id})-[e:EDITED]->(t:Table {unique_id: $node_id})
+		RETURN e.amended AS amended`,
+		map[string]any{"proposal_id": row.ID, "node_id": ftableEUniqueID})
+	require.Len(t, editRows, 1, "ftable_e must have exactly one EDITED edge from the proposal")
+	require.Equal(t, true, editRows[0]["amended"], "an amended merge's EDITED edge must carry amended=true")
+
+	t.Logf("✅ amended-merge provenance confirmed: rb.amended=true, ed.amended=true, pr_state=merged")
 }
 
 // batchProposalRow is the batched view of a proposal row: the set the attempt
@@ -640,33 +1079,37 @@ func releaseFailingNodes(t *testing.T, ctx context.Context, clients *testClients
 	return body.FailingNodes
 }
 
-// openRemediationPR opens the proposal's pull request through the UI route and
-// returns its number, asserting the route is idempotent: a second POST must
-// return 409 with the same URL rather than opening a second pull request, and
-// the row must settle on pr_state='open'.
+// openRemediationPR opens the proposal's pull request(s) through the UI route
+// and returns the single entry's PR number, asserting a single-service
+// proposal opens exactly ONE pull request, attributed to service, whose
+// branch carries the deterministic /<service> suffix. It also asserts the
+// route is idempotent: a second POST must return the SAME pull_requests set —
+// not open a second pull request — since every group that already has one
+// resolves to a reported success rather than a per-group error, so the whole
+// route still answers 200, not 409.
 func openRemediationPR(
-	t *testing.T, ctx context.Context, clients *testClients, proposalID, releaseID string,
+	t *testing.T, ctx context.Context, clients *testClients, proposalID, releaseID, service string,
 ) int {
 	t.Helper()
 	created := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
-	require.NotEmpty(t, created.PRUrl, "pr_url must be non-empty on first create")
-	require.Greater(t, created.PRNumber, 0, "pr_number must be a positive stub-github PR number")
+	require.Empty(t, created.Errors, "no per-service group should fail to open a pull request; got %+v", created.Errors)
+	require.Len(t, created.PullRequests, 1,
+		"a single-service proposal must open exactly one pull request; got %+v", created.PullRequests)
+	pr := created.PullRequests[0]
+	require.Equal(t, service, pr.Service, "the pull request must be attributed to the proposal's owning service")
+	require.NotEmpty(t, pr.PRUrl, "pr_url must be non-empty on first create")
+	require.Greater(t, pr.PRNumber, 0, "pr_number must be a positive stub-github PR number")
 
-	dup := callCreatePREndpoint409(t, ctx, clients.uiBase, proposalID)
-	require.Equal(t, created.PRUrl, dup.PRUrl,
-		"a second POST must return the SAME pull request, not open another one for release %s", releaseID)
+	dup := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
+	require.Empty(t, dup.Errors, "a duplicate POST must not report any per-service failure; got %+v", dup.Errors)
+	require.Equal(t, created.PullRequests, dup.PullRequests,
+		"a second POST must return the SAME pull request set, not open another one for release %s", releaseID)
 
-	var row prRow
-	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
-		err := clients.agentRemediationDB.GetContext(ctx, &row,
-			`SELECT pr_state, pr_url, pr_number FROM proposal WHERE id = $1`, proposalID)
-		if err != nil {
-			return false, nil
-		}
-		return row.PRState == "open", nil
-	}, fmt.Sprintf("timeout waiting for proposal %s to reach pr_state='open'", proposalID))
-	require.Equal(t, created.PRNumber, row.PRNumber, "the row must record the number the create call returned")
-	return created.PRNumber
+	row := pollChildPRState(t, ctx, clients, proposalID, service, "open", 30*time.Second)
+	require.Equal(t, pr.PRNumber, row.PRNumber, "the row must record the number the create call returned")
+	require.True(t, strings.HasSuffix(row.Branch, "/"+service),
+		"a per-service pull request's branch must carry the /<service> suffix; got %q", row.Branch)
+	return pr.PRNumber
 }
 
 // stubPullRequest is the subset of stub-github's pulls JSON these tests assert.
