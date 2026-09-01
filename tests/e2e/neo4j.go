@@ -21,7 +21,7 @@ func queryNeo4jRecords(t *testing.T, ctx context.Context, clients *testClients, 
 	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{
 		AccessMode: neo4jdriver.AccessModeRead,
 	})
-	defer session.Close(ctx)
+	defer func() { _ = session.Close(ctx) }()
 
 	result, err := session.Run(ctx, cypher, params)
 	require.NoError(t, err, "run cypher: %s", cypher)
