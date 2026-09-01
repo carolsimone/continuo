@@ -383,3 +383,163 @@ func TestCaseBaseRepository_RecordPullRequestOutcomeLegacyMergedEmptyLists(t *te
 	`, map[string]any{"proposal_id": proposalID}, "c")
 	assert.EqualValues(t, 0, editedCount, "a legacy merged outcome draws no EDITED edge")
 }
+
+// readPullRequestFacts reads the full :PullRequest fact set for (proposal_id,
+// service) as a single record, asserting exactly one such node exists.
+func readPullRequestFacts(t *testing.T, session neo4j.SessionWithContext, proposalID, service string) *neo4j.Record {
+	t.Helper()
+	ctx := context.Background()
+	res, err := session.Run(ctx, `
+		MATCH (:Proposal {proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {service: $service})
+		RETURN pl.pr_url AS pr_url, pl.pr_number AS pr_number, pl.pr_state AS pr_state,
+		       pl.closed_at AS closed_at, pl.opened_by AS opened_by, pl.opened_at AS opened_at
+	`, map[string]any{"proposal_id": proposalID, "service": service})
+	require.NoError(t, err)
+	recs, err := res.Collect(ctx)
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "exactly one :PullRequest for (proposal, service)")
+	return recs[0]
+}
+
+// TestCaseBaseRepository_CloseBeforeOpenFillsPRFactsWithoutResettingState
+// verifies the out-of-order half of the PR lifecycle. remediation.pr_opened:v1
+// and remediation.pr_closed:v1 are consumed by independent orchestrator groups,
+// so a close can be recorded before its open. When it is,
+// RecordPullRequestOutcome creates the :PullRequest and ON CREATE fills the
+// pr_url/pr_number the close event carries — so a close-first node is not blank
+// — and the later RecordProposal ON MATCH fills the open-only facts
+// (opened_by/opened_at) WITHOUT resetting the terminal pr_state to 'open' or
+// dropping closed_at.
+func TestCaseBaseRepository_CloseBeforeOpenFillsPRFactsWithoutResettingState(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	repo := newCaseBaseRepo(client)
+
+	releaseID := marker + "-rel"
+	proposalID := marker + "-proposal"
+	na := marker + "-na"
+	openedAt := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	closedAt := time.Date(2026, 8, 20, 11, 30, 0, 0, time.UTC)
+	prURL := "https://github.com/org/repo/pull/77"
+	prNumber := 77
+
+	// CLOSE lands first: no :Proposal / :PullRequest exists yet. The close event
+	// carries pr_url/pr_number, so the created node must not be blank.
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: releaseID, Service: "core",
+		Outcome: "merged", ClosedAt: closedAt,
+		PrURL: prURL, PrNumber: prNumber,
+		ResolvedNodeIDs: []string{na},
+	}))
+
+	session := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	// After close-only: pr_url/pr_number filled from the close event, terminal
+	// state applied, open-only facts still absent.
+	afterClose := readPullRequestFacts(t, session, proposalID, "core")
+	prURLGot, _ := afterClose.Get("pr_url")
+	assert.Equal(t, prURL, prURLGot, "close-first ON CREATE fills pr_url from the close event")
+	prNumberGot, _ := afterClose.Get("pr_number")
+	assert.EqualValues(t, prNumber, prNumberGot, "close-first ON CREATE fills pr_number from the close event")
+	prStateGot, _ := afterClose.Get("pr_state")
+	assert.Equal(t, "merged", prStateGot)
+	openedByGot, _ := afterClose.Get("opened_by")
+	assert.Nil(t, openedByGot, "open-only facts are absent until the open event lands")
+
+	// OPEN lands second: fills opened_by/opened_at, must NOT reset pr_state.
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: releaseID, NodeID: na},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: prURL, PrNumber: prNumber,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
+		}))
+
+	afterOpen := readPullRequestFacts(t, session, proposalID, "core")
+	prStateAfter, _ := afterOpen.Get("pr_state")
+	assert.Equal(t, "merged", prStateAfter,
+		"opening a close-first PR must not reset its terminal pr_state to 'open'")
+	closedAtAfter, _ := afterOpen.Get("closed_at")
+	closedAtTime, ok := closedAtAfter.(time.Time)
+	require.True(t, ok, "closed_at must survive the open, got %T", closedAtAfter)
+	assert.True(t, closedAt.Equal(closedAtTime), "closed_at retained through the open")
+	openedByAfter, _ := afterOpen.Get("opened_by")
+	assert.Equal(t, "agent-remediation", openedByAfter, "opened_by filled by the later open")
+	openedAtAfter, _ := afterOpen.Get("opened_at")
+	openedAtTime, ok := openedAtAfter.(time.Time)
+	require.True(t, ok, "opened_at must round-trip as a time.Time, got %T", openedAtAfter)
+	assert.True(t, openedAt.Equal(openedAtTime), "opened_at filled by the later open")
+	prURLAfter, _ := afterOpen.Get("pr_url")
+	assert.Equal(t, prURL, prURLAfter, "pr_url retained")
+	prNumberAfter, _ := afterOpen.Get("pr_number")
+	assert.EqualValues(t, prNumber, prNumberAfter, "pr_number retained")
+}
+
+// TestCaseBaseRepository_OpenBeforeCloseYieldsTerminalStateAndAllFacts pins the
+// ordinary order: the open event lands first, then the close. The :PullRequest
+// must end with every open fact (from the open) intact and the terminal
+// pr_state/closed_at (from the close) applied — the close must not blank the
+// open facts.
+func TestCaseBaseRepository_OpenBeforeCloseYieldsTerminalStateAndAllFacts(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	repo := newCaseBaseRepo(client)
+
+	releaseID := marker + "-rel"
+	proposalID := marker + "-proposal"
+	na := marker + "-na"
+	openedAt := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	closedAt := time.Date(2026, 8, 20, 11, 30, 0, 0, time.UTC)
+	prURL := "https://github.com/org/repo/pull/88"
+	prNumber := 88
+
+	// OPEN first.
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: releaseID, NodeID: na},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: prURL, PrNumber: prNumber,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
+		}))
+
+	// CLOSE second — the close event carries pr_url/pr_number too, but the node
+	// already exists so ON CREATE is a no-op and the open facts survive.
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: releaseID, Service: "core",
+		Outcome: "merged", ClosedAt: closedAt,
+		PrURL: prURL, PrNumber: prNumber,
+		ResolvedNodeIDs: []string{na},
+	}))
+
+	session := client.NewSession(ctx, neo4j.AccessModeRead)
+	defer session.Close(ctx)
+
+	rec := readPullRequestFacts(t, session, proposalID, "core")
+	prStateGot, _ := rec.Get("pr_state")
+	assert.Equal(t, "merged", prStateGot, "the terminal outcome is applied")
+	closedAtGot, _ := rec.Get("closed_at")
+	closedAtTime, ok := closedAtGot.(time.Time)
+	require.True(t, ok, "closed_at must round-trip as a time.Time, got %T", closedAtGot)
+	assert.True(t, closedAt.Equal(closedAtTime))
+	openedByGot, _ := rec.Get("opened_by")
+	assert.Equal(t, "agent-remediation", openedByGot, "the open facts survive the close")
+	openedAtGot, _ := rec.Get("opened_at")
+	openedAtTime, ok := openedAtGot.(time.Time)
+	require.True(t, ok, "opened_at must round-trip as a time.Time, got %T", openedAtGot)
+	assert.True(t, openedAt.Equal(openedAtTime))
+	prURLGot, _ := rec.Get("pr_url")
+	assert.Equal(t, prURL, prURLGot)
+	prNumberGot, _ := rec.Get("pr_number")
+	assert.EqualValues(t, prNumber, prNumberGot)
+}

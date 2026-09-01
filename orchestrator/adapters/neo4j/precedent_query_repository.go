@@ -198,11 +198,21 @@ func (r *PrecedentQueryRepository) Precedents(
 	// For an amended edit, select the promoted :NodeVersion straddling the PR's
 	// close — the first version promoted after closed_at (merged) and the newest
 	// before it (prior) — so the service can render the merged-truth diff.
+	//
+	// A proposal spanning several services is shared by their rejections, but
+	// each RESOLVED_BY edge carries the resolving service, so the walk is scoped
+	// to it: a rejection resolved by one service's PR surfaces only that
+	// service's edits and reads only that service's :PullRequest closed_at. A
+	// legacy edge written before the service stamp existed has a null rb.service;
+	// it falls back to the whole-proposal walk so its single-service edits still
+	// render.
 	editedResult, err := session.Run(ctx, `
 		UNWIND $keys AS k
 		MATCH (rej:Rejection {release_id: k.release_id, node_id: k.node_id})-[rb:RESOLVED_BY]->(rp:Proposal)
 		MATCH (rp)-[ed:EDITED]->(t:Table)
-		OPTIONAL MATCH (rp)-[:HAS_PR]->(pl:PullRequest) WHERE pl.pr_state = 'merged'
+		  WHERE ed.service = rb.service OR rb.service IS NULL
+		OPTIONAL MATCH (rp)-[:HAS_PR]->(pl:PullRequest)
+		  WHERE pl.pr_state = 'merged' AND (pl.service = rb.service OR rb.service IS NULL)
 		OPTIONAL MATCH (mv:NodeVersion {unique_id: t.unique_id})
 		  WHERE ed.amended AND pl.closed_at IS NOT NULL AND mv.promoted_at > pl.closed_at
 		WITH rej, ed, t, pl, mv ORDER BY mv.promoted_at ASC

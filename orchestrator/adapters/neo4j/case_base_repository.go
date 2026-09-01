@@ -115,8 +115,15 @@ func (r *CaseBaseRepository) RecordRejection(ctx context.Context, rej casebase.R
 // proposal's opened_at (approximate) and RecordRejection later corrects it
 // when the rejection itself arrives. The PR facts land on :PullRequest rather
 // than inline on :Proposal — MERGEd on (proposal_id, service) so a redelivery
-// converges onto the one PR node instead of overwriting its state with the
-// open-time snapshot every replay.
+// converges onto the one PR node instead of duplicating it.
+//
+// The open event and the close event are consumed by independent groups, so
+// either can land first. When the :PullRequest already exists — a replay, or a
+// close that arrived before this open — ON MATCH fills the OPEN-only facts
+// (opened_by, opened_at) and backfills pr_url/pr_number only while they are
+// still blank, but never touches pr_state: a close-first node already carries
+// its terminal 'merged'/'rejected', and opening it must not reset that to
+// 'open'.
 func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Proposal, pr casebase.PullRequest) error {
 	session := r.client.NewSession(ctx, neo4j.AccessModeWrite)
 	defer func() { _ = session.Close(ctx) }()
@@ -132,6 +139,10 @@ func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Prop
 		              pull.pr_state = $pr_state,
 		              pull.opened_by = $opened_by,
 		              pull.opened_at = $opened_at
+		ON MATCH SET pull.opened_by = $opened_by,
+		             pull.opened_at = $opened_at,
+		             pull.pr_url = CASE WHEN pull.pr_url IS NULL OR pull.pr_url = '' THEN $pr_url ELSE pull.pr_url END,
+		             pull.pr_number = CASE WHEN pull.pr_number IS NULL OR pull.pr_number = 0 THEN $pr_number ELSE pull.pr_number END
 	`, map[string]any{
 		"release_id":  p.ReleaseID,
 		"node_id":     p.NodeID,
@@ -155,18 +166,25 @@ func (r *CaseBaseRepository) RecordProposal(ctx context.Context, p casebase.Prop
 // RecordPullRequestOutcome stamps a fix PR's terminal state on its
 // :PullRequest node — the same node RecordProposal opened, matched through
 // [:HAS_PR] on (proposal_id, service) so the outcome updates it rather than
-// minting a second one. On a merged outcome it also draws the case-base
-// provenance edges in the same write: [:RESOLVED_BY] from each resolved
-// :Rejection to the shared :Proposal (a stub :Rejection is MERGEd when the
-// rejection has not landed yet, exactly as RecordProposal does), and [:EDITED]
-// from that :Proposal to each edit's :Table. The [:EDITED] edge is skipped
-// when its target :Table is absent — this writer must never mint a :Table,
-// which would leak a non-promoted node into scheduler snapshots (same guard as
-// RecordRejection's [:FAILED] anchor). A rejected outcome passes empty resolved
-// and edits, so it updates only the terminal state and draws no edges. Every
-// resolved node's [:RESOLVED_BY] edge carries the same amended flag: whether a
-// human amended any of the PR's edits before it merged. All writes are
-// MERGE/SET, so a redelivery converges rather than duplicating.
+// minting a second one. When this close arrives before the PR's open event
+// (independent consumer groups process the two in no fixed order), the MERGE
+// creates the :PullRequest, and ON CREATE fills the pr_url/pr_number the close
+// event also carries — so a close-first node is not left blank until the open
+// event's later ON MATCH fills its opened_by/opened_at. On a merged outcome it
+// also draws the case-base provenance edges in the same write: [:RESOLVED_BY]
+// from each resolved :Rejection to the shared :Proposal (a stub :Rejection is
+// MERGEd when the rejection has not landed yet, exactly as RecordProposal
+// does), and [:EDITED] from that :Proposal to each edit's :Table. The [:EDITED]
+// edge is skipped when its target :Table is absent — this writer must never
+// mint a :Table, which would leak a non-promoted node into scheduler snapshots
+// (same guard as RecordRejection's [:FAILED] anchor). A rejected outcome passes
+// empty resolved and edits, so it updates only the terminal state and draws no
+// edges. Every resolved node's [:RESOLVED_BY] edge carries the same amended
+// flag: whether a human amended any of the PR's edits before it merged, and the
+// resolving service, so a precedent read of a proposal that spans services can
+// scope each rejection's edited-node provenance to the service that resolved
+// it. All writes are MERGE/SET, so a redelivery converges rather than
+// duplicating.
 func (r *CaseBaseRepository) RecordPullRequestOutcome(ctx context.Context, o casebase.PullRequestOutcome) error {
 	// Only a merged PR draws provenance edges; a rejected outcome updates the
 	// terminal state and nothing else, regardless of what its payload carried.
@@ -197,13 +215,14 @@ func (r *CaseBaseRepository) RecordPullRequestOutcome(ctx context.Context, o cas
 	res, err := session.Run(ctx, `
 		MERGE (pr:Proposal {proposal_id: $proposal_id})
 		MERGE (pr)-[:HAS_PR]->(pull:PullRequest {proposal_id: $proposal_id, service: $service})
+		ON CREATE SET pull.pr_url = $pr_url, pull.pr_number = $pr_number
 		SET pull.pr_state = $outcome, pull.closed_at = $closed_at
 		WITH pr
 		FOREACH (nid IN $resolved |
 		  MERGE (rej:Rejection {release_id: $release_id, node_id: nid})
 		  ON CREATE SET rej.at = $closed_at, rej.stub = true
 		  MERGE (rej)-[rb:RESOLVED_BY]->(pr)
-		  SET rb.amended = $amended_any)
+		  SET rb.amended = $amended_any, rb.service = $service)
 		WITH pr
 		UNWIND $edits AS e
 		OPTIONAL MATCH (t:Table {unique_id: e.target_node_id})
@@ -216,6 +235,8 @@ func (r *CaseBaseRepository) RecordPullRequestOutcome(ctx context.Context, o cas
 		"service":     o.Service,
 		"outcome":     o.Outcome,
 		"closed_at":   o.ClosedAt.UTC(),
+		"pr_url":      o.PrURL,
+		"pr_number":   o.PrNumber,
 		"resolved":    resolved,
 		"edits":       edits,
 		"amended_any": amendedAny,

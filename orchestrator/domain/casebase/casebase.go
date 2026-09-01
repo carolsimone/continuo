@@ -74,12 +74,19 @@ type EditOutcome struct {
 // the shared :Proposal, and [:EDITED] from that :Proposal to each edit's
 // :Table. A rejected outcome only stamps the :PullRequest's terminal state and
 // draws no edges; ResolvedNodeIDs and Edits are empty for it.
+//
+// PrURL and PrNumber are the PR's identifying facts, carried on the close event
+// too. They let the outcome fill those facts when it lands before the PR's open
+// event (independent consumer groups process the two out of order), so a
+// close-first :PullRequest is not left permanently blank.
 type PullRequestOutcome struct {
 	ProposalID      string
 	ReleaseID       string
 	Service         string
 	Outcome         string
 	ClosedAt        time.Time
+	PrURL           string
+	PrNumber        int
 	ResolvedNodeIDs []string
 	Edits           []EditOutcome
 }

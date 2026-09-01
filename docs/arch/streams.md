@@ -189,7 +189,7 @@ split proposal per id, with the legacy service `""` reproducing the pre-split
 case-base provenance consumer (group
 `orchestrator-remediation-pr-closed-provenance`) records the resolution: it
 stamps the `:PullRequest`'s terminal `pr_state`/`closed_at`, and for a merged
-outcome draws `[:RESOLVED_BY {amended}]` from every resolved node's
+outcome draws `[:RESOLVED_BY {amended, service}]` from every resolved node's
 `:Rejection` to the shared `:Proposal` and `[:EDITED {path, amended, diff,
 service}]` from that `:Proposal` to each edit's `:Table`. See
 `docs/arch/services/agent-remediation.md` for the full payload shape.

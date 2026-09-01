@@ -94,6 +94,8 @@ func (h *PrClosedProvenanceHandler) Handle(
 		Service:         in.Service,
 		Outcome:         in.Outcome,
 		ClosedAt:        closedAt,
+		PrURL:           in.PrURL,
+		PrNumber:        in.PrNumber,
 		ResolvedNodeIDs: in.ResolvedNodeIDs,
 		Edits:           edits,
 	}
