@@ -483,9 +483,22 @@ export default function ReleaseDetailPage() {
       )}
 
       {rel.status === 'rejected' && deadEnd && rel.remediation_round < MAX_REMEDIATION_ROUNDS && (
-        <button type="button" className="btn btn--primary" disabled={retrying} onClick={retry}>
-          Try again (round {rel.remediation_round} of {MAX_REMEDIATION_ROUNDS})
-        </button>
+        <div className="action-banner">
+          <div className="action-banner__body">
+            <div className="action-banner__title">No fix was produced for this release</div>
+            <div className="action-banner__sub">
+              The last remediation attempt couldn’t open a pull request. Run another round to try again.
+            </div>
+          </div>
+          <button type="button" className="btn btn--cta" disabled={retrying} onClick={retry}>
+            <svg className="btn__ico" width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <path d="M21 3v6h-6" />
+            </svg>
+            Try again (round {rel.remediation_round} of {MAX_REMEDIATION_ROUNDS})
+          </button>
+        </div>
       )}
       {rel.status === 'rejected' && deadEnd && rel.remediation_round >= MAX_REMEDIATION_ROUNDS && (
         <div className="info-strip info-strip--neutral">
