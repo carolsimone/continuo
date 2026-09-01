@@ -246,14 +246,15 @@ func TestRenderPrecedents_UpstreamEdit(t *testing.T) {
 }
 
 // TestRenderPrecedents_AmendedCaveat verifies that an Edited entry with
-// Amended==true renders the human-amendment caveat before its diff.
+// Amended==true whose diff is the merged-truth (shipped) diff renders the
+// "what shipped" human-amendment caveat before its diff.
 func TestRenderPrecedents_AmendedCaveat(t *testing.T) {
 	ps := []Precedent{{
 		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
 		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
 		Resolved: true,
 		Edited: []EditedPrecedent{
-			{NodeID: "analytics.payments", Path: "models/payments.sql", Amended: true, Diff: "-old\n+new"},
+			{NodeID: "analytics.payments", Path: "models/payments.sql", Amended: true, DiffIsShipped: true, Diff: "-old\n+new"},
 		},
 	}}
 	var b strings.Builder
@@ -261,6 +262,33 @@ func TestRenderPrecedents_AmendedCaveat(t *testing.T) {
 	out := b.String()
 	if !strings.Contains(out, "note: a human amended the proposed fix before merge; the diff below is what shipped.") {
 		t.Fatalf("missing amended caveat:\n%s", out)
+	}
+	if strings.Index(out, "note: a human amended") > strings.Index(out, "-old\n+new") {
+		t.Fatalf("caveat must precede the diff it describes:\n%s", out)
+	}
+}
+
+// TestRenderPrecedents_AmendedNotShippedCaveat verifies that an Edited entry
+// amended before merge but whose merged version is not recorded yet
+// (DiffIsShipped==false, so Diff is the proposal-time fallback) renders a
+// caveat that does NOT claim the diff shipped.
+func TestRenderPrecedents_AmendedNotShippedCaveat(t *testing.T) {
+	ps := []Precedent{{
+		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
+		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
+		Resolved: true,
+		Edited: []EditedPrecedent{
+			{NodeID: "analytics.payments", Path: "models/payments.sql", Amended: true, DiffIsShipped: false, Diff: "-old\n+new"},
+		},
+	}}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if strings.Contains(out, "the diff below is what shipped.") {
+		t.Fatalf("must not claim the diff shipped when the merged version is not recorded:\n%s", out)
+	}
+	if !strings.Contains(out, "note: a human amended the proposed fix before merge; the merged version is not recorded yet, so the originally proposed diff is shown below.") {
+		t.Fatalf("missing not-yet-shipped caveat:\n%s", out)
 	}
 	if strings.Index(out, "note: a human amended") > strings.Index(out, "-old\n+new") {
 		t.Fatalf("caveat must precede the diff it describes:\n%s", out)
@@ -347,7 +375,7 @@ func TestRenderPrecedents_AmendedCaveat_CoexistsWithResolutionDiff(t *testing.T)
 		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
 		Resolved: true, ResolutionDiff: "-select a\n+select a, x",
 		Edited: []EditedPrecedent{
-			{NodeID: "analytics.orders", Path: "models/orders.sql", Amended: true, Diff: "-select a\n+select a, x"},
+			{NodeID: "analytics.orders", Path: "models/orders.sql", Amended: true, DiffIsShipped: true, Diff: "-select a\n+select a, x"},
 		},
 	}}
 	var b strings.Builder
@@ -358,6 +386,31 @@ func TestRenderPrecedents_AmendedCaveat_CoexistsWithResolutionDiff(t *testing.T)
 	}
 	if !strings.Contains(out, "note: a human amended the proposed fix before merge; the diff below is what shipped.") {
 		t.Fatalf("amended caveat must render even when ResolutionDiff supplied the diff text:\n%s", out)
+	}
+}
+
+// TestRenderPrecedents_OwnNodeCaveatNotShipped verifies the own-node caveat
+// path (renderPrecedentResolution's ResolutionDiff branch) is DiffIsShipped-
+// aware too: an own-node Edited entry amended before merge but whose merged
+// version is not recorded yet must render the not-yet-shipped caveat, never
+// "what shipped", even when a ResolutionDiff supplied the diff text.
+func TestRenderPrecedents_OwnNodeCaveatNotShipped(t *testing.T) {
+	ps := []Precedent{{
+		NodeID: "analytics.orders", Category: "sql_error", Reason: "missing_column",
+		ErrorExcerpt: "column x does not exist", RejectedAt: "2026-08-01T00:00:00Z",
+		Resolved: true, ResolutionDiff: "-select a\n+select a, x",
+		Edited: []EditedPrecedent{
+			{NodeID: "analytics.orders", Path: "models/orders.sql", Amended: true, DiffIsShipped: false, Diff: "-select a\n+select a, x"},
+		},
+	}}
+	var b strings.Builder
+	renderPrecedents(&b, ps)
+	out := b.String()
+	if strings.Contains(out, "the diff below is what shipped.") {
+		t.Fatalf("own-node caveat must not claim the diff shipped when the merged version is not recorded:\n%s", out)
+	}
+	if !strings.Contains(out, "note: a human amended the proposed fix before merge; the merged version is not recorded yet, so the originally proposed diff is shown below.") {
+		t.Fatalf("missing own-node not-yet-shipped caveat:\n%s", out)
 	}
 }
 

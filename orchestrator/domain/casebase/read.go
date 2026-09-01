@@ -23,11 +23,18 @@ type ProposalView struct {
 // Amended and a :NodeVersion was promoted after the PR closed, MergedPrior and
 // MergedVersion carry the versions straddling the merge so the service can
 // render the amended/merged-truth diff from real promoted code.
+//
+// DiffIsShipped reports whether the rendered Diff is that merged-truth diff (a
+// post-close NodeVersion straddle was found) rather than the proposal-time
+// fallback. It is set by the query service when it renders the diff, so a
+// consumer can tell an amended edit whose shipped code is recorded from one
+// whose merged version has not been promoted yet.
 type EditedView struct {
 	NodeID        string
 	Path          string
 	Amended       bool
 	Diff          string
+	DiffIsShipped bool
 	MergedPrior   *codeversion.VersionView
 	MergedVersion *codeversion.VersionView
 }

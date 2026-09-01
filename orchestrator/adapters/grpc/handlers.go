@@ -435,6 +435,7 @@ func precedentToProto(p casebase.Precedent) *orchestratorv1.Precedent {
 	for _, e := range p.Edited {
 		pb.Edited = append(pb.Edited, &orchestratorv1.PrecedentEdit{
 			NodeId: e.NodeID, Path: e.Path, Amended: e.Amended, Diff: e.Diff,
+			DiffIsShipped: e.DiffIsShipped,
 		})
 	}
 	return pb

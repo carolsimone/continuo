@@ -47,6 +47,12 @@ type EditedPrecedent struct {
 	Path    string
 	Amended bool
 	Diff    string
+	// DiffIsShipped is true only when Diff is the merged-truth diff rendered
+	// from the promoted post-close NodeVersion — the code that actually shipped.
+	// It is false when the edit was amended but the merged version is not
+	// recorded yet, so Diff is the originally proposed diff; the caveat must not
+	// then claim the diff is what shipped.
+	DiffIsShipped bool
 }
 
 type Evidence struct {
@@ -182,7 +188,7 @@ func renderPrecedentResolution(b *strings.Builder, p Precedent) {
 
 	switch {
 	case p.ResolutionDiff != "":
-		renderDiffBlock(b, p.ResolutionDiff, own != nil && own.Amended)
+		renderDiffBlock(b, p.ResolutionDiff, own != nil && own.Amended, own != nil && own.DiffIsShipped)
 	case own != nil:
 		renderEditedDiff(b, *own)
 	}
@@ -197,17 +203,23 @@ func renderPrecedentResolution(b *strings.Builder, p Precedent) {
 }
 
 // renderEditedDiff writes one Edited entry's diff, preceded by the amended
-// caveat when the entry's diff was computed from merged truth rather than
-// the original proposal.
+// caveat. The caveat's wording depends on whether the diff is the merged-truth
+// (shipped) diff or the proposal-time fallback.
 func renderEditedDiff(b *strings.Builder, e EditedPrecedent) {
-	renderDiffBlock(b, e.Diff, e.Amended)
+	renderDiffBlock(b, e.Diff, e.Amended, e.DiffIsShipped)
 }
 
 // renderDiffBlock writes one diff fence, preceded by the amended caveat when
-// amended is true.
-func renderDiffBlock(b *strings.Builder, diff string, amended bool) {
-	if amended {
+// amended is true. When the diff is the merged-truth diff (diffIsShipped) the
+// caveat states the diff is what shipped; when the edit was amended but the
+// merged version is not recorded yet, the diff is the originally proposed one,
+// so the caveat says so instead of claiming it shipped.
+func renderDiffBlock(b *strings.Builder, diff string, amended, diffIsShipped bool) {
+	switch {
+	case amended && diffIsShipped:
 		b.WriteString("  note: a human amended the proposed fix before merge; the diff below is what shipped.\n")
+	case amended:
+		b.WriteString("  note: a human amended the proposed fix before merge; the merged version is not recorded yet, so the originally proposed diff is shown below.\n")
 	}
 	fmt.Fprintf(b, "```diff\n%s\n```\n", diff)
 }

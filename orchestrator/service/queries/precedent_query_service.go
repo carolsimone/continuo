@@ -85,7 +85,10 @@ func (s *PrecedentQueryService) GetPrecedents(
 // with the merged-truth diff (the version the merge superseded vs the promoted
 // merged version) when the edit was amended and a straddling version was
 // selected; otherwise it keeps the edge's own stored proposal diff. The merged
-// diff is capped at diffByteCap like every other rendered diff.
+// diff is capped at diffByteCap like every other rendered diff. DiffIsShipped
+// is set true only on the merged-truth branch, so a consumer can tell an
+// amended edit whose shipped code is recorded from one that fell back to the
+// proposal-time diff because no post-close version has been promoted yet.
 func renderEditedDiffs(edited []casebase.EditedView) []casebase.EditedView {
 	if len(edited) == 0 {
 		return nil
@@ -99,6 +102,7 @@ func renderEditedDiffs(edited []casebase.EditedView) []casebase.EditedView {
 				priorCode, priorSeq = e.MergedPrior.RawCode, e.MergedPrior.VersionSeq
 			}
 			e.Diff, _ = renderUnifiedDiff(priorCode, e.MergedVersion.RawCode, priorSeq, e.MergedVersion.VersionSeq)
+			e.DiffIsShipped = true
 		}
 		out = append(out, e)
 	}

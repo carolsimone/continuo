@@ -2464,11 +2464,17 @@ func (x *PrecedentProposal) GetPrState() string {
 // merged version) when the edit was amended and a promoted version straddles
 // the merge, otherwise the proposal's own edit diff.
 type PrecedentEdit struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Amended       bool                   `protobuf:"varint,3,opt,name=amended,proto3" json:"amended,omitempty"`
-	Diff          string                 `protobuf:"bytes,4,opt,name=diff,proto3" json:"diff,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	NodeId  string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Path    string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Amended bool                   `protobuf:"varint,3,opt,name=amended,proto3" json:"amended,omitempty"`
+	Diff    string                 `protobuf:"bytes,4,opt,name=diff,proto3" json:"diff,omitempty"`
+	// diff_is_shipped is true only when diff was rendered from the promoted
+	// merged NodeVersion — the code that actually shipped. It is false when the
+	// edit was amended but no post-close version straddle was found yet, so diff
+	// fell back to the proposal-time diff: consumers must not then claim the diff
+	// is what shipped.
+	DiffIsShipped bool `protobuf:"varint,5,opt,name=diff_is_shipped,json=diffIsShipped,proto3" json:"diff_is_shipped,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2529,6 +2535,13 @@ func (x *PrecedentEdit) GetDiff() string {
 		return x.Diff
 	}
 	return ""
+}
+
+func (x *PrecedentEdit) GetDiffIsShipped() bool {
+	if x != nil {
+		return x.DiffIsShipped
+	}
+	return false
 }
 
 // Precedent is one past rejection with its resolution.
@@ -2931,12 +2944,13 @@ const file_proto_orchestrator_v1_orchestrator_proto_rawDesc = "" +
 	"proposalId\x12\x15\n" +
 	"\x06pr_url\x18\x02 \x01(\tR\x05prUrl\x12\x1b\n" +
 	"\tpr_number\x18\x03 \x01(\x05R\bprNumber\x12\x19\n" +
-	"\bpr_state\x18\x04 \x01(\tR\aprState\"j\n" +
+	"\bpr_state\x18\x04 \x01(\tR\aprState\"\x92\x01\n" +
 	"\rPrecedentEdit\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x18\n" +
 	"\aamended\x18\x03 \x01(\bR\aamended\x12\x12\n" +
-	"\x04diff\x18\x04 \x01(\tR\x04diff\"\xbc\x04\n" +
+	"\x04diff\x18\x04 \x01(\tR\x04diff\x12&\n" +
+	"\x0fdiff_is_shipped\x18\x05 \x01(\bR\rdiffIsShipped\"\xbc\x04\n" +
 	"\tPrecedent\x12\x1d\n" +
 	"\n" +
 	"release_id\x18\x01 \x01(\tR\treleaseId\x12\x17\n" +

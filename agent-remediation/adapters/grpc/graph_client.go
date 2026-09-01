@@ -3,9 +3,9 @@ package grpc
 import (
 	"context"
 
-	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	orchestratorv1 "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -136,6 +136,7 @@ func MapPrecedents(resp *orchestratorv1.GetPrecedentsResponse) []prompt.Preceden
 		for _, e := range p.Edited {
 			pr.Edited = append(pr.Edited, prompt.EditedPrecedent{
 				NodeID: e.NodeId, Path: e.Path, Amended: e.Amended, Diff: e.Diff,
+				DiffIsShipped: e.DiffIsShipped,
 			})
 		}
 		out = append(out, pr)

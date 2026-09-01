@@ -380,6 +380,12 @@ message PrecedentEdit {
   string path = 2;
   bool amended = 3;
   string diff = 4;
+  // diff_is_shipped is true only when diff was rendered from the promoted
+  // merged NodeVersion — the code that actually shipped. It is false when the
+  // edit was amended but no post-close version straddle was found yet, so diff
+  // fell back to the proposal-time diff: consumers must not then claim the diff
+  // is what shipped.
+  bool diff_is_shipped = 5;
 }
 
 // Precedent is one past rejection with its resolution.
