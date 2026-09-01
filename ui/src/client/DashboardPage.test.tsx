@@ -69,6 +69,59 @@ function renderDashboard() {
   );
 }
 
+describe('DashboardPage — liveness badge', () => {
+  it('shows "Live" (no timestamp) once the schedules poll succeeds', async () => {
+    mockFetchProposals.mockResolvedValue([]);
+
+    const { container } = renderDashboard();
+
+    await waitFor(() => {
+      const badge = container.querySelector('.live-badge');
+      expect(badge).toBeInTheDocument();
+      expect(badge?.textContent).toContain('Live');
+    });
+
+    const badge = container.querySelector('.live-badge');
+    // Liveness, not a clock: no HH:MM:SS timestamp is rendered.
+    expect(badge?.textContent).not.toMatch(/\d{1,2}:\d{2}:\d{2}/);
+    expect(badge?.className).toContain('live-badge--live');
+  });
+
+  it('shows "Reconnecting" when the schedules poll fails', async () => {
+    mockFetchProposals.mockResolvedValue([]);
+    mockFetch.mockImplementation((url: string) => {
+      if (url === '/api/schedules') return Promise.reject(new Error('network error'));
+      if (url === '/api/topology/schedules') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ schedules: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ total_count: 0 }) });
+    });
+
+    const { container } = renderDashboard();
+
+    await waitFor(() => {
+      const badge = container.querySelector('.live-badge');
+      expect(badge?.textContent).toContain('Reconnecting');
+      expect(badge?.className).toContain('live-badge--reconnecting');
+    });
+  });
+
+  it('shows "Connecting" before the first poll resolves', async () => {
+    mockFetchProposals.mockResolvedValue([]);
+    mockFetch.mockImplementation((url: string) => {
+      if (url === '/api/schedules') return new Promise(() => {}); // never resolves
+      if (url === '/api/topology/schedules') return new Promise(() => {});
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ total_count: 0 }) });
+    });
+
+    const { container } = renderDashboard();
+
+    const badge = container.querySelector('.live-badge');
+    expect(badge?.textContent).toContain('Connecting');
+    expect(badge?.className).toContain('live-badge--connecting');
+  });
+});
+
 describe('DashboardPage — Remediation tab count badge', () => {
   it('counts proposals with an open PR (pr_state=open)', async () => {
     const proposals = [

@@ -78,6 +78,12 @@ The architecture pack under `docs/arch/` is part of the working agreement for th
 Before completing any task that changes service behavior, interfaces, storage ownership, Redis flows, gRPC interactions, Kubernetes behavior, or S3 usage, the LLM must review and update the relevant files in `docs/arch/`.
 Do not consider a task complete until the architecture documentation has been reconciled with the implemented code changes.
 
+**Arch docs describe the system's current working only — present tense, self-contained.** They are held to the same standard as code comments (see the IMPORTANT rules below): a new reader with no prior knowledge must understand what the system does today from the text alone. So:
+- No references to past PRs, past edits, migrations-as-history, or a change ("previously", "used to", "was renamed from", "after the cutover", "we removed"). State what is true now. Describing a value that is *currently* absent is fine when it reads as current state ("the projection stores only X"), not as a change narrative.
+- No future/roadmap framing ("will be added later", "planned", "TODO"). Habitual/runtime "will" ("the reconciler emits once a release answers") is fine.
+- No cross-references that only resolve relative to an edit or another section's numbering — e.g. citing "Step 3a" outside the numbered flow that defines it. Name the mechanism (the function, the field) instead.
+- Deprecated/removed features are simply absent, not documented as history.
+
 Services should be Go based service, find `Dockerfile.dev` in the service folders if you need to know how to build them.
 The exception is `topology-controller`, which is Python 3.12 and uses uv for dependency management.
 All the other services should, more or less, use a similar stack but with different dependencies.

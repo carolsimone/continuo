@@ -2318,3 +2318,46 @@ func TestBeginPR_PerServiceClaimOverMemberlessEditsResolvesNoMembers(t *testing.
 		"the whole-proposal claim still resolves the full fixed set")
 	require.Len(t, legacyClaim.Edits, 2)
 }
+
+// TestProposalRepositoryFailGenerating_FailsNodeOutcomes verifies FailGenerating
+// carries the terminal status into every per-node outcome, not just the row.
+// The UI reads node_outcomes[node].status in preference to the row status
+// (proposalStatusForNode: `node_outcomes?.[node]?.status ?? status`), so a
+// per-node entry left at 'generating' keeps the FIX cell spinning and hides
+// "Try again" even though the row is failed — the exact orphan symptom this
+// recovery must clear. Any node already terminal is left as it was.
+func TestProposalRepositoryFailGenerating_FailsNodeOutcomes(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	repo := NewProposalRepository(db, nil)
+
+	inFlight := proposal.Proposal{
+		Source: "compile", ReleaseID: "rel-no-1", Attempt: 1, Status: proposal.StatusGenerating,
+		CreatedAt:       time.Now().UTC(),
+		ResolvedNodeIDs: []string{"core", "analytics.b"},
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"core":        {Status: proposal.StatusGenerating},
+			"analytics.b": {Status: proposal.StatusGenerating},
+		},
+	}
+	inFlight.NormalizeRepresentativeViews()
+	require.NoError(t, repo.InsertGenerating(ctx, inFlight))
+
+	n, err := repo.FailGenerating(ctx, "rel-no-1", "poison-dropped after exhausting redelivery")
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	for _, node := range []string{"core", "analytics.b"} {
+		var got struct {
+			Status string `db:"status"`
+			Reason string `db:"reason"`
+		}
+		require.NoError(t, db.GetContext(ctx, &got,
+			`SELECT node_outcomes->$2->>'status' AS status,
+			        COALESCE(node_outcomes->$2->>'reason','') AS reason
+			   FROM proposal WHERE release_id=$1 AND attempt=$3`,
+			"rel-no-1", node, 1))
+		require.Equal(t, string(proposal.StatusFailed), got.Status, "node %s status must be failed", node)
+		require.Equal(t, "poison-dropped after exhausting redelivery", got.Reason, "node %s reason", node)
+	}
+}
