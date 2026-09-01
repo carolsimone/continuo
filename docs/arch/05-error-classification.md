@@ -133,8 +133,8 @@ rows with `status IN ('pending', 'scheduled')` that are due —
 `next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp()`. A fresh
 `pending` row (never attempted, `next_attempt_at` NULL) is always eligible; a
 transiently-failed `scheduled` row becomes eligible only once its backoff
-elapses. The distinct `scheduled` status is what keeps the change safe under a
-rolling deployment: a previous-version replica's reader filters on
+elapses. The distinct `scheduled` status is what keeps backed-off scheduling
+safe under a rolling deployment: a previous-version replica's reader filters on
 `status = 'pending'` and so never reclaims a row a newer replica has backed
 off, so it cannot retry that row every tick and exhaust its budget before the
 backoff elapses. The delay is capped exponential
