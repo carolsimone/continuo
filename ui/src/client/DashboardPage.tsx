@@ -12,7 +12,7 @@ import Brand from './Brand';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [topologies, setTopologies] = useState<ScheduleTopologySummary[]>([]);
   const [topologiesError, setTopologiesError] = useState<string | null>(null);
@@ -25,7 +25,7 @@ export default function DashboardPage() {
         .then(r => r.json())
         .then((data: SchedulesResponse) => {
           setSchedules(data.schedules || []);
-          setLastUpdated(new Date());
+          setLoaded(true);
           setError(null);
         })
         .catch(e => setError(e.message));
@@ -79,13 +79,23 @@ export default function DashboardPage() {
       .catch(() => {});
   }, []);
 
+  // Connection liveness, not a wall clock: reflects whether the dashboard is
+  // still receiving data from the schedules poll. 'live' once a poll has
+  // succeeded, 'reconnecting' after a failed poll, 'connecting' before the
+  // first response lands.
+  const liveState = error ? 'reconnecting' : loaded ? 'live' : 'connecting';
+  const liveLabel =
+    liveState === 'live' ? 'Live'
+      : liveState === 'reconnecting' ? 'Reconnecting…'
+      : 'Connecting…';
+
   return (
     <div className="page">
       <header className="page-header">
         <h1><Brand /></h1>
         <div className="page-actions">
-          <span className="live-badge">
-            ● live{lastUpdated ? ` · ${lastUpdated.toLocaleTimeString()}` : ''}
+          <span className={`live-badge live-badge--${liveState}`}>
+            ● {liveLabel}
           </span>
           <UserMenu />
         </div>
