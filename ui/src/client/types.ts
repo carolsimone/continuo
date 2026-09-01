@@ -232,6 +232,23 @@ export interface NodeOutcomeDTO {
   reason: string;
 }
 
+// One pull request opened from a proposal. A proposal splits into one entry
+// per owning service; service === '' is the legacy whole-proposal group.
+export interface PullRequestDTO {
+  service: string;
+  repo: string;
+  branch: string;
+  pr_url: string;
+  pr_number: number;
+  // pr_state is the terminal state from GitHub: "merged" or "rejected", or
+  // "open"/"opening" while the PR has not yet closed, "" or "failed" while
+  // no live PR exists for this service.
+  pr_state: string;
+  pr_opened_at: string;
+  pr_opened_by: string;
+  pr_closed_at: string;
+}
+
 // One shadow release a batched attempt ran to verify its fix for one edited
 // service. A multi-service proposal can carry several: one per service whose
 // edits needed a shadow release to judge.
@@ -304,4 +321,14 @@ export interface ProposalDTO {
   // service that needed verification. Empty on a proposal judged without one,
   // or a legacy row that only ever tracked a single shadow_release_id.
   verifications?: VerificationDTO[];
+  // pull_requests is one entry per (proposal, service) pull request; absent
+  // or empty on a proposal that never entered the PR lifecycle, or one from
+  // before the per-service split existed — in which case the singular pr_*
+  // fields above describe its one (legacy, service '') pull request. See
+  // proposalPullRequests.
+  pull_requests?: PullRequestDTO[];
+  // pr_services is the sorted owning-service groups this proposal's pull
+  // requests split into; absent, or [''], for a legacy (unsplit) proposal.
+  // See proposalPrServices.
+  pr_services?: string[];
 }

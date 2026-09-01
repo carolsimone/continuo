@@ -564,6 +564,44 @@ func TestValidation_PrecedentFields_Sanitized(t *testing.T) {
 	}
 }
 
+// TestValidation_PrecedentEditedDiff_Sanitized verifies that a precedent's
+// Edited entries — the diffs of the nodes a merged fix PR touched — are run
+// through the LogSanitizer before they reach the LLM, the same as the
+// precedent's own resolution diff and error excerpt.
+func TestValidation_PrecedentEditedDiff_Sanitized(t *testing.T) {
+	svc := validationSvc()
+	svc.Precedents = &fakePrecedents{bySignature: map[string][]prompt.Precedent{
+		"sig-1": {
+			{
+				ReleaseID: "r-other", NodeID: "other-node",
+				Category: "validation", Reason: "type_mismatch",
+				ErrorExcerpt: "column x does not exist",
+				RejectedAt:   "2026-01-01T00:00:00Z",
+				Resolved:     true,
+				Edited: []prompt.EditedPrecedent{
+					{NodeID: "upstream-node", Path: "models/upstream.sql", Diff: "-x\n+password = SEKRET"},
+				},
+			},
+		},
+	}}
+	svc.Sanitizer = redactingSanitizer{secret: "SEKRET", marker: "[redacted]"}
+	llm := twoStepLLM()
+	svc.LLM = llm
+
+	in := validationInput()
+	in.ErrorSignature = "sig-1"
+
+	if _, err := (validationFixer{}).Propose(context.Background(), svc, in); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(llm.requests[0].User, "SEKRET") {
+		t.Fatalf("unsanitized secret leaked into the prompt via a precedent's edited diff:\n%s", llm.requests[0].User)
+	}
+	if !strings.Contains(llm.requests[0].User, "[redacted]") {
+		t.Fatalf("expected the marker in place of the edited diff's secret:\n%s", llm.requests[0].User)
+	}
+}
+
 // TestValidation_GraphReadsFail_DegradesToBaseEvidence verifies that when the
 // upstream, version, and precedent lookups all error, the fixer still
 // proposes a fix from the candidate SQL and dbt log alone.

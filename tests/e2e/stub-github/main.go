@@ -36,8 +36,11 @@
 //	    via recordedTreeFor.
 //
 //	GET  /repos/{owner}/{repo}/contents/{path}  (Accept contains "raw")
-//	    Returns the canned ftable_e dbt source — the agent-remediation's
-//	    single-file read path.
+//	    When ref names a commit written via the git/commits endpoint below,
+//	    resolves commit -> tree -> blob for path and returns that blob's
+//	    content (404 when the commit has no such path). Otherwise (ref unknown
+//	    or omitted) returns the canned ftable_e dbt source — the
+//	    agent-remediation's single-file read path.
 //
 //	GET  /repos/{owner}/{repo}/contents/{path}  (JSON Accept)
 //	    Returns 404 — the agent-remediation's directory-listing read path,
@@ -62,7 +65,10 @@
 //	    Returns the current PR state (404 when never opened).
 //
 //	PUT  /repos/{owner}/{repo}/pulls/{n}/merge
-//	    Marks PR as merged and closed. Returns 200 with merged confirmation.
+//	    Marks PR as merged and closed. Resolves the PR's head branch to its
+//	    latest written commit (see branchRefs) and records/returns that as the
+//	    merge commit sha; when the branch was never pushed to, returns the
+//	    fixed stubCommitSHA constant instead (back-compat).
 //
 //	PATCH /repos/{owner}/{repo}/pulls/{n}
 //	    With body {"state":"closed"} marks PR as closed without merge. Returns 200 with PR JSON.
@@ -73,6 +79,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -153,13 +160,14 @@ var (
 // posted and echoed back on every read, so a test can assert what the pull
 // request the system opened is actually called.
 type stubPRState struct {
-	Number    int
-	Title     string
-	Head      string
-	Base      string
-	CreatedAt string
-	Closed    bool
-	Merged    bool
+	Number         int
+	Title          string
+	Head           string
+	Base           string
+	CreatedAt      string
+	Closed         bool
+	Merged         bool
+	MergeCommitSHA string
 }
 
 // resetPRs clears all PR state and rewinds the PR-number counter back to
@@ -195,20 +203,33 @@ type stubCommitWrite struct {
 	Parents []string
 }
 
-// gitMu guards recordedTrees and recordedCommits, the write-side state for
-// POST git/trees and POST git/commits.
+// gitMu guards recordedTrees, recordedCommits, recordedBlobs and branchRefs,
+// the write-side state for POST git/blobs, POST git/trees, POST git/commits,
+// and PATCH git/refs/heads/{branch}.
 var (
 	gitMu           sync.Mutex
 	recordedTrees   = map[string]stubTreeWrite{}
 	recordedCommits = map[string]stubCommitWrite{}
+	// recordedBlobs holds each written blob's decoded content, keyed by the
+	// sha handleGitBlobs returned for it, so handleContents can serve a
+	// file's actual text when asked for it at a written commit.
+	recordedBlobs = map[string]string{}
+	// branchRefs holds each branch's latest written commit sha, keyed by
+	// branch name without the "refs/heads/" prefix (as posted to PATCH
+	// git/refs/heads/{branch} — the same form a PR's Head is stored in). It
+	// is how the merge handler finds a PR's head branch tip.
+	branchRefs = map[string]string{}
 )
 
-// resetGitWrites clears all recorded tree and commit writes (test helper).
+// resetGitWrites clears all recorded tree, commit and blob writes, and all
+// branch ref pointers (test helper).
 func resetGitWrites() {
 	gitMu.Lock()
 	defer gitMu.Unlock()
 	recordedTrees = map[string]stubTreeWrite{}
 	recordedCommits = map[string]stubCommitWrite{}
+	recordedBlobs = map[string]string{}
+	branchRefs = map[string]string{}
 }
 
 // recordedTreeFor returns the request recorded for a POST git/trees call
@@ -227,6 +248,50 @@ func recordedCommitFor(sha string) (stubCommitWrite, bool) {
 	defer gitMu.Unlock()
 	w, ok := recordedCommits[sha]
 	return w, ok
+}
+
+// recordedBlobFor returns the decoded content recorded for a POST git/blobs
+// call that returned sha, and whether one was recorded (test helper).
+func recordedBlobFor(sha string) (string, bool) {
+	gitMu.Lock()
+	defer gitMu.Unlock()
+	c, ok := recordedBlobs[sha]
+	return c, ok
+}
+
+// branchTip returns the latest commit sha written to branch (as recorded by
+// a PATCH git/refs/heads/{branch} call), and whether one has ever been
+// recorded (test helper).
+func branchTip(branch string) (string, bool) {
+	gitMu.Lock()
+	defer gitMu.Unlock()
+	sha, ok := branchRefs[branch]
+	return sha, ok
+}
+
+// commitTreeBlob resolves path within the tree of the commit recorded under
+// sha, returning its blob content. knownCommit reports whether sha names a
+// commit this stub has recorded at all (independent of whether path was
+// found within it), so a caller can distinguish "ref never written here"
+// (fall back to other behavior) from "ref written, but path absent" (404).
+func commitTreeBlob(sha, path string) (content string, knownCommit, found bool) {
+	gitMu.Lock()
+	defer gitMu.Unlock()
+	commit, ok := recordedCommits[sha]
+	if !ok {
+		return "", false, false
+	}
+	tree, ok := recordedTrees[commit.Tree]
+	if !ok {
+		return "", true, false
+	}
+	for _, e := range tree.Entries {
+		if e.Path == path {
+			c, ok := recordedBlobs[e.SHA]
+			return c, true, ok
+		}
+	}
+	return "", true, false
 }
 
 func main() {
@@ -378,6 +443,14 @@ func handleGitRefs(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 
+		// Record the branch's new tip so a later PR merge on this branch can
+		// resolve its head to the commit actually pushed to it.
+		if body.SHA != "" {
+			gitMu.Lock()
+			branchRefs[branch] = body.SHA
+			gitMu.Unlock()
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -397,7 +470,9 @@ func handleGitRefs(w http.ResponseWriter, r *http.Request) {
 // blob for one file's content. The returned sha is derived from the posted
 // content, so the same content always yields the same sha and different
 // content yields different shas — enough for a test to tell two blobs apart
-// without any server-side counter or clock.
+// without any server-side counter or clock. The decoded content is recorded
+// under that sha (retrievable via recordedBlobFor) so handleContents can
+// later serve it back for a path resolved through a written commit's tree.
 func handleGitBlobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -409,6 +484,16 @@ func handleGitBlobs(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	sha := deterministicSHA("blob", body.Content)
+
+	content := body.Content
+	if body.Encoding == "base64" {
+		if decoded, err := base64.StdEncoding.DecodeString(body.Content); err == nil {
+			content = string(decoded)
+		}
+	}
+	gitMu.Lock()
+	recordedBlobs[sha] = content
+	gitMu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -506,26 +591,52 @@ func handleCreateCommit(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"sha": sha})
 }
 
-// handleContents responds to GET /repos/{owner}/{repo}/contents/{path}.
+// handleContents responds to GET /repos/{owner}/{repo}/contents/{path}?ref=.
 //
 // GET with Accept containing "raw" (the agent-remediation single-file read
-// path) returns the canned ftable_e source as raw text. GET with a JSON
-// Accept (the agent-remediation directory-listing read path) returns 404,
-// which its caller treats as "nothing more to list" rather than an error.
+// path, and the ui pull-request-creator's amend-detection compare) is
+// resolved two ways:
+//
+//   - ref names a commit this stub recorded through the git/blobs, git/trees
+//     and git/commits write endpoints (i.e. something was actually pushed to
+//     that sha): the path is resolved commit -> tree -> blob and that blob's
+//     content is returned. A path absent from that commit's tree is a 404,
+//     so ErrSourceNotFound still fires for a genuinely-absent file.
+//   - any other ref (including none): the canned ftable_e source is
+//     returned, as before — this stub does not carry a real repository
+//     history, only whatever was explicitly written to it in a test.
+//
+// GET with a JSON Accept (the agent-remediation directory-listing read path)
+// returns 404, which its caller treats as "nothing more to list" rather than
+// an error.
 func handleContents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if strings.Contains(r.Header.Get("Accept"), "raw") {
-		// Single-file raw read path — existing behavior preserved.
-		w.Header().Set("Content-Type", "application/vnd.github.raw")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(ftableESource))
+	if !strings.Contains(r.Header.Get("Accept"), "raw") {
+		// JSON-Accept directory listing: no such path in the stub.
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	// JSON-Accept directory listing: no such path in the stub.
-	http.Error(w, "not found", http.StatusNotFound)
+
+	ref := r.URL.Query().Get("ref")
+	_, path, _ := strings.Cut(r.URL.Path, "/contents/")
+	if content, knownCommit, found := commitTreeBlob(ref, path); knownCommit {
+		if !found {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.github.raw")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(content))
+		return
+	}
+
+	// Unknown (or absent) ref — the canned single-file fixture, as before.
+	w.Header().Set("Content-Type", "application/vnd.github.raw")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(ftableESource))
 }
 
 // handleTarball responds to GET /repos/{owner}/{repo}/tarball/{ref} with a
@@ -635,7 +746,8 @@ func tarballOf(root, prefix string) ([]byte, error) {
 //	GET  pulls?head=&state=  -> PRs matching head branch and state (see listPulls)
 //	POST pulls                -> opens a new stub PR (registers lifecycle state)
 //	GET  pulls/{n}             -> current PR state (404 when never opened)
-//	PUT  pulls/{n}/merge       -> mark merged
+//	PUT  pulls/{n}/merge       -> mark merged, resolving merge_commit_sha to
+//	                              the head branch's latest written commit
 //	PATCH pulls/{n}            -> {"state":"closed"} marks closed without merge
 func handlePulls(w http.ResponseWriter, r *http.Request) {
 	// Isolate the segment after ".../pulls".
@@ -679,18 +791,35 @@ func handlePulls(w http.ResponseWriter, r *http.Request) {
 		}
 		prMu.Lock()
 		st, ok := prStates[n]
+		var head string
 		if ok {
-			st.Closed, st.Merged = true, true
+			head = st.Head
 		}
 		prMu.Unlock()
 		if !ok {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+
+		// Resolve the merge commit to the head branch's latest written
+		// commit; a branch nothing was ever pushed to falls back to the
+		// fixed stub sha (back-compat for tests that merge without pushing).
+		sha := stubCommitSHA
+		if tip, ok := branchTip(head); ok {
+			sha = tip
+		}
+
+		prMu.Lock()
+		if st, ok := prStates[n]; ok {
+			st.Closed, st.Merged = true, true
+			st.MergeCommitSHA = sha
+		}
+		prMu.Unlock()
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"sha": stubCommitSHA, "merged": true,
+			"sha": sha, "merged": true,
 		})
 
 	case after != "" && r.Method == http.MethodPatch:
@@ -765,14 +894,15 @@ func pullJSON(st *stubPRState) map[string]interface{} {
 		createdAt = stubClosedAt
 	}
 	return map[string]interface{}{
-		"number":     st.Number,
-		"title":      st.Title,
-		"state":      state,
-		"merged":     st.Merged,
-		"merged_at":  mergedAt,
-		"closed_at":  closedAt,
-		"created_at": createdAt,
-		"html_url":   fmt.Sprintf("http://stub-github/pull/%d", st.Number),
+		"number":           st.Number,
+		"title":            st.Title,
+		"state":            state,
+		"merged":           st.Merged,
+		"merged_at":        mergedAt,
+		"closed_at":        closedAt,
+		"created_at":       createdAt,
+		"html_url":         fmt.Sprintf("http://stub-github/pull/%d", st.Number),
+		"merge_commit_sha": st.MergeCommitSHA,
 	}
 }
 

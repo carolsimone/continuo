@@ -109,7 +109,10 @@ describe('CreatePrModal', () => {
   });
 
   it('confirming calls createPullRequest, shows Creating… then Created, then PR link', async () => {
-    mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 });
+    mockCreatePullRequest.mockResolvedValue({
+      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 }],
+      errors: [],
+    });
     const { onClose, onCreated } = renderModal();
 
     const createBtn = screen.getByRole('button', { name: /Create PR/i });
@@ -125,24 +128,14 @@ describe('CreatePrModal', () => {
     });
 
     expect(mockCreatePullRequest).toHaveBeenCalledWith('prop-1');
-    expect(onCreated).toHaveBeenCalledWith('https://github.com/org/repo/pull/99');
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it('treats 409 with pr_url as success — calls onCreated, no error strip', async () => {
-    mockCreatePullRequest.mockRejectedValue({ status: 409, pr_url: 'https://github.com/org/repo/pull/77', message: 'already exists' });
-    const { onClose, onCreated } = renderModal();
-
-    fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
-
-    await waitFor(() => {
-      expect(onCreated).toHaveBeenCalledWith('https://github.com/org/repo/pull/77');
+    expect(onCreated).toHaveBeenCalledWith({
+      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/99', pr_number: 99 }],
+      errors: [],
     });
     expect(onClose).toHaveBeenCalled();
-    expect(document.querySelector('.info-strip--error')).toBeNull();
   });
 
-  it('renders .info-strip--error on non-409 failure', async () => {
+  it('renders .info-strip--error on failure', async () => {
     mockCreatePullRequest.mockRejectedValue({ status: 502, message: 'upstream timeout' });
     renderModal();
 
@@ -155,6 +148,49 @@ describe('CreatePrModal', () => {
 
     // Modal should remain open, no PR link produced
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('lists every created PR link and shows per-service errors on a partial success, keeping the modal open', async () => {
+    mockCreatePullRequest.mockResolvedValue({
+      pull_requests: [{ service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }],
+      errors: [{ service: 'finance', error: 'failed to open pull request' }],
+    });
+    const { onClose, onCreated } = renderModal();
+
+    fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
+
+    const link = await screen.findByRole('link', { name: /core: open PR ↗/i });
+    expect(link).toHaveAttribute('href', 'https://github.com/org/core-repo/pull/10');
+    expect(await screen.findByText(/finance: failed to open pull request/i)).toBeInTheDocument();
+
+    expect(onCreated).toHaveBeenCalledWith({
+      pull_requests: [{ service: 'core', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10 }],
+      errors: [{ service: 'finance', error: 'failed to open pull request' }],
+    });
+    // A partial success stays open — closing here would hide the services
+    // that still need attention.
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    // The operator can retry the remaining service(s) immediately.
+    expect(screen.getByRole('button', { name: /^Create PR$/i })).toBeEnabled();
+  });
+
+  it('renders no link for a pull_requests entry with an empty pr_url', async () => {
+    // Defensive case: the server is not expected to send this (a URL-less
+    // FAILED_PRECONDITION is routed to errors[], not pull_requests), but the
+    // modal must never assemble a dead href="" link if it ever did.
+    mockCreatePullRequest.mockResolvedValue({
+      pull_requests: [{ service: 'core', pr_url: '', pr_number: 0 }],
+      errors: [],
+    });
+    renderModal();
+
+    fireEvent.click(screen.getByRole('button', { name: /Create PR/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Created/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('link', { name: /open PR/i })).toBeNull();
   });
 });
 
@@ -267,7 +303,10 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
   it('after successful PR creation, shows the link immediately and settles on the server-reported state via refetch', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
-    mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 });
+    mockCreatePullRequest.mockResolvedValue({
+      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55 }],
+      errors: [],
+    });
     // Realistic actionable proposal: the card is already open, no click needed.
     const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: '' });
 
@@ -317,7 +356,10 @@ describe('RemediationPanel — Create PR trigger gating', () => {
 
   it('when best-effort recording fails, the refetch reports opening rather than a false open', async () => {
     mockUseCurrentUser.mockReturnValue({ userId: 'u1', email: 'op@x.com', name: 'Op', role: 'operator' });
-    mockCreatePullRequest.mockResolvedValue({ pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56 });
+    mockCreatePullRequest.mockResolvedValue({
+      pull_requests: [{ service: '', pr_url: 'https://github.com/org/repo/pull/56', pr_number: 56 }],
+      errors: [],
+    });
     const proposal = makeProposal({ source_resolved: true, pr_url: '', pr_state: '' });
 
     // The GitHub PR was created but recordPullRequest failed server side,

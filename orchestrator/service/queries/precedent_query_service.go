@@ -52,16 +52,25 @@ func (s *PrecedentQueryService) GetPrecedents(
 	out := make([]casebase.Precedent, 0, len(views))
 	for _, v := range views {
 		p := casebase.Precedent{
-			Rejection:        v.Rejection,
-			Resolved:         v.ResolvingVersion != nil,
+			Rejection: v.Rejection,
+			// A precedent is resolved by an own-timeline version, by a merged
+			// PR's drawn edits, or — even when that PR drew no edits because
+			// every edit target was absent from the graph — by the presence of
+			// the [:RESOLVED_BY]->(:Proposal) edge itself, so Resolved agrees
+			// with the identity query's resolved-first ordering.
+			Resolved:         v.ResolvingVersion != nil || len(v.Edited) > 0 || v.ResolvedByProposal,
 			ResolvingVersion: v.ResolvingVersion,
 			Proposals:        v.Proposals,
 		}
+		// The own-timeline resolution diff is rendered as before and preferred
+		// when present: it is the authoritative record when a resolving version
+		// exists on the node's own timeline.
 		if v.ResolvingVersion != nil && v.PriorVersion != nil {
 			p.ResolutionDiff, p.ResolutionDiffTruncated = renderUnifiedDiff(
 				v.PriorVersion.RawCode, v.ResolvingVersion.RawCode,
 				v.PriorVersion.VersionSeq, v.ResolvingVersion.VersionSeq)
 		}
+		p.Edited = renderEditedDiffs(v.Edited)
 		if !includeCode && p.ResolvingVersion != nil {
 			stripped := *p.ResolvingVersion
 			stripped.RawCode, stripped.CompiledCode = "", ""
@@ -70,6 +79,34 @@ func (s *PrecedentQueryService) GetPrecedents(
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// renderEditedDiffs copies each edited-provenance entry, replacing its Diff
+// with the merged-truth diff (the version the merge superseded vs the promoted
+// merged version) when the edit was amended and a straddling version was
+// selected; otherwise it keeps the edge's own stored proposal diff. The merged
+// diff is capped at diffByteCap like every other rendered diff. DiffIsShipped
+// is set true only on the merged-truth branch, so a consumer can tell an
+// amended edit whose shipped code is recorded from one that fell back to the
+// proposal-time diff because no post-close version has been promoted yet.
+func renderEditedDiffs(edited []casebase.EditedView) []casebase.EditedView {
+	if len(edited) == 0 {
+		return nil
+	}
+	out := make([]casebase.EditedView, 0, len(edited))
+	for _, e := range edited {
+		if e.MergedVersion != nil {
+			var priorCode string
+			var priorSeq int64
+			if e.MergedPrior != nil {
+				priorCode, priorSeq = e.MergedPrior.RawCode, e.MergedPrior.VersionSeq
+			}
+			e.Diff, _ = renderUnifiedDiff(priorCode, e.MergedVersion.RawCode, priorSeq, e.MergedVersion.VersionSeq)
+			e.DiffIsShipped = true
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func clampPrecedentLimit(limit int32) int32 {

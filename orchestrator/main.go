@@ -387,14 +387,18 @@ func main() {
 		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, codeVersionRepo, logger)
 
 	// remediation.requested:v2 (rejections) + remediation.pr_opened:v1
-	// (proposals) — the failure-precedent case base. The rejections handler
-	// reuses the versions path's bundle reader to fetch the failing code; the
-	// proposals handler needs no bundle. Orchestrator remains the sole Neo4j
-	// writer.
+	// (proposals) + remediation.pr_closed:v1 (provenance) — the
+	// failure-precedent case base. The rejections handler reuses the versions
+	// path's bundle reader to fetch the failing code; the proposals and
+	// provenance handlers need no bundle. The provenance handler draws the
+	// RESOLVED_BY/EDITED case-base edges on a merged PR and stamps every PR's
+	// terminal state. Orchestrator remains the sole Neo4j writer.
 	caseBaseRepo := neo4jinfra.NewCaseBaseRepository(neo4jClient, logger)
 	rejectionsHandler := handlers.NewRemediationRequestedRejectionsHandler(
 		postgres.NewPostgresUnitOfWork(pgDB, logger), codeBundleReader, caseBaseRepo, logger)
 	proposalsHandler := handlers.NewPrOpenedProposalsHandler(
+		postgres.NewPostgresUnitOfWork(pgDB, logger), caseBaseRepo, logger)
+	provenanceHandler := handlers.NewPrClosedProvenanceHandler(
 		postgres.NewPostgresUnitOfWork(pgDB, logger), caseBaseRepo, logger)
 
 	// Every orchestrator consumer is the same shape: a domain handler wrapped
@@ -418,6 +422,7 @@ func main() {
 		{"promoted_seeds", streams.TriggerPromotedSeedsV1, streams.OrchestratorPromotedSeeds, redis.NewPromotedSeedsBinding(handlePromotedSeedsHandler, logger)},
 		{"remediation_requested_rejections", streams.RemediationRequestedV2, streams.OrchestratorRemediationRequestedRejections, redis.NewRemediationRequestedBinding(rejectionsHandler, logger)},
 		{"remediation_pr_opened_proposals", streams.RemediationPrOpenedV1, streams.OrchestratorRemediationPrOpenedProposals, redis.NewPrOpenedBinding(proposalsHandler, logger)},
+		{"remediation_pr_closed_provenance", streams.RemediationPrClosedV1, streams.OrchestratorRemediationPrClosedProvenance, redis.NewPrClosedBinding(provenanceHandler, logger)},
 	}
 	for _, c := range consumers {
 		runConsumer(c.name, pkgredis.NewStreamConsumer(redisClient, c.stream, c.group, c.binding, logger))

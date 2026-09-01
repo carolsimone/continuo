@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { ProposalDTO } from './types';
-import { createPullRequest } from './remediation-api';
+import { createPullRequest, CreatePullRequestResponse } from './remediation-api';
 import { proposalNodeIds } from './release-helpers';
 
 interface Props {
   proposal: ProposalDTO;
   onClose: () => void;
-  onCreated: (prUrl: string) => void;
+  onCreated: (result: CreatePullRequestResponse) => void;
 }
 
 type ButtonState = 'idle' | 'loading' | 'success';
@@ -14,6 +14,10 @@ type ButtonState = 'idle' | 'loading' | 'success';
 export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
   const [buttonState, setButtonState] = useState<ButtonState>('idle');
   const [error, setError] = useState<string | null>(null);
+  // result holds the last response this modal received, so a partial
+  // success (some services opened, some failed) can stay on screen instead
+  // of being lost the instant the request settles.
+  const [result, setResult] = useState<CreatePullRequestResponse | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -27,23 +31,25 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
     setButtonState('loading');
     setError(null);
     try {
-      const result = await createPullRequest(proposal.id);
-      setButtonState('success');
-      onCreated(result.pr_url);
-      onClose();
-      setTimeout(() => setButtonState('idle'), 3000);
-    } catch (err: unknown) {
-      const apiErr = err as { status?: number; pr_url?: string; message?: string };
-      if (apiErr.status === 409 && apiErr.pr_url) {
-        // PR already exists — treat as success
+      const res = await createPullRequest(proposal.id);
+      setResult(res);
+      onCreated(res);
+      if (res.errors.length === 0) {
+        // Every owning service succeeded — behave exactly as before: show
+        // success, hand the link(s) to the caller, and close.
         setButtonState('success');
-        onCreated(apiErr.pr_url);
         onClose();
         setTimeout(() => setButtonState('idle'), 3000);
       } else {
+        // A partial success: some services opened, others didn't. Keep the
+        // modal open so the operator can see which is which — closing here
+        // would silently drop the services that still need attention.
         setButtonState('idle');
-        setError(apiErr.message ?? 'Request failed — please try again');
       }
+    } catch (err: unknown) {
+      const apiErr = err as { status?: number; message?: string };
+      setButtonState('idle');
+      setError(apiErr.message ?? 'Request failed — please try again');
     }
   };
 
@@ -72,6 +78,27 @@ export default function CreatePrModal({ proposal, onClose, onCreated }: Props) {
           <strong>{proposalNodeIds(proposal).join(', ')}</strong> · release {proposal.release_id}
         </p>
         <p>This opens a GitHub PR applying the proposed fix; it will not be merged.</p>
+
+        {result && result.pull_requests.some(pr => pr.pr_url) && (
+          <ul>
+            {result.pull_requests
+              .filter(pr => pr.pr_url)
+              .map(pr => (
+                <li key={pr.service || 'legacy'}>
+                  <a href={pr.pr_url} target="_blank" rel="noreferrer">
+                    {pr.service ? `${pr.service}: open PR ↗` : 'open PR ↗'}
+                  </a>
+                </li>
+              ))}
+          </ul>
+        )}
+
+        {result && result.errors.length > 0 && (
+          <div className="info-strip info-strip--error">
+            <span className="info-strip__icon">⚠</span>
+            {result.errors.map(e => (e.service ? `${e.service}: ${e.error}` : e.error)).join('; ')}
+          </div>
+        )}
 
         {error && (
           <div className="info-strip info-strip--error">

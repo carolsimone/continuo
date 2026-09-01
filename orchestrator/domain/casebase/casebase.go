@@ -29,14 +29,64 @@ type Rejection struct {
 	ContentHash string
 }
 
-// Proposal is one fix PR opened for a rejection.
+// Proposal is one fix attempt (identified by ProposalID) for a rejected
+// release. A batched attempt spanning several nodes MERGEs onto the same
+// :Proposal, reached by one [:PROPOSED] edge per resolved :Rejection —
+// ReleaseID and NodeID here identify that one rejection's edge, not the
+// :Proposal itself. PR facts (url/number/state/opened_*) live on the
+// [:HAS_PR]->(:PullRequest) node, not here; legacy pre-split :Proposal nodes
+// still carry them inline for backward reads.
 type Proposal struct {
 	ProposalID string
 	ReleaseID  string
 	NodeID     string
+}
+
+// PullRequest is the PR facts for one proposal's fix, scoped to the service
+// the PR targets. A batched proposal resolves many nodes with one PR, so the
+// PR's facts are recorded once on this node — [:HAS_PR] from the shared
+// :Proposal — rather than duplicated per resolved node.
+type PullRequest struct {
+	ProposalID string
+	Service    string
 	PrURL      string
 	PrNumber   int
-	PrState    string
+	State      string
 	OpenedBy   string
 	OpenedAt   time.Time
+}
+
+// EditOutcome is one file a merged fix PR edited, as it stood at merge.
+// Amended reports whether a human changed this edit before merge; Diff is the
+// proposal-time unified diff of the edit (the precedent read renders the
+// merged-truth diff instead when the edit is amended). TargetNodeID is the node
+// the edit fixes — the :Table the [:EDITED] edge points at.
+type EditOutcome struct {
+	Path         string
+	TargetNodeID string
+	Amended      bool
+	Diff         string
+}
+
+// PullRequestOutcome is one fix PR's terminal state, scoped to the owning
+// service. Outcome is "merged" or "rejected". On a merged outcome the case
+// base draws provenance edges: [:RESOLVED_BY] from each resolved rejection to
+// the shared :Proposal, and [:EDITED] from that :Proposal to each edit's
+// :Table. A rejected outcome only stamps the :PullRequest's terminal state and
+// draws no edges; ResolvedNodeIDs and Edits are empty for it.
+//
+// PrURL and PrNumber are the PR's identifying facts, carried on the close event
+// too. They let the outcome fill those facts when it lands before the PR's open
+// event (independent consumer groups process the two out of order), so a
+// close-first :PullRequest is not left permanently blank.
+type PullRequestOutcome struct {
+	ProposalID      string
+	ReleaseID       string
+	Service         string
+	Outcome         string
+	ClosedAt        time.Time
+	PrURL           string
+	PrNumber        int
+	ResolvedNodeIDs []string
+	Edits           []EditOutcome
 }

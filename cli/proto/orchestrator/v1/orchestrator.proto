@@ -1,6 +1,6 @@
 syntax = "proto3";
 package orchestrator.v1;
-option go_package = "github.com/carolsimone/continuo/cli/proto/orchestrator/v1;orchestratorv1";
+option go_package = "github.com/carolsimone/continuo/orchestrator/api/orchestrator/v1;orchestratorv1";
 import "google/protobuf/timestamp.proto";
 
 service OrchestratorQuery {
@@ -363,9 +363,29 @@ message PrecedentProposal {
   string proposal_id = 1;
   string pr_url = 2;
   int32 pr_number = 3;
-  // pr_state records the proposal's state when the PR was opened; it is not
-  // updated when the PR is later merged or closed.
+  // pr_state is the PR's live state: open until the close-loop mirrors a
+  // terminal outcome, merged/rejected afterwards; rows recorded before the
+  // per-PR split keep the open-time snapshot.
   string pr_state = 4;
+}
+
+// PrecedentEdit is one provenance edit a merged fix PR made while resolving a
+// precedent's rejection. node_id is the edited node — which may be an upstream
+// ancestor of the rejected node rather than the rejected node itself. diff is
+// the merged-truth diff (the version the merge superseded to the promoted
+// merged version) when the edit was amended and a promoted version straddles
+// the merge, otherwise the proposal's own edit diff.
+message PrecedentEdit {
+  string node_id = 1;
+  string path = 2;
+  bool amended = 3;
+  string diff = 4;
+  // diff_is_shipped is true only when diff was rendered from the promoted
+  // merged NodeVersion — the code that actually shipped. It is false when the
+  // edit was amended but no post-close version straddle was found yet, so diff
+  // fell back to the proposal-time diff: consumers must not then claim the diff
+  // is what shipped.
+  bool diff_is_shipped = 5;
 }
 
 // Precedent is one past rejection with its resolution.
@@ -389,6 +409,9 @@ message Precedent {
   string resolution_diff = 11;
   bool resolution_diff_truncated = 12;
   repeated PrecedentProposal proposals = 13;
+  // edited carries the provenance of a merged fix PR that resolved this
+  // rejection: one entry per node the PR edited.
+  repeated PrecedentEdit edited = 14;
 }
 
 message GetPrecedentsResponse {

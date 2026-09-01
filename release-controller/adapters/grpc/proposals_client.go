@@ -41,8 +41,24 @@ func (p *ProposalsClient) ListProposalsForRelease(ctx context.Context, releaseID
 		out = append(out, ports.ProposalSummary{
 			ID: pr.Id, NodeID: pr.NodeId, Attempt: int(pr.Attempt),
 			Status: pr.Status, PRState: pr.PrState, PRURL: pr.PrUrl,
+			PullRequests:     mapPullRequests(pr.PullRequests),
+			PRServices:       pr.PrServices,
 			RemediationRound: int(pr.RemediationRound),
 		})
 	}
 	return out, nil
+}
+
+// mapPullRequests maps a proposal's per-service pull requests from the wire type
+// to the port type. Returns nil for a proposal that carries none, so the port's
+// EffectivePRs falls back to the singular PRState/PRURL for a legacy row.
+func mapPullRequests(prs []*remediationv1.PullRequest) []ports.ProposalPR {
+	if len(prs) == 0 {
+		return nil
+	}
+	out := make([]ports.ProposalPR, 0, len(prs))
+	for _, pr := range prs {
+		out = append(out, ports.ProposalPR{Service: pr.Service, PRState: pr.PrState, PRURL: pr.PrUrl})
+	}
+	return out
 }

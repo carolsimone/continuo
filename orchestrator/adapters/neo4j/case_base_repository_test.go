@@ -309,6 +309,109 @@ func TestCaseBaseRepository_BackLinksResolvedByWhenNewerVersionExists(t *testing
 		"still exactly one [:RESOLVED_BY] edge — the existing IS NULL guard must block a second link")
 }
 
+// seedStubResolvedByProposal MERGEs a stub :Rejection (the shape
+// RecordProposal itself would create) and links it directly to a :Proposal —
+// the merged-PR provenance edge RecordPullRequestOutcome draws — so a
+// back-link test can prove its presence must not suppress RecordRejection's
+// own-timeline :NodeVersion back-link.
+func seedStubResolvedByProposal(t *testing.T, client neo4jinfra.Neo4jClient, releaseID, nodeID, proposalID string, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	defer s.Close(ctx)
+	res, err := s.Run(ctx, `
+		MERGE (rej:Rejection {release_id: $release_id, node_id: $node_id})
+		ON CREATE SET rej.at = $at, rej.stub = true
+		MERGE (prop:Proposal {proposal_id: $proposal_id})
+		MERGE (rej)-[:RESOLVED_BY]->(prop)
+	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID, "at": at})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+}
+
+// TestCaseBaseRepository_BackLinkGuardIsPerNodeVersionFamily verifies the
+// back-link guard's existing-edge check is keyed on the RESOLVED_BY edge's
+// target-label family, not raw edge existence: a merged fix PR can draw its
+// own RESOLVED_BY->(:Proposal) provenance edge (via
+// RecordPullRequestOutcome) before the rejection itself lands through this
+// path, and that edge must not suppress the own-timeline
+// RESOLVED_BY->(:NodeVersion) link — while a rejection already linked to a
+// :NodeVersion is still left alone by a later call (existing skip behavior,
+// pinned here scoped to the same family).
+func TestCaseBaseRepository_BackLinkGuardIsPerNodeVersionFamily(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	repo := newCaseBaseRepo(client)
+
+	t0 := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+
+	// Node A: merged-PR provenance already landed (RESOLVED_BY -> :Proposal)
+	// before the rejection arrives through this path. A qualifying
+	// :NodeVersion exists too.
+	nodeA := marker + "-node-a"
+	releaseA := marker + "-rel-a"
+	seedNodeVersion(t, client, nodeA, marker, "hash-a1", t0.Add(time.Hour))
+	seedStubResolvedByProposal(t, client, releaseA, nodeA, marker+"-prop", t0)
+
+	require.NoError(t, repo.RecordRejection(ctx, casebase.Rejection{
+		ReleaseID: releaseA, NodeID: nodeA, Stage: "validation",
+		Category: "cat", Reason: "reason", Signature: marker + "-sig-a",
+		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
+	}))
+
+	assert.Equal(t, "hash-a1", runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
+		RETURN v.content_hash AS c
+	`, map[string]any{"release_id": releaseA, "node_id": nodeA}, "c"),
+		"the Proposal-linked rejection must still receive its own-timeline NodeVersion back-link")
+	assert.EqualValues(t, 1, runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(:Proposal)
+		RETURN count(*) AS c
+	`, map[string]any{"release_id": releaseA, "node_id": nodeA}, "c"),
+		"the pre-existing Proposal provenance edge is untouched")
+	assert.EqualValues(t, 2, runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->()
+		RETURN count(r) AS c
+	`, map[string]any{"release_id": releaseA, "node_id": nodeA}, "c"),
+		"the rejection now carries both the Proposal edge and the new NodeVersion edge")
+
+	// Node B: the ordinary case establishes a NodeVersion link on the first
+	// call; a later-arriving version, and a redelivery, must both leave it
+	// alone.
+	nodeB := marker + "-node-b"
+	releaseB := marker + "-rel-b"
+	seedNodeVersion(t, client, nodeB, marker, "hash-b1", t0.Add(time.Hour))
+
+	rejB := casebase.Rejection{
+		ReleaseID: releaseB, NodeID: nodeB, Stage: "validation",
+		Category: "cat", Reason: "reason", Signature: marker + "-sig-b",
+		ErrorExcerpt: "excerpt", DBTLogURI: "uri", At: t0,
+	}
+	require.NoError(t, repo.RecordRejection(ctx, rejB))
+
+	// A version older than the linked hash-b1 arrives after the link is
+	// established; the existing-edge guard must keep it from being moved.
+	seedNodeVersion(t, client, nodeB, marker, "hash-b2", t0.Add(30*time.Minute))
+	require.NoError(t, repo.RecordRejection(ctx, rejB))
+
+	assert.Equal(t, "hash-b1", runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[:RESOLVED_BY]->(v:NodeVersion)
+		RETURN v.content_hash AS c
+	`, map[string]any{"release_id": releaseB, "node_id": nodeB}, "c"),
+		"a rejection already linked to a :NodeVersion must not be moved by a later call")
+	assert.EqualValues(t, 1, runScalar(t, client, `
+		MATCH (:Rejection {release_id: $release_id, node_id: $node_id})-[r:RESOLVED_BY]->()
+		RETURN count(r) AS c
+	`, map[string]any{"release_id": releaseB, "node_id": nodeB}, "c"),
+		"still exactly one RESOLVED_BY edge")
+}
+
 // seedCurrentPointerAt MERGEs a :Table's [:CURRENT] edge to the version
 // addressed by (unique_id, content_hash), stamped with promotedAt — the
 // property the revert branch of RecordRejection's back-link reads, which is
@@ -396,7 +499,8 @@ func TestCaseBaseRepository_BackLinksResolvedByOnRevert(t *testing.T) {
 // rejection creates a stub :Rejection so the [:PROPOSED] edge has an anchor,
 // and the rejection landing later completes that same stub in place rather
 // than creating a second :Rejection. A replayed RecordProposal converges to
-// one :Proposal.
+// one :Proposal and one :PullRequest, and the PR facts land on the
+// :PullRequest node rather than inline on :Proposal.
 func TestCaseBaseRepository_RecordProposalCreatesStubRejection(t *testing.T) {
 	client := newTestClient(t)
 	ctx := context.Background()
@@ -414,23 +518,26 @@ func TestCaseBaseRepository_RecordProposalCreatesStubRejection(t *testing.T) {
 
 	proposal := casebase.Proposal{
 		ProposalID: proposalID, ReleaseID: releaseID, NodeID: nodeID,
-		PrURL: "https://github.com/org/repo/pull/42", PrNumber: 42,
-		PrState: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
 	}
-	require.NoError(t, repo.RecordProposal(ctx, proposal))
+	pr := casebase.PullRequest{
+		ProposalID: proposalID, Service: "core",
+		PrURL: "https://github.com/org/repo/pull/42", PrNumber: 42,
+		State: "open", OpenedBy: "agent-remediation", OpenedAt: openedAt,
+	}
+	require.NoError(t, repo.RecordProposal(ctx, proposal, pr))
 
 	session := client.NewSession(ctx, neo4j.AccessModeRead)
 	defer session.Close(ctx)
 
 	stubRes, err := session.Run(ctx, `
-		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})-[:PROPOSED]->(p:Proposal {proposal_id: $proposal_id})
-		RETURN rej.stub AS stub, p.pr_url AS pr_url, p.pr_number AS pr_number,
-		       p.pr_state AS pr_state, p.opened_by AS opened_by, p.opened_at AS opened_at
-	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID})
+		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})-[:PROPOSED]->(p:Proposal {proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {service: $service})
+		RETURN rej.stub AS stub, pl.pr_url AS pr_url, pl.pr_number AS pr_number,
+		       pl.pr_state AS pr_state, pl.opened_by AS opened_by, pl.opened_at AS opened_at
+	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID, "service": "core"})
 	require.NoError(t, err)
 	stubRecords, err := stubRes.Collect(ctx)
 	require.NoError(t, err)
-	require.Len(t, stubRecords, 1, "a stub :Rejection with a [:PROPOSED] edge must exist")
+	require.Len(t, stubRecords, 1, "a stub :Rejection with a [:PROPOSED]->[:HAS_PR] chain must exist")
 
 	stub, _ := stubRecords[0].Get("stub")
 	assert.Equal(t, true, stub, "a rejection created purely from a proposal must be a stub")
@@ -439,13 +546,20 @@ func TestCaseBaseRepository_RecordProposalCreatesStubRejection(t *testing.T) {
 	prState, _ := stubRecords[0].Get("pr_state")
 	openedBy, _ := stubRecords[0].Get("opened_by")
 	openedAtGot, _ := stubRecords[0].Get("opened_at")
-	assert.Equal(t, proposal.PrURL, prURL)
-	assert.EqualValues(t, proposal.PrNumber, prNumber)
+	assert.Equal(t, pr.PrURL, prURL)
+	assert.EqualValues(t, pr.PrNumber, prNumber)
 	assert.Equal(t, "open", prState)
-	assert.Equal(t, proposal.OpenedBy, openedBy)
+	assert.Equal(t, pr.OpenedBy, openedBy)
 	openedAtTime, ok := openedAtGot.(time.Time)
 	require.True(t, ok, "opened_at must round-trip as a time.Time, got %T", openedAtGot)
-	assert.True(t, proposal.OpenedAt.Equal(openedAtTime))
+	assert.True(t, pr.OpenedAt.Equal(openedAtTime))
+
+	// The :Proposal node itself carries no PR facts — those live solely on the
+	// linked :PullRequest node now.
+	noPrURLOnProposal := runScalar(t, client, `
+		MATCH (p:Proposal {proposal_id: $proposal_id}) RETURN p.pr_url AS v
+	`, map[string]any{"proposal_id": proposalID}, "v")
+	assert.Nil(t, noPrURLOnProposal, "the :Proposal node must carry no pr_url property")
 
 	// The rejection arrives later and must complete the stub in place.
 	rej := casebase.Rejection{
@@ -490,17 +604,21 @@ func TestCaseBaseRepository_RecordProposalCreatesStubRejection(t *testing.T) {
 	`, map[string]any{"release_id": releaseID, "node_id": nodeID, "proposal_id": proposalID}, "c")
 	assert.EqualValues(t, 1, proposedEdges, "[:PROPOSED] edge must survive the stub being completed")
 
-	// A replayed RecordProposal must converge onto the same :Proposal node and
-	// must not disturb the :Rejection it points at. The stub fields are only
-	// ever written with ON CREATE SET, so a redelivered pr_opened event — a
-	// routine Redis consumer-group occurrence — must not flip a completed
-	// rejection back to a stub or overwrite its classified-at with the
-	// proposal's opened_at.
-	require.NoError(t, repo.RecordProposal(ctx, proposal))
+	// A replayed RecordProposal must converge onto the same :Proposal and
+	// :PullRequest nodes and must not disturb the :Rejection it points at. The
+	// stub fields are only ever written with ON CREATE SET, so a redelivered
+	// pr_opened event — a routine Redis consumer-group occurrence — must not
+	// flip a completed rejection back to a stub or overwrite its
+	// classified-at with the proposal's opened_at.
+	require.NoError(t, repo.RecordProposal(ctx, proposal, pr))
 	proposalCount := runScalar(t, client,
 		`MATCH (p:Proposal {proposal_id: $proposal_id}) RETURN count(p) AS c`,
 		map[string]any{"proposal_id": proposalID}, "c")
 	assert.EqualValues(t, 1, proposalCount, "RecordProposal replay converges to one :Proposal")
+	pullRequestCount := runScalar(t, client,
+		`MATCH (:Proposal {proposal_id: $proposal_id})-[:HAS_PR]->(pl:PullRequest {service: $service}) RETURN count(pl) AS c`,
+		map[string]any{"proposal_id": proposalID, "service": "core"}, "c")
+	assert.EqualValues(t, 1, pullRequestCount, "RecordProposal replay converges to one :PullRequest")
 
 	afterReplayRes, err := session.Run(ctx, `
 		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})

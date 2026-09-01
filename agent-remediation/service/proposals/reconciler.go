@@ -6,15 +6,20 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
 // OutcomeRecorder is the Service slice the reconciler drives; the concrete
-// *Service satisfies it.
+// *Service satisfies it. service selects which per-service child PR the outcome
+// belongs to. edits and resolved carry the terminal-outcome detail the pr_closed
+// event names; the outcome-mirror pass leaves them empty (the amend compare that
+// fills them lands with the full close loop), and RecordOutcome falls back to
+// the per-service resolved set so pr_closed still matches pr_opened.
 type OutcomeRecorder interface {
-	RecordOutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) error
+	RecordOutcome(ctx context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time, edits []event.ClosedEdit, resolved []string) error
 }
 
 // OpeningRecorder is the Service slice the opening sweep drives to record a
@@ -23,13 +28,20 @@ type OpeningRecorder interface {
 	Record(ctx context.Context, in RecordInput) error
 }
 
+// Getter loads a proposal View by id so the reconciler can read the edits a
+// closing PR carried and the failing-node subset its outcome must name. The
+// proposal repository satisfies it.
+type Getter interface {
+	Get(ctx context.Context, id string) (proposal.View, error)
+}
+
 // PRFailer is the Service slice the opening sweep drives to release a stale
 // claim back to 'failed' when no pull request is found for it. The CAS guard
 // on observedClaimedAt ensures the sweep only ever fails the exact claim it
 // listed earlier in the same pass, never a fresher one taken by a re-claim in
 // between; hit reports whether the CAS fired.
 type PRFailer interface {
-	FailStuckClaim(ctx context.Context, id string, observedClaimedAt time.Time) (hit bool, err error)
+	FailStuckClaim(ctx context.Context, id, service string, observedClaimedAt time.Time) (hit bool, err error)
 }
 
 // defaultOpeningGracePeriod bounds how long a pr_state='opening' claim can go
@@ -48,6 +60,17 @@ type ReconcilerDeps struct {
 	Recorder OutcomeRecorder
 	Clock    ports.Clock
 	Logger   *slog.Logger
+
+	// Getter loads the proposal View whose edits a closing PR's outcome names.
+	// Sources reads the merged file content at a merged PR's merge commit, and
+	// Evidence the proposal's stored proposed content and diff — together they
+	// drive the amend byte-compare that stamps each edit. ServiceRepoPaths splits
+	// a split proposal's edits by owning service, so a per-service PR compares
+	// and resolves only the files and nodes it owns.
+	Getter           Getter
+	Sources          ports.SourceReader
+	Evidence         ports.EvidenceReader
+	ServiceRepoPaths map[string]string
 	// Interval between reconcile passes; <=0 falls back to one minute.
 	Interval time.Duration
 	// BatchLimit caps the open-PR rows (and, for the opening sweep, the stuck
@@ -81,6 +104,11 @@ type Reconciler struct {
 	logger     *slog.Logger
 	interval   time.Duration
 	batchLimit int
+
+	getter           Getter
+	sources          ports.SourceReader
+	evidence         ports.EvidenceReader
+	serviceRepoPaths map[string]string
 
 	openingLister      repository.OpeningLister
 	branchFinder       ports.PullRequestBranchFinder
@@ -122,6 +150,10 @@ func NewReconciler(d ReconcilerDeps) *Reconciler {
 		logger:             d.Logger,
 		interval:           d.Interval,
 		batchLimit:         d.BatchLimit,
+		getter:             d.Getter,
+		sources:            d.Sources,
+		evidence:           d.Evidence,
+		serviceRepoPaths:   d.ServiceRepoPaths,
 		openingLister:      d.OpeningLister,
 		branchFinder:       d.BranchFinder,
 		openingRecorder:    d.OpeningRecorder,
@@ -196,13 +228,48 @@ func (r *Reconciler) reconcileOpen(ctx context.Context) (permissionDenied, clean
 		if closedAt.IsZero() {
 			closedAt = r.clock.Now()
 		}
-		if err := r.recorder.RecordOutcome(ctx, pr.ID, outcome, closedAt); err != nil {
+
+		// Load the proposal so the pr_closed event names this PR's own edits and
+		// the exact per-service node subset it fixes — the same subset pr_opened
+		// named. A read failure leaves the row 'open' for the next pass.
+		v, err := r.getter.Get(ctx, pr.ID)
+		if err != nil {
+			r.logger.Warn("pr reconciler: get proposal for close detail",
+				"proposal_id", pr.ID, "service", pr.Service, "error", err)
+			continue
+		}
+		// A split proposal's PR carries only its owning service's edits; the
+		// legacy "" PR carries the whole proposal's.
+		serviceEdits := v.Edits
+		if pr.Service != "" {
+			serviceEdits = proposal.GroupEditsByService(r.serviceRepoPaths, v.Edits)[pr.Service]
+		}
+		resolved := resolvedNodesForService(r.serviceRepoPaths, v, pr.Service)
+
+		var closedEdits []event.ClosedEdit
+		if st.Merged {
+			// Byte-compare each merged file against what the agent proposed, so
+			// pr_closed records which edits a human amended before merge. A fetch
+			// error (other than a merged file that is simply gone, which IS an
+			// amendment) aborts the compare: leave the row 'open' and retry next
+			// pass rather than record an amend verdict computed from partial reads.
+			closedEdits, err = resolveClosedEdits(ctx, r.sources, r.evidence, pr.Repo, st.MergeCommitSHA, serviceEdits)
+			if err != nil {
+				r.logger.Warn("pr reconciler: resolve amend detail",
+					"proposal_id", pr.ID, "service", pr.Service, "pr_number", pr.PRNumber, "error", err)
+				continue
+			}
+		}
+		// A rejected PR skips the compare entirely: its edits never merged, so
+		// there is nothing to compare against — closedEdits stays empty while
+		// resolved still names the nodes the PR would have fixed.
+		if err := r.recorder.RecordOutcome(ctx, pr.ID, pr.Service, outcome, closedAt, closedEdits, resolved); err != nil {
 			r.logger.Warn("pr reconciler: record outcome",
-				"proposal_id", pr.ID, "outcome", string(outcome), "error", err)
+				"proposal_id", pr.ID, "service", pr.Service, "outcome", string(outcome), "error", err)
 			continue
 		}
 		r.logger.Info("pr reconciler: proposal PR reached terminal outcome",
-			"proposal_id", pr.ID, "repo", pr.Repo, "pr_number", pr.PRNumber, "outcome", string(outcome))
+			"proposal_id", pr.ID, "service", pr.Service, "repo", pr.Repo, "pr_number", pr.PRNumber, "outcome", string(outcome))
 	}
 	return permissionDenied, cleanRead
 }
@@ -245,7 +312,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 
 	now := r.clock.Now()
 	for _, o := range stuck {
-		branch := BuildBranch(o.ReleaseID, o.Attempt)
+		branch := BuildBranch(o.ReleaseID, o.Attempt, o.Service)
 		ref, found, err := r.branchFinder.FindByBranch(ctx, o.Repo, branch)
 		if err != nil {
 			if errors.Is(err, ports.ErrPermissionDenied) {
@@ -259,6 +326,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 		if found {
 			if err := r.openingRecorder.Record(ctx, RecordInput{
 				ProposalID: o.ID,
+				Service:    o.Service,
 				PrURL:      ref.URL,
 				PrNumber:   ref.Number,
 				OpenedAt:   ref.CreatedAt,
@@ -285,7 +353,7 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 		if age < r.openingGracePeriod {
 			continue
 		}
-		hit, err := r.failer.FailStuckClaim(ctx, o.ID, *o.ClaimedAt)
+		hit, err := r.failer.FailStuckClaim(ctx, o.ID, o.Service, *o.ClaimedAt)
 		if err != nil {
 			r.logger.Warn("pr reconciler: fail stuck opening claim",
 				"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "error", err)

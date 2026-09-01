@@ -373,6 +373,9 @@ streams:
 
   - name: remediation.pr_closed:v1
     const: RemediationPrClosedV1
-    description: Audit event emitted when a remediation PR reaches a terminal outcome on GitHub (merged, or closed without merge); pointer-only, no consumer in this slice.
+    description: Terminal PR outcome (merged, or closed without merge), one per (release, attempt, service); merged outcomes carry per-edit amended flags and diffs, and orchestrator's provenance group draws RESOLVED_BY/EDITED case-base edges from them.
     producers: [agent-remediation]
-    consumers: []
+    consumers:
+      - service: orchestrator
+        group: orchestrator-remediation-pr-closed-provenance
+        const: OrchestratorRemediationPrClosedProvenance

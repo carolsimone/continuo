@@ -383,21 +383,26 @@ func (r *CodeVersionRepository) writeBatch(
 
 		// The fix for a recorded failure is the first version promoted after
 		// it: link every still-open rejection of these nodes to the version
-		// that just became current. Guarded on the same watermark as the
-		// pointer, so a stale redelivery cannot claim to resolve anything. The
-		// edge is stamped with this promotion's own timestamp and release
-		// (ON CREATE only, so a later redelivery cannot rewrite it) — the
-		// detail query uses it as the diff baseline instead of the version
-		// node's own promoted_at, which a reverted-to version keeps at its
-		// original, earlier value. The MERGE pattern itself stays free of
-		// those properties so it keeps matching on the edge type alone.
+		// that just became current. "Still open" is scoped to this edge's own
+		// target-label family, :NodeVersion — RESOLVED_BY is a shared
+		// relationship type, and a merged fix PR draws its own
+		// RESOLVED_BY->(:Proposal) provenance edge (RecordPullRequestOutcome)
+		// independently of any version write, so that edge's presence must
+		// not suppress this own-timeline link. Guarded on the same watermark
+		// as the pointer, so a stale redelivery cannot claim to resolve
+		// anything. The edge is stamped with this promotion's own timestamp
+		// and release (ON CREATE only, so a later redelivery cannot rewrite
+		// it) — the detail query uses it as the diff baseline instead of the
+		// version node's own promoted_at, which a reverted-to version keeps
+		// at its original, earlier value. The MERGE pattern itself stays free
+		// of those properties so it keeps matching on the edge type alone.
 		linkRes, err := tx.Run(ctx, `
 			UNWIND $currents AS c
 			MATCH (t:Table {unique_id: c.unique_id})
 			WHERE t.code_version_promoted_at = $promoted_at
 			MATCH (v:NodeVersion {unique_id: c.unique_id, content_hash: c.content_hash})
 			MATCH (rej:Rejection {node_id: c.unique_id})
-			WHERE rej.at < $promoted_at AND NOT (rej)-[:RESOLVED_BY]->()
+			WHERE rej.at < $promoted_at AND NOT (rej)-[:RESOLVED_BY]->(:NodeVersion)
 			MERGE (rej)-[rb:RESOLVED_BY]->(v)
 			ON CREATE SET rb.promoted_at = $promoted_at, rb.release_id = $release_id
 		`, map[string]any{

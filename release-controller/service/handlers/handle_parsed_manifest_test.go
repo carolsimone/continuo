@@ -1530,3 +1530,344 @@ func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
 	entry := findEntry(t, store, streams.ValidationRequestedV1)
 	assert.NotNil(t, entry, "a clean topology must still request validation")
 }
+
+// --- shadow changed-set derivation ---
+//
+// A remediation that spans two services repairs the whole failing set in one
+// attempt but submits one shadow release per edited service (a release is one
+// service's delta). Each shadow assembles the OTHER edited service's node
+// UNCHANGED — still carrying its not-yet-fixed failure, byte-identical to the
+// rejected candidate. A shadow that names the rejected release it verifies must
+// therefore re-validate a node only if the fix changed it relative to BOTH
+// current_prod AND that rejected candidate — the intersection of the two diffs.
+// The sibling's still-broken node differs from current_prod but matches the
+// rejected candidate, so it is excluded; an unrelated node another release
+// promoted since the rejection matches current_prod, so it is excluded too;
+// only the fix's own edit, which departs from both, is validated.
+
+const (
+	shadowEID = "svc2.ftable_e" // service-2's broken/fixed node
+	shadowGID = "svc3.ftable_g" // service-3's broken node (the sibling failure)
+	shadowUID = "shared.u"      // an unchanged upstream present in production
+)
+
+// seedReleaseInParsing installs a release already advanced to Parsing so a
+// HandleParsedManifest call exercises handleParseOK directly. Rehydrate pins
+// exactly the fields the changed-set baseline reads (Shadow, VerifiesReleaseID,
+// ChangedService) without driving the receive/advance/compile pipeline.
+func seedReleaseInParsing(store *fakeStore, id, service string, shadow bool, verifiesID string) {
+	store.SeedRelease(release.Rehydrate(release.RehydrateInput{
+		ID:                id,
+		Status:            release.StatusParsing,
+		ImageTags:         map[string]string{service: "img-" + service},
+		ChangedService:    service,
+		Shadow:            shadow,
+		VerifiesReleaseID: verifiesID,
+		ManifestKind:      release.ManifestKindDbt,
+		RemediationRound:  1,
+		CreatedAt:         time.Unix(90, 0).UTC(),
+		Transitions:       []release.Transition{{To: release.StatusParsing, At: time.Unix(90, 0).UTC()}},
+	}))
+}
+
+// seedRejectedOriginal installs the rejected release a shadow verifies, carrying
+// the candidate topology the sibling's unfixed failure matches (and so is
+// excluded by) in the intersection.
+func seedRejectedOriginal(store *fakeStore, id, service string, candidate release.Topology) {
+	store.SeedRelease(release.Rehydrate(release.RehydrateInput{
+		ID:                id,
+		Status:            release.StatusRejected,
+		ImageTags:         map[string]string{service: "img-" + service},
+		ChangedService:    service,
+		CandidateTopology: candidate,
+		ManifestKind:      release.ManifestKindDbt,
+		RemediationRound:  1,
+		CreatedAt:         time.Unix(80, 0).UTC(),
+		Transitions:       []release.Transition{{To: release.StatusRejected, At: time.Unix(85, 0).UTC()}},
+	}))
+}
+
+// shadowProdTopo is production BEFORE the rejected release: it advanced past
+// neither broken node, holding only the unchanged upstream.
+func shadowProdTopo() release.Topology {
+	return release.Topology{{UniqueID: shadowUID, ServiceName: "shared", ContentHash: "h_u"}}
+}
+
+// shadowRejectedCandidate is the rejected release's candidate: its own service-2
+// delta (broken ftable_e) plus service-3's ftable_g assembled unchanged from that
+// service's production pointer (also broken).
+func shadowRejectedCandidate() release.Topology {
+	return release.Topology{
+		{UniqueID: shadowUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: shadowEID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "e_broken"},
+		{UniqueID: shadowGID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "g_broken"},
+	}
+}
+
+// shadowParsedTopo is the service-2 shadow's assembled+parsed topology: the FIXED
+// ftable_e (new hash) plus service-3's ftable_g still assembled UNCHANGED
+// (identical to the rejected candidate's hash).
+func shadowParsedTopo() release.Topology {
+	return release.Topology{
+		{UniqueID: shadowUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: shadowEID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "e_fixed"},
+		{UniqueID: shadowGID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "g_broken"},
+	}
+}
+
+// TestHandleParsedManifest_OK_ShadowBaselinesOnVerifiedCandidate: a shadow
+// verifying a rejected release re-validates only the nodes its fix changed
+// relative to both current_prod and the rejected candidate. The fixed node is
+// validated; the sibling's still-broken node, byte-identical to the rejected
+// candidate, is not.
+func TestHandleParsedManifest_OK_ShadowBaselinesOnVerifiedCandidate(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", shadowProdTopo(), time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "orig", "service-2", shadowRejectedCandidate())
+	seedReleaseInParsing(store, "shadow2", "service-2", true, "orig")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "shadow2",
+		Status:    "ok",
+		Topology:  shadowParsedTopo(),
+	}))
+
+	r, err := store.GetRelease("shadow2")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, shadowEID,
+		"the fix's own edit departs from the rejected candidate -> validated")
+	assert.NotContains(t, validIDs, shadowGID,
+		"the sibling's still-broken node matches the rejected candidate -> NOT re-validated")
+	assert.NotContains(t, validIDs, shadowUID,
+		"an unchanged upstream is neither changed nor pulled into the build set")
+}
+
+// TestHandleParsedManifest_OK_NonShadowDiffsAgainstProdOnly pins that the
+// two-way intersection is confined to the shadow-with-verifies path: a
+// production release with the identical topology still diffs against
+// current_prod alone, so both nodes absent from production read as changed.
+func TestHandleParsedManifest_OK_NonShadowDiffsAgainstProdOnly(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", shadowProdTopo(), time.Unix(50, 0).UTC()))
+	seedReleaseInParsing(store, "prodrel", "service-2", false, "")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "prodrel",
+		Status:    "ok",
+		Topology:  shadowParsedTopo(),
+	}))
+
+	r, err := store.GetRelease("prodrel")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, shadowEID, "a production release diffs against prod only")
+	assert.Contains(t, validIDs, shadowGID,
+		"absent from production, the sibling node is changed for a non-shadow release")
+}
+
+// TestHandleParsedManifest_OK_ShadowWithoutVerifiesDiffsAgainstProdOnly pins that
+// a shadow that names no verified release keeps today's behavior (diff against
+// current_prod), so the two-way intersection is genuinely gated on
+// VerifiesReleaseID.
+func TestHandleParsedManifest_OK_ShadowWithoutVerifiesDiffsAgainstProdOnly(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", shadowProdTopo(), time.Unix(50, 0).UTC()))
+	seedReleaseInParsing(store, "shadownv", "service-2", true, "")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "shadownv",
+		Status:    "ok",
+		Topology:  shadowParsedTopo(),
+	}))
+
+	r, err := store.GetRelease("shadownv")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, shadowEID)
+	assert.Contains(t, validIDs, shadowGID,
+		"a shadow naming no verified release still diffs against prod, so the sibling is changed")
+}
+
+// TestHandleParsedManifest_OK_ShadowFallsBackWhenVerifiedReleaseUnreadable pins
+// the graceful degradation: a shadow whose verified release cannot be read
+// diffs against production instead of failing, so the sibling node is validated
+// (a weaker but running verification), mirroring assembleFor.
+func TestHandleParsedManifest_OK_ShadowFallsBackWhenVerifiedReleaseUnreadable(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", shadowProdTopo(), time.Unix(50, 0).UTC()))
+	// "missing" is never seeded, so ReleaseRepo().Get returns (nil, nil).
+	seedReleaseInParsing(store, "shadowmiss", "service-2", true, "missing")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "shadowmiss",
+		Status:    "ok",
+		Topology:  shadowParsedTopo(),
+	}))
+
+	r, err := store.GetRelease("shadowmiss")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, shadowEID)
+	assert.Contains(t, validIDs, shadowGID,
+		"an unreadable verified release falls back to a production diff, so the sibling is changed")
+}
+
+// TestHandleParsedManifest_OK_ShadowFallsBackWhenVerifiedCandidateEmpty pins the
+// second fallback: a verified release that never parsed far enough to hold a
+// candidate topology yields nothing to intersect against, so the shadow diffs
+// against production alone.
+func TestHandleParsedManifest_OK_ShadowFallsBackWhenVerifiedCandidateEmpty(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", shadowProdTopo(), time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "origempty", "service-2", nil) // no candidate topology
+	seedReleaseInParsing(store, "shadowempty", "service-2", true, "origempty")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "shadowempty",
+		Status:    "ok",
+		Topology:  shadowParsedTopo(),
+	}))
+
+	r, err := store.GetRelease("shadowempty")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, shadowEID)
+	assert.Contains(t, validIDs, shadowGID,
+		"an empty verified candidate falls back to a production diff, so the sibling is changed")
+}
+
+// shadowHID is a node owned by neither the shadow's own service nor the
+// sibling failure: an unrelated node that another release promoted to
+// production AFTER the rejection this shadow verifies.
+const shadowHID = "svc4.ftable_h"
+
+// TestHandleParsedManifest_OK_ShadowBaselinePrefersNewerProdOverRejectedCandidate
+// covers current_prod advancing past a node between the rejection and this
+// shadow's parse (an unrelated service promoting in the meantime). The shadow
+// assembles that node at its live production hash, so it matches current_prod
+// and is absent from the current_prod diff — the intersection excludes it even
+// though it still differs from the rejected candidate's stale copy. Without
+// that, a live, already-promoted node would be dragged into a fix-only shadow.
+func TestHandleParsedManifest_OK_ShadowBaselinePrefersNewerProdOverRejectedCandidate(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	// current_prod already carries H's NEW hash: some other release promoted it
+	// after the rejection below.
+	prod := release.Topology{
+		{UniqueID: shadowUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: shadowHID, ServiceName: "service-4", NodeType: "dbt-model", ContentHash: "h_new"},
+	}
+	// The rejected candidate is a point-in-time snapshot from before that
+	// promotion: it still holds H's OLD hash.
+	rejectedCandidate := release.Topology{
+		{UniqueID: shadowUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: shadowEID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "e_broken"},
+		{UniqueID: shadowGID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "g_broken"},
+		{UniqueID: shadowHID, ServiceName: "service-4", NodeType: "dbt-model", ContentHash: "h_old"},
+	}
+	// The shadow assembles H from current_prod (its NEW hash), same as any
+	// other unrelated, already-live node.
+	parsed := release.Topology{
+		{UniqueID: shadowUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: shadowEID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "e_fixed"},
+		{UniqueID: shadowGID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "g_broken"},
+		{UniqueID: shadowHID, ServiceName: "service-4", NodeType: "dbt-model", ContentHash: "h_new"},
+	}
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "origpromoted", "service-2", rejectedCandidate)
+	seedReleaseInParsing(store, "shadowpromoted", "service-2", true, "origpromoted")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "shadowpromoted",
+		Status:    "ok",
+		Topology:  parsed,
+	}))
+
+	r, err := store.GetRelease("shadowpromoted")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, shadowEID,
+		"the fix's own edit still departs from the rejected candidate -> validated")
+	assert.NotContains(t, validIDs, shadowGID,
+		"the sibling's still-broken node matches the rejected candidate -> NOT re-validated")
+	assert.NotContains(t, validIDs, shadowHID,
+		"an unrelated node promoted to production since the rejection matches current_prod, so the intersection excludes it over the stale rejected candidate -> NOT re-validated")
+}
+
+// shadowSID is an ESTABLISHED sibling node: the sibling service's failing node
+// MODIFIES a node that already exists in production, so current_prod holds it at
+// its pre-rejection hash rather than it being absent. This is the case the
+// absent-sibling fixture (shadowGID, new in production) does not cover.
+const shadowSID = "svc3.ftable_s"
+
+// TestHandleParsedManifest_OK_ShadowExcludesEstablishedSiblingModification is
+// the established-sibling case: a two-service fix where the sibling service's
+// failing node edits an EXISTING production node. current_prod holds that node
+// at its pre-rejection hash (s_old), the rejected candidate holds the sibling's
+// still-broken edit (s_broken), and this shadow (for the OTHER service)
+// assembles the sibling unchanged from the rejected candidate (s_broken). The
+// sibling differs from current_prod, so a current_prod-only or current_prod-wins
+// baseline would re-validate it and re-fail the shadow on a node its fix was
+// never about — sinking the good fix. Diffing against BOTH current_prod and the
+// rejected candidate and keeping only the intersection excludes it: it matches
+// the rejected candidate, so it is absent from the second diff. The fix's own
+// node, which departs from both, is still validated.
+func TestHandleParsedManifest_OK_ShadowExcludesEstablishedSiblingModification(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	// current_prod holds the sibling node S at its pre-rejection hash: the
+	// sibling's failure MODIFIES this existing node rather than adding it.
+	prod := release.Topology{
+		{UniqueID: shadowUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: shadowSID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "s_old"},
+	}
+	// The rejected candidate carries this service's own broken delta (e_broken)
+	// plus the sibling's still-broken modification (s_broken).
+	rejectedCandidate := release.Topology{
+		{UniqueID: shadowUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: shadowEID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "e_broken"},
+		{UniqueID: shadowSID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "s_broken"},
+	}
+	// This shadow fixes service-2 (e_fixed) and assembles the sibling UNCHANGED
+	// from the rejected candidate (s_broken), because service-3's fix ships on a
+	// separate shadow.
+	parsed := release.Topology{
+		{UniqueID: shadowUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: shadowEID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "e_fixed"},
+		{UniqueID: shadowSID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "s_broken"},
+	}
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "origestab", "service-2", rejectedCandidate)
+	seedReleaseInParsing(store, "shadowestab", "service-2", true, "origestab")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "shadowestab",
+		Status:    "ok",
+		Topology:  parsed,
+	}))
+
+	r, err := store.GetRelease("shadowestab")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, shadowEID,
+		"the fix's own edit departs from both current_prod and the rejected candidate -> validated")
+	assert.NotContains(t, validIDs, shadowSID,
+		"the sibling's still-broken modification differs from current_prod (which holds it at its pre-rejection hash) but matches the rejected candidate, so the intersection excludes it -> NOT re-validated")
+	assert.NotContains(t, validIDs, shadowUID,
+		"an unchanged upstream is neither changed nor pulled into the build set")
+}

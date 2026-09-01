@@ -16,16 +16,19 @@ import (
 // UnitOfWork manages a single Postgres transaction and the repositories scoped
 // to it.
 type UnitOfWork struct {
-	db     *sqlx.DB
-	tx     *sqlx.Tx
-	logger *slog.Logger
+	db               *sqlx.DB
+	tx               *sqlx.Tx
+	logger           *slog.Logger
+	serviceRepoPaths map[string]string
 }
 
 var _ uow.UnitOfWork = (*UnitOfWork)(nil)
 
-// NewUnitOfWork constructs a Postgres-backed UnitOfWork.
-func NewUnitOfWork(db *sqlx.DB, logger *slog.Logger) *UnitOfWork {
-	return &UnitOfWork{db: db, logger: logger}
+// NewUnitOfWork constructs a Postgres-backed UnitOfWork. serviceRepoPaths is
+// forwarded to the transaction-scoped ProposalRepository so a per-service PR
+// claim can split a proposal's edits by owning service.
+func NewUnitOfWork(db *sqlx.DB, logger *slog.Logger, serviceRepoPaths map[string]string) *UnitOfWork {
+	return &UnitOfWork{db: db, logger: logger, serviceRepoPaths: serviceRepoPaths}
 }
 
 func (u *UnitOfWork) Begin(ctx context.Context) error {
@@ -57,7 +60,7 @@ func (u *UnitOfWork) Rollback() error {
 
 // ProposalRepo returns the ProposalRepository bound to the current transaction.
 func (u *UnitOfWork) ProposalRepo() repository.ProposalRepository {
-	return NewProposalRepository(u.tx)
+	return NewProposalRepository(u.tx, u.serviceRepoPaths)
 }
 
 // OutboxRepo returns the pkg/outbox repository bound to remediation_agent_outbox

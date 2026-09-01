@@ -54,6 +54,7 @@ import (
 //     write cost is negligible, and the hub's category/reason remain accurate
 //     first-seen metadata worth indexing for direct hub lookups.
 //   - proposal_unique: a proposal's identity.
+//   - pull_request_unique: one PR node per (proposal, service).
 var schemaStatements = []string{
 	"CREATE CONSTRAINT run_id_unique IF NOT EXISTS FOR (r:Run) REQUIRE r.run_id IS UNIQUE",
 	"CREATE CONSTRAINT table_uid_unique IF NOT EXISTS FOR (t:Table) REQUIRE t.unique_id IS UNIQUE",
@@ -71,6 +72,7 @@ var schemaStatements = []string{
 	"CREATE CONSTRAINT error_signature_unique IF NOT EXISTS FOR (s:ErrorSignature) REQUIRE s.signature IS UNIQUE",
 	"CREATE INDEX error_signature_category_reason IF NOT EXISTS FOR (s:ErrorSignature) ON (s.category, s.reason)",
 	"CREATE CONSTRAINT proposal_unique IF NOT EXISTS FOR (p:Proposal) REQUIRE p.proposal_id IS UNIQUE",
+	"CREATE CONSTRAINT pull_request_unique IF NOT EXISTS FOR (p:PullRequest) REQUIRE (p.proposal_id, p.service) IS UNIQUE",
 }
 
 // dataMigrations are idempotent DML statements applied once startup DDL is in

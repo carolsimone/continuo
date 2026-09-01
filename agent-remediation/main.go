@@ -210,11 +210,11 @@ func main() {
 	// The proposal repository is bound to the DB rather than to a transaction:
 	// the gRPC read path, the reconciler, and the fixers' prior-attempt reads
 	// all use it outside any unit of work.
-	proposalRepo := postgres.NewProposalRepository(db)
+	proposalRepo := postgres.NewProposalRepository(db, cfg.ServiceRepoPaths)
 	contracts := repofs.NewLocator(logger)
 
 	deps := handlers.Deps{
-		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
 		LLM:              cachedLLM,
 		Evidence:         store,
 		Source:           gh,
@@ -235,9 +235,9 @@ func main() {
 		// and reading the declarations a file holds are one yaml shape.
 		ContractInspector: contracts,
 		Packager:          packager,
-		Releases:         releaseGateway,
-		PriorAttempts:    proposalRepo,
-		SQLDialect:       cfg.SQLDialect,
+		Releases:          releaseGateway,
+		PriorAttempts:     proposalRepo,
+		SQLDialect:        cfg.SQLDialect,
 	}
 
 	// Start the outbox publisher; spawns its own goroutine internally and runs
@@ -265,9 +265,10 @@ func main() {
 	// DB-bound (non-transactional) repository for reads and the UoW factory for
 	// write operations, matching the consumer's wiring above.
 	proposalSvc := proposals.New(proposals.Deps{
-		Repo:   proposalRepo,
-		NewUoW: func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
-		Clock:  ports.SystemClock{},
+		Repo:             proposalRepo,
+		NewUoW:           func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
+		Clock:            ports.SystemClock{},
+		ServiceRepoPaths: cfg.ServiceRepoPaths,
 	})
 	lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 	if err != nil {
@@ -298,6 +299,15 @@ func main() {
 		OpeningRecorder:    proposalSvc,
 		Failer:             proposalSvc,
 		OpeningGracePeriod: cfg.PROpeningGracePeriod,
+		// At a merged PR the reconciler byte-compares each edited file at the
+		// merge commit against the proposal to stamp per-edit amend flags on
+		// pr_closed: the source reader reads the merged file from GitHub, the S3
+		// store the proposed content and diff, the getter loads the proposal's
+		// edits, and ServiceRepoPaths splits them by owning service.
+		Getter:           proposalRepo,
+		Sources:          gh,
+		Evidence:         store,
+		ServiceRepoPaths: cfg.ServiceRepoPaths,
 	})
 	go reconciler.Run(ctx)
 
@@ -310,7 +320,7 @@ func main() {
 	shadowReconciler := shadowverify.New(shadowverify.Deps{
 		Lister:   proposalRepo,
 		Releases: releaseGateway,
-		NewUoW:   func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger) },
+		NewUoW:   func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
 		Decode:   rredis.TriggerFromPayload,
 		Propose: func(ctx context.Context, t handlers.Trigger) error {
 			return handlers.ProposeFix(ctx, deps, t)

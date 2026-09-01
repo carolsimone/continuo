@@ -33,6 +33,26 @@ type Precedent struct {
 	ResolutionDiff string
 	DiffTruncated  bool
 	PRURL          string
+	// Edited carries the provenance of a merged fix PR that resolved this
+	// precedent: one entry per node the PR touched, which may include nodes
+	// other than the precedent's own (an upstream ancestor edited instead of,
+	// or in addition to, the failing node itself).
+	Edited []EditedPrecedent
+}
+
+// EditedPrecedent is one node a merged fix PR edited while resolving a
+// precedent's rejection.
+type EditedPrecedent struct {
+	NodeID  string
+	Path    string
+	Amended bool
+	Diff    string
+	// DiffIsShipped is true only when Diff is the merged-truth diff rendered
+	// from the promoted post-close NodeVersion — the code that actually shipped.
+	// It is false when the edit was amended but the merged version is not
+	// recorded yet, so Diff is the originally proposed diff; the caveat must not
+	// then claim the diff is what shipped.
+	DiffIsShipped bool
 }
 
 type Evidence struct {
@@ -122,10 +142,12 @@ func renderPrecedents(b *strings.Builder, ps []Precedent) {
 	b.WriteString("How similar failures were fixed before (same error shape, any service):\n")
 	diffs := 0
 	for _, p := range ps {
-		if p.Resolved && p.ResolutionDiff != "" && diffs < maxPrecedentDiffRender {
+		hasResolution := p.ResolutionDiff != "" || len(p.Edited) > 0
+		if p.Resolved && hasResolution && diffs < maxPrecedentDiffRender {
 			diffs++
 			fmt.Fprintf(b, "- %s (%s/%s, %s): %s\n", p.NodeID, p.Category, p.Reason, p.RejectedAt, p.ErrorExcerpt)
-			fmt.Fprintf(b, "  Fix that resolved it:\n```diff\n%s\n```\n", p.ResolutionDiff)
+			b.WriteString("  Fix that resolved it:\n")
+			renderPrecedentResolution(b, p)
 			if p.DiffTruncated {
 				b.WriteString("  (diff truncated)\n")
 			}
@@ -141,6 +163,65 @@ func renderPrecedents(b *strings.Builder, ps []Precedent) {
 		fmt.Fprintf(b, "- %s (%s/%s, %s, %s): %s\n", p.NodeID, p.Category, p.Reason, p.RejectedAt, status, p.ErrorExcerpt)
 	}
 	b.WriteString("\n")
+}
+
+// renderPrecedentResolution writes the diff(s) that resolved a precedent. The
+// precedent's own resolution diff, when present, renders exactly as before
+// (no upstream wording); when there is no own-node resolution diff at all,
+// the matching own-node Edited entry stands in as the rendered resolution.
+// Either way, an own-node Edited entry's Amended flag governs the caveat
+// independently of which of the two supplied the diff text: a precedent can
+// carry both a non-empty ResolutionDiff (an own-timeline NodeVersion
+// resolution) and an own-node Edited entry with Amended set (a merged-PR
+// edit to that same node) at once, and the caveat must render in that case
+// too. Edited entries for a node other than the precedent's own are
+// additionally rendered with a line naming that upstream node and its path,
+// each with its own Amended-governed caveat.
+func renderPrecedentResolution(b *strings.Builder, p Precedent) {
+	var own *EditedPrecedent
+	for i := range p.Edited {
+		if p.Edited[i].NodeID == p.NodeID {
+			own = &p.Edited[i]
+			break
+		}
+	}
+
+	switch {
+	case p.ResolutionDiff != "":
+		renderDiffBlock(b, p.ResolutionDiff, own != nil && own.Amended, own != nil && own.DiffIsShipped)
+	case own != nil:
+		renderEditedDiff(b, *own)
+	}
+
+	for _, e := range p.Edited {
+		if e.NodeID == p.NodeID {
+			continue
+		}
+		fmt.Fprintf(b, "  resolved by editing upstream node %s (%s):\n", e.NodeID, e.Path)
+		renderEditedDiff(b, e)
+	}
+}
+
+// renderEditedDiff writes one Edited entry's diff, preceded by the amended
+// caveat. The caveat's wording depends on whether the diff is the merged-truth
+// (shipped) diff or the proposal-time fallback.
+func renderEditedDiff(b *strings.Builder, e EditedPrecedent) {
+	renderDiffBlock(b, e.Diff, e.Amended, e.DiffIsShipped)
+}
+
+// renderDiffBlock writes one diff fence, preceded by the amended caveat when
+// amended is true. When the diff is the merged-truth diff (diffIsShipped) the
+// caveat states the diff is what shipped; when the edit was amended but the
+// merged version is not recorded yet, the diff is the originally proposed one,
+// so the caveat says so instead of claiming it shipped.
+func renderDiffBlock(b *strings.Builder, diff string, amended, diffIsShipped bool) {
+	switch {
+	case amended && diffIsShipped:
+		b.WriteString("  note: a human amended the proposed fix before merge; the diff below is what shipped.\n")
+	case amended:
+		b.WriteString("  note: a human amended the proposed fix before merge; the merged version is not recorded yet, so the originally proposed diff is shown below.\n")
+	}
+	fmt.Fprintf(b, "```diff\n%s\n```\n", diff)
 }
 
 const compileFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt project that failed to compile.

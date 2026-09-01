@@ -82,6 +82,14 @@ message Proposal {
   // verifications is one shadow release per edited service; the first entry
   // is the view mirrored onto shadow_release_id.
   repeated Verification verifications = 32;
+  // pull_requests is one entry per (proposal, service) pull request; empty
+  // for a proposal that never entered the PR lifecycle. service = "" is the
+  // legacy whole-proposal group. The singular pr_* fields above mirror
+  // pull_requests[0] for old readers that predate the per-service split.
+  repeated PullRequest pull_requests = 33;
+  // pr_services is the sorted owning-service groups this proposal's pull
+  // requests split into; [""] for a legacy (unsplit) proposal.
+  repeated string pr_services = 34;
 }
 
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
@@ -103,6 +111,9 @@ message GetProposalRequest {
 // BeginPullRequestRequest identifies the proposal to claim for PR creation.
 message BeginPullRequestRequest {
   string id = 1;
+  // service is the owning-service group to claim; "" is the legacy
+  // whole-proposal group. Must be one of the proposal's pr_services.
+  string service = 2;
 }
 
 // BeginPullRequestResponse carries all data needed to open a GitHub pull-request.
@@ -136,6 +147,9 @@ message BeginPullRequestResponse {
   // resolved_node_ids is the failing nodes this attempt addresses, sorted;
   // node_id is their representative.
   repeated string resolved_node_ids = 16;
+  // service is the owning-service group this claim covers, echoing the
+  // request's service; "" is the legacy whole-proposal group.
+  string service = 17;
 }
 
 // RecordPullRequestRequest stores the PR metadata after a PR is opened.
@@ -144,6 +158,9 @@ message RecordPullRequestRequest {
   string pr_url = 2;
   int32 pr_number = 3;
   string opened_by = 4;
+  // service is the owning-service group this PR covers; "" is the legacy
+  // whole-proposal group.
+  string service = 5;
 }
 
 message RecordPullRequestResponse {}
@@ -157,6 +174,9 @@ message FailPullRequestRequest {
   // claim already released and re-claimed by someone else is left untouched
   // instead of being reset out from under its new owner.
   string claimed_at = 2;
+  // service is the owning-service group this claim covers; "" is the legacy
+  // whole-proposal group.
+  string service = 3;
 }
 
 message FailPullRequestResponse {
@@ -191,4 +211,25 @@ message Verification {
   string service = 1;
   string kind = 2;
   string shadow_release_id = 3;
+}
+
+// PullRequest is one pull request opened from a proposal, mirroring
+// proposal.PullRequest. One entry per (proposal, service) split; service =
+// "" is the legacy whole-proposal group.
+message PullRequest {
+  string service = 1;
+  string repo = 2;
+  string branch = 3;
+  string pr_url = 4;
+  int32 pr_number = 5;
+  // pr_state is the terminal state from GitHub: "merged" or "rejected", or
+  // "open" while the PR has not yet closed.
+  string pr_state = 6;
+  // pr_opened_at is an RFC3339-formatted timestamp string, empty when not
+  // yet set.
+  string pr_opened_at = 7;
+  string pr_opened_by = 8;
+  // pr_closed_at is an RFC3339-formatted timestamp string, empty until the
+  // PR reaches a terminal outcome (pr_state 'merged' or 'rejected').
+  string pr_closed_at = 9;
 }

@@ -262,84 +262,76 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	t.Logf("proposal id: %s", proposalID)
 
 	// (g) POST /api/remediation/proposals/{id}/pull-request — expect 200 with
-	//     pr_url and pr_number from stub-github.
+	//     one pull_requests entry from stub-github. ftable_e's fix touches one
+	//     service (service-2), and every edit now carries its cluster's member
+	//     node ids, so PRServices never falls back to the legacy [""] group —
+	//     the route opens exactly one pull request, attributed to service-2.
 	createPRResp := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
-	require.NotEmpty(t, createPRResp.PRUrl, "pr_url must be non-empty on first create")
+	require.Empty(t, createPRResp.Errors, "no per-service group should fail to open a pull request; got %+v", createPRResp.Errors)
+	require.Len(t, createPRResp.PullRequests, 1,
+		"a single-service proposal must open exactly one pull request; got %+v", createPRResp.PullRequests)
+	pr := createPRResp.PullRequests[0]
+	require.Equal(t, changedService, pr.Service, "the pull request must be attributed to ftable_e's owning service")
+	require.NotEmpty(t, pr.PRUrl, "pr_url must be non-empty on first create")
 	// stub-github assigns PR numbers on an auto-incrementing, shared-process
 	// counter (see tests/e2e/stub-github/main.go), so only positivity is
 	// guaranteed here, not a specific value.
-	require.Greater(t, createPRResp.PRNumber, 0, "pr_number must be a positive stub-github PR number")
-	t.Logf("PR created: pr_url=%s pr_number=%d", createPRResp.PRUrl, createPRResp.PRNumber)
+	require.Greater(t, pr.PRNumber, 0, "pr_number must be a positive stub-github PR number")
+	t.Logf("PR created: service=%s pr_url=%s pr_number=%d", pr.Service, pr.PRUrl, pr.PRNumber)
 
-	// (h) Idempotency: a second POST to the same endpoint must not create a second
-	//     PR. The proposal's pr_state is now 'open', so beginPullRequest CAS
-	//     conflicts and the service returns FAILED_PRECONDITION. The route maps
-	//     this to 409 and echoes the existing pr_url in the body.
-	dupResp := callCreatePREndpoint409(t, ctx, clients.uiBase, proposalID)
-	require.NotEmpty(t, dupResp.PRUrl, "409 body must carry the existing pr_url")
-	require.Equal(t, createPRResp.PRUrl, dupResp.PRUrl,
-		"idempotent 409 must return the SAME pr_url as the first call")
-	t.Logf("idempotency confirmed: second POST returned 409 with pr_url=%s", dupResp.PRUrl)
+	// (h) Idempotency: a second POST to the same endpoint must not create a
+	//     second PR. The service's claim is now 'open', so beginPullRequest CAS
+	//     conflicts with FAILED_PRECONDITION; the route recognizes the embedded
+	//     pr_url in that error and reports the existing pull request as a
+	//     success rather than an error — so the whole route still answers 200
+	//     with the SAME pull_requests set, not a 409.
+	dupResp := callCreatePREndpoint(t, ctx, clients.uiBase, proposalID, http.StatusOK)
+	require.Empty(t, dupResp.Errors, "a duplicate POST must not report any per-service failure; got %+v", dupResp.Errors)
+	require.Equal(t, createPRResp.PullRequests, dupResp.PullRequests,
+		"a second POST must return the SAME pull request set, opening nothing new")
+	t.Logf("idempotency confirmed: second POST returned the same set: %+v", dupResp.PullRequests)
 
-	// (i) Assert the DB proposal row now reflects pr_state='open', a non-empty
-	//     pr_url, and the same pr_number the create call returned.
-	var finalRow prRow
-	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
-		err := clients.agentRemediationDB.GetContext(ctx, &finalRow,
-			`SELECT pr_state, pr_url, pr_number FROM proposal WHERE id = $1`,
-			proposalID)
-		if err != nil {
-			return false, nil
-		}
-		return finalRow.PRState == "open", nil
-	}, fmt.Sprintf("timeout waiting for proposal %s to reach pr_state='open'", proposalID))
-
-	require.Equal(t, "open", finalRow.PRState, "proposal pr_state must be 'open'")
-	require.NotEmpty(t, finalRow.PRUrl, "proposal pr_url must be non-empty")
-	require.Equal(t, createPRResp.PRNumber, finalRow.PRNumber, "proposal pr_number must match the number the create call returned")
-	t.Logf("proposal PR state confirmed: pr_state=%s pr_url=%s pr_number=%d",
-		finalRow.PRState, finalRow.PRUrl, finalRow.PRNumber)
+	// (i) Assert the (proposal, service) child row now reflects pr_state='open',
+	//     a non-empty pr_url, the same pr_number the create call returned, and a
+	//     branch carrying the /<service> suffix BuildBranch appends for a real
+	//     (non-legacy) owning-service group. The parent proposal's singular
+	//     pr_state/pr_url/pr_number columns are not written once a proposal
+	//     enters the per-service split (db/migration/agent_remediation/V17__
+	//     proposal_pull_requests.sql) — every PR-lifecycle read now goes
+	//     through proposal_pull_request, keyed by (proposal_id, service).
+	finalRow := pollChildPRState(t, ctx, clients, proposalID, changedService, "open", 30*time.Second)
+	require.NotEmpty(t, finalRow.PRUrl, "proposal_pull_request.pr_url must be non-empty")
+	require.Equal(t, pr.PRNumber, finalRow.PRNumber, "the row must record the number the create call returned")
+	require.True(t, strings.HasSuffix(finalRow.Branch, "/"+changedService),
+		"a per-service pull request's branch must carry the /<service> suffix; got %q", finalRow.Branch)
+	t.Logf("proposal_pull_request state confirmed: service=%s pr_state=%s pr_url=%s pr_number=%d branch=%s",
+		changedService, finalRow.PRState, finalRow.PRUrl, finalRow.PRNumber, finalRow.Branch)
 
 	// (j) Merge the PR in stub-github; the reconciler must observe the merge
-	//     and flip the proposal to the terminal pr_state='merged' with
-	//     pr_closed_at set.
+	//     and flip the (proposal, service) child row to the terminal
+	//     pr_state='merged' with pr_closed_at set. repo is still a column on
+	//     the parent proposal row — it names the single monorepo every service
+	//     fixture shares, and is written once when the attempt is created,
+	//     independent of the per-service PR split.
 	var repoName string
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &repoName,
 		`SELECT repo FROM proposal WHERE id = $1`, proposalID))
-	// The e2e suite runs inside the orchestrator container, so stub-github is
-	// reached by its compose service name (the same base URL the
-	// agent-remediation uses via GITHUB_BASE_URL).
-	mergeURL := fmt.Sprintf("http://stub-github:9200/repos/%s/pulls/%d/merge", repoName, finalRow.PRNumber)
-	mergeReq, err := http.NewRequestWithContext(ctx, http.MethodPut, mergeURL, nil)
-	require.NoError(t, err, "build stub merge request")
-	mergeResp, err := (&http.Client{Timeout: 10 * time.Second}).Do(mergeReq)
-	require.NoError(t, err, "PUT %s", mergeURL)
-	defer mergeResp.Body.Close()
-	require.Equal(t, http.StatusOK, mergeResp.StatusCode, "stub merge must succeed")
+	mergeCommitSHA := mergePullRequestViaStub(t, ctx, repoName, finalRow.PRNumber)
+	t.Logf("merged PR #%d via stub-github: merge_commit_sha=%s", finalRow.PRNumber, mergeCommitSHA)
 
-	var closedRow struct {
-		PRState    string     `db:"pr_state"`
-		PRClosedAt *time.Time `db:"pr_closed_at"`
-	}
-	pollUntil(t, ctx, 60*time.Second, 2*time.Second, func() (bool, error) {
-		err := clients.agentRemediationDB.GetContext(ctx, &closedRow,
-			`SELECT pr_state, pr_closed_at FROM proposal WHERE id = $1`, proposalID)
-		if err != nil {
-			return false, nil
-		}
-		return closedRow.PRState == "merged", nil
-	}, fmt.Sprintf("timeout waiting for proposal %s to reach pr_state='merged'", proposalID))
+	closedRow := pollChildPRState(t, ctx, clients, proposalID, changedService, "merged", 60*time.Second)
 	require.NotNil(t, closedRow.PRClosedAt, "pr_closed_at must be set on merge")
 
 	// (k) The terminal outcome was emitted atomically: a remediation_pr_closed
-	//     outbox row exists for this proposal (pending or already published).
-	var outboxCount int
-	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &outboxCount,
-		`SELECT count(*) FROM remediation_agent_outbox
-		  WHERE event_type = 'remediation_pr_closed'
-		    AND payload->>'proposal_id' = $1`, proposalID))
-	require.GreaterOrEqual(t, outboxCount, 1, "expected a remediation.pr_closed:v1 outbox row for this proposal")
-	t.Logf("close-loop confirmed: pr_state=merged pr_closed_at=%s", closedRow.PRClosedAt)
+	//     outbox row exists for this proposal and service, and its payload
+	//     carries the service the PR belongs to and the non-empty edits it
+	//     closed with.
+	closedPayload := latestPRClosedPayload(t, ctx, clients, proposalID, changedService)
+	require.Equal(t, "merged", closedPayload.Outcome, "pr_closed payload outcome")
+	require.Equal(t, changedService, closedPayload.Service, "pr_closed payload must carry the service this PR belongs to")
+	require.NotEmpty(t, closedPayload.Edits, "pr_closed payload must carry the merged PR's edits")
+	t.Logf("close-loop confirmed: pr_state=merged pr_closed_at=%s service=%s edits=%d",
+		closedRow.PRClosedAt, closedPayload.Service, len(closedPayload.Edits))
 }
 
 // TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR drives the
@@ -447,22 +439,13 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 	//    5s in this compose stack) to find it via GET pulls?head=... and
 	//    record it — well inside REMEDIATION_PR_OPENING_GRACE_PERIOD (15s),
 	//    proving recovery, not the fail path.
-	var row struct {
-		PRState     string     `db:"pr_state"`
-		PRUrl       string     `db:"pr_url"`
-		PRNumber    int        `db:"pr_number"`
-		PRClaimedAt *time.Time `db:"pr_claimed_at"`
-		PROpenedAt  *time.Time `db:"pr_opened_at"`
-	}
-	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
-		err := clients.agentRemediationDB.GetContext(ctx, &row,
-			`SELECT pr_state, pr_url, pr_number, pr_claimed_at, pr_opened_at FROM proposal WHERE id = $1`,
-			proposalID)
-		if err != nil {
-			return false, nil
-		}
-		return row.PRState == "open", nil
-	}, fmt.Sprintf("timeout waiting for the opening sweep to recover proposal %s", proposalID))
+	//
+	//    This proposal was seeded directly (no edits/member node ids), so
+	//    PRServices reads it as the legacy, unsplit group — service "" — and
+	//    every write BeginPullRequest/the opening sweep make lands on the
+	//    (proposal, "") child row in proposal_pull_request, not on the parent
+	//    proposal's own (unwritten, post-split) pr_* columns.
+	row := pollChildPRState(t, ctx, clients, proposalID, "", "open", 30*time.Second)
 
 	require.Equal(t, "open", row.PRState, "the opening sweep must have recorded the found PR")
 	require.Equal(t, created.HTMLURL, row.PRUrl)
@@ -508,31 +491,86 @@ type proposalRow struct {
 	ProposedSQLURI string `db:"proposed_sql_uri"`
 }
 
-// prRow captures the PR-state fields asserted after calling the create-PR endpoint.
+// prRow captures the PR-lifecycle fields asserted after calling the
+// create-PR endpoint, read from the (proposal, service) child row —
+// proposal_pull_request — the table every pull request's lifecycle now lives
+// on (db/migration/agent_remediation/V17__proposal_pull_requests.sql). The
+// parent proposal's singular pr_* columns stop being written once a proposal
+// enters the per-service split; they remain only for a legacy (pre-split) row.
 type prRow struct {
-	PRState  string `db:"pr_state"`
-	PRUrl    string `db:"pr_url"`
-	PRNumber int    `db:"pr_number"`
+	PRState     string     `db:"pr_state"`
+	PRUrl       string     `db:"pr_url"`
+	PRNumber    int        `db:"pr_number"`
+	Branch      string     `db:"branch"`
+	PRClosedAt  *time.Time `db:"pr_closed_at"`
+	PRClaimedAt *time.Time `db:"pr_claimed_at"`
+	PROpenedAt  *time.Time `db:"pr_opened_at"`
 }
 
-// createPRResponse captures the JSON body returned by a successful POST
-// /api/remediation/proposals/:id/pull-request (HTTP 200).
-type createPRResponse struct {
+// pollChildPRState polls the (proposal, service) pull-request child row until
+// pr_state reaches want, and returns it. Every status change is logged, so a
+// row stuck in 'opening' or 'open' is distinguishable from one that was never
+// claimed at all.
+func pollChildPRState(
+	t *testing.T, ctx context.Context, clients *testClients,
+	proposalID, service, want string, timeout time.Duration,
+) prRow {
+	t.Helper()
+	var row prRow
+	var last string
+	pollUntil(t, ctx, timeout, 1*time.Second, func() (bool, error) {
+		err := clients.agentRemediationDB.GetContext(ctx, &row, `
+			SELECT pr_state, pr_url, pr_number, branch, pr_closed_at, pr_claimed_at, pr_opened_at
+			  FROM proposal_pull_request
+			 WHERE proposal_id = $1 AND service = $2`,
+			proposalID, service)
+		if err != nil {
+			return false, nil
+		}
+		if row.PRState != last {
+			t.Logf("proposal_pull_request %s/%s: pr_state=%s", proposalID, service, row.PRState)
+			last = row.PRState
+		}
+		return row.PRState == want, nil
+	}, fmt.Sprintf("timeout waiting for proposal %s service %q to reach pr_state=%q (see the logged status changes above)",
+		proposalID, service, want))
+	return row
+}
+
+// pullRequestResult mirrors one entry of the create-PR route's pull_requests
+// array: a pull request that exists after the request completes, either just
+// opened or already open from an earlier attempt.
+type pullRequestResult struct {
+	Service  string `json:"service"`
 	PRUrl    string `json:"pr_url"`
 	PRNumber int    `json:"pr_number"`
 }
 
-// createPR409Response captures the JSON body returned by a conflicting POST
-// /api/remediation/proposals/:id/pull-request (HTTP 409).
-type createPR409Response struct {
-	Error string `json:"error"`
-	PRUrl string `json:"pr_url"`
+// pullRequestRouteError mirrors one entry of the create-PR route's errors
+// array: an owning-service group that failed to produce a pull request.
+type pullRequestRouteError struct {
+	Service string `json:"service"`
+	Error   string `json:"error"`
+}
+
+// createPRRouteResponse captures the JSON body returned by POST
+// /api/remediation/proposals/:id/pull-request: 200 when every owning-service
+// group succeeded, 207 when some but not all did, 502 when none did. There is
+// no longer a singular pr_url/pr_number at the top level — a proposal can
+// open more than one pull request, one per owning service.
+type createPRRouteResponse struct {
+	PullRequests []pullRequestResult     `json:"pull_requests"`
+	Errors       []pullRequestRouteError `json:"errors"`
 }
 
 // callCreatePREndpoint POSTs to POST /api/remediation/proposals/{id}/pull-request,
-// asserts the given expected status code, and returns the parsed 200-response body.
-// It is called with wantStatus=200 for the first (successful) invocation.
-func callCreatePREndpoint(t *testing.T, ctx context.Context, uiBase, proposalID string, wantStatus int) createPRResponse {
+// asserts the given expected status code, and returns the parsed response
+// body. A proposal whose groups all already have a pull request (a duplicate
+// call) still answers 200 with the same pull_requests set — beginPullRequest's
+// FAILED_PRECONDITION is recognized by the route as "already open" and
+// reported as a success, not surfaced as a per-group error — so this same
+// helper covers both the first call and the idempotency check.
+func callCreatePREndpoint(t *testing.T, ctx context.Context, uiBase, proposalID string, wantStatus int) createPRRouteResponse {
 	t.Helper()
 	url := fmt.Sprintf("%s/api/remediation/proposals/%s/pull-request", uiBase, proposalID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte{}))
@@ -550,34 +588,195 @@ func callCreatePREndpoint(t *testing.T, ctx context.Context, uiBase, proposalID 
 	raw, err := io.ReadAll(resp.Body)
 	require.NoError(t, err, "read body from POST %s", url)
 
-	var result createPRResponse
-	require.NoError(t, json.Unmarshal(raw, &result), "unmarshal 200 body from POST %s: %s", url, raw)
+	var result createPRRouteResponse
+	require.NoError(t, json.Unmarshal(raw, &result), "unmarshal body from POST %s: %s", url, raw)
 	return result
 }
 
-// callCreatePREndpoint409 POSTs to the create-PR endpoint a second time,
-// asserts 409, and returns the conflict-response body (carries the existing pr_url).
-func callCreatePREndpoint409(t *testing.T, ctx context.Context, uiBase, proposalID string) createPR409Response {
+// mergePullRequestViaStub PUTs the stub-github merge endpoint for pull request
+// number n on repo, asserts it succeeds, and returns the merge commit sha the
+// stub reports. The e2e suite runs inside the orchestrator container, so
+// stub-github is reached by its compose service name — the same base URL
+// agent-remediation and ui use.
+func mergePullRequestViaStub(t *testing.T, ctx context.Context, repo string, n int) string {
 	t.Helper()
-	url := fmt.Sprintf("%s/api/remediation/proposals/%s/pull-request", uiBase, proposalID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte{}))
-	require.NoError(t, err, "build duplicate POST pull-request request")
-	req.Header.Set("Content-Type", "application/json")
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := httpClient.Do(req)
-	require.NoError(t, err, "duplicate POST %s", url)
+	url := fmt.Sprintf("http://stub-github:9200/repos/%s/pulls/%d/merge", repo, n)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil)
+	require.NoError(t, err, "build stub merge request")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	require.NoError(t, err, "PUT %s", url)
 	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "stub merge must succeed")
 
-	require.Equal(t, http.StatusConflict, resp.StatusCode,
-		"second POST to %s must return 409 (pr_state already 'open')", url)
+	var body struct {
+		SHA    string `json:"sha"`
+		Merged bool   `json:"merged"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body), "decode merge response from %s", url)
+	require.True(t, body.Merged, "stub merge response must report merged=true")
+	return body.SHA
+}
 
-	raw, err := io.ReadAll(resp.Body)
-	require.NoError(t, err, "read body from duplicate POST %s", url)
+// closePullRequestViaStub PATCHes the stub-github pull request n on repo to
+// state "closed" without merging — the "closed" half of the merge/close-loop
+// contract stub-github's PATCH endpoint implements
+// (tests/e2e/stub-github/main.go). A PR closed this way is observed by the
+// reconciler as PROutcomeRejected, drawing no case-base provenance edges.
+func closePullRequestViaStub(t *testing.T, ctx context.Context, repo string, n int) {
+	t.Helper()
+	url := fmt.Sprintf("http://stub-github:9200/repos/%s/pulls/%d", repo, n)
+	body, err := json.Marshal(map[string]string{"state": "closed"})
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body))
+	require.NoError(t, err, "build stub close request")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	require.NoError(t, err, "PATCH %s", url)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "stub close must succeed")
+}
 
-	var result createPR409Response
-	require.NoError(t, json.Unmarshal(raw, &result), "unmarshal 409 body from POST %s: %s", url, raw)
-	return result
+// closedEdit mirrors one element of the remediation.pr_closed:v1 payload's
+// edits array: this PR's per-file close detail, including whether a human
+// amended it before merge.
+type closedEdit struct {
+	Path         string `json:"path"`
+	TargetNodeID string `json:"target_node_id"`
+	Amended      bool   `json:"amended"`
+	Diff         string `json:"diff"`
+}
+
+// prClosedPayload mirrors the remediation.pr_closed:v1 wire shape emitted
+// when one (proposal, service) pull request reaches a terminal outcome.
+type prClosedPayload struct {
+	ProposalID      string       `json:"proposal_id"`
+	ReleaseID       string       `json:"release_id"`
+	ResolvedNodeIDs []string     `json:"resolved_node_ids"`
+	Service         string       `json:"service"`
+	Outcome         string       `json:"outcome"`
+	Edits           []closedEdit `json:"edits"`
+}
+
+// latestPRClosedPayload reads the most recent remediation_pr_closed outbox row
+// for (proposalID, service) and decodes its payload. It is keyed on both
+// columns because a multi-service proposal's PRs close independently, each
+// with its own outbox row naming only its own service.
+func latestPRClosedPayload(t *testing.T, ctx context.Context, clients *testClients, proposalID, service string) prClosedPayload {
+	t.Helper()
+	var raw []byte
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &raw,
+		`SELECT payload FROM remediation_agent_outbox
+		  WHERE event_type = 'remediation_pr_closed'
+		    AND payload->>'proposal_id' = $1
+		    AND payload->>'service' = $2
+		  ORDER BY created_at DESC LIMIT 1`,
+		proposalID, service),
+		"expected a remediation.pr_closed:v1 outbox row for proposal %s service %s", proposalID, service)
+	var payload prClosedPayload
+	require.NoError(t, json.Unmarshal(raw, &payload), "decode pr_closed payload: %s", raw)
+	return payload
+}
+
+// amendedFile is one file's content to write into a new commit pushed
+// directly onto a PR branch through stub-github's git-write endpoints,
+// simulating a human amending the PR before merge.
+type amendedFile struct {
+	Path    string
+	Content string
+}
+
+// stubGitTreeEntry mirrors one entry of a POST git/trees request body — the
+// shape octokit's createTree call sends and tests/e2e/stub-github/main.go's
+// handleGitTrees records.
+type stubGitTreeEntry struct {
+	Path string `json:"path"`
+	Mode string `json:"mode"`
+	Type string `json:"type"`
+	SHA  string `json:"sha"`
+}
+
+// pushAmendedCommit pushes a new commit directly onto branch through
+// stub-github's git-write endpoints (POST git/blobs, POST git/trees, POST
+// git/commits, PATCH git/refs/heads/{branch}) — the same primitives the ui
+// pull-request creator uses (ui/src/server/github/pull-request-creator.ts),
+// called directly here to simulate a human editing the PR before merge.
+//
+// The stub does NOT inherit a tree's base_tree entries: POST git/trees
+// records exactly the entries it is given, and a later read resolves a path
+// only against that SAME tree's own entries (tests/e2e/stub-github/main.go's
+// commitTreeBlob), never by walking base_tree to an earlier commit's files.
+// So files must list every path this commit should resolve to — not just the
+// one(s) actually changing — or an untouched path in the same PR would read
+// back 404 (ErrSourceNotFound) at merge time and be misread as amended too.
+func pushAmendedCommit(t *testing.T, ctx context.Context, repo, branch string, files []amendedFile) {
+	t.Helper()
+	require.NotEmpty(t, files, "pushAmendedCommit needs at least one file")
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	entries := make([]stubGitTreeEntry, 0, len(files))
+	for _, f := range files {
+		blobBody, err := json.Marshal(map[string]string{"content": f.Content, "encoding": "utf-8"})
+		require.NoError(t, err, "marshal blob body for %s", f.Path)
+		blobURL := fmt.Sprintf("http://stub-github:9200/repos/%s/git/blobs", repo)
+		blobReq, err := http.NewRequestWithContext(ctx, http.MethodPost, blobURL, bytes.NewReader(blobBody))
+		require.NoError(t, err, "build blob request for %s", f.Path)
+		blobReq.Header.Set("Content-Type", "application/json")
+		blobResp, err := httpClient.Do(blobReq)
+		require.NoError(t, err, "POST %s", blobURL)
+		require.Equal(t, http.StatusCreated, blobResp.StatusCode, "create blob for %s", f.Path)
+		var blob struct {
+			SHA string `json:"sha"`
+		}
+		require.NoError(t, json.NewDecoder(blobResp.Body).Decode(&blob), "decode blob response for %s", f.Path)
+		blobResp.Body.Close()
+		entries = append(entries, stubGitTreeEntry{Path: f.Path, Mode: "100644", Type: "blob", SHA: blob.SHA})
+	}
+
+	treeBody, err := json.Marshal(map[string]any{"tree": entries})
+	require.NoError(t, err, "marshal tree body")
+	treeURL := fmt.Sprintf("http://stub-github:9200/repos/%s/git/trees", repo)
+	treeReq, err := http.NewRequestWithContext(ctx, http.MethodPost, treeURL, bytes.NewReader(treeBody))
+	require.NoError(t, err, "build tree request")
+	treeReq.Header.Set("Content-Type", "application/json")
+	treeResp, err := httpClient.Do(treeReq)
+	require.NoError(t, err, "POST %s", treeURL)
+	require.Equal(t, http.StatusCreated, treeResp.StatusCode, "create tree")
+	var tree struct {
+		SHA string `json:"sha"`
+	}
+	require.NoError(t, json.NewDecoder(treeResp.Body).Decode(&tree), "decode tree response")
+	treeResp.Body.Close()
+
+	commitBody, err := json.Marshal(map[string]any{
+		"message": "amend: human edit pushed before merge",
+		"tree":    tree.SHA,
+	})
+	require.NoError(t, err, "marshal commit body")
+	commitURL := fmt.Sprintf("http://stub-github:9200/repos/%s/git/commits", repo)
+	commitReq, err := http.NewRequestWithContext(ctx, http.MethodPost, commitURL, bytes.NewReader(commitBody))
+	require.NoError(t, err, "build commit request")
+	commitReq.Header.Set("Content-Type", "application/json")
+	commitResp, err := httpClient.Do(commitReq)
+	require.NoError(t, err, "POST %s", commitURL)
+	require.Equal(t, http.StatusCreated, commitResp.StatusCode, "create commit")
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	require.NoError(t, json.NewDecoder(commitResp.Body).Decode(&commit), "decode commit response")
+	commitResp.Body.Close()
+
+	refBody, err := json.Marshal(map[string]any{"sha": commit.SHA, "force": true})
+	require.NoError(t, err, "marshal ref-update body")
+	refURL := fmt.Sprintf("http://stub-github:9200/repos/%s/git/refs/heads/%s", repo, branch)
+	refReq, err := http.NewRequestWithContext(ctx, http.MethodPatch, refURL, bytes.NewReader(refBody))
+	require.NoError(t, err, "build ref-update request")
+	refReq.Header.Set("Content-Type", "application/json")
+	refResp, err := httpClient.Do(refReq)
+	require.NoError(t, err, "PATCH %s", refURL)
+	require.Equal(t, http.StatusOK, refResp.StatusCode, "move branch to amended commit")
+	refResp.Body.Close()
+
+	t.Logf("pushed amended commit %s to %s@%s (%d file(s))", commit.SHA, repo, branch, len(files))
 }
 
 // getS3ObjectByKey downloads an S3 object from the e2e bucket by key (no s3:// prefix).

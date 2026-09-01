@@ -41,6 +41,12 @@ type FileEdit struct {
 	// shared-upstream fix it is the changed ancestor, which may not itself
 	// have failed.
 	TargetNodeID string
+	// MemberNodeIDs are the failing nodes this edit's cluster resolves; the
+	// pull-request split attributes a node to the PR that carries its fixing
+	// edit, so a per-service PR's resolved set is the union of its edits'
+	// members. Empty on rows written before the split. Persistence is owned by
+	// the adapter's fileEditRow DTO, so this aggregate carries no wire tags.
+	MemberNodeIDs []string
 }
 
 // NodeOutcome is how one failing node's attempt ended: verifying, proposed,

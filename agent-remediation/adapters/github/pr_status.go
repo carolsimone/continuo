@@ -52,15 +52,16 @@ func (g *GitHub) PRStatus(ctx context.Context, repo string, number int) (ports.P
 			repo, number, resp.StatusCode, truncate(errBody, 512))
 	}
 	var body struct {
-		State    string     `json:"state"`
-		Merged   bool       `json:"merged"`
-		MergedAt *time.Time `json:"merged_at"`
-		ClosedAt *time.Time `json:"closed_at"`
+		State          string     `json:"state"`
+		Merged         bool       `json:"merged"`
+		MergedAt       *time.Time `json:"merged_at"`
+		ClosedAt       *time.Time `json:"closed_at"`
+		MergeCommitSHA string     `json:"merge_commit_sha"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSourceBytes)).Decode(&body); err != nil {
 		return ports.PRStatus{}, fmt.Errorf("github get pull %s#%d: decode: %w", repo, number, err)
 	}
-	st := ports.PRStatus{Closed: body.State == "closed", Merged: body.Merged}
+	st := ports.PRStatus{Closed: body.State == "closed", Merged: body.Merged, MergeCommitSHA: body.MergeCommitSHA}
 	switch {
 	case body.Merged && body.MergedAt != nil:
 		st.ClosedAt = *body.MergedAt

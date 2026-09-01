@@ -2,6 +2,36 @@ package proposal
 
 import "time"
 
+// PullRequest is a pull request opened from a proposal, carrying all fields
+// mirrored from GitHub. One row per (proposal, service) combination when the
+// proposal was split by service.
+type PullRequest struct {
+	// Service is the owning-service group this PR covers; "" for legacy
+	// whole-proposal PRs.
+	Service string
+	// Repo is the version-control repository (owner/name) into which the PR was
+	// opened.
+	Repo string
+	// Branch is the head branch name of this PR.
+	Branch string
+	// PrURL is the full GitHub URL of the pull request.
+	PrURL string
+	// PrNumber is the GitHub-assigned pull request number.
+	PrNumber int
+	// PrState is the terminal state from GitHub: "merged" or "rejected".
+	PrState string
+	// PrOpenedAt is when the PR was opened on GitHub.
+	PrOpenedAt *time.Time
+	// PrClosedAt is when the PR was closed on GitHub; nil while it remains
+	// open or terminal state is not yet known.
+	PrClosedAt *time.Time
+	// PrOpenedBy is the GitHub username that opened the PR.
+	PrOpenedBy string
+	// PrClaimedAt is when this pull request was claimed for opening, mirroring
+	// proposal.pr_claimed_at; used to detect stale claims.
+	PrClaimedAt *time.Time
+}
+
 // View is a read-only projection of a proposal row, including all PR-lifecycle
 // columns. It is returned by ProposalRepository.Get and ProposalRepository.List.
 type View struct {
@@ -63,6 +93,9 @@ type View struct {
 	PrOpenedBy string
 	// PrClosedAt is when GitHub closed the PR; nil while pr_state is not terminal.
 	PrClosedAt *time.Time
+	// PullRequests is one row per (proposal, service) PR; empty for rows that
+	// never entered the PR lifecycle.
+	PullRequests []PullRequest
 }
 
 // FixedNodeIDs is the failing nodes this attempt actually repaired: the
@@ -126,6 +159,9 @@ type PRClaim struct {
 	ClaimedAt time.Time
 	// Branch is populated by the caller of BeginPR, not from the DB.
 	Branch string
+	// Service is the owning-service group this claim covers; '' = legacy
+	// whole-proposal claim.
+	Service string
 }
 
 // PROutcome is a terminal pull-request outcome mirrored from GitHub.
@@ -147,6 +183,7 @@ type OpenPR struct {
 	ReleaseID string
 	NodeID    string
 	Attempt   int
+	Service   string
 }
 
 // OpeningPR identifies a proposal claimed for PR creation (pr_state='opening')
@@ -169,4 +206,5 @@ type OpeningPR struct {
 	Attempt   int
 	ClaimedAt *time.Time
 	CreatedAt time.Time
+	Service   string
 }

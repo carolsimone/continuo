@@ -621,6 +621,31 @@ describe('ReleaseDetailPage — retry a dead-end rejected release', () => {
     expect(await screen.findByRole('button', { name: 'Try again (round 1 of 3)' })).toBeInTheDocument();
   });
 
+  it('hides Try again when a batched proposal has one owning service rejected but another still open', async () => {
+    // The server mirrors the singular pr_state from pull_requests[0] — here
+    // service 'a' (alphabetically first, and rejected) — so a reader that
+    // only looks at the singular field would misjudge this attempt as a dead
+    // end even though service 'b' still has a PR open for review.
+    mockFetchProposals.mockResolvedValue([proposal({
+      source: 'compile', node_id: 'finance', status: 'proposed', pr_state: 'rejected', remediation_round: 1,
+      pr_services: ['a', 'b'],
+      pull_requests: [
+        {
+          service: 'a', repo: 'demo', branch: 'fix/a', pr_url: 'https://x/pr/1', pr_number: 1,
+          pr_state: 'rejected', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
+        },
+        {
+          service: 'b', repo: 'demo', branch: 'fix/b', pr_url: 'https://x/pr/2', pr_number: 2,
+          pr_state: 'open', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
+        },
+      ],
+    })]);
+    renderPage(makeRelease([node({ stage: 'compile', node_id: 'finance', status: 'failed' })]));
+    await screen.findByText('finance');
+    await waitFor(() => expect(mockFetchProposals).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /Try again/ })).toBeNull();
+  });
+
   it('hides Try again when the only round-1 proposal is proposed with no PR yet', async () => {
     mockFetchProposals.mockResolvedValue([proposal({
       source: 'compile', node_id: 'finance', status: 'proposed', pr_state: '', remediation_round: 1,

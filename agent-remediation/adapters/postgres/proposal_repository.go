@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 )
@@ -21,16 +23,24 @@ type Queryer interface {
 }
 
 // ProposalRepository is the Postgres-backed ProposalRepository port.
-type ProposalRepository struct{ q Queryer }
+type ProposalRepository struct {
+	q Queryer
+	// serviceRepoPaths maps a dbt service name to its project root within the
+	// repository. BeginPR uses it to bucket a claimed proposal's edits by
+	// owning service, so a per-service PR claims only that service's edits and
+	// the nodes it fixed.
+	serviceRepoPaths map[string]string
+}
 
 var _ repository.ProposalRepository = (*ProposalRepository)(nil)
 var _ repository.OpenPRLister = (*ProposalRepository)(nil)
 var _ repository.OpeningLister = (*ProposalRepository)(nil)
 
 // NewProposalRepository binds a repository to a Queryer (pass *sqlx.Tx for the
-// transactional write path).
-func NewProposalRepository(q Queryer) *ProposalRepository {
-	return &ProposalRepository{q: q}
+// transactional write path) and the service→repo-path prefixes used to split a
+// proposal's edits by owning service when claiming a per-service pull request.
+func NewProposalRepository(q Queryer, serviceRepoPaths map[string]string) *ProposalRepository {
+	return &ProposalRepository{q: q, serviceRepoPaths: serviceRepoPaths}
 }
 
 // CountAttempts returns the number of TERMINAL proposal attempts recorded for
@@ -252,12 +262,17 @@ type proposalRow struct {
 // fileEditRow is the persistence DTO for one element of the file_edits JSONB
 // column. The json tags — a storage concern — live here in the adapter so the
 // domain proposal.FileEdit carries no serialization annotations. The stored
-// shape is [{"path","content_uri","diff_uri","target_node_id"}, ...].
+// shape is
+// [{"path","content_uri","diff_uri","target_node_id","member_node_ids"}, ...].
+// member_node_ids records the failing nodes an edit's cluster resolves, so a
+// per-service pull request claimed later from this row can narrow itself to the
+// members its own edits address.
 type fileEditRow struct {
-	Path         string `json:"path"`
-	ContentURI   string `json:"content_uri"`
-	DiffURI      string `json:"diff_uri"`
-	TargetNodeID string `json:"target_node_id,omitempty"`
+	Path          string   `json:"path"`
+	ContentURI    string   `json:"content_uri"`
+	DiffURI       string   `json:"diff_uri"`
+	TargetNodeID  string   `json:"target_node_id,omitempty"`
+	MemberNodeIDs []string `json:"member_node_ids,omitempty"`
 }
 
 // marshalFileEdits encodes the domain edits as the file_edits column value.
@@ -266,7 +281,13 @@ type fileEditRow struct {
 func marshalFileEdits(edits []proposal.FileEdit) ([]byte, error) {
 	rows := make([]fileEditRow, 0, len(edits))
 	for _, e := range edits {
-		rows = append(rows, fileEditRow{Path: e.Path, ContentURI: e.ContentURI, DiffURI: e.DiffURI, TargetNodeID: e.TargetNodeID})
+		rows = append(rows, fileEditRow{
+			Path:          e.Path,
+			ContentURI:    e.ContentURI,
+			DiffURI:       e.DiffURI,
+			TargetNodeID:  e.TargetNodeID,
+			MemberNodeIDs: e.MemberNodeIDs,
+		})
 	}
 	return json.Marshal(rows)
 }
@@ -287,7 +308,13 @@ func editsOrLegacy(raw []byte, filePath, contentURI, diffURI string) []proposal.
 	}
 	edits := make([]proposal.FileEdit, 0, len(rows))
 	for _, r := range rows {
-		edits = append(edits, proposal.FileEdit{Path: r.Path, ContentURI: r.ContentURI, DiffURI: r.DiffURI, TargetNodeID: r.TargetNodeID})
+		edits = append(edits, proposal.FileEdit{
+			Path:          r.Path,
+			ContentURI:    r.ContentURI,
+			DiffURI:       r.DiffURI,
+			TargetNodeID:  r.TargetNodeID,
+			MemberNodeIDs: r.MemberNodeIDs,
+		})
 	}
 	return edits
 }
@@ -454,11 +481,31 @@ type claimRow struct {
 }
 
 // toClaim projects a claimed row onto the claim the caller opens a pull request
-// from. ResolvedNodeIDs is narrowed to the nodes the attempt actually repaired:
-// the claim is what names the pull request and writes its body, and a node the
-// attempt skipped or failed carries no fix to describe. Every consumer of a
-// claim reads it through this projection, so the narrowing cannot be bypassed.
-func (row claimRow) toClaim(branch string) proposal.PRClaim {
+// from, scoped to service. ResolvedNodeIDs is first narrowed to the nodes the
+// attempt actually repaired (FixedNodeIDs): the claim is what names the pull
+// request and writes its body, and a node the attempt skipped or failed carries
+// no fix to describe. Every consumer of a claim reads it through this
+// projection, so the narrowing cannot be bypassed.
+//
+// When service is non-empty the claim is narrowed a second time to that owning
+// service's group: Edits keeps only the files service owns (GroupEditsByService
+// on serviceRepoPaths), and ResolvedNodeIDs keeps only the members those edits
+// address that the attempt also fixed (MembersOfEdits ∩ fixed). The legacy ""
+// service keeps every edit and the full fixed set — one pull request for the
+// whole proposal.
+func (row claimRow) toClaim(service, branch string, serviceRepoPaths map[string]string) proposal.PRClaim {
+	edits := editsOrLegacy(row.FileEdits, row.FilePath, row.ProposedSQLURI, row.DiffURI)
+	fixed := proposal.FixedNodeIDs(
+		resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID), unmarshalNodeOutcomes(row.NodeOutcomes))
+	resolved := fixed
+	if service != "" {
+		edits = proposal.GroupEditsByService(serviceRepoPaths, edits)[service]
+		// The fallback is nil, not fixed: a per-service claim resolves ONLY the
+		// members its own edits explicitly attribute. An edit written before the
+		// member_node_ids codec carries no members, and falling back to the whole
+		// fixed set there would let one service's PR claim nodes it never touched.
+		resolved = proposal.IntersectSorted(proposal.MembersOfEdits(edits, nil), fixed)
+	}
 	return proposal.PRClaim{
 		ID:              row.ID,
 		Repo:            row.Repo,
@@ -466,18 +513,97 @@ func (row claimRow) toClaim(branch string) proposal.PRClaim {
 		FilePath:        row.FilePath,
 		ProposedSQLURI:  row.ProposedSQLURI,
 		DiffURI:         row.DiffURI,
-		Edits:           editsOrLegacy(row.FileEdits, row.FilePath, row.ProposedSQLURI, row.DiffURI),
+		Edits:           edits,
 		ReleaseID:       row.ReleaseID,
 		NodeID:          row.NodeID,
-		ResolvedNodeIDs: proposal.FixedNodeIDs(
-			resolvedOrLegacy(row.ResolvedNodeIDs, row.NodeID), unmarshalNodeOutcomes(row.NodeOutcomes)),
+		ResolvedNodeIDs: resolved,
 		Attempt:         row.Attempt,
 		Rationale:       row.Rationale,
 		Confidence:      proposal.Confidence(row.Confidence),
 		Model:           row.Model,
 		ClaimedAt:       row.ClaimedAt,
 		Branch:          branch,
+		Service:         service,
 	}
+}
+
+// pullRequestRow is the persistence DTO for one proposal_pull_request child
+// row — one pull request per (proposal, service).
+type pullRequestRow struct {
+	ProposalID  string     `db:"proposal_id"`
+	Service     string     `db:"service"`
+	Repo        string     `db:"repo"`
+	Branch      string     `db:"branch"`
+	PrState     string     `db:"pr_state"`
+	PrURL       string     `db:"pr_url"`
+	PrNumber    int        `db:"pr_number"`
+	PrClaimedAt *time.Time `db:"pr_claimed_at"`
+	PrOpenedAt  *time.Time `db:"pr_opened_at"`
+	PrOpenedBy  string     `db:"pr_opened_by"`
+	PrClosedAt  *time.Time `db:"pr_closed_at"`
+}
+
+func (row pullRequestRow) toPullRequest() proposal.PullRequest {
+	return proposal.PullRequest{
+		Service:     row.Service,
+		Repo:        row.Repo,
+		Branch:      row.Branch,
+		PrURL:       row.PrURL,
+		PrNumber:    row.PrNumber,
+		PrState:     row.PrState,
+		PrOpenedAt:  row.PrOpenedAt,
+		PrClosedAt:  row.PrClosedAt,
+		PrOpenedBy:  row.PrOpenedBy,
+		PrClaimedAt: row.PrClaimedAt,
+	}
+}
+
+// pullRequestColumns is the child-table projection loaded onto a View's
+// PullRequests. proposal_id is included so a batch load over many proposals can
+// group the rows by their parent.
+const pullRequestColumns = `proposal_id, service, repo, branch, pr_state, pr_url, pr_number,
+	pr_claimed_at, pr_opened_at, pr_opened_by, pr_closed_at`
+
+// loadPullRequests reads the proposal_pull_request child rows for the given
+// proposal ids, grouped by proposal_id and ordered by service within each
+// group, so applyChildPRs can populate every View's PullRequests and derive its
+// singular Pr* fields from the first child.
+func (r *ProposalRepository) loadPullRequests(ctx context.Context, ids []string) (map[string][]proposal.PullRequest, error) {
+	byProposal := make(map[string][]proposal.PullRequest, len(ids))
+	if len(ids) == 0 {
+		return byProposal, nil
+	}
+	q := `SELECT ` + pullRequestColumns + `
+		FROM proposal_pull_request
+		WHERE proposal_id = ANY($1::uuid[])
+		ORDER BY proposal_id, service`
+	var rows []pullRequestRow
+	if err := r.q.SelectContext(ctx, &rows, q, pq.Array(ids)); err != nil {
+		return nil, fmt.Errorf("load proposal pull requests: %w", err)
+	}
+	for _, row := range rows {
+		byProposal[row.ProposalID] = append(byProposal[row.ProposalID], row.toPullRequest())
+	}
+	return byProposal, nil
+}
+
+// applyChildPRs attaches the child pull requests to the view and, when any
+// exist, overrides the view's singular Pr* fields from the first child (ordered
+// by service). This keeps every existing reader of the singular fields
+// rendering the live PR state now that the parent's own pr_* columns are no
+// longer written; a proposal with no child rows keeps its legacy parent values.
+func applyChildPRs(v *proposal.View, prs []proposal.PullRequest) {
+	v.PullRequests = prs
+	if len(prs) == 0 {
+		return
+	}
+	first := prs[0]
+	v.PrState = first.PrState
+	v.PrURL = first.PrURL
+	v.PrNumber = first.PrNumber
+	v.PrOpenedAt = first.PrOpenedAt
+	v.PrOpenedBy = first.PrOpenedBy
+	v.PrClosedAt = first.PrClosedAt
 }
 
 // Get returns the full View for the given proposal id.
@@ -491,7 +617,13 @@ func (r *ProposalRepository) Get(ctx context.Context, id string) (proposal.View,
 		}
 		return proposal.View{}, fmt.Errorf("get proposal: %w", err)
 	}
-	return row.toView(), nil
+	view := row.toView()
+	byProposal, err := r.loadPullRequests(ctx, []string{id})
+	if err != nil {
+		return proposal.View{}, err
+	}
+	applyChildPRs(&view, byProposal[id])
+	return view, nil
 }
 
 // List returns proposals matching the filter, ordered by created_at DESC.
@@ -506,7 +638,18 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 	}
 	if filter.PRState != "" {
 		args = append(args, filter.PRState)
-		q += fmt.Sprintf(" AND pr_state = $%d", len(args))
+		n := len(args)
+		// pr_state now lives on the proposal_pull_request child rows; the
+		// parent's own pr_state column is a legacy read-mirror that nothing
+		// writes. A proposal matches when any of its child rows is in the
+		// requested state, or — for a legacy proposal that never split into
+		// child rows — when its own parent column is. This mirrors the derived
+		// singular pr_state readers see (the first child row ordered by service,
+		// else the parent column).
+		q += fmt.Sprintf(` AND (EXISTS (SELECT 1 FROM proposal_pull_request ppr`+
+			` WHERE ppr.proposal_id = proposal.id AND ppr.pr_state = $%d)`+
+			` OR (NOT EXISTS (SELECT 1 FROM proposal_pull_request ppr`+
+			` WHERE ppr.proposal_id = proposal.id) AND proposal.pr_state = $%d))`, n, n)
 	}
 	if filter.ReleaseID != "" {
 		args = append(args, filter.ReleaseID)
@@ -531,37 +674,74 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 		return nil, fmt.Errorf("list proposals: %w", err)
 	}
 	views := make([]proposal.View, 0, len(rows))
+	ids := make([]string, 0, len(rows))
 	for _, row := range rows {
 		views = append(views, row.toView())
+		ids = append(ids, row.ID)
+	}
+	byProposal, err := r.loadPullRequests(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range views {
+		applyChildPRs(&views[i], byProposal[views[i].ID])
 	}
 	return views, nil
 }
 
-// BeginPR atomically claims a proposal for PR creation: an empty pr_state or
-// 'failed' -> 'opening', stamping pr_claimed_at with claimedAt. The UPDATE…RETURNING is
-// the single-winner guard; concurrent callers see 0 rows and receive
-// ErrPRConflict. The RETURNING clause reads pr_claimed_at back from the row
-// rather than trusting the claimedAt argument verbatim, so the returned
-// PRClaim.ClaimedAt is always the value actually persisted — the one a later
-// FailStuckOpeningPR call must CAS against.
+// beginPRClaimCAS is the atomic claim BeginPR issues: it moves a (proposal,
+// service) child row from '' or 'failed' to 'opening' — stamping pr_claimed_at
+// — only while the parent proposal is still source-resolved and 'proposed'. The
+// correlated EXISTS re-checks those two preconditions inside the same UPDATE as
+// the pr_state guard, so a status or source_resolved change committed between
+// BeginPR's pre-read and this statement can never yield a claim: the UPDATE
+// simply matches 0 rows (surfacing as ErrPRConflict) rather than opening a PR
+// for a fix that is no longer proposed or resolved. Reading pr_claimed_at back
+// from the row is what makes the returned claim carry the value actually
+// persisted, not the caller's argument.
+const beginPRClaimCAS = `
+	UPDATE proposal_pull_request ppr
+	   SET pr_state='opening', pr_claimed_at=$3
+	 WHERE ppr.proposal_id=$1 AND ppr.service=$2 AND ppr.pr_state IN ('', 'failed')
+	   AND EXISTS (SELECT 1 FROM proposal p
+	                WHERE p.id=ppr.proposal_id AND p.source_resolved AND p.status='proposed')
+	RETURNING pr_claimed_at`
+
+// BeginPR atomically claims one (proposal, service) pull request for creation:
+// the child proposal_pull_request row's pr_state moves from ” or 'failed' to
+// 'opening', stamping pr_claimed_at with claimedAt. The child row is created on
+// first claim by an INSERT … ON CONFLICT DO NOTHING; the UPDATE … RETURNING is
+// the single-winner guard, so concurrent callers for the same service see 0
+// rows and receive ErrPRConflict. The RETURNING clause reads pr_claimed_at back
+// from the row rather than trusting the claimedAt argument verbatim, so the
+// returned PRClaim.ClaimedAt is always the value actually persisted — the one a
+// later FailStuckOpeningPR call must CAS against.
 //
-// The claim requires status='proposed' as well as source_resolved, and the CAS
-// itself carries that condition rather than only the lookup above it: a python
-// contract fix is written as 'verifying' with source_resolved=true the moment
-// its shadow release is submitted, and a shadow rejection changes nothing but
-// the status — so without it a caller could open a pull request for a fix still
-// being judged, or for one already judged wrong.
+// The parent-proposal preconditions are read first so each returns its own
+// error rather than collapsing into the CAS's "already claimed". Claiming
+// requires status='proposed' as well as source_resolved: a python contract fix
+// is written as 'verifying' with source_resolved=true the moment its shadow
+// release is submitted, and a shadow rejection changes nothing but the status —
+// so without the status guard a caller could open a pull request for a fix
+// still being judged, or for one already judged wrong.
 //
 // Returns ErrNotSourceResolved when source_resolved=false, ErrNotProposed when
-// the attempt has not reached 'proposed', ErrNotFound when the id is unknown.
-func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
-	// Read both preconditions first so each returns its own error rather than
-	// collapsing into the CAS's "already claimed".
+// the attempt has not reached 'proposed', ErrPRConflict when the service is
+// already claimed, ErrNotFound when the id is unknown.
+func (r *ProposalRepository) BeginPR(ctx context.Context, id, service, branch string, claimedAt time.Time) (proposal.PRClaim, error) {
+	// Pre-read the parent proposal: the claim's payload columns plus the
+	// source_resolved / status ladder. pr_claimed_at is not among them — the
+	// claim ages from the child row's CAS, not from the (legacy) parent column.
 	var pre struct {
+		claimRow
 		SourceResolved bool   `db:"source_resolved"`
 		Status         string `db:"status"`
 	}
-	if err := r.q.GetContext(ctx, &pre, `SELECT source_resolved, status FROM proposal WHERE id=$1`, id); err != nil {
+	const preRead = `SELECT id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
+		file_edits, release_id, node_id, resolved_node_ids, node_outcomes,
+		attempt, rationale, confidence, model, source_resolved, status
+		FROM proposal WHERE id=$1`
+	if err := r.q.GetContext(ctx, &pre, preRead, id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrNotFound
 		}
@@ -574,40 +754,44 @@ func (r *ProposalRepository) BeginPR(ctx context.Context, id, branch string, cla
 		return proposal.PRClaim{}, repository.ErrNotProposed
 	}
 
-	const stmt = `
-		UPDATE proposal SET pr_state = 'opening', pr_claimed_at = $2
-		WHERE id = $1
-		  AND source_resolved
-		  AND status = $3
-		  AND pr_state IN ('', 'failed')
-		RETURNING id, repo, commit_sha, file_path, proposed_sql_uri, diff_uri,
-		          file_edits,
-		          release_id, node_id, resolved_node_ids, node_outcomes, attempt, rationale, confidence, model,
-		          pr_claimed_at`
-	var row claimRow
-	if err := r.q.GetContext(ctx, &row, stmt, id, claimedAt, proposal.StatusProposed); err != nil {
+	// Create the child row if this service has never been claimed; a row left
+	// from an earlier failed claim is untouched (DO NOTHING) so its CAS below
+	// re-claims it from 'failed'.
+	if _, err := r.q.ExecContext(ctx,
+		`INSERT INTO proposal_pull_request (proposal_id, service, repo, branch)
+		 VALUES ($1,$2,$3,$4) ON CONFLICT (proposal_id, service) DO NOTHING`,
+		id, service, pre.Repo, branch); err != nil {
+		return proposal.PRClaim{}, fmt.Errorf("begin pr insert child: %w", err)
+	}
+
+	var persistedClaimedAt time.Time
+	if err := r.q.GetContext(ctx, &persistedClaimedAt, beginPRClaimCAS,
+		id, service, claimedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return proposal.PRClaim{}, repository.ErrPRConflict
 		}
 		return proposal.PRClaim{}, fmt.Errorf("begin pr cas: %w", err)
 	}
-	return row.toClaim(branch), nil
+
+	row := pre.claimRow
+	row.ClaimedAt = persistedClaimedAt
+	return row.toClaim(service, branch, r.serviceRepoPaths), nil
 }
 
-// RecordPR records the opened PR, flips pr_state to 'open', and clears
-// pr_claimed_at back to NULL since the claim it tracked is now resolved — but
-// only when the row is still 'opening': the WHERE clause is the same
-// compare-and-set guard FailStuckOpeningPR and RecordPROutcome apply, so a
-// row already moved on (recorded or failed by another caller, including an
-// unknown id) leaves 0 rows affected rather than a blind write. hit reports
-// whether the CAS fired.
-func (r *ProposalRepository) RecordPR(ctx context.Context, id, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
+// RecordPR records the opened PR on the (proposal, service) child row, flips
+// its pr_state to 'open', and clears pr_claimed_at back to NULL since the claim
+// it tracked is now resolved — but only when the row is still 'opening': the
+// WHERE clause is the same compare-and-set guard FailStuckOpeningPR and
+// RecordPROutcome apply, so a row already moved on (recorded or failed by
+// another caller, including an unknown id) leaves 0 rows affected rather than a
+// blind write. hit reports whether the CAS fired.
+func (r *ProposalRepository) RecordPR(ctx context.Context, id, service, prURL string, prNumber int, openedBy string, openedAt time.Time) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal
-		 SET pr_state='open', pr_url=$2, pr_number=$3, pr_opened_by=$4, pr_opened_at=$5,
+		`UPDATE proposal_pull_request
+		 SET pr_state='open', pr_url=$3, pr_number=$4, pr_opened_by=$5, pr_opened_at=$6,
 		     pr_claimed_at=NULL
-		 WHERE id=$1 AND pr_state='opening'`,
-		id, prURL, prNumber, openedBy, openedAt)
+		 WHERE proposal_id=$1 AND service=$2 AND pr_state='opening'`,
+		id, service, prURL, prNumber, openedBy, openedAt)
 	if err != nil {
 		return false, fmt.Errorf("record pr: %w", err)
 	}
@@ -627,11 +811,11 @@ func (r *ProposalRepository) RecordPR(ctx context.Context, id, prURL string, prN
 // reconciler's opening sweep (CAS'd on the ClaimedAt it read while listing
 // stuck claims) and by the ui PR-creation route's own failure
 // callback (CAS'd on the ClaimedAt its own BeginPR call returned).
-func (r *ProposalRepository) FailStuckOpeningPR(ctx context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+func (r *ProposalRepository) FailStuckOpeningPR(ctx context.Context, id, service string, observedClaimedAt time.Time) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET pr_state='failed', pr_claimed_at=NULL
-		 WHERE id=$1 AND pr_state='opening' AND pr_claimed_at=$2`,
-		id, observedClaimedAt)
+		`UPDATE proposal_pull_request SET pr_state='failed', pr_claimed_at=NULL
+		 WHERE proposal_id=$1 AND service=$2 AND pr_state='opening' AND pr_claimed_at=$3`,
+		id, service, observedClaimedAt)
 	if err != nil {
 		return false, fmt.Errorf("fail stuck opening pr: %w", err)
 	}
@@ -642,9 +826,11 @@ func (r *ProposalRepository) FailStuckOpeningPR(ctx context.Context, id string, 
 	return n > 0, nil
 }
 
-// openPRRow is the persistence DTO for the ListOpenPullRequests projection.
+// openPRRow is the persistence DTO for the ListOpenPullRequests projection: one
+// row per open child pull request, joined to its parent proposal.
 type openPRRow struct {
 	ID        string `db:"id"`
+	Service   string `db:"service"`
 	Repo      string `db:"repo"`
 	PRNumber  int    `db:"pr_number"`
 	ReleaseID string `db:"release_id"`
@@ -652,11 +838,15 @@ type openPRRow struct {
 	Attempt   int    `db:"attempt"`
 }
 
-// ListOpenPullRequests returns proposals with pr_state='open', oldest-opened
-// first, so the reconciler checks the longest-waiting PRs before newer ones.
+// ListOpenPullRequests returns one entry per child pull request with
+// pr_state='open', oldest-opened first, so the reconciler checks the
+// longest-waiting PRs before newer ones. A proposal split into several
+// per-service PRs yields one entry per open service.
 func (r *ProposalRepository) ListOpenPullRequests(ctx context.Context, limit int) ([]proposal.OpenPR, error) {
-	q := `SELECT id, repo, pr_number, release_id, node_id, attempt
-	      FROM proposal WHERE pr_state = 'open' ORDER BY pr_opened_at ASC`
+	q := `SELECT p.id, ppr.service, ppr.repo, ppr.pr_number, p.release_id, p.node_id, p.attempt
+	      FROM proposal_pull_request ppr
+	      JOIN proposal p ON p.id = ppr.proposal_id
+	      WHERE ppr.pr_state = 'open' ORDER BY ppr.pr_opened_at ASC`
 	args := []any{}
 	if limit > 0 {
 		args = append(args, limit)
@@ -675,17 +865,18 @@ func (r *ProposalRepository) ListOpenPullRequests(ctx context.Context, limit int
 			ReleaseID: row.ReleaseID,
 			NodeID:    row.NodeID,
 			Attempt:   row.Attempt,
+			Service:   row.Service,
 		})
 	}
 	return out, nil
 }
 
-// RecordPROutcome atomically transitions pr_state 'open' -> outcome. The WHERE
-// pr_state='open' guard makes concurrent or repeated calls single-winner: only
-// the first caller sees rows-affected=1; every later call is a no-op false.
-// openingRow is the persistence DTO for the ListStuckOpening projection.
+// openingRow is the persistence DTO for the ListStuckOpening projection: one
+// row per 'opening' child pull request, joined to its parent proposal for the
+// ordering key and the fields the opening sweep needs.
 type openingRow struct {
 	ID        string     `db:"id"`
+	Service   string     `db:"service"`
 	Repo      string     `db:"repo"`
 	ReleaseID string     `db:"release_id"`
 	NodeID    string     `db:"node_id"`
@@ -694,24 +885,33 @@ type openingRow struct {
 	CreatedAt time.Time  `db:"created_at"`
 }
 
-// ListStuckOpening returns up to limit proposals with pr_state='opening',
-// ordered oldest-created first (created_at, id) and resuming strictly after
-// cursor (nil for the first page). It over-fetches by one row to tell
-// "more rows exist" apart from "this was the last page": when limit+1 rows
-// come back, the (limit+1)th is dropped from the result and becomes next,
-// the cursor of the row now at the end of the page; otherwise next is nil.
+// ListStuckOpening returns up to limit child pull requests with
+// pr_state='opening', ordered oldest-created first by (parent proposal
+// created_at, parent id, child service) and resuming strictly after cursor
+// (nil for the first page). It over-fetches by one row to tell "more rows
+// exist" apart from "this was the last page": when limit+1 rows come back, the
+// (limit+1)th is dropped from the result and becomes next, the cursor of the
+// row now at the end of the page; otherwise next is nil. Service is part of the
+// keyset because one proposal can have several 'opening' children — one per
+// owning service — that share a (created_at, id); ordering and resuming on
+// service too keeps a page boundary that lands between two siblings from
+// skipping the later one, which a (created_at, id)-only cursor would exclude
+// via its strict `>`.
 func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cursor *repository.OpeningCursor) ([]proposal.OpeningPR, *repository.OpeningCursor, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	q := `SELECT id, repo, release_id, node_id, attempt, pr_claimed_at, created_at
-	      FROM proposal WHERE pr_state = 'opening'`
+	q := `SELECT p.id, ppr.service, ppr.repo, p.release_id, p.node_id, p.attempt,
+	             ppr.pr_claimed_at, p.created_at
+	      FROM proposal_pull_request ppr
+	      JOIN proposal p ON p.id = ppr.proposal_id
+	      WHERE ppr.pr_state = 'opening'`
 	args := make([]any, 0, 6)
 	if cursor != nil {
-		args = append(args, cursor.CreatedAt, cursor.ID)
-		q += fmt.Sprintf(" AND (created_at, id) > ($%d, $%d)", len(args)-1, len(args))
+		args = append(args, cursor.CreatedAt, cursor.ID, cursor.Service)
+		q += fmt.Sprintf(" AND (p.created_at, p.id, ppr.service) > ($%d, $%d, $%d)", len(args)-2, len(args)-1, len(args))
 	}
-	q += " ORDER BY created_at ASC, id ASC"
+	q += " ORDER BY p.created_at ASC, p.id ASC, ppr.service ASC"
 	args = append(args, limit+1)
 	q += fmt.Sprintf(" LIMIT $%d", len(args))
 
@@ -723,7 +923,7 @@ func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cu
 	var next *repository.OpeningCursor
 	if len(rows) > limit {
 		last := rows[limit-1]
-		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+		next = &repository.OpeningCursor{CreatedAt: last.CreatedAt, ID: last.ID, Service: last.Service}
 		rows = rows[:limit]
 	}
 
@@ -737,15 +937,21 @@ func (r *ProposalRepository) ListStuckOpening(ctx context.Context, limit int, cu
 			Attempt:   row.Attempt,
 			ClaimedAt: row.ClaimedAt,
 			CreatedAt: row.CreatedAt,
+			Service:   row.Service,
 		})
 	}
 	return out, next, nil
 }
 
-func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
+// RecordPROutcome atomically transitions the (proposal, service) child row's
+// pr_state 'open' -> outcome. The WHERE pr_state='open' guard makes concurrent
+// or repeated calls single-winner: only the first caller sees rows-affected=1;
+// every later call is a no-op false.
+func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time) (bool, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET pr_state=$2, pr_closed_at=$3 WHERE id=$1 AND pr_state='open'`,
-		id, string(outcome), closedAt)
+		`UPDATE proposal_pull_request SET pr_state=$3, pr_closed_at=$4
+		 WHERE proposal_id=$1 AND service=$2 AND pr_state='open'`,
+		id, service, string(outcome), closedAt)
 	if err != nil {
 		return false, fmt.Errorf("record pr outcome: %w", err)
 	}

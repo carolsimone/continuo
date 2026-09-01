@@ -558,7 +558,7 @@ sequenceDiagram
 
 **Reject reasons.** A release ends in `Rejected` for one of eight reasons, each emitted as `release.rejected:v1`. The event is uniform across all legs: it always carries `release_id`, `stage`, `reason`, `repo`, `commit_sha`, `failing_nodes`, and `per_node[]` (each entry: `node_id`, `status`, `dbt_log_uri`, optional `run_results_uri`). A top-level `code_bundle_uri` (the release's code-bundle S3 URI) is threaded onto six of the eight: set (non-empty) for `duplicate_table`, `seed_build_failed`, and `validation_failed`, all of which follow a completed parse; present but empty for `compile_failed`, `parse_rehearsal_failed`, and `artifact_upload_failed`, which precede the parse that produces the bundle. The remaining two reasons, `parse_failed` and `unbuildable_cross_service_upstream`, carry no `code_bundle_uri` key at all — their payload is the narrower `{release_id, reason, error_class, error_detail}`, without `stage`, `repo`, `commit_sha`, `failing_nodes`, or `per_node[]` either. The eight reasons are: `compile_failed` (dbt compile job failed for a reason other than the two below; `stage="compile"`), `parse_rehearsal_failed` (the compile Job's `parse-prod` or `parse-candidate` initContainer failed — partial parsing is disabled for the project, or the project re-parses under run-pod conditions; `stage="compile"`), `artifact_upload_failed` (the compile Job's `upload` main container failed to publish an artifact to S3; `stage="compile"`), `parse_failed` (a malformed dbt manifest or python contract, an unrecognized manifest kind, an unqualified table reference, a node's runtime having no candidate-artifact builder, a candidate-artifact S3 upload failure, or a code-bundle S3 upload failure; no explicit stage), `duplicate_table` (the assembled candidate topology has a relation collision — two or more nodes write the same `<schema>.<table>` — or an identity collision — two or more nodes share a `unique_id` without all resolving to the same relation; no explicit stage; `error_class: DuplicatedTable`; `per_node[]` carries the rename target's `service`/`file_path`/`node_type`, the contested `relation_id`, and the competing `other_service`/`other_file_path` — but only for a relation collision with exactly two claimants; an identity collision, or a relation collision with three or more claimants, produces no `per_node` entry and therefore no heal trigger, though it still names every claimant in `failing_nodes`/`error_detail`), `unbuildable_cross_service_upstream` (an in-set node depends on an upstream absent from the candidate topology; no explicit stage), `seed_build_failed` (a candidate seed-build job failed; `stage="seed_build"`), and `validation_failed` (one or more validation jobs failed; `stage="validation"`). For `validation_failed`, per-node entries additionally carry `candidate_artifact_uri` plus the candidate topology's `node_type`, `file_path`, and `service` for that node — the kind is what routes the failure to the right fixer in agent-remediation (a python node's contract fix, described in Flow 11a, rather than a dbt source fix), and the location is the path *this* candidate declares, which no promoted-topology lookup can supply for a release that was rejected. Every rejection payload also carries a top-level `shadow` boolean, true only for a fix-verification release (Flow 11a); the remediation classifier records such a rejection and emits nothing for it. `parse_rehearsal_failed` and `artifact_upload_failed` are release-controller's `compileRejection` mapping of the compile Job's `failed_container` attribution (see Flow 11 above) onto a reject reason distinct from `compile_failed`, so a rehearsal-gate miss or an internal upload failure is never presented as a dbt SQL error. Remediation consumes every leg's rejection and discriminates by `stage` (falling back to `reason` when `stage` is absent) to build `FailureEvidence` with the appropriate source (`SourceCompile`, `SourceSeed`, `SourceValidation`, or `SourceDuplicateTable`) — except `parse_rehearsal_failed` and `artifact_upload_failed`, which it excludes entirely (no evidence built, no classification, no trigger) before source resolution, since neither is a model defect a heal proposal could fix. For compile, the evidence-producing reasons extract `file_path` from the dbt log so the agent can read the real source file directly; `seed_build`, `validation`, and `duplicate_table` need no extraction — release-controller already threads `file_path`/`service` from the candidate topology onto each `per_node[]` entry, plus `node_type` for validation and duplicate_table, and `other_service`/`other_file_path` for duplicate_table's competing claimant.
 
-**Failure-precedent case base.** `remediation.requested:v2` (emitted by `remediation` once per rejected release, carrying every healable classified failure) and `remediation.pr_opened:v1` (emitted by `agent-remediation` when an operator records a fix PR) each carry a second consumer group on `orchestrator`, alongside their existing one — `agent-remediation`'s trigger consumer and `orchestrator`'s case-base rejections consumer both read `remediation.requested:v2`; `orchestrator`'s case-base proposals consumer reads `remediation.pr_opened:v1`. The rejections consumer loops the message's `nodes[]` and records each classified failure as its own `:Rejection`, linked to a global `:ErrorSignature` hub keyed on the classifier's `error_signature` and anchored `[:FAILED {release_id}]` from the node's `:Table` when one exists; the proposals consumer records each opened PR as a `:Proposal`, `[:PROPOSED]` from its rejection (MERGing a stub rejection first if the PR arrives before it). `[:RESOLVED_BY]` — linking a rejection to the code version that fixed it — converges from both directions: the versions consumer (Phase 6 above) forward-links every still-open rejection of a node the moment a new version becomes its `:CURRENT`, stamping the edge with that promotion's own timestamp; the rejections consumer back-links a newly-recorded rejection to an already-promoted version when the fix landed first — ordinarily the oldest version promoted after the rejection, or, for a revert (a promotion that reuses an existing, older version node), the node's `:CURRENT` version instead. Both writers guard on "no existing `[:RESOLVED_BY]`", so whichever direction arrives first wins; a race between them still leaving two edges is resolved deterministically on read (oldest-by-`promoted_at` wins). `GetPrecedents` (gRPC) and `continuo precedents` (CLI) read this case base by signature or `(category, reason)` — both filtered on each `:Rejection`'s own properties — resolved-first then newest.
+**Failure-precedent case base.** `remediation.requested:v2` (emitted by `remediation` once per rejected release, carrying every healable classified failure), `remediation.pr_opened:v1` (emitted by `agent-remediation` when an operator records a fix PR), and `remediation.pr_closed:v1` (emitted by `agent-remediation`'s PR-outcome reconciler on a terminal GitHub PR state) each carry a consumer group on `orchestrator`, alongside their other consumers — `agent-remediation`'s trigger consumer and `orchestrator`'s case-base rejections consumer both read `remediation.requested:v2`; `orchestrator`'s case-base proposals consumer reads `remediation.pr_opened:v1`; `orchestrator`'s case-base provenance consumer (group `orchestrator-remediation-pr-closed-provenance`) reads `remediation.pr_closed:v1`. The rejections consumer loops the message's `nodes[]` and records each classified failure as its own `:Rejection`, linked to a global `:ErrorSignature` hub keyed on the classifier's `error_signature` and anchored `[:FAILED {release_id}]` from the node's `:Table` when one exists; the proposals consumer records each opened PR as a `:Proposal`, `[:PROPOSED]` from its rejection (MERGing a stub rejection first if the PR arrives before it), with the PR's own facts (`pr_url`, `pr_number`, `pr_state`, `opened_by`, `opened_at`) recorded once on a `:PullRequest` node keyed by (`proposal_id`, `service`) and linked `[:HAS_PR]` from the `:Proposal` — a proposal spanning several services gets one `:PullRequest` per service. `[:RESOLVED_BY]` is a shared relationship type with two target-label families, written independently: `(:Rejection)-[:RESOLVED_BY]->(:NodeVersion)` — linking a rejection to the own-timeline code version that fixed it — converges from both directions: the versions consumer (Phase 6 above) forward-links every still-open rejection of a node the moment a new version becomes its `:CURRENT`, stamping the edge with that promotion's own timestamp; the rejections consumer back-links a newly-recorded rejection to an already-promoted version when the fix landed first — ordinarily the oldest version promoted after the rejection, or, for a revert (a promotion that reuses an existing, older version node), the node's `:CURRENT` version instead. Both writers guard on "no existing `[:RESOLVED_BY]->(:NodeVersion)` edge", scoped to that one target-label family, so whichever direction arrives first wins; a race between them still leaving two `:NodeVersion` edges is resolved deterministically on read (oldest-by-`promoted_at` wins). Independently, `(:Rejection)-[:RESOLVED_BY {amended, service}]->(:Proposal)` is the merged-PR provenance edge: on a merged outcome, the provenance consumer draws this edge for every node the PR resolved (MERGEing a stub `:Rejection` when needed), stamping `service` so a precedent read of a proposal spanning services surfaces only the resolving service's edits, and, per file the PR edited, `(:Proposal)-[:EDITED {path, amended, diff, service}]->(:Table)` — skipped when the edit's target `:Table` is absent; a rejected outcome updates only the `:PullRequest`'s terminal `pr_state`/`closed_at`, drawing neither edge. Because the guard is scoped per target-label family, a rejection can carry both a `:NodeVersion` link and a `:Proposal` link without either suppressing the other. `GetPrecedents` (gRPC) and `continuo precedents` (CLI) read this case base by signature or `(category, reason)` — both filtered on each `:Rejection`'s own properties — resolved-first then newest, and a rejection resolved only via the `:Proposal` edge surfaces the merged PR's edited-node provenance alongside the classified failure.
 
 **Bootstrap and empty-diff short-circuits.** A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes — the initial cutover (or a trusted re-baseline) against an empty or mismatched snapshot. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology. A release whose diff is empty (e.g. an image-tag-only bump) trivially passes the gate and promotes directly. All three promotion paths point `current_prod` at the candidate topology and upsert the changed service's `service_prod` pointer, so the next release's change-detection diff is correct and any other service's next release assembles against the refreshed pointer.
 
@@ -639,7 +639,7 @@ sequenceDiagram
 
 **How a dbt fix is verified.** A python service's fix packages a contract yaml, which *is* the release artifact, so the shadow release simply reads it. A dbt service has no such artifact: the fix changes files inside a project that lives in a team image the release runs. So the agent packs the proposed files into a deterministic `source-overlay.tar.gz`, keyed by each file's path within that project, and release-controller threads its URI onto `compile.requested:v1`. Executor-controller then adds an `overlay` init container (the s3-sidecar's `overlay_fetcher.py`) ahead of every team-image container of the compile Job and prefixes each of their commands with a staging prologue that copies the team project into a writable `/work` emptyDir, lays the proposed files over the copy, and runs dbt from there — so the manifest, both parse artifacts, and the candidate SQL the release validates all describe the proposed source. The proposed files are never written into the image's own project directory, which means a team image needs no Dockerfile change to be verifiable: root-owned project files (what a plain `COPY` produces) work unchanged.
 
-**One rejection, one pull request.** The attempt's row carries `resolved_node_ids` (every failing node it addresses), `node_outcomes` (how it ended for each of them — a cluster whose fixer skipped leaves its members skipped while the rest verify), `verifications` (one shadow release per edited service), and `file_edits` with each edit's `target_node_id`. The release page joins each proposal to every node in `resolved_node_ids` and reads that node's own outcome; the Create PR route titles the pull request `fix N nodes` and lists them all in its body, on a branch named for the attempt (`remediation/<release_id>/attempt<n>`) rather than for any one node.
+**One rejection, one pull request per owning service.** The attempt's row carries `resolved_node_ids` (every failing node it addresses), `node_outcomes` (how it ended for each of them — a cluster whose fixer skipped leaves its members skipped while the rest verify), `verifications` (one shadow release per edited service), and `file_edits` with each edit's `target_node_id`. The release page joins each proposal to every node in `resolved_node_ids` and reads that node's own outcome. The attempt's edits are bucketed by owning service (the same bucketing that drives one shadow release per service above); `pr_services` names the sorted service groups, `[""]` for a proposal whose edits all land in one service (or a legacy row from before the split), and the Create PR route (Flow 12) opens one pull request per group — titled `fix N nodes` and suffixed with the service name for a split proposal, on a branch agent-remediation names for the attempt and that service (`remediation/<release_id>/attempt<n>/<service>`, or `remediation/<release_id>/attempt<n>` for the legacy, unsplit group) — rather than one pull request for the whole attempt. Each per-service shadow assembles the OTHER edited services' nodes unchanged (their fixes ship on separate PRs), so release-controller re-validates only the nodes a shadow's fix changed relative to BOTH `current_prod` and the rejected release's candidate topology — the intersection of the two `content_hash` diffs. A sibling's still-unfixed failure, byte-identical to that candidate, differs from `current_prod` but not from the candidate, so it is excluded; a node another release promoted since the rejection matches `current_prod` but differs from the candidate's stale copy, so it is excluded too; only the shadow's own fix delta differs from both and is validated (see `services/release-controller.md`). Without it, each shadow would re-validate the other services' unfixed failures and no multi-service proposal could pass.
 
 **The same flow for a python-csv node.** A python-csv node carries `node_type=python-csv` instead, has no script at all, and rejects for a different reason — its declared `output_columns` name a column the CSV file's own header does not carry. `fixer.For(validation, python-csv)` resolves to its own `csvValidationFixer` rather than the python contract fixer, and the LLM call becomes `propose_csv_fix` with a prompt telling the model the CSV file is the source of truth (fix the contract to match it, not the other way round) and that there is no script whose reads must be preserved. The repository search, apply-then-package ordering, and the reconciler loop below it are not merely the same shape — `csvValidationFixer` and `pythonValidationFixer` call the same two functions, `locateContractForFix` and `proposeContractFixViaShadow`. Only the evidence shown to the model and the post-apply guard differ, and the guard differs only for the failing node's own `csv` read: that key's uri may be corrected without refusing the fix, but every other read on every node the answer touches — including a python-model sibling's, in a directory the fix packages whole — is still held to the same "no read may be dropped" rule the python-model lane applies everywhere. See **CSV validation fixer** in `docs/arch/services/agent-remediation.md` for the full delta.
 
@@ -709,7 +709,7 @@ sequenceDiagram
 
 ## 12. Human-Gated Create PR (Remediation Surface)
 
-An operator reviews a fix proposal in the Remediation tab and clicks **Create PR**. ui orchestrates the claim, GitHub PR creation, and result recording; agent-remediation enforces single-winner idempotency. The PR's eventual close is then mirrored back onto the proposal by a background reconciler, independent of ui.
+An operator reviews a fix proposal in the Remediation tab and clicks **Create PR**. ui reads the proposal's `pr_services` — the sorted owning-service groups its pull requests split into (`[""]` for a legacy, unsplit proposal) — and repeats the claim / GitHub-create / record sequence once per group, independently: a group that already has a PR is skipped rather than retried, and a group that fails does not lose a group that already succeeded in the same request. agent-remediation enforces single-winner idempotency per (proposal, service). The PR's eventual close is then mirrored back onto its (proposal, service) row by a background reconciler, independent of ui.
 
 ```mermaid
 sequenceDiagram
@@ -720,70 +720,84 @@ sequenceDiagram
   participant GH as GitHub App API
 
   OP->>UI: POST /api/remediation/proposals/:id/pull-request (operator role required)
-  UI->>RA: BeginPullRequest(id)
-  Note over RA: CAS: pr_state '' or 'failed' → 'opening' (atomic, guarded on source_resolved=true AND status='proposed')<br/>Stamps pr_claimed_at — RETURNING reads it back into the response<br/>Returns repo, commit_sha, file_path, proposed_sql_uri, branch_name, release_id, node_id, claimed_at, edits<br/>edits is one {path, content_uri, diff_uri} per changed file (or a one-element synthesis of the legacy scalar fields for a pre-migration row)<br/>Returns FAILED_PRECONDITION + existing pr_url if already opening/open<br/>Returns FAILED_PRECONDITION if source_resolved=false<br/>Returns FAILED_PRECONDITION if status is not 'proposed' (still generating, awaiting a shadow verdict, or rejected by one)
+  UI->>RA: GetProposal(id)
+  alt not found
+    RA-->>UI: NOT_FOUND
+    UI-->>OP: 404
+  else found
+    RA-->>UI: { pr_services: [...] } — [""] for a legacy, unsplit proposal
+    Note over UI: services := sorted(pr_services)
 
-  alt already opening or open
-    RA-->>UI: FAILED_PRECONDITION { pr_url }
-    UI-->>OP: 409 { pr_url }
-  else source_resolved=false
-    RA-->>UI: FAILED_PRECONDITION (no source)
-    UI-->>OP: 409 { error, pr_url: undefined } (button should have been disabled)
-  else status is not 'proposed'
-    RA-->>UI: FAILED_PRECONDITION (attempt not proposed)
-    UI-->>OP: 409 { error, pr_url: undefined } (the fix is unverified or was rejected)
-  else claim granted
-    RA-->>UI: { repo, commit_sha, file_path, proposed_sql_uri, branch_name, claimed_at, edits, ... }
+    loop each service in services, independently
+      UI->>RA: BeginPullRequest(id, service)
+      Note over RA: CAS, scoped to this (proposal, service) row:<br/>pr_state '' or 'failed' → 'opening' (guarded on source_resolved=true AND status='proposed')<br/>Stamps pr_claimed_at — RETURNING reads it back into the response<br/>Returns repo, commit_sha, branch (agent-remediation-computed, service-scoped), claimed_at, edits (this service's files only)<br/>Returns FAILED_PRECONDITION + this service's existing pr_url if already opening/open<br/>Returns FAILED_PRECONDITION if source_resolved=false or status is not 'proposed'
 
-    alt edits list empty and file_path or proposed_sql_uri missing
-      Note over UI: nothing to commit at all — refuse rather than open a PR that changes no files
-      UI->>RA: FailPullRequest(id, claimed_at)
-      UI-->>OP: 502 { error: "proposal carries no file edits" }
-    else edits usable
-      Note over UI: an empty edits list alongside a populated file_path/proposed_sql_uri<br/>(an agent-remediation that predates the list, mid rolling upgrade)<br/>is read as one edit synthesized from those single-file fields
-      alt S3 fetch fails for any edit
-        UI->>S3: GetObject(edit.content_uri) (any edit)
-        S3-->>UI: error
-        UI->>RA: FailPullRequest(id, claimed_at)
-        UI-->>OP: 502 { error: "failed to fetch proposed file content from S3" }
-      else all edits fetched
-        loop each edit in edits
-          UI->>S3: GetObject(edit.content_uri)
-          S3-->>UI: corrected file content
-        end
+      alt already opening or open for this service
+        RA-->>UI: FAILED_PRECONDITION { pr_url }
+        Note over UI: skip — this service already has a PR; report its URL, do not touch GitHub
+      else source_resolved=false, or status is not 'proposed'
+        RA-->>UI: FAILED_PRECONDITION
+        Note over UI: record a per-service error, continue to the next service
+      else claim granted
+        RA-->>UI: { repo, commit_sha, branch, claimed_at, edits, resolved_node_ids, ... }
 
-        UI->>GH: mint installation token (App JWT → /installations/:id/access_tokens)
-        Note over UI: base sha = commit_sha (a granted claim's source_resolved=true guard means it is always present)<br/>the GET .../refs/heads/main fallback that pull-request-creator.ts also supports is never reached here
-        UI->>GH: POST /repos/{repo}/git/refs (branch_name off commit_sha)
-        Note over GH: deterministic branch: remediation/<release_id>/<node>-attempt<n><br/>422 "Reference already exists" treated as idempotent
-        UI->>GH: GET /repos/{repo}/git/commits/{commit_sha} → base tree SHA
-        loop each edit
-          UI->>GH: POST /repos/{repo}/git/blobs (base64 content)
-        end
-        UI->>GH: POST /repos/{repo}/git/trees (base_tree=base tree SHA, one entry per edit, mode 100644)
-        UI->>GH: POST /repos/{repo}/git/commits (tree=new tree SHA, parents=[commit_sha])
-        Note over GH: every edited file lands in this one commit
-        UI->>GH: PATCH /repos/{repo}/git/refs/heads/{branch_name} (sha=new commit SHA, force=true)
-        UI->>GH: POST /repos/{repo}/pulls (base=main, head=branch_name)
-        Note over GH: 422 "PR already exists for head" → GET existing PR
+        alt edits list empty and no single-file fallback
+          Note over UI: nothing to commit for this service — refuse rather than open an empty PR
+          UI->>RA: FailPullRequest(id, claimed_at, service)
+          Note over UI: record a per-service error, continue to the next service
+        else edits usable (a legacy edits-empty row falls back to its single-file fields)
+          alt S3 fetch fails for any edit
+            UI->>S3: GetObject(edit.content_uri) (any edit)
+            S3-->>UI: error
+            UI->>RA: FailPullRequest(id, claimed_at, service)
+            Note over UI: record a per-service error, continue to the next service
+          else all edits fetched
+            loop each edit for this service
+              UI->>S3: GetObject(edit.content_uri)
+              S3-->>UI: corrected file content
+            end
 
-        alt GitHub step errors
-          UI->>RA: FailPullRequest(id, claimed_at)
-          Note over RA: CAS: pr_state 'opening' → 'failed' (retryable)<br/>WHERE pr_state='opening' AND pr_claimed_at=claimed_at<br/>released=false (not an error) if the claim already moved on —<br/>e.g. the opening sweep released it first on a slow S3/GitHub step
-          UI-->>OP: 502 error
-        else GitHub step succeeds
-          GH-->>UI: { pr_url, pr_number }
-          UI->>RA: RecordPullRequest(id, pr_url, pr_number, opened_by=session.user_id)
-          Note over RA: CAS: pr_state 'opening' → 'open' (WHERE pr_state='opening')<br/>pr_opened_at = now(), pr_opened_by = user_id<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1, pointer-only)<br/>a CAS miss (e.g. the opening sweep already recorded this same claim) is a silent no-op, not an error
-          RA-->>UI: ok
-          UI-->>OP: 200 { pr_url, pr_number }
+            UI->>GH: mint installation token (App JWT → /installations/:id/access_tokens)
+            UI->>GH: POST /repos/{repo}/git/refs (branch off commit_sha; 422 "already exists" treated as idempotent)
+            UI->>GH: GET /repos/{repo}/git/commits/{commit_sha} → base tree SHA
+            loop each edit
+              UI->>GH: POST /repos/{repo}/git/blobs (base64 content)
+            end
+            UI->>GH: POST /repos/{repo}/git/trees (base_tree=base tree SHA, one entry per edit, mode 100644)
+            UI->>GH: POST /repos/{repo}/git/commits (tree=new tree SHA, parents=[commit_sha])
+            Note over GH: every edited file for this service lands in this one commit
+            UI->>GH: PATCH /repos/{repo}/git/refs/heads/{branch} (sha=new commit SHA, force=true)
+            UI->>GH: POST /repos/{repo}/pulls (base=main, head=branch)
+            Note over GH: 422 "PR already exists for head" → GET existing PR
+
+            alt GitHub step errors
+              UI->>RA: FailPullRequest(id, claimed_at, service)
+              Note over RA: CAS: pr_state 'opening' → 'failed' (retryable), scoped to this (proposal, service) row<br/>released=false (not an error) if the claim already moved on —<br/>e.g. the opening sweep released it first on a slow S3/GitHub step
+              Note over UI: record a per-service error, continue to the next service
+            else GitHub step succeeds
+              GH-->>UI: { pr_url, pr_number }
+              UI->>RA: RecordPullRequest(id, pr_url, pr_number, opened_by=session.user_id, service)
+              Note over RA: CAS: pr_state 'opening' → 'open' for this (proposal, service) row (WHERE pr_state='opening')<br/>pr_opened_at = now(), pr_opened_by = user_id<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1, pointer-only)<br/>a CAS miss (e.g. the opening sweep already recorded this same claim) is a silent no-op, not an error
+              RA-->>UI: ok
+              Note over UI: append { service, pr_url, pr_number } to the response's pull_requests
+            end
+          end
         end
       end
+    end
+
+    Note over UI: every service attempted — pull_requests[] holds every success (opened or already-open),<br/>errors[] holds every per-service failure
+    alt no service succeeded
+      UI-->>OP: 502 { pull_requests: [], errors: [...] }
+    else some but not all succeeded
+      UI-->>OP: 207 { pull_requests: [...], errors: [...] }
+    else every service succeeded
+      UI-->>OP: 200 { pull_requests: [...], errors: [] }
     end
   end
 ```
 
-> The deterministic branch name and the GitHub-level "PR already exists for head" guard together make the full flow safe to retry: a double-click or browser reload issues a second `BeginPullRequest`, which — if the first already reached `opening`/`open` — short-circuits with the existing `pr_url` before touching GitHub again. `FailPullRequest` resets `pr_state` to `failed` so a subsequent click by the same or a different operator can retry cleanly; it is a compare-and-set on the `claimed_at` its own `BeginPullRequest` call returned, not an unconditional write, so a claim this same request already lost — released by the opening sweep after the grace period elapsed while the S3/GitHub round trip was still in flight, then re-claimed by someone else — is never reset out from under its new owner. `RecordPullRequest` carries the same guard on the way into `'open'`: its CAS only fires while the row is still `'opening'`, so if the opening sweep (Flow 12b) recovers and records the same PR first — recomputing the same deterministic branch and finding it on GitHub — this call's own attempt is a harmless no-op rather than a second write or a second outbox entry; ui still returns 200 with the PR link either way, since the PR itself was already created by the time this call runs. The `remediation.pr_opened:v1` outbox event feeds orchestrator's case-base proposals consumer (see Flow 11's "Failure-precedent case base" above), which records the opened PR as a `:Proposal` linked from its `:Rejection`.
+> ui checks for a configured GitHub App (`GITHUB_APP_ID`/`GITHUB_APP_PRIVATE_KEY`/`GITHUB_APP_INSTALLATION_ID`) before even calling `GetProposal`, returning 503 if it is absent — unchanged from the single-PR route this replaced. The deterministic branch name and the GitHub-level "PR already exists for head" guard together make each service's slice of the flow safe to retry independently: a double-click or browser reload issues a second `BeginPullRequest` for that service, which — if the first already reached `opening`/`open` — short-circuits with the existing `pr_url` before touching GitHub again, without disturbing any other service's claim. `FailPullRequest` resets that one (proposal, service) row's `pr_state` to `failed` so a subsequent click by the same or a different operator can retry just that service cleanly; it is a compare-and-set on the `claimed_at` its own `BeginPullRequest` call returned, not an unconditional write, so a claim this same request already lost — released by the opening sweep after the grace period elapsed while the S3/GitHub round trip was still in flight, then re-claimed by someone else — is never reset out from under its new owner. `RecordPullRequest` carries the same guard on the way into `'open'`: its CAS only fires while that row is still `'opening'`, so if the opening sweep (Flow 12b) recovers and records the same PR first — recomputing the same deterministic branch and finding it on GitHub — this call's own attempt is a harmless no-op rather than a second write or a second outbox entry; ui still reports that service's PR link either way, since the PR itself was already created by the time this call runs. The `remediation.pr_opened:v1` outbox event feeds orchestrator's case-base proposals consumer (see Flow 11's "Failure-precedent case base" above), which records the opened PR as a `:Proposal` linked from its `:Rejection`.
 
 ### 12a. PR-Outcome Reconciler (Close-Loop Tail)
 
@@ -816,11 +830,11 @@ sequenceDiagram
   end
 ```
 
-> Per-row errors — a failed GitHub read or a failed `RecordOutcome` — are logged and skipped so one bad row never blocks the rest of the batch; that row is retried on the next pass. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked: the reconciler only lists `pr_state='open'` rows, so a terminal row is never re-examined. The outbox publisher drains the `remediation.pr_closed:v1` row on its own loop, same as every other outbox entry; no consumer is wired to the stream — it is an audit seam.
+> Per-row errors — a failed GitHub read or a failed `RecordOutcome` — are logged and skipped so one bad row never blocks the rest of the batch; that row is retried on the next pass. A PR reopened on GitHub after reaching `merged`/`rejected` is not tracked: the reconciler only lists `pr_state='open'` rows, so a terminal row is never re-examined. The outbox publisher drains the `remediation.pr_closed:v1` row on its own loop, same as every other outbox entry; orchestrator's case-base provenance consumer (group `orchestrator-remediation-pr-closed-provenance`) reads it to stamp the `:PullRequest`'s terminal state and, on a merged outcome, draw the `[:RESOLVED_BY]`/`[:EDITED]` provenance edges.
 
 ### 12b. Opening Sweep (Stranded-Claim Recovery)
 
-`RecordPullRequest` in Flow 12 is explicitly best-effort: by the time it runs, the PR already exists on GitHub, so ui logs loudly and returns the PR link to the operator on failure rather than failing the request. That leaves the proposal row stuck at `pr_state='opening'` with no `pr_url`, which the UI reads as "no PR yet" — inviting a duplicate. The same background reconciler that drives Flow 12a also sweeps these stuck claims, on the same tick.
+`RecordPullRequest` in Flow 12 is explicitly best-effort: by the time it runs, the PR already exists on GitHub, so ui logs loudly and returns the PR link to the operator on failure rather than failing the request. That leaves the claimed (proposal, service) row stuck at `pr_state='opening'` in the `proposal_pull_request` child table, with no `pr_url`, which the UI reads as "no PR yet" — inviting a duplicate. Because the PR lifecycle is per (proposal, service), a proposal split across several owning services can have several independently-stuck claims, one per service, each recovered or released on its own. The same background reconciler that drives Flow 12a also sweeps these stuck claims, on the same tick.
 
 ```mermaid
 sequenceDiagram
@@ -829,17 +843,17 @@ sequenceDiagram
   participant PG as agent-remediation Postgres
 
   loop every REMEDIATION_PR_POLL_INTERVAL (default 60s)
-    RA->>PG: ListStuckOpening(limit=50, cursor) -- pr_state='opening', (created_at, id) order, resumes after cursor
+    RA->>PG: ListStuckOpening(limit=50, cursor) -- reads proposal_pull_request child rows with pr_state='opening',<br/>(created_at, id, service) order (service breaks ties between one proposal's several stuck children), resumes after cursor
     PG-->>RA: rows, next_cursor
     Note over RA: cursor := next_cursor (nil wraps to the start) -- advanced before any row below is handled
-    loop each stuck-opening row
-      Note over RA: recompute branch_name = remediation/<release_id>/<node>-attempt<n> (BuildBranch)
+    loop each stuck-opening (proposal, service) child row
+      Note over RA: recompute branch_name = BuildBranch(release_id, attempt, service) --<br/>remediation/<release_id>/attempt<n>/<service>, or remediation/<release_id>/attempt<n> for the legacy ("") group
       RA->>GH: GET /repos/{repo}/pulls?head={owner}:{branch_name}&state=all&per_page=1
       alt PR found
         GH-->>RA: [{ number, html_url, created_at }]
-        RA->>PG: Record(id, pr_url, pr_number, opened_by="") -- 1 tx:<br/>CAS pr_state 'opening' -> 'open' (WHERE pr_state='opening'), pr_opened_at=created_at, pr_claimed_at=NULL<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1)
+        RA->>PG: Record(id, service, pr_url, pr_number, opened_by="") -- 1 tx:<br/>CAS on the (id, service) child row: pr_state 'opening' -> 'open' (WHERE proposal_id=id AND service=service AND pr_state='opening'), pr_opened_at=created_at, pr_claimed_at=NULL<br/>INSERT remediation_agent_outbox (remediation.pr_opened:v1)
         alt CAS hit (row was still 'opening')
-          Note over PG: gap closed -- UI now shows the recovered pr_url
+          Note over PG: gap closed -- UI now shows the recovered pr_url for this service
         else CAS miss (ui's own RecordPullRequest recorded this same claim first)
           Note over PG: no-op -- nothing written, no event emitted
         end
@@ -848,7 +862,7 @@ sequenceDiagram
         alt pr_claimed_at is NULL
           Note over RA: unmeasurable claim age (the proposal_stamp_pr_claimed_at trigger did not run -- schema corruption or a manual edit) — leave untouched
         else now - pr_claimed_at > REMEDIATION_PR_OPENING_GRACE_PERIOD
-          RA->>PG: FailStuckOpeningPR(id, observed_pr_claimed_at) -- CAS:<br/>pr_state 'opening' -> 'failed', pr_claimed_at=NULL<br/>WHERE pr_state='opening' AND pr_claimed_at=observed_pr_claimed_at
+          RA->>PG: FailStuckOpeningPR(id, service, observed_pr_claimed_at) -- CAS on the (id, service) child row:<br/>pr_state 'opening' -> 'failed', pr_claimed_at=NULL<br/>WHERE proposal_id=id AND service=service AND pr_state='opening' AND pr_claimed_at=observed_pr_claimed_at
           alt CAS hit
             PG-->>RA: true
             Note over PG: retryable: BeginPR's claim guard accepts '' or 'failed'

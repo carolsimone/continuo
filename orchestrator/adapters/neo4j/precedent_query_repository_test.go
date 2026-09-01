@@ -510,6 +510,551 @@ func TestPrecedentReader_IncludeCodeFalseOmitsFailingCode(t *testing.T) {
 		"prior-version code is always fetched — the caller renders the diff from it")
 }
 
+// TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState
+// verifies the read path widened to recognize proposal-level provenance: a
+// rejection resolved by a MERGED PR (a [:RESOLVED_BY] edge to a :Proposal,
+// not a :NodeVersion)
+// counts as resolved by the identity query — it must sort ahead of a still-open
+// rejection filed LATER on the same signature — and the detail path surfaces
+// the merged PR's [:EDITED] provenance and the :PullRequest's live pr_state.
+// The edited node (nu) is an UPSTREAM node distinct from the rejected node, so
+// the test also proves the edited target is carried faithfully rather than
+// assumed equal to the rejection node.
+func TestPrecedentReader_ProposalResolvedRejectionCarriesEditedAndLivePrState(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	relA, nodeA := marker+"-rel-a", marker+"-node-a"
+	relOpen, nodeOpen := marker+"-rel-open", marker+"-node-open"
+	nu := marker + "-nu" // the edited upstream :Table, distinct from nodeA
+	proposalID := marker + "-proposal"
+	closedAt := t0.Add(2 * time.Hour)
+
+	// The proposal-resolved rejection, filed EARLIER than the open one.
+	seedPrecedentRejection(t, client, relA, nodeA, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+	// A still-open rejection on the same signature, filed LATER — resolved-first
+	// ordering must still rank the proposal-resolved rejection ahead of it.
+	seedPrecedentRejection(t, client, relOpen, nodeOpen, sig, "logic", "logic:missing_object",
+		t0.Add(30*time.Minute), "select open", "hash-open")
+
+	// The edit's target :Table must already exist; the writer never mints one.
+	seedEditTargetTable(t, client, nu, marker)
+
+	repo := newCaseBaseRepo(client)
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: relA, NodeID: nodeA},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/repo/pull/9", PrNumber: 9,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
+		}))
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: relA, Service: "core",
+		Outcome: "merged", ClosedAt: closedAt,
+		ResolvedNodeIDs: []string{nodeA},
+		Edits: []casebase.EditOutcome{
+			{Path: "models/upstream.sql", TargetNodeID: nu, Amended: false, Diff: "D1"},
+		},
+	}))
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 2, "both rejections on the signature match")
+
+	// The identity query counts the [:RESOLVED_BY]->(:Proposal) edge as
+	// resolved: nodeA sorts first despite being OLDER by `at`.
+	resolved, open := precedents[0], precedents[1]
+	assert.Equal(t, nodeA, resolved.Rejection.NodeID,
+		"a proposal-resolved rejection must rank resolved-first, ahead of a newer open one")
+	assert.Equal(t, nodeOpen, open.Rejection.NodeID)
+
+	require.Len(t, resolved.Edited, 1, "the merged PR's EDITED provenance is surfaced")
+	e := resolved.Edited[0]
+	assert.Equal(t, nu, e.NodeID, "the edited (upstream) node is carried, distinct from the rejected node")
+	assert.NotEqual(t, nodeA, e.NodeID)
+	assert.Equal(t, "models/upstream.sql", e.Path)
+	assert.False(t, e.Amended)
+	assert.Equal(t, "D1", e.Diff, "a non-amended edit keeps the edge's stored proposal diff")
+	assert.Nil(t, e.MergedVersion, "no straddling merged version selected for a non-amended edit")
+	assert.Nil(t, e.MergedPrior)
+
+	require.Len(t, resolved.Proposals, 1)
+	assert.Equal(t, proposalID, resolved.Proposals[0].ProposalID)
+	assert.Equal(t, "merged", resolved.Proposals[0].PrState,
+		"pr_state comes live from the :PullRequest node, not the open-time inline snapshot")
+
+	assert.Empty(t, open.Edited, "the still-open rejection carries no edited provenance")
+}
+
+// TestPrecedentReader_AmendedEditSelectsStraddlingVersions verifies the new
+// per-key edited query's straddling-version selection: for an AMENDED edit
+// whose target :Table has :NodeVersions promoted both before and after the PR
+// closed, MergedVersion is the FIRST version promoted after closed_at
+// (ascending) and MergedPrior is the NEWEST version promoted before it — the
+// two versions that bracket the human's merged truth.
+func TestPrecedentReader_AmendedEditSelectsStraddlingVersions(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	relC, nodeC := marker+"-rel-c", marker+"-node-c"
+	nu := marker + "-nu"
+	proposalID := marker + "-proposal"
+	closedAt := t0.Add(2 * time.Hour)
+
+	seedPrecedentRejection(t, client, relC, nodeC, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+	seedEditTargetTable(t, client, nu, marker)
+
+	// Four versions on the edited node straddling closed_at. The selection must
+	// pick "hash-after" (first after closed_at) as merged and "hash-before"
+	// (newest before merged) as prior — never the way-before/way-after decoys.
+	seedPrecedentVersion(t, client, nu, marker, "hash-way-before", "select way before", closedAt.Add(-3*time.Hour))
+	seedPrecedentVersion(t, client, nu, marker, "hash-before", "select before", closedAt.Add(-1*time.Hour))
+	seedPrecedentVersion(t, client, nu, marker, "hash-after", "select after", closedAt.Add(1*time.Hour))
+	seedPrecedentVersion(t, client, nu, marker, "hash-way-after", "select way after", closedAt.Add(3*time.Hour))
+
+	repo := newCaseBaseRepo(client)
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: relC, NodeID: nodeC},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/repo/pull/11", PrNumber: 11,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
+		}))
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: relC, Service: "core",
+		Outcome: "merged", ClosedAt: closedAt,
+		ResolvedNodeIDs: []string{nodeC},
+		Edits: []casebase.EditOutcome{
+			{Path: "models/amended.sql", TargetNodeID: nu, Amended: true, Diff: "Dc"},
+		},
+	}))
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	require.Len(t, precedents[0].Edited, 1)
+	e := precedents[0].Edited[0]
+	assert.True(t, e.Amended)
+	require.NotNil(t, e.MergedVersion, "an amended edit with a straddling version selects the merged truth")
+	assert.Equal(t, "hash-after", e.MergedVersion.ContentHash,
+		"the FIRST version promoted after closed_at (ascending) is the merged version")
+	assert.Equal(t, "select after", e.MergedVersion.RawCode)
+	require.NotNil(t, e.MergedPrior, "the version the merge superseded is the newest one before it")
+	assert.Equal(t, "hash-before", e.MergedPrior.ContentHash)
+	assert.Equal(t, "select before", e.MergedPrior.RawCode)
+}
+
+// TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByProposal
+// verifies the detail query surfaces the proposal-resolved signal even when the
+// merged PR drew NO [:EDITED] edges — every edit target was absent from the
+// graph, so RecordPullRequestOutcome skipped them (it never mints a :Table).
+// The rejection is genuinely fixed and the identity query already counts it
+// resolved-first; ResolvedByProposal must be true so the service's Resolved
+// boolean agrees, with no Edited rows and no own-timeline version.
+func TestPrecedentReader_ProposalResolvedWithAllEditsAbsentSurfacesResolvedByProposal(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	relA, nodeA := marker+"-rel-a", marker+"-node-a"
+	proposalID := marker + "-proposal"
+	missing := marker + "-missing" // edit target that is NOT in the graph
+	closedAt := t0.Add(2 * time.Hour)
+
+	seedPrecedentRejection(t, client, relA, nodeA, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+
+	repo := newCaseBaseRepo(client)
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: relA, NodeID: nodeA},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/repo/pull/13", PrNumber: 13,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(10 * time.Minute),
+		}))
+	// Merged: resolves nodeA, but the sole edit's target :Table is absent, so no
+	// [:EDITED] edge is drawn.
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: relA, Service: "core",
+		Outcome: "merged", ClosedAt: closedAt,
+		ResolvedNodeIDs: []string{nodeA},
+		Edits: []casebase.EditOutcome{
+			{Path: "models/absent.sql", TargetNodeID: missing, Amended: false, Diff: "D-absent"},
+		},
+	}))
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	p := precedents[0]
+	assert.True(t, p.ResolvedByProposal,
+		"a RESOLVED_BY->(:Proposal) edge must surface even when no EDITED edge was drawn")
+	assert.Empty(t, p.Edited, "no EDITED edge was drawn for an absent target")
+	assert.Nil(t, p.ResolvingVersion, "there is no own-timeline resolving version")
+}
+
+// TestPrecedentReader_UnresolvedRejectionIsNotResolvedByProposal pins the
+// negative: a rejection with no [:RESOLVED_BY] edge at all reports
+// ResolvedByProposal=false.
+func TestPrecedentReader_UnresolvedRejectionIsNotResolvedByProposal(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	rel, node := marker+"-rel", marker+"-node"
+
+	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	assert.False(t, precedents[0].ResolvedByProposal, "an unresolved rejection has no proposal edge")
+	assert.Nil(t, precedents[0].ResolvingVersion)
+	assert.Empty(t, precedents[0].Edited)
+}
+
+// TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService
+// verifies the per-resolving-service scoping of edited-node provenance. A single
+// :Proposal spans two services: a core rejection resolved by core's merged PR
+// (a non-amended edit to a core node) and a finance rejection resolved by
+// finance's merged PR (an amended edit to a finance node). Each rejection links
+// to the SHARED :Proposal, so without scoping the read would walk EVERY [:EDITED]
+// edge and EVERY merged :PullRequest on that proposal. The RESOLVED_BY edge's
+// service stamp scopes the walk: the core rejection surfaces only the core edit,
+// the finance rejection only the finance edit, and the finance amended straddle
+// is selected against finance's own :PullRequest closed_at — never core's
+// earlier one.
+func TestPrecedentReader_MultiServiceProposalScopesEditedProvenancePerService(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	proposalID := marker + "-proposal"
+
+	coreRel, coreNode := marker+"-core-rel", marker+"-core-node"
+	finRel, finNode := marker+"-fin-rel", marker+"-fin-node"
+	coreTable := marker + "-core-edited"
+	finTable := marker + "-fin-edited"
+
+	coreClosed := t0.Add(2 * time.Hour) // Tc — earlier close
+	finClosed := t0.Add(5 * time.Hour)  // Tf — later close
+
+	// Two rejections on the SAME signature, resolved by the SAME proposal but by
+	// different services' PRs.
+	seedPrecedentRejection(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
+		t0, "select core", "hash-core")
+	seedPrecedentRejection(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
+		t0.Add(time.Minute), "select fin", "hash-fin")
+
+	seedEditTargetTable(t, client, coreTable, marker)
+	seedEditTargetTable(t, client, finTable, marker)
+
+	// Versions on the finance-edited node straddling the two closes. Scoped to
+	// finance's closed_at (Tf), only "hash-after-tf" qualifies as the merged
+	// version; were the read to leak core's earlier closed_at (Tc), the
+	// "hash-between" version (promoted after Tc but before Tf) would wrongly win.
+	seedPrecedentVersion(t, client, finTable, marker, "hash-between", "select between", t0.Add(3*time.Hour))
+	seedPrecedentVersion(t, client, finTable, marker, "hash-after-tf", "select after tf", t0.Add(6*time.Hour))
+
+	repo := newCaseBaseRepo(client)
+
+	// pr_opened per service, sharing the one proposal.
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: coreRel, NodeID: coreNode},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
+		}))
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: finRel, NodeID: finNode},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "finance",
+			PrURL: "https://github.com/org/finance/pull/1", PrNumber: 1,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
+		}))
+
+	// core PR merges: edits the core node, not amended.
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: coreRel, Service: "core",
+		Outcome: "merged", ClosedAt: coreClosed,
+		PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
+		ResolvedNodeIDs: []string{coreNode},
+		Edits: []casebase.EditOutcome{
+			{Path: "models/core.sql", TargetNodeID: coreTable, Amended: false, Diff: "D-core"},
+		},
+	}))
+	// finance PR merges: edits the finance node, amended.
+	require.NoError(t, repo.RecordPullRequestOutcome(ctx, casebase.PullRequestOutcome{
+		ProposalID: proposalID, ReleaseID: finRel, Service: "finance",
+		Outcome: "merged", ClosedAt: finClosed,
+		PrURL: "https://github.com/org/finance/pull/1", PrNumber: 1,
+		ResolvedNodeIDs: []string{finNode},
+		Edits: []casebase.EditOutcome{
+			{Path: "models/finance.sql", TargetNodeID: finTable, Amended: true, Diff: "D-fin"},
+		},
+	}))
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 2, "both rejections on the signature match")
+
+	byNode := map[string]casebase.PrecedentView{}
+	for _, p := range precedents {
+		byNode[p.Rejection.NodeID] = p
+	}
+	coreP, ok := byNode[coreNode]
+	require.True(t, ok, "the core rejection is present")
+	finP, ok := byNode[finNode]
+	require.True(t, ok, "the finance rejection is present")
+
+	// The core rejection surfaces ONLY the core edit — never finance's.
+	require.Len(t, coreP.Edited, 1, "core rejection surfaces exactly its own service's edit")
+	assert.Equal(t, coreTable, coreP.Edited[0].NodeID, "core must not surface finance's edited node")
+	assert.Equal(t, "D-core", coreP.Edited[0].Diff)
+	assert.False(t, coreP.Edited[0].Amended)
+	assert.Nil(t, coreP.Edited[0].MergedVersion, "a non-amended edit selects no straddling version")
+
+	// The finance rejection surfaces ONLY the finance edit, and selects the
+	// straddling merged version against finance's own PR closed_at.
+	require.Len(t, finP.Edited, 1, "finance rejection surfaces exactly its own service's edit")
+	fe := finP.Edited[0]
+	assert.Equal(t, finTable, fe.NodeID, "finance must not surface core's edited node")
+	assert.Equal(t, "D-fin", fe.Diff)
+	assert.True(t, fe.Amended)
+	require.NotNil(t, fe.MergedVersion, "an amended edit selects the merged-truth version")
+	assert.Equal(t, "hash-after-tf", fe.MergedVersion.ContentHash,
+		"the merged version is selected against finance's own closed_at, not core's earlier one")
+	require.NotNil(t, fe.MergedPrior, "the version the merge superseded is the newest before it")
+	assert.Equal(t, "hash-between", fe.MergedPrior.ContentHash)
+}
+
+// TestPrecedentReader_LegacyResolvedByWithoutServiceRendersEdit pins the
+// backward-compatible fallback: a [:RESOLVED_BY]->(:Proposal) edge written
+// before the per-service stamp existed carries no service. The scoped walk must
+// not exclude such an edge — with a null rb.service it falls back to the
+// whole-proposal walk, so the single-service legacy edit still renders.
+func TestPrecedentReader_LegacyResolvedByWithoutServiceRendersEdit(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	rel, node := marker+"-rel", marker+"-node"
+	proposalID := marker + "-proposal"
+	edited := marker + "-edited"
+
+	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+	seedEditTargetTable(t, client, edited, marker)
+
+	// A legacy RESOLVED_BY edge with NO service property, plus its EDITED edge
+	// (whose own service predates this change). The read must still render it.
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	res, err := s.Run(ctx, `
+		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
+		MATCH (t:Table {unique_id: $edited})
+		MERGE (p:Proposal {proposal_id: $proposal_id})
+		MERGE (rej)-[:RESOLVED_BY]->(p)
+		MERGE (p)-[:HAS_PR]->(pl:PullRequest {proposal_id: $proposal_id, service: 'core'})
+		SET pl.pr_state = 'merged', pl.closed_at = $closed_at
+		MERGE (p)-[ed:EDITED {path: 'models/legacy.sql'}]->(t)
+		SET ed.amended = false, ed.diff = 'D-legacy', ed.service = 'core'
+	`, map[string]any{
+		"release_id": rel, "node_id": node, "proposal_id": proposalID,
+		"edited": edited, "closed_at": t0.Add(time.Hour).UTC(),
+	})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+	s.Close(ctx)
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	require.Len(t, precedents[0].Edited, 1,
+		"a legacy RESOLVED_BY edge with no service still renders its edit via the null fallback")
+	assert.Equal(t, edited, precedents[0].Edited[0].NodeID)
+	assert.Equal(t, "D-legacy", precedents[0].Edited[0].Diff)
+}
+
+// TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService verifies
+// the per-proposing-service scoping of a precedent's PR facts. A single
+// :Proposal spans two services: a core rejection whose fix PR is core's, and a
+// finance rejection whose fix PR is finance's. Both rejections link to the
+// SHARED :Proposal, which carries both services' :PullRequest nodes. Without
+// scoping the read would fan EVERY :PullRequest into EVERY rejection's Proposals
+// list — a core rejection would surface finance's PR url/number/state (and a
+// duplicate proposal entry). The [:PROPOSED] edge's service stamp scopes the PR
+// join: the core rejection surfaces only core's PR, the finance rejection only
+// finance's.
+func TestPrecedentReader_MultiServiceProposalScopesProposalPRsPerService(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	proposalID := marker + "-proposal"
+
+	coreRel, coreNode := marker+"-core-rel", marker+"-core-node"
+	finRel, finNode := marker+"-fin-rel", marker+"-fin-node"
+
+	// Two rejections on the SAME signature, resolved by the SAME proposal but by
+	// different services' PRs.
+	seedPrecedentRejection(t, client, coreRel, coreNode, sig, "logic", "logic:missing_object",
+		t0, "select core", "hash-core")
+	seedPrecedentRejection(t, client, finRel, finNode, sig, "logic", "logic:missing_object",
+		t0.Add(time.Minute), "select fin", "hash-fin")
+
+	repo := newCaseBaseRepo(client)
+
+	// pr_opened per service, sharing the one proposal. Each RecordProposal stamps
+	// its service on the [:PROPOSED] edge and lands its PR on its own
+	// :PullRequest node.
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: coreRel, NodeID: coreNode},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "core",
+			PrURL: "https://github.com/org/core/pull/1", PrNumber: 1,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
+		}))
+	require.NoError(t, repo.RecordProposal(ctx,
+		casebase.Proposal{ProposalID: proposalID, ReleaseID: finRel, NodeID: finNode},
+		casebase.PullRequest{
+			ProposalID: proposalID, Service: "finance",
+			PrURL: "https://github.com/org/finance/pull/7", PrNumber: 7,
+			State: "open", OpenedBy: "agent-remediation", OpenedAt: t0.Add(30 * time.Minute),
+		}))
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 2, "both rejections on the signature match")
+
+	byNode := map[string]casebase.PrecedentView{}
+	for _, p := range precedents {
+		byNode[p.Rejection.NodeID] = p
+	}
+	coreP, ok := byNode[coreNode]
+	require.True(t, ok, "the core rejection is present")
+	finP, ok := byNode[finNode]
+	require.True(t, ok, "the finance rejection is present")
+
+	// The core rejection surfaces ONLY core's PR — never finance's, and never a
+	// duplicate.
+	require.Len(t, coreP.Proposals, 1, "core rejection surfaces exactly its own service's PR")
+	assert.Equal(t, proposalID, coreP.Proposals[0].ProposalID)
+	assert.Equal(t, "https://github.com/org/core/pull/1", coreP.Proposals[0].PrURL,
+		"core must not surface finance's PR url")
+	assert.Equal(t, 1, coreP.Proposals[0].PrNumber)
+	assert.Equal(t, "open", coreP.Proposals[0].PrState)
+
+	// The finance rejection surfaces ONLY finance's PR.
+	require.Len(t, finP.Proposals, 1, "finance rejection surfaces exactly its own service's PR")
+	assert.Equal(t, "https://github.com/org/finance/pull/7", finP.Proposals[0].PrURL,
+		"finance must not surface core's PR url")
+	assert.Equal(t, 7, finP.Proposals[0].PrNumber)
+}
+
+// TestPrecedentReader_LegacyProposedWithoutServiceRendersPR pins the
+// backward-compatible fallback: a [:PROPOSED] edge written before the
+// per-service stamp existed carries no service. The scoped PR join must not
+// exclude such an edge — with a null prop.service it falls back to matching any
+// of the proposal's PRs, so the single-service legacy PR still renders.
+func TestPrecedentReader_LegacyProposedWithoutServiceRendersPR(t *testing.T) {
+	client := newTestClient(t)
+	ctx := context.Background()
+	marker := t.Name()
+	cleanup := caseBaseCleanup(t, client, marker)
+	cleanup()
+	defer cleanup()
+
+	sig := marker + "-sig"
+	t0 := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	rel, node := marker+"-rel", marker+"-node"
+	proposalID := marker + "-proposal"
+
+	seedPrecedentRejection(t, client, rel, node, sig, "logic", "logic:missing_object",
+		t0, "select failing", "hash-failing")
+
+	// A legacy [:PROPOSED] edge with NO service property, plus a :PullRequest on
+	// the proposal. The read must still render the PR via the null fallback.
+	s := client.NewSession(ctx, neo4j.AccessModeWrite)
+	res, err := s.Run(ctx, `
+		MATCH (rej:Rejection {release_id: $release_id, node_id: $node_id})
+		MERGE (p:Proposal {proposal_id: $proposal_id})
+		MERGE (rej)-[:PROPOSED]->(p)
+		MERGE (p)-[:HAS_PR]->(pl:PullRequest {proposal_id: $proposal_id, service: 'core'})
+		SET pl.pr_url = $pr_url, pl.pr_number = 5, pl.pr_state = 'merged'
+	`, map[string]any{
+		"release_id": rel, "node_id": node, "proposal_id": proposalID,
+		"pr_url": "https://github.com/org/legacy/pull/5",
+	})
+	require.NoError(t, err)
+	_, err = res.Consume(ctx)
+	require.NoError(t, err)
+	s.Close(ctx)
+
+	reader := newPrecedentReader(client)
+	precedents, err := reader.Precedents(ctx, sig, "", "", 10, true)
+	require.NoError(t, err)
+	require.Len(t, precedents, 1)
+
+	require.Len(t, precedents[0].Proposals, 1,
+		"a legacy PROPOSED edge with no service still renders its PR via the null fallback")
+	assert.Equal(t, "https://github.com/org/legacy/pull/5", precedents[0].Proposals[0].PrURL)
+	assert.Equal(t, 5, precedents[0].Proposals[0].PrNumber)
+	assert.Equal(t, "merged", precedents[0].Proposals[0].PrState)
+}
+
 // TestPrecedentReader_NoMatchIsEmptyNotError verifies that a signature with no
 // recorded rejections is a valid, non-error answer: an empty slice, not an
 // error.

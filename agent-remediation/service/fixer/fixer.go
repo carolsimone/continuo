@@ -277,7 +277,10 @@ func loadPrecedents(ctx context.Context, svc Services, in Input) []prompt.Preced
 // needed here. It allocates a fresh slice rather than filtering ps in place,
 // since ps is backed by whatever the PrecedentReader returned — a test fake's
 // fixture map today, potentially a caching adapter tomorrow — and reusing its
-// backing array would corrupt that value across calls.
+// backing array would corrupt that value across calls. Each precedent's
+// Edited diffs get the same treatment as ResolutionDiff and ErrorExcerpt: a
+// merged fix PR's diff can carry the same secrets a proposal's diff can, so
+// it must not reach the LLM unsanitized either.
 func withoutSelf(ps []prompt.Precedent, in Input, sanitizer ports.LogSanitizer) []prompt.Precedent {
 	out := make([]prompt.Precedent, 0, len(ps))
 	for _, p := range ps {
@@ -286,6 +289,14 @@ func withoutSelf(ps []prompt.Precedent, in Input, sanitizer ports.LogSanitizer) 
 		}
 		p.ResolutionDiff = sanitizer.Sanitize(p.ResolutionDiff)
 		p.ErrorExcerpt = sanitizer.Sanitize(p.ErrorExcerpt)
+		if len(p.Edited) > 0 {
+			edited := make([]prompt.EditedPrecedent, len(p.Edited))
+			for i, e := range p.Edited {
+				e.Diff = sanitizer.Sanitize(e.Diff)
+				edited[i] = e
+			}
+			p.Edited = edited
+		}
 		out = append(out, p)
 	}
 	return out

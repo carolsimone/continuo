@@ -23,18 +23,27 @@ type fakeSvc struct {
 	listErr   error
 	// lastFilter captures the filter List was called with, so a test can
 	// verify the gRPC request's fields reach the service unchanged.
-	lastFilter  repository.ProposalFilter
-	getView     proposal.View
-	getErr      error
-	beginClaim  proposal.PRClaim
-	beginErr    error
-	existingURL string // returned by Get when beginErr == ErrPRConflict
-	recordErr   error
+	lastFilter repository.ProposalFilter
+	getView    proposal.View
+	getErr     error
+	beginClaim proposal.PRClaim
+	beginErr   error
+	recordErr  error
+	// Begin capture
+	lastBeginID      string
+	lastBeginService string
+	// Record capture
+	lastRecordInput proposals.RecordInput
 	// FailStuckClaim capture/behavior
 	failHit          bool
 	failErr          error
 	lastFailID       string
+	lastFailService  string
 	lastFailObserved time.Time
+	// prServices is returned by PRServices; lastPRServicesView captures the
+	// view it was called with.
+	prServices         []string
+	lastPRServicesView proposal.View
 }
 
 func (f *fakeSvc) List(_ context.Context, filter repository.ProposalFilter) ([]proposal.View, error) {
@@ -43,24 +52,30 @@ func (f *fakeSvc) List(_ context.Context, filter repository.ProposalFilter) ([]p
 }
 
 func (f *fakeSvc) Get(_ context.Context, _ string) (proposal.View, error) {
-	if f.beginErr == repository.ErrPRConflict && f.existingURL != "" {
-		return proposal.View{PrURL: f.existingURL}, nil
-	}
 	return f.getView, f.getErr
 }
 
-func (f *fakeSvc) Begin(_ context.Context, _ string) (proposal.PRClaim, error) {
+func (f *fakeSvc) Begin(_ context.Context, id, service string) (proposal.PRClaim, error) {
+	f.lastBeginID = id
+	f.lastBeginService = service
 	return f.beginClaim, f.beginErr
 }
 
-func (f *fakeSvc) Record(_ context.Context, _ proposals.RecordInput) error {
+func (f *fakeSvc) Record(_ context.Context, in proposals.RecordInput) error {
+	f.lastRecordInput = in
 	return f.recordErr
 }
 
-func (f *fakeSvc) FailStuckClaim(_ context.Context, id string, observedClaimedAt time.Time) (bool, error) {
+func (f *fakeSvc) FailStuckClaim(_ context.Context, id, service string, observedClaimedAt time.Time) (bool, error) {
 	f.lastFailID = id
+	f.lastFailService = service
 	f.lastFailObserved = observedClaimedAt
 	return f.failHit, f.failErr
+}
+
+func (f *fakeSvc) PRServices(v proposal.View) []string {
+	f.lastPRServicesView = v
+	return f.prServices
 }
 
 // ---- ListProposals ----
@@ -210,6 +225,62 @@ func TestProposalsServer_GetProposal_HappyPath(t *testing.T) {
 	assert.Equal(t, "s3://bucket/b.diff", p.Edits[1].DiffUri)
 }
 
+// TestProposalsServer_GetProposal_PullRequestsAndPrServices verifies that
+// GetProposal maps View.PullRequests onto the wire's pull_requests field and
+// asks the service for pr_services, so a UI reading a split proposal sees
+// every per-service PR and the set of services it split into.
+func TestProposalsServer_GetProposal_PullRequestsAndPrServices(t *testing.T) {
+	openedAt := time.Date(2026, 6, 24, 9, 0, 0, 0, time.UTC)
+	closedAt := time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC)
+	view := proposal.View{
+		ID: "p1",
+		PullRequests: []proposal.PullRequest{
+			{
+				Service:    "core",
+				Repo:       "org/core",
+				Branch:     "remediation/rel-1/attempt1/core",
+				PrURL:      "https://gh/pr/1",
+				PrNumber:   1,
+				PrState:    "open",
+				PrOpenedAt: &openedAt,
+				PrOpenedBy: "bot",
+				PrClosedAt: &closedAt,
+			},
+			{
+				Service:  "billing",
+				Repo:     "org/billing",
+				Branch:   "remediation/rel-1/attempt1/billing",
+				PrURL:    "https://gh/pr/2",
+				PrNumber: 2,
+				PrState:  "merged",
+			},
+		},
+	}
+	svc := &fakeSvc{getView: view, prServices: []string{"billing", "core"}}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	p, err := s.GetProposal(context.Background(), &remediationv1.GetProposalRequest{Id: "p1"})
+	require.NoError(t, err)
+
+	require.Len(t, p.PullRequests, 2, "every (proposal, service) pull request must be carried onto the wire")
+	assert.Equal(t, "core", p.PullRequests[0].Service)
+	assert.Equal(t, "org/core", p.PullRequests[0].Repo)
+	assert.Equal(t, "remediation/rel-1/attempt1/core", p.PullRequests[0].Branch)
+	assert.Equal(t, "https://gh/pr/1", p.PullRequests[0].PrUrl)
+	assert.Equal(t, int32(1), p.PullRequests[0].PrNumber)
+	assert.Equal(t, "open", p.PullRequests[0].PrState)
+	assert.Equal(t, openedAt.Format(time.RFC3339), p.PullRequests[0].PrOpenedAt)
+	assert.Equal(t, "bot", p.PullRequests[0].PrOpenedBy)
+	assert.Equal(t, closedAt.Format(time.RFC3339), p.PullRequests[0].PrClosedAt)
+
+	assert.Equal(t, "billing", p.PullRequests[1].Service)
+	assert.Equal(t, "", p.PullRequests[1].PrOpenedAt, "nil pr_opened_at must produce empty string")
+	assert.Equal(t, "", p.PullRequests[1].PrClosedAt, "nil pr_closed_at must produce empty string")
+
+	assert.Equal(t, []string{"billing", "core"}, p.PrServices, "pr_services must come from the service's PRServices call")
+	assert.Equal(t, "p1", svc.lastPRServicesView.ID, "PRServices must be called with the fetched view")
+}
+
 func TestProposalsServer_GetProposal_NotFound(t *testing.T) {
 	svc := &fakeSvc{getErr: repository.ErrNotFound}
 	s := grpcadapter.NewProposalsServer(svc)
@@ -284,8 +355,54 @@ func TestProposalsServer_BeginPullRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, "s3://bucket/baz.diff", resp.Edits[1].DiffUri)
 }
 
+// TestProposalsServer_BeginPullRequest_ThreadsServiceThrough verifies that
+// BeginPullRequest{service:"core"} reaches Begin(ctx, id, "core") and that
+// the response echoes the claimed service back.
+func TestProposalsServer_BeginPullRequest_ThreadsServiceThrough(t *testing.T) {
+	svc := &fakeSvc{beginClaim: proposal.PRClaim{ID: "p1", Service: "core"}}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	resp, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1", Service: "core"})
+	require.NoError(t, err)
+	assert.Equal(t, "p1", svc.lastBeginID)
+	assert.Equal(t, "core", svc.lastBeginService, "the request's service must reach Service.Begin unchanged")
+	assert.Equal(t, "core", resp.Service, "the response must echo the claimed service")
+}
+
+// TestProposalsServer_BeginPullRequest_EmptyServiceStaysEmpty verifies the
+// legacy path: an empty service on the request reaches Begin as "" and the
+// response echoes "" back, unchanged.
+func TestProposalsServer_BeginPullRequest_EmptyServiceStaysEmpty(t *testing.T) {
+	svc := &fakeSvc{beginClaim: proposal.PRClaim{ID: "p1"}}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	resp, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1"})
+	require.NoError(t, err)
+	assert.Equal(t, "", svc.lastBeginService)
+	assert.Equal(t, "", resp.Service)
+}
+
+// TestProposalsServer_BeginPullRequest_UnknownServiceMapsToInvalidArgument
+// verifies that proposals.ErrUnknownService — the requested service is not
+// one of the proposal's PRServices — maps to INVALID_ARGUMENT: it is a bad
+// request argument, not a missing resource or a state conflict.
+func TestProposalsServer_BeginPullRequest_UnknownServiceMapsToInvalidArgument(t *testing.T) {
+	svc := &fakeSvc{beginErr: proposals.ErrUnknownService}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1", Service: "bogus"})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
 func TestProposalsServer_BeginPullRequest_ConflictMapsToFailedPrecondition(t *testing.T) {
-	svc := &fakeSvc{beginErr: repository.ErrPRConflict, existingURL: "https://gh/pr/7"}
+	svc := &fakeSvc{
+		beginErr: repository.ErrPRConflict,
+		getView: proposal.View{
+			PrURL:        "https://gh/pr/7",
+			PullRequests: []proposal.PullRequest{{Service: "", PrURL: "https://gh/pr/7", PrState: "open"}},
+		},
+	}
 	s := grpcadapter.NewProposalsServer(svc)
 
 	_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1"})
@@ -293,6 +410,55 @@ func TestProposalsServer_BeginPullRequest_ConflictMapsToFailedPrecondition(t *te
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	// The error message should carry the existing PR URL.
 	assert.Contains(t, err.Error(), "https://gh/pr/7")
+}
+
+// TestProposalsServer_BeginPullRequest_ConflictEmbedsTheConflictingServicesOwnURL
+// verifies that a conflict on a named service embeds THAT service's own
+// pr_url from v.PullRequests, never a different service's. The proposal's
+// singular pr_url field mirrors the first child row ordered by service
+// (here, "core"), so a naive read of it would report core's URL for a
+// finance conflict even though the two are unrelated pull requests.
+func TestProposalsServer_BeginPullRequest_ConflictEmbedsTheConflictingServicesOwnURL(t *testing.T) {
+	view := proposal.View{
+		PrURL: "https://gh/pr/core", // singular fields mirror the first child, "core"
+		PullRequests: []proposal.PullRequest{
+			{Service: "core", PrURL: "https://gh/pr/core", PrState: "open"},
+			{Service: "finance", PrState: "opening"}, // claimed but not yet opened: no URL
+		},
+	}
+
+	t.Run("finance conflict embeds finance's own state, never core's URL", func(t *testing.T) {
+		svc := &fakeSvc{beginErr: repository.ErrPRConflict, getView: view}
+		s := grpcadapter.NewProposalsServer(svc)
+
+		_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1", Service: "finance"})
+		require.Error(t, err)
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+		assert.NotContains(t, err.Error(), "https://gh/pr/core",
+			"a finance conflict must never surface core's PR URL")
+	})
+
+	t.Run("core conflict embeds core's own URL", func(t *testing.T) {
+		svc := &fakeSvc{beginErr: repository.ErrPRConflict, getView: view}
+		s := grpcadapter.NewProposalsServer(svc)
+
+		_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1", Service: "core"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "https://gh/pr/core")
+	})
+
+	t.Run("legacy service embeds the singular pr_url", func(t *testing.T) {
+		legacyView := proposal.View{
+			PrURL:        "https://gh/pr/legacy",
+			PullRequests: []proposal.PullRequest{{Service: "", PrURL: "https://gh/pr/legacy", PrState: "open"}},
+		}
+		svc := &fakeSvc{beginErr: repository.ErrPRConflict, getView: legacyView}
+		s := grpcadapter.NewProposalsServer(svc)
+
+		_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p1"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "https://gh/pr/legacy")
+	})
 }
 
 func TestProposalsServer_BeginPullRequest_NotSourceResolved(t *testing.T) {
@@ -338,6 +504,26 @@ func TestProposalsServer_RecordPullRequest_HappyPath(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
+// TestProposalsServer_RecordPullRequest_ThreadsServiceThrough verifies that
+// RecordPullRequest's service field reaches proposals.RecordInput.Service
+// unchanged, and that an empty service (the legacy path) stays empty.
+func TestProposalsServer_RecordPullRequest_ThreadsServiceThrough(t *testing.T) {
+	svc := &fakeSvc{}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	_, err := s.RecordPullRequest(context.Background(), &remediationv1.RecordPullRequestRequest{
+		Id: "p4", PrUrl: "https://gh/pr/42", PrNumber: 42, OpenedBy: "bot", Service: "core",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "core", svc.lastRecordInput.Service)
+
+	_, err = s.RecordPullRequest(context.Background(), &remediationv1.RecordPullRequestRequest{
+		Id: "p4", PrUrl: "https://gh/pr/42", PrNumber: 42, OpenedBy: "bot",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "", svc.lastRecordInput.Service, "an empty service must map to \"\" unchanged")
+}
+
 func TestProposalsServer_RecordPullRequest_NotFound(t *testing.T) {
 	svc := &fakeSvc{recordErr: repository.ErrNotFound}
 	s := grpcadapter.NewProposalsServer(svc)
@@ -372,6 +558,27 @@ func TestProposalsServer_FailPullRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, "p5", svc.lastFailID)
 	assert.True(t, claimedAt.Equal(svc.lastFailObserved),
 		"the handler must parse claimed_at and forward the exact instant to FailStuckClaim")
+}
+
+// TestProposalsServer_FailPullRequest_ThreadsServiceThrough verifies that
+// FailPullRequest's service field reaches Service.FailStuckClaim unchanged,
+// and that an empty service (the legacy path) stays empty.
+func TestProposalsServer_FailPullRequest_ThreadsServiceThrough(t *testing.T) {
+	claimedAt := time.Date(2026, 6, 24, 9, 0, 0, 0, time.UTC)
+	svc := &fakeSvc{failHit: true}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	_, err := s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{
+		Id: "p5", ClaimedAt: claimedAt.Format(time.RFC3339), Service: "core",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "core", svc.lastFailService)
+
+	_, err = s.FailPullRequest(context.Background(), &remediationv1.FailPullRequestRequest{
+		Id: "p5", ClaimedAt: claimedAt.Format(time.RFC3339),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "", svc.lastFailService, "an empty service must map to \"\" unchanged")
 }
 
 // TestProposalsServer_FailPullRequest_CASMiss_ReturnsReleasedFalseNoError
