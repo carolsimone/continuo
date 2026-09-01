@@ -34,10 +34,14 @@ func DerivedChangedNodeIDs(candidate, prod Topology) []string {
 // input is mutated.
 //
 // It layers one topology's view of a set of nodes over another's. Baselining a
-// change diff on current_prod overlaid with a rejected candidate — rather than
+// change diff on a rejected candidate overlaid with current_prod — rather than
 // current_prod alone — measures only the delta a fix introduces on top of that
-// candidate: a node the overlay still holds at the candidate's content_hash is
-// not reported as changed, while an edit that departs from it is.
+// candidate, while still preferring current_prod's hash for any node current_prod
+// already carries: a node the overlay still holds at the candidate's
+// content_hash (because current_prod never advanced past it) is not reported as
+// changed, an edit that departs from it still is, and a node current_prod has
+// since moved past is measured at current_prod's newer hash rather than the
+// candidate's stale one.
 func OverlayTopology(base, over Topology) Topology {
 	byID := make(map[string]Node, len(base)+len(over))
 	for _, n := range base {

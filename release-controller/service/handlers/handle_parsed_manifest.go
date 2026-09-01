@@ -275,11 +275,18 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 // reads as "changed" and gets re-validated, so it fails again and sinks a fix
 // that was never about it.
 //
-// So a shadow that names the rejected release it verifies baselines on
-// current_prod overlaid with that release's candidate topology. A node the
-// shadow still holds byte-identical to the rejected candidate — the sibling's
-// unfixed failure — matches the baseline and is not re-derived as changed, while
-// the fix's own edit departs from the candidate and still is. If the verified
+// So a shadow that names the rejected release it verifies baselines on the
+// rejected candidate overlaid with current_prod: current_prod wins by
+// unique_id, and the rejected candidate only fills in nodes current_prod
+// doesn't have — the still-unpromoted nodes this shadow inherited from that
+// rejection, including the sibling's unfixed failure. current_prod winning
+// matters because it can have moved on since the rejection: an unrelated
+// release may have promoted a node the rejected candidate only remembers at
+// its older, since-superseded hash, and current_prod's is the one this
+// shadow's own assembled copy will match. A node the shadow still holds
+// byte-identical to the rejected candidate — the sibling's unfixed failure —
+// therefore matches the baseline and is not re-derived as changed, while the
+// fix's own edit departs from the candidate and still is. If the verified
 // release cannot be read, or never parsed far enough to hold a candidate
 // topology, the shadow falls back to diffing against production — a weaker but
 // still-running verification, mirroring assembleFor's graceful degradation.
@@ -299,7 +306,7 @@ func shadowBaseline(ctx context.Context, u uow.UnitOfWork, d *Deps, r *release.R
 			"release_id", r.ID(), "verifies_release_id", original.ID())
 		return prod
 	}
-	return release.OverlayTopology(prod, original.CandidateTopology())
+	return release.OverlayTopology(original.CandidateTopology(), prod)
 }
 
 // newChangedSeedIDs returns the validation-set node IDs that are dbt-seeds in the
