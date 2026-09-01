@@ -150,3 +150,44 @@ export function proposalPrServices(p: ProposalDTO): string[] {
 export function proposalPrStateForService(p: ProposalDTO, service: string): string {
   return proposalPullRequests(p).find((pr) => pr.service === service)?.pr_state ?? '';
 }
+
+// Shadow-release statuses that mean a fix verification has left the global
+// one-at-a-time release queue and is actively running the validation pipeline.
+// A shadow still 'received' is waiting its turn behind other releases; the
+// terminal 'validated'/'rejected' are the verdict, not a running phase.
+export const SHADOW_RUNNING_STATUSES = new Set([
+  'compiling', 'parsing', 'seed_building', 'validating',
+]);
+
+// proposalShadowIds lists the shadow release(s) a batched attempt ran to verify
+// its fix — one per edited service (verifications), or the legacy singular
+// shadow_release_id for a proposal that only ever tracked one. Empty when the
+// attempt was judged without any shadow release.
+export function proposalShadowIds(p: ProposalDTO): string[] {
+  if (p.verifications && p.verifications.length > 0) {
+    return p.verifications.map((v) => v.shadow_release_id).filter(Boolean);
+  }
+  return p.shadow_release_id ? [p.shadow_release_id] : [];
+}
+
+// shadowVerifyPhase decides whether a fix in the 'verifying' state is being
+// actively validated or is still waiting its turn in the global release queue,
+// from the statuses of the shadow release(s) backing it (shadowStatus maps a
+// shadow release id to its last-observed status). Running wins: any shadow that
+// has started means the fix is being verified now. A shadow observed still
+// 'received' — queued behind other releases — reads as queued. Absent any
+// running/received status (not fetched yet, no shadow id, or a terminal
+// verdict), it stays 'running', so the queued signal is only ever shown on
+// positive evidence and the chip never regresses to a false wait.
+export function shadowVerifyPhase(
+  shadowIds: string[],
+  shadowStatus: Map<string, string>,
+): 'queued' | 'running' {
+  let sawQueued = false;
+  for (const id of shadowIds) {
+    const status = shadowStatus.get(id);
+    if (status && SHADOW_RUNNING_STATUSES.has(status)) return 'running';
+    if (status === 'received') sawQueued = true;
+  }
+  return sawQueued ? 'queued' : 'running';
+}

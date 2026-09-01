@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   groupByStage, stageLabel, reasonLabel, proposalKey,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
+  proposalShadowIds, shadowVerifyPhase,
 } from './release-helpers';
 import { NodeValidationResult } from './types';
 import type { ProposalDTO } from './types';
@@ -81,5 +82,62 @@ describe('batched proposal helpers', () => {
     expect(proposalStatusForNode(p, 's.b')).toBe('skipped');
     expect(proposalReasonForNode(p, 's.b')).toBe('no source');
     expect(proposalReasonForNode(p, 's.a')).toBe('overall');
+  });
+});
+
+describe('proposalShadowIds', () => {
+  it('lists one shadow release per verification, dropping empty ids', () => {
+    const p = {
+      ...base,
+      shadow_release_id: 'rel_legacy',
+      verifications: [
+        { service: 'svc_a', kind: 'dbt', shadow_release_id: 'rel_a' },
+        { service: 'svc_b', kind: 'dbt', shadow_release_id: '' },
+        { service: 'svc_c', kind: 'python', shadow_release_id: 'rel_c' },
+      ],
+    };
+    expect(proposalShadowIds(p)).toEqual(['rel_a', 'rel_c']);
+  });
+
+  it('falls back to the singular shadow_release_id when there are no verifications', () => {
+    expect(proposalShadowIds({ ...base, shadow_release_id: 'rel_legacy' })).toEqual(['rel_legacy']);
+  });
+
+  it('is empty when an attempt was judged without any shadow release', () => {
+    expect(proposalShadowIds(base)).toEqual([]);
+  });
+});
+
+describe('shadowVerifyPhase', () => {
+  const running = ['compiling', 'parsing', 'seed_building', 'validating'];
+
+  it.each(running)('reads a shadow at %s as running', (status) => {
+    expect(shadowVerifyPhase(['rel_a'], new Map([['rel_a', status]]))).toBe('running');
+  });
+
+  it('reads a shadow still received (waiting its turn in the queue) as queued', () => {
+    expect(shadowVerifyPhase(['rel_a'], new Map([['rel_a', 'received']]))).toBe('queued');
+  });
+
+  it('lets running win when one shadow is queued and another has started', () => {
+    const status = new Map([['rel_a', 'received'], ['rel_b', 'validating']]);
+    expect(shadowVerifyPhase(['rel_a', 'rel_b'], status)).toBe('running');
+  });
+
+  it('reads queued only when every observed shadow is still received', () => {
+    const status = new Map([['rel_a', 'received'], ['rel_b', 'received']]);
+    expect(shadowVerifyPhase(['rel_a', 'rel_b'], status)).toBe('queued');
+  });
+
+  it('stays running (the existing chip) when no shadow status is observed yet', () => {
+    expect(shadowVerifyPhase(['rel_a'], new Map())).toBe('running');
+    expect(shadowVerifyPhase([], new Map())).toBe('running');
+  });
+
+  it('ignores a terminal shadow status, keeping the running fallback', () => {
+    // A shadow that already reached 'validated'/'rejected' is not queued; the
+    // node's own outcome is about to flip, so the chip must not read 'queued'.
+    expect(shadowVerifyPhase(['rel_a'], new Map([['rel_a', 'validated']]))).toBe('running');
+    expect(shadowVerifyPhase(['rel_a'], new Map([['rel_a', 'rejected']]))).toBe('running');
   });
 });
