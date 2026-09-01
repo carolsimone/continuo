@@ -279,6 +279,12 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
       reconciler, once a release has judged the fix.
 ```
 
+### Recovering a dropped trigger's in-flight row
+
+Step 3a commits the `generating` row *before* the model is called, so the release page can show the failing set as being worked on. If the trigger then fails on every delivery — a downstream dependency the fix needs is unreachable, say — the stream consumer redelivers it through the PEL sweep and, once it passes `maxDeliveries`, quarantines it as poison: the message is ACK-dropped so the loop keeps making progress. That drop records no state of its own, so without a recovery the `generating` row from step 3a is left in flight forever — the release reports a fix as permanently "generating", and its "Try again" action stays blocked behind that phantom in-flight attempt (release-controller reads a `generating` row as an open attempt a fix may still land from).
+
+The binding closes this out through the consumer's drop seam. `NewRemediationRequestedConsumer` registers a `pkgredis.WithOnDrop` handler (`failInFlightOnDrop`) that the consumer invokes whenever it abandons a message — a permanent error or a poison quarantine. The handler decodes the dropped trigger's `release_id` and calls `handlers.FailInFlight`, which finalizes that release's in-flight `generating` row to `failed` with the drop cause recorded (`FailGenerating`; idempotent — a row already terminal is left untouched, so a redundant drop or a shadow reconciler that closed it first is harmless). A dropped message that carries no payload, or one whose payload cannot be decoded, named no release and never reached step 3a, so it is ignored. The recovery UPDATE is bounded by a short timeout so a slow database cannot stall the reclaim sweep on this off-critical path. Once the row is `failed`, the release surfaces the failed attempt and its "Try again" gate opens for a fresh remediation round.
+
 ### Grouping the failing set
 
 `domain/typology` partitions the trigger's nodes into fix targets before any port is touched. It is pure — it reads the failing set and a `DagView` built entirely from the ids in the trigger's own `changed_ancestors` — so the routing decision is testable without the LLM or any adapter.

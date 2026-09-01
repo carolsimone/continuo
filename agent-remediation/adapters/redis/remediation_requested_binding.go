@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	goredis "github.com/redis/go-redis/v9"
 
@@ -13,6 +14,11 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 )
+
+// failInFlightTimeout bounds the single-row recovery UPDATE the drop handler
+// runs, so a slow database can never stall the consumer's reclaim sweep on the
+// off-critical drop path.
+const failInFlightTimeout = 10 * time.Second
 
 // TriggerFromPayload decodes a remediation.requested:v2 payload — one batched
 // trigger per rejected release, carrying its whole healable node set — into a
@@ -72,5 +78,44 @@ func NewRemediationRequestedConsumer(rc *goredis.Client, deps handlers.Deps, log
 		streams.AgentRemediationRemediationRequested,
 		handler,
 		logger,
+		pkgredis.WithOnDrop(failInFlightOnDrop(logger, func(ctx context.Context, releaseID, reason string) (int, error) {
+			ctx, cancel := context.WithTimeout(ctx, failInFlightTimeout)
+			defer cancel()
+			return handlers.FailInFlight(ctx, deps, releaseID, reason)
+		})),
 	)
+}
+
+// failInFlightOnDrop builds the drop handler that closes out a remediation
+// attempt the stream consumer abandoned. markGenerating commits an in-flight
+// 'generating' row before the model is called; if the trigger then fails on
+// every redelivery and is poison-dropped, that row is left reporting a fix as
+// forever generating — and the release's "Try again" stays blocked behind it.
+// This decodes the dropped trigger's release id and fails that row via fail.
+//
+// A message with no payload, or one whose payload cannot be decoded, named no
+// release and never created a row (markGenerating runs only after a successful
+// decode), so it is ignored.
+func failInFlightOnDrop(logger *slog.Logger, fail func(ctx context.Context, releaseID, reason string) (int, error)) pkgredis.DropHandler {
+	return func(ctx context.Context, msg goredis.XMessage, cause error) {
+		raw, ok := msg.Values["payload"].(string)
+		if !ok {
+			return
+		}
+		t, err := TriggerFromPayload([]byte(raw))
+		if err != nil || t.ReleaseID == "" {
+			return
+		}
+		reason := fmt.Sprintf("remediation trigger dropped after exhausting redelivery: %v", cause)
+		n, ferr := fail(ctx, t.ReleaseID, reason)
+		if ferr != nil {
+			logger.Error("could not fail in-flight remediation row after its trigger was dropped",
+				"stream", streams.RemediationRequestedV2, "message_id", msg.ID, "release", t.ReleaseID, "error", ferr)
+			return
+		}
+		if n > 0 {
+			logger.Warn("failed in-flight remediation row after its trigger was dropped",
+				"stream", streams.RemediationRequestedV2, "message_id", msg.ID, "release", t.ReleaseID, "cause", cause)
+		}
+	}
 }

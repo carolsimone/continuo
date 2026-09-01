@@ -71,6 +71,19 @@ three consumer-resilience behaviours that also bear on failure handling:
   `ErrPermanent` drop. This is the general safety net for any repeatedly-failing
   message, not only timeouts.
 
+- **Drop notification seam (`WithOnDrop` / `DropHandler`).** A dropped message —
+  poison quarantine or `ErrPermanent` — is ACKed away silently apart from the log,
+  which orphans any in-flight state a handler committed before it started failing.
+  A consumer may register a `DropHandler` via `WithOnDrop`; the consumer invokes
+  it at every drop site (read-path permanent, reclaim permanent, reclaim poison)
+  with the message and the cause, so the owning service can finalize that state.
+  It is best-effort and off the critical path: nil by default (drops behave
+  exactly as before), invoked with panic recovery, and its outcome never changes
+  whether the message is ACKed. `agent-remediation` uses it to fail the in-flight
+  `generating` proposal row a dropped `remediation.requested:v2` trigger leaves
+  behind (see `docs/arch/services/agent-remediation.md`, "Recovering a dropped
+  trigger's in-flight row").
+
 - **Per-handler timeout + liveness heartbeat.** Each handler invocation runs
   under a bounded context deadline (`SetHandlerTimeout` / `WithHandlerTimeout`),
   so a hung handler eventually returns control to the loop; a timeout logs
