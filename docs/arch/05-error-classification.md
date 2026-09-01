@@ -76,10 +76,14 @@ three consumer-resilience behaviours that also bear on failure handling:
   which orphans any in-flight state a handler committed before it started failing.
   A consumer may register a `DropHandler` via `WithOnDrop`; the consumer invokes
   it at every drop site (read-path permanent, reclaim permanent, reclaim poison)
-  with the message and the cause, so the owning service can finalize that state.
-  It is best-effort and off the critical path: nil by default (drops behave
-  exactly as before), invoked with panic recovery, and its outcome never changes
-  whether the message is ACKed. `agent-remediation` uses it to fail the in-flight
+  with the message and the cause, so the owning service can finalize that state —
+  but only **after the ACK is confirmed** (`ackFn`/`ackBatch` returned no error).
+  A failed XACK leaves the message in the PEL to be reprocessed, so notifying then
+  would finalize in-flight state for a message that was never actually dropped;
+  in agent-remediation the newly-terminal row would let the same trigger spend
+  another attempt. It is best-effort and off the critical path: nil by default
+  (drops behave exactly as before), invoked with panic recovery, and its outcome
+  never changes whether the message is ACKed. `agent-remediation` uses it to fail the in-flight
   `generating` proposal row a dropped `remediation.requested:v2` trigger leaves
   behind (see `docs/arch/services/agent-remediation.md`, "Recovering a dropped
   trigger's in-flight row").

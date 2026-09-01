@@ -20,6 +20,8 @@ func TestFailInFlight_FinalizesGeneratingRow(t *testing.T) {
 	u := newFakeUoW()
 	require.NoError(t, u.pr.InsertGenerating(context.Background(), proposal.Proposal{
 		ReleaseID: "rel-x", Attempt: 1, Status: proposal.StatusGenerating,
+		ResolvedNodeIDs: []string{"core"},
+		NodeOutcomes:    map[string]proposal.NodeOutcome{"core": {Status: proposal.StatusGenerating}},
 	}))
 
 	d := Deps{NewUoW: func() uow.UnitOfWork { return u }, Logger: slog.Default()}
@@ -29,6 +31,8 @@ func TestFailInFlight_FinalizesGeneratingRow(t *testing.T) {
 	require.Equal(t, 1, n)
 	require.Equal(t, proposal.StatusFailed, u.pr.generating[0].Status)
 	require.Equal(t, "poison-dropped after exhausting redelivery", u.pr.generating[0].Rationale)
+	require.Equal(t, proposal.StatusFailed, u.pr.generating[0].NodeOutcomes["core"].Status,
+		"the per-node outcome must be failed too, or the UI keeps the node spinning")
 	require.True(t, u.committed, "the failing write must be committed")
 }
 

@@ -28,6 +28,14 @@ type MessageHandler func(ctx context.Context, msg goredis.XMessage) error
 // invoked with panic recovery and its outcome does not affect the ACK.
 type DropHandler func(ctx context.Context, msg goredis.XMessage, cause error)
 
+// droppedEntry pairs a message the consumer is abandoning with the cause, held
+// until its ACK is confirmed so the DropHandler is only notified for a message
+// that actually left the PEL.
+type droppedEntry struct {
+	msg   goredis.XMessage
+	cause error
+}
+
 // StreamConsumer is a generic Redis Streams consumer that delegates message
 // processing to a MessageHandler callback
 type StreamConsumer struct {
@@ -51,10 +59,11 @@ type StreamConsumer struct {
 	// is never violated, only parallelism is forgone for that message.
 	aggregateKeyField string
 
-	// ackFn acknowledges a single resolved message. It defaults to ackOne (a
-	// real XACK) and is a seam so the lane-scheduling logic can be unit-tested
-	// without a live Redis connection.
-	ackFn func(ctx context.Context, id string)
+	// ackFn acknowledges a single resolved message, returning an error when the
+	// XACK itself failed (the message then stays in the PEL). It defaults to
+	// ackOne (a real XACK) and is a seam so the lane-scheduling logic can be
+	// unit-tested without a live Redis connection.
+	ackFn func(ctx context.Context, id string) error
 
 	// lastActivity is the unix-nano timestamp of the most recent unit of read-
 	// loop progress, stored via atomic.Int64 so Healthy can be polled from the
@@ -523,6 +532,11 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 		}
 
 		var ackIDs []string
+		// Drops are collected and notified only after ackBatch confirms the ACK:
+		// a failed batch XACK leaves every id in the PEL to be reprocessed, so
+		// finalizing an abandoned message's in-flight state before then would
+		// abandon a message that was never actually dropped.
+		var dropped []droppedEntry
 		for _, msg := range msgs {
 			err := c.safeInvoke(ctx, msg)
 			if err == nil {
@@ -534,7 +548,7 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 					"message_id", msg.ID,
 					"error", err,
 				)
-				c.onDropped(ctx, msg, err)
+				dropped = append(dropped, droppedEntry{msg: msg, cause: err})
 				ackIDs = append(ackIDs, msg.ID)
 				continue
 			}
@@ -551,7 +565,7 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 					"handler_timeout", isHandlerTimeout(err),
 					"error", err,
 				)
-				c.onDropped(ctx, msg, err)
+				dropped = append(dropped, droppedEntry{msg: msg, cause: err})
 				ackIDs = append(ackIDs, msg.ID)
 				continue
 			}
@@ -563,7 +577,11 @@ func (c *StreamConsumer) reclaimPending(ctx context.Context) error {
 			)
 			// no-ACK; next periodic sweep is the retry cadence
 		}
-		c.ackBatch(ctx, ackIDs)
+		if c.ackBatch(ctx, ackIDs) == nil {
+			for _, d := range dropped {
+				c.onDropped(ctx, d.msg, d.cause)
+			}
+		}
 
 		if next == "0-0" {
 			return nil
@@ -748,40 +766,56 @@ func boundedWorkerCount(n int) int {
 // message leaves the PEL immediately, so a slow sibling — or a stuck lane when
 // workerCount>1 — can never keep finished work pending long enough for another
 // replica's reclaim sweep to pick it up again.
+//
+// A drop (permanent error) is notified only after the ACK is confirmed: a failed
+// XACK leaves the message in the PEL to be reprocessed, so finalizing its
+// in-flight state then would abandon a message that was never actually dropped.
 func (c *StreamConsumer) processOne(ctx context.Context, msg goredis.XMessage) {
-	if c.shouldAck(ctx, msg) {
-		c.ackFn(ctx, msg.ID)
+	ack, dropCause := c.shouldAck(ctx, msg)
+	if !ack {
+		return
+	}
+	if err := c.ackFn(ctx, msg.ID); err != nil {
+		return
+	}
+	if dropCause != nil {
+		c.onDropped(ctx, msg, dropCause)
 	}
 }
 
-// ackOne acknowledges a single message, logging on failure. A failed XACK is
-// non-fatal: the message stays in the PEL and the reclaim sweep redelivers it.
-func (c *StreamConsumer) ackOne(ctx context.Context, id string) {
+// ackOne acknowledges a single message, logging and returning the error on
+// failure. A failed XACK is non-fatal: the message stays in the PEL and the
+// reclaim sweep redelivers it — the returned error lets the caller hold back a
+// drop notification until the ACK is confirmed.
+func (c *StreamConsumer) ackOne(ctx context.Context, id string) error {
 	if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, id).Err(); err != nil {
 		c.logger.Error("Failed to ACK message",
 			"stream", c.streamName,
 			"message_id", id,
 			"error", err,
 		)
+		return err
 	}
+	return nil
 }
 
 // shouldAck runs the read-path handler (with inline retry) for one message and
-// reports whether it must be ACKed: true on success or a permanent error
-// (drop the poison message), false on an exhausted transient failure (leave it
-// in the PEL for the reclaim sweep).
-func (c *StreamConsumer) shouldAck(ctx context.Context, msg goredis.XMessage) bool {
+// reports whether it must be ACKed and, when the ACK is a drop, the cause to
+// notify once the ACK is confirmed. The results are: (true, nil) on success,
+// (true, err) on a permanent error (drop the poison message — the caller
+// notifies after ACKing), (false, nil) on an exhausted transient failure (leave
+// it in the PEL for the reclaim sweep).
+func (c *StreamConsumer) shouldAck(ctx context.Context, msg goredis.XMessage) (bool, error) {
 	err := c.invokeWithRetry(ctx, msg)
 	if err == nil {
-		return true
+		return true, nil
 	}
 	if errors.Is(err, events.ErrPermanent) {
 		c.logger.Error("Permanent handler error — ACKing to drop from PEL",
 			"message_id", msg.ID,
 			"error", err,
 		)
-		c.onDropped(ctx, msg, err)
-		return true
+		return true, err
 	}
 	if isHandlerTimeout(err) {
 		c.logger.Error("Handler exceeded its timeout — leaving in PEL for the reclaim sweep",
@@ -789,18 +823,20 @@ func (c *StreamConsumer) shouldAck(ctx context.Context, msg goredis.XMessage) bo
 	} else {
 		c.logger.Error("Message still failing after in-process retries", "message_id", msg.ID, "error", err)
 	}
-	return false // no-ACK; PEL sweep remains the safety net (and eventually quarantines poison)
+	return false, nil // no-ACK; PEL sweep remains the safety net (and eventually quarantines poison)
 }
 
 // ackBatch acknowledges a page of reclaimed message IDs in a single pipelined
-// round trip. Only IDs the handler resolved (success or permanent drop) are
-// passed in, so a transiently-failed reclaimed message is never acked here. The
-// read path acks per message (processOne); reclaimed entries are already past
-// their idle gate and processed single-shot within one sweep, so a per-page ack
-// carries none of the read path's hold-finished-work-in-PEL risk.
-func (c *StreamConsumer) ackBatch(ctx context.Context, ids []string) {
+// round trip, returning the error when the XACK failed. Only IDs the handler
+// resolved (success or permanent drop) are passed in, so a transiently-failed
+// reclaimed message is never acked here. The read path acks per message
+// (processOne); reclaimed entries are already past their idle gate and processed
+// single-shot within one sweep, so a per-page ack carries none of the read
+// path's hold-finished-work-in-PEL risk. The returned error lets the caller hold
+// back drop notifications until the ACK is confirmed.
+func (c *StreamConsumer) ackBatch(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
-		return
+		return nil
 	}
 	if err := c.client.XAck(ctx, c.streamName, c.consumerGroup, ids...).Err(); err != nil {
 		c.logger.Error("Failed to ACK message batch",
@@ -808,5 +844,7 @@ func (c *StreamConsumer) ackBatch(ctx context.Context, ids []string) {
 			"count", len(ids),
 			"error", err,
 		)
+		return err
 	}
+	return nil
 }

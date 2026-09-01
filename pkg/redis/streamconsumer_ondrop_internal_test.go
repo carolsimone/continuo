@@ -11,7 +11,32 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/carolsimone/continuo/pkg/events"
 )
+
+// TestProcessOne_NotifiesDropOnlyAfterAckSucceeds pins the ordering: the read
+// path must notify a permanent drop only once the message is actually ACKed. A
+// failed XACK leaves the message in the PEL to be reprocessed, so finalizing its
+// in-flight state then would abandon a message that was never dropped — in
+// agent-remediation the newly-terminal row lets the same trigger spend another
+// attempt.
+func TestProcessOne_NotifiesDropOnlyAfterAckSucceeds(t *testing.T) {
+	permHandler := func(context.Context, goredis.XMessage) error {
+		return fmt.Errorf("unprocessable: %w", events.ErrPermanent)
+	}
+	var drops atomic.Int32
+	c := NewStreamConsumer(nil, "s", "g", permHandler, discardLog(),
+		WithOnDrop(func(context.Context, goredis.XMessage, error) { drops.Add(1) }))
+
+	c.ackFn = func(context.Context, string) error { return errors.New("XACK failed") }
+	c.processOne(context.Background(), goredis.XMessage{ID: "1-0"})
+	require.Zero(t, drops.Load(), "a failed ACK leaves the message pending — the drop must not be notified")
+
+	c.ackFn = func(context.Context, string) error { return nil }
+	c.processOne(context.Background(), goredis.XMessage{ID: "1-0"})
+	require.Equal(t, int32(1), drops.Load(), "a confirmed ACK notifies the drop exactly once")
+}
 
 // TestOnDropped_FiresRegisteredCallback verifies the drop seam: when a message
 // is abandoned, the registered DropHandler is called with that message and the
