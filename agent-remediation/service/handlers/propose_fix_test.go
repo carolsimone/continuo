@@ -272,6 +272,14 @@ func (r *fakeProposalRepo) FailGenerating(_ context.Context, releaseID, reason s
 		}
 		g.Status = proposal.StatusFailed
 		g.Rationale = reason
+		// Carry the terminal status into the per-node outcomes too, as the real
+		// SQL does — the UI reads a node's own outcome in preference to the row
+		// status, so a lingering 'generating' entry would keep the node spinning.
+		for k, o := range g.NodeOutcomes {
+			if o.Status == proposal.StatusGenerating {
+				g.NodeOutcomes[k] = proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: reason}
+			}
+		}
 		n++
 	}
 	return n, nil

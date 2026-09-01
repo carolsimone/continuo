@@ -116,7 +116,13 @@ type ProposalRepository interface {
 
 	// FailGenerating finalizes releaseID's in-flight 'generating' row,
 	// transitioning it to 'failed' with reason as its rationale, and returns how
-	// many rows it moved.
+	// many rows it moved. It carries 'failed' into the per-node outcomes too:
+	// every node_outcomes entry still marked 'generating' is rewritten to
+	// 'failed' with reason, while any already-terminal entry is left as it is.
+	// This is load-bearing, not cosmetic — the release page reads a node's own
+	// outcome in preference to the row status, so an entry left at 'generating'
+	// would keep that node reporting a fix as still being generated even with the
+	// row failed.
 	//
 	// It exists for the one writer that starts an attempt with nothing behind it
 	// to redeliver. A trigger consumed from the stream is redelivered when the

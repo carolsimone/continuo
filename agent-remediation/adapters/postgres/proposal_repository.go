@@ -94,7 +94,13 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 }
 
 // FailGenerating finalizes releaseID's in-flight 'generating' row, recording
-// reason as the rationale, and returns how many rows moved.
+// reason as the rationale, and returns how many rows moved. It carries the
+// terminal status into the per-node outcomes too: every node_outcomes entry
+// still marked 'generating' is rewritten to 'failed' with reason, while any
+// already-terminal entry is left as it is. This matters because the release UI
+// reads a node's own outcome in preference to the row status, so a per-node
+// entry left at 'generating' would keep the FIX cell spinning and hide the
+// release's "Try again" even though the row itself is failed.
 //
 // One attempt now addresses a release's whole failing set, so at most one row
 // per release can be generating at a time: the release id alone identifies
@@ -104,7 +110,18 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 // already reached a terminal state is left exactly as it is.
 func (r *ProposalRepository) FailGenerating(ctx context.Context, releaseID, reason string) (int, error) {
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$3, rationale=$2 WHERE release_id=$1 AND status=$4`,
+		`UPDATE proposal
+		   SET status=$3,
+		       rationale=$2,
+		       node_outcomes = COALESCE(
+		         (SELECT jsonb_object_agg(
+		            key,
+		            CASE WHEN value->>'status' = $4
+		                 THEN jsonb_build_object('status', $3::text, 'reason', $2::text)
+		                 ELSE value END)
+		          FROM jsonb_each(node_outcomes)),
+		         node_outcomes)
+		 WHERE release_id=$1 AND status=$4`,
 		releaseID, reason, proposal.StatusFailed, proposal.StatusGenerating)
 	if err != nil {
 		return 0, fmt.Errorf("fail generating proposals: %w", err)

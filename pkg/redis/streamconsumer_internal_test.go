@@ -25,19 +25,20 @@ func testConsumer(handler MessageHandler) *StreamConsumer {
 		workerCount: 1,
 		// No-op ack by default (no live Redis). Tests asserting ack behaviour
 		// override this with a recorder.
-		ackFn: func(context.Context, string) {},
+		ackFn: func(context.Context, string) error { return nil },
 	}
 }
 
 // ackRecorder returns an ackFn that records acknowledged message IDs and the
 // recorded slice. Safe for concurrent lanes.
-func ackRecorder() (func(context.Context, string), *[]string, *sync.Mutex) {
+func ackRecorder() (func(context.Context, string) error, *[]string, *sync.Mutex) {
 	var mu sync.Mutex
 	var acked []string
-	return func(_ context.Context, id string) {
+	return func(_ context.Context, id string) error {
 		mu.Lock()
 		acked = append(acked, id)
 		mu.Unlock()
+		return nil
 	}, &acked, &mu
 }
 
