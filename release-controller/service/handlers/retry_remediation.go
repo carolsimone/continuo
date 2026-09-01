@@ -179,12 +179,14 @@ func openProposal(current, all []ports.ProposalSummary) (ErrProposalOpen, bool) 
 }
 
 // openInCurrentRound reports whether any node's latest attempt in the current
-// round is still generating or verifying, or is proposed with a PR that is
-// not terminally closed — a fix may still land without spending another
-// round. A proposed attempt whose PR was rejected (closed without merging) is
-// a dead end for that attempt, not an open one, so it does not block a new
-// round. Only each node's latest attempt is consulted; an earlier attempt
-// superseded by a later one on the same node does not count.
+// round is still generating or verifying, or is proposed with a fix that could
+// still land. A batched attempt opens one pull request per owning service, so
+// the decision weighs all of them: the attempt is a dead end — closed without
+// landing a fix — only once every owning service's pull request has been
+// rejected. If any owning service has no pull request yet, or one in any
+// non-rejected state, a fix may still land and a new round would duplicate it.
+// Only each node's latest attempt is consulted; an earlier attempt superseded
+// by a later one on the same node does not count.
 func openInCurrentRound(current []ports.ProposalSummary) (ErrProposalOpen, bool) {
 	latest := map[string]ports.ProposalSummary{}
 	for _, p := range current {
@@ -198,27 +200,29 @@ func openInCurrentRound(current []ports.ProposalSummary) (ErrProposalOpen, bool)
 		case "generating", "verifying":
 			return ErrProposalOpen{ProposalID: p.ID, PRURL: p.PRURL}, true
 		case "proposed":
-			if p.PRState == "rejected" {
+			if isDeadEnd(p) {
 				continue
 			}
-			return ErrProposalOpen{ProposalID: p.ID, PRURL: p.PRURL}, true
+			return ErrProposalOpen{ProposalID: p.ID, PRURL: representativePRURL(p)}, true
 		}
 	}
 	return ErrProposalOpen{}, false
 }
 
-// openPRAcrossRounds reports whether any proposal from any round — not just
-// the current one — has a PR that is opening, open, or merged: a fix already
-// out for human review makes a new round redundant regardless of which round
-// proposed it.
+// openPRAcrossRounds reports whether any proposal from any round — not just the
+// current one — has a pull request that is opening, open, or merged: a fix
+// already out for human review makes a new round redundant regardless of which
+// round proposed it. A batched attempt's per-service pull requests are all
+// weighed, so one service's still-open PR blocks even when a sibling service's
+// PR was rejected.
 func openPRAcrossRounds(all []ports.ProposalSummary) (ErrProposalOpen, bool) {
 	byNode := map[string]ports.ProposalSummary{}
 	for _, p := range all {
-		switch p.PRState {
-		case "opening", "open", "merged":
-			if cur, ok := byNode[p.NodeID]; !ok || p.Attempt > cur.Attempt {
-				byNode[p.NodeID] = p
-			}
+		if !hasOutstandingPR(p) {
+			continue
+		}
+		if cur, ok := byNode[p.NodeID]; !ok || p.Attempt > cur.Attempt {
+			byNode[p.NodeID] = p
 		}
 	}
 	ids := sortedNodeIDs(byNode)
@@ -226,7 +230,67 @@ func openPRAcrossRounds(all []ports.ProposalSummary) (ErrProposalOpen, bool) {
 		return ErrProposalOpen{}, false
 	}
 	p := byNode[ids[0]]
-	return ErrProposalOpen{ProposalID: p.ID, PRURL: p.PRURL}, true
+	return ErrProposalOpen{ProposalID: p.ID, PRURL: representativePRURL(p)}, true
+}
+
+// isDeadEnd reports whether a proposed attempt has run out of road: every
+// owning service's pull request has been rejected, so no fix from this attempt
+// can still land. An owning service with no pull request yet, or one in any
+// non-rejected state, means the attempt is still live.
+func isDeadEnd(p ports.ProposalSummary) bool {
+	byService := map[string]ports.ProposalPR{}
+	for _, pr := range p.EffectivePRs() {
+		byService[pr.Service] = pr
+	}
+	for _, svc := range owningServices(p) {
+		pr, ok := byService[svc]
+		if !ok || pr.PRState != "rejected" {
+			return false
+		}
+	}
+	return true
+}
+
+// owningServices names the services whose fixes an attempt must land before it
+// is exhausted: PRServices when the attempt carries them, otherwise the
+// services named by its effective pull requests (the legacy single-group case).
+func owningServices(p ports.ProposalSummary) []string {
+	if len(p.PRServices) > 0 {
+		return p.PRServices
+	}
+	prs := p.EffectivePRs()
+	svcs := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		svcs = append(svcs, pr.Service)
+	}
+	return svcs
+}
+
+// hasOutstandingPR reports whether any of an attempt's pull requests is being
+// opened, open, or merged.
+func hasOutstandingPR(p ports.ProposalSummary) bool {
+	for _, pr := range p.EffectivePRs() {
+		switch pr.PRState {
+		case "opening", "open", "merged":
+			return true
+		}
+	}
+	return false
+}
+
+// representativePRURL is the pull request URL to name when an attempt blocks a
+// retry: the first non-rejected pull request's URL in service order, so a human
+// is pointed at a PR that could still land rather than a closed one; the legacy
+// singular URL when the attempt carries no per-service pull requests.
+func representativePRURL(p ports.ProposalSummary) string {
+	prs := append([]ports.ProposalPR(nil), p.EffectivePRs()...)
+	sort.Slice(prs, func(i, j int) bool { return prs[i].Service < prs[j].Service })
+	for _, pr := range prs {
+		if pr.PRState != "rejected" {
+			return pr.PRURL
+		}
+	}
+	return p.PRURL
 }
 
 // sortedNodeIDs returns m's keys in sorted order, so a scan over the map

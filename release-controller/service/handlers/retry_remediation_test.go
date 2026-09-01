@@ -262,3 +262,147 @@ func TestRetryRemediation_NamesTheLowestNodeIDWhenSeveralAreOpen(t *testing.T) {
 	require.Equal(t, "p-finance", open.ProposalID, "finance sorts before marketing")
 	require.Equal(t, "https://x/pr/finance", open.PRURL)
 }
+
+func TestRetryRemediation_MultiServiceProposedOneServiceStillOpenBlocks(t *testing.T) {
+	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
+	// A batched attempt opened one PR per owning service: service "a"'s PR was
+	// rejected, service "b"'s is still open. The singular PRState mirrors the
+	// first service's row ("rejected"); reading it alone would wrongly call the
+	// whole attempt a dead end. The still-open "b" PR must block the retry, and
+	// the refusal must name that open PR rather than the rejected one.
+	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{
+		ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed",
+		PRState: "rejected", PRURL: "https://x/pr/a",
+		PRServices: []string{"a", "b"},
+		PullRequests: []ports.ProposalPR{
+			{Service: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
+			{Service: "b", PRState: "open", PRURL: "https://x/pr/b"},
+		},
+		RemediationRound: 1,
+	}}}
+
+	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+	var open handlers.ErrProposalOpen
+	require.ErrorAs(t, err, &open)
+	require.Equal(t, "p1", open.ProposalID)
+	require.Equal(t, "https://x/pr/b", open.PRURL, "names the still-open PR, not the rejected one")
+
+	r, err := store.GetRelease("rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Empty(t, outboxEntries(store), "nothing emitted")
+}
+
+func TestRetryRemediation_MultiServiceMergedPRAcrossRoundsBlocks(t *testing.T) {
+	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
+	// The attempt escalated (its status blocks nothing on the current-round
+	// check), but one of its per-service PRs merged while another was rejected.
+	// A merged fix already landed for a service, so a new round would duplicate
+	// it — the singular PRState ("rejected", mirroring the first service) hides
+	// the merged PR from an aggregate-blind reader.
+	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{
+		ID: "p1", NodeID: "finance", Attempt: 1, Status: "escalated",
+		PRState: "rejected", PRURL: "https://x/pr/a",
+		PRServices: []string{"a", "b"},
+		PullRequests: []ports.ProposalPR{
+			{Service: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
+			{Service: "b", PRState: "merged", PRURL: "https://x/pr/b"},
+		},
+		RemediationRound: 1,
+	}}}
+
+	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+	var open handlers.ErrProposalOpen
+	require.ErrorAs(t, err, &open)
+	require.Equal(t, "p1", open.ProposalID)
+
+	r, err := store.GetRelease("rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Empty(t, outboxEntries(store), "nothing emitted")
+}
+
+func TestRetryRemediation_MultiServiceBothPRsRejectedIsADeadEnd(t *testing.T) {
+	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
+	// Every owning service's PR was rejected: the attempt is a genuine dead end,
+	// so a new round is allowed.
+	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{
+		ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed",
+		PRState: "rejected", PRURL: "https://x/pr/a",
+		PRServices: []string{"a", "b"},
+		PullRequests: []ports.ProposalPR{
+			{Service: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
+			{Service: "b", PRState: "rejected", PRURL: "https://x/pr/b"},
+		},
+		RemediationRound: 1,
+	}}}
+
+	res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 2, res.RemediationRound)
+
+	r, err := store.GetRelease("rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 2, r.RemediationRound())
+}
+
+func TestRetryRemediation_MultiServiceOwningServiceWithoutPRBlocks(t *testing.T) {
+	deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+	store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
+	// Two owning services, but only service "a" has opened (and had rejected) a
+	// PR; service "b" has no PR row yet, so its fix could still land. The attempt
+	// is a dead end only once every owning service's PR is rejected, so it must
+	// still block the retry.
+	deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{{
+		ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed",
+		PRState: "rejected", PRURL: "https://x/pr/a",
+		PRServices: []string{"a", "b"},
+		PullRequests: []ports.ProposalPR{
+			{Service: "a", PRState: "rejected", PRURL: "https://x/pr/a"},
+		},
+		RemediationRound: 1,
+	}}}
+
+	_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+	var open handlers.ErrProposalOpen
+	require.ErrorAs(t, err, &open)
+	require.Equal(t, "p1", open.ProposalID)
+
+	r, err := store.GetRelease("rel-1")
+	require.NoError(t, err)
+	require.Equal(t, 1, r.RemediationRound(), "no round spent")
+	require.Empty(t, outboxEntries(store), "nothing emitted")
+}
+
+func TestRetryRemediation_LegacyProposalWithoutPerServicePRs(t *testing.T) {
+	// A pre-split proposal carries no PullRequests, only the singular fields, and
+	// must decide exactly as it did before the per-service split.
+	t.Run("proposed with singular rejected is a dead end", func(t *testing.T) {
+		deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+		store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
+		deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{
+			{ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed", PRState: "rejected", RemediationRound: 1},
+		}}
+
+		res, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+		require.NoError(t, err)
+		require.Equal(t, 2, res.RemediationRound)
+	})
+
+	t.Run("proposed with singular open blocks", func(t *testing.T) {
+		deps, store := newDeps(time.Date(2026, 8, 27, 1, 0, 0, 0, time.UTC))
+		store.SeedRelease(rejectedRelease(t, "rel-1", `{"reason":"compile_failed"}`))
+		deps.Proposals = &fakeProposals{items: []ports.ProposalSummary{
+			{ID: "p1", NodeID: "finance", Attempt: 1, Status: "proposed", PRState: "open", PRURL: "https://x/pr/legacy", RemediationRound: 1},
+		}}
+
+		_, err := handlers.RetryRemediation(context.Background(), deps, "rel-1")
+		var open handlers.ErrProposalOpen
+		require.ErrorAs(t, err, &open)
+		require.Equal(t, "p1", open.ProposalID)
+		require.Equal(t, "https://x/pr/legacy", open.PRURL)
+	})
+}
