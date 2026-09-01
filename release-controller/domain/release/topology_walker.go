@@ -27,6 +27,33 @@ func DerivedChangedNodeIDs(candidate, prod Topology) []string {
 	return changed
 }
 
+// OverlayTopology returns base with every over node upserted by UniqueID: an
+// over node whose id already exists in base replaces the base node (over wins),
+// an over-only node is added, and a base node whose id is absent from over is
+// kept unchanged. The result is sorted by UniqueID for determinism, and neither
+// input is mutated.
+//
+// It layers one topology's view of a set of nodes over another's. Baselining a
+// change diff on current_prod overlaid with a rejected candidate — rather than
+// current_prod alone — measures only the delta a fix introduces on top of that
+// candidate: a node the overlay still holds at the candidate's content_hash is
+// not reported as changed, while an edit that departs from it is.
+func OverlayTopology(base, over Topology) Topology {
+	byID := make(map[string]Node, len(base)+len(over))
+	for _, n := range base {
+		byID[n.UniqueID] = n
+	}
+	for _, n := range over {
+		byID[n.UniqueID] = n
+	}
+	out := make(Topology, 0, len(byID))
+	for _, n := range byID {
+		out = append(out, n)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UniqueID < out[j].UniqueID })
+	return out
+}
+
 // DescendantsClosure returns the union of the seed nodes and all their
 // transitive downstream descendants, deduplicated and sorted topologically
 // (upstreams before downstreams). Nodes named in seeds but not present in

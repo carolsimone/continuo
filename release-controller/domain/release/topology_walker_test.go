@@ -12,6 +12,72 @@ func withUpstream(n release.Node, ups ...string) release.Node {
 	return n
 }
 
+func TestOverlayTopology_OverNodeReplacesSameIDBaseNode(t *testing.T) {
+	base := release.Topology{{UniqueID: "a", ContentHash: "base"}}
+	over := release.Topology{{UniqueID: "a", ContentHash: "over"}}
+	got := release.OverlayTopology(base, over)
+	assert.Equal(t, release.Topology{{UniqueID: "a", ContentHash: "over"}}, got,
+		"an over node wins over the same-id base node")
+}
+
+func TestOverlayTopology_OverOnlyNodeIsAdded(t *testing.T) {
+	base := release.Topology{{UniqueID: "a", ContentHash: "h_a"}}
+	over := release.Topology{{UniqueID: "b", ContentHash: "h_b"}}
+	got := release.OverlayTopology(base, over)
+	assert.Equal(t, release.Topology{
+		{UniqueID: "a", ContentHash: "h_a"},
+		{UniqueID: "b", ContentHash: "h_b"},
+	}, got, "an over-only node joins the result")
+}
+
+func TestOverlayTopology_BaseOnlyNodeIsKept(t *testing.T) {
+	base := release.Topology{
+		{UniqueID: "a", ContentHash: "h_a"},
+		{UniqueID: "keep", ContentHash: "h_keep"},
+	}
+	over := release.Topology{{UniqueID: "a", ContentHash: "over"}}
+	got := release.OverlayTopology(base, over)
+	assert.Equal(t, release.Topology{
+		{UniqueID: "a", ContentHash: "over"},
+		{UniqueID: "keep", ContentHash: "h_keep"},
+	}, got, "a base node absent from over is kept unchanged")
+}
+
+func TestOverlayTopology_EmptyOverReturnsBaseSorted(t *testing.T) {
+	base := release.Topology{
+		{UniqueID: "z", ContentHash: "h_z"},
+		{UniqueID: "a", ContentHash: "h_a"},
+	}
+	got := release.OverlayTopology(base, nil)
+	assert.Equal(t, release.Topology{
+		{UniqueID: "a", ContentHash: "h_a"},
+		{UniqueID: "z", ContentHash: "h_z"},
+	}, got, "an empty overlay leaves base content unchanged (sorted by id)")
+}
+
+func TestOverlayTopology_DeterministicSortedByUniqueID(t *testing.T) {
+	base := release.Topology{{UniqueID: "m", ContentHash: "1"}}
+	over := release.Topology{
+		{UniqueID: "z", ContentHash: "2"},
+		{UniqueID: "a", ContentHash: "3"},
+	}
+	got := release.OverlayTopology(base, over)
+	ids := make([]string, len(got))
+	for i, n := range got {
+		ids[i] = n.UniqueID
+	}
+	assert.Equal(t, []string{"a", "m", "z"}, ids, "result is sorted by unique_id")
+}
+
+// OverlayTopology must not mutate either input slice's contents.
+func TestOverlayTopology_DoesNotMutateInputs(t *testing.T) {
+	base := release.Topology{{UniqueID: "a", ContentHash: "base"}}
+	over := release.Topology{{UniqueID: "a", ContentHash: "over"}}
+	_ = release.OverlayTopology(base, over)
+	assert.Equal(t, "base", base[0].ContentHash, "base is not mutated")
+	assert.Equal(t, "over", over[0].ContentHash, "over is not mutated")
+}
+
 func TestTopologyWalker_LinearChain(t *testing.T) {
 	topo := release.Topology{
 		{UniqueID: "a"},
