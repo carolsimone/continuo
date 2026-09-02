@@ -217,10 +217,9 @@ spec:
         - port: 8088
 ---
 # agent-remediation reaches release-controller's HTTP API (port 8088) to
-# submit shadow verification releases, poll their verdicts, and read the
-# original failing release's image tags — the whole shadow-verify lane. Only
-# ui is admitted by allow-ui-upstreams above, so without this edge every
-# proposed fix stalls before it can be verified.
+# submit fix-verification runs, poll their status, and read the failing
+# release's image tag. Only ui is admitted by allow-ui-upstreams above, so
+# without this edge every proposed fix stalls before it can be verified.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
