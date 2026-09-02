@@ -478,6 +478,7 @@ describe('RemediationPanel — a batched proposal spanning several nodes', () =>
 
     expect(screen.getByRole('link', { name: /verify-rel-1-core-a1/ })).toHaveAttribute('href', '/verifications/verify-rel-1-core-a1');
     expect(screen.getByText(/core · dbt · Verifying fix…/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /verify-rel-1-ops-a1/ })).toHaveAttribute('href', '/verifications/verify-rel-1-ops-a1');
     expect(screen.getByText(/ops · python · Queued for verification/)).toBeInTheDocument();
   });
 

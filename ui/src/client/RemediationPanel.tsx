@@ -46,7 +46,10 @@ function sourceLabel(resolved: boolean): string {
   return resolved ? 'yes' : 'no';
 }
 
-// verificationPhaseLabel is the wording for one run's recorded phase.
+// verificationPhaseLabel is the wording for one run's recorded phase. The
+// default branch covers both 'running' and '' (a run the reconciler has not
+// observed yet) — an unread run is already underway from the operator's
+// point of view, so both read as the same in-progress wording.
 function verificationPhaseLabel(phase: string): string {
   switch (phase) {
     case 'queued':  return 'Queued for verification';
