@@ -10,6 +10,8 @@ import { createConfigRouter } from './routes/config';
 import { createFeaturesRouter } from './routes/features';
 import { createTopologyRouter } from './routes/topology';
 import { createReleasesRouter } from './routes/releases';
+import { createVerificationsRouter } from './routes/verifications';
+import { createPipelineRouter } from './routes/pipeline';
 import { createRemediationRouter } from './routes/remediation';
 import { createReleaseClient } from './release-client';
 import { getLogObject } from './s3';
@@ -51,7 +53,10 @@ export function createApp(
   app.use('/api/topology', createTopologyRouter(graphClient));
   app.use('/api/config', createConfigRouter(configFilePath));
   app.use('/api/features', createFeaturesRouter(chatBridgeEnabled));
-  app.use('/api/releases', createReleasesRouter(createReleaseClient(releaseControllerUrl), getLogObject, commitAuthorResolver));
+  const releaseClient = createReleaseClient(releaseControllerUrl);
+  app.use('/api/releases', createReleasesRouter(releaseClient, getLogObject, commitAuthorResolver));
+  app.use('/api/verifications', createVerificationsRouter(releaseClient));
+  app.use('/api/pipeline', createPipelineRouter(releaseClient));
   if (remediationClient) {
     app.use('/api/remediation', createRemediationRouter(remediationClient, prCreator, getLogObject));
   }

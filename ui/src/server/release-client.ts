@@ -3,6 +3,9 @@ export interface ReleaseClient {
   getRelease(id: string): Promise<any>;
   getCurrentProd(): Promise<any>;
   retryRemediation(id: string): Promise<{ status: number; body: unknown }>;
+  getVerificationRun(id: string): Promise<any>;
+  listVerificationRuns(releaseId: string): Promise<any>;
+  getPipeline(): Promise<any>;
 }
 
 class HttpError extends Error {
@@ -32,6 +35,15 @@ export function createReleaseClient(baseUrl: string): ReleaseClient {
     },
     getCurrentProd() {
       return getJson('/current-prod');
+    },
+    getVerificationRun(id) {
+      return getJson(`/verification-runs/${encodeURIComponent(id)}`);
+    },
+    listVerificationRuns(releaseId) {
+      return getJson(`/verification-runs?verifies=${encodeURIComponent(releaseId)}`);
+    },
+    getPipeline() {
+      return getJson('/pipeline');
     },
     async retryRemediation(id) {
       const resp = await fetch(`${base}/releases/${encodeURIComponent(id)}/retry-remediation`, { method: 'POST' });
