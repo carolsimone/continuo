@@ -18,17 +18,29 @@ const (
 	StatusGenerating Status = "generating"
 	// StatusVerifying is the in-flight state that follows StatusGenerating for a
 	// fix whose correctness cannot be judged synchronously: the agent has
-	// proposed a fix and posted a shadow release to run it through the full
-	// parse -> candidate-schema -> validation pipeline. The row carries the
-	// shadow release's id (ShadowReleaseID) and the raw trigger payload
-	// (TriggerPayload) so an asynchronous reconciler can poll the release and
-	// finalize the attempt to 'proposed' (the fix verified) or 'failed' (with
-	// the shadow's error recorded as evidence for the next attempt).
+	// proposed a fix and posted a fix-verification run to carry it through the
+	// full parse -> candidate-schema -> validation pipeline. The row carries the
+	// run's id (VerificationRunID) and the raw trigger payload (TriggerPayload)
+	// so an asynchronous reconciler can poll the run and finalize the attempt to
+	// 'proposed' (the fix verified) or 'failed' (with the run's error recorded
+	// as evidence for the next attempt).
 	StatusVerifying Status = "verifying"
 	StatusProposed  Status = "proposed"
 	StatusSkipped   Status = "skipped"
 	StatusFailed    Status = "failed"
 	StatusEscalated Status = "escalated"
+)
+
+// Phase is where a fix-verification run stands, as this service last read it
+// from release-controller. queued: waiting its turn in the pipeline's FIFO.
+// running: in one of the legs. passed / failed: the verdict.
+type Phase string
+
+const (
+	PhaseQueued  Phase = "queued"
+	PhaseRunning Phase = "running"
+	PhasePassed  Phase = "passed"
+	PhaseFailed  Phase = "failed"
 )
 
 // FileEdit is one proposed change to a single file: its repository-relative
@@ -56,12 +68,41 @@ type NodeOutcome struct {
 	Reason string
 }
 
-// Verification is one shadow release posted to verify the edits made to a
-// single service.
+// Verification is one fix-verification run posted to judge the edits made to
+// a single service, and the durable summary of how it went. The summary
+// outlives the run itself: release-controller prunes finished runs on its
+// retention window, and this is what still explains an old attempt after
+// that.
 type Verification struct {
-	Service         string
-	Kind            string
-	ShadowReleaseID string
+	Service string
+	Kind    string
+	RunID   string
+	// Phase is the run's last-read phase; "" on a row the reconciler has
+	// not yet read since the run was recorded.
+	Phase       Phase
+	ActivatedAt *time.Time
+	// Error is the named per-node errors the run reported; empty unless the
+	// run failed.
+	Error string
+}
+
+// UnionServices merges service-name sets into one sorted, de-duplicated
+// slice with empty names dropped.
+func UnionServices(sets ...[]string) []string {
+	seen := map[string]bool{}
+	for _, set := range sets {
+		for _, s := range set {
+			if s != "" {
+				seen[s] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Confidence is the model's self-reported confidence in the proposed fix.
@@ -91,15 +132,18 @@ type Proposal struct {
 	// cluster whose fixer skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]NodeOutcome
-	// Verifications is one shadow release per edited service;
-	// ShadowReleaseID is the view of the first.
+	// Verifications is one fix-verification run per edited service;
+	// VerificationRunID is the view of the first.
 	Verifications []Verification
-	// ShadowReleaseID is the id of the shadow release posted to verify this
-	// attempt's fix, written when Status is (or was) StatusVerifying. It is
-	// kept when the attempt is finalized, so a resolved row still names the
-	// release that judged it. Empty for an attempt that never entered
-	// verification.
-	ShadowReleaseID string
+	// VerificationRunID is the run id of the first verification — the
+	// single-run view of Verifications. Written when Status is (or was)
+	// StatusVerifying. It is kept when the attempt is finalized, so a
+	// resolved row still names the run that judged it. Empty for an attempt
+	// that never entered verification.
+	VerificationRunID string
+	// Services is every service this attempt touched: the failing nodes'
+	// services plus the edited ones.
+	Services []string
 	// TriggerPayload is the raw remediation.requested:v1 payload that drove
 	// this attempt, written when Status is (or was) StatusVerifying so a
 	// reconciler can rebuild the trigger and retry with the shadow release's
@@ -164,17 +208,17 @@ func (p *Proposal) NormalizeSingleFileView() {
 
 // NormalizeRepresentativeViews derives the single-value views of the batched
 // fields: ResolvedNodeIDs is sorted, NodeID defaults to its first entry,
-// ShadowReleaseID defaults to the first verification's release, and the
+// VerificationRunID defaults to the first verification's run, and the
 // single-file scalars follow edits[0]. Every writer calls it before the
 // aggregate is persisted or turned into an event, so the row and the event
-// cannot disagree about which node or release represents the attempt.
+// cannot disagree about which node or run represents the attempt.
 func (p *Proposal) NormalizeRepresentativeViews() {
 	sort.Strings(p.ResolvedNodeIDs)
 	if p.NodeID == "" && len(p.ResolvedNodeIDs) > 0 {
 		p.NodeID = p.ResolvedNodeIDs[0]
 	}
-	if p.ShadowReleaseID == "" && len(p.Verifications) > 0 {
-		p.ShadowReleaseID = p.Verifications[0].ShadowReleaseID
+	if p.VerificationRunID == "" && len(p.Verifications) > 0 {
+		p.VerificationRunID = p.Verifications[0].RunID
 	}
 	p.NormalizeSingleFileView()
 }

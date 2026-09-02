@@ -4,6 +4,8 @@ import (
 	"sort"
 
 	"github.com/google/uuid"
+
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 )
 
 // Trigger is the decoded remediation.requested:v2 payload that drives one
@@ -23,10 +25,6 @@ type Trigger struct {
 	// rejection, which precedes the parse that produces the bundle; every
 	// post-parse rejection (duplicate_table included) carries it.
 	CodeBundleURI string
-	// Shadow is true when the rejected release was itself a fix-verification
-	// release. The classifier records such rejections but never emits them, so
-	// a Shadow trigger is not produced; the field travels for completeness.
-	Shadow bool
 	// Nodes is the release's healable failing set, one entry per node.
 	Nodes []TriggerNode
 	// MessageID is the Redis Stream message ID of the inbound
@@ -121,6 +119,15 @@ func (t Trigger) NodeIDs() []string {
 	return ids
 }
 
+// Services is the sorted set of services the trigger's failing nodes belong to.
+func (t Trigger) Services() []string {
+	names := make([]string, 0, len(t.Nodes))
+	for _, n := range t.Nodes {
+		names = append(names, n.Service)
+	}
+	return proposal.UnionServices(names)
+}
+
 // idempotencyKey identifies this inbound trigger for LLM response caching. It
 // mirrors the message-processing dedup identity: the upstream OutboxEntryID when
 // present (stable across a Redis republish of the same logical trigger with a
@@ -150,11 +157,9 @@ type TriggerWire struct {
 	CommitSHA        string `json:"commit_sha"`
 	// CodeBundleURI locates the release's code-bundle document; empty when
 	// parse never completed (compile-stage failures).
-	CodeBundleURI string `json:"code_bundle_uri,omitempty"`
-	// Shadow marks a rejection of a fix-verification release.
-	Shadow       bool              `json:"shadow"`
-	ClassifiedAt string            `json:"classified_at,omitempty"`
-	Nodes        []TriggerNodeWire `json:"nodes"`
+	CodeBundleURI string            `json:"code_bundle_uri,omitempty"`
+	ClassifiedAt  string            `json:"classified_at,omitempty"`
+	Nodes         []TriggerNodeWire `json:"nodes"`
 }
 
 // TriggerNodeWire is one failing node inside a TriggerWire.
@@ -218,7 +223,6 @@ func TriggerFromWire(w TriggerWire) Trigger {
 		Repo:             w.Repo,
 		CommitSHA:        w.CommitSHA,
 		CodeBundleURI:    w.CodeBundleURI,
-		Shadow:           w.Shadow,
 		Nodes:            nodes,
 	}
 }

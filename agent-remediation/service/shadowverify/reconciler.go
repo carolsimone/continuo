@@ -189,10 +189,10 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 	anyRejected, allTerminal := false, true
 	var runningSince []time.Time
 	for _, ver := range verificationsOf(v) {
-		verdict, err := r.releases.Verdict(ctx, ver.ShadowReleaseID)
+		verdict, err := r.releases.Verdict(ctx, ver.RunID)
 		if err != nil {
 			r.logger.Warn("shadow verify: read shadow release verdict",
-				"proposal_id", v.ID, "shadow_release", ver.ShadowReleaseID, "error", err)
+				"proposal_id", v.ID, "shadow_release", ver.RunID, "error", err)
 			r.failIfUnreadableTooLong(ctx, v)
 			return
 		}
@@ -222,14 +222,15 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 	}
 }
 
-// verificationsOf is the set of shadow releases judging one attempt. A row that
-// recorded per-service verifications names them all; a row that posted a single
-// shadow release names only ShadowReleaseID, and is that one verification.
+// verificationsOf is the set of verification runs judging one attempt. A row
+// that recorded per-service verifications names them all; a row that posted a
+// single verification run names only VerificationRunID, and is that one
+// verification.
 func verificationsOf(v proposal.View) []proposal.Verification {
 	if len(v.Verifications) > 0 {
 		return v.Verifications
 	}
-	return []proposal.Verification{{ShadowReleaseID: v.ShadowReleaseID}}
+	return []proposal.Verification{{RunID: v.VerificationRunID}}
 }
 
 // verified finalizes an attempt every shadow release validated: the proposal
@@ -246,7 +247,7 @@ func (r *Reconciler) verified(ctx context.Context, v proposal.View) {
 	}
 	defer func() { _ = u.Rollback() }()
 
-	hit, err := u.ProposalRepo().MarkVerified(ctx, v.ID)
+	hit, err := u.ProposalRepo().MarkVerified(ctx, v.ID, v.Verifications)
 	if err != nil {
 		r.logger.Warn("shadow verify: mark verified", "proposal_id", v.ID, "error", err)
 		return
@@ -288,7 +289,7 @@ func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr st
 	}
 	defer func() { _ = u.Rollback() }()
 
-	hit, err := u.ProposalRepo().MarkVerifyFailed(ctx, v.ID, verifyErr)
+	hit, err := u.ProposalRepo().MarkVerifyFailed(ctx, v.ID, verifyErr, v.Verifications)
 	if err != nil {
 		r.logger.Warn("shadow verify: mark verify failed", "proposal_id", v.ID, "error", err)
 		return
@@ -475,23 +476,23 @@ func (r *Reconciler) abandonInFlight(ctx context.Context, v proposal.View, cause
 // nodes that were waiting for it.
 func proposedEvent(v proposal.View) proposal.Proposal {
 	return proposal.Proposal{
-		Source:           v.Source,
-		ReleaseID:        v.ReleaseID,
-		RemediationRound: v.RemediationRound,
-		NodeID:           v.NodeID,
-		ResolvedNodeIDs:  append([]string(nil), v.ResolvedNodeIDs...),
-		ErrorSignature:   v.ErrorSignature,
-		Attempt:          v.Attempt,
-		Status:           proposal.StatusProposed,
-		NodeOutcomes:     proposedOutcomes(v.NodeOutcomes),
-		Verifications:    append([]proposal.Verification(nil), v.Verifications...),
-		ShadowReleaseID:  v.ShadowReleaseID,
-		Confidence:       v.Confidence,
-		Rationale:        v.Rationale,
-		ProposedSQLURI:   v.ProposedSQLURI,
-		DiffURI:          v.DiffURI,
-		Edits:            append([]proposal.FileEdit(nil), v.Edits...),
-		Model:            v.Model,
+		Source:            v.Source,
+		ReleaseID:         v.ReleaseID,
+		RemediationRound:  v.RemediationRound,
+		NodeID:            v.NodeID,
+		ResolvedNodeIDs:   append([]string(nil), v.ResolvedNodeIDs...),
+		ErrorSignature:    v.ErrorSignature,
+		Attempt:           v.Attempt,
+		Status:            proposal.StatusProposed,
+		NodeOutcomes:      proposedOutcomes(v.NodeOutcomes),
+		Verifications:     append([]proposal.Verification(nil), v.Verifications...),
+		VerificationRunID: v.VerificationRunID,
+		Confidence:        v.Confidence,
+		Rationale:         v.Rationale,
+		ProposedSQLURI:    v.ProposedSQLURI,
+		DiffURI:           v.DiffURI,
+		Edits:             append([]proposal.FileEdit(nil), v.Edits...),
+		Model:             v.Model,
 	}
 }
 
@@ -529,7 +530,7 @@ func verifyError(v proposal.View, nodeErrors map[string]string) string {
 		return all
 	}
 	return fmt.Sprintf("shadow release %s was rejected without a per-node error",
-		verificationsOf(v)[0].ShadowReleaseID)
+		verificationsOf(v)[0].RunID)
 }
 
 // namedErrors renders the errors of the given nodes as "node: message" joined

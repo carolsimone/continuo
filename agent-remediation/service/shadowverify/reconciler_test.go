@@ -14,9 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/pkg/messageprocessing"
-	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
 	rredis "github.com/carolsimone/continuo/agent-remediation/adapters/redis"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
@@ -24,6 +21,9 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // testNow is the instant every test's clock reports; row ages are expressed
@@ -114,13 +114,13 @@ func verifyingRow(id string, attempt int, age time.Duration) proposal.View {
 		NodeOutcomes: map[string]proposal.NodeOutcome{
 			"analytics.orders": {Status: proposal.StatusVerifying},
 		},
-		Verifications:   []proposal.Verification{{Service: "svc", Kind: "python", ShadowReleaseID: shadow}},
-		ShadowReleaseID: shadow,
-		TriggerPayload:  requestedPayload(),
-		Confidence:      proposal.ConfidenceHigh,
-		Rationale:       "corrected the declared column type",
-		ProposedSQLURI:  "s3://b/proposed.yaml",
-		DiffURI:         "s3://b/diff.patch",
+		Verifications:     []proposal.Verification{{Service: "svc", Kind: "python", RunID: shadow}},
+		VerificationRunID: shadow,
+		TriggerPayload:    requestedPayload(),
+		Confidence:        proposal.ConfidenceHigh,
+		Rationale:         "corrected the declared column type",
+		ProposedSQLURI:    "s3://b/proposed.yaml",
+		DiffURI:           "s3://b/diff.patch",
 		Edits: []proposal.FileEdit{{
 			Path:         "contracts/svc.yml",
 			ContentURI:   "s3://b/proposed.yaml",
@@ -180,7 +180,7 @@ func (r *fakeProposalRepo) ListVerifying(context.Context) ([]proposal.View, erro
 	return out, nil
 }
 
-func (r *fakeProposalRepo) MarkVerified(_ context.Context, id string) (bool, error) {
+func (r *fakeProposalRepo) MarkVerified(_ context.Context, id string, verifications []proposal.Verification) (bool, error) {
 	if r.markErr != nil {
 		return false, r.markErr
 	}
@@ -189,10 +189,11 @@ func (r *fakeProposalRepo) MarkVerified(_ context.Context, id string) (bool, err
 		return false, nil
 	}
 	v.Status = proposal.StatusProposed
+	v.Verifications = verifications
 	return true, nil
 }
 
-func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, id, verifyErr string) (bool, error) {
+func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, id, verifyErr string, verifications []proposal.Verification) (bool, error) {
 	if r.markErr != nil {
 		return false, r.markErr
 	}
@@ -202,7 +203,14 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, id, verifyErr str
 	}
 	v.Status = proposal.StatusFailed
 	v.VerifyError = verifyErr
+	v.Verifications = verifications
 	return true, nil
+}
+
+// UpdateVerificationPhase is a no-op: no test in this package drives the
+// reconciler's phase-write path (Task 12), only the terminal Mark* calls above.
+func (r *fakeProposalRepo) UpdateVerificationPhase(context.Context, string, string, proposal.Phase, *time.Time) error {
+	return nil
 }
 
 func (r *fakeProposalRepo) CountAttempts(context.Context, string, int) (int, error) {
@@ -408,7 +416,7 @@ func (h *harness) handlerDeps(maxAttempts int) handlers.Deps {
 func TestReconcileOnce_ValidatedShadowProposesTheFix(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
 
 	h.rec.ReconcileOnce(context.Background())
 
@@ -441,7 +449,7 @@ func TestReconcileOnce_ValidatedShadowCarriesTheRemediationRound(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.RemediationRound = 2
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
 
 	h.rec.ReconcileOnce(context.Background())
 
@@ -457,7 +465,7 @@ func TestReconcileOnce_ValidatedShadowCarriesTheRemediationRound(t *testing.T) {
 func TestReconcileOnce_ValidatedShadowEmitsOnceAcrossTicks(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
 
 	h.rec.ReconcileOnce(context.Background())
 	h.rec.ReconcileOnce(context.Background())
@@ -473,8 +481,8 @@ func TestReconcileOnce_ValidatedShadowEmitsOnceAcrossTicks(t *testing.T) {
 func TestReconcileOnce_TwoVerificationsProposesOnlyWhenBothValidated(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.Verifications = []proposal.Verification{
-		{Service: "svc", Kind: "dbt", ShadowReleaseID: "shadow-rel-1-svc-a1"},
-		{Service: "other", Kind: "dbt", ShadowReleaseID: "shadow-rel-1-other-a1"},
+		{Service: "svc", Kind: "dbt", RunID: "shadow-rel-1-svc-a1"},
+		{Service: "other", Kind: "dbt", RunID: "shadow-rel-1-other-a1"},
 	}
 	h := newHarness(row)
 	h.gateway.verdicts["shadow-rel-1-svc-a1"] = ports.ShadowVerdict{Terminal: true, Validated: true}
@@ -504,8 +512,8 @@ func TestReconcileOnce_TwoVerificationsProposesOnlyWhenBothValidated(t *testing.
 func TestReconcileOnce_OneRejectedVerificationFailsTheWholeAttempt(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.Verifications = []proposal.Verification{
-		{Service: "svc", Kind: "dbt", ShadowReleaseID: "shadow-rel-1-svc-a1"},
-		{Service: "other", Kind: "dbt", ShadowReleaseID: "shadow-rel-1-other-a1"},
+		{Service: "svc", Kind: "dbt", RunID: "shadow-rel-1-svc-a1"},
+		{Service: "other", Kind: "dbt", RunID: "shadow-rel-1-other-a1"},
 	}
 	h := newHarness(row)
 	h.gateway.verdicts["shadow-rel-1-svc-a1"] = ports.ShadowVerdict{ActivatedAt: testNow}
@@ -521,15 +529,15 @@ func TestReconcileOnce_OneRejectedVerificationFailsTheWholeAttempt(t *testing.T)
 	assert.Len(t, h.proposer.triggers, 1, "a rejected attempt starts the next one")
 }
 
-// TestReconcileOnce_RowNamingOnlyAShadowReleaseIDStillResolves covers the row
+// TestReconcileOnce_RowNamingOnlyAVerificationRunIDStillResolves covers the row
 // that records no per-service verifications and names its single shadow release
-// in ShadowReleaseID alone: that release is the one verification judging it, so
+// in VerificationRunID alone: that release is the one verification judging it, so
 // the row resolves exactly like any other.
-func TestReconcileOnce_RowNamingOnlyAShadowReleaseIDStillResolves(t *testing.T) {
+func TestReconcileOnce_RowNamingOnlyAVerificationRunIDStillResolves(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.Verifications = nil
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
 
 	h.rec.ReconcileOnce(context.Background())
 
@@ -545,7 +553,7 @@ func TestReconcileOnce_RowNamingOnlyAShadowReleaseIDStillResolves(t *testing.T) 
 func TestReconcileOnce_RejectedShadowFailsTheAttemptAndRetries(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 		Terminal:   true,
 		Validated:  false,
 		NodeErrors: map[string]string{"analytics.orders": "column total_amount is numeric, contract declares text"},
@@ -575,7 +583,7 @@ func TestReconcileOnce_RejectedShadowFailsTheAttemptAndRetries(t *testing.T) {
 func TestReconcileOnce_RejectedShadowNamesEveryFailingNodeWhenTheFixedOnePassed(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 		Terminal:   true,
 		Validated:  false,
 		NodeErrors: map[string]string{"analytics.returns": "relation missing", "analytics.customers": "row count 0"},
@@ -594,12 +602,12 @@ func TestReconcileOnce_RejectedShadowNamesEveryFailingNodeWhenTheFixedOnePassed(
 func TestReconcileOnce_RejectedShadowWithNoNodeErrorsStillRecordsAReason(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: true, Validated: false}
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: false}
 
 	h.rec.ReconcileOnce(context.Background())
 
 	assert.Equal(t,
-		"shadow release "+row.ShadowReleaseID+" was rejected without a per-node error",
+		"shadow release "+row.VerificationRunID+" was rejected without a per-node error",
 		h.repo.row("p1").VerifyError)
 }
 
@@ -616,7 +624,7 @@ func TestReconcileOnce_RejectedShadowRetriesTheWholeBatch(t *testing.T) {
 	row.ResolvedNodeIDs = []string{"s.a", "s.b"}
 	row.TriggerPayload = batchPayload("s.a", "s.b")
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 		Terminal:   true,
 		NodeErrors: map[string]string{"s.b": "still broken"},
 	}
@@ -643,7 +651,7 @@ func TestReconcileOnce_RejectedShadowWithCollateralFailureRetriesEveryNode(t *te
 	row.ResolvedNodeIDs = []string{"s.a", "s.b"}
 	row.TriggerPayload = batchPayload("s.a", "s.b")
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 		Terminal:   true,
 		NodeErrors: map[string]string{"s.downstream": "relation does not exist"},
 	}
@@ -669,7 +677,7 @@ func TestReconcileOnce_RejectedShadowWithCollateralFailureRetriesEveryNode(t *te
 func TestReconcileOnce_RetryCarriesAFreshDedupIdentity(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 		Terminal: true, Validated: false,
 		NodeErrors: map[string]string{"analytics.orders": "still wrong"},
 	}
@@ -731,7 +739,7 @@ func TestProposeFix_ReplayedMessageIDIsANoOp(t *testing.T) {
 func TestReconcileOnce_RejectedAtTheAttemptCapEscalates(t *testing.T) {
 	row := verifyingRow("p3", 3, time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 		Terminal: true, Validated: false,
 		NodeErrors: map[string]string{"analytics.orders": "third failure"},
 	}
@@ -756,7 +764,7 @@ func TestReconcileOnce_RejectedAtTheAttemptCapEscalates(t *testing.T) {
 func TestReconcileOnce_NonTerminalWithinTheTimeoutIsLeftAlone(t *testing.T) {
 	row := verifyingRow("p1", 1, testTimeout-time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: false}
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: false}
 
 	h.rec.ReconcileOnce(context.Background())
 
@@ -777,7 +785,7 @@ func TestReconcileOnce_NonTerminalWithinTheTimeoutIsLeftAlone(t *testing.T) {
 func TestReconcileOnce_NonTerminalPastTheTimeoutFailsTheAttempt(t *testing.T) {
 	row := verifyingRow("p1", 1, testTimeout+time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 		Terminal: false, ActivatedAt: testNow.Add(-(testTimeout + time.Minute)),
 	}
 
@@ -803,8 +811,8 @@ func TestReconcileOnce_NonTerminalPastTheTimeoutFailsTheAttempt(t *testing.T) {
 func TestReconcileOnce_SerialVerificationsAreBudgetedIndividually(t *testing.T) {
 	row := verifyingRow("p1", 1, testTimeout+time.Hour)
 	row.Verifications = []proposal.Verification{
-		{Service: "svc", Kind: "dbt", ShadowReleaseID: "shadow-rel-1-svc-a1"},
-		{Service: "other", Kind: "dbt", ShadowReleaseID: "shadow-rel-1-other-a1"},
+		{Service: "svc", Kind: "dbt", RunID: "shadow-rel-1-svc-a1"},
+		{Service: "other", Kind: "dbt", RunID: "shadow-rel-1-other-a1"},
 	}
 	h := newHarness(row)
 	// The first service's release started half an hour ago and has already
@@ -849,7 +857,7 @@ func TestReconcileOnce_QueuedTimeDoesNotSpendTheVerificationBudget(t *testing.T)
 		row := verifyingRow("p1", 1, testTimeout+time.Hour)
 		h := newHarness(row)
 		// No activation: release-controller has not started this release.
-		h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: false}
+		h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: false}
 
 		h.rec.ReconcileOnce(context.Background())
 
@@ -862,7 +870,7 @@ func TestReconcileOnce_QueuedTimeDoesNotSpendTheVerificationBudget(t *testing.T)
 	t.Run("queued long, running briefly", func(t *testing.T) {
 		row := verifyingRow("p1", 1, testTimeout+time.Hour)
 		h := newHarness(row)
-		h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+		h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 			Terminal: false, ActivatedAt: testNow.Add(-time.Minute),
 		}
 
@@ -882,7 +890,7 @@ func TestReconcileOnce_QueuedTimeDoesNotSpendTheVerificationBudget(t *testing.T)
 func TestReconcileOnce_UnreadableVerdictWithinTheTimeoutBurnsNoAttempt(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	h := newHarness(row)
-	h.gateway.errs[row.ShadowReleaseID] = errors.New("get release shadow-x: status 503: upstream unavailable")
+	h.gateway.errs[row.VerificationRunID] = errors.New("get release shadow-x: status 503: upstream unavailable")
 
 	h.rec.ReconcileOnce(context.Background())
 
@@ -898,7 +906,7 @@ func TestReconcileOnce_UnreadableVerdictWithinTheTimeoutBurnsNoAttempt(t *testin
 func TestReconcileOnce_UnreadableVerdictPastTheTimeoutFailsTheAttempt(t *testing.T) {
 	row := verifyingRow("p1", 1, testTimeout+time.Minute)
 	h := newHarness(row)
-	h.gateway.errs[row.ShadowReleaseID] = errors.New("get release shadow-x: status 404: not found")
+	h.gateway.errs[row.VerificationRunID] = errors.New("get release shadow-x: status 404: not found")
 
 	h.rec.ReconcileOnce(context.Background())
 
@@ -912,13 +920,13 @@ func TestReconcileOnce_UnreadableVerdictPastTheTimeoutFailsTheAttempt(t *testing
 func TestReconcileOnce_OneUnresolvableRowDoesNotBlockTheRest(t *testing.T) {
 	stuck := verifyingRow("p1", 1, time.Minute)
 	healthy := verifyingRow("p2", 1, time.Minute)
-	healthy.ShadowReleaseID = "shadow-rel-1-other-a1"
+	healthy.VerificationRunID = "shadow-rel-1-other-a1"
 	healthy.Verifications = []proposal.Verification{
-		{Service: "other", Kind: "python", ShadowReleaseID: healthy.ShadowReleaseID},
+		{Service: "other", Kind: "python", RunID: healthy.VerificationRunID},
 	}
 	h := newHarness(stuck, healthy)
-	h.gateway.errs[stuck.ShadowReleaseID] = errors.New("connection refused")
-	h.gateway.verdicts[healthy.ShadowReleaseID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h.gateway.errs[stuck.VerificationRunID] = errors.New("connection refused")
+	h.gateway.verdicts[healthy.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
 
 	h.rec.ReconcileOnce(context.Background())
 
@@ -932,7 +940,7 @@ func TestReconcileOnce_OneUnresolvableRowDoesNotBlockTheRest(t *testing.T) {
 func TestReconcileOnce_ListFailureIsSurvived(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
 	h.repo.listErr = errors.New("db down")
 
 	h.rec.ReconcileOnce(context.Background())
@@ -952,7 +960,7 @@ func TestReconcileOnce_RowWithoutAStoredTriggerIsFailedButNotRetried(t *testing.
 	row := verifyingRow("p1", 1, time.Minute)
 	row.TriggerPayload = nil
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 		Terminal: true, Validated: false,
 		NodeErrors: map[string]string{"analytics.orders": "boom"},
 	}
@@ -1004,7 +1012,7 @@ func (failingArchive) Fetch(context.Context, string, string) (string, func(), er
 func TestReconcileOnce_FailedNextAttemptLeavesNoGeneratingRow(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	h := newHarness(row)
-	h.gateway.verdicts[row.ShadowReleaseID] = ports.ShadowVerdict{
+	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
 		Terminal: true, Validated: false,
 		NodeErrors: map[string]string{"analytics.orders": "still wrong"},
 	}
@@ -1049,5 +1057,5 @@ func TestProposedEventPromotesOnlyTheVerifyingNodeOutcomes(t *testing.T) {
 	assert.Equal(t, []string{"s.a", "s.b"}, got.ResolvedNodeIDs)
 	assert.Equal(t, row.Edits, got.Edits)
 	assert.Equal(t, row.Verifications, got.Verifications)
-	assert.Equal(t, row.ShadowReleaseID, got.ShadowReleaseID)
+	assert.Equal(t, row.VerificationRunID, got.VerificationRunID)
 }

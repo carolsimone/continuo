@@ -81,27 +81,43 @@ func TestNormalizeSingleFileView_EmptyFirstEditPathLeavesScalarsAlone(t *testing
 	}
 }
 
-// TestNormalizeRepresentativeViews_FillsNodeIDAndShadowFromBatchFields verifies
-// that NormalizeRepresentativeViews sorts ResolvedNodeIDs, derives NodeID and
-// ShadowReleaseID from the batch fields when empty, and follows edits[0] for
-// the single-file view.
-func TestNormalizeRepresentativeViews_FillsNodeIDAndShadowFromBatchFields(t *testing.T) {
+// TestNormalizeRepresentativeViews_FillsNodeIDAndVerificationRunIDFromBatchFields
+// verifies that NormalizeRepresentativeViews sorts ResolvedNodeIDs, derives
+// NodeID and VerificationRunID from the batch fields when empty, and follows
+// edits[0] for the single-file view.
+func TestNormalizeRepresentativeViews_FillsNodeIDAndVerificationRunIDFromBatchFields(t *testing.T) {
 	p := Proposal{
 		ResolvedNodeIDs: []string{"s.b", "s.a"},
-		Verifications:   []Verification{{Service: "svc", Kind: "dbt", ShadowReleaseID: "shadow-r-svc-a1"}},
+		Verifications:   []Verification{{Service: "svc", Kind: "dbt", RunID: "verify-r-svc-a1"}},
 		Edits:           []FileEdit{{Path: "services/svc/models/u.sql", ContentURI: "s3://c", DiffURI: "s3://d", TargetNodeID: "s.u"}},
 	}
 	p.NormalizeRepresentativeViews()
 	if p.NodeID != "s.a" {
 		t.Fatalf("representative node must be the smallest resolved id, got %q", p.NodeID)
 	}
-	if p.ShadowReleaseID != "shadow-r-svc-a1" {
-		t.Fatalf("shadow id view must be the first verification, got %q", p.ShadowReleaseID)
+	if p.VerificationRunID != "verify-r-svc-a1" {
+		t.Fatalf("verification run id view must be the first verification, got %q", p.VerificationRunID)
 	}
 	if p.FilePath != "services/svc/models/u.sql" || p.ProposedSQLURI != "s3://c" {
 		t.Fatalf("single-file view must follow edits[0]: %+v", p)
 	}
 	if p.ResolvedNodeIDs[0] != "s.a" {
 		t.Fatal("resolved ids must be sorted")
+	}
+}
+
+// TestUnionServices_SortsDedupesAndDropsEmpty verifies that UnionServices
+// merges several service-name sets into one sorted, de-duplicated slice, with
+// empty names dropped rather than merged in as a service.
+func TestUnionServices_SortsDedupesAndDropsEmpty(t *testing.T) {
+	got := UnionServices([]string{"ops", ""}, []string{"core"}, nil, []string{"core", "ops"})
+	want := []string{"core", "ops"}
+	if len(got) != len(want) {
+		t.Fatalf("UnionServices = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("UnionServices = %v, want %v", got, want)
+		}
 	}
 }

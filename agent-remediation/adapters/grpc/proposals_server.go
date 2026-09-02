@@ -67,6 +67,7 @@ func (s *ProposalsServer) ListProposals(ctx context.Context, req *remediationv1.
 		Status:    req.Status,
 		PRState:   req.PrState,
 		ReleaseID: req.ReleaseId,
+		Service:   req.Service,
 		Limit:     int(req.Limit),
 	}
 	views, err := s.svc.List(ctx, filter)
@@ -100,8 +101,8 @@ func (s *ProposalsServer) GetProposal(ctx context.Context, req *remediationv1.Ge
 // FAILED_PRECONDITION when the proposal is already claimed (carrying the
 // existing pr_url in the message), when source resolution has not completed,
 // or when the attempt has not reached 'proposed' — a fix still being
-// generated or verified, or one a shadow release rejected, is not one a pull
-// request may be opened for. Returns NOT_FOUND when the proposal does not
+// generated or verified, or one a verification run rejected, is not one a
+// pull request may be opened for. Returns NOT_FOUND when the proposal does not
 // exist.
 func (s *ProposalsServer) BeginPullRequest(ctx context.Context, req *remediationv1.BeginPullRequestRequest) (*remediationv1.BeginPullRequestResponse, error) {
 	claim, err := s.svc.Begin(ctx, req.Id, req.Service)
@@ -245,17 +246,25 @@ func nodeOutcomesToProto(outcomes map[string]proposal.NodeOutcome) map[string]*r
 
 // verificationsToProto converts a slice of domain Verification values to the
 // proto representation. A nil or empty input produces a nil slice rather
-// than a list containing a zero-valued element.
+// than a list containing a zero-valued element. ActivatedAt is formatted as
+// RFC3339, or "" when nil.
 func verificationsToProto(verifications []proposal.Verification) []*remediationv1.Verification {
 	if len(verifications) == 0 {
 		return nil
 	}
 	out := make([]*remediationv1.Verification, 0, len(verifications))
 	for _, v := range verifications {
+		var activatedAt string
+		if v.ActivatedAt != nil {
+			activatedAt = v.ActivatedAt.Format(time.RFC3339)
+		}
 		out = append(out, &remediationv1.Verification{
-			Service:         v.Service,
-			Kind:            v.Kind,
-			ShadowReleaseId: v.ShadowReleaseID,
+			Service:     v.Service,
+			Kind:        v.Kind,
+			RunId:       v.RunID,
+			Phase:       string(v.Phase),
+			ActivatedAt: activatedAt,
+			Error:       v.Error,
 		})
 	}
 	return out
@@ -337,7 +346,7 @@ func viewToProto(v proposal.View, prServices []string) *remediationv1.Proposal {
 		PrOpenedBy:          v.PrOpenedBy,
 		PrClosedAt:          prClosedAt,
 		Edits:               editsToProto(v.Edits),
-		ShadowReleaseId:     v.ShadowReleaseID,
+		VerificationRunId:   v.VerificationRunID,
 		VerifyError:         v.VerifyError,
 		RemediationRound:    num.ClampInt32(v.RemediationRound),
 		ResolvedNodeIds:     v.ResolvedNodeIDs,

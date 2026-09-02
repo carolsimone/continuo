@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/service/overlay"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // errUnmappedEdit marks an edit whose path lies outside every service this
@@ -172,9 +172,9 @@ func submitVerifications(
 			"shadow", shadowID, "kind", kind, "edits", len(byService[service]))
 
 		verifications = append(verifications, proposal.Verification{
-			Service:         service,
-			Kind:            kind,
-			ShadowReleaseID: shadowID,
+			Service: service,
+			Kind:    kind,
+			RunID:   shadowID,
 		})
 	}
 	return verifications, nil

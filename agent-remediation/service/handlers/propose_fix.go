@@ -22,9 +22,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/carolsimone/continuo/pkg/messageprocessing"
-	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
@@ -34,6 +31,9 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // Deps holds every collaborator ProposeFix needs, all behind ports so the
@@ -654,6 +654,7 @@ func markGenerating(ctx context.Context, deps Deps, t Trigger, attempt int) erro
 		NodeOutcomes:     outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusGenerating}),
 		Attempt:          attempt,
 		Status:           proposal.StatusGenerating,
+		Services:         t.Services(),
 		CreatedAt:        deps.Clock.Now(),
 	}
 	p.NormalizeRepresentativeViews()
@@ -694,6 +695,7 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	if len(p.ResolvedNodeIDs) == 0 {
 		p.ResolvedNodeIDs = t.NodeIDs()
 	}
+	p.Services = proposal.UnionServices(t.Services(), verificationServices(p.Verifications))
 	p.NormalizeRepresentativeViews()
 	p.ErrorSignature = signatureFor(t, p.NodeID)
 	if p.Status == proposal.StatusVerifying {
@@ -731,6 +733,15 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 		"release", t.ReleaseID, "node", p.NodeID, "nodes", len(p.ResolvedNodeIDs),
 		"status", p.Status, "attempt", attempt)
 	return nil
+}
+
+// verificationServices is the services an attempt's verification runs cover.
+func verificationServices(vs []proposal.Verification) []string {
+	out := make([]string, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, v.Service)
+	}
+	return out
 }
 
 // Enqueue builds the deterministic remediation.proposed:v1 outbox entry for an

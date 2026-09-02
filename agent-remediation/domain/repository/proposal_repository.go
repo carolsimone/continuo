@@ -44,7 +44,9 @@ type ProposalFilter struct {
 	ReleaseID string
 	Source    string
 	NodeID    string
-	Limit     int
+	// Service, when set, matches proposals whose services contain it.
+	Service string
+	Limit   int
 }
 
 // AttemptLister is the repository slice a fixer reads while assembling
@@ -237,18 +239,26 @@ type ProposalRepository interface {
 	// verification rather than being starved by one stuck row.
 	ListVerifying(ctx context.Context) ([]proposal.View, error)
 
-	// MarkVerified finalizes a proposal whose shadow release validated the
-	// fix, transitioning status 'verifying' -> 'proposed'. It also rewrites
-	// every node_outcomes entry still at 'verifying' to 'proposed', so a
-	// per-node reader agrees with the row's own status. hit reports whether
-	// the CAS fired; false means the row was no longer 'verifying' — already
+	// MarkVerified finalizes a proposal every verification run passed,
+	// transitioning status 'verifying' -> 'proposed'. It also rewrites every
+	// node_outcomes entry still at 'verifying' to 'proposed', so a per-node
+	// reader agrees with the row's own status. verifications is the final
+	// per-run summary, written in the same statement. hit reports whether the
+	// CAS fired; false means the row was no longer 'verifying' — already
 	// finalized by a concurrent or repeated reconciler pass.
-	MarkVerified(ctx context.Context, id string) (hit bool, err error)
+	MarkVerified(ctx context.Context, id string, verifications []proposal.Verification) (hit bool, err error)
 
-	// MarkVerifyFailed finalizes a proposal whose shadow release failed to
-	// validate the fix, transitioning status 'verifying' -> 'failed' and
-	// recording verifyErr so the next attempt can use it as evidence. It also
-	// rewrites every node_outcomes entry still at 'verifying' to 'failed'. hit
-	// reports whether the CAS fired, with the same semantics as MarkVerified.
-	MarkVerifyFailed(ctx context.Context, id, verifyErr string) (hit bool, err error)
+	// MarkVerifyFailed finalizes a proposal a verification run rejected,
+	// transitioning status 'verifying' -> 'failed' and recording verifyErr so
+	// the next attempt can use it as evidence. It also rewrites every
+	// node_outcomes entry still at 'verifying' to 'failed'. verifications is
+	// the final per-run summary, written in the same statement. hit reports
+	// whether the CAS fired, with the same semantics as MarkVerified.
+	MarkVerifyFailed(ctx context.Context, id, verifyErr string, verifications []proposal.Verification) (hit bool, err error)
+
+	// UpdateVerificationPhase records the phase (and, once known, the
+	// activation time) of one of the proposal's verification runs, leaving
+	// the others untouched. Called by the reconciler only when the phase it
+	// read differs from the stored one.
+	UpdateVerificationPhase(ctx context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error
 }

@@ -8,7 +8,8 @@ option go_package = "github.com/carolsimone/continuo/agent-remediation/api/remed
 // for the agent-remediation. The UI reads proposals via ListProposals/GetProposal
 // and drives the PR workflow via BeginPullRequest/RecordPullRequest/FailPullRequest.
 service RemediationProposals {
-  // ListProposals returns proposals filtered by status, pr_state, release_id, and limit.
+  // ListProposals returns proposals filtered by status, pr_state, release_id,
+  // service, and limit.
   rpc ListProposals(ListProposalsRequest) returns (ListProposalsResponse);
   // GetProposal returns a single proposal by ID.
   rpc GetProposal(GetProposalRequest) returns (Proposal);
@@ -60,12 +61,10 @@ message Proposal {
   // reaches a terminal outcome (pr_state 'merged' or 'rejected').
   string pr_closed_at = 25;
   repeated FileEdit edits = 26;
-  // shadow_release_id names the release that ran this attempt's fix through
-  // the whole validation pipeline to decide whether it holds. It is set while
-  // the attempt is 'verifying' and stays set on the 'proposed' or 'failed' row
-  // that attempt became, so a reader can always reach the release that decided
-  // it. Empty on an attempt judged without one.
-  string shadow_release_id = 27;
+  // verification_run_id names the pipeline run that verified this attempt's
+  // fix — the first of `verifications`. Set while the attempt is 'verifying'
+  // and kept on the row it became. Empty on an attempt judged without one.
+  string verification_run_id = 27;
   // verify_error is why that release rejected the fix — the reason a python
   // contract attempt reached 'failed', and the evidence the next attempt is
   // shown. Empty unless verification failed.
@@ -79,8 +78,8 @@ message Proposal {
   // cluster whose fixer skipped or failed leaves its members
   // skipped/failed while other members verify.
   map<string, NodeOutcome> node_outcomes = 31;
-  // verifications is one shadow release per edited service; the first entry
-  // is the view mirrored onto shadow_release_id.
+  // verifications is one fix-verification run per edited service; the first
+  // entry is the view mirrored onto verification_run_id.
   repeated Verification verifications = 32;
   // pull_requests is one entry per (proposal, service) pull request; empty
   // for a proposal that never entered the PR lifecycle. service = "" is the
@@ -98,6 +97,7 @@ message ListProposalsRequest {
   string pr_state = 2;
   int32 limit = 3;
   string release_id = 4; // when set, only proposals of this release
+  string service = 5; // when set, only proposals whose services contain it
 }
 
 message ListProposalsResponse {
@@ -205,12 +205,17 @@ message NodeOutcome {
   string reason = 2;
 }
 
-// Verification is one shadow release posted to verify the edits made to a
-// single service.
+// Verification is one fix-verification run per edited service and the
+// durable summary of how it went. phase is queued | running | passed |
+// failed ('' before the first read); activated_at is RFC 3339 or empty;
+// error is the named per-node errors on a failed run.
 message Verification {
   string service = 1;
   string kind = 2;
-  string shadow_release_id = 3;
+  string run_id = 3;
+  string phase = 4;
+  string activated_at = 5;
+  string error = 6;
 }
 
 // PullRequest is one pull request opened from a proposal, mirroring

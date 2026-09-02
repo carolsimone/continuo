@@ -19,8 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/pkg/messageprocessing"
-	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
@@ -28,6 +26,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/outbox"
 )
 
 // fakeEvidence returns pre-loaded strings by URI, or an error if set.
@@ -329,12 +329,16 @@ func (r *fakeProposalRepo) ListVerifying(_ context.Context) ([]proposal.View, er
 	return nil, nil
 }
 
-func (r *fakeProposalRepo) MarkVerified(_ context.Context, _ string) (bool, error) {
+func (r *fakeProposalRepo) MarkVerified(_ context.Context, _ string, _ []proposal.Verification) (bool, error) {
 	return false, nil
 }
 
-func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, _, _ string) (bool, error) {
+func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, _, _ string, _ []proposal.Verification) (bool, error) {
 	return false, nil
+}
+
+func (r *fakeProposalRepo) UpdateVerificationPhase(_ context.Context, _, _ string, _ proposal.Phase, _ *time.Time) error {
+	return nil
 }
 
 // fakeOutbox satisfies outbox.Repository in memory. Create takes a pointer to
@@ -778,9 +782,9 @@ func TestProposeFix_HappyPath(t *testing.T) {
 	require.Equal(t, "services/svc/models/n.sql", p.FilePath)
 	require.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.n"].Status)
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.ShadowKindDbt, ShadowReleaseID: "shadow-r1-svc-a1",
+		Service: "svc", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-svc-a1",
 	}}, p.Verifications)
-	require.Equal(t, "shadow-r1-svc-a1", p.ShadowReleaseID, "the representative shadow is the first verification's")
+	require.Equal(t, "shadow-r1-svc-a1", p.VerificationRunID, "the representative shadow is the first verification's")
 
 	require.Len(t, gw.submitted, 1)
 	require.Equal(t, "tag-1", gw.submitted[0].ImageTag)
@@ -1183,7 +1187,7 @@ func TestProposeFix_TwoIndependentNodes_OneVerifyingProposalWithTwoEdits(t *test
 	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.a"].Status)
 	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.b"].Status)
 	require.Len(t, p.Verifications, 1, "both edits are in one service: one shadow")
-	assert.Equal(t, proposal.Verification{Service: "svc", Kind: ports.ShadowKindDbt, ShadowReleaseID: "shadow-r1-svc-a1"}, p.Verifications[0])
+	assert.Equal(t, proposal.Verification{Service: "svc", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-svc-a1"}, p.Verifications[0])
 	assert.Equal(t, tr.RawPayload, p.TriggerPayload)
 
 	require.Len(t, gw.submitted, 1)
@@ -1633,7 +1637,7 @@ func TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField(t *testing
 	require.NoError(t, err)
 
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.ShadowKindPython, ShadowReleaseID: "shadow-r1-svc-a1",
+		Service: "svc", Kind: ports.ShadowKindPython, RunID: "shadow-r1-svc-a1",
 	}}, got)
 	require.Equal(t, "merged: contract\n", art.written["svc/shadow-r1-svc-a1/contract.yaml"])
 	require.NotContains(t, art.written, "svc/shadow-r1-svc-a1/source-overlay.tar.gz")
@@ -1683,9 +1687,9 @@ func TestProposeFix_MixedOutcomes_SkippedMemberDoesNotBlockVerification(t *testi
 		"the skipped node contributes nothing to the shadow release")
 }
 
-// TestProposeFix_AllSkipped_RecordsSkippedWithoutShadow: nothing was fixed, so
-// no release slot is spent and the attempt records why for each node.
-func TestProposeFix_AllSkipped_RecordsSkippedWithoutShadow(t *testing.T) {
+// TestProposeFix_AllSkipped_RecordsSkippedWithoutVerification: nothing was
+// fixed, so no release slot is spent and the attempt records why for each node.
+func TestProposeFix_AllSkipped_RecordsSkippedWithoutVerification(t *testing.T) {
 	u := newFakeUoW()
 	llm := newFakeLLM(ports.ProposeResult{}, nil)
 	art := &fakeArtifacts{}
@@ -1743,9 +1747,9 @@ func TestProposeFix_TwoServices_OneShadowEach(t *testing.T) {
 	p := u.pr.inserted[0]
 	assert.Equal(t, proposal.StatusVerifying, p.Status)
 	require.Len(t, p.Verifications, 2)
-	assert.Equal(t, proposal.Verification{Service: "other", Kind: ports.ShadowKindDbt, ShadowReleaseID: "shadow-r1-other-a1"}, p.Verifications[0])
-	assert.Equal(t, proposal.Verification{Service: "svc", Kind: ports.ShadowKindDbt, ShadowReleaseID: "shadow-r1-svc-a1"}, p.Verifications[1])
-	assert.Equal(t, "shadow-r1-other-a1", p.ShadowReleaseID)
+	assert.Equal(t, proposal.Verification{Service: "other", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-other-a1"}, p.Verifications[0])
+	assert.Equal(t, proposal.Verification{Service: "svc", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-svc-a1"}, p.Verifications[1])
+	assert.Equal(t, "shadow-r1-other-a1", p.VerificationRunID)
 
 	require.Len(t, gw.submitted, 2)
 	assert.Equal(t, "other", gw.submitted[0].Service)
@@ -1966,7 +1970,7 @@ func TestRecord_NormalizesRepresentativeViews(t *testing.T) {
 		Edits: []proposal.FileEdit{
 			{Path: "services/svc/models/orders_d.sql", ContentURI: "s3://real/content", DiffURI: "s3://real/diff"},
 		},
-		Verifications: []proposal.Verification{{Service: "svc", Kind: ports.ShadowKindDbt, ShadowReleaseID: "shadow-r1-svc-a1"}},
+		Verifications: []proposal.Verification{{Service: "svc", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-svc-a1"}},
 	}
 
 	require.NoError(t, record(context.Background(), d, tr, 1, p))
@@ -1980,7 +1984,7 @@ func TestRecord_NormalizesRepresentativeViews(t *testing.T) {
 		"an attempt that names no set addresses the trigger's whole failing set")
 	require.Equal(t, "s.a", got.NodeID)
 	require.Equal(t, "sig-a", got.ErrorSignature)
-	require.Equal(t, "shadow-r1-svc-a1", got.ShadowReleaseID)
+	require.Equal(t, "shadow-r1-svc-a1", got.VerificationRunID)
 	require.Empty(t, u.ob.entries, "record announces nothing")
 }
 

@@ -107,14 +107,14 @@ func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 	require.Len(t, u.pr.inserted, 1)
 	got := u.pr.inserted[0]
 	require.Equal(t, proposal.StatusVerifying, got.Status)
-	require.Equal(t, "shadow-r1-svc-a1", got.ShadowReleaseID)
+	require.Equal(t, "shadow-r1-svc-a1", got.VerificationRunID)
 	require.Equal(t, tr.RawPayload, got.TriggerPayload,
 		"a verifying row must carry the trigger that produced it, so the attempt can be rebuilt once the shadow release answers")
 	require.Equal(t, "services/svc/contracts/kpis.yml", got.FilePath)
 	require.Len(t, got.Edits, 1)
 	require.Equal(t, "analytics.py_daily_kpis", got.Edits[0].TargetNodeID)
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.ShadowKindPython, ShadowReleaseID: "shadow-r1-svc-a1",
+		Service: "svc", Kind: ports.ShadowKindPython, RunID: "shadow-r1-svc-a1",
 	}}, got.Verifications)
 	require.Equal(t, proposal.StatusVerifying, got.NodeOutcomes["analytics.py_daily_kpis"].Status)
 
@@ -158,7 +158,7 @@ func TestProposeFix_PythonValidation_ServiceDerivedFromTheEditPath(t *testing.T)
 	got := u.pr.inserted[0]
 	require.Equal(t, proposal.StatusVerifying, got.Status)
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.ShadowKindPython, ShadowReleaseID: "shadow-r1-svc-a1",
+		Service: "svc", Kind: ports.ShadowKindPython, RunID: "shadow-r1-svc-a1",
 	}}, got.Verifications)
 	require.Equal(t, "merged: contract\n", art.written["svc/shadow-r1-svc-a1/contract.yaml"])
 	require.NotContains(t, art.written, "svc/shadow-r1-svc-a1/source-overlay.tar.gz")
@@ -253,5 +253,5 @@ func TestProposeFix_DbtValidation_StoresNoTriggerPayload(t *testing.T) {
 
 	require.Len(t, u.pr.inserted, 1)
 	require.Empty(t, u.pr.inserted[0].TriggerPayload)
-	require.Empty(t, u.pr.inserted[0].ShadowReleaseID)
+	require.Empty(t, u.pr.inserted[0].VerificationRunID)
 }
