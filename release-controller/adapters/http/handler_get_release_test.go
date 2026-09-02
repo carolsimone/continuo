@@ -2,6 +2,8 @@ package http
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -62,22 +64,29 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 	assert.Equal(t, "acme/demo", decoded["repo"])
 	assert.Equal(t, "deadbeefcafe1234", decoded["commit_sha"])
 	// Guard the full response shape so an accidental field drop in the extracted
-	// helper is caught: 11 pre-existing keys plus repo + commit_sha + shadow +
-	// remediation_round.
-	assert.Len(t, decoded, 15)
+	// helper is caught: 11 pre-existing keys plus repo + commit_sha +
+	// remediation_round. There is no shadow key: a candidate response never
+	// carries one, since GET /releases/{id} only ever returns a candidate.
+	assert.Len(t, decoded, 14)
 	assert.Equal(t, "rPROV", decoded["release_id"])
+	_, hasShadow := decoded["shadow"]
+	assert.False(t, hasShadow, "a candidate response must not carry a shadow key")
 }
 
-// TestGetReleaseResponse_IncludesShadow verifies that the shadow flag is
-// exposed by GET /releases/{id} so a caller can distinguish a fix-verification
-// release from a normal one.
-func TestGetReleaseResponse_IncludesShadow(t *testing.T) {
-	shadowRel := pipeline.NewVerification("rel-shadow", "finance", "tag", "rel-orig", 1, "", release.ManifestKindDbt, time.Unix(1, 0).UTC())
-	assert.Equal(t, true, getReleaseResponse(shadowRel)["shadow"])
+// TestHandleGetRelease_VerificationIDAnswers404 verifies that GET
+// /releases/{id} treats a verification run's id as unknown: a verification
+// is not a release and is read through GET /verification-runs instead.
+func TestHandleGetRelease_VerificationIDAnswers404(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	v := pipeline.NewVerification("verify-1", "finance", "tag", "rel-orig", 1, "", release.ManifestKindDbt, now)
+	deps, releases := newRetryRemediationDeps(now)
+	releases.releases["verify-1"] = v
 
-	plainRel := pipeline.NewCandidate("rel-plain", "finance", "tag", false, "owner/repo", "abc123",
-		release.ManifestKindDbt, time.Unix(1, 0).UTC())
-	assert.Equal(t, false, getReleaseResponse(plainRel)["shadow"])
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/releases/verify-1", nil)
+	newTestServer(deps).Routes().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestGetReleaseResponse_IncludesRejectDetail(t *testing.T) {

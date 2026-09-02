@@ -135,21 +135,6 @@ func TestReceiveCandidate_PersistsPythonKind(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPython, r.ManifestKind())
 }
 
-func TestReceiveCandidate_SourceOverlayRequiresShadow(t *testing.T) {
-	deps, _ := newDeps(time.Now())
-	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "r-ov", ImageTag: "t", Repo: "o/r", CommitSHA: "sha",
-		SourceOverlayURI: "s3://b/svc/r-ov/source-overlay.tar.gz",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "source_overlay_uri")
-}
-
-// A shadow ReceiveCandidateInput's persistence path — creating a verification
-// run that actually carries SourceOverlayURI and VerifiesReleaseID — is
-// covered once ReceiveCandidate dispatches on Shadow instead of always
-// creating a candidate.
-
 func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
@@ -160,4 +145,14 @@ func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown manifest kind")
 	r, _ := store.GetRelease("rK3")
 	assert.Nil(t, r, "an invalid kind must not persist a release")
+}
+
+func TestReceiveCandidate_ConflictsWithAVerification(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	deps, store := newDeps(now)
+	store.SeedRelease(pipeline.NewVerification("run-9", "core", "img", "rel-0", 1, "", release.ManifestKindDbt, now))
+	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "core", ReleaseID: "run-9", ImageTag: "img", Repo: "acme/demo", CommitSHA: "deadbeef",
+	})
+	assert.ErrorIs(t, err, handlers.ErrRunKindConflict)
 }

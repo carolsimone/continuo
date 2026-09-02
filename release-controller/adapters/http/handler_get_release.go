@@ -21,7 +21,6 @@ func getReleaseResponse(rel *pipeline.Run) map[string]any {
 		"per_node_results":    rel.PerNodeResults(),
 		"image_tags":          rel.ImageTags(),
 		"bootstrap":           rel.IsBootstrap(),
-		"shadow":              rel.Kind() == pipeline.KindVerification,
 		"repo":                rel.Repo(),
 		"commit_sha":          rel.CommitSHA(),
 		"remediation_round":   rel.RemediationRound(),
@@ -34,7 +33,7 @@ func (s *Server) handleGetRelease(w http.ResponseWriter, r *http.Request) {
 	// connection pool directly for this read-only path.
 	u := s.deps.NewUoW()
 	rel, err := u.RunRepo().Get(r.Context(), id)
-	if err != nil || rel == nil {
+	if err != nil || rel == nil || rel.Kind() != pipeline.KindCandidate {
 		http.Error(w, "release not found", http.StatusNotFound)
 		return
 	}

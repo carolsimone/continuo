@@ -29,23 +29,13 @@ type ReceiveCandidateInput struct {
 	// untouched) or "python" (contract.yaml, uploaded by the domain repo's CI
 	// before this POST). Anything else is rejected (HTTP 400).
 	Kind string `json:"kind"`
-	// Shadow marks a fix-verification release posted by agent-remediation: it
-	// runs the normal parse+validation pipeline but stops at StatusPassed
-	// instead of promoting to production. Absent means false — the default
-	// for every existing caller.
-	Shadow bool `json:"shadow"`
-	// SourceOverlayURI locates a tarball of project-relative source files the
-	// compile leg lays over the checked-in project before running, so the
-	// release verifies a proposed fix instead of the committed source. Accepted
-	// only together with Shadow; a production release always compiles exactly
-	// what is committed.
-	SourceOverlayURI string `json:"source_overlay_uri"`
-	// VerifiesReleaseID names the rejected release this shadow release verifies
-	// a fix for. The fix may edit a different service than the one whose release
-	// was rejected, so the rejected release's own changed service is assembled
-	// from ITS candidate instead of from the live production pointer — otherwise
-	// the fix would be judged against code the rejection was never about.
-	// Accepted only together with Shadow.
+	// Shadow, SourceOverlayURI, and VerifiesReleaseID are fix-verification
+	// concepts and are refused here (HTTP 400): a fix-verification run is
+	// submitted to POST /verification-runs instead. The three fields stay on
+	// this struct so a stale caller still posting them is answered with a
+	// clear error rather than having the values silently ignored.
+	Shadow            bool   `json:"shadow"`
+	SourceOverlayURI  string `json:"source_overlay_uri"`
 	VerifiesReleaseID string `json:"verifies_release_id"`
 }
 
@@ -68,11 +58,8 @@ func (i ReceiveCandidateInput) validate() error {
 	if _, err := i.manifestKind(); err != nil {
 		return err
 	}
-	if i.SourceOverlayURI != "" && !i.Shadow {
-		return errors.New("source_overlay_uri is accepted only on a shadow release")
-	}
-	if i.VerifiesReleaseID != "" && !i.Shadow {
-		return errors.New("verifies_release_id is accepted only on a shadow release")
+	if i.Shadow || i.SourceOverlayURI != "" || i.VerifiesReleaseID != "" {
+		return errors.New("shadow, source_overlay_uri and verifies_release_id are not accepted here; a fix-verification run is posted to POST /verification-runs")
 	}
 	return nil
 }
@@ -102,8 +89,14 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	existing, _ := u.RunRepo().Get(ctx, in.ReleaseID)
+	existing, err := u.RunRepo().Get(ctx, in.ReleaseID)
+	if err != nil {
+		return fmt.Errorf("get run: %w", err)
+	}
 	if existing != nil {
+		if existing.Kind() != pipeline.KindCandidate {
+			return fmt.Errorf("%w: %s is a %s", ErrRunKindConflict, in.ReleaseID, existing.Kind())
+		}
 		return u.Commit()
 	}
 

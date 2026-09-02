@@ -1,10 +1,14 @@
 package http
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,4 +49,27 @@ func TestToReleaseListItem_CarriesProvenance(t *testing.T) {
 
 	assert.Equal(t, "acme/dbt", item.Repo)
 	assert.Equal(t, "abc123", item.CommitSHA)
+}
+
+// TestHandleListReleases_OmitsVerificationRuns verifies that GET /releases
+// scopes its listing to candidates: a verification run occupying the same
+// run collection must not appear in the release history, since it is read
+// through GET /verification-runs instead.
+func TestHandleListReleases_OmitsVerificationRuns(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	deps, releases := newRetryRemediationDeps(now)
+	releases.releases["rel-1"] = pipeline.NewCandidate("rel-1", "finance", "tag", false, "owner/repo", "abc123", release.ManifestKindDbt, now)
+	releases.releases["verify-1"] = pipeline.NewVerification("verify-1", "finance", "tag", "rel-0", 1, "", release.ManifestKindDbt, now)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/releases", nil)
+	newTestServer(deps).Routes().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var resp struct {
+		Releases []map[string]any `json:"releases"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Releases, 1)
+	assert.Equal(t, "rel-1", resp.Releases[0]["release_id"])
 }

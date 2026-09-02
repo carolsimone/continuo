@@ -17,11 +17,14 @@ type releaseListItem struct {
 	ResolvedAt   *string `json:"resolved_at"`
 	NodeCount    int     `json:"node_count"`
 	Bootstrap    bool    `json:"bootstrap"`
-	Shadow       bool    `json:"shadow"`
 	RejectReason string  `json:"reject_reason,omitempty"`
 	Repo         string  `json:"repo"`
 	CommitSHA    string  `json:"commit_sha"`
 }
+
+// candidateKind narrows GET /releases to candidates: a verification run is
+// not a release and is read through GET /verification-runs instead.
+var candidateKind = pipeline.KindCandidate
 
 // handleListReleases returns paginated release history, newest-first.
 // Query params: status (optional), limit (optional), cursor (optional).
@@ -48,7 +51,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 
 	u := s.deps.NewUoW()
 	items, next, err := u.RunRepo().List(r.Context(), repository.ListFilter{
-		Status: statusPtr, Limit: limit, Cursor: cursor,
+		Kind: &candidateKind, Status: statusPtr, Limit: limit, Cursor: cursor,
 	})
 	if err != nil {
 		s.log.Error("list releases failed", "error", err)
@@ -84,7 +87,6 @@ func toReleaseListItem(rel *pipeline.Run) releaseListItem {
 		ResolvedAt:   resolved,
 		NodeCount:    len(rel.CandidateTopology()),
 		Bootstrap:    rel.IsBootstrap(),
-		Shadow:       rel.Kind() == pipeline.KindVerification,
 		RejectReason: rel.FailReason(),
 		Repo:         rel.Repo(),
 		CommitSHA:    rel.CommitSHA(),

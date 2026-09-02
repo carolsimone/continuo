@@ -43,6 +43,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /releases/{id}/retry-remediation", s.handleRetryRemediation)
 	mux.HandleFunc("GET /releases", s.handleListReleases)
 	mux.HandleFunc("GET /current-prod", s.handleGetCurrentProd)
+	mux.HandleFunc("POST /verification-runs", s.handleReceiveVerification)
+	mux.HandleFunc("GET /verification-runs/{id}", s.handleGetVerificationRun)
+	mux.HandleFunc("GET /verification-runs", s.handleListVerificationRuns)
+	mux.HandleFunc("GET /pipeline", s.handleGetPipeline)
 	return mux
 }
 

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -53,10 +54,39 @@ func (f *fakeReleaseRepo) Save(_ context.Context, r *pipeline.Run) error {
 func (f *fakeReleaseRepo) NextQueued(context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }
-func (f *fakeReleaseRepo) Active(context.Context) (*pipeline.Run, error) { return nil, nil }
 
-func (f *fakeReleaseRepo) List(context.Context, repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
-	return nil, nil, nil
+// Active returns the single run in a non-terminal, non-received status, or
+// nil. Mirrors the Postgres query that guards AdvanceQueue from launching a
+// second concurrent run.
+func (f *fakeReleaseRepo) Active(context.Context) (*pipeline.Run, error) {
+	for _, r := range f.releases {
+		switch r.Status() {
+		case pipeline.StatusCompiling, pipeline.StatusParsing, pipeline.StatusSeedBuilding, pipeline.StatusValidating:
+			return r, nil
+		}
+	}
+	return nil, nil
+}
+
+// List returns every stored run matching filter.Kind, filter.VerifiesReleaseID,
+// and filter.Status (each optional), newest first. Pagination is not
+// simulated: HTTP handler tests exercise small, unpaginated fixtures.
+func (f *fakeReleaseRepo) List(_ context.Context, filter repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
+	var out []*pipeline.Run
+	for _, r := range f.releases {
+		if filter.Kind != nil && r.Kind() != *filter.Kind {
+			continue
+		}
+		if filter.VerifiesReleaseID != nil && r.VerifiesReleaseID() != *filter.VerifiesReleaseID {
+			continue
+		}
+		if filter.Status != nil && string(r.Status()) != *filter.Status {
+			continue
+		}
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt().After(out[j].CreatedAt()) })
+	return out, nil, nil
 }
 
 func (f *fakeReleaseRepo) DeleteFinishedBefore(context.Context, time.Time, []string) (int, error) {
@@ -133,6 +163,7 @@ func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return u },
 		Clock:     fakeClock{t: now},
+		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Proposals: &fakeProposalReader{},
 	}

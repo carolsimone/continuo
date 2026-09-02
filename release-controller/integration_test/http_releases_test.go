@@ -137,3 +137,43 @@ func TestIntegration_PostReleases_UnknownKind_Returns400(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, r, "no release row should be persisted for a rejected kind")
 }
+
+// TestIntegration_VerificationRunExposedOnItsOwnRoutesOnly verifies that a
+// fix-verification run, saved through the real Postgres repository, is
+// readable only via the verification-run routes: GET /releases/{id} treats
+// its id as unknown, and GET /releases never lists it.
+func TestIntegration_VerificationRunExposedOnItsOwnRoutesOnly(t *testing.T) {
+	srv, deps, db := setup(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	require.NoError(t, handlers.ReceiveVerification(ctx, deps, handlers.ReceiveVerificationInput{
+		RunID: "verify-rv1", Service: "service-1", ImageTag: "t", Kind: "dbt",
+		VerifiesReleaseID: "rv1", Attempt: 1,
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/verification-runs/verify-rv1", nil)
+	w := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, "received", got["status"])
+
+	req = httptest.NewRequest(http.MethodGet, "/releases/verify-rv1", nil)
+	w = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/releases", nil)
+	w = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var list struct {
+		Releases []map[string]any `json:"releases"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
+	for _, rel := range list.Releases {
+		assert.NotEqual(t, "verify-rv1", rel["release_id"])
+	}
+}
