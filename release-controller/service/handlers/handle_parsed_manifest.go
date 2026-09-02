@@ -178,11 +178,16 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	// release would block the queue indefinitely. Promote directly instead — an
 	// empty candidate diff trivially passes the gate.
 	//
-	// A shadow release is the exception and is rejected here instead: it exists
-	// only to measure a proposed fix, and an empty candidate diff measures
-	// nothing.
+	// A shadow release takes the same trivial pass, ending in validated instead
+	// of promoted (promoteToProduction): a candidate identical to production IS
+	// production's validated code, so the fix it carries is proven by identity
+	// with that baseline. This is the shape of a fix that restores a
+	// compile-broken model to its promoted content — the shadow already proved
+	// the fix by compiling it, and there is nothing left to measure. Only a
+	// shadow whose candidate declares no node at all is rejected here: it
+	// measured nothing and can prove nothing.
 	if len(validationIDs) == 0 {
-		if r.IsShadow() {
+		if r.IsShadow() && len(topo) == 0 {
 			return rejectShadowWithNothingToValidate(ctx, d, u, r, in.ReleaseID, now)
 		}
 		if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
@@ -550,31 +555,29 @@ func intersectSorted(a, b []string) []string {
 	return out
 }
 
-// rejectShadowWithNothingToValidate ends a shadow release whose candidate
-// topology is identical to production, so its validation set is empty.
+// rejectShadowWithNothingToValidate ends a shadow release whose packaged
+// candidate declares no node at all.
 //
 // A shadow release runs the real pipeline for one purpose: to find out whether
-// a proposed fix survives validation. Its terminal "validated" status is the
-// only evidence anyone has that the fix works, and it is what a human is shown
-// before being asked to merge that fix. An empty validation set means no node
-// would have been built or checked at all, so taking the trivial-pass
-// promotion path here would report an unmeasured fix as verified. It is
-// rejected instead, which routes it into the handling a fix that failed
-// verification already gets: the attempt is recorded as failed with this
-// reason as its evidence, and either the next attempt starts or the operator
-// is left with the failure.
+// a proposed fix survives it. Its terminal "validated" status is the only
+// evidence anyone has that the fix works, and it is what a human is shown
+// before being asked to merge that fix. A candidate with no node would have
+// built and checked nothing, so taking the trivial-pass path here would report
+// an unmeasured fix as verified. It is rejected instead, which routes it into
+// the handling a fix that failed verification already gets: the attempt is
+// recorded as failed with this reason as its evidence, and either the next
+// attempt starts or the operator is left with the failure.
 //
-// The case arises when the proposed fix changed nothing the candidate topology
-// can see — a node's content_hash folds its source, shared code, and resolved
-// config, so an edit touching none of them leaves it identical to production —
-// or when the packaged candidate declares no node at all.
+// A non-empty candidate whose every node matches production is NOT this case:
+// that candidate is production's own validated code, so the fix is proven by
+// identity with it and the shadow ends validated (see handleParseOK).
 //
 // The rejection carries no stage and no per_node entries, so remediation
 // derives no failure evidence from it and opens no heal trigger for it;
 // shadow:true is the same signal every other shadow rejection carries.
 func rejectShadowWithNothingToValidate(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, now time.Time) error {
-	const detail = "a shadow release verifies a fix by validating it, and no candidate node is new or " +
-		"content-changed against production, so nothing would have been validated and the fix is unproven"
+	const detail = "a shadow release verifies a fix by running it through the pipeline, and its candidate " +
+		"declares no node at all, so nothing was built or checked and the fix is unproven"
 
 	if err := r.TransitionToRejected("nothing_to_validate", detail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
