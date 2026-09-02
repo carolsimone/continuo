@@ -135,11 +135,11 @@ type Services struct {
 type Result struct {
 	Proposal      proposal.Proposal
 	SuspectedRoot string
-	// ShadowContract is the packaged contract.yaml a python fix must be
+	// VerificationContract is the packaged contract.yaml a python fix must be
 	// verified with, for the driver to upload alongside the verification run
 	// it submits; nil for a dbt fix, whose edits are verified by re-running
 	// the project directly.
-	ShadowContract []byte
+	VerificationContract []byte
 }
 
 // Gathered holds every source file a single-shot Fixer read, keyed by

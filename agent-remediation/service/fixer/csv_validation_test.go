@@ -120,7 +120,7 @@ func csvSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager, *
 // TestCsvValidation_HappyPath walks the whole lane end to end: an answer that
 // only corrects output_columns is applied and packaged from the whole
 // contract directory into the merged contract returned as
-// Result.ShadowContract for the driver to submit — and the LLM request it
+// Result.VerificationContract for the driver to submit — and the LLM request it
 // was built from carries the csv-specific system prompt and tool name, not
 // the python-model ones.
 func TestCsvValidation_HappyPath(t *testing.T) {
@@ -143,7 +143,7 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 		"a file the model did not return must be left exactly as the repository holds it")
 
 	// The merged contract is returned in memory for the driver, not uploaded.
-	require.Equal(t, []byte("merged: contract\n"), r.ShadowContract)
+	require.Equal(t, []byte("merged: contract\n"), r.VerificationContract)
 
 	p := r.Proposal
 	require.Equal(t, proposal.StatusProposed, p.Status,
@@ -153,7 +153,7 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 	require.Equal(t, "analytics.py_csv_orders", p.Edits[0].TargetNodeID)
 	for key := range arts.written {
 		require.NotContains(t, key, "contract.yaml",
-			"this lane never uploads the merged contract itself; the driver does, from Result.ShadowContract")
+			"this lane never uploads the merged contract itself; the driver does, from Result.VerificationContract")
 	}
 
 	// The prompt sent to the model is the csv lane's own: its rules, not the
@@ -194,7 +194,7 @@ func TestCsvValidation_AnswerCorrectsTheCsvURI_Verifies(t *testing.T) {
 	require.Equal(t, proposal.StatusProposed, r.Proposal.Status,
 		"correcting the csv read's uri is a sanctioned repair and must be proposed")
 	require.Len(t, pkgr.calls, 1)
-	require.NotEmpty(t, r.ShadowContract)
+	require.NotEmpty(t, r.VerificationContract)
 }
 
 // TestCsvValidation_AnswerDeletesTheCsvRead_Fails covers the cheapest way to
@@ -447,6 +447,6 @@ func TestCsvValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 		"the sibling check reads the ORIGINAL failing release, not a verification run")
 	require.Equal(t, 0, llm.calls, "no model call is worth making for an unverifiable fix")
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, r.ShadowContract, "no release-queue slot is spent on a fix that cannot pass")
+	require.Empty(t, r.VerificationContract, "no release-queue slot is spent on a fix that cannot pass")
 	require.Empty(t, arts.written)
 }

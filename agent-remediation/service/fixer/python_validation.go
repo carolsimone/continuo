@@ -27,7 +27,7 @@ import (
 // repository at the failing commit, finds the file declaring the node, asks
 // the model to correct it, and packages the result with the same tool the
 // team's own CI runs after a merge — the merged contract a real release would
-// run. It returns that contract as Result.ShadowContract alongside the
+// run. It returns that contract as Result.VerificationContract alongside the
 // proposed edits, with Status=StatusProposed; the driver collects it with
 // every other edit for the release and submits a fix-verification run that
 // carries the full parse -> candidate-schema -> validation pipeline through
@@ -38,13 +38,13 @@ import (
 //
 // Locating the contract file and everything from the model call through
 // packaging the merged contract (locateContractForFix,
-// proposeContractFixViaShadow) is shared code, not merely a similar shape,
-// with the python-csv lane (csvValidationFixer): both call the same two
-// functions. The two lanes differ only in the two seams passed into
-// proposeContractFixViaShadow — what evidence is assembled and what prompt it
-// becomes (buildPythonProposeRequest), and what "the fix preserved the node's
-// declaration" means (declarationBreach) — because a python-csv node has no
-// script and a different set of rules for what a fix may touch.
+// proposeContractFixViaVerification) is shared code, not merely a similar
+// shape, with the python-csv lane (csvValidationFixer): both call the same
+// two functions. The two lanes differ only in the two seams passed into
+// proposeContractFixViaVerification — what evidence is assembled and what
+// prompt it becomes (buildPythonProposeRequest), and what "the fix preserved
+// the node's declaration" means (declarationBreach) — because a python-csv
+// node has no script and a different set of rules for what a fix may touch.
 type pythonValidationFixer struct{}
 
 func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
@@ -69,7 +69,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 	// prompt it becomes, and what "the fix preserved the node's declaration"
 	// means are specific to a python node, so those three are passed in as the
 	// seams.
-	return proposeContractFixViaShadow(ctx, svc, in, schema, table, root, located,
+	return proposeContractFixViaVerification(ctx, svc, in, schema, table, root, located,
 		buildPythonProposeRequest, declarationBreach)
 }
 
@@ -172,7 +172,7 @@ func buildPythonProposeRequest(ctx context.Context, svc Services, in Input, loca
 	return prompt.AssemblePythonContractFix(ev), nil
 }
 
-// proposeContractFixViaShadow carries the orchestration shared by every
+// proposeContractFixViaVerification carries the orchestration shared by every
 // contract-fix lane whose answer can only be judged by a verification run:
 // one model call, applying and guarding the answer, and packaging it into the
 // merged contract a verification run would run, plus writing the audit
@@ -183,7 +183,7 @@ func buildPythonProposeRequest(ctx context.Context, svc Services, in Input, loca
 // returned error is transient (the driver redelivers). checkDeclarations is
 // the post-apply guard: it returns "" when the answer preserved what the fix
 // is required not to change, or the reason to fail the attempt otherwise.
-func proposeContractFixViaShadow(
+func proposeContractFixViaVerification(
 	ctx context.Context, svc Services, in Input, schema, table, root string, located ports.Located,
 	buildRequest func(ctx context.Context, svc Services, in Input, located ports.Located) (prompt.ProposeRequest, error),
 	checkDeclarations func(svc Services, files []ports.ProposedFile, originals map[string]string) string,
@@ -296,7 +296,7 @@ func proposeContractFixViaShadow(
 		"node", in.NodeID, "node_type", in.NodeType, "release", in.ReleaseID, "files", len(edits))
 
 	return Result{
-		ShadowContract: merged,
+		VerificationContract: merged,
 		Proposal: proposal.Proposal{
 			Status:         proposal.StatusProposed,
 			Confidence:     normalizeConfidence(res.Confidence),
@@ -309,7 +309,7 @@ func proposeContractFixViaShadow(
 			DiffURI:        edits[0].DiffURI,
 			// The edits name real files at a real commit, which is what a pull
 			// request needs; the verification run the driver submits from
-			// ShadowContract decides whether they are right.
+			// VerificationContract decides whether they are right.
 			SourceResolved: true,
 			Edits:          edits,
 		},

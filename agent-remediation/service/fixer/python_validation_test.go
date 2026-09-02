@@ -213,7 +213,7 @@ func pythonSvc(t *testing.T, root string) (Services, *fakeArchive, *fakePackager
 // TestPythonValidation_HappyPath walks the whole lane end to end and pins the
 // property a reordering would break: the contract directory is packaged only
 // after the model's files are written into it, never from the still-failing
-// tree. The merged contract comes back as Result.ShadowContract for the
+// tree. The merged contract comes back as Result.VerificationContract for the
 // driver to submit and verify — this lane never uploads or submits anything
 // itself — and the edit names the node it repairs.
 func TestPythonValidation_HappyPath(t *testing.T) {
@@ -245,7 +245,7 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 		"a file the model did not return must be left exactly as the repository holds it")
 
 	// The merged contract is returned in memory for the driver, not uploaded.
-	require.Equal(t, []byte("merged: contract\n"), r.ShadowContract)
+	require.Equal(t, []byte("merged: contract\n"), r.VerificationContract)
 
 	// The sibling check read the ORIGINAL failing release, not a verification run.
 	require.Equal(t, []string{"rel-1"}, rel.failingNodesCalls)
@@ -372,7 +372,7 @@ func TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence(t *testing.T)
 	attempts := &fakeAttempts{views: []proposal.View{
 		{
 			Attempt: 1, Status: proposal.StatusFailed,
-			VerifyError: "shadow rejected: revenue_total still missing",
+			VerifyError: "verification failed: revenue_total still missing",
 			Edits:       []proposal.FileEdit{{Path: "services/service-py/contracts/py_daily_kpis.yml", DiffURI: "s3://diff-1"}},
 		},
 		// The row for the attempt now in flight must not be fed back to the
@@ -398,7 +398,7 @@ func TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence(t *testing.T)
 
 	require.Len(t, llm.requests, 1)
 	user := llm.requests[0].User
-	require.Contains(t, user, "shadow rejected: revenue_total still missing")
+	require.Contains(t, user, "verification failed: revenue_total still missing")
 	require.Contains(t, user, "+      - name: revenue_total")
 	require.NotContains(t, user, "Attempt 2", "the in-flight attempt is not prior evidence for itself")
 }
@@ -417,7 +417,7 @@ func TestPythonValidation_EvidenceDegradesNeverBlocks(t *testing.T) {
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
 	require.Equal(t, proposal.StatusProposed, r.Proposal.Status)
-	require.NotEmpty(t, r.ShadowContract)
+	require.NotEmpty(t, r.VerificationContract)
 }
 
 // TestPythonValidation_TransientBundleError_Redelivers verifies that a
@@ -556,7 +556,7 @@ func TestPythonValidation_RejectedPackaging_Fails(t *testing.T) {
 	require.Equal(t, proposal.StatusFailed, r.Proposal.Status)
 	require.Contains(t, r.Proposal.Rationale, "output_columns is required",
 		"the tool's own complaint is the evidence the next attempt is shown")
-	require.Empty(t, r.ShadowContract, "nothing was packaged, so there is no contract to hand the driver")
+	require.Empty(t, r.VerificationContract, "nothing was packaged, so there is no contract to hand the driver")
 	require.Empty(t, arts.written, "a contract that could not be packaged writes no artifacts")
 	require.Equal(t, 1, arch.cleanups, "the checkout is released even when the attempt fails")
 }
@@ -733,7 +733,7 @@ func TestPythonValidation_AnswerAddsExplicitDefaultKind_Verifies(t *testing.T) {
 	require.Equal(t, proposal.StatusProposed, r.Proposal.Status,
 		"writing the same default kind explicitly must be proposed like any other accepted fix")
 	require.Len(t, pkgr.calls, 1)
-	require.NotEmpty(t, r.ShadowContract)
+	require.NotEmpty(t, r.VerificationContract)
 }
 
 // TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails covers the
@@ -863,7 +863,7 @@ func TestPythonValidation_AnswerThatDropsADeclaredRead_Fails(t *testing.T) {
 			require.Equal(t, proposal.StatusProposed, r.Proposal.Status,
 				"a fix that keeps every declared read must be proposed")
 			require.Len(t, pkgr.calls, 1)
-			require.NotEmpty(t, r.ShadowContract)
+			require.NotEmpty(t, r.VerificationContract)
 		})
 	}
 }
@@ -902,7 +902,7 @@ func TestPythonValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 		"the sibling check reads the ORIGINAL failing release, not a verification run")
 	require.Equal(t, 0, llm.calls, "no model call is worth making for an unverifiable fix")
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, r.ShadowContract, "no release-queue slot is spent on a fix that cannot pass")
+	require.Empty(t, r.VerificationContract, "no release-queue slot is spent on a fix that cannot pass")
 	require.Empty(t, arts.written)
 }
 
@@ -929,7 +929,7 @@ func TestPythonValidation_FailureElsewhereDoesNotBlock(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proposal.StatusProposed, r.Proposal.Status)
 	require.Len(t, pkgr.calls, 1)
-	require.NotEmpty(t, r.ShadowContract)
+	require.NotEmpty(t, r.VerificationContract)
 }
 
 // TestPythonValidation_UnreadableFailingNodesIsTransient pins that a release

@@ -19,7 +19,7 @@ import (
 // entry carries the hash fold topology-controller recomputes and checks. A
 // wrong subprocess argument order, a wrong --out path, or a CLI that never
 // ran at all would each surface here as a missing field or a parse failure —
-// the same rejection topology-controller would give the shadow artifact.
+// the same rejection topology-controller would give the merged contract.
 func TestMerge_ProducesHashFoldedWireContract(t *testing.T) {
 	if _, err := exec.LookPath("continuo-runtime"); err != nil {
 		t.Skipf("continuo-runtime not on PATH (%v): this binary ships only inside the agent-remediation image, not on a bare host or CI runner. It is exercised in CI by the dedicated in-container step that runs this package's integration test inside the running agent-remediation container.", err)

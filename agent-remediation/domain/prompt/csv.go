@@ -11,7 +11,7 @@ import (
 // pointing at the file the runtime loads — and the output_columns it promises
 // that file to carry. The evidence therefore has the same shape as a python
 // node's (a normalized ContractEntry paired with the declaring file's verbatim
-// YAMLText at YAMLPath), because the same contract-yaml-plus-shadow-release
+// YAMLText at YAMLPath), because the same contract-yaml-plus-verification-run
 // mechanism verifies both; only what the model is told a fix may touch
 // differs, in the system prompt.
 //

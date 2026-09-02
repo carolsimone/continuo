@@ -45,7 +45,7 @@ func NewProposalRepository(q Queryer, serviceRepoPaths map[string]string) *Propo
 
 // CountAttempts returns the number of TERMINAL proposal attempts recorded for
 // one remediation round of one release. In-flight rows — 'generating' (the
-// model call has not resolved) and 'verifying' (a shadow release is still
+// model call has not resolved) and 'verifying' (a verification run is still
 // validating a proposed fix) — are excluded so an attempt that has not yet
 // concluded neither inflates the attempt cap nor shifts the attempt number on
 // a redelivery.
@@ -736,10 +736,10 @@ const beginPRClaimCAS = `
 // The parent-proposal preconditions are read first so each returns its own
 // error rather than collapsing into the CAS's "already claimed". Claiming
 // requires status='proposed' as well as source_resolved: a python contract fix
-// is written as 'verifying' with source_resolved=true the moment its shadow
-// release is submitted, and a shadow rejection changes nothing but the status —
-// so without the status guard a caller could open a pull request for a fix
-// still being judged, or for one already judged wrong.
+// is written as 'verifying' with source_resolved=true the moment its
+// verification run is submitted, and a failed verification changes nothing
+// but the status — so without the status guard a caller could open a pull
+// request for a fix still being judged, or for one already judged wrong.
 //
 // Returns ErrNotSourceResolved when source_resolved=false, ErrNotProposed when
 // the attempt has not reached 'proposed', ErrPRConflict when the service is
@@ -983,8 +983,8 @@ func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id, service st
 // makes bounded progress on each tick.
 const verifyingBatchLimit = 20
 
-// ListVerifying returns proposals awaiting shadow-release verification
-// (status='verifying'), oldest first, capped at verifyingBatchLimit.
+// ListVerifying returns proposals awaiting verification (status='verifying'),
+// oldest first, capped at verifyingBatchLimit.
 func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View, error) {
 	q := `SELECT ` + proposalColumns + ` FROM proposal
 	      WHERE status = $1 ORDER BY created_at ASC LIMIT $2`
@@ -1001,9 +1001,10 @@ func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View
 
 // rewriteVerifyingOutcomes is the node_outcomes assignment that carries an
 // attempt's per-node outcomes along with the attempt itself: every node still
-// waiting on a shadow release takes the status the attempt just reached, while
+// waiting on verification takes the status the attempt just reached, while
 // a node the attempt had already settled — skipped, or failed while being
-// fixed — keeps the entry it was recorded with, since no release judged it.
+// fixed — keeps the entry it was recorded with, since no verification run
+// judged it.
 //
 // The COALESCE is what keeps the column (NOT NULL) writable: aggregating over a
 // row that recorded no per-node outcome at all yields SQL NULL, not an empty

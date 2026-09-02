@@ -146,7 +146,7 @@ type Proposal struct {
 	Services []string
 	// TriggerPayload is the raw remediation.requested:v1 payload that drove
 	// this attempt, written when Status is (or was) StatusVerifying so a
-	// reconciler can rebuild the trigger and retry with the shadow release's
+	// reconciler can rebuild the trigger and retry with the verification run's
 	// error as new evidence. It is kept when the attempt is finalized —
 	// rebuilding the retry reads it from a row that has already moved to
 	// 'failed'. Empty for an attempt that never entered verification.

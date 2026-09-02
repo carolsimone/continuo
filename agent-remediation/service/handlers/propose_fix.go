@@ -422,7 +422,7 @@ func fixCluster(ctx context.Context, deps Deps, svc fixer.Services, t Trigger, c
 func outcomeFromResult(r fixer.Result) clusterOutcome {
 	out := clusterOutcome{
 		edits:          append([]proposal.FileEdit(nil), r.Proposal.Edits...),
-		contract:       r.ShadowContract,
+		contract:       r.VerificationContract,
 		status:         r.Proposal.Status,
 		reason:         r.Proposal.Rationale,
 		rationale:      r.Proposal.Rationale,

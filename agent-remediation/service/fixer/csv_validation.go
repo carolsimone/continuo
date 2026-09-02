@@ -37,8 +37,8 @@ const csvReadKey = "csv"
 // can actually pass), and everything from the model call through packaging the
 // merged contract is not merely similar in shape to the python-model lane's —
 // it is the same code, shared through locateContractForFix and
-// proposeContractFixViaShadow. This type differs from pythonValidationFixer
-// only in the two seams passed into proposeContractFixViaShadow: what
+// proposeContractFixViaVerification. This type differs from pythonValidationFixer
+// only in the two seams passed into proposeContractFixViaVerification: what
 // evidence it shows the model (buildCsvProposeRequest) and what "the fix
 // preserved the node's declaration" means for a contract-only node
 // (csvDeclarationBreach).
@@ -56,7 +56,7 @@ func (csvValidationFixer) Propose(ctx context.Context, svc Services, in Input) (
 		return *skip, nil
 	}
 
-	return proposeContractFixViaShadow(ctx, svc, in, schema, table, root, located,
+	return proposeContractFixViaVerification(ctx, svc, in, schema, table, root, located,
 		buildCsvProposeRequest, csvDeclarationBreach)
 }
 

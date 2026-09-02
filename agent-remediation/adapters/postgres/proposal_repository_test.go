@@ -1059,17 +1059,17 @@ func TestBeginPR_RejectsUnresolvedSource(t *testing.T) {
 // turned into a pull request.
 //
 // A python contract fix is persisted as 'verifying' with source_resolved=true
-// while a shadow release is still judging it, and a rejected one becomes
+// while a verification run is still judging it, and a failed one becomes
 // 'failed' with only its status changed. Claiming on source_resolved and
 // pr_state alone therefore let a caller open a PR for a fix still being
-// verified, or for one a release had already rejected. The UI's own
+// verified, or for one a run had already failed. The UI's own
 // status==='proposed' predicate is not that invariant: it does not run for a
 // direct or stale gRPC client.
 func TestBeginPR_RejectsAnAttemptThatIsNotProposed(t *testing.T) {
 	for name, status := range map[string]proposal.Status{
-		"still being verified by a shadow release": proposal.StatusVerifying,
-		"rejected by its shadow release":           proposal.StatusFailed,
-		"still being generated":                    proposal.StatusGenerating,
+		"still being verified by a verification run": proposal.StatusVerifying,
+		"failed by its verification run":             proposal.StatusFailed,
+		"still being generated":                      proposal.StatusGenerating,
 	} {
 		t.Run(name, func(t *testing.T) {
 			db := newTestDB(t)
@@ -1083,7 +1083,7 @@ func TestBeginPR_RejectsAnAttemptThatIsNotProposed(t *testing.T) {
 				ErrorSignature:    "sig",
 				Attempt:           1,
 				Status:            status,
-				VerificationRunID: "shadow-r-1-analytics.py_daily_kpis-a1",
+				VerificationRunID: "verify-r-1-analytics.py_daily_kpis-a1",
 				Confidence:        proposal.ConfidenceHigh,
 				Rationale:         "rationale",
 				SourceResolved:    true,
@@ -1285,7 +1285,7 @@ func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
 		"model.p.ancestor":   {Status: proposal.StatusSkipped, Reason: "no source"},
 	}
 	verifications := []proposal.Verification{
-		{Service: "service-1", Kind: "dbt", RunID: "shadow-r-service-1-a1"},
+		{Service: "service-1", Kind: "dbt", RunID: "verify-r-service-1-a1"},
 	}
 	p := proposal.Proposal{
 		Source:          "validation",
@@ -1455,12 +1455,12 @@ func TestBeginPR_ClaimCarriesFileEdits(t *testing.T) {
 		"a row with no resolved_node_ids must claim with one entry synthesized from node_id")
 }
 
-// TestProposalRepositoryVerifyingLifecycle verifies the round trip a shadow
-// release drives: a proposal upserted with status='verifying' carries its
-// shadow_release_id and trigger_payload, is surfaced by ListVerifying, and
-// MarkVerified finalizes it to 'proposed' and removes it from the verifying
-// list. A second MarkVerified call is an idempotent no-op (hit=false) since
-// the row is no longer 'verifying'.
+// TestProposalRepositoryVerifyingLifecycle verifies the round trip a
+// verification run drives: a proposal upserted with status='verifying'
+// carries its verification_run_id and trigger_payload, is surfaced by
+// ListVerifying, and MarkVerified finalizes it to 'proposed' and removes it
+// from the verifying list. A second MarkVerified call is an idempotent no-op
+// (hit=false) since the row is no longer 'verifying'.
 func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -1474,10 +1474,10 @@ func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 		ErrorSignature:    "sig-verify-1",
 		Attempt:           1,
 		Status:            proposal.StatusVerifying,
-		VerificationRunID: "shadow-rel-abc",
+		VerificationRunID: "verify-rel-abc",
 		TriggerPayload:    trigger,
 		Confidence:        proposal.ConfidenceHigh,
-		Rationale:         "proposed fix awaiting shadow verification",
+		Rationale:         "proposed fix awaiting verification",
 		Model:             "claude-3-5-sonnet",
 		CreatedAt:         time.Now().UTC(),
 	}
@@ -1488,7 +1488,7 @@ func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 	require.Len(t, verifying, 1, "the verifying proposal must be listed")
 	require.Equal(t, id, verifying[0].ID)
 	require.Equal(t, string(proposal.StatusVerifying), string(verifying[0].Status))
-	require.Equal(t, "shadow-rel-abc", verifying[0].VerificationRunID, "shadow_release_id must round-trip")
+	require.Equal(t, "verify-rel-abc", verifying[0].VerificationRunID, "verification_run_id must round-trip")
 	// JSONB is a binary format: Postgres re-serializes it on read (e.g. adding
 	// a space after ':' and ','), so the column never preserves the writer's
 	// exact bytes. JSONEq compares the two payloads for JSON-semantic
@@ -1527,23 +1527,23 @@ func TestProposalRepositoryMarkVerifyFailed(t *testing.T) {
 		ErrorSignature:    "sig-verify-2",
 		Attempt:           1,
 		Status:            proposal.StatusVerifying,
-		VerificationRunID: "shadow-rel-def",
+		VerificationRunID: "verify-rel-def",
 		TriggerPayload:    []byte(`{"source":"validation","node_id":"model.p.customers"}`),
 		Confidence:        proposal.ConfidenceMedium,
-		Rationale:         "proposed fix awaiting shadow verification",
+		Rationale:         "proposed fix awaiting verification",
 		Model:             "claude-3-5-sonnet",
 		CreatedAt:         time.Now().UTC(),
 	}
 	id := seedProposal(t, repo, db, p)
 
-	hit, err := repo.MarkVerifyFailed(ctx, id, "shadow release rel-shadow-def failed: validation rejected 3 rows", nil)
+	hit, err := repo.MarkVerifyFailed(ctx, id, "verification run verify-rel-def failed: validation rejected 3 rows", nil)
 	require.NoError(t, err)
 	require.True(t, hit, "first MarkVerifyFailed must fire the CAS")
 
 	got, err := repo.Get(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, string(proposal.StatusFailed), string(got.Status), "MarkVerifyFailed must flip status to 'failed'")
-	require.Equal(t, "shadow release rel-shadow-def failed: validation rejected 3 rows", got.VerifyError)
+	require.Equal(t, "verification run verify-rel-def failed: validation rejected 3 rows", got.VerifyError)
 
 	verifying, err := repo.ListVerifying(ctx)
 	require.NoError(t, err)
@@ -1554,13 +1554,13 @@ func TestProposalRepositoryMarkVerifyFailed(t *testing.T) {
 	require.False(t, hit, "second MarkVerifyFailed must be a no-op: the row is no longer 'verifying'")
 	got2, err := repo.Get(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, "shadow release rel-shadow-def failed: validation rejected 3 rows", got2.VerifyError,
+	require.Equal(t, "verification run verify-rel-def failed: validation rejected 3 rows", got2.VerifyError,
 		"the no-op call must not overwrite the already-recorded verify_error")
 }
 
 // TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes verifies that the
 // UPDATE finalizing an attempt also finalizes its per-node outcomes: every node
-// that was waiting on a shadow release becomes 'proposed', while a node the
+// that was waiting on verification becomes 'proposed', while a node the
 // attempt had already settled keeps the status and reason it was recorded with.
 // Without the rewrite the row would report itself proposed while its own nodes
 // still read as verifying, and every reader of node_outcomes would keep showing
@@ -1582,7 +1582,7 @@ func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
 			"model.p.a": {Status: proposal.StatusVerifying},
 			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
 		},
-		VerificationRunID: "shadow-rel-verify-outcomes-1",
+		VerificationRunID: "verify-rel-verify-outcomes-1",
 		CreatedAt:         time.Now().UTC(),
 	})
 
@@ -1608,7 +1608,7 @@ func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
 		ErrorSignature:    "sig-verify-outcomes-1",
 		Attempt:           2,
 		Status:            proposal.StatusVerifying,
-		VerificationRunID: "shadow-rel-verify-outcomes-2",
+		VerificationRunID: "verify-rel-verify-outcomes-2",
 		CreatedAt:         time.Now().UTC(),
 	})
 
@@ -1623,8 +1623,8 @@ func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
 }
 
 // TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes is the mirror of
-// the rewrite above for a rejected attempt: every node that was waiting on a
-// shadow release becomes 'failed', and a node the attempt had already settled
+// the rewrite above for a failed attempt: every node that was waiting on
+// verification becomes 'failed', and a node the attempt had already settled
 // keeps its own outcome.
 func TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
 	db := newTestDB(t)
@@ -1643,7 +1643,7 @@ func TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
 			"model.p.a": {Status: proposal.StatusVerifying},
 			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
 		},
-		VerificationRunID: "shadow-rel-verify-outcomes-3",
+		VerificationRunID: "verify-rel-verify-outcomes-3",
 		CreatedAt:         time.Now().UTC(),
 	})
 
@@ -1682,7 +1682,7 @@ func TestListVerifying_OrderedOldestFirstAndLimited(t *testing.T) {
 			// Distinct attempt per row: (release_id, attempt) is the unique key.
 			Attempt:           i + 1,
 			Status:            proposal.StatusVerifying,
-			VerificationRunID: fmt.Sprintf("shadow-rel-%02d", i),
+			VerificationRunID: fmt.Sprintf("verify-rel-%02d", i),
 			Confidence:        proposal.ConfidenceLow,
 			Model:             "claude-3-5-sonnet",
 			CreatedAt:         base.Add(time.Duration(i) * time.Minute),
@@ -1694,7 +1694,7 @@ func TestListVerifying_OrderedOldestFirstAndLimited(t *testing.T) {
 	require.Len(t, verifying, 20, "ListVerifying must cap at 20 rows even though 25 are in flight")
 
 	for i, v := range verifying {
-		require.Equal(t, fmt.Sprintf("shadow-rel-%02d", i), v.VerificationRunID,
+		require.Equal(t, fmt.Sprintf("verify-rel-%02d", i), v.VerificationRunID,
 			"row %d must be the %d-th oldest proposal (oldest first)", i, i)
 	}
 	for i := 1; i < len(verifying); i++ {
@@ -1705,7 +1705,7 @@ func TestListVerifying_OrderedOldestFirstAndLimited(t *testing.T) {
 
 // TestProposalRepositoryCountAttemptsExcludesVerifying verifies that an
 // in-flight 'verifying' row is not counted toward the attempt cap, for the
-// same reason an in-flight 'generating' row is not: the shadow release has
+// same reason an in-flight 'generating' row is not: the verification run has
 // not concluded, so counting it would inflate the attempt cap and shift the
 // attempt number on a redelivery of the trigger that started it.
 func TestProposalRepositoryCountAttemptsExcludesVerifying(t *testing.T) {
@@ -1726,11 +1726,11 @@ func TestProposalRepositoryCountAttemptsExcludesVerifying(t *testing.T) {
 			Attempt: i, Status: proposal.StatusProposed, CreatedAt: now,
 		}), "insert terminal attempt %d", i)
 	}
-	// A third, in-flight attempt marked verifying: a shadow release is still
+	// A third, in-flight attempt marked verifying: a verification run is still
 	// running for it.
 	require.NoError(t, repo.Upsert(ctx, proposal.Proposal{
 		Source: source, ReleaseID: "release-v", NodeID: nodeID, ErrorSignature: sig,
-		Attempt: 3, Status: proposal.StatusVerifying, VerificationRunID: "shadow-count-1", CreatedAt: now,
+		Attempt: 3, Status: proposal.StatusVerifying, VerificationRunID: "verify-count-1", CreatedAt: now,
 	}))
 
 	n, err := repo.CountAttempts(ctx, "release-v", 1)
@@ -1863,7 +1863,7 @@ func TestProposalRepositoryFailGenerating(t *testing.T) {
 	settled := inFlight
 	settled.Attempt = 1
 	settled.Status = proposal.StatusFailed
-	settled.Rationale = "the shadow release rejected this fix"
+	settled.Rationale = "the verification run failed this fix"
 	settledID := seedProposal(t, repo, db, settled)
 
 	n, err := repo.FailGenerating(ctx, "rel-fg-1",
@@ -1883,7 +1883,7 @@ func TestProposalRepositoryFailGenerating(t *testing.T) {
 
 	stillSettled, err := repo.Get(ctx, settledID)
 	require.NoError(t, err)
-	require.Equal(t, "the shadow release rejected this fix", stillSettled.Rationale,
+	require.Equal(t, "the verification run failed this fix", stillSettled.Rationale,
 		"a row that already reached a terminal state must not be rewritten")
 
 	n, err = repo.FailGenerating(ctx, "rel-fg-1", "again")

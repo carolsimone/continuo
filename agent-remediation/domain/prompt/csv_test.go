@@ -29,7 +29,7 @@ func csvEvidence() CsvEvidence {
 		PriorAttempts: []PriorAttempt{
 			{
 				Attempt:     1,
-				VerifyError: "shadow rejected: customer_id still missing",
+				VerifyError: "verification failed: customer_id still missing",
 				Diffs: []AttemptDiff{
 					{Path: "services/service-csv/contracts/py_csv_orders.yml", Diff: "-    - name: cust_id\n+    - name: customer_id"},
 				},
@@ -40,7 +40,7 @@ func csvEvidence() CsvEvidence {
 
 // TestAssembleCsvContractFix_RendersEverySection pins that every evidence
 // section reaches the model, each in the fence its content type calls for.
-// The per-attempt evidence (the prior attempt's diff and the shadow release's
+// The per-attempt evidence (the prior attempt's diff and the verification run's
 // error) is what makes a second attempt better-informed than the first, so a
 // renderer that silently drops a section would degrade retries without any
 // visible failure.
@@ -65,8 +65,8 @@ func TestAssembleCsvContractFix_RendersEverySection(t *testing.T) {
 	require.Contains(t, u, "How similar failures were fixed before")
 	require.Contains(t, u, "https://example.test/pr/1")
 
-	// Prior attempts: the shadow release's error and the diff that attempt made.
-	require.Contains(t, u, "shadow rejected: customer_id still missing")
+	// Prior attempts: the verification run's error and the diff that attempt made.
+	require.Contains(t, u, "verification failed: customer_id still missing")
 	require.Contains(t, u, "+    - name: customer_id")
 }
 
