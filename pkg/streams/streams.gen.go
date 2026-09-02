@@ -68,7 +68,7 @@ const (
 	CompileCompletedV1 = "compile.completed:v1"
 	// ReleasePromotedV1 — Release promoted to production; orchestrator atomically replaces its Neo4j topology.
 	ReleasePromotedV1 = "release.promoted:v1"
-	// ReleaseRejectedV1 — Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
+	// ReleaseRejectedV1 — Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
 	ReleaseRejectedV1 = "release.rejected:v1"
 	// PipelineRunFinishedV1 — A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so executor-controller can drop it whatever the outcome.
 	PipelineRunFinishedV1 = "pipeline.run.finished:v1"
@@ -154,12 +154,8 @@ const (
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
-	// ExecutorReleasePromoted — executor-controller consumer group on release.promoted:v1.
-	ExecutorReleasePromoted = "executor-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
-	// ExecutorReleaseRejected — executor-controller consumer group on release.rejected:v1.
-	ExecutorReleaseRejected = "executor-release-rejected"
 	// ExecutorPipelineRunFinished — executor-controller consumer group on pipeline.run.finished:v1.
 	ExecutorPipelineRunFinished = "executor-pipeline-run-finished"
 	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.

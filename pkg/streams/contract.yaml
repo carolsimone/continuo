@@ -315,21 +315,15 @@ streams:
       - service: orchestrator
         group: orchestrator-release-promoted-versions
         const: OrchestratorReleasePromotedVersions
-      - service: executor-controller
-        group: executor-release-promoted
-        const: ExecutorReleasePromoted
 
   - name: release.rejected:v1
     const: ReleaseRejectedV1
-    description: Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
+    description: Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
     producers: [release-controller]
     consumers:
       - service: remediation
         group: remediation-release-rejected
         const: RemediationReleaseRejected
-      - service: executor-controller
-        group: executor-release-rejected
-        const: ExecutorReleaseRejected
 
   - name: pipeline.run.finished:v1
     const: PipelineRunFinishedV1
