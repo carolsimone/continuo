@@ -66,39 +66,31 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	if err := r.Fail("parse_failed", in.ErrorDetail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
-	if err := u.RunRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
-	}
 
 	payload, err := json.Marshal(map[string]any{
 		"release_id":   in.ReleaseID,
 		"reason":       "parse_failed",
 		"error_class":  in.ErrorClass,
 		"error_detail": in.ErrorDetail,
-		"shadow":       r.Kind() == pipeline.KindVerification,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(in.ReleaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+		return err
+	}
+	if err := u.RunRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, false, 0)
-	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "parse_failed", nil)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 
@@ -189,12 +181,12 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// here: it measured nothing and can prove nothing.
 	if len(validationIDs) == 0 {
 		if r.Kind() == pipeline.KindVerification && len(topo) == 0 {
-			return failVerificationNothingToValidate(ctx, d, u, r, in.ReleaseID, now)
+			return failVerificationNothingToValidate(ctx, d, u, r, now)
 		}
 		if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
 			return fmt.Errorf("transition to validating: %w", err)
 		}
-		if err := promoteToProduction(ctx, d, u, r, in.ReleaseID, now); err != nil {
+		if err := concludeValidated(ctx, d, u, r, now); err != nil {
 			return err
 		}
 		if err := u.Commit(); err != nil {
@@ -205,9 +197,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		// way a normal pass is, just with a zero-node validation.
 		d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
 		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
-		if r.Kind() == pipeline.KindCandidate {
-			d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
-		}
+		recordTerminalTelemetry(ctx, d, r, len(topo))
 		return nil
 	}
 
@@ -431,7 +421,10 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipelin
 	if err := r.TransitionToValidating(topo, nil, now); err != nil {
 		return fmt.Errorf("transition to validating (bootstrap): %w", err)
 	}
-	if err := promoteToProduction(ctx, d, u, r, releaseID, now); err != nil {
+	// A verification run is never bootstrap (NewVerification never sets it), so
+	// this always calls promoteToProduction directly rather than
+	// concludeValidated: the run reaching here is always a candidate.
+	if err := promoteToProduction(ctx, d, u, r, now); err != nil {
 		return err
 	}
 	if err := u.Commit(); err != nil {
@@ -441,9 +434,7 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipelin
 	// no-validation promote path's zero-node validation span).
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
 	d.Telemetry.ReleaseValidationCompleted(ctx, releaseID, true, 0, 0, 0)
-	if r.Kind() == pipeline.KindCandidate {
-		d.Telemetry.ReleasePromoted(ctx, releaseID, len(topo))
-	}
+	recordTerminalTelemetry(ctx, d, r, len(topo))
 	return nil
 }
 
@@ -574,10 +565,11 @@ func intersectSorted(a, b []string) []string {
 // that candidate is production's own proven code, so the fix is proven by
 // identity with it and the verification ends passed (see handleParseOK).
 //
-// The failure carries no stage and no per_node entries, so remediation
-// derives no failure evidence from it and opens no heal trigger for it; the
-// wire flag is true, the same signal every other verification failure carries.
-func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, now time.Time) error {
+// A verification's failure is never a release rejection (Global Constraint):
+// this emits no release.rejected:v1, only pipeline.run.finished:v1, so
+// remediation derives no failure evidence from it and opens no heal trigger
+// for it.
+func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
 	const detail = "a verification run verifies a fix by running it through the pipeline, and its candidate " +
 		"declares no node at all, so nothing was built or checked and the fix is unproven"
 
@@ -587,35 +579,16 @@ func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitO
 	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-	payload, err := json.Marshal(map[string]any{
-		"release_id":   releaseID,
-		"reason":       "nothing_to_validate",
-		"error_detail": detail,
-		"shadow":       true,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(releaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	// The parse itself succeeded; the release is rejected because what it
-	// proposes cannot be measured, not on a malformed artifact.
-	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
-	d.Telemetry.ReleaseRejected(ctx, releaseID, "nothing_to_validate", nil)
+	// The parse itself succeeded; the run is failed because what it proposes
+	// cannot be measured, not on a malformed artifact.
+	d.Telemetry.ReleaseParseCompleted(ctx, r.ID(), true, 0)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 
@@ -628,38 +601,30 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 	if err := r.Fail("unbuildable_cross_service_upstream", detail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
-	if err := u.RunRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
-	}
 	payload, err := json.Marshal(map[string]any{
 		"release_id":   releaseID,
 		"reason":       "unbuildable_cross_service_upstream",
 		"error_class":  "validation_unsupported",
 		"error_detail": detail,
-		"shadow":       r.Kind() == pipeline.KindVerification,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(releaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+		return err
+	}
+	if err := u.RunRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	// Parse phase succeeded; the release is rejected at validation-policy level, not parse level.
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
-	d.Telemetry.ReleaseRejected(ctx, releaseID, "unbuildable_cross_service_upstream", nil)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 
@@ -774,29 +739,19 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 		"repo":            r.Repo(),
 		"commit_sha":      r.CommitSHA(),
 		"code_bundle_uri": r.CodeBundleURI(),
-		"shadow":          r.Kind() == pipeline.KindVerification,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	r.SetRejectionPayload(payload)
+	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+		return err
+	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(releaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
@@ -804,7 +759,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 	// The parse itself succeeded; the release is rejected on a topology
 	// invariant, not on a malformed artifact.
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
-	d.Telemetry.ReleaseRejected(ctx, releaseID, "duplicate_table", failing)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 

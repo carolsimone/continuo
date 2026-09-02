@@ -13,6 +13,11 @@ type Telemetry interface {
 	ReleaseSeedBuildCompleted(ctx context.Context, releaseID string, ok bool, durationMS int64)
 	ReleasePromoted(ctx context.Context, releaseID string, nodeCount int)
 	ReleaseRejected(ctx context.Context, releaseID, reason string, failingNodes []string)
+	// VerificationFinished emits the span for a verification run's terminal
+	// outcome (passed or failed). A verification never promotes or rejects a
+	// release, so its terminal decision gets its own span rather than reusing
+	// ReleasePromoted/ReleaseRejected.
+	VerificationFinished(ctx context.Context, runID, outcome string, nodeCount int)
 }
 
 // NoOpTelemetry is the default for tests and bring-up.
@@ -27,3 +32,4 @@ func (NoOpTelemetry) ReleaseSeedBuildRequested(context.Context, string, int)    
 func (NoOpTelemetry) ReleaseSeedBuildCompleted(context.Context, string, bool, int64)            {}
 func (NoOpTelemetry) ReleasePromoted(context.Context, string, int)                              {}
 func (NoOpTelemetry) ReleaseRejected(context.Context, string, string, []string)                 {}
+func (NoOpTelemetry) VerificationFinished(context.Context, string, string, int)                 {}

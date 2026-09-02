@@ -186,15 +186,10 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 	assert.Equal(t, "parse_failed", r.FailReason())
 
 	entries := outboxEntries(store)
-	require.Len(t, entries, 3) // CompileRequested + ReleaseRequested + ReleaseRejected
+	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ReleaseRejected + PipelineRunFinished
 
-	last := entries[2]
-	assert.Equal(t, streams.ReleaseRejectedV1, last.StreamName)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(last.Payload, &payload))
-	assert.Equal(t, false, payload["shadow"],
-		"a candidate release's parse_failed rejection must carry the wire flag false")
+	assert.Equal(t, streams.ReleaseRejectedV1, entries[2].StreamName)
+	assert.Equal(t, "rejected", outcomeOf(t, entries[3]))
 }
 
 // seedToParsingVerification mirrors seedToParsing but seeds a verification
@@ -230,12 +225,13 @@ func seedToParsingVerificationWithOverlay(t *testing.T, releaseID string, imageT
 	return deps, store
 }
 
-// TestHandleParsedManifest_Failed_Verification_CarriesWireFlagTrue verifies
-// that a verification run's parse_failed rejection carries the wire flag
-// true on release.rejected:v1, so a consumer (remediation) can tell this
-// failure came from a fix-verification attempt and must not re-trigger
-// remediation on it — re-triggering would loop.
-func TestHandleParsedManifest_Failed_Verification_CarriesWireFlagTrue(t *testing.T) {
+// TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmitted
+// verifies that a verification run's parse_failed ends the run at Failed and
+// emits no release.rejected:v1 at all (a verification failure is never a
+// release rejection — Global Constraint), so remediation cannot mistake it
+// for a rejected candidate and re-trigger itself; the failure travels on
+// pipeline.run.finished:v1 alone.
+func TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmitted(t *testing.T) {
 	deps, store := seedToParsingVerification(t, "rVerify", map[string]string{"svc-a": "sha-a"})
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -246,11 +242,15 @@ func TestHandleParsedManifest_Failed_Verification_CarriesWireFlagTrue(t *testing
 	})
 	require.NoError(t, err)
 
-	entry := findEntry(t, store, streams.ReleaseRejectedV1)
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
-	assert.Equal(t, true, payload["shadow"],
-		"a verification run's parse_failed rejection must carry the wire flag true")
+	r, err := store.GetRelease("rVerify")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusFailed, r.Status())
+
+	for _, e := range outboxEntries(store) {
+		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
+			"a verification run's parse failure must not be reported as a release rejection")
+	}
+	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
 // TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields asserts
@@ -456,17 +456,18 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 	for _, e := range entries {
 		assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
 	}
-	last := entries[len(entries)-1]
-	assert.Equal(t, streams.ReleasePromotedV1, last.StreamName, "promotes directly")
+	promoted := findEntry(t, store, streams.ReleasePromotedV1)
 
 	var payload map[string]any
-	require.NoError(t, json.Unmarshal(last.Payload, &payload))
+	require.NoError(t, json.Unmarshal(promoted.Payload, &payload))
 	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", payload["code_bundle_uri"],
 		"empty-diff promote-direct path must carry code_bundle_uri")
 	assert.Equal(t, false, payload["bootstrap"], "non-bootstrap release must carry bootstrap=false")
 
 	cp := store.GetCurrentProd()
 	assert.Equal(t, "rA", cp.ReleaseID(), "current prod advanced to this release")
+
+	assert.Equal(t, "promoted", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
 // A verification run exists only to find out whether a proposed fix survives
@@ -524,6 +525,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 
 		assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
 			"a passed verification run must not advance current prod")
+		assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 	})
 
 	t.Run("verification with an empty candidate topology fails instead of reported verified", func(t *testing.T) {
@@ -546,18 +548,13 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 		for _, e := range outboxEntries(store) {
 			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
 			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a verification run never promotes")
+			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
+				"a verification's failure is never a release rejection")
 		}
-
-		var payload map[string]any
-		require.NoError(t, json.Unmarshal(findEntry(t, store, streams.ReleaseRejectedV1).Payload, &payload))
-		assert.Equal(t, "rVerify", payload["release_id"])
-		assert.Equal(t, "nothing_to_validate", payload["reason"])
-		assert.NotEmpty(t, payload["error_detail"])
-		assert.Equal(t, true, payload["shadow"],
-			"the rejection must carry the wire flag true so remediation does not classify a failed fix attempt")
 
 		assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
 			"a failed verification run must not advance current prod")
+		assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 	})
 
 	t.Run("candidate release with the same empty validation set still promotes", func(t *testing.T) {
@@ -575,8 +572,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 		assert.Equal(t, pipeline.StatusPromoted, r.Status(),
 			"the empty-set trivial pass must be unchanged for a normal release")
 
-		entries := outboxEntries(store)
-		assert.Equal(t, streams.ReleasePromotedV1, entries[len(entries)-1].StreamName, "promotes directly")
+		assert.NotNil(t, findEntry(t, store, streams.ReleasePromotedV1), "promotes directly")
 		assert.Equal(t, "rA", store.GetCurrentProd().ReleaseID(), "current prod advanced to this release")
 	})
 }
@@ -622,8 +618,7 @@ func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rejectedEntry.Payload, &payload))
 	assert.Equal(t, "unbuildable_cross_service_upstream", payload["reason"])
 	assert.Equal(t, "rA", payload["release_id"])
-	assert.Equal(t, false, payload["shadow"],
-		"a candidate release's unbuildable_cross_service_upstream rejection must carry the wire flag false")
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
 // TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode proves the guard
@@ -942,10 +937,12 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 	// current_prod seeded to this release.
 	assert.Equal(t, "rBoot", store.GetCurrentProd().ReleaseID())
 
-	// Exactly CompileRequested + ReleaseRequested + ReleasePromoted; NO validation_requested, NO rejection.
+	// Exactly CompileRequested + ReleaseRequested + ReleasePromoted + PipelineRunFinished;
+	// NO validation_requested, NO rejection.
 	entries := outboxEntries(store)
-	require.Len(t, entries, 3)
+	require.Len(t, entries, 4)
 	assert.Equal(t, streams.ReleasePromotedV1, entries[2].StreamName)
+	assert.Equal(t, "promoted", outcomeOf(t, entries[3]))
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
@@ -1211,18 +1208,17 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 	assert.Equal(t, "DuplicatedTable", payload["error_class"])
 	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", payload["code_bundle_uri"],
 		"top-level code_bundle_uri must come from the release aggregate, set at parse time")
-	assert.Equal(t, false, payload["shadow"],
-		"a candidate release's duplicate_table rejection must carry the wire flag false")
 	assert.JSONEq(t, string(entry.Payload), string(r.RejectionPayload()),
 		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
-// TestHandleParsedManifest_DuplicateTable_Verification_CarriesWireFlagTrue
-// verifies that a verification run's duplicate_table rejection carries the
-// wire flag true on release.rejected:v1, so remediation can tell this
-// failure came from a fix-verification attempt and must not re-trigger
-// remediation on it.
-func TestHandleParsedManifest_DuplicateTable_Verification_CarriesWireFlagTrue(t *testing.T) {
+// TestHandleParsedManifest_DuplicateTable_Verification_NoReleaseRejected_FinishedEmitted
+// verifies that a verification run's duplicate_table failure ends the run at
+// Failed and emits no release.rejected:v1 at all (a verification failure is
+// never a release rejection — Global Constraint), so remediation cannot
+// mistake it for a rejected candidate and re-trigger itself.
+func TestHandleParsedManifest_DuplicateTable_Verification_NoReleaseRejected_FinishedEmitted(t *testing.T) {
 	deps, store := seedToParsingVerification(t, "rVerify", map[string]string{"marketing": "sha-m"})
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1236,11 +1232,15 @@ func TestHandleParsedManifest_DuplicateTable_Verification_CarriesWireFlagTrue(t 
 		},
 	}))
 
-	entry := findEntry(t, store, streams.ReleaseRejectedV1)
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
-	assert.Equal(t, true, payload["shadow"],
-		"a verification run's duplicate_table rejection must carry the wire flag true")
+	r, err := store.GetRelease("rVerify")
+	require.NoError(t, err)
+	assert.Equal(t, pipeline.StatusFailed, r.Status())
+
+	for _, e := range outboxEntries(store) {
+		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
+			"a verification run's duplicate_table failure must not be reported as a release rejection")
+	}
+	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
 // The rejection payload carries the claimant a fix should target and the
@@ -1821,6 +1821,7 @@ func TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileReje
 	}
 	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
 		"a passed verification run must not advance current prod")
+	assert.Equal(t, "passed", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
 // verifyHID is a node owned by neither the verification run's own service nor

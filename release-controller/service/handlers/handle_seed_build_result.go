@@ -114,35 +114,25 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 		"commit_sha":       r.CommitSHA(),
 		"code_bundle_uri":  r.CodeBundleURI(),
 		"candidate_schema": CandidateSchemaFor(in.ReleaseID),
-		"shadow":           r.Kind() == pipeline.KindVerification,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	r.SetRejectionPayload(payload)
+	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+		return err
+	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(in.ReleaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, false, 0)
-	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "seed_build_failed", failing)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 
@@ -197,7 +187,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	// was a seed-only change with no downstream models). Promote directly, mirroring
 	// the nothing-to-validate short-circuit in handleParseOK.
 	if len(validationIDs) == 0 {
-		if err := promoteToProduction(ctx, d, u, r, in.ReleaseID, now); err != nil {
+		if err := concludeValidated(ctx, d, u, r, now); err != nil {
 			return err
 		}
 		if err := u.Commit(); err != nil {
@@ -205,9 +195,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 		}
 		d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, 0)
 		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
-		if r.Kind() == pipeline.KindCandidate {
-			d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
-		}
+		recordTerminalTelemetry(ctx, d, r, len(topo))
 		return nil
 	}
 

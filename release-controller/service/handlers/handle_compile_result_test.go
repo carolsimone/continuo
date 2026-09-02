@@ -6,6 +6,7 @@ import (
 
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,10 +102,10 @@ func TestHandleCompileResult_FailedRejects(t *testing.T) {
 	r := mustGetRelease(t, fakes, releaseID)
 	assert.Equal(t, pipeline.StatusRejected, r.Status())
 	assert.Equal(t, "compile_failed", r.FailReason())
-	e := lastOutbox(t, fakes)
-	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+	e := findEntry(t, fakes, streams.ReleaseRejectedV1)
 	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
 		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, fakes, streams.PipelineRunFinishedV1)))
 }
 
 // TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
@@ -132,8 +133,7 @@ func TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
 			assert.Equal(t, pipeline.StatusRejected, r.Status())
 			assert.Equal(t, "parse_rehearsal_failed", r.FailReason())
 
-			e := lastOutbox(t, fakes)
-			assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+			e := findEntry(t, fakes, streams.ReleaseRejectedV1)
 			p := decodeJSON(t, e.Payload)
 			assert.Equal(t, "compile", p["stage"])
 			assert.Equal(t, "parse_rehearsal_failed", p["reason"])
@@ -167,8 +167,7 @@ func TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFaile
 	assert.Equal(t, pipeline.StatusRejected, r.Status())
 	assert.Equal(t, "artifact_upload_failed", r.FailReason())
 
-	e := lastOutbox(t, fakes)
-	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+	e := findEntry(t, fakes, streams.ReleaseRejectedV1)
 	p := decodeJSON(t, e.Payload)
 	assert.Equal(t, "compile", p["stage"])
 	assert.Equal(t, "artifact_upload_failed", p["reason"])
@@ -204,7 +203,7 @@ func TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged(t
 			assert.Equal(t, pipeline.StatusRejected, r.Status())
 			assert.Equal(t, "compile_failed", r.FailReason())
 
-			e := lastOutbox(t, fakes)
+			e := findEntry(t, fakes, streams.ReleaseRejectedV1)
 			p := decodeJSON(t, e.Payload)
 			assert.Equal(t, "compile", p["stage"])
 			assert.Equal(t, "compile_failed", p["reason"])
@@ -243,7 +242,7 @@ func TestHandleCompileResult_MixedPerNode_PinsFirstMatchDeterminism(t *testing.T
 	assert.Equal(t, pipeline.StatusRejected, r.Status())
 	assert.Equal(t, "parse_rehearsal_failed", r.FailReason())
 
-	e := lastOutbox(t, fakes)
+	e := findEntry(t, fakes, streams.ReleaseRejectedV1)
 	p := decodeJSON(t, e.Payload)
 	assert.Equal(t, "parse_rehearsal_failed", p["reason"])
 	assert.Equal(t, "parse_rehearsal_failed", p["error_class"])
@@ -289,8 +288,7 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 	assert.Equal(t, "compile", r.PerNodeResults()[0].Stage)
 
 	// The outbox payload must match the canonical uniform rejected shape.
-	e := lastOutbox(t, fakes)
-	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
+	e := findEntry(t, fakes, streams.ReleaseRejectedV1)
 
 	var topLevel map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(e.Payload, &topLevel))
@@ -330,7 +328,45 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 	assert.Equal(t, "failed", perNode[0].Status)
 	assert.Equal(t, "s3://c.log", perNode[0].DBTLogURI)
 
-	var shadow bool
-	require.NoError(t, json.Unmarshal(topLevel["shadow"], &shadow))
-	assert.False(t, shadow, "a non-shadow release's compile rejection must carry shadow:false")
+	// A candidate's terminal decision also emits pipeline.run.finished:v1.
+	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, fakes, streams.PipelineRunFinishedV1)))
+}
+
+// putCompilingVerification mirrors putCompilingRelease but seeds a
+// verification run instead of a candidate.
+func putCompilingVerification(t *testing.T, store *fakeStore, deps *handlers.Deps, releaseID string) {
+	t.Helper()
+	store.SeedRelease(pipeline.NewVerification(releaseID, "svc-a", "sha-compile", "rel-1", 1, "", release.ManifestKindDbt, deps.Clock.Now()))
+	require.NoError(t, handlers.AdvanceQueue(ctx(t), deps))
+
+	r, err := store.GetRelease(releaseID)
+	require.NoError(t, err)
+	require.Equal(t, pipeline.StatusCompiling, r.Status(),
+		"putCompilingVerification: release must be in compiling after AdvanceQueue")
+}
+
+// TestHandleCompileResult_Verification_Failed_NoReleaseRejected_FinishedEmitted
+// verifies a verification run's compile failure ends the run at Failed,
+// emits no release.rejected:v1 at all (a verification failure is never a
+// release rejection — Global Constraint), and emits pipeline.run.finished:v1
+// with outcome "failed".
+func TestHandleCompileResult_Verification_Failed_NoReleaseRejected_FinishedEmitted(t *testing.T) {
+	d, fakes := newTestDeps(t)
+	releaseID := "rel-verify-compile-fail"
+	putCompilingVerification(t, fakes, d, releaseID)
+
+	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
+		ReleaseID: releaseID, Status: "failed", ErrorClass: "compile_error", ErrorDetail: "ref not found",
+	}))
+
+	r := mustGetRelease(t, fakes, releaseID)
+	assert.Equal(t, pipeline.StatusFailed, r.Status())
+	assert.Equal(t, "compile_failed", r.FailReason())
+	assert.Nil(t, r.RejectionPayload(), "a verification stores no rejection payload")
+
+	for _, e := range fakes.OutboxEntries() {
+		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName,
+			"a verification run's compile failure must not be reported as a release rejection")
+	}
+	assert.Equal(t, "failed", outcomeOf(t, findEntry(t, fakes, streams.PipelineRunFinishedV1)))
 }

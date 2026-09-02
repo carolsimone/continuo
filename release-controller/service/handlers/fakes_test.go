@@ -2,9 +2,11 @@ package handlers_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
+	"testing"
 	"time"
 
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -16,6 +18,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 // --- fakeClock ---
@@ -28,16 +31,22 @@ var _ ports.Clock = (*fakeClock)(nil)
 
 // --- spyTelemetry ---
 
-// spyTelemetry embeds NoOpTelemetry and records ReleasePromoted calls so
-// tests can assert the promoted span does not fire on a route that must not
-// promote (e.g. a verification run stopping at Passed).
+// spyTelemetry embeds NoOpTelemetry and records ReleasePromoted and
+// VerificationFinished calls so tests can assert the promoted span does not
+// fire on a route that must not promote (e.g. a verification run stopping at
+// Passed), and that a verification's terminal decision emits its own span.
 type spyTelemetry struct {
 	ports.NoOpTelemetry
-	releasePromotedCalls int
+	releasePromotedCalls      int
+	verificationFinishedCalls int
 }
 
 func (s *spyTelemetry) ReleasePromoted(_ context.Context, _ string, _ int) {
 	s.releasePromotedCalls++
+}
+
+func (s *spyTelemetry) VerificationFinished(context.Context, string, string, int) {
+	s.verificationFinishedCalls++
 }
 
 var _ ports.Telemetry = (*spyTelemetry)(nil)
@@ -423,4 +432,27 @@ func newDeps(now time.Time) (*handlers.Deps, *fakeStore) {
 // store. Use this in handler tests to inspect outbox state after handler calls.
 func outboxEntries(store *fakeStore) []*pkgoutbox.Entry {
 	return store.OutboxEntries()
+}
+
+// lastEntryOn returns the newest outbox entry the store holds for stream, or nil.
+func lastEntryOn(s *fakeStore, stream string) *pkgoutbox.Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.entries) - 1; i >= 0; i-- {
+		if s.entries[i].StreamName == stream {
+			return s.entries[i]
+		}
+	}
+	return nil
+}
+
+// outcomeOf decodes the outcome field of a pipeline.run.finished:v1 entry.
+func outcomeOf(t *testing.T, e *pkgoutbox.Entry) string {
+	t.Helper()
+	require.NotNil(t, e, "expected a pipeline.run.finished:v1 entry")
+	var p struct {
+		Outcome string `json:"outcome"`
+	}
+	require.NoError(t, json.Unmarshal(e.Payload, &p))
+	return p.Outcome
 }

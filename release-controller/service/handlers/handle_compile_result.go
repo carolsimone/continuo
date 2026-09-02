@@ -4,11 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
-	"github.com/google/uuid"
 )
 
 // HandleCompileResultInput carries the aggregated compile outcome from
@@ -59,7 +54,8 @@ func compileRejection(perNode []NodeResult) (reason, errorClass, errorDetail str
 //
 // failed path: Fail with a reason derived from the per-node failed_container
 // attribution (compile_failed, parse_rehearsal_failed, or
-// artifact_upload_failed — see compileRejection), emits release.rejected:v1.
+// artifact_upload_failed — see compileRejection). A candidate emits
+// release.rejected:v1; a run of either kind emits pipeline.run.finished:v1.
 //
 // unknown release: drops the message (ack).
 func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInput) error {
@@ -131,34 +127,24 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			"repo":            r.Repo(),
 			"commit_sha":      r.CommitSHA(),
 			"code_bundle_uri": r.CodeBundleURI(),
-			"shadow":          r.Kind() == pipeline.KindVerification,
 		})
 		if err != nil {
 			return fmt.Errorf("marshal payload: %w", err)
 		}
 
-		r.SetRejectionPayload(payload)
+		if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+			return err
+		}
 		if err := u.RunRepo().Save(ctx, r); err != nil {
 			return fmt.Errorf("save release: %w", err)
 		}
-
-		if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-			ID:            uuid.New(),
-			AggregateType: "release-controller",
-			AggregateID:   AggregateIDForRelease(in.ReleaseID),
-			EventType:     "release_rejected",
-			Payload:       payload,
-			StreamName:    streams.ReleaseRejectedV1,
-			Status:        "pending",
-			MaxRetries:    pkgoutbox.DefaultMaxRetries,
-			CreatedAt:     now,
-		}); err != nil {
-			return fmt.Errorf("outbox insert: %w", err)
+		if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+			return err
 		}
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, reason, failing)
+		recordTerminalTelemetry(ctx, d, r, 0)
 		return nil
 	}
 
