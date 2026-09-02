@@ -151,48 +151,15 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	}
 }
 
-func TestClassifyFailure_ShadowRecordsDropAndEmitsNothing(t *testing.T) {
-	// A shadow release's rejection must still produce an audit row (so the drop
-	// is never invisible), but must never enqueue a remediation trigger — a
-	// failed fix attempt triggering a remediation of itself would loop forever.
+func TestClassifyFailure_EmitsHealableNodes(t *testing.T) {
+	// A healable failure classifies as emit, and the release's rejection
+	// enqueues exactly one trigger for it.
 	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
 	ev := failure.FailureEvidence{
 		Source:    failure.SourceValidation,
 		ReleaseID: "r1",
 		NodeID:    "s.n",
 		DBTLogURI: "s3://b/k",
-		Shadow:    true,
-	}
-	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(u.dec.saved) != 1 {
-		t.Fatalf("expected 1 decision recorded, got %d", len(u.dec.saved))
-	}
-	d := u.dec.saved[0]
-	if d.Decision != failure.DecisionDrop {
-		t.Fatalf("decision = %q, want drop", d.Decision)
-	}
-	if d.Reason != "shadow_verification" {
-		t.Fatalf("reason = %q, want shadow_verification", d.Reason)
-	}
-	if len(u.ob.entries) != 0 {
-		t.Fatalf("shadow rejection must not emit a trigger, got %d", len(u.ob.entries))
-	}
-}
-
-func TestClassifyFailure_NonShadowStillEmits(t *testing.T) {
-	// Control: with Shadow=false, behavior must stay byte-identical to the
-	// pre-shadow classifier — same decision, same reason, and the healable
-	// category still emits exactly one trigger.
-	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
-	ev := failure.FailureEvidence{
-		Source:    failure.SourceValidation,
-		ReleaseID: "r1",
-		NodeID:    "s.n",
-		DBTLogURI: "s3://b/k",
-		Shadow:    false,
 	}
 	err := ClassifyRejection(context.Background(), depsWith(u, `Database Error: column "x" does not exist`, nil), []failure.FailureEvidence{ev})
 	if err != nil {
@@ -209,7 +176,7 @@ func TestClassifyFailure_NonShadowStillEmits(t *testing.T) {
 		t.Fatalf("reason = %q, want logic:missing_object", d.Reason)
 	}
 	if len(u.ob.entries) != 1 {
-		t.Fatalf("non-shadow healable failure must emit exactly 1 trigger, got %d", len(u.ob.entries))
+		t.Fatalf("healable failure must emit exactly 1 trigger, got %d", len(u.ob.entries))
 	}
 }
 

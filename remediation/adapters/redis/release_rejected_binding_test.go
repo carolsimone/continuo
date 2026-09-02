@@ -287,38 +287,12 @@ func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
 	}
 }
 
-// TestEvidenceFromRejected_ShadowCopiesOntoEveryEvidence verifies that a
-// top-level shadow flag on the release.rejected:v1 payload is copied onto
-// EVERY FailureEvidence produced from a multi-node rejection, not just the
-// first — a single rejection event can carry several failing nodes, and every
-// one of them must be recognizable downstream as a shadow-release failure so
-// the classifier never re-triggers a remediation of a failed fix attempt.
-func TestEvidenceFromRejected_ShadowCopiesOntoEveryEvidence(t *testing.T) {
-	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
-		"repo":"o/r","commit_sha":"abc","shadow":true,
-		"per_node":[
-			{"node_id":"s.a","status":"failed","dbt_log_uri":"s3://b/a.log"},
-			{"node_id":"s.b","status":"failed","dbt_log_uri":"s3://b/b.log"}
-		]}`)
+func TestEvidenceFromRejected_IgnoresUnknownTopLevelFields(t *testing.T) {
+	raw := []byte(`{"release_id":"r","stage":"validation","reason":"validation_failed","shadow":true,
+		"per_node":[{"node_id":"model.core.orders","status":"failed"}]}`)
 	evs, err := evidenceFromRejected(raw)
 	require.NoError(t, err)
-	require.Len(t, evs, 2)
-	assert.True(t, evs[0].Shadow, "first evidence must carry shadow=true")
-	assert.True(t, evs[1].Shadow, "second evidence must carry shadow=true")
-}
-
-// TestEvidenceFromRejected_ShadowAbsentDefaultsFalse verifies that a payload
-// with no shadow field — every pre-existing release.rejected:v1 event —
-// decodes to Shadow=false, so old events keep triggering remediation exactly
-// as before.
-func TestEvidenceFromRejected_ShadowAbsentDefaultsFalse(t *testing.T) {
-	raw := []byte(`{"release_id":"rel-1","stage":"validation","reason":"validation_failed",
-		"repo":"o/r","commit_sha":"abc",
-		"per_node":[{"node_id":"s.a","status":"failed","dbt_log_uri":"s3://b/a.log"}]}`)
-	evs, err := evidenceFromRejected(raw)
-	require.NoError(t, err)
-	require.Len(t, evs, 1)
-	assert.False(t, evs[0].Shadow)
+	require.Len(t, evs, 1, "a field this binding does not model changes nothing")
 }
 
 // TestEvidenceFromRejected_CarriesCodeBundleURI verifies that a top-level

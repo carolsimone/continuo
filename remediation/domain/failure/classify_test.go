@@ -35,10 +35,9 @@ func TestClassifyBuckets(t *testing.T) {
 		// --- unmatched → unknown, EMIT ---
 		{"gibberish", "some entirely novel failure mode", CategoryUnknown, DecisionEmit, "unknown"},
 	}
-	ev := FailureEvidence{Source: SourceValidation, ReleaseID: "r1", NodeID: "n1"}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Classify(ev, tc.logText)
+			got := Classify(tc.logText)
 			if got.Category != tc.wantCat {
 				t.Errorf("category = %q, want %q", got.Category, tc.wantCat)
 			}
@@ -56,7 +55,7 @@ func TestClassifyBuckets(t *testing.T) {
 }
 
 func TestClassifyLogUnavailable(t *testing.T) {
-	got := Classify(FailureEvidence{}, "")
+	got := Classify("")
 	if got.Category != CategoryUnknown || got.Decision != DecisionEmit {
 		t.Fatalf("empty log: got %+v", got)
 	}
@@ -138,17 +137,17 @@ func TestClassifyDuplicateTable_SignatureFallsBackToNodeIDWhenRelationIDEmpty(t 
 
 func TestClassify_PopulatesExcerptWithKeyErrorLine(t *testing.T) {
 	log := "Running dbt\n\nDatabase Error in model revenue\n  column \"gross_amt\" does not exist\n"
-	c := Classify(FailureEvidence{}, log)
+	c := Classify(log)
 	assert.Equal(t, "Database Error in model revenue", c.Excerpt)
 }
 
 func TestClassify_EmptyLogHasEmptyExcerpt(t *testing.T) {
-	c := Classify(FailureEvidence{}, "   ")
+	c := Classify("   ")
 	assert.Equal(t, "", c.Excerpt)
 }
 
 func TestClassifyWithStructured_ExcerptIsStructuredMessage(t *testing.T) {
-	c := ClassifyWithStructured(FailureEvidence{},
+	c := ClassifyWithStructured(
 		&StructuredResult{Status: "error", Message: "syntax error at or near SELECT"}, "ignored log")
 	assert.Equal(t, "syntax error at or near SELECT", c.Excerpt)
 }
@@ -160,65 +159,9 @@ func TestClassifyDuplicateTable_ExcerptNamesTheRelation(t *testing.T) {
 
 func TestClassify_ExcerptIsCappedOnARuneBoundary(t *testing.T) {
 	long := "error: " + strings.Repeat("é", 4096) // 2 bytes per rune ⇒ over the 4 KiB cap
-	c := Classify(FailureEvidence{}, long)
+	c := Classify(long)
 	assert.LessOrEqual(t, len(c.Excerpt), 4096)
 	assert.True(t, utf8.ValidString(c.Excerpt))
-}
-
-// TestClassify_ShadowDropsWithoutAlteringTheDiagnosis pins the anti-loop rule
-// in the layer that owns classification: a rejection from a shadow release —
-// one posted to verify a proposed fix — is dropped, because emitting a
-// remediation trigger for it would remediate a failed fix attempt with another
-// fix attempt, without bound. Everything the rejection is worth recording for
-// (category, signature, excerpt) is unchanged, so the audit row still says what
-// went wrong; only the routing changes.
-func TestClassify_ShadowDropsWithoutAlteringTheDiagnosis(t *testing.T) {
-	const logText = `Database Error in model orders: column "custmer_id" does not exist`
-	const msg = `column "custmer_id" does not exist`
-	structured := &StructuredResult{Status: "error", Message: msg}
-
-	cases := map[string]struct {
-		plain, shadow Classification
-	}{
-		"log text": {
-			plain:  Classify(FailureEvidence{}, logText),
-			shadow: Classify(FailureEvidence{Shadow: true}, logText),
-		},
-		"structured result": {
-			plain:  ClassifyWithStructured(FailureEvidence{}, structured, logText),
-			shadow: ClassifyWithStructured(FailureEvidence{Shadow: true}, structured, logText),
-		},
-		"structured falling back to the log": {
-			plain:  ClassifyWithStructured(FailureEvidence{}, nil, logText),
-			shadow: ClassifyWithStructured(FailureEvidence{Shadow: true}, nil, logText),
-		},
-		"duplicate relation": {
-			plain:  ClassifyDuplicateTable(FailureEvidence{RelationID: "analytics.orders"}),
-			shadow: ClassifyDuplicateTable(FailureEvidence{RelationID: "analytics.orders", Shadow: true}),
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, DecisionEmit, tc.plain.Decision, "control: the same failure outside a shadow release emits")
-
-			assert.Equal(t, DecisionDrop, tc.shadow.Decision)
-			assert.Equal(t, ReasonShadowVerification, tc.shadow.Reason)
-			assert.Equal(t, tc.plain.Category, tc.shadow.Category, "the category diagnoses the failure and does not depend on who submitted the release")
-			assert.Equal(t, tc.plain.Signature, tc.shadow.Signature, "the signature keys the precedent case base and must stay comparable across shadow and normal releases")
-			assert.Equal(t, tc.plain.Excerpt, tc.shadow.Excerpt)
-		})
-	}
-}
-
-// TestClassify_ShadowDropIsAlreadyDroppedInfra verifies that an infrastructure
-// failure inside a shadow release keeps the drop it already earned, and reports
-// the shadow as the reason it was not emitted — one reason per decision, never
-// a decision whose recorded reason disagrees with it.
-func TestClassify_ShadowDropIsAlreadyDroppedInfra(t *testing.T) {
-	c := Classify(FailureEvidence{Shadow: true}, "could not connect to database: connection refused")
-	assert.Equal(t, CategoryInfraTransient, c.Category)
-	assert.Equal(t, DecisionDrop, c.Decision)
-	assert.Equal(t, ReasonShadowVerification, c.Reason)
 }
 
 func contains(s, sub string) bool {

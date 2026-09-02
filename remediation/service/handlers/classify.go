@@ -73,5 +73,5 @@ func classify(ctx context.Context, deps Deps, ev *failure.FailureEvidence) (fail
 		ev.FilePath = failure.ExtractDbtFilePath(logText)
 	}
 
-	return failure.ClassifyWithStructured(*ev, structured, logText), nil
+	return failure.ClassifyWithStructured(structured, logText), nil
 }
