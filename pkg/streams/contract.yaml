@@ -331,6 +331,15 @@ streams:
         group: executor-release-rejected
         const: ExecutorReleaseRejected
 
+  - name: pipeline.run.finished:v1
+    const: PipelineRunFinishedV1
+    description: A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so executor-controller can drop it whatever the outcome.
+    producers: [release-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-pipeline-run-finished
+        const: ExecutorPipelineRunFinished
+
   - name: remediation.retry_requested:v1
     const: RemediationRetryRequestedV1
     description: A human asked for another remediation round on a rejected release; release-controller replays the release's stored rejection payload plus remediation_round, and the remediation classifier re-classifies it as a fresh round.
