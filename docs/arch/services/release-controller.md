@@ -175,8 +175,11 @@ status=ok:
       Reject(reason=unbuildable_cross_service_upstream), emit release.rejected:v1, advance queue, return
   for each inSet node: upstream_node_ids = inSet ∩ direct upstreams of node (intra- and cross-service)
   if inSet is empty:
-      if release.shadow:
+      if release.shadow and the candidate topology is empty:
           Reject(reason=nothing_to_validate, no stage, no per_node), emit release.rejected:v1
+      else if release.shadow:
+          trivial pass (the candidate is production's own validated code):
+            transition to Validating then Validated; current_prod untouched, no event
       else:
           promote directly (nothing to validate trivially passes the gate):
             update current_prod, transition to Promoted, emit release.promoted:v1
@@ -195,7 +198,7 @@ status=ok:
 
 `validationOpFor` picks the executor's per-node build strategy from the node's kind and whether it is in the changed closure: a changed-closure dbt node gets `build_from_sql` (candidate SQL already rewritten to the candidate schema); a changed-closure python node gets `build_from_columns` (a JSON spec of declared reads + output columns, since there is no SQL to build from); every other in-set node — an unchanged upstream, of either kind — gets `clone_from_prod` regardless, since it carries no candidate artifact to build from.
 
-An empty in-set is a trivial pass for a normal release and a rejection for a shadow one. A normal release with nothing to validate promotes directly because emitting an empty `validation.requested:v1` would be refused by executor-controller as a permanent parse error, leaving no `validation.completed:v1` and blocking the queue indefinitely. A shadow release exists only to measure a proposed fix by validating it, and its terminal `validated` status is the sole evidence a reviewer is shown before merging that fix — so an empty in-set, which validates nothing, is rejected with `reason=nothing_to_validate` rather than reported as verified. It happens when the proposed fix changed nothing the candidate topology can see (a node's `content_hash` folds source, shared code, and resolved config, so an edit touching none of them leaves it identical to production) or when the packaged candidate declares no node at all. The rejection carries no `stage` and no `per_node` entries, so remediation derives no failure evidence from it; agent-remediation's shadow-verify reconciler reads the rejected status through `GET /releases/{id}` and records the attempt as failed.
+An empty in-set is a trivial pass for a normal release and, with one exception, for a shadow one too. A normal release with nothing to validate promotes directly because emitting an empty `validation.requested:v1` would be refused by executor-controller as a permanent parse error, leaving no `validation.completed:v1` and blocking the queue indefinitely. A shadow release whose non-empty candidate has every node matching production takes the same trivial pass and ends `validated` without touching `current_prod`: that candidate is production's own validated code, so the fix it carries is proven by identity with that baseline. This is the shape of a fix that restores a compile-broken model to its promoted content — the shadow has already proved the fix by compiling it, and there is nothing left to measure. The exception is a shadow whose packaged candidate declares no node at all: it built and checked nothing and can prove nothing, so it is rejected with `reason=nothing_to_validate` rather than reported as verified. That rejection carries no `stage` and no `per_node` entries, so remediation derives no failure evidence from it; agent-remediation's shadow-verify reconciler reads the rejected status through `GET /releases/{id}` and records the attempt as failed.
 
 A `bootstrap:true` release skips validation entirely: it records the candidate topology, seeds `current_prod`, and promotes directly. This is the initial cutover (or a trusted re-baseline) against an empty or mismatched `current_prod`. A non-bootstrap release against an empty snapshot instead treats every candidate node as changed and validates the whole topology.
 

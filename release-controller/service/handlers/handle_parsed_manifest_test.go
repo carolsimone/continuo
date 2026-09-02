@@ -478,17 +478,25 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 
 // A shadow release exists only to find out whether a proposed fix survives the
 // real pipeline, and its terminal "validated" status is what a human is shown
-// as proof before being asked to merge that fix. A candidate whose nodes all
-// match prod has nothing to validate, so the trivial pass a normal release
-// takes there would end a shadow release in "validated" having run no
-// validation at all — reporting an unverified fix as verified. The shadow is
-// rejected instead, which is the outcome the shadow-verify reconciler already
-// treats as a failed attempt.
+// as proof before being asked to merge that fix. What that proof requires
+// depends on WHY the validation set is empty.
 //
-// The second subtest is the control: the same empty validation set on a
+// A candidate whose nodes all match production has nothing to validate
+// because it IS production's code — the validated, promoted baseline — so the
+// fix is proven by identity with it. The shadow takes the same trivial pass a
+// normal release does and ends in "validated" without touching prod. This is
+// the shape of a fix that restores a compile-broken model to its promoted
+// content: the shadow already proved the fix by compiling it, and there is
+// nothing left to measure.
+//
+// A candidate that declares no node at all measured nothing and can prove
+// nothing, so it is rejected instead — the outcome the shadow-verify
+// reconciler already treats as a failed attempt.
+//
+// The last subtest is the control: the same empty validation set on a
 // non-shadow release must still promote directly, since emitting an empty
 // validation request would block the release queue forever.
-func TestHandleParsedManifest_OK_NothingToValidate_ShadowIsRejected(t *testing.T) {
+func TestHandleParsedManifest_OK_NothingToValidate_Shadow(t *testing.T) {
 	unchangedTopo := func() release.Topology {
 		return release.Topology{
 			{UniqueID: "a", ServiceName: "svc-a", ContentHash: "h_a"},
@@ -496,7 +504,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_ShadowIsRejected(t *testing.T
 		}
 	}
 
-	t.Run("shadow release is rejected instead of reported verified", func(t *testing.T) {
+	t.Run("shadow whose candidate matches production ends validated", func(t *testing.T) {
 		deps, store := seedToParsingShadow(t, "rShadow", map[string]string{"svc-a": "sha-a"})
 		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
 
@@ -508,8 +516,37 @@ func TestHandleParsedManifest_OK_NothingToValidate_ShadowIsRejected(t *testing.T
 
 		r, err := store.GetRelease("rShadow")
 		require.NoError(t, err)
+		assert.Equal(t, release.StatusValidated, r.Status(),
+			"a candidate identical to production is production's validated code, so the fix it carries is proven")
+		assert.Empty(t, r.RejectReason())
+		assert.Len(t, r.CandidateTopology(), 2,
+			"the parsed topology is persisted, so the release reports its real node count")
+		assert.Empty(t, r.ValidationNodeIDs(), "nothing was sent to the validation leg")
+
+		for _, e := range outboxEntries(store) {
+			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
+			assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a shadow release never promotes")
+			assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
+		}
+
+		assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
+			"a validated shadow release must not advance current prod")
+	})
+
+	t.Run("shadow with an empty candidate topology is rejected instead of reported verified", func(t *testing.T) {
+		deps, store := seedToParsingShadow(t, "rShadow", map[string]string{"svc-a": "sha-a"})
+		store.SeedCurrentProd(release.RehydrateCurrentProd("prev", unchangedTopo(), time.Unix(50, 0).UTC()))
+
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "rShadow",
+			Status:    "ok",
+			Topology:  release.Topology{},
+		}))
+
+		r, err := store.GetRelease("rShadow")
+		require.NoError(t, err)
 		assert.Equal(t, release.StatusRejected, r.Status(),
-			"a shadow release that validated nothing must not end in a status that means the fix is verified")
+			"a shadow release that declares no node measured nothing and must not end in a status that means the fix is verified")
 		assert.Equal(t, "nothing_to_validate", r.RejectReason())
 		assert.NotEmpty(t, r.RejectDetail(), "the rejection must explain itself to an operator")
 
@@ -1745,6 +1782,45 @@ func TestHandleParsedManifest_OK_ShadowFallsBackWhenVerifiedCandidateEmpty(t *te
 	assert.Contains(t, validIDs, shadowEID)
 	assert.Contains(t, validIDs, shadowGID,
 		"an empty verified candidate falls back to a production diff, so the sibling is changed")
+}
+
+// TestHandleParsedManifest_OK_ShadowRestoringProductionAfterCompileRejectionIsValidated
+// pins the compile-lane verification path within the parse leg. The verified
+// release was rejected at compile, so it never parsed and holds no candidate
+// topology; the shadow therefore diffs against production alone. The fix
+// restores the broken model to exactly its promoted content, so that diff is
+// empty — and because the shadow's topology is production's own code, the fix
+// is proven (the shadow already compiled it), so the shadow ends validated
+// rather than rejected as unmeasured.
+func TestHandleParsedManifest_OK_ShadowRestoringProductionAfterCompileRejectionIsValidated(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	prod := release.Topology{
+		{UniqueID: "core.read_order", ServiceName: "core", NodeType: "dbt-model", ContentHash: "h_read_order"},
+	}
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "origcompile", "core", nil) // rejected at compile: no candidate topology
+	seedReleaseInParsing(store, "shadowfix", "core", true, "origcompile")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "shadowfix",
+		Status:    "ok",
+		Topology:  prod, // the fix restored the model to its promoted content
+	}))
+
+	r, err := store.GetRelease("shadowfix")
+	require.NoError(t, err)
+	assert.Equal(t, release.StatusValidated, r.Status(),
+		"a fix that restores a compile-broken model to its promoted content is proven, not unmeasured")
+	assert.Empty(t, r.RejectReason())
+	assert.Len(t, r.CandidateTopology(), 1, "the parsed topology is persisted on the validated shadow")
+	for _, e := range outboxEntries(store) {
+		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")
+		assert.NotEqual(t, streams.ReleasePromotedV1, e.StreamName, "a shadow release never promotes")
+	}
+	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(),
+		"a validated shadow release must not advance current prod")
 }
 
 // shadowHID is a node owned by neither the shadow's own service nor the
