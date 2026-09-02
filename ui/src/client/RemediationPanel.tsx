@@ -46,12 +46,23 @@ function sourceLabel(resolved: boolean): string {
   return resolved ? 'yes' : 'no';
 }
 
+// verificationPhaseLabel is the wording for one run's recorded phase.
+function verificationPhaseLabel(phase: string): string {
+  switch (phase) {
+    case 'queued':  return 'Queued for verification';
+    case 'running': return 'Verifying fix…';
+    case 'passed':  return 'passed';
+    case 'failed':  return 'failed';
+    default:        return 'Verifying fix…';
+  }
+}
+
 // statusChip renders a proposal's status. 'verifying' is the one status whose
-// raw word does not say what is happening — the fix is written and a shadow
-// release is running it through the full validation pipeline to decide whether
-// it holds — so it reads as that wait, in the same non-actionable busy chip the
-// release page shows for an in-flight fix. Every other status is already a
-// plain statement of where the attempt ended.
+// raw word does not say what is happening — the fix is written and a
+// verification run is putting it through the full validation pipeline to
+// decide whether it holds — so it reads as that wait, in the same
+// non-actionable busy chip the release page shows for an in-flight fix.
+// Every other status is already a plain statement of where the attempt ended.
 function statusChip(status: string) {
   if (status === 'verifying') {
     return (
@@ -135,29 +146,25 @@ function ProposalDetailCard({
           </div>
         )}
 
-        {/* The release(s) that judged this fix — one shadow release per edited
-            service for a batched proposal. Without the link(s) they are named
-            on a different screen with nothing connecting the two. A legacy
-            proposal that only ever tracked a single shadow_release_id falls
-            back to that one link. */}
+        {/* The runs that judged this fix — one per edited service — with where
+            each stands, so the operator can tell "waiting its turn" from
+            "running" without opening the run. */}
         {proposal.verifications && proposal.verifications.length > 0
           ? proposal.verifications.map((v) => (
-              <div className="detail-card__row" key={v.shadow_release_id}>
-                <Link
-                  to={`/releases/${v.shadow_release_id}`}
-                  className="btn btn--secondary"
-                >
-                  verification release {v.shadow_release_id} ({v.service}) →
+              <div className="detail-card__row" key={v.run_id}>
+                <Link to={`/verifications/${v.run_id}`} className="btn btn--secondary">
+                  verification run {v.run_id} →
                 </Link>
+                {' '}
+                <span className="nodes-reason">
+                  {v.service} · {v.kind} · {verificationPhaseLabel(v.phase)}
+                </span>
               </div>
             ))
-          : proposal.shadow_release_id && (
+          : proposal.verification_run_id && (
               <div className="detail-card__row">
-                <Link
-                  to={`/releases/${proposal.shadow_release_id}`}
-                  className="btn btn--secondary"
-                >
-                  verification release {proposal.shadow_release_id} →
+                <Link to={`/verifications/${proposal.verification_run_id}`} className="btn btn--secondary">
+                  verification run {proposal.verification_run_id} →
                 </Link>
               </div>
             )}
