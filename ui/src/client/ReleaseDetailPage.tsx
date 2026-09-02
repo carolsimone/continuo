@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
-import { ReleaseDetail, NodeValidationResult, ProposalDTO } from './types';
+import { ReleaseDetail, NodeValidationResult, ProposalDTO, VerificationRunSummary } from './types';
 import {
-  releasePillClass, groupByStage, stageLabel, proposalKey, reasonLabel,
+  releasePillClass, proposalKey, reasonLabel,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
   proposalPullRequests, proposalPrServices, proposalPrStateForService,
-  proposalShadowIds, shadowVerifyPhase,
+  verificationPhase, verificationRunPhase,
 } from './release-helpers';
 import { fetchProposals } from './remediation-api';
-import { LogView } from './node-results';
+import { NodeResultsTable } from './node-results';
 
 // A remediation round is capped at this many attempts; the release-controller
 // enforces the same limit and answers 409 rounds_exhausted past it.
@@ -42,10 +42,10 @@ const MAX_POLLS = Math.floor(MAX_POLL_MS / POLL_INTERVAL_MS);
 // Release statuses that will never change again. Per-node validation results land
 // incrementally while the release is still progressing (e.g. 'validating'), so the
 // detail page polls until the release reaches one of these, then stops.
-const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'validated', 'rejected', 'superseded']);
+const TERMINAL_RELEASE_STATUSES = new Set(['promoted', 'rejected', 'superseded']);
 
 // What the FIX cell can say about a failed node, ordered by how far its fix has
-// progressed: still being written, then being run through a shadow release to
+// progressed: still being written, then being run through a verification run to
 // see whether it holds, then ready for a human to review. A node can carry
 // several attempts at once — a later one can supersede an earlier in-flight
 // one — so the cell shows the furthest-along of them. Every other proposal
@@ -120,11 +120,12 @@ function anyOpenPR(list: ProposalDTO[]): boolean {
   return list.some(p => proposalPullRequests(p).some(pr => OPEN_PR_STATES.includes(pr.pr_state ?? '')));
 }
 
-// verifyLabel picks the wording of the in-flight verification chip. A shadow
-// release runs the fix through the whole validation pipeline behind a global
-// one-at-a-time queue, so it can sit waiting its turn before any work starts —
-// which reads as "stuck" under a flat "Verifying fix…". Splitting the chip on
-// the shadow's own phase lets a long wait read as "waiting its turn" instead.
+// verifyLabel picks the wording of the in-flight verification chip. A
+// verification run puts the fix through the whole validation pipeline behind
+// a global one-at-a-time queue, so it can sit waiting its turn before any
+// work starts — which reads as "stuck" under a flat "Verifying fix…".
+// Splitting the chip on the phase agent-remediation recorded for the run
+// (queued vs running) lets a long wait read as "waiting its turn" instead.
 function verifyLabel(phase?: 'queued' | 'running'): string {
   return phase === 'queued' ? 'Queued for verification' : 'Verifying fix…';
 }
@@ -180,14 +181,15 @@ export default function ReleaseDetailPage() {
   // the dead-end check below can recompute in-flight/PR state per remediation
   // round (fixState itself is a rendering-only summary across every round).
   const [proposals, setProposals] = useState<ProposalDTO[]>([]);
-  // Per (stage, node_id) shadow release id(s) backing a node currently shown as
-  // 'verifying'. Populated only for verifying nodes so the shadow-status poll
-  // below reads just the releases that matter; empty for every other node.
-  const [verifyShadowIds, setVerifyShadowIds] = useState<Map<string, string[]>>(new Map());
-  // Last-observed status of each shadow release being polled, keyed by release
-  // id. Feeds shadowVerifyPhase so the verify chip can say whether a shadow is
-  // queued behind the global release queue or actively validating.
-  const [shadowStatus, setShadowStatus] = useState<Map<string, string>>(new Map());
+  // Per (stage, node_id) verification phase for a node currently shown as
+  // 'verifying', read off the proposal's own verification summary
+  // (verificationPhase) — whether the run judging its fix is still queued
+  // behind the global one-at-a-time pipeline or already running. Populated
+  // only for verifying nodes; empty for every other node.
+  const [verifyPhaseByKey, setVerifyPhaseByKey] = useState<Map<string, 'queued' | 'running'>>(new Map());
+  // The verification runs recorded for this release, newest first, rendered
+  // in the "Verification runs" section below.
+  const [verificationRuns, setVerificationRuns] = useState<VerificationRunSummary[]>([]);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
   // Bumped by retry() to re-arm the proposal-polling effect below after a
@@ -268,10 +270,8 @@ export default function ReleaseDetailPage() {
   // "round bumped" and "the new round's first proposal landed" is never a
   // dead end), no failed node has an in-flight/proposed fix in the current
   // round, and no proposal from any round already has a PR out for review.
-  // A shadow release is never a dead end — it verifies a fix, it does not
-  // start one. "Try again" (below) only ever shows in this state.
+  // "Try again" (below) only ever shows in this state.
   const deadEnd = rel?.status === 'rejected'
-    && !rel.shadow
     && failedKeys.length > 0
     && currentRoundProposals.length > 0
     && !hasActiveFix(currentRoundProposals, failedKeys)
@@ -300,13 +300,14 @@ export default function ReleaseDetailPage() {
     // already found every proposal and stopped polling.
     let issued = 0;
     let applied = 0;
-    // Whether the last applied response showed a fix a shadow release is still
-    // judging. Such a verdict is coming — the backend runs a whole release to
-    // produce it, behind a global release queue, and ends the attempt itself if
-    // it never arrives — so the cap below, which exists for failures that will
-    // never be healed at all, must not apply while one is outstanding.
-    // Otherwise a healthy transition to 'proposed' lands after polling stopped
-    // and the page sits on "Verifying fix…" until someone reloads it.
+    // Whether the last applied response showed a fix a verification run is
+    // still judging. Such a verdict is coming — the backend runs a whole
+    // release-shaped pipeline to produce it, behind a global queue, and ends
+    // the attempt itself if it never arrives — so the cap below, which exists
+    // for failures that will never be healed at all, must not apply while one
+    // is outstanding. Otherwise a healthy transition to 'proposed' lands
+    // after polling stopped and the page sits on "Verifying fix…" until
+    // someone reloads it.
     let verifying = false;
 
     const stop = () => {
@@ -324,6 +325,14 @@ export default function ReleaseDetailPage() {
           applied = seq;
           const releaseProposals = fetched.filter(p => p.release_id === id);
           setProposals(releaseProposals);
+          // Refresh the "Verification runs" section on the same tick as the
+          // proposal poll, so a newly-started run shows up without a manual
+          // reload. Best-effort: a failed fetch leaves the section showing
+          // its last-known rows rather than clearing them.
+          fetch(`/api/releases/${id}/verifications`)
+            .then(r => (r.ok ? r.json() : { runs: [] }))
+            .then(d => { if (!cancelled) setVerificationRuns(d.runs ?? []); })
+            .catch(() => {});
           // Bucket each failed node by its proposals, keeping the furthest-along
           // state any of its attempts reached; terminal-but-blank statuses
           // (skipped/failed/escalated) leave the node without an entry here —
@@ -349,23 +358,23 @@ export default function ReleaseDetailPage() {
             }
           }
           setFixState(byKey);
-          // Shadow release id(s) for each node whose furthest-along state is
-          // 'verifying', so the shadow-status poll below can fetch just those
-          // releases and the verify chip can split queued-vs-running. A node
-          // settled on any other state carries no entry.
-          const shadowIdsByKey = new Map<string, string[]>();
+          // Verification phase for each node whose furthest-along state is
+          // 'verifying', read off the proposal's own verification summary
+          // (verificationPhase) rather than a separate poll — so the verify
+          // chip can split queued-vs-running. A node settled on any other
+          // state carries no entry. When more than one attempt for a node is
+          // still verifying, 'running' wins over 'queued'.
+          const phaseByKey = new Map<string, 'queued' | 'running'>();
           for (const p of releaseProposals) {
-            const ids = proposalShadowIds(p);
-            if (ids.length === 0) continue;
+            const phase = verificationPhase(p);
+            if (!phase) continue;
             for (const nid of proposalNodeIds(p)) {
               const k = proposalKey(p.source, nid);
               if (byKey.get(k) !== 'verifying') continue;
-              const existing = shadowIdsByKey.get(k) ?? [];
-              for (const rid of ids) if (!existing.includes(rid)) existing.push(rid);
-              shadowIdsByKey.set(k, existing);
+              if (phase === 'running' || !phaseByKey.has(k)) phaseByKey.set(k, phase);
             }
           }
-          setVerifyShadowIds(shadowIdsByKey);
+          setVerifyPhaseByKey(phaseByKey);
           const noteByKey = new Map<string, string>();
           for (const [k, { proposal: p, nodeId: nid }] of latestByKey) {
             const status = proposalStatusForNode(p, nid);
@@ -430,54 +439,6 @@ export default function ReleaseDetailPage() {
   // so a fresh remediation round's proposals are picked up without a reload.
   const restartProposalPolling = () => setPollNonce(n => n + 1);
 
-  // Flat, deduped, sorted set of shadow release ids to poll — the union across
-  // every node currently shown as 'verifying'. Its sorted join is the effect's
-  // dependency, so the poll re-subscribes only when the set of shadows changes,
-  // not on every proposal poll that rebuilds verifyShadowIds with equal content.
-  const shadowIdsToPoll = Array.from(new Set(Array.from(verifyShadowIds.values()).flat())).sort();
-  const shadowIdsKey = shadowIdsToPoll.join('\n');
-
-  // Poll each backing shadow release's status while any fix is 'verifying', so
-  // the verify chip reflects whether the shadow is queued behind the global
-  // one-at-a-time release queue or actively validating. Fetches are best-effort:
-  // a 404 or stale id is swallowed and leaves that shadow's status unknown, so
-  // the chip keeps its flat "Verifying fix…" fallback rather than claiming a
-  // wait it cannot substantiate. Runs only while a node is verifying and stops
-  // as soon as none are.
-  useEffect(() => {
-    if (shadowIdsToPoll.length === 0) { setShadowStatus(new Map()); return; }
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const tick = () => {
-      Promise.all(shadowIdsToPoll.map(rid =>
-        fetch(`/api/releases/${rid}`)
-          .then(r => (r.ok ? r.json() : null))
-          .then((d: ReleaseDetail | null) => [rid, d?.status] as const)
-          .catch(() => [rid, undefined] as const),
-      )).then(entries => {
-        if (cancelled) return;
-        // Keep only the ids still being polled, carrying a last-known status
-        // forward when a single fetch transiently fails.
-        setShadowStatus(prev => {
-          const next = new Map<string, string>();
-          for (const [rid, status] of entries) {
-            const value = status ?? prev.get(rid);
-            if (value) next.set(rid, value);
-          }
-          return next;
-        });
-        timer = setTimeout(tick, POLL_INTERVAL_MS);
-      });
-    };
-    tick();
-
-    return () => { cancelled = true; if (timer) clearTimeout(timer); };
-    // shadowIdsToPoll is derived from shadowIdsKey; keying on the string keeps
-    // the poll stable across proposal polls that rebuild an equal id set.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shadowIdsKey]);
-
   // retry asks release-controller to start another remediation round. A 202
   // advances the round shown in the header and restarts proposal polling; a
   // 409 means the request was refused, and the reason is turned into the text
@@ -527,9 +488,6 @@ export default function ReleaseDetailPage() {
       <header className="page-header">
         <button type="button" className="detail-back-link" onClick={() => navigate('/?tab=releases')}>← Back</button>
         <div className="detail-page-title">{rel.release_id}</div>
-        {rel.shadow && (
-          <span className="pill-sm pill-sm--verification">fix verification run</span>
-        )}
         <span className={`pill ${releasePillClass(rel.status)}`}>
           {rel.status}{rel.remediation_round > 1 ? ` · round ${rel.remediation_round}` : ''}
         </span>
@@ -593,61 +551,40 @@ export default function ReleaseDetailPage() {
           ))}
         </ul>
 
-        {perNode.length === 0 ? (
+        <NodeResultsTable
+          perNode={perNode}
+          fixCell={(stage, n) => {
+            const key = proposalKey(stage, n.node_id);
+            const st = fixState.get(key);
+            return <FixCell state={st} verifyPhase={st === 'verifying' ? verifyPhaseByKey.get(key) : undefined} note={fixNote.get(key)} />;
+          }}
+        />
+        {verificationRuns.length > 0 && (
           <>
             <div className="section-header">
               <div className="section-header__main">
-                <span className="section-header__title">Per-node results</span>
+                <span className="section-header__title">Verification runs</span>
+                <span className="section-header__count">{verificationRuns.length}</span>
               </div>
             </div>
-            <p className="empty">No per-node results.</p>
+            <table className="nodes-table">
+              <thead><tr><th>Run</th><th>Attempt</th><th>Service</th><th>Status</th><th>Started</th></tr></thead>
+              <tbody>
+                {verificationRuns.map(v => {
+                  const phase = verificationRunPhase(v.status);
+                  return (
+                    <tr key={v.run_id}>
+                      <td><Link className="nodes-node-name" to={`/verifications/${v.run_id}`}>{v.run_id}</Link></td>
+                      <td>{v.attempt}</td>
+                      <td>{v.service}</td>
+                      <td><span className={`pill-sm ${releasePillClass(phase).replace('pill--', 'pill-sm--')}`}>{phase}</span></td>
+                      <td className="nodes-ts">{v.activated_at ? v.activated_at.slice(0, 19).replace('T', ' ') : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </>
-        ) : (
-          groupByStage(perNode).map(({ stage, nodes }) => (
-            <div key={stage}>
-              <div className="section-header">
-                <div className="section-header__main">
-                  <span className="section-header__title">{stageLabel(stage)}</span>
-                  <span className="section-header__count">{nodes.length}</span>
-                </div>
-              </div>
-              <table className="nodes-table">
-                <thead>
-                  <tr><th>Node</th><th>Status</th><th>Duration</th><th>Log</th><th>Fix</th></tr>
-                </thead>
-                <tbody>
-                  {nodes.map(n => {
-                    const key = proposalKey(stage, n.node_id);
-                    const st = fixState.get(key);
-                    return (
-                      <tr key={key}>
-                        <td>
-                          <div className="nodes-node-name">{n.node_id}</div>
-                          {n.file_path && <div className="nodes-node-subpath">{n.file_path}</div>}
-                        </td>
-                        <td>
-                          <span className={`pill-sm ${releasePillClass(n.status).replace('pill--', 'pill-sm--')}`}>
-                            {n.status}
-                          </span>
-                        </td>
-                        <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
-                        <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
-                        <td>
-                          <FixCell
-                            state={st}
-                            verifyPhase={st === 'verifying'
-                              ? shadowVerifyPhase(verifyShadowIds.get(key) ?? [], shadowStatus)
-                              : undefined}
-                            note={fixNote.get(key)}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ))
         )}
       </main>
     </div>
