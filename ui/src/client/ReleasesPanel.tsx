@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { ReleaseListItem, ReleasesListResponse, CurrentProd } from './types';
-import { firstInFlight, releasePillClass, reasonLabel } from './release-helpers';
+import { ReleaseListItem, ReleasesListResponse, CurrentProd, PipelineResponse } from './types';
+import { releasePillClass, reasonLabel } from './release-helpers';
 
-const STATUS_FILTERS = ['', 'promoted', 'validated', 'rejected', 'superseded', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
+const STATUS_FILTERS = ['', 'promoted', 'rejected', 'superseded', 'validating', 'seed_building', 'parsing', 'compiling', 'received'];
 
 export default function ReleasesPanel() {
   const navigate = useNavigate();
@@ -11,6 +11,7 @@ export default function ReleasesPanel() {
   const [nextCursor, setNextCursor] = useState('');
   const [status, setStatus] = useState('');
   const [currentProd, setCurrentProd] = useState<CurrentProd | null>(null);
+  const [pipeline, setPipeline] = useState<PipelineResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = (cursor: string, replace: boolean) => {
@@ -30,13 +31,14 @@ export default function ReleasesPanel() {
   useEffect(() => { load('', true); /* reload on filter change */ }, [status]);
 
   useEffect(() => {
-    const f = () => fetch('/api/releases/current-prod').then(r => r.json()).then(setCurrentProd).catch(() => {});
+    const f = () => {
+      fetch('/api/releases/current-prod').then(r => r.json()).then(setCurrentProd).catch(() => {});
+      fetch('/api/pipeline').then(r => r.json()).then(setPipeline).catch(() => {});
+    };
     f();
     const id = setInterval(f, 5000);
     return () => clearInterval(id);
   }, []);
-
-  const inFlight = firstInFlight(items);
 
   return (
     <>
@@ -57,10 +59,21 @@ export default function ReleasesPanel() {
         </div>
       )}
 
-      {inFlight ? (
+      {pipeline?.active ? (
         <div className="info-strip info-strip--warning">
           <span className="info-strip__icon">⚠</span>
-          In flight · <strong>{inFlight.release_id}</strong> · {inFlight.status}
+          {pipeline.active.run_kind === 'verification' ? (
+            <>
+              In flight · verification run{' '}
+              <Link to={`/verifications/${pipeline.active.run_id}`}><strong>{pipeline.active.run_id}</strong></Link>
+              {' '}for <Link to={`/releases/${pipeline.active.verifies_release_id}`}>{pipeline.active.verifies_release_id}</Link>
+              {' '}(attempt {pipeline.active.attempt}, service {pipeline.active.service}) · {pipeline.active.status}
+            </>
+          ) : (
+            <>
+              In flight · <Link to={`/releases/${pipeline.active.run_id}`}><strong>{pipeline.active.run_id}</strong></Link> · {pipeline.active.status}
+            </>
+          )}
         </div>
       ) : (
         <div className="info-strip info-strip--neutral">
@@ -116,9 +129,6 @@ export default function ReleasesPanel() {
                     >
                       {r.release_id}
                     </Link>
-                    {r.shadow && (
-                      <>{' '}<span className="pill-sm pill-sm--verification">verification</span></>
-                    )}
                   </td>
                   <td>
                     {r.author?.login ? (

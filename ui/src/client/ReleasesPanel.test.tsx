@@ -3,16 +3,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import ReleasesPanel from './ReleasesPanel';
-import { ReleaseListItem } from './types';
+import { ReleaseListItem, PipelineResponse } from './types';
 
 const item = (o: Partial<ReleaseListItem> & { release_id: string; status: string }): ReleaseListItem => ({
-  created_at: '2026-07-02T10:00:00Z', resolved_at: null, node_count: 0, bootstrap: false, shadow: false, ...o,
+  created_at: '2026-07-02T10:00:00Z', resolved_at: null, node_count: 0, bootstrap: false, ...o,
 });
 
-function mockFetch(releases: ReleaseListItem[]) {
+function mockFetch(releases: ReleaseListItem[], pipeline: PipelineResponse = { active: null }) {
   global.fetch = vi.fn((url: string) => {
     if (String(url).startsWith('/api/releases/current-prod')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }
+    if (String(url).startsWith('/api/pipeline')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(pipeline) });
     }
     if (String(url).startsWith('/api/releases')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ releases, next_cursor: '' }) });
@@ -95,27 +98,37 @@ describe('ReleasesPanel — author column', () => {
   });
 });
 
-describe('ReleasesPanel — shadow verification label', () => {
-  it('renders a verification pill next to the release id for a shadow release', async () => {
-    mockFetch([item({ release_id: 'rel-5', status: 'validated', shadow: true })]);
+describe('ReleasesPanel — in-flight strip', () => {
+  it('names a running verification and links both the run and the release it verifies', async () => {
+    mockFetch([], { active: { run_id: 'verify-rel-1-core-a2', run_kind: 'verification', status: 'compiling', service: 'core', since: '2026-09-02T10:01:00Z', verifies_release_id: 'rel-1', attempt: 2 } });
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
-    await screen.findByText('rel-5');
-    expect(screen.getByText('verification')).toBeInTheDocument();
+    const strip = await screen.findByText(/In flight · verification run/);
+    expect(strip.textContent).toContain('attempt 2');
+    expect(strip.textContent).toContain('service core');
+    expect(strip.textContent).toContain('compiling');
+    expect(screen.getByRole('link', { name: 'verify-rel-1-core-a2' })).toHaveAttribute('href', '/verifications/verify-rel-1-core-a2');
+    expect(screen.getByRole('link', { name: 'rel-1' })).toHaveAttribute('href', '/releases/rel-1');
   });
 
-  it('does not render a verification pill for a non-shadow release', async () => {
-    mockFetch([item({ release_id: 'rel-6', status: 'promoted', shadow: false })]);
+  it('names a running candidate release', async () => {
+    mockFetch([], { active: { run_id: 'rel-7', run_kind: 'candidate', status: 'validating', service: 'core', since: '2026-09-02T10:01:00Z' } });
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
-    await screen.findByText('rel-6');
-    expect(screen.queryByText('verification')).toBeNull();
+    const strip = await screen.findByText(/In flight ·/);
+    expect(strip.textContent).toContain('validating');
+    expect(screen.getByRole('link', { name: 'rel-7' })).toHaveAttribute('href', '/releases/rel-7');
   });
 
-  it('includes validated in the status filter, so shadow verification runs can be filtered to', async () => {
-    mockFetch([]);
+  it('says nothing is in flight when the pipeline is idle, whatever the list holds', async () => {
+    mockFetch([item({ release_id: 'rel-1', status: 'received' })], { active: null });
     render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
-    await waitFor(() => expect(document.querySelector('#release-status-filter')).toBeInTheDocument());
-    const options = Array.from(document.querySelectorAll('#release-status-filter option'))
-      .map(o => (o as HTMLOptionElement).value);
-    expect(options).toContain('validated');
+    expect(await screen.findByText('Nothing in flight.')).toBeInTheDocument();
+  });
+
+  it('offers no validated filter and no verification chip', async () => {
+    mockFetch([item({ release_id: 'rel-1', status: 'promoted' })]);
+    render(<MemoryRouter><ReleasesPanel /></MemoryRouter>);
+    await screen.findByText('rel-1');
+    expect(screen.queryByRole('option', { name: 'validated' })).toBeNull();
+    expect(document.querySelector('.pill-sm--verification')).toBeNull();
   });
 });
