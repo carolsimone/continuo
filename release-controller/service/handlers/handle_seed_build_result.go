@@ -8,6 +8,7 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
@@ -35,7 +36,7 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.ReleaseRepo().Get(ctx, in.ReleaseID)
+	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
@@ -50,7 +51,7 @@ func HandleSeedBuildResult(ctx context.Context, d *Deps, in HandleSeedBuildResul
 	return handleSeedBuildOK(ctx, d, u, r, in, now)
 }
 
-func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleSeedBuildResultInput, now time.Time) error {
+func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleSeedBuildResultInput, now time.Time) error {
 	// Build per-node results and derive the failing set.
 	results, failing := stageResults(in.PerNode)
 
@@ -62,7 +63,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 	}
 
 	r.RecordStageResults("seed_build", results)
-	if err := r.TransitionToRejected("seed_build_failed", in.ErrorDetail, failing, now); err != nil {
+	if err := r.Fail("seed_build_failed", in.ErrorDetail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
@@ -113,14 +114,14 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 		"commit_sha":       r.CommitSHA(),
 		"code_bundle_uri":  r.CodeBundleURI(),
 		"candidate_schema": CandidateSchemaFor(in.ReleaseID),
-		"shadow":           r.IsShadow(),
+		"shadow":           r.Kind() == pipeline.KindVerification,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
 	r.SetRejectionPayload(payload)
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -145,7 +146,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *re
 	return nil
 }
 
-func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleSeedBuildResultInput, now time.Time) error {
+func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleSeedBuildResultInput, now time.Time) error {
 	// Record per-node seed-build results on the ok path so the UI can surface
 	// per-seed build status even when the overall build succeeds.
 	results, _ := stageResults(in.PerNode)
@@ -188,7 +189,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 	if err := r.TransitionFromSeedBuilding(validationIDs, now); err != nil {
 		return fmt.Errorf("transition from seed building: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -204,7 +205,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 		}
 		d.Telemetry.ReleaseSeedBuildCompleted(ctx, in.ReleaseID, true, 0)
 		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
-		if !r.IsShadow() {
+		if r.Kind() == pipeline.KindCandidate {
 			d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
 		}
 		return nil

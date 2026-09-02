@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,17 +36,17 @@ func TestIntegration_FIFO_SerializesConcurrentCandidates(t *testing.T) {
 	wg.Wait()
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	active, err := deps.NewUoW().ReleaseRepo().ActiveRelease(context.Background())
+	active, err := deps.NewUoW().RunRepo().Active(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, active, "exactly one release must be active")
 	// AdvanceQueue promotes the oldest Received candidate to Compiling (the
 	// compile leg runs before Parsing); Compiling is an active status, so it
 	// still blocks queue advancement exactly like Parsing did before the
 	// compile leg existed.
-	assert.Equal(t, release.StatusCompiling, active.Status())
+	assert.Equal(t, pipeline.StatusCompiling, active.Status())
 
 	// Calling AdvanceQueue again must not start a second active release
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
-	active2, _ := deps.NewUoW().ReleaseRepo().ActiveRelease(context.Background())
+	active2, _ := deps.NewUoW().RunRepo().Active(context.Background())
 	assert.Equal(t, active.ID(), active2.ID(), "no second active release while first is in flight")
 }

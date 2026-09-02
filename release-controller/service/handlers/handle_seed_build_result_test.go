@@ -8,6 +8,7 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -85,12 +86,12 @@ func putSeedBuildingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps,
 
 	r, err := store.GetRelease(releaseID)
 	require.NoError(t, err)
-	require.Equal(t, release.StatusSeedBuilding, r.Status(),
+	require.Equal(t, pipeline.StatusSeedBuilding, r.Status(),
 		"topology must have a new dbt-seed for putSeedBuildingRelease to leave release in SeedBuilding")
 }
 
 // mustGetRelease fetches a release from the fakeStore or fails the test.
-func mustGetRelease(t *testing.T, store *fakeStore, releaseID string) *release.Release {
+func mustGetRelease(t *testing.T, store *fakeStore, releaseID string) *pipeline.Run {
 	t.Helper()
 	r, err := store.GetRelease(releaseID)
 	require.NoError(t, err)
@@ -146,7 +147,7 @@ func TestHandleSeedBuildResult_OKEmitsValidationRequestedExcludingBuiltSeeds(t *
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, release.StatusValidating, r.Status())
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
 
 	entry := lastOutbox(t, store)
 	assert.Equal(t, streams.ValidationRequestedV1, entry.StreamName)
@@ -196,8 +197,8 @@ func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "seed_build_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "seed_build_failed", r.FailReason())
 	e := lastOutbox(t, store)
 	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
 	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
@@ -258,8 +259,8 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "seed_build_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "seed_build_failed", r.FailReason())
 
 	// The aggregate must record per-node seed-build stage results.
 	require.NotEmpty(t, r.PerNodeResults())
@@ -341,7 +342,7 @@ func TestHandleSeedBuildResult_OKThenValidationCompletePromotes(t *testing.T) {
 	// The persisted validation set must exclude the built seed so the barrier's
 	// expected set matches the executor's per-node emissions.
 	r := mustGetRelease(t, store, releaseID)
-	require.Equal(t, release.StatusValidating, r.Status())
+	require.Equal(t, pipeline.StatusValidating, r.Status())
 	assert.Equal(t, []string{"model.fin.report"}, r.ValidationNodeIDs(),
 		"persisted validation set must drop the just-built seed")
 
@@ -357,7 +358,7 @@ func TestHandleSeedBuildResult_OKThenValidationCompletePromotes(t *testing.T) {
 	}))
 
 	r = mustGetRelease(t, store, releaseID)
-	assert.Equal(t, release.StatusPromoted, r.Status(),
+	assert.Equal(t, pipeline.StatusPromoted, r.Status(),
 		"seed-build then per-node validation-ok must promote, not hang on the barrier")
 	assert.Equal(t, streams.ReleasePromotedV1, lastOutbox(t, store).StreamName)
 }
@@ -386,7 +387,7 @@ func TestHandleSeedBuildResult_EmptyAfterExclusionPromotesDirect(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
-	assert.Equal(t, release.StatusPromoted, r.Status(), "seed-only release promotes directly after seed build")
+	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "seed-only release promotes directly after seed build")
 
 	// No validation.requested must be emitted; last event is release.promoted:v1
 	entry := lastOutbox(t, store)

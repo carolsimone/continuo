@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
@@ -29,7 +30,7 @@ type ReceiveCandidateInput struct {
 	// before this POST). Anything else is rejected (HTTP 400).
 	Kind string `json:"kind"`
 	// Shadow marks a fix-verification release posted by agent-remediation: it
-	// runs the normal parse+validation pipeline but stops at StatusValidated
+	// runs the normal parse+validation pipeline but stops at StatusPassed
 	// instead of promoting to production. Absent means false — the default
 	// for every existing caller.
 	Shadow bool `json:"shadow"`
@@ -101,15 +102,13 @@ func ReceiveCandidate(ctx context.Context, d *Deps, in ReceiveCandidateInput) er
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	existing, _ := u.ReleaseRepo().Get(ctx, in.ReleaseID)
+	existing, _ := u.RunRepo().Get(ctx, in.ReleaseID)
 	if existing != nil {
 		return u.Commit()
 	}
 
-	r := release.New(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Shadow, in.Repo, in.CommitSHA, kind, d.Clock.Now())
-	r.SetSourceOverlayURI(in.SourceOverlayURI)
-	r.SetVerifiesReleaseID(in.VerifiesReleaseID)
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	r := pipeline.NewCandidate(in.ReleaseID, in.Service, in.ImageTag, in.Bootstrap, in.Repo, in.CommitSHA, kind, d.Clock.Now())
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 	if err := u.Commit(); err != nil {

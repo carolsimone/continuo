@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 )
@@ -36,31 +37,32 @@ func AssembleManifestSet(existing []*release.ServiceProd, bucket, changedService
 }
 
 // applyVerifiedReleaseOverride assembles the rejected release's changed service
-// from THAT release's candidate, for a shadow release verifying a fix in a
+// from THAT release's candidate, for a verification run verifying a fix in a
 // different service.
 //
-// A shadow is a single-service delta like any other release: its own service
-// carries the fix, and every other service is assembled from the live
-// service_prod pointers. When the fix edits a DOWNSTREAM service, the service
-// whose release was actually rejected is one of those "other" services, so the
-// fix would be validated against that service's PRODUCTION code — not the
-// candidate whose rejection the fix is answering. The change would then be
-// judged on a graph the failure never occurred in.
+// A verification run is a single-service delta like any other run: its own
+// service carries the fix, and every other service is assembled from the
+// live service_prod pointers. When the fix edits a DOWNSTREAM service, the
+// service whose release was actually rejected is one of those "other"
+// services, so the fix would be validated against that service's PRODUCTION
+// code — not the candidate whose rejection the fix is answering. The change
+// would then be judged on a graph the failure never occurred in.
 //
-// The shadow therefore names the release it verifies, and that release's own
-// changed service is swapped to its candidate manifest key and image tag. The
-// original release is read once here; if it is gone, or never got far enough to
-// have a candidate manifest, the set is left as assembled and the shadow runs
-// against production — a weaker verification, but a running one.
+// The verification run therefore names the release it verifies, and that
+// release's own changed service is swapped to its candidate manifest key and
+// image tag. The original release is read once here; if it is gone, or never
+// got far enough to have a candidate manifest, the set is left as assembled
+// and the verification runs against production — a weaker check, but a
+// running one.
 //
 // Only the rejected release's own delta is restored. Sibling edits the same
 // attempt made in OTHER services are not co-verified: one release is one
-// service delta, so each shadow sees its own change plus the rejected
+// service delta, so each verification sees its own change plus the rejected
 // candidate. The follow-up release that runs after the fix PR is merged remains
 // the gate that judges the whole change together.
-func applyVerifiedReleaseOverride(set AssembledSet, bucket string, shadow, original *release.Release) AssembledSet {
+func applyVerifiedReleaseOverride(set AssembledSet, bucket string, verification, original *pipeline.Run) AssembledSet {
 	svc := original.ChangedService()
-	if svc == "" || svc == shadow.ChangedService() {
+	if svc == "" || svc == verification.ChangedService() {
 		return set
 	}
 	key := CanonicalManifestKey(bucket, svc, original.ID(), original.ManifestKind())
@@ -85,24 +87,24 @@ func applyVerifiedReleaseOverride(set AssembledSet, bucket string, shadow, origi
 	return set
 }
 
-// assembleFor builds the manifest set a release runs against: the standard
-// single-service assembly, plus — for a shadow release naming the rejected
+// assembleFor builds the manifest set a run runs against: the standard
+// single-service assembly, plus — for a verification run naming the rejected
 // release it verifies — that release's own candidate in place of its
 // production pointer. It is called from every site that assembles a set, so a
-// shadow's compile leg and its parse leg cannot disagree about which manifest
-// a service contributes.
+// verification's compile leg and its parse leg cannot disagree about which
+// manifest a service contributes.
 func assembleFor(
 	ctx context.Context, u uow.UnitOfWork, logger *slog.Logger,
-	r *release.Release, pointers []*release.ServiceProd, bucket string,
+	r *pipeline.Run, pointers []*release.ServiceProd, bucket string,
 ) AssembledSet {
 	imageTag := r.ImageTags()[r.ChangedService()]
 	set := AssembleManifestSet(pointers, bucket, r.ChangedService(), r.ID(), imageTag, r.ManifestKind())
-	if !r.IsShadow() || r.VerifiesReleaseID() == "" {
+	if r.Kind() == pipeline.KindCandidate || r.VerifiesReleaseID() == "" {
 		return set
 	}
-	original, err := u.ReleaseRepo().Get(ctx, r.VerifiesReleaseID())
+	original, err := u.RunRepo().Get(ctx, r.VerifiesReleaseID())
 	if err != nil || original == nil {
-		logger.Warn("shadow release verifies a release that cannot be read; assembling from production instead",
+		logger.Warn("verification run verifies a release that cannot be read; assembling from production instead",
 			"release_id", r.ID(), "verifies_release_id", r.VerifiesReleaseID(), "error", err)
 		return set
 	}
@@ -112,8 +114,8 @@ func assembleFor(
 		return set
 	}
 	out := applyVerifiedReleaseOverride(set, bucket, r, original)
-	logger.Info("shadow release assembles the verified release's candidate for its changed service",
+	logger.Info("verification run assembles the verified release's candidate for its changed service",
 		"release_id", r.ID(), "verifies_release_id", original.ID(),
-		"service", original.ChangedService(), "shadow_service", r.ChangedService())
+		"service", original.ChangedService(), "verification_service", r.ChangedService())
 	return out
 }

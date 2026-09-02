@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ func putCompilingRelease(t *testing.T, store *fakeStore, deps *handlers.Deps, re
 
 	r, err := store.GetRelease(releaseID)
 	require.NoError(t, err)
-	require.Equal(t, release.StatusCompiling, r.Status(),
+	require.Equal(t, pipeline.StatusCompiling, r.Status(),
 		"putCompilingRelease: release must be in compiling after AdvanceQueue")
 }
 
@@ -62,7 +62,7 @@ func TestHandleCompileResult_OKEmitsReleaseRequested(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, release.StatusParsing, r.Status())
+	assert.Equal(t, pipeline.StatusParsing, r.Status())
 
 	e := lastOutbox(t, fakes)
 	assert.Equal(t, streams.ReleaseRequestedV1, e.StreamName)
@@ -99,8 +99,8 @@ func TestHandleCompileResult_FailedRejects(t *testing.T) {
 	}))
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "compile_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "compile_failed", r.FailReason())
 	e := lastOutbox(t, fakes)
 	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
 	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
@@ -129,8 +129,8 @@ func TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
 			require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
 
 			r := mustGetRelease(t, fakes, releaseID)
-			assert.Equal(t, release.StatusRejected, r.Status())
-			assert.Equal(t, "parse_rehearsal_failed", r.RejectReason())
+			assert.Equal(t, pipeline.StatusRejected, r.Status())
+			assert.Equal(t, "parse_rehearsal_failed", r.FailReason())
 
 			e := lastOutbox(t, fakes)
 			assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
@@ -164,8 +164,8 @@ func TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFaile
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "artifact_upload_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "artifact_upload_failed", r.FailReason())
 
 	e := lastOutbox(t, fakes)
 	assert.Equal(t, streams.ReleaseRejectedV1, e.StreamName)
@@ -201,8 +201,8 @@ func TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged(t
 			require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
 
 			r := mustGetRelease(t, fakes, releaseID)
-			assert.Equal(t, release.StatusRejected, r.Status())
-			assert.Equal(t, "compile_failed", r.RejectReason())
+			assert.Equal(t, pipeline.StatusRejected, r.Status())
+			assert.Equal(t, "compile_failed", r.FailReason())
 
 			e := lastOutbox(t, fakes)
 			p := decodeJSON(t, e.Payload)
@@ -240,8 +240,8 @@ func TestHandleCompileResult_MixedPerNode_PinsFirstMatchDeterminism(t *testing.T
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "parse_rehearsal_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "parse_rehearsal_failed", r.FailReason())
 
 	e := lastOutbox(t, fakes)
 	p := decodeJSON(t, e.Payload)
@@ -281,8 +281,8 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	r := mustGetRelease(t, fakes, releaseID)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "compile_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "compile_failed", r.FailReason())
 
 	// The aggregate must record a per-node compile-stage result.
 	require.Len(t, r.PerNodeResults(), 1)

@@ -8,6 +8,7 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
@@ -46,7 +47,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.ReleaseRepo().Load(ctx, in.ReleaseID) // FOR UPDATE: serialize against per-node upserts
+	r, err := u.RunRepo().Load(ctx, in.ReleaseID) // FOR UPDATE: serialize against per-node upserts
 	if err != nil {
 		return fmt.Errorf("load release: %w", err)
 	}
@@ -65,7 +66,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	// Per-node content lives in the read model, projected from the earlier
 	// kind=node messages on validation.result:v1. Read the validation-stage
 	// results the stream already stored rather than re-carrying them here.
-	stored := map[string]release.NodeValidationResult{}
+	stored := map[string]pipeline.NodeValidationResult{}
 	for _, n := range r.PerNodeResults() {
 		if n.Stage == "validation" {
 			stored[n.NodeID] = n
@@ -114,17 +115,17 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 // it, and writes the release.promoted:v1 outbox row. The caller owns
 // Begin/Commit and any telemetry. The release must already hold its candidate
 // topology (i.e. be in Validating).
-func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, now time.Time) error {
-	// A shadow release runs the same parse+validation pipeline as a normal
-	// release but must never reach production: it exists only to verify a
-	// proposed fix. Stop at Validated instead of touching current_prod,
+func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, now time.Time) error {
+	// A verification run runs the same parse+validation pipeline as a
+	// candidate release but must never reach production: it exists only to
+	// verify a proposed fix. Stop at Passed instead of touching current_prod,
 	// service_prod, or emitting release.promoted:v1.
-	if r.IsShadow() {
-		if err := r.TransitionToValidated(now); err != nil {
-			return fmt.Errorf("transition shadow release %s to validated: %w", releaseID, err)
+	if r.Kind() == pipeline.KindVerification {
+		if err := r.Pass(now); err != nil {
+			return fmt.Errorf("transition verification run %s to passed: %w", releaseID, err)
 		}
-		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
-			return fmt.Errorf("save validated shadow release %s: %w", releaseID, err)
+		if err := u.RunRepo().Save(ctx, r); err != nil {
+			return fmt.Errorf("save passed verification run %s: %w", releaseID, err)
 		}
 		return nil
 	}
@@ -165,10 +166,10 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		return fmt.Errorf("upsert service_prod: %w", err)
 	}
 
-	if err := r.TransitionToPromoted(now); err != nil {
+	if err := r.Promote(now); err != nil {
 		return fmt.Errorf("transition to promoted: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -230,7 +231,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	})
 }
 
-func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, now time.Time) error {
+func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, now time.Time) error {
 	if err := promoteToProduction(ctx, d, u, r, in.ReleaseID, now); err != nil {
 		return err
 	}
@@ -239,7 +240,7 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(r.ValidationNodeIDs()), 0, 0)
-	if !r.IsShadow() {
+	if r.Kind() == pipeline.KindCandidate {
 		d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(r.CandidateTopology()))
 	}
 	return nil
@@ -254,8 +255,8 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 // kind=node messages projected, not from this terminal message. A node whose
 // projection write was permanently dropped may be absent from the read model, in
 // which case only present, non-ok nodes appear in failing.
-func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing []string, now time.Time) error {
-	if err := r.TransitionToRejected("validation_failed", "", failing, now); err != nil {
+func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, failing []string, now time.Time) error {
+	if err := r.Fail("validation_failed", "", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
@@ -354,14 +355,14 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		"repo":             r.Repo(),
 		"commit_sha":       r.CommitSHA(),
 		"code_bundle_uri":  r.CodeBundleURI(),
-		"shadow":           r.IsShadow(),
+		"shadow":           r.Kind() == pipeline.KindVerification,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
 	r.SetRejectionPayload(payload)
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +23,7 @@ func TestAdvanceQueue_NoActive_ActivatesToCompilingAndEmitsCompileRequested(t *t
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, release.StatusCompiling, r.Status())
+	assert.Equal(t, pipeline.StatusCompiling, r.Status())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
@@ -89,7 +90,7 @@ func TestAdvanceQueue_OtherServicesIncluded_ImageTagsAssembledOnRelease(t *testi
 
 	// Assembled image tags must already be persisted on the release (SetAssembledImageTags).
 	r, _ := store.GetRelease("rNEW")
-	assert.Equal(t, release.StatusCompiling, r.Status())
+	assert.Equal(t, pipeline.StatusCompiling, r.Status())
 	assert.Equal(t, map[string]string{
 		"svc-a": "tag-a-new",
 		"svc-b": "tag-b-old",
@@ -120,7 +121,7 @@ func TestAdvanceQueue_ProdSeeded_UncoveredService_BlocksActivation(t *testing.T)
 	// svc-b and svc-c are uncovered, so the release stays Received and nothing
 	// is emitted; the operator must seed service_prod first.
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, release.StatusReceived, r.Status())
+	assert.Equal(t, pipeline.StatusReceived, r.Status())
 	assert.Empty(t, outboxEntries(store))
 }
 
@@ -147,7 +148,7 @@ func TestAdvanceQueue_ProdSeeded_AllServicesCovered_Proceeds(t *testing.T) {
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rA")
-	assert.Equal(t, release.StatusCompiling, r.Status())
+	assert.Equal(t, pipeline.StatusCompiling, r.Status())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
@@ -166,7 +167,7 @@ func TestAdvanceQueue_ActiveExists_DoesNothing(t *testing.T) {
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rB, _ := store.GetRelease("rB")
-	assert.Equal(t, release.StatusReceived, rB.Status())
+	assert.Equal(t, pipeline.StatusReceived, rB.Status())
 	assert.Len(t, outboxEntries(store), 1) // only rA emitted
 }
 
@@ -189,7 +190,7 @@ func TestAdvanceQueue_PythonRelease_SkipsCompile_EmitsReleaseRequested(t *testin
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	r, _ := store.GetRelease("rPy")
-	assert.Equal(t, release.StatusParsing, r.Status(), "python releases activate straight into Parsing")
+	assert.Equal(t, pipeline.StatusParsing, r.Status(), "python releases activate straight into Parsing")
 	assert.Equal(t, map[string]string{"svc-py": "img:1", "svc-dbt": "t-old"}, r.ImageTags())
 
 	entries := outboxEntries(store)
@@ -226,7 +227,7 @@ func TestAdvanceQueue_DbtRelease_StillCompiles(t *testing.T) {
 	}))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	r, _ := store.GetRelease("rDbt")
-	assert.Equal(t, release.StatusCompiling, r.Status())
+	assert.Equal(t, pipeline.StatusCompiling, r.Status())
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
 	assert.Equal(t, streams.CompileRequestedV1, entries[0].StreamName)
@@ -244,14 +245,14 @@ func TestAdvanceQueue_PicksOldestFirst(t *testing.T) {
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	rOLD, _ := store.GetRelease("rOLD")
 	rNEW, _ := store.GetRelease("rNEW")
-	assert.Equal(t, release.StatusCompiling, rOLD.Status())
-	assert.Equal(t, release.StatusReceived, rNEW.Status())
+	assert.Equal(t, pipeline.StatusCompiling, rOLD.Status())
+	assert.Equal(t, pipeline.StatusReceived, rNEW.Status())
 }
 
 func TestAdvanceQueue_CompileRequestedCarriesSourceOverlayURI(t *testing.T) {
 	deps, store := newDeps(time.Now())
-	r := release.New("r-ov", "svc", "tag", false, true, "o/r", "sha", release.ManifestKindDbt, deps.Clock.Now())
-	r.SetSourceOverlayURI("s3://b/svc/r-ov/source-overlay.tar.gz")
+	r := pipeline.NewVerification("r-ov", "svc", "tag", "rel-orig", 1,
+		"s3://b/svc/r-ov/source-overlay.tar.gz", release.ManifestKindDbt, deps.Clock.Now())
 	store.SeedRelease(r)
 
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
@@ -268,17 +269,17 @@ func TestAdvanceQueue_CompileRequestedCarriesSourceOverlayURI(t *testing.T) {
 		assert.Equal(t, "s3://b/svc/r-ov/source-overlay.tar.gz", p.SourceOverlayURI)
 		found = true
 	}
-	require.True(t, found, "compile.requested must be emitted for a dbt shadow release")
+	require.True(t, found, "compile.requested must be emitted for a dbt verification run")
 }
 
 // verifiedOriginal is a rejected candidate release of svc-a, parsed (so its
 // candidate manifest exists at its canonical key) and carrying its own image
 // tag for svc-a. A shadow release verifying it must assemble THAT manifest for
 // svc-a rather than svc-a's live production pointer.
-func verifiedOriginal(id string, now time.Time) *release.Release {
-	return release.Rehydrate(release.RehydrateInput{
+func verifiedOriginal(id string, now time.Time) *pipeline.Run {
+	return pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:             id,
-		Status:         release.StatusRejected,
+		Status:         pipeline.StatusRejected,
 		ImageTags:      map[string]string{"svc-a": "tag-a-candidate", "svc-b": "tag-b-old"},
 		ChangedService: "svc-a",
 		CandidateTopology: release.Topology{
@@ -293,18 +294,15 @@ func verifiedOriginal(id string, now time.Time) *release.Release {
 // whose edit lands in a DIFFERENT service than the one whose release was
 // rejected: the rejection came from svc-a's candidate, so verifying the fix
 // against svc-a's PRODUCTION manifest would judge it on code the rejection was
-// never about. The shadow names the release it verifies, and svc-a is assembled
-// from that release's candidate — manifest key and image tag both.
+// never about. The verification names the release it verifies, and svc-a is
+// assembled from that release's candidate — manifest key and image tag both.
 func TestAdvanceQueue_ShadowVerifiesTheRejectedReleasesCandidate(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO", deps.Clock.Now()))
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-b", ReleaseID: "rShadow", ImageTag: "img:1", Repo: "acme/py", CommitSHA: "cafebabe",
-		Kind: "python", Shadow: true, VerifiesReleaseID: "rO",
-	}))
+	store.SeedRelease(pipeline.NewVerification("rShadow", "svc-b", "img:1", "rO", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -321,18 +319,15 @@ func TestAdvanceQueue_ShadowVerifiesTheRejectedReleasesCandidate(t *testing.T) {
 }
 
 // TestAdvanceQueue_ShadowVerifyingAnUnknownRelease_FallsBackToProd covers the
-// verified release having been deleted (or never persisted): the shadow still
-// runs, assembled from the live production pointers exactly as any other
-// release is, rather than failing to activate.
+// verified release having been deleted (or never persisted): the verification
+// still runs, assembled from the live production pointers exactly as any
+// other run is, rather than failing to activate.
 func TestAdvanceQueue_ShadowVerifyingAnUnknownRelease_FallsBackToProd(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-b", ReleaseID: "rShadow2", ImageTag: "img:1", Repo: "acme/py", CommitSHA: "cafebabe",
-		Kind: "python", Shadow: true, VerifiesReleaseID: "rGone",
-	}))
+	store.SeedRelease(pipeline.NewVerification("rShadow2", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -345,18 +340,15 @@ func TestAdvanceQueue_ShadowVerifyingAnUnknownRelease_FallsBackToProd(t *testing
 }
 
 // TestAdvanceQueue_ShadowVerifyingItsOwnServicesRelease_ChangesNothing covers
-// the ordinary shadow, whose fix edits the very service whose release was
-// rejected: that service is the shadow's own delta already, so there is nothing
-// to override.
+// the ordinary verification, whose fix edits the very service whose release
+// was rejected: that service is the verification's own delta already, so
+// there is nothing to override.
 func TestAdvanceQueue_ShadowVerifyingItsOwnServicesRelease_ChangesNothing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO2", deps.Clock.Now()))
 
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc-a", ReleaseID: "rShadow3", ImageTag: "img:2", Repo: "acme/py", CommitSHA: "cafebabe",
-		Kind: "python", Shadow: true, VerifiesReleaseID: "rO2",
-	}))
+	store.SeedRelease(pipeline.NewVerification("rShadow3", "svc-a", "img:2", "rO2", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)

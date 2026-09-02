@@ -20,13 +20,13 @@ func TestPruneResolvedReleases_PassesCutoffAndKeepIDs(t *testing.T) {
 	deps, _ := newDeps(now)
 
 	// Use a dedicated store for this test so we can seed current_prod and
-	// inspect the fakeReleaseRepo fields after the call.
+	// inspect the fakeRunRepo fields after the call.
 	store := newFakeStore()
 	store.SeedCurrentProd(release.RehydrateCurrentProd("live-1", release.Topology{}, now))
 
-	// Capture the fakeReleaseRepo that the handler will obtain so we can
+	// Capture the fakeRunRepo that the handler will obtain so we can
 	// assert on the recorded cutoff and keepReleaseIDs.
-	var captured *fakeReleaseRepo
+	var captured *fakeRunRepo
 	deps.NewUoW = func() uow.UnitOfWork {
 		u := newFakeUoW(store)
 		u.releases.deletedCount = 3
@@ -56,7 +56,7 @@ func TestPruneResolvedReleases_IncludesServiceProdReleaseIDs(t *testing.T) {
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "sp-a", "s3://a", "t1", release.ManifestKindDbt, now))
 	store.SeedServiceProd(release.NewServiceProd("svc-b", "sp-b", "s3://b", "t2", release.ManifestKindDbt, now))
 
-	var captured *fakeReleaseRepo
+	var captured *fakeRunRepo
 	deps.NewUoW = func() uow.UnitOfWork {
 		u := newFakeUoW(store)
 		u.releases.deletedCount = 0
@@ -80,7 +80,7 @@ func TestPruneResolvedReleases_EmptyKeepSetWhenNoProdPointers(t *testing.T) {
 	// No current_prod, no service_prod rows.
 	store := newFakeStore()
 
-	var captured *fakeReleaseRepo
+	var captured *fakeRunRepo
 	deps.NewUoW = func() uow.UnitOfWork {
 		u := newFakeUoW(store)
 		captured = u.releases
@@ -105,7 +105,7 @@ func TestPruneResolvedReleases_DeduplicatesOverlappingIDs(t *testing.T) {
 	store.SeedCurrentProd(release.RehydrateCurrentProd("shared-1", release.Topology{}, now))
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "shared-1", "s3://a", "t1", release.ManifestKindDbt, now))
 
-	var captured *fakeReleaseRepo
+	var captured *fakeRunRepo
 	deps.NewUoW = func() uow.UnitOfWork {
 		u := newFakeUoW(store)
 		captured = u.releases

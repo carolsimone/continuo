@@ -44,7 +44,7 @@ func PruneResolvedReleases(ctx context.Context, d *Deps, retentionDays int) (int
 		keepIDs = append(keepIDs, id)
 	}
 
-	n, err := u.ReleaseRepo().DeleteResolvedBefore(ctx, cutoff, keepIDs)
+	n, err := u.RunRepo().DeleteFinishedBefore(ctx, cutoff, keepIDs)
 	if err != nil {
 		return 0, fmt.Errorf("delete resolved before: %w", err)
 	}

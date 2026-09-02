@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
@@ -65,18 +66,18 @@ func TestIntegration_HappyPath(t *testing.T) {
 
 	// 2. Verify release is Compiling (AdvanceQueue ran on POST, promoting the
 	// release into the compile leg rather than straight to Parsing).
-	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
+	r, err := deps.NewUoW().RunRepo().Get(context.Background(), "rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusCompiling, r.Status())
+	assert.Equal(t, pipeline.StatusCompiling, r.Status())
 
 	// 2b. Simulate the dbt compile job completing ok: Compiling -> Parsing.
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
 		ReleaseID: "rA",
 		Status:    "ok",
 	}))
-	r, err = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
+	r, err = deps.NewUoW().RunRepo().Get(context.Background(), "rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusParsing, r.Status())
+	assert.Equal(t, pipeline.StatusParsing, r.Status())
 
 	// 3. Simulate topology-controller reply
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -87,8 +88,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
 		},
 	}))
-	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
-	assert.Equal(t, release.StatusValidating, r.Status())
+	r, _ = deps.NewUoW().RunRepo().Get(context.Background(), "rA")
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
 
 	// 4. Project each node's result via the kind=node messages, then deliver the
 	// terminal decision. The kind=complete terminal message carries only the
@@ -103,8 +104,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 		ReleaseID:       "rA",
 		AggregateStatus: "ok",
 	}))
-	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
-	assert.Equal(t, release.StatusPromoted, r.Status())
+	r, _ = deps.NewUoW().RunRepo().Get(context.Background(), "rA")
+	assert.Equal(t, pipeline.StatusPromoted, r.Status())
 	require.NotNil(t, r)
 	require.NotEmpty(t, r.PerNodeResults())
 	assert.Equal(t, "ok", r.PerNodeResults()[0].Status)

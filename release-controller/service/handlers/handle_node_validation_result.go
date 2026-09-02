@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 )
 
 // NodeValidationResultInput is the wire shape of the kind:"node" message on
@@ -32,7 +32,7 @@ func HandleNodeValidationResult(ctx context.Context, d *Deps, in NodeValidationR
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.ReleaseRepo().Load(ctx, in.ReleaseID)
+	r, err := u.RunRepo().Load(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("load release: %w", err)
 	}
@@ -42,13 +42,13 @@ func HandleNodeValidationResult(ctx context.Context, d *Deps, in NodeValidationR
 		return nil
 	}
 
-	r.UpsertStageResult(in.Stage, release.NodeValidationResult{
+	r.UpsertStageResult(in.Stage, pipeline.NodeValidationResult{
 		NodeID:        in.NodeID,
 		Status:        in.Status,
 		DBTLogURI:     in.DBTLogURI,
 		RunResultsURI: in.RunResultsURI,
 	})
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 	if err := u.Commit(); err != nil {

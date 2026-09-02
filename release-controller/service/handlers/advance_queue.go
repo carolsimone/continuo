@@ -48,7 +48,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return fmt.Errorf("lock release queue: %w", err)
 	}
 
-	active, err := u.ReleaseRepo().ActiveRelease(ctx)
+	active, err := u.RunRepo().Active(ctx)
 	if err != nil {
 		return fmt.Errorf("active release: %w", err)
 	}
@@ -56,7 +56,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		return u.Commit()
 	}
 
-	next, err := u.ReleaseRepo().NextQueuedRelease(ctx)
+	next, err := u.RunRepo().NextQueued(ctx)
 	if err != nil {
 		return fmt.Errorf("next queued: %w", err)
 	}
@@ -112,7 +112,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 		if err := next.TransitionToParsing(now); err != nil {
 			return fmt.Errorf("transition to parsing: %w", err)
 		}
-		if err := u.ReleaseRepo().Save(ctx, next); err != nil {
+		if err := u.RunRepo().Save(ctx, next); err != nil {
 			return fmt.Errorf("save release: %w", err)
 		}
 		if err := emitReleaseRequested(ctx, u, next.ID(), set.ManifestKeys, now); err != nil {
@@ -128,7 +128,7 @@ func AdvanceQueue(ctx context.Context, d *Deps) error {
 	if err := next.TransitionToCompiling(now); err != nil {
 		return fmt.Errorf("transition to compiling: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, next); err != nil {
+	if err := u.RunRepo().Save(ctx, next); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 

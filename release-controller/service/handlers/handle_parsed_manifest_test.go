@@ -8,6 +8,7 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -102,7 +103,7 @@ func TestHandleParsedManifest_OK_TransitionsToValidating(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusValidating, r.Status())
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
 
 	validIDs := r.ValidationNodeIDs()
 	assert.Contains(t, validIDs, "a")
@@ -141,7 +142,7 @@ func TestHandleParsedManifest_OK_StoresCodeBundleURI(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusValidating, r.Status())
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
 	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", r.CodeBundleURI())
 }
 
@@ -164,7 +165,7 @@ func TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI(t *testing.T) {
 
 	r, err := store.GetRelease("rBoot")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusPromoted, r.Status())
+	assert.Equal(t, pipeline.StatusPromoted, r.Status())
 	assert.Equal(t, "s3://continuo/code-bundles/rBoot/bundle.json", r.CodeBundleURI())
 }
 
@@ -181,8 +182,8 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "parse_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "parse_failed", r.FailReason())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 3) // CompileRequested + ReleaseRequested + ReleaseRejected
@@ -196,10 +197,10 @@ func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
 		"a non-shadow release's parse_failed rejection must carry shadow:false")
 }
 
-// seedToParsingShadow mirrors seedToParsing but registers the release with
-// Shadow: true, so a rejection emitted from the parsing leg can be asserted
-// to carry shadow:true — the signal remediation uses to avoid re-triggering
-// itself on a failed fix-verification attempt.
+// seedToParsingShadow mirrors seedToParsing but seeds a verification run, so
+// a rejection emitted from the parsing leg can be asserted to carry
+// shadow:true — the signal remediation uses to avoid re-triggering itself on
+// a failed fix-verification attempt.
 func seedToParsingShadow(t *testing.T, releaseID string, imageTags map[string]string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	return seedToParsingShadowWithOverlay(t, releaseID, imageTags, "")
@@ -220,15 +221,7 @@ func seedToParsingShadowWithOverlay(t *testing.T, releaseID string, imageTags ma
 	}
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:          svc,
-		ReleaseID:        releaseID,
-		ImageTag:         tag,
-		Repo:             "acme/demo",
-		CommitSHA:        "deadbeef",
-		Shadow:           true,
-		SourceOverlayURI: overlayURI,
-	}))
+	store.SeedRelease(pipeline.NewVerification(releaseID, svc, tag, "", 1, overlayURI, release.ManifestKindDbt, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
 		ReleaseID: releaseID,
@@ -289,7 +282,7 @@ func TestHandleParsedManifest_OK_ValidationRequestedCarriesPerNodeFields(t *test
 	// B5: a new dbt-seed routes to seed_building, not validating.
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusSeedBuilding, r.Status())
+	assert.Equal(t, pipeline.StatusSeedBuilding, r.Status())
 
 	// seed.build.requested:v1 must be emitted; validation.requested must not.
 	entries := outboxEntries(store)
@@ -457,7 +450,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_PromotesDirectly(t *testing.T
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusPromoted, r.Status(), "nothing to validate -> promote directly")
+	assert.Equal(t, pipeline.StatusPromoted, r.Status(), "nothing to validate -> promote directly")
 
 	entries := outboxEntries(store)
 	for _, e := range entries {
@@ -516,9 +509,9 @@ func TestHandleParsedManifest_OK_NothingToValidate_Shadow(t *testing.T) {
 
 		r, err := store.GetRelease("rShadow")
 		require.NoError(t, err)
-		assert.Equal(t, release.StatusValidated, r.Status(),
+		assert.Equal(t, pipeline.StatusPassed, r.Status(),
 			"a candidate identical to production is production's validated code, so the fix it carries is proven")
-		assert.Empty(t, r.RejectReason())
+		assert.Empty(t, r.FailReason())
 		assert.Len(t, r.CandidateTopology(), 2,
 			"the parsed topology is persisted, so the release reports its real node count")
 		assert.Empty(t, r.ValidationNodeIDs(), "nothing was sent to the validation leg")
@@ -545,10 +538,10 @@ func TestHandleParsedManifest_OK_NothingToValidate_Shadow(t *testing.T) {
 
 		r, err := store.GetRelease("rShadow")
 		require.NoError(t, err)
-		assert.Equal(t, release.StatusRejected, r.Status(),
+		assert.Equal(t, pipeline.StatusFailed, r.Status(),
 			"a shadow release that declares no node measured nothing and must not end in a status that means the fix is verified")
-		assert.Equal(t, "nothing_to_validate", r.RejectReason())
-		assert.NotEmpty(t, r.RejectDetail(), "the rejection must explain itself to an operator")
+		assert.Equal(t, "nothing_to_validate", r.FailReason())
+		assert.NotEmpty(t, r.FailDetail(), "the rejection must explain itself to an operator")
 
 		for _, e := range outboxEntries(store) {
 			assert.NotEqual(t, streams.ValidationRequestedV1, e.StreamName, "must not emit an empty validation request")
@@ -579,7 +572,7 @@ func TestHandleParsedManifest_OK_NothingToValidate_Shadow(t *testing.T) {
 
 		r, err := store.GetRelease("rA")
 		require.NoError(t, err)
-		assert.Equal(t, release.StatusPromoted, r.Status(),
+		assert.Equal(t, pipeline.StatusPromoted, r.Status(),
 			"the empty-set trivial pass must be unchanged for a normal release")
 
 		entries := outboxEntries(store)
@@ -612,8 +605,8 @@ func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusRejected, r.Status(), "release must be Rejected")
-	assert.Equal(t, "unbuildable_cross_service_upstream", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status(), "release must be Rejected")
+	assert.Equal(t, "unbuildable_cross_service_upstream", r.FailReason())
 
 	entries := outboxEntries(store)
 	var rejectedEntry *pkgoutbox.Entry
@@ -661,9 +654,9 @@ func TestHandleParseOK_RejectsUnbuildableUpstreamOnDownstreamNode(t *testing.T) 
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusRejected, r.Status(),
+	assert.Equal(t, pipeline.StatusRejected, r.Status(),
 		"a downstream node with an unbuildable upstream must reject the whole release")
-	assert.Equal(t, "unbuildable_cross_service_upstream", r.RejectReason())
+	assert.Equal(t, "unbuildable_cross_service_upstream", r.FailReason())
 }
 
 // TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes verifies that a
@@ -700,7 +693,7 @@ func TestHandleParseOK_CrossServiceUpstreamInCandidatePromotes(t *testing.T) {
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusValidating, r.Status(), "cross-service upstream present in candidate must transition to Validating")
+	assert.Equal(t, pipeline.StatusValidating, r.Status(), "cross-service upstream present in candidate must transition to Validating")
 
 	// The full ancestor closure must include b_up (cross-service upstream of the changed a2).
 	validIDs := r.ValidationNodeIDs()
@@ -940,7 +933,7 @@ func TestHandleParsedManifest_Bootstrap_PromotesWithoutValidation(t *testing.T) 
 
 	r, err := store.GetRelease("rBoot")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusPromoted, r.Status())
+	assert.Equal(t, pipeline.StatusPromoted, r.Status())
 	// The candidate topology is recorded — promoteToProduction reads it to seed
 	// current_prod and the release.promoted:v1 payload; an empty one would
 	// silently produce an empty prod snapshot.
@@ -1088,7 +1081,7 @@ func TestHandleParsedManifest_NewSeedRoutesToSeedBuild(t *testing.T) {
 	// Release must be in seed_building state.
 	r, err := store.GetRelease("rel-seed-1")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusSeedBuilding, r.Status())
+	assert.Equal(t, pipeline.StatusSeedBuilding, r.Status())
 
 	// seed.build.requested:v1 must be emitted with only the seed node.
 	entry := findEntry(t, store, streams.SeedBuildRequestedV1)
@@ -1200,10 +1193,10 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "duplicate_table", r.RejectReason())
-	assert.Contains(t, r.RejectDetail(), "finance (models/orders.sql)")
-	assert.Contains(t, r.RejectDetail(), "marketing (models/orders.sql)")
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.FailReason())
+	assert.Contains(t, r.FailDetail(), "finance (models/orders.sql)")
+	assert.Contains(t, r.FailDetail(), "marketing (models/orders.sql)")
 	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes())
 
 	for _, e := range outboxEntries(store) {
@@ -1327,8 +1320,8 @@ func TestHandleParsedManifest_DuplicateTableRejectsBootstrap(t *testing.T) {
 
 	r, rErr := store.GetRelease("rBoot")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.FailReason())
 	assert.Equal(t, "", store.GetCurrentProd().ReleaseID(), "nothing may be promoted")
 }
 
@@ -1357,8 +1350,8 @@ func TestHandleParsedManifest_DuplicateTablePinsNothingToValidateShortCircuit(t 
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "duplicate_table", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.FailReason())
 	assert.Equal(t, "prev", store.GetCurrentProd().ReleaseID(), "current_prod must not move")
 }
 
@@ -1382,11 +1375,11 @@ func TestHandleParsedManifest_DuplicateTableThreeWayEmitsNoPerNodeEntry(t *testi
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "duplicate_table", r.RejectReason())
-	assert.Contains(t, r.RejectDetail(), "finance (models/orders.sql)")
-	assert.Contains(t, r.RejectDetail(), "marketing (models/orders.sql)")
-	assert.Contains(t, r.RejectDetail(), "sales (models/orders.sql)")
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.FailReason())
+	assert.Contains(t, r.FailDetail(), "finance (models/orders.sql)")
+	assert.Contains(t, r.FailDetail(), "marketing (models/orders.sql)")
+	assert.Contains(t, r.FailDetail(), "sales (models/orders.sql)")
 	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes(),
 		"all three claimants share this unique_id here, so it appears once, deduplicated")
 
@@ -1452,11 +1445,11 @@ func TestHandleParsedManifest_DuplicateTableIdentityCollisionRejectsWithNoPerNod
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "duplicate_table", r.RejectReason())
-	assert.Contains(t, r.RejectDetail(), "unique_id analytics.orders is declared by")
-	assert.Contains(t, r.RejectDetail(), "finance (models/orders.sql)")
-	assert.Contains(t, r.RejectDetail(), "marketing (models/orders_v2.sql)")
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "duplicate_table", r.FailReason())
+	assert.Contains(t, r.FailDetail(), "unique_id analytics.orders is declared by")
+	assert.Contains(t, r.FailDetail(), "finance (models/orders.sql)")
+	assert.Contains(t, r.FailDetail(), "marketing (models/orders_v2.sql)")
 	assert.Equal(t, []string{"analytics.orders"}, r.FailingNodes(),
 		"both claimants share this unique_id, so it appears once, deduplicated")
 
@@ -1523,10 +1516,10 @@ func TestHandleParsedManifest_DuplicateTableRelationAndIdentityBothNamedOnlyRela
 
 	r, rErr := store.GetRelease("rA")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Contains(t, r.RejectDetail(), "analytics.orders is produced by",
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Contains(t, r.FailDetail(), "analytics.orders is produced by",
 		"relation collision named as a relation")
-	assert.Contains(t, r.RejectDetail(), "unique_id analytics.customers is declared by",
+	assert.Contains(t, r.FailDetail(), "unique_id analytics.customers is declared by",
 		"identity collision named as an identity")
 
 	entry := findEntry(t, store, streams.ReleaseRejectedV1)
@@ -1562,7 +1555,7 @@ func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
 
 	r, rErr := store.GetRelease("rOK")
 	require.NoError(t, rErr)
-	assert.Equal(t, release.StatusValidating, r.Status())
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
 
 	entry := findEntry(t, store, streams.ValidationRequestedV1)
 	assert.NotNil(t, entry, "a clean topology must still request validation")
@@ -1588,22 +1581,26 @@ const (
 	shadowUID = "shared.u"      // an unchanged upstream present in production
 )
 
-// seedReleaseInParsing installs a release already advanced to Parsing so a
+// seedReleaseInParsing installs a run already advanced to Parsing so a
 // HandleParsedManifest call exercises handleParseOK directly. Rehydrate pins
-// exactly the fields the changed-set baseline reads (Shadow, VerifiesReleaseID,
+// exactly the fields the changed-set baseline reads (Kind, VerifiesReleaseID,
 // ChangedService) without driving the receive/advance/compile pipeline.
 func seedReleaseInParsing(store *fakeStore, id, service string, shadow bool, verifiesID string) {
-	store.SeedRelease(release.Rehydrate(release.RehydrateInput{
+	kind := pipeline.KindCandidate
+	if shadow {
+		kind = pipeline.KindVerification
+	}
+	store.SeedRelease(pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:                id,
-		Status:            release.StatusParsing,
+		Kind:              kind,
+		Status:            pipeline.StatusParsing,
 		ImageTags:         map[string]string{service: "img-" + service},
 		ChangedService:    service,
-		Shadow:            shadow,
 		VerifiesReleaseID: verifiesID,
 		ManifestKind:      release.ManifestKindDbt,
 		RemediationRound:  1,
 		CreatedAt:         time.Unix(90, 0).UTC(),
-		Transitions:       []release.Transition{{To: release.StatusParsing, At: time.Unix(90, 0).UTC()}},
+		Transitions:       []pipeline.Transition{{To: pipeline.StatusParsing, At: time.Unix(90, 0).UTC()}},
 	}))
 }
 
@@ -1611,16 +1608,16 @@ func seedReleaseInParsing(store *fakeStore, id, service string, shadow bool, ver
 // the candidate topology the sibling's unfixed failure matches (and so is
 // excluded by) in the intersection.
 func seedRejectedOriginal(store *fakeStore, id, service string, candidate release.Topology) {
-	store.SeedRelease(release.Rehydrate(release.RehydrateInput{
+	store.SeedRelease(pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:                id,
-		Status:            release.StatusRejected,
+		Status:            pipeline.StatusRejected,
 		ImageTags:         map[string]string{service: "img-" + service},
 		ChangedService:    service,
 		CandidateTopology: candidate,
 		ManifestKind:      release.ManifestKindDbt,
 		RemediationRound:  1,
 		CreatedAt:         time.Unix(80, 0).UTC(),
-		Transitions:       []release.Transition{{To: release.StatusRejected, At: time.Unix(85, 0).UTC()}},
+		Transitions:       []pipeline.Transition{{To: pipeline.StatusRejected, At: time.Unix(85, 0).UTC()}},
 	}))
 }
 
@@ -1741,7 +1738,7 @@ func TestHandleParsedManifest_OK_ShadowFallsBackWhenVerifiedReleaseUnreadable(t 
 	deps.Bucket = "continuo"
 
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", shadowProdTopo(), time.Unix(50, 0).UTC()))
-	// "missing" is never seeded, so ReleaseRepo().Get returns (nil, nil).
+	// "missing" is never seeded, so RunRepo().Get returns (nil, nil).
 	seedReleaseInParsing(store, "shadowmiss", "service-2", true, "missing")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1811,9 +1808,9 @@ func TestHandleParsedManifest_OK_ShadowRestoringProductionAfterCompileRejectionI
 
 	r, err := store.GetRelease("shadowfix")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusValidated, r.Status(),
+	assert.Equal(t, pipeline.StatusPassed, r.Status(),
 		"a fix that restores a compile-broken model to its promoted content is proven, not unmeasured")
-	assert.Empty(t, r.RejectReason())
+	assert.Empty(t, r.FailReason())
 	assert.Len(t, r.CandidateTopology(), 1, "the parsed topology is persisted on the validated shadow")
 	for _, e := range outboxEntries(store) {
 		assert.NotEqual(t, streams.ReleaseRejectedV1, e.StreamName, "a proven fix must not be reported as a failed attempt")

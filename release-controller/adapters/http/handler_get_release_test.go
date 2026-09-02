@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,10 +15,10 @@ import (
 // per_node_results exposes its stage (and file_path when present) so the UI can
 // group results into Compilation / Seed / Validation sections.
 func TestGetReleaseResponse_PerNodeResultsIncludeStage(t *testing.T) {
-	rel := release.Rehydrate(release.RehydrateInput{
+	rel := pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:     "rSTAGE",
-		Status: release.StatusRejected,
-		PerNodeResults: []release.NodeValidationResult{
+		Status: pipeline.StatusRejected,
+		PerNodeResults: []pipeline.NodeValidationResult{
 			{Stage: "compile", NodeID: "model.svc.node_a", Status: "failed", FilePath: "models/node_a.sql"},
 			{Stage: "validation", NodeID: "model.svc.node_b", Status: "ok"},
 		},
@@ -46,9 +47,9 @@ func TestGetReleaseResponse_PerNodeResultsIncludeStage(t *testing.T) {
 }
 
 func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
-	rel := release.Rehydrate(release.RehydrateInput{
+	rel := pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:        "rPROV",
-		Status:    release.StatusRejected,
+		Status:    pipeline.StatusRejected,
 		Repo:      "acme/demo",
 		CommitSHA: "deadbeefcafe1234",
 	})
@@ -71,20 +72,19 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 // exposed by GET /releases/{id} so a caller can distinguish a fix-verification
 // release from a normal one.
 func TestGetReleaseResponse_IncludesShadow(t *testing.T) {
-	shadowRel := release.New("rel-shadow", "finance", "tag", false, true, "owner/repo", "abc123",
-		release.ManifestKindDbt, time.Unix(1, 0).UTC())
+	shadowRel := pipeline.NewVerification("rel-shadow", "finance", "tag", "rel-orig", 1, "", release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	assert.Equal(t, true, getReleaseResponse(shadowRel)["shadow"])
 
-	plainRel := release.New("rel-plain", "finance", "tag", false, false, "owner/repo", "abc123",
+	plainRel := pipeline.NewCandidate("rel-plain", "finance", "tag", false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	assert.Equal(t, false, getReleaseResponse(plainRel)["shadow"])
 }
 
 func TestGetReleaseResponse_IncludesRejectDetail(t *testing.T) {
-	r := release.New("rel-1", "finance", "tag", false, false, "owner/repo", "abc123",
+	r := pipeline.NewCandidate("rel-1", "finance", "tag", false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
-	require.NoError(t, r.TransitionToRejected("duplicate_table",
+	require.NoError(t, r.Fail("duplicate_table",
 		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
 		[]string{"analytics.orders"}, time.Unix(3, 0).UTC()))
 

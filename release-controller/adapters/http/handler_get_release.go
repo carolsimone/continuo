@@ -4,24 +4,24 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 )
 
 // getReleaseResponse builds the JSON object returned by GET /releases/{id}.
-func getReleaseResponse(rel *release.Release) map[string]any {
+func getReleaseResponse(rel *pipeline.Run) map[string]any {
 	return map[string]any{
 		"release_id":          rel.ID(),
 		"status":              string(rel.Status()),
 		"changed_service":     rel.ChangedService(),
 		"transitions":         rel.Transitions(),
 		"validation_node_ids": rel.ValidationNodeIDs(),
-		"reject_reason":       rel.RejectReason(),
-		"reject_detail":       rel.RejectDetail(),
+		"reject_reason":       rel.FailReason(),
+		"reject_detail":       rel.FailDetail(),
 		"failing_nodes":       rel.FailingNodes(),
 		"per_node_results":    rel.PerNodeResults(),
 		"image_tags":          rel.ImageTags(),
 		"bootstrap":           rel.IsBootstrap(),
-		"shadow":              rel.IsShadow(),
+		"shadow":              rel.Kind() == pipeline.KindVerification,
 		"repo":                rel.Repo(),
 		"commit_sha":          rel.CommitSHA(),
 		"remediation_round":   rel.RemediationRound(),
@@ -33,7 +33,7 @@ func (s *Server) handleGetRelease(w http.ResponseWriter, r *http.Request) {
 	// Each request gets its own UoW; no Begin is called — the repo uses the
 	// connection pool directly for this read-only path.
 	u := s.deps.NewUoW()
-	rel, err := u.ReleaseRepo().Get(r.Context(), id)
+	rel, err := u.RunRepo().Get(r.Context(), id)
 	if err != nil || rel == nil {
 		http.Error(w, "release not found", http.StatusNotFound)
 		return

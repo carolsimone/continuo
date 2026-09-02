@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -105,7 +106,7 @@ func TestHandleValidationResult_MissingNode_AggregateOK_Promotes(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusPromoted, r.Status(),
+	assert.Equal(t, pipeline.StatusPromoted, r.Status(),
 		"a missing audit row must not reject a release the aggregate says passed")
 	assert.Empty(t, r.FailingNodes(), "the missing node must not be fabricated as failing")
 	assert.Contains(t, logBuf.String(), "per-node audit missing nodes",
@@ -129,8 +130,8 @@ func TestHandleValidationResult_MissingNode_AggregateFailed_Rejects(t *testing.T
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "validation_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "validation_failed", r.FailReason())
 	assert.Empty(t, r.FailingNodes(), "no present node failed; rejection is driven by aggregate_status alone")
 }
 
@@ -151,7 +152,7 @@ func TestHandleValidationResult_CompleteProjection_Promotes(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusPromoted, r.Status())
+	assert.Equal(t, pipeline.StatusPromoted, r.Status())
 }
 
 // TestHandleValidationResult_FailedNodeInStore_Rejects verifies that a failed
@@ -171,7 +172,7 @@ func TestHandleValidationResult_FailedNodeInStore_Rejects(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
 	assert.Equal(t, []string{"a"}, r.FailingNodes())
 
 	e := lastOutbox(t, store)
@@ -200,7 +201,7 @@ func TestHandleValidationResult_SkippedNodeInStore_Rejects(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
 	// Both the failed node and the skipped node are non-ok, so both are failing.
 	assert.Equal(t, []string{"a", "b"}, r.FailingNodes())
 }
@@ -240,7 +241,7 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusPromoted, r.Status())
+	assert.Equal(t, pipeline.StatusPromoted, r.Status())
 
 	cp := store.GetCurrentProd()
 	assert.Equal(t, "rA", cp.ReleaseID())
@@ -259,22 +260,15 @@ func TestHandleValidationResult_AllOK_Promotes(t *testing.T) {
 	assert.Equal(t, "sha-a", sp.ImageTag())
 }
 
-// seedToValidatingShadow mirrors seedToValidating but registers the release
-// with Shadow: true, so promotion tests can assert a shadow release stops at
-// StatusValidated instead of reaching current_prod.
+// seedToValidatingShadow mirrors seedToValidating but seeds a verification
+// run, so promotion tests can assert a verification run stops at
+// StatusPassed instead of reaching current_prod.
 func seedToValidatingShadow(t *testing.T, releaseID string) (*handlers.Deps, *fakeStore) {
 	t.Helper()
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
 
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service:   "svc-a",
-		ReleaseID: releaseID,
-		ImageTag:  "sha-a",
-		Repo:      "acme/demo",
-		CommitSHA: "deadbeef",
-		Shadow:    true,
-	}))
+	store.SeedRelease(pipeline.NewVerification(releaseID, "svc-a", "sha-a", "", 1, "", release.ManifestKindDbt, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
 		ReleaseID: releaseID, Status: "ok",
@@ -293,12 +287,12 @@ func seedToValidatingShadow(t *testing.T, releaseID string) (*handlers.Deps, *fa
 }
 
 // TestHandleValidationResult_Shadow_StopsAtValidated_NeverPromotes drives
-// HandleValidationResult with a shadow release in Validating and an all-ok
-// aggregate. The shadow release must stop at StatusValidated: no
+// HandleValidationResult with a verification run in Validating and an all-ok
+// aggregate. The verification run must stop at StatusPassed: no
 // release.promoted:v1 outbox row, current_prod's Upsert never called, and the
-// promoted-telemetry span never fires. A control on the identical flow with
-// shadow=false must still promote exactly as today, proving the gate is
-// specific to the shadow flag rather than a general regression.
+// promoted-telemetry span never fires. A control on the identical flow with a
+// candidate must still promote exactly as today, proving the gate is
+// specific to the run's kind rather than a general regression.
 func TestHandleValidationResult_Shadow_StopsAtValidated_NeverPromotes(t *testing.T) {
 	t.Run("shadow release stops at validated and never promotes", func(t *testing.T) {
 		deps, store := seedToValidatingShadow(t, "rShadow")
@@ -317,8 +311,8 @@ func TestHandleValidationResult_Shadow_StopsAtValidated_NeverPromotes(t *testing
 
 		r, err := store.GetRelease("rShadow")
 		require.NoError(t, err)
-		assert.Equal(t, release.StatusValidated, r.Status(),
-			"a shadow release must stop at validated, not promoted")
+		assert.Equal(t, pipeline.StatusPassed, r.Status(),
+			"a verification run must stop at passed, not promoted")
 
 		entries := outboxEntries(store)
 		for _, e := range entries {
@@ -353,7 +347,7 @@ func TestHandleValidationResult_Shadow_StopsAtValidated_NeverPromotes(t *testing
 
 		r, err := store.GetRelease("rShadowControl")
 		require.NoError(t, err)
-		assert.Equal(t, release.StatusPromoted, r.Status())
+		assert.Equal(t, pipeline.StatusPromoted, r.Status())
 
 		cp := store.GetCurrentProd()
 		assert.Equal(t, "rShadowControl", cp.ReleaseID())
@@ -441,8 +435,8 @@ func TestHandleValidationResult_AnyFail_Rejects(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "validation_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "validation_failed", r.FailReason())
 	assert.Equal(t, []string{"b"}, r.FailingNodes())
 
 	// CurrentProd must remain empty since validation failed.
@@ -489,7 +483,7 @@ func TestHandleValidationResult_Shadow_Rejected_CarriesShadowTrue(t *testing.T) 
 
 	r, err := store.GetRelease("rShadowReject")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, pipeline.StatusFailed, r.Status())
 
 	entry := outboxEntries(store)[len(outboxEntries(store))-1]
 	assert.Equal(t, streams.ReleaseRejectedV1, entry.StreamName)
@@ -561,7 +555,7 @@ func TestHandleValidationResult_Rejected_CarriesCandidateArtifactURIAndProvenanc
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ValidationRequested + ReleaseRejected
@@ -681,8 +675,8 @@ func TestHandleValidationResult_AggregateStatusFailed_Rejects(t *testing.T) {
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusRejected, r.Status())
-	assert.Equal(t, "validation_failed", r.RejectReason())
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
+	assert.Equal(t, "validation_failed", r.FailReason())
 	assert.Empty(t, r.FailingNodes(), "no explicitly-failed or missing nodes when only aggregate is bad")
 
 	entries := outboxEntries(store)
@@ -918,21 +912,21 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 	// The release is already in Validating (seedToValidatingWithURIs drives it
 	// there), so re-transitioning is refused by the state machine; rehydrate a
 	// new aggregate carrying every persisted field, with the rewired topology.
-	r = release.Rehydrate(release.RehydrateInput{
+	r = pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:                r.ID(),
+		Kind:              r.Kind(),
 		Status:            r.Status(),
 		ImageTags:         r.ImageTags(),
 		ChangedService:    r.ChangedService(),
 		CandidateTopology: topo,
 		ValidationNodeIDs: r.ValidationNodeIDs(),
 		PerNodeResults:    r.PerNodeResults(),
-		RejectReason:      r.RejectReason(),
-		RejectDetail:      r.RejectDetail(),
+		FailReason:        r.FailReason(),
+		FailDetail:        r.FailDetail(),
 		FailingNodes:      r.FailingNodes(),
 		CreatedAt:         r.CreatedAt(),
 		Transitions:       r.Transitions(),
 		Bootstrap:         r.IsBootstrap(),
-		Shadow:            r.IsShadow(),
 		Repo:              r.Repo(),
 		CommitSHA:         r.CommitSHA(),
 		CodeBundleURI:     r.CodeBundleURI(),

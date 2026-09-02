@@ -17,6 +17,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -30,39 +31,39 @@ func newTestServer(deps *handlers.Deps) *Server {
 	return NewServer(deps, liveness.NewRegistry(), "0", slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-// --- fakeReleaseRepo: in-memory ReleaseRepository backing retry-remediation tests ---
+// --- fakeReleaseRepo: in-memory RunRepository backing retry-remediation tests ---
 
 type fakeReleaseRepo struct {
-	releases map[string]*release.Release
+	releases map[string]*pipeline.Run
 }
 
-func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*release.Release, error) {
+func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*pipeline.Run, error) {
 	return f.releases[id], nil
 }
 
-func (f *fakeReleaseRepo) Load(_ context.Context, id string) (*release.Release, error) {
+func (f *fakeReleaseRepo) Load(_ context.Context, id string) (*pipeline.Run, error) {
 	return f.releases[id], nil
 }
 
-func (f *fakeReleaseRepo) Save(_ context.Context, r *release.Release) error {
+func (f *fakeReleaseRepo) Save(_ context.Context, r *pipeline.Run) error {
 	f.releases[r.ID()] = r
 	return nil
 }
 
-func (f *fakeReleaseRepo) NextQueuedRelease(context.Context) (*release.Release, error) {
+func (f *fakeReleaseRepo) NextQueued(context.Context) (*pipeline.Run, error) {
 	return nil, nil
 }
-func (f *fakeReleaseRepo) ActiveRelease(context.Context) (*release.Release, error) { return nil, nil }
+func (f *fakeReleaseRepo) Active(context.Context) (*pipeline.Run, error) { return nil, nil }
 
-func (f *fakeReleaseRepo) List(context.Context, repository.ListFilter) ([]*release.Release, *repository.ListCursor, error) {
+func (f *fakeReleaseRepo) List(context.Context, repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
 	return nil, nil, nil
 }
 
-func (f *fakeReleaseRepo) DeleteResolvedBefore(context.Context, time.Time, []string) (int, error) {
+func (f *fakeReleaseRepo) DeleteFinishedBefore(context.Context, time.Time, []string) (int, error) {
 	return 0, nil
 }
 
-var _ repository.ReleaseRepository = (*fakeReleaseRepo)(nil)
+var _ repository.RunRepository = (*fakeReleaseRepo)(nil)
 
 // --- fakeOutboxRepo: records every entry Create writes ---
 
@@ -92,7 +93,7 @@ type fakeUoW struct {
 	outbox   *fakeOutboxRepo
 }
 
-func (u *fakeUoW) ReleaseRepo() repository.ReleaseRepository           { return u.releases }
+func (u *fakeUoW) RunRepo() repository.RunRepository                   { return u.releases }
 func (u *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository   { return nil }
 func (u *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository   { return nil }
 func (u *fakeUoW) OutboxRepo() pkgoutbox.Repository                    { return u.outbox }
@@ -127,7 +128,7 @@ var _ ports.Clock = (fakeClock{})
 
 // newRetryRemediationDeps builds a handlers.Deps wired to fresh, empty fakes.
 func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
-	releases := &fakeReleaseRepo{releases: map[string]*release.Release{}}
+	releases := &fakeReleaseRepo{releases: map[string]*pipeline.Run{}}
 	u := &fakeUoW{releases: releases, outbox: &fakeOutboxRepo{}}
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return u },
@@ -140,11 +141,11 @@ func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
 
 // rejectedReleaseForRetry builds a release that reached StatusRejected with a
 // healable reason and a stored rejection payload, ready for RetryRemediation.
-func rejectedReleaseForRetry(t *testing.T, id string, now time.Time) *release.Release {
+func rejectedReleaseForRetry(t *testing.T, id string, now time.Time) *pipeline.Run {
 	t.Helper()
-	r := release.New(id, "finance", "abc", false, false, "o/r", "sha", release.ManifestKindDbt, now)
+	r := pipeline.NewCandidate(id, "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
 	require.NoError(t, r.TransitionToCompiling(now))
-	require.NoError(t, r.TransitionToRejected("compile_failed", "", []string{"finance"}, now))
+	require.NoError(t, r.Fail("compile_failed", "", []string{"finance"}, now))
 	r.SetRejectionPayload([]byte(`{"release_id":"` + id + `","stage":"compile","reason":"compile_failed"}`))
 	return r
 }
@@ -255,13 +256,13 @@ func TestRetryRemediationHandler_RetryInProgress(t *testing.T) {
 // *fakeReleaseRepo so every other method keeps that fake's behavior.
 type erroringReleaseRepo struct{ *fakeReleaseRepo }
 
-func (erroringReleaseRepo) Load(context.Context, string) (*release.Release, error) {
+func (erroringReleaseRepo) Load(context.Context, string) (*pipeline.Run, error) {
 	return nil, errors.New("row-lock timeout")
 }
 
 func TestRetryRemediationHandler_GenericErrorIsInternal(t *testing.T) {
 	now := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
-	repo := erroringReleaseRepo{&fakeReleaseRepo{releases: map[string]*release.Release{}}}
+	repo := erroringReleaseRepo{&fakeReleaseRepo{releases: map[string]*pipeline.Run{}}}
 	u := &fakeUoW{releases: repo.fakeReleaseRepo, outbox: &fakeOutboxRepo{}}
 	deps := &handlers.Deps{
 		NewUoW: func() uow.UnitOfWork {
@@ -287,4 +288,4 @@ type loadErrUoW struct {
 	releaseRepo erroringReleaseRepo
 }
 
-func (u *loadErrUoW) ReleaseRepo() repository.ReleaseRepository { return u.releaseRepo }
+func (u *loadErrUoW) RunRepo() repository.RunRepository { return u.releaseRepo }

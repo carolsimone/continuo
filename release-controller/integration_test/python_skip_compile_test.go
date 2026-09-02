@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -38,10 +39,10 @@ func TestIntegration_PythonRelease_SkipsCompileLeg(t *testing.T) {
 	srv.Routes().ServeHTTP(w, req)
 	require.Equal(t, http.StatusAccepted, w.Code)
 
-	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "it-py-1")
+	r, err := deps.NewUoW().RunRepo().Get(context.Background(), "it-py-1")
 	require.NoError(t, err)
 	require.NotNil(t, r)
-	assert.Equal(t, release.StatusParsing, r.Status())
+	assert.Equal(t, pipeline.StatusParsing, r.Status())
 	assert.Equal(t, release.ManifestKindPython, r.ManifestKind())
 
 	entries, err := deps.NewUoW().OutboxRepo().GetPendingBatch(context.Background(), 10)

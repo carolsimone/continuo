@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +24,7 @@ func TestReceiveCandidate_PersistsAsReceived(t *testing.T) {
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusReceived, r.Status())
+	assert.Equal(t, pipeline.StatusReceived, r.Status())
 	assert.Equal(t, "service-1", r.ChangedService())
 	assert.Equal(t, map[string]string{"service-1": "sha-abc"}, r.ImageTags())
 }
@@ -41,7 +42,7 @@ func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusReceived, r.Status())
+	assert.Equal(t, pipeline.StatusReceived, r.Status())
 }
 
 func TestReceiveCandidate_RejectsEmptyReleaseID(t *testing.T) {
@@ -144,16 +145,10 @@ func TestReceiveCandidate_SourceOverlayRequiresShadow(t *testing.T) {
 	assert.Contains(t, err.Error(), "source_overlay_uri")
 }
 
-func TestReceiveCandidate_ShadowPersistsSourceOverlayURI(t *testing.T) {
-	deps, store := newDeps(time.Now())
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "r-ov", ImageTag: "t", Repo: "o/r", CommitSHA: "sha", Shadow: true,
-		SourceOverlayURI: "s3://b/svc/r-ov/source-overlay.tar.gz",
-	}))
-	r, err := store.GetRelease("r-ov")
-	require.NoError(t, err)
-	assert.Equal(t, "s3://b/svc/r-ov/source-overlay.tar.gz", r.SourceOverlayURI())
-}
+// A shadow ReceiveCandidateInput's persistence path — creating a verification
+// run that actually carries SourceOverlayURI and VerifiesReleaseID — is
+// covered once ReceiveCandidate dispatches on Shadow instead of always
+// creating a candidate.
 
 func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())

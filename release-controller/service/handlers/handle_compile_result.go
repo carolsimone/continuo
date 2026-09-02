@@ -7,6 +7,7 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/google/uuid"
 )
 
@@ -56,8 +57,8 @@ func compileRejection(perNode []NodeResult) (reason, errorClass, errorDetail str
 // manifest_keys — payload shape identical to the pre-compile-leg behaviour so
 // topology-controller requires no change.
 //
-// failed path: TransitionToRejected with a reason derived from the per-node
-// failed_container attribution (compile_failed, parse_rehearsal_failed, or
+// failed path: Fail with a reason derived from the per-node failed_container
+// attribution (compile_failed, parse_rehearsal_failed, or
 // artifact_upload_failed — see compileRejection), emits release.rejected:v1.
 //
 // unknown release: drops the message (ack).
@@ -68,7 +69,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.ReleaseRepo().Get(ctx, in.ReleaseID)
+	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
@@ -96,7 +97,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		}
 
 		r.RecordStageResults("compile", results)
-		if err := r.TransitionToRejected(reason, errorDetail, failing, now); err != nil {
+		if err := r.Fail(reason, errorDetail, failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
 
@@ -130,14 +131,14 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			"repo":            r.Repo(),
 			"commit_sha":      r.CommitSHA(),
 			"code_bundle_uri": r.CodeBundleURI(),
-			"shadow":          r.IsShadow(),
+			"shadow":          r.Kind() == pipeline.KindVerification,
 		})
 		if err != nil {
 			return fmt.Errorf("marshal payload: %w", err)
 		}
 
 		r.SetRejectionPayload(payload)
-		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		if err := u.RunRepo().Save(ctx, r); err != nil {
 			return fmt.Errorf("save release: %w", err)
 		}
 
@@ -168,7 +169,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	if err := r.TransitionFromCompiling(now); err != nil {
 		return fmt.Errorf("transition from compiling: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 

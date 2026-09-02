@@ -82,7 +82,7 @@ func StartOutboxPublisher(ctx context.Context, db *sqlx.DB, rc *goredis.Client, 
 		nil, // no terminal-failure hook needed for simple event publishing
 		logger,
 		pkgoutbox.ProcessorConfig{
-			Tick:      0,   // default 1s poll interval
+			Tick:      0, // default 1s poll interval
 			BatchSize: 64,
 		},
 	)

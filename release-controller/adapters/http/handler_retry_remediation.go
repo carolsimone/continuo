@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 )
 
@@ -28,13 +28,13 @@ func (s *Server) handleRetryRemediation(w http.ResponseWriter, r *http.Request) 
 	case errors.Is(err, handlers.ErrReleaseNotFound):
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not_found"})
-	case errors.Is(err, release.ErrNotRejected):
+	case errors.Is(err, pipeline.ErrNotRejected):
 		writeRefusal(w, "not_rejected", nil)
 	case errors.Is(err, handlers.ErrNotHealable):
 		writeRefusal(w, "not_healable", nil)
 	case errors.Is(err, handlers.ErrNotRetryable):
 		writeRefusal(w, "not_retryable", nil)
-	case errors.Is(err, release.ErrRoundsExhausted):
+	case errors.Is(err, pipeline.ErrRoundsExhausted):
 		writeRefusal(w, "rounds_exhausted", nil)
 	case errors.Is(err, handlers.ErrRetryInProgress):
 		writeRefusal(w, "retry_in_progress", nil)
