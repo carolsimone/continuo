@@ -34,7 +34,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	}
 	// limit is best-effort: an unparseable, non-positive, or out-of-range value
 	// falls back to the default page size, which the repository clamps (see
-	// RunRepository.List). Only the cursor is strictly validated, since a
+	// RunRepository.List). Only the cursor is strictly checked, since a
 	// malformed cursor is an unambiguous client error.
 	limit := 0
 	if n, err := strconv.Atoi(q.Get("limit")); err == nil {

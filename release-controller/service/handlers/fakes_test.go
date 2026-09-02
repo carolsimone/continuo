@@ -30,7 +30,7 @@ var _ ports.Clock = (*fakeClock)(nil)
 
 // spyTelemetry embeds NoOpTelemetry and records ReleasePromoted calls so
 // tests can assert the promoted span does not fire on a route that must not
-// promote (e.g. a shadow release stopping at Validated).
+// promote (e.g. a verification run stopping at Passed).
 type spyTelemetry struct {
 	ports.NoOpTelemetry
 	releasePromotedCalls int
@@ -396,7 +396,7 @@ func (f *fakeUoW) Commit() error                                       { return 
 func (f *fakeUoW) Rollback() error                                     { return nil }
 
 // LockReleaseQueue is a no-op in the fake: unit tests execute sequentially,
-// so the tx-scoped advisory lock semantics are validated end-to-end against
+// so the tx-scoped advisory lock semantics are proven end-to-end against
 // real Postgres in integration_test/concurrent_advance_no_duplicate_test.go.
 func (f *fakeUoW) LockReleaseQueue(_ context.Context) error { return nil }
 

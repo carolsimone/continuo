@@ -263,7 +263,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	// Build a per-node lookup over the candidate topology so each entry in the
 	// rejected payload carries, alongside its outcome:
 	//   - candidate_artifact_uri: the S3 pointer to the artifact that was
-	//     validated — mirroring the dbt_log_uri pattern as a pointer, not inline
+	//     checked — mirroring the dbt_log_uri pattern as a pointer, not inline
 	//     content;
 	//   - node_type, file_path, service: the node's kind and source location as
 	//     THIS candidate declares them.

@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResolvedAt_ValidatedIsResolved verifies that resolvedAt treats
+// TestResolvedAt_PassedIsResolved verifies that resolvedAt treats
 // StatusPassed as a terminal transition — the same as promoted, rejected,
 // and superseded — so a verification run's list item carries a non-empty
 // resolved_at once it reaches its terminal status.
-func TestResolvedAt_ValidatedIsResolved(t *testing.T) {
+func TestResolvedAt_PassedIsResolved(t *testing.T) {
 	at := time.Unix(42, 0).UTC()
 	r := pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:     "rVAL",

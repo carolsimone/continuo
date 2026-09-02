@@ -181,8 +181,8 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	//
 	// A verification run takes the same trivial pass, ending in passed instead
 	// of promoted (promoteToProduction): a candidate identical to production IS
-	// production's validated code, so the fix it carries is proven by identity
-	// with that baseline. This is the shape of a fix that restores a
+	// production's already-proven code, so the fix it carries is proven by
+	// identity with that baseline. This is the shape of a fix that restores a
 	// compile-broken model to its promoted content — the verification already
 	// proved the fix by compiling it, and there is nothing left to measure.
 	// Only a verification whose candidate declares no node at all is rejected
@@ -200,7 +200,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		// Emit the full lifecycle span sequence (parsed → validated-0-nodes →
+		// Emit the full lifecycle span sequence (parsed → checked-0-nodes →
 		// promoted) so this no-validation-needed promotion is observable the same
 		// way a normal pass is, just with a zero-node validation.
 		d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
@@ -285,11 +285,11 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 // changed it relative to BOTH current_prod AND that rejected candidate: the
 // intersection of the two diffs.
 //   - The fix's own edited node differs from current_prod (old or absent) and
-//     from the rejected candidate (broken) — in both, so validated.
+//     from the rejected candidate (broken) — in both, so it is checked.
 //   - A sibling service's still-unfixed failure differs from current_prod
 //     (which never advanced past the rejection, or holds the node at its
 //     pre-rejection hash) but is byte-identical to the rejected candidate — in
-//     only one, so excluded and not re-validated.
+//     only one, so excluded and not checked again.
 //   - An unrelated node another release promoted since the rejection matches
 //     current_prod (even though it differs from the rejected candidate's stale
 //     copy) — in only one, so excluded, never dragged into a fix-only
@@ -320,8 +320,8 @@ func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeli
 }
 
 // newChangedSeedIDs returns the validation-set node IDs that are dbt-seeds in the
-// changed-closure (new or content-changed). These cannot be adapter-validated
-// (no compiled SQL) and cannot be cloned (structure may have changed) — they are
+// changed-closure (new or content-changed). These cannot be checked by the
+// adapter (no compiled SQL) and cannot be cloned (structure may have changed) — they are
 // built into the candidate schema by the seed-build leg. Sorted for determinism.
 func newChangedSeedIDs(topo release.Topology, validationIDs []string, changedClosureSet map[string]bool) []string {
 	inSet := make(map[string]bool, len(validationIDs))
@@ -341,7 +341,7 @@ func newChangedSeedIDs(topo release.Topology, validationIDs []string, changedClo
 // seedBuildNodesInOrder returns one map per seed node (sorted by seedIDs order)
 // carrying the fields executor-controller needs to build the seed into the
 // candidate schema with the team image. No candidate_artifact_uri / validation_op:
-// seeds are built, not adapter-validated; no upstreams: seeds are roots.
+// seeds are built, not checked by the adapter; no upstreams: seeds are roots.
 func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
@@ -421,7 +421,7 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 // promoteBootstrap promotes a bootstrap release without validation: it records
 // the candidate topology (TransitionToValidating with no validation nodes) and
 // runs the shared promoteToProduction path, which seeds current_prod and emits
-// release.promoted:v1. The full parse/validated/promoted telemetry span is
+// release.promoted:v1. The full parse/checked/promoted telemetry span is
 // emitted (with a zero-node validation) so a bootstrap is observable like any
 // other promotion.
 func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, topo release.Topology, now time.Time) error {
@@ -571,12 +571,12 @@ func intersectSorted(a, b []string) []string {
 // attempt starts or the operator is left with the failure.
 //
 // A non-empty candidate whose every node matches production is NOT this case:
-// that candidate is production's own validated code, so the fix is proven by
+// that candidate is production's own proven code, so the fix is proven by
 // identity with it and the verification ends passed (see handleParseOK).
 //
 // The failure carries no stage and no per_node entries, so remediation
-// derives no failure evidence from it and opens no heal trigger for it;
-// shadow:true is the same signal every other verification failure carries.
+// derives no failure evidence from it and opens no heal trigger for it; the
+// wire flag is true, the same signal every other verification failure carries.
 func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, now time.Time) error {
 	const detail = "a verification run verifies a fix by running it through the pipeline, and its candidate " +
 		"declares no node at all, so nothing was built or checked and the fix is unproven"

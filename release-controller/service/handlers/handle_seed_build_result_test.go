@@ -153,7 +153,7 @@ func TestHandleSeedBuildResult_OKEmitsValidationRequestedExcludingBuiltSeeds(t *
 	assert.Equal(t, streams.ValidationRequestedV1, entry.StreamName)
 	nodes := decodeValidationNodes(t, entry)
 	ids := nodeUniqueIDs(nodes)
-	assert.Contains(t, ids, "model.fin.report", "model still validated")
+	assert.Contains(t, ids, "model.fin.report", "model still in the validation set")
 	assert.NotContains(t, ids, "seed.core.fx", "built seed excluded from validation set")
 }
 
@@ -327,7 +327,7 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 // TestHandleSeedBuildResult_OKThenValidationCompletePromotes proves the
 // seed-build leg leaves the persisted validation set equal to what the executor
 // actually emits per-node events for (the non-seed models). After the seed
-// builds ok, only the downstream model is validated, so only that node's per-node
+// builds ok, only the downstream model is checked, so only that node's per-node
 // result lands. The validation terminal (kind=complete) must then PROMOTE, not stall
 // by rejecting over the seed, which is not part of the release's validation set.
 func TestHandleSeedBuildResult_OKThenValidationCompletePromotes(t *testing.T) {

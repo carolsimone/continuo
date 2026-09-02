@@ -44,7 +44,7 @@ func AssembleManifestSet(existing []*release.ServiceProd, bucket, changedService
 // service carries the fix, and every other service is assembled from the
 // live service_prod pointers. When the fix edits a DOWNSTREAM service, the
 // service whose release was actually rejected is one of those "other"
-// services, so the fix would be validated against that service's PRODUCTION
+// services, so the fix would be checked against that service's PRODUCTION
 // code — not the candidate whose rejection the fix is answering. The change
 // would then be judged on a graph the failure never occurred in.
 //
