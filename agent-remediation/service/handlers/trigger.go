@@ -38,7 +38,7 @@ type Trigger struct {
 	OutboxEntryID *uuid.UUID
 	// RawPayload is the raw bytes of the message payload, stored in the
 	// message_processing row for audit/replay purposes and on a verifying
-	// proposal so the attempt can be rebuilt once a shadow release answers.
+	// proposal so the attempt can be rebuilt once its verification runs answer.
 	RawPayload []byte
 }
 

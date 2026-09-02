@@ -33,8 +33,8 @@ const csvReadKey = "csv"
 // own reads section holds.
 //
 // Locating the failing node's contract file, verifying no sibling in the same
-// directory also failed (so the shadow release the driver later submits can
-// actually pass), and everything from the model call through packaging the
+// directory also failed (so the verification run the driver later submits
+// can actually pass), and everything from the model call through packaging the
 // merged contract is not merely similar in shape to the python-model lane's —
 // it is the same code, shared through locateContractForFix and
 // proposeContractFixViaShadow. This type differs from pythonValidationFixer

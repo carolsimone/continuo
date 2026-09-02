@@ -1,4 +1,4 @@
-package shadowverify
+package verification
 
 import (
 	"context"
@@ -97,11 +97,14 @@ func batchPayload(nodeIDs ...string) []byte {
 	return triggerPayload(nodes)
 }
 
-// verifyingRow is a proposal awaiting its shadow releases' verdicts, aged by
+// verifyingRow is a proposal awaiting its verification runs' outcomes, aged by
 // age relative to testNow. It addresses one failing node, verified by the one
-// shadow release the service that node belongs to was submitted as.
+// verification run the service that node belongs to was submitted as. The
+// verification starts at PhaseQueued, matching the phase the driver records
+// when it submits the run — so a status read that still reports "queued"
+// records no phase transition.
 func verifyingRow(id string, attempt int, age time.Duration) proposal.View {
-	shadow := fmt.Sprintf("shadow-rel-1-svc-a%d", attempt)
+	run := fmt.Sprintf("verify-rel-1-svc-a%d", attempt)
 	return proposal.View{
 		ID:              id,
 		Source:          "validation",
@@ -114,8 +117,8 @@ func verifyingRow(id string, attempt int, age time.Duration) proposal.View {
 		NodeOutcomes: map[string]proposal.NodeOutcome{
 			"analytics.orders": {Status: proposal.StatusVerifying},
 		},
-		Verifications:     []proposal.Verification{{Service: "svc", Kind: "python", RunID: shadow}},
-		VerificationRunID: shadow,
+		Verifications:     []proposal.Verification{{Service: "svc", Kind: "python", RunID: run, Phase: proposal.PhaseQueued}},
+		VerificationRunID: run,
 		TriggerPayload:    requestedPayload(),
 		Confidence:        proposal.ConfidenceHigh,
 		Rationale:         "corrected the declared column type",
@@ -147,6 +150,20 @@ type fakeProposalRepo struct {
 	generating []proposal.Proposal
 	listErr    error
 	markErr    error
+	// phaseWrites records every UpdateVerificationPhase call: which proposal,
+	// which run, and the phase it was moved to.
+	phaseWrites []struct {
+		id, runID string
+		phase     proposal.Phase
+	}
+	// markFailedCalls records every MarkVerifyFailed call's arguments, so a
+	// test can inspect the final per-verification summary a failing pass
+	// wrote, not just the row's own resulting fields.
+	markFailedCalls []struct {
+		id            string
+		verifyErr     string
+		verifications []proposal.Verification
+	}
 }
 
 func newFakeProposalRepo(views ...proposal.View) *fakeProposalRepo {
@@ -197,6 +214,11 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, id, verifyErr str
 	if r.markErr != nil {
 		return false, r.markErr
 	}
+	r.markFailedCalls = append(r.markFailedCalls, struct {
+		id            string
+		verifyErr     string
+		verifications []proposal.Verification
+	}{id, verifyErr, verifications})
 	v := r.row(id)
 	if v == nil || v.Status != proposal.StatusVerifying {
 		return false, nil
@@ -207,9 +229,26 @@ func (r *fakeProposalRepo) MarkVerifyFailed(_ context.Context, id, verifyErr str
 	return true, nil
 }
 
-// UpdateVerificationPhase is a no-op: no test in this package drives the
-// reconciler's phase-write path (Task 12), only the terminal Mark* calls above.
-func (r *fakeProposalRepo) UpdateVerificationPhase(context.Context, string, string, proposal.Phase, *time.Time) error {
+// UpdateVerificationPhase records the call and, when the row still exists,
+// writes the phase (and activation) onto the matching verification in place —
+// the same effect the real UPDATE statement has — so a later pass in the same
+// test sees the phase it just recorded.
+func (r *fakeProposalRepo) UpdateVerificationPhase(_ context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error {
+	r.phaseWrites = append(r.phaseWrites, struct {
+		id, runID string
+		phase     proposal.Phase
+	}{id, runID, phase})
+	v := r.row(id)
+	if v == nil {
+		return nil
+	}
+	for i := range v.Verifications {
+		if v.Verifications[i].RunID == runID {
+			v.Verifications[i].Phase = phase
+			v.Verifications[i].ActivatedAt = activatedAt
+			break
+		}
+	}
 	return nil
 }
 
@@ -324,30 +363,28 @@ func (u *fakeUoW) ProposalRepo() repository.ProposalRepository         { return 
 func (u *fakeUoW) OutboxRepo() outbox.Repository                       { return u.ob }
 func (u *fakeUoW) MessageProcessingRepo() messageprocessing.Repository { return u.mp }
 
-// fakeGateway scripts one verdict (or error) per shadow release id and counts
-// the reads, so a test can assert both what the reconciler did with a verdict
-// and that it asked for one at all.
-type fakeGateway struct {
-	verdicts map[string]ports.ShadowVerdict
+// fakePipeline scripts one status (or error) per verification run id and
+// records the runs it was asked to read, so a test can assert both what the
+// reconciler did with a status and that it asked for one at all.
+type fakePipeline struct {
+	statuses map[string]ports.VerificationStatus
 	errs     map[string]error
-	calls    int
+	reads    []string
 }
 
-func newFakeGateway() *fakeGateway {
-	return &fakeGateway{verdicts: map[string]ports.ShadowVerdict{}, errs: map[string]error{}}
+func newFakePipeline() *fakePipeline {
+	return &fakePipeline{statuses: map[string]ports.VerificationStatus{}, errs: map[string]error{}}
 }
 
-func (g *fakeGateway) Verdict(_ context.Context, releaseID string) (ports.ShadowVerdict, error) {
-	g.calls++
-	if err, ok := g.errs[releaseID]; ok {
-		return ports.ShadowVerdict{}, err
+func (p *fakePipeline) Submit(context.Context, ports.VerificationRequest) error { return nil }
+
+func (p *fakePipeline) Status(_ context.Context, runID string) (ports.VerificationStatus, error) {
+	p.reads = append(p.reads, runID)
+	if err, ok := p.errs[runID]; ok {
+		return ports.VerificationStatus{}, err
 	}
-	return g.verdicts[releaseID], nil
+	return p.statuses[runID], nil
 }
-
-func (g *fakeGateway) Submit(context.Context, ports.ShadowSubmission) error { return nil }
-
-func (g *fakeGateway) ImageTag(context.Context, string, string) (string, error) { return "tag", nil }
 
 // recordingProposer captures every trigger the reconciler starts a next
 // attempt with, and optionally forwards it to a real proposer so a test can
@@ -369,30 +406,57 @@ func (p *recordingProposer) propose(ctx context.Context, t handlers.Trigger) err
 // harness wires a Reconciler over the in-memory collaborators above and keeps
 // each of them addressable for assertions.
 type harness struct {
-	repo     *fakeProposalRepo
-	gateway  *fakeGateway
-	uow      *fakeUoW
-	proposer *recordingProposer
-	rec      *Reconciler
+	repo       *fakeProposalRepo
+	pipeline   *fakePipeline
+	uow        *fakeUoW
+	proposer   *recordingProposer
+	reconciler *Reconciler
 }
 
-func newHarness(rows ...proposal.View) *harness {
+func newHarness(t *testing.T, rows ...proposal.View) *harness {
+	t.Helper()
 	repo := newFakeProposalRepo(rows...)
 	u := &fakeUoW{pr: repo, ob: &fakeOutbox{}, mp: newFakeMsgProc()}
-	g := newFakeGateway()
-	p := &recordingProposer{}
-	h := &harness{repo: repo, gateway: g, uow: u, proposer: p}
-	h.rec = New(Deps{
+	p := newFakePipeline()
+	pr := &recordingProposer{}
+	h := &harness{repo: repo, pipeline: p, uow: u, proposer: pr}
+	h.reconciler = New(Deps{
 		Lister:   repo,
-		Releases: g,
+		Pipeline: p,
 		NewUoW:   func() uow.UnitOfWork { return u },
 		Decode:   rredis.TriggerFromPayload,
-		Propose:  p.propose,
+		Propose:  pr.propose,
 		Clock:    fakeClock{t: testNow},
 		Logger:   testLogger(),
 		Timeout:  testTimeout,
 	})
 	return h
+}
+
+// seedVerifying adds a proposal awaiting verification to the harness's
+// repository, addressing "analytics.orders" and carrying verifications as
+// given, aged one minute. It returns the row as recorded, so a test can
+// assert against its assigned id.
+func (h *harness) seedVerifying(releaseID string, verifications []proposal.Verification) proposal.View {
+	v := proposal.View{
+		ID:              releaseID + "-p1",
+		Source:          "validation",
+		ReleaseID:       releaseID,
+		NodeID:          "analytics.orders",
+		ResolvedNodeIDs: []string{"analytics.orders"},
+		ErrorSignature:  "sig-1",
+		Attempt:         1,
+		Status:          proposal.StatusVerifying,
+		NodeOutcomes: map[string]proposal.NodeOutcome{
+			"analytics.orders": {Status: proposal.StatusVerifying},
+		},
+		Verifications:     verifications,
+		VerificationRunID: verifications[0].RunID,
+		TriggerPayload:    requestedPayload(),
+		CreatedAt:         testNow.Add(-time.Minute),
+	}
+	h.repo.rows = append(h.repo.rows, &v)
+	return v
 }
 
 // handlerDeps builds the driver dependencies the real ProposeFix runs with
@@ -408,17 +472,17 @@ func (h *harness) handlerDeps(maxAttempts int) handlers.Deps {
 	}
 }
 
-// TestReconcileOnce_ValidatedShadowProposesTheFix covers the branch that makes
-// a verified fix reachable by a human: a shadow release that validated
+// TestReconcileOnce_PassedVerificationProposesTheFix covers the branch that
+// makes a verified fix reachable by a human: a verification run that passed
 // finalizes the proposal to 'proposed' and emits exactly one
 // remediation.proposed:v1 outbox entry, both in the same transaction. Without
 // it a green fix is produced and never surfaces.
-func TestReconcileOnce_ValidatedShadowProposesTheFix(t *testing.T) {
+func TestReconcileOnce_PassedVerificationProposesTheFix(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{Phase: proposal.PhasePassed}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusProposed, h.repo.row("p1").Status)
 	require.Len(t, h.uow.ob.entries, 1)
@@ -440,18 +504,18 @@ func TestReconcileOnce_ValidatedShadowProposesTheFix(t *testing.T) {
 	assert.Empty(t, h.proposer.triggers, "a verified fix must not start another attempt")
 }
 
-// TestReconcileOnce_ValidatedShadowCarriesTheRemediationRound pins that the
+// TestReconcileOnce_PassedVerificationCarriesTheRemediationRound pins that the
 // enqueued remediation.proposed:v1 event carries the attempt's own
-// remediation round. Without it a round-2 (or later) attempt that a shadow
-// release validates would surface with remediation_round dropped to zero, and
-// a UI reader that treats 0 as round 1 would misfile it under the wrong round.
-func TestReconcileOnce_ValidatedShadowCarriesTheRemediationRound(t *testing.T) {
+// remediation round. Without it a round-2 (or later) attempt that passes
+// verification would surface with remediation_round dropped to zero, and a UI
+// reader that treats 0 as round 1 would misfile it under the wrong round.
+func TestReconcileOnce_PassedVerificationCarriesTheRemediationRound(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.RemediationRound = 2
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{Phase: proposal.PhasePassed}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	require.Len(t, h.uow.ob.entries, 1)
 	var payload event.RemediationProposed
@@ -459,44 +523,44 @@ func TestReconcileOnce_ValidatedShadowCarriesTheRemediationRound(t *testing.T) {
 	assert.Equal(t, 2, payload.RemediationRound)
 }
 
-// TestReconcileOnce_ValidatedShadowEmitsOnceAcrossTicks pins the CAS: a second
-// pass over an already-finalized proposal writes nothing and emits nothing,
-// so a repeated tick cannot duplicate the event.
-func TestReconcileOnce_ValidatedShadowEmitsOnceAcrossTicks(t *testing.T) {
+// TestReconcileOnce_PassedVerificationEmitsOnceAcrossTicks pins the CAS: a
+// second pass over an already-finalized proposal writes nothing and emits
+// nothing, so a repeated tick cannot duplicate the event.
+func TestReconcileOnce_PassedVerificationEmitsOnceAcrossTicks(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{Phase: proposal.PhasePassed}
 
-	h.rec.ReconcileOnce(context.Background())
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Len(t, h.uow.ob.entries, 1)
 }
 
-// TestReconcileOnce_TwoVerificationsProposesOnlyWhenBothValidated covers the
-// attempt whose edits span two services: one shadow release per service judges
-// them, and the attempt is a proposal only once every one of those releases has
-// validated. Resolving on the first validated release would announce a fix
-// whose other half is still running — or was about to be rejected.
-func TestReconcileOnce_TwoVerificationsProposesOnlyWhenBothValidated(t *testing.T) {
+// TestReconcileOnce_TwoVerificationsProposesOnlyWhenBothPassed covers the
+// attempt whose edits span two services: one verification run per service
+// judges them, and the attempt is a proposal only once every one of those
+// runs has passed. Resolving on the first passed run would announce a fix
+// whose other half is still running — or was about to fail.
+func TestReconcileOnce_TwoVerificationsProposesOnlyWhenBothPassed(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.Verifications = []proposal.Verification{
-		{Service: "svc", Kind: "dbt", RunID: "shadow-rel-1-svc-a1"},
-		{Service: "other", Kind: "dbt", RunID: "shadow-rel-1-other-a1"},
+		{Service: "svc", Kind: "dbt", RunID: "verify-rel-1-svc-a1", Phase: proposal.PhaseQueued},
+		{Service: "other", Kind: "dbt", RunID: "verify-rel-1-other-a1", Phase: proposal.PhaseQueued},
 	}
-	h := newHarness(row)
-	h.gateway.verdicts["shadow-rel-1-svc-a1"] = ports.ShadowVerdict{Terminal: true, Validated: true}
-	h.gateway.verdicts["shadow-rel-1-other-a1"] = ports.ShadowVerdict{ActivatedAt: testNow}
+	h := newHarness(t, row)
+	h.pipeline.statuses["verify-rel-1-svc-a1"] = ports.VerificationStatus{Phase: proposal.PhasePassed}
+	h.pipeline.statuses["verify-rel-1-other-a1"] = ports.VerificationStatus{Phase: proposal.PhaseRunning, ActivatedAt: testNow}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
-	assert.Equal(t, 2, h.gateway.calls, "every shadow release judging the attempt is read once per pass")
-	assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status, "one shadow still running: wait")
-	assert.Empty(t, h.uow.ob.entries, "nothing may be announced while a shadow release is still running")
+	assert.Equal(t, 2, len(h.pipeline.reads), "every verification run judging the attempt is read once per pass")
+	assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status, "one run still running: wait")
+	assert.Empty(t, h.uow.ob.entries, "nothing may be announced while a run is still running")
 
-	h.gateway.verdicts["shadow-rel-1-other-a1"] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h.pipeline.statuses["verify-rel-1-other-a1"] = ports.VerificationStatus{Phase: proposal.PhasePassed}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusProposed, h.repo.row("p1").Status)
 	require.Len(t, h.uow.ob.entries, 1)
@@ -505,66 +569,65 @@ func TestReconcileOnce_TwoVerificationsProposesOnlyWhenBothValidated(t *testing.
 	assert.Equal(t, []string{"analytics.orders"}, payload.ResolvedNodeIDs)
 }
 
-// TestReconcileOnce_OneRejectedVerificationFailsTheWholeAttempt is the other
+// TestReconcileOnce_OneFailedVerificationFailsTheWholeAttempt is the other
 // half of the multi-service model: the attempt is one proposal, so a single
-// service's shadow release rejecting it fails the attempt even while the other
-// service's release is still running. The fix cannot be split.
-func TestReconcileOnce_OneRejectedVerificationFailsTheWholeAttempt(t *testing.T) {
+// service's verification run failing fails the attempt even while the other
+// service's run is still running. The fix cannot be split.
+func TestReconcileOnce_OneFailedVerificationFailsTheWholeAttempt(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.Verifications = []proposal.Verification{
-		{Service: "svc", Kind: "dbt", RunID: "shadow-rel-1-svc-a1"},
-		{Service: "other", Kind: "dbt", RunID: "shadow-rel-1-other-a1"},
+		{Service: "svc", Kind: "dbt", RunID: "verify-rel-1-svc-a1", Phase: proposal.PhaseQueued},
+		{Service: "other", Kind: "dbt", RunID: "verify-rel-1-other-a1", Phase: proposal.PhaseQueued},
 	}
-	h := newHarness(row)
-	h.gateway.verdicts["shadow-rel-1-svc-a1"] = ports.ShadowVerdict{ActivatedAt: testNow}
-	h.gateway.verdicts["shadow-rel-1-other-a1"] = ports.ShadowVerdict{
-		Terminal:   true,
+	h := newHarness(t, row)
+	h.pipeline.statuses["verify-rel-1-svc-a1"] = ports.VerificationStatus{Phase: proposal.PhaseRunning, ActivatedAt: testNow}
+	h.pipeline.statuses["verify-rel-1-other-a1"] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
 		NodeErrors: map[string]string{"analytics.orders": "still wrong"},
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusFailed, h.repo.row("p1").Status)
 	assert.Equal(t, "analytics.orders: still wrong", h.repo.row("p1").VerifyError)
-	assert.Len(t, h.proposer.triggers, 1, "a rejected attempt starts the next one")
+	assert.Len(t, h.proposer.triggers, 1, "a failed attempt starts the next one")
 }
 
 // TestReconcileOnce_RowNamingOnlyAVerificationRunIDStillResolves covers the row
-// that records no per-service verifications and names its single shadow release
-// in VerificationRunID alone: that release is the one verification judging it, so
-// the row resolves exactly like any other.
+// that records no per-service verifications and names its single verification
+// run in VerificationRunID alone: that run is the one verification judging
+// it, so the row resolves exactly like any other.
 func TestReconcileOnce_RowNamingOnlyAVerificationRunIDStillResolves(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.Verifications = nil
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{Phase: proposal.PhasePassed}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
-	assert.Equal(t, 1, h.gateway.calls, "the row's single shadow release must be read exactly once")
+	assert.Equal(t, 1, len(h.pipeline.reads), "the row's single verification run must be read exactly once")
 	assert.Equal(t, proposal.StatusProposed, h.repo.row("p1").Status)
 	assert.Len(t, h.uow.ob.entries, 1)
 }
 
-// TestReconcileOnce_RejectedShadowFailsTheAttemptAndRetries covers the branch
-// that keeps the heal loop alive: a rejected shadow records the failing node's
-// error on the attempt and immediately starts the next one from the stored
-// trigger. Without it the loop dies after one attempt.
-func TestReconcileOnce_RejectedShadowFailsTheAttemptAndRetries(t *testing.T) {
+// TestReconcileOnce_FailedVerificationFailsTheAttemptAndRetries covers the
+// branch that keeps the heal loop alive: a failed verification run records
+// the failing node's error on the attempt and immediately starts the next one
+// from the stored trigger. Without it the loop dies after one attempt.
+func TestReconcileOnce_FailedVerificationFailsTheAttemptAndRetries(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-		Terminal:   true,
-		Validated:  false,
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
 		NodeErrors: map[string]string{"analytics.orders": "column total_amount is numeric, contract declares text"},
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	stored := h.repo.row("p1")
 	assert.Equal(t, proposal.StatusFailed, stored.Status)
 	assert.Equal(t, "analytics.orders: column total_amount is numeric, contract declares text", stored.VerifyError)
-	assert.Empty(t, h.uow.ob.entries, "a rejected fix must not be announced as proposed")
+	assert.Empty(t, h.uow.ob.entries, "a failed fix must not be announced as proposed")
 
 	require.Len(t, h.proposer.triggers, 1)
 	next := h.proposer.triggers[0]
@@ -576,60 +639,59 @@ func TestReconcileOnce_RejectedShadowFailsTheAttemptAndRetries(t *testing.T) {
 	assert.Equal(t, "python-model", next.Nodes[0].NodeType)
 }
 
-// TestReconcileOnce_RejectedShadowNamesEveryFailingNodeWhenTheFixedOnePassed
-// covers the rejection whose failing node is not the node being fixed: the
+// TestReconcileOnce_FailedVerificationNamesEveryFailingNodeWhenTheFixedOnePassed
+// covers the failure whose failing node is not the node being fixed: the
 // recorded evidence must name what actually failed instead of leaving the
 // attempt with a blank reason.
-func TestReconcileOnce_RejectedShadowNamesEveryFailingNodeWhenTheFixedOnePassed(t *testing.T) {
+func TestReconcileOnce_FailedVerificationNamesEveryFailingNodeWhenTheFixedOnePassed(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-		Terminal:   true,
-		Validated:  false,
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
 		NodeErrors: map[string]string{"analytics.returns": "relation missing", "analytics.customers": "row count 0"},
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t,
 		"analytics.customers: row count 0; analytics.returns: relation missing",
 		h.repo.row("p1").VerifyError)
 }
 
-// TestReconcileOnce_RejectedShadowWithNoNodeErrorsStillRecordsAReason covers a
-// rejection release-controller reported no per-node error for: the attempt
-// still records why it ended, naming the release that judged it.
-func TestReconcileOnce_RejectedShadowWithNoNodeErrorsStillRecordsAReason(t *testing.T) {
+// TestReconcileOnce_FailedVerificationWithNoNodeErrorsStillRecordsAReason
+// covers a failure release-controller reported no per-node error for: the
+// attempt still records why it ended, naming the run that judged it.
+func TestReconcileOnce_FailedVerificationWithNoNodeErrorsStillRecordsAReason(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: false}
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{Phase: proposal.PhaseFailed}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t,
-		"shadow release "+row.VerificationRunID+" was rejected without a per-node error",
+		"verification run "+row.VerificationRunID+" failed without a per-node error",
 		h.repo.row("p1").VerifyError)
 }
 
-// TestReconcileOnce_RejectedShadowRetriesTheWholeBatch covers the partial
-// rejection, which is the common shape once one attempt addresses a whole
-// failing set: the shadow release accepted the fix for some of the attempt's
-// nodes and still rejects others. The attempt is one proposal over one set of
-// edits and it failed as a unit, so the whole batch is retried — the edits that
-// did hold up died with the rejected attempt, and a retry over the still-failing
-// nodes alone would end in a pull request missing them. The recorded evidence
-// still names exactly which node failed.
-func TestReconcileOnce_RejectedShadowRetriesTheWholeBatch(t *testing.T) {
+// TestReconcileOnce_FailedVerificationRetriesTheWholeBatch covers the partial
+// failure, which is the common shape once one attempt addresses a whole
+// failing set: the verification run accepted the fix for some of the
+// attempt's nodes and still fails others. The attempt is one proposal over
+// one set of edits and it failed as a unit, so the whole batch is retried —
+// the edits that did hold up died with the failed attempt, and a retry over
+// the still-failing nodes alone would end in a pull request missing them.
+// The recorded evidence still names exactly which node failed.
+func TestReconcileOnce_FailedVerificationRetriesTheWholeBatch(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.ResolvedNodeIDs = []string{"s.a", "s.b"}
 	row.TriggerPayload = batchPayload("s.a", "s.b")
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-		Terminal:   true,
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
 		NodeErrors: map[string]string{"s.b": "still broken"},
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusFailed, h.repo.row("p1").Status)
 	assert.Equal(t, "s.b: still broken", h.repo.row("p1").VerifyError,
@@ -637,26 +699,26 @@ func TestReconcileOnce_RejectedShadowRetriesTheWholeBatch(t *testing.T) {
 	require.Len(t, h.proposer.triggers, 1)
 	assert.Equal(t, []string{"s.a", "s.b"}, h.proposer.triggers[0].NodeIDs(),
 		"the retry replays the whole batch: a fix that passed is not carried over from a failed attempt")
-	assert.Equal(t, "shadow-verify:p1", h.proposer.triggers[0].MessageID)
+	assert.Equal(t, "verify-retry:p1", h.proposer.triggers[0].MessageID)
 	assert.Nil(t, h.proposer.triggers[0].OutboxEntryID)
 }
 
-// TestReconcileOnce_RejectedShadowWithCollateralFailureRetriesEveryNode covers
-// the rejection that names no node this attempt fixed: every node it fixed
-// passed, and something else in the release failed. The whole failing set is
-// retried, with the collateral failure recorded as the evidence the next attempt
-// reads.
-func TestReconcileOnce_RejectedShadowWithCollateralFailureRetriesEveryNode(t *testing.T) {
+// TestReconcileOnce_FailedVerificationWithCollateralFailureRetriesEveryNode
+// covers the failure that names no node this attempt fixed: every node it
+// fixed passed, and something else in the release failed. The whole failing
+// set is retried, with the collateral failure recorded as the evidence the
+// next attempt reads.
+func TestReconcileOnce_FailedVerificationWithCollateralFailureRetriesEveryNode(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.ResolvedNodeIDs = []string{"s.a", "s.b"}
 	row.TriggerPayload = batchPayload("s.a", "s.b")
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-		Terminal:   true,
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
 		NodeErrors: map[string]string{"s.downstream": "relation does not exist"},
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusFailed, h.repo.row("p1").Status)
 	assert.Equal(t, "s.downstream: relation does not exist", h.repo.row("p1").VerifyError,
@@ -676,9 +738,9 @@ func TestReconcileOnce_RejectedShadowWithCollateralFailureRetriesEveryNode(t *te
 // its own, unique to the attempt it follows.
 func TestReconcileOnce_RetryCarriesAFreshDedupIdentity(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-		Terminal: true, Validated: false,
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
 		NodeErrors: map[string]string{"analytics.orders": "still wrong"},
 	}
 	// The first attempt claimed the inbound remediation.requested message, as
@@ -690,18 +752,18 @@ func TestReconcileOnce_RetryCarriesAFreshDedupIdentity(t *testing.T) {
 	require.NoError(t, err)
 
 	// The retry runs through the real driver, at the attempt cap so it records
-	// an escalated row without reaching a fixer. That row is the observable
+	// an escalated row without ever reaching a fixer. That row is the observable
 	// proof the driver actually ran: a dedup hit would return before it.
 	h.repo.attempts = 3
 	h.proposer.delegate = func(ctx context.Context, tr handlers.Trigger) error {
 		return handlers.ProposeFix(ctx, h.handlerDeps(3), tr)
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	require.Len(t, h.proposer.triggers, 1)
 	next := h.proposer.triggers[0]
-	assert.Equal(t, "shadow-verify:"+row.ID, next.MessageID,
+	assert.Equal(t, "verify-retry:"+row.ID, next.MessageID,
 		"the retry must not reuse the Redis message id of the trigger that started the first attempt")
 	assert.Nil(t, next.OutboxEntryID,
 		"the retry must not reuse the upstream outbox entry id either — it is the second dedup axis")
@@ -716,7 +778,7 @@ func TestReconcileOnce_RetryCarriesAFreshDedupIdentity(t *testing.T) {
 // nothing at all. It is what the retry would silently become without a fresh
 // identity, and it is why the reconciler mints one.
 func TestProposeFix_ReplayedMessageIDIsANoOp(t *testing.T) {
-	h := newHarness()
+	h := newHarness(t)
 	_, _, err := h.uow.mp.InsertIfNotExists(context.Background(), &messageprocessing.MessageProcessing{
 		MessageID: originalMessageID, StreamName: streams.RemediationRequestedV2,
 	})
@@ -732,15 +794,15 @@ func TestProposeFix_ReplayedMessageIDIsANoOp(t *testing.T) {
 	assert.Empty(t, h.repo.upserted, "a replayed message id deduplicates the whole attempt away")
 }
 
-// TestReconcileOnce_RejectedAtTheAttemptCapEscalates covers the branch that
+// TestReconcileOnce_FailedAtTheAttemptCapEscalates covers the branch that
 // stops the loop: at the cap the next attempt the reconciler starts records an
 // escalated row instead of proposing anything, so an unfixable failure ends
 // visibly rather than cycling forever.
-func TestReconcileOnce_RejectedAtTheAttemptCapEscalates(t *testing.T) {
+func TestReconcileOnce_FailedAtTheAttemptCapEscalates(t *testing.T) {
 	row := verifyingRow("p3", 3, time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-		Terminal: true, Validated: false,
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
 		NodeErrors: map[string]string{"analytics.orders": "third failure"},
 	}
 	h.repo.attempts = 3
@@ -748,7 +810,7 @@ func TestReconcileOnce_RejectedAtTheAttemptCapEscalates(t *testing.T) {
 		return handlers.ProposeFix(ctx, h.handlerDeps(3), tr)
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusFailed, h.repo.row("p3").Status)
 	require.Len(t, h.repo.upserted, 1)
@@ -759,176 +821,187 @@ func TestReconcileOnce_RejectedAtTheAttemptCapEscalates(t *testing.T) {
 }
 
 // TestReconcileOnce_NonTerminalWithinTheTimeoutIsLeftAlone covers the branch
-// that lets a shadow release finish: a verdict that is still running is read
-// and then left untouched, neither finalized nor retried.
+// that lets a verification run finish: a status that is still queued is read
+// and then left untouched, neither finalized nor retried — and, since it
+// still reports the phase the row was submitted with, records no phase
+// transition either.
 func TestReconcileOnce_NonTerminalWithinTheTimeoutIsLeftAlone(t *testing.T) {
-	row := verifyingRow("p1", 1, testTimeout-time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: false}
+	row := verifyingRow("p1", 1, time.Minute)
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{Phase: proposal.PhaseQueued}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
-	assert.Equal(t, 1, h.gateway.calls, "the reconciler must read the verdict for every verifying row")
+	assert.Equal(t, 1, len(h.pipeline.reads), "the reconciler must read the status for every verifying row")
 	assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status)
 	assert.Empty(t, h.repo.row("p1").VerifyError)
 	assert.Empty(t, h.proposer.triggers)
 	assert.Empty(t, h.uow.ob.entries)
 	assert.Zero(t, h.uow.commits)
+	assert.Empty(t, h.repo.phaseWrites, "queued → queued records no phase transition")
 }
 
 // TestReconcileOnce_NonTerminalPastTheTimeoutFailsTheAttempt covers the branch
-// that keeps a wedged shadow release from pinning a proposal in 'verifying'
+// that keeps a wedged verification run from pinning a proposal in 'verifying'
 // forever: past the budget the attempt is failed with the timeout as its
-// recorded reason and the next attempt starts, exactly as a rejection does.
-// The budget is spent from the moment the release started running, so the
-// verdict carries an activation that far back.
+// recorded reason and the next attempt starts, exactly as a failure does.
+// The budget is spent from the moment the run started running, so the
+// status carries an activation that far back.
 func TestReconcileOnce_NonTerminalPastTheTimeoutFailsTheAttempt(t *testing.T) {
 	row := verifyingRow("p1", 1, testTimeout+time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-		Terminal: false, ActivatedAt: testNow.Add(-(testTimeout + time.Minute)),
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase: proposal.PhaseRunning, ActivatedAt: testNow.Add(-(testTimeout + time.Minute)),
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	stored := h.repo.row("p1")
 	assert.Equal(t, proposal.StatusFailed, stored.Status)
-	assert.Equal(t, "shadow verification timed out", stored.VerifyError)
+	assert.Equal(t, "verification timed out", stored.VerifyError)
 	assert.Len(t, h.proposer.triggers, 1)
 }
 
 // TestReconcileOnce_SerialVerificationsAreBudgetedIndividually pins that the
-// verification budget is spent per shadow release rather than across the
-// attempt as a whole.
+// verification budget is spent per run rather than across the attempt as a
+// whole.
 //
-// Shadow releases join one global release queue and run one at a time, so an
-// attempt that edited several services waits its releases out one after
-// another: the span from the first release's activation to the last one's
-// verdict grows with the number of services, while no single release runs any
-// longer than it otherwise would. Charging that whole span to one budget would
-// fail an attempt whose releases are all perfectly healthy, purely for having
-// touched more than one service.
+// Verification runs join one global release queue and run one at a time, so
+// an attempt that edited several services waits its runs out one after
+// another: the span from the first run's activation to the last one's
+// verdict grows with the number of services, while no single run runs any
+// longer than it otherwise would. Charging that whole span to one budget
+// would fail an attempt whose runs are all perfectly healthy, purely for
+// having touched more than one service.
 func TestReconcileOnce_SerialVerificationsAreBudgetedIndividually(t *testing.T) {
 	row := verifyingRow("p1", 1, testTimeout+time.Hour)
 	row.Verifications = []proposal.Verification{
-		{Service: "svc", Kind: "dbt", RunID: "shadow-rel-1-svc-a1"},
-		{Service: "other", Kind: "dbt", RunID: "shadow-rel-1-other-a1"},
+		{Service: "svc", Kind: "dbt", RunID: "verify-rel-1-svc-a1", Phase: proposal.PhaseQueued},
+		{Service: "other", Kind: "dbt", RunID: "verify-rel-1-other-a1", Phase: proposal.PhaseQueued},
 	}
-	h := newHarness(row)
-	// The first service's release started half an hour ago and has already
+	h := newHarness(t, row)
+	// The first service's run started half an hour ago and has already
 	// answered; the second's started five minutes ago and is still running.
-	h.gateway.verdicts["shadow-rel-1-svc-a1"] = ports.ShadowVerdict{
-		Terminal: true, Validated: true, ActivatedAt: testNow.Add(-30 * time.Minute),
+	h.pipeline.statuses["verify-rel-1-svc-a1"] = ports.VerificationStatus{
+		Phase: proposal.PhasePassed, ActivatedAt: testNow.Add(-30 * time.Minute),
 	}
-	h.gateway.verdicts["shadow-rel-1-other-a1"] = ports.ShadowVerdict{
-		ActivatedAt: testNow.Add(-5 * time.Minute),
+	h.pipeline.statuses["verify-rel-1-other-a1"] = ports.VerificationStatus{
+		Phase: proposal.PhaseRunning, ActivatedAt: testNow.Add(-5 * time.Minute),
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status,
-		"only the release still running spends a budget, and it has spent five minutes of its own")
+		"only the run still running spends a budget, and it has spent five minutes of its own")
 	assert.Empty(t, h.proposer.triggers)
-	assert.Zero(t, h.uow.commits)
+	// The still-running run's transition from queued to running is recorded;
+	// the passed run's phase is never written mid-pass — it is carried by the
+	// terminal statement once every run has answered.
+	require.Len(t, h.repo.phaseWrites, 1)
+	assert.Equal(t, proposal.PhaseRunning, h.repo.phaseWrites[0].phase)
+	assert.Equal(t, "verify-rel-1-other-a1", h.repo.phaseWrites[0].runID)
 
-	// That release now wedges: on its own activation it is past the budget.
-	h.gateway.verdicts["shadow-rel-1-other-a1"] = ports.ShadowVerdict{
-		ActivatedAt: testNow.Add(-(testTimeout + 5*time.Minute)),
+	// That run now wedges: on its own activation it is past the budget.
+	h.pipeline.statuses["verify-rel-1-other-a1"] = ports.VerificationStatus{
+		Phase: proposal.PhaseRunning, ActivatedAt: testNow.Add(-(testTimeout + 5*time.Minute)),
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusFailed, h.repo.row("p1").Status)
-	assert.Equal(t, "shadow verification timed out", h.repo.row("p1").VerifyError)
+	assert.Equal(t, "verification timed out", h.repo.row("p1").VerifyError)
 	assert.Len(t, h.proposer.triggers, 1)
+	// Still running, same phase as already stored: the second pass records no
+	// further transition before the timeout finalizes the row.
+	assert.Len(t, h.repo.phaseWrites, 1, "no new phase write once the run is already recorded as running")
 }
 
 // TestReconcileOnce_QueuedTimeDoesNotSpendTheVerificationBudget pins what the
 // timeout is a budget FOR.
 //
-// A shadow release joins the same global FIFO queue as every other release and
-// only one release runs at a time, so a backlog — or one long normal release —
-// can hold it in 'received' for the entire window. Measuring from when the
-// proposal was recorded therefore failed an attempt whose release had not run
-// at all, and would do the same to every retry behind it, burning the whole
-// per-failure budget on releases that were never given a chance to answer.
+// A verification run joins the same global FIFO queue as every other release
+// and only one runs at a time, so a backlog — or one long normal release —
+// can hold it queued for the entire window. Measuring from when the proposal
+// was recorded therefore failed an attempt whose run had not run at all, and
+// would do the same to every retry behind it, burning the whole per-failure
+// budget on runs that were never given a chance to answer.
 func TestReconcileOnce_QueuedTimeDoesNotSpendTheVerificationBudget(t *testing.T) {
 	t.Run("still queued", func(t *testing.T) {
 		row := verifyingRow("p1", 1, testTimeout+time.Hour)
-		h := newHarness(row)
-		// No activation: release-controller has not started this release.
-		h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: false}
+		h := newHarness(t, row)
+		// No activation: release-controller has not started this run.
+		h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{Phase: proposal.PhaseQueued}
 
-		h.rec.ReconcileOnce(context.Background())
+		h.reconciler.ReconcileOnce(context.Background())
 
 		assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status,
-			"a release that has not left the queue has not spent any of its verification budget")
+			"a run that has not left the queue has not spent any of its verification budget")
 		assert.Empty(t, h.proposer.triggers)
 		assert.Zero(t, h.uow.commits)
 	})
 
 	t.Run("queued long, running briefly", func(t *testing.T) {
 		row := verifyingRow("p1", 1, testTimeout+time.Hour)
-		h := newHarness(row)
-		h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-			Terminal: false, ActivatedAt: testNow.Add(-time.Minute),
+		h := newHarness(t, row)
+		h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+			Phase: proposal.PhaseRunning, ActivatedAt: testNow.Add(-time.Minute),
 		}
 
-		h.rec.ReconcileOnce(context.Background())
+		h.reconciler.ReconcileOnce(context.Background())
 
 		assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status,
-			"the budget runs from when the release started, not from when the attempt was recorded")
+			"the budget runs from when the run started, not from when the attempt was recorded")
 		assert.Empty(t, h.proposer.triggers)
 	})
 }
 
-// TestReconcileOnce_UnreadableVerdictWithinTheTimeoutBurnsNoAttempt pins the
-// choice made about a verdict read that fails: release-controller being
-// briefly unreachable and a release id it will never know produce the same
-// error, so neither may be counted as a rejection. The row is left for the
+// TestReconcileOnce_UnreadableStatusWithinTheTimeoutBurnsNoAttempt pins the
+// choice made about a status read that fails: release-controller being
+// briefly unreachable and a run id it will never know produce the same
+// error, so neither may be counted as a failure. The row is left for the
 // next tick.
-func TestReconcileOnce_UnreadableVerdictWithinTheTimeoutBurnsNoAttempt(t *testing.T) {
+func TestReconcileOnce_UnreadableStatusWithinTheTimeoutBurnsNoAttempt(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
-	h := newHarness(row)
-	h.gateway.errs[row.VerificationRunID] = errors.New("get release shadow-x: status 503: upstream unavailable")
+	h := newHarness(t, row)
+	h.pipeline.errs[row.VerificationRunID] = errors.New("get verification run verify-x: status 503: upstream unavailable")
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status)
 	assert.Empty(t, h.proposer.triggers)
 	assert.Zero(t, h.uow.commits)
 }
 
-// TestReconcileOnce_UnreadableVerdictPastTheTimeoutFailsTheAttempt is the
-// other half of that choice: waiting on an unreadable verdict is still
-// bounded, so a shadow release whose verdict never becomes readable ends the
+// TestReconcileOnce_UnreadableStatusPastTheTimeoutFailsTheAttempt is the
+// other half of that choice: waiting on an unreadable status is still
+// bounded, so a verification run whose status never becomes readable ends the
 // attempt instead of pinning it in 'verifying' forever.
-func TestReconcileOnce_UnreadableVerdictPastTheTimeoutFailsTheAttempt(t *testing.T) {
+func TestReconcileOnce_UnreadableStatusPastTheTimeoutFailsTheAttempt(t *testing.T) {
 	row := verifyingRow("p1", 1, testTimeout+time.Minute)
-	h := newHarness(row)
-	h.gateway.errs[row.VerificationRunID] = errors.New("get release shadow-x: status 404: not found")
+	h := newHarness(t, row)
+	h.pipeline.errs[row.VerificationRunID] = errors.New("get verification run verify-x: status 404: not found")
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusFailed, h.repo.row("p1").Status)
-	assert.Equal(t, "shadow verification timed out", h.repo.row("p1").VerifyError)
+	assert.Equal(t, "verification timed out", h.repo.row("p1").VerifyError)
 }
 
 // TestReconcileOnce_OneUnresolvableRowDoesNotBlockTheRest pins the
-// best-effort loop: a row whose verdict cannot be read is skipped and the
+// best-effort loop: a row whose status cannot be read is skipped and the
 // rows behind it are still resolved in the same pass.
 func TestReconcileOnce_OneUnresolvableRowDoesNotBlockTheRest(t *testing.T) {
 	stuck := verifyingRow("p1", 1, time.Minute)
 	healthy := verifyingRow("p2", 1, time.Minute)
-	healthy.VerificationRunID = "shadow-rel-1-other-a1"
+	healthy.VerificationRunID = "verify-rel-1-other-a1"
 	healthy.Verifications = []proposal.Verification{
-		{Service: "other", Kind: "python", RunID: healthy.VerificationRunID},
+		{Service: "other", Kind: "python", RunID: healthy.VerificationRunID, Phase: proposal.PhaseQueued},
 	}
-	h := newHarness(stuck, healthy)
-	h.gateway.errs[stuck.VerificationRunID] = errors.New("connection refused")
-	h.gateway.verdicts[healthy.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h := newHarness(t, stuck, healthy)
+	h.pipeline.errs[stuck.VerificationRunID] = errors.New("connection refused")
+	h.pipeline.statuses[healthy.VerificationRunID] = ports.VerificationStatus{Phase: proposal.PhasePassed}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status)
 	assert.Equal(t, proposal.StatusProposed, h.repo.row("p2").Status)
@@ -939,16 +1012,16 @@ func TestReconcileOnce_OneUnresolvableRowDoesNotBlockTheRest(t *testing.T) {
 // once the store answers again, resolves the row it could not read before.
 func TestReconcileOnce_ListFailureIsSurvived(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{Terminal: true, Validated: true}
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{Phase: proposal.PhasePassed}
 	h.repo.listErr = errors.New("db down")
 
-	h.rec.ReconcileOnce(context.Background())
-	assert.Zero(t, h.gateway.calls)
+	h.reconciler.ReconcileOnce(context.Background())
+	assert.Zero(t, len(h.pipeline.reads))
 	assert.Equal(t, proposal.StatusVerifying, h.repo.row("p1").Status)
 
 	h.repo.listErr = nil
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 	assert.Equal(t, proposal.StatusProposed, h.repo.row("p1").Status)
 }
 
@@ -959,13 +1032,13 @@ func TestReconcileOnce_ListFailureIsSurvived(t *testing.T) {
 func TestReconcileOnce_RowWithoutAStoredTriggerIsFailedButNotRetried(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.TriggerPayload = nil
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-		Terminal: true, Validated: false,
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
 		NodeErrors: map[string]string{"analytics.orders": "boom"},
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	assert.Equal(t, proposal.StatusFailed, h.repo.row("p1").Status)
 	assert.Equal(t, "analytics.orders: boom", h.repo.row("p1").VerifyError)
@@ -975,12 +1048,12 @@ func TestReconcileOnce_RowWithoutAStoredTriggerIsFailedButNotRetried(t *testing.
 // TestRunStopsOnContextCancellation pins the loop's shutdown: Run returns when
 // its context is cancelled rather than leaking a ticker goroutine.
 func TestRunStopsOnContextCancellation(t *testing.T) {
-	h := newHarness()
-	h.rec.interval = time.Millisecond
+	h := newHarness(t)
+	h.reconciler.interval = time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { h.rec.Run(ctx); close(done) }()
+	go func() { h.reconciler.Run(ctx); close(done) }()
 	cancel()
 
 	select {
@@ -1006,14 +1079,14 @@ func (failingArchive) Fetch(context.Context, string, string) (string, func(), er
 // immediately before calling the model — that row is what the release page
 // renders as "Generating fix…". When the driver then errors on the consumer's
 // path, the message is left unacknowledged and the redelivery reuses that row.
-// Nothing redelivers here: this attempt was started by a release's verdict,
-// not by a consumed message, and no sweep exists. So the row would say a fix
-// is being generated for as long as the database keeps it.
+// Nothing redelivers here: this attempt was started by a run's status, not by
+// a consumed message, and no sweep exists. So the row would say a fix is
+// being generated for as long as the database keeps it.
 func TestReconcileOnce_FailedNextAttemptLeavesNoGeneratingRow(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
-	h := newHarness(row)
-	h.gateway.verdicts[row.VerificationRunID] = ports.ShadowVerdict{
-		Terminal: true, Validated: false,
+	h := newHarness(t, row)
+	h.pipeline.statuses[row.VerificationRunID] = ports.VerificationStatus{
+		Phase:      proposal.PhaseFailed,
 		NodeErrors: map[string]string{"analytics.orders": "still wrong"},
 	}
 
@@ -1025,7 +1098,7 @@ func TestReconcileOnce_FailedNextAttemptLeavesNoGeneratingRow(t *testing.T) {
 		return handlers.ProposeFix(ctx, deps, t)
 	}
 
-	h.rec.ReconcileOnce(context.Background())
+	h.reconciler.ReconcileOnce(context.Background())
 
 	require.Len(t, h.repo.generating, 1,
 		"fixture check: the driver must have marked the next attempt in flight")
@@ -1037,9 +1110,9 @@ func TestReconcileOnce_FailedNextAttemptLeavesNoGeneratingRow(t *testing.T) {
 
 // TestProposedEventPromotesOnlyTheVerifyingNodeOutcomes pins what the
 // announcement says happened to each node the attempt covered. Only the nodes
-// that were waiting on a shadow release become proposed; a node the attempt
+// that were waiting on verification become proposed; a node the attempt
 // already skipped or failed keeps the outcome and reason it was recorded with,
-// since no release judged it.
+// since no run judged it.
 func TestProposedEventPromotesOnlyTheVerifyingNodeOutcomes(t *testing.T) {
 	row := verifyingRow("p1", 1, time.Minute)
 	row.ResolvedNodeIDs = []string{"s.a", "s.b"}
@@ -1058,4 +1131,42 @@ func TestProposedEventPromotesOnlyTheVerifyingNodeOutcomes(t *testing.T) {
 	assert.Equal(t, row.Edits, got.Edits)
 	assert.Equal(t, row.Verifications, got.Verifications)
 	assert.Equal(t, row.VerificationRunID, got.VerificationRunID)
+}
+
+// TestReconcile_RecordsThePhaseOnlyWhenItChanges pins recordPhase's guard: a
+// status read that reports the same phase the row already carries writes
+// nothing, while a genuine transition is recorded on the matching
+// verification.
+func TestReconcile_RecordsThePhaseOnlyWhenItChanges(t *testing.T) {
+	h := newHarness(t)
+	row := h.seedVerifying("rel-1", []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "verify-rel-1-svc-a1", Phase: proposal.PhaseQueued}})
+	h.pipeline.statuses["verify-rel-1-svc-a1"] = ports.VerificationStatus{Phase: proposal.PhaseQueued}
+	h.reconciler.ReconcileOnce(context.Background())
+	require.Empty(t, h.repo.phaseWrites, "queued → queued writes nothing")
+
+	h.pipeline.statuses["verify-rel-1-svc-a1"] = ports.VerificationStatus{Phase: proposal.PhaseRunning, ActivatedAt: testNow}
+	h.reconciler.ReconcileOnce(context.Background())
+	require.Len(t, h.repo.phaseWrites, 1)
+	assert.Equal(t, proposal.PhaseRunning, h.repo.phaseWrites[0].phase)
+	assert.Equal(t, row.ID, h.repo.phaseWrites[0].id)
+}
+
+// TestReconcile_FinalizesWithTerminalPhasesAndErrors pins that a multi-service
+// attempt's final per-run summary carries each run's own terminal phase and
+// error text, in the order the row's verifications were recorded.
+func TestReconcile_FinalizesWithTerminalPhasesAndErrors(t *testing.T) {
+	h := newHarness(t)
+	h.seedVerifying("rel-1", []proposal.Verification{
+		{Service: "svc", Kind: "dbt", RunID: "verify-rel-1-svc-a1", Phase: proposal.PhaseRunning},
+		{Service: "other", Kind: "dbt", RunID: "verify-rel-1-other-a1", Phase: proposal.PhaseRunning},
+	})
+	h.pipeline.statuses["verify-rel-1-svc-a1"] = ports.VerificationStatus{Phase: proposal.PhasePassed}
+	h.pipeline.statuses["verify-rel-1-other-a1"] = ports.VerificationStatus{Phase: proposal.PhaseFailed, NodeErrors: map[string]string{"model.other.x": "boom"}}
+	h.reconciler.ReconcileOnce(context.Background())
+	require.Len(t, h.repo.markFailedCalls, 1)
+	final := h.repo.markFailedCalls[0].verifications
+	require.Len(t, final, 2)
+	assert.Equal(t, proposal.PhasePassed, final[0].Phase)
+	assert.Equal(t, proposal.PhaseFailed, final[1].Phase)
+	assert.Equal(t, "model.other.x: boom", final[1].Error)
 }

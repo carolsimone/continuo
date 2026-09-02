@@ -29,12 +29,12 @@ import (
 // team's own CI runs after a merge — the merged contract a real release would
 // run. It returns that contract as Result.ShadowContract alongside the
 // proposed edits, with Status=StatusProposed; the driver collects it with
-// every other edit for the release and submits a shadow release that runs the
-// full parse -> candidate-schema -> validation pipeline but stops at
-// "validated" instead of promoting, deciding whether the fix survives.
-// Nothing here re-implements any validation rule — dialect, bind, and hash
-// semantics are identical to a normal release by construction, because a
-// shadow release IS one.
+// every other edit for the release and submits a fix-verification run that
+// carries the full parse -> candidate-schema -> validation pipeline through
+// to a terminal passed/failed verdict without ever promoting, deciding
+// whether the fix survives. Nothing here re-implements any validation rule —
+// dialect, bind, and hash semantics are identical to a normal release by
+// construction, because a verification run IS one.
 //
 // Locating the contract file and everything from the model call through
 // packaging the merged contract (locateContractForFix,
@@ -65,7 +65,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 
 	// Steps 4-7 — evidence, model call, apply, guard, package, and audit
 	// artifacts are identical in shape to every contract-fix lane whose answer
-	// is judged by a shadow release; only what evidence is assembled, what
+	// is judged by a verification run; only what evidence is assembled, what
 	// prompt it becomes, and what "the fix preserved the node's declaration"
 	// means are specific to a python node, so those three are passed in as the
 	// seams.
@@ -74,13 +74,13 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 }
 
 // locateContractForFix runs the steps every contract-fix lane whose answer is
-// judged by a shadow release needs before the model is ever consulted: split
-// the node id into schema and table, fetch the repository checkout at the
-// failing commit, locate the contract file declaring the node, and refuse to
-// proceed if another node declared in the same contract directory also
-// failed the original release (the shadow release the driver later submits
-// re-runs the whole packaged directory, so a second broken node there would
-// reject it however correct this fix is — see siblingFailure).
+// judged by a verification run needs before the model is ever consulted:
+// split the node id into schema and table, fetch the repository checkout at
+// the failing commit, locate the contract file declaring the node, and
+// refuse to proceed if another node declared in the same contract directory
+// also failed the original release (the verification run the driver later
+// submits re-runs the whole packaged directory, so a second broken node
+// there would fail it however correct this fix is — see siblingFailure).
 //
 // cleanup is non-nil whenever Archive.Fetch actually ran and succeeded —
 // including when the outcome that follows is a skip — so the caller can
@@ -101,8 +101,8 @@ func locateContractForFix(ctx context.Context, svc Services, in Input) (
 		return
 	}
 	// The service is what the driver later keys the merged contract's upload
-	// and the shadow release's submission by, so a trigger without one names
-	// nothing the fix could ever be verified under.
+	// and the verification run's submission by, so a trigger without one
+	// names nothing the fix could ever be verified under.
 	if in.Service == "" {
 		skip = skipResult(svc, in, "the trigger names no service, so the fix has no release to be verified under")
 		return
@@ -141,11 +141,11 @@ func locateContractForFix(ctx context.Context, svc Services, in Input) (
 	}
 
 	// Is a fix for this node verifiable at all? The fix is packaged from the
-	// whole contract directory, so the shadow release re-runs every node
+	// whole contract directory, so its verification run re-runs every node
 	// declared in it. Another node in that directory that also failed the
-	// original release therefore rejects the shadow however correct the fix
-	// is, and the attempt ends up front rather than spending a full
-	// validation release — and the single release slot — proving it.
+	// original release therefore fails that run however correct the fix is,
+	// and the attempt ends up front rather than spending a full verification
+	// run — and the single release-queue slot it takes — proving it.
 	var sibling string
 	sibling, err = siblingFailure(ctx, svc, in, located, root)
 	if err != nil {
@@ -154,8 +154,8 @@ func locateContractForFix(ctx context.Context, svc Services, in Input) (
 	if sibling != "" {
 		skip = skipResult(svc, in, fmt.Sprintf(
 			"%s also failed validation in release %s and is declared in the same contract directory (%s) as %s. "+
-				"A fix is packaged from that whole directory, so any shadow release verifying it would re-run both nodes "+
-				"and be rejected by %s. Fix both nodes together.",
+				"A fix is packaged from that whole directory, so any verification run of it would re-run both nodes "+
+				"and be failed by %s. Fix both nodes together.",
 			sibling, in.ReleaseID, located.ContractDir, in.NodeID, sibling))
 	}
 	return
@@ -173,9 +173,9 @@ func buildPythonProposeRequest(ctx context.Context, svc Services, in Input, loca
 }
 
 // proposeContractFixViaShadow carries the orchestration shared by every
-// contract-fix lane whose answer can only be judged by a shadow release: one
-// model call, applying and guarding the answer, and packaging it into the
-// merged contract a shadow release would run, plus writing the audit
+// contract-fix lane whose answer can only be judged by a verification run:
+// one model call, applying and guarding the answer, and packaging it into the
+// merged contract a verification run would run, plus writing the audit
 // artifacts. It never submits anything — packaging the whole release from
 // every edited service's contract and deciding whether the fix survives
 // belongs to the driver, which collects this and every other cluster's edits
@@ -203,7 +203,7 @@ func proposeContractFixViaShadow(
 	// Every path must be inside the contract directory the model was shown, and
 	// no file may appear twice. A repeated path has no single answer: applying
 	// the list leaves the LAST entry on disk — which is what gets packaged and
-	// what the shadow release verifies — while the recorded edits, and the
+	// what the verification run verifies — while the recorded edits, and the
 	// proposal's single-file view built from the first of them, would describe
 	// an earlier entry. A human would then approve content that was never the
 	// content validated. Paths are compared in cleaned form so two spellings of
@@ -233,12 +233,12 @@ func proposeContractFixViaShadow(
 	}
 
 	// Step 6 — the node under repair must have survived its own repair. A
-	// shadow release can only reject what the packaged contract still declares,
-	// so an answer that deleted or renamed the failing node — or deleted the
-	// read that could not bind — leaves the release nothing to fail on: it
-	// validates, and the edit that removed the broken thing is recorded as a
-	// proven fix and offered to a human. The same holds for a sibling declared
-	// beside it, which this attempt was never asked to touch at all.
+	// verification run can only fail on what the packaged contract still
+	// declares, so an answer that deleted or renamed the failing node — or
+	// deleted the read that could not bind — leaves the run nothing to fail
+	// on: it passes, and the edit that removed the broken thing is recorded
+	// as a proven fix and offered to a human. The same holds for a sibling
+	// declared beside it, which this attempt was never asked to touch at all.
 	if reason := checkDeclarations(svc, res.Files, originals); reason != "" {
 		return failPython(svc, in, reason)
 	}
@@ -308,7 +308,7 @@ func proposeContractFixViaShadow(
 			ProposedSQLURI: edits[0].ContentURI,
 			DiffURI:        edits[0].DiffURI,
 			// The edits name real files at a real commit, which is what a pull
-			// request needs; the shadow release the driver submits from
+			// request needs; the verification run the driver submits from
 			// ShadowContract decides whether they are right.
 			SourceResolved: true,
 			Edits:          edits,
@@ -327,11 +327,11 @@ func proposeContractFixViaShadow(
 // is not mistaken for deleting it from one.
 //
 // A node the answer ADDS is not refused here, and neither is a read it adds or
-// rewrites. Each is declared in the packaged directory, so the shadow release
-// runs and bind-checks it like any other, which is an honest verdict rather than
-// a false one. What is refused is subtraction: a node or a read that was there
-// and no longer is leaves the release less to judge than the failure it was
-// asked to repair.
+// rewrites. Each is declared in the packaged directory, so the verification
+// run runs and bind-checks it like any other, which is an honest verdict
+// rather than a false one. What is refused is subtraction: a node or a read
+// that was there and no longer is leaves the run less to judge than the
+// failure it was asked to repair.
 func declarationBreach(svc Services, files []ports.ProposedFile, originals map[string]string) string {
 	before, after, breach := buildDeclarationMaps(svc, files, originals)
 	if breach != "" {
@@ -534,30 +534,30 @@ func isContractYAMLPath(p string) bool {
 //
 // It exists because two things disagree about scope. The classifier emits one
 // heal trigger per failing node, but a python fix is packaged from the whole
-// directory the declaring yaml lives in — so the release that verifies it runs
-// every node declared there. If a second one of those nodes is already broken,
-// no fix for the first can ever be validated: the shadow is rejected by the
-// node this attempt neither repaired nor was shown, that rejection becomes the
+// directory the declaring yaml lives in — so the verification run that judges
+// it runs every node declared there. If a second one of those nodes is
+// already broken, no fix for the first can ever pass: the run fails on the
+// node this attempt neither repaired nor was shown, that failure becomes the
 // next attempt's evidence, and the same thing happens again until the attempt
 // cap is reached.
 //
-// The failing set is read from the ORIGINAL release's verdict, whose NodeErrors
-// are keyed by node id, and each other id is resolved against the same checkout
-// to see where it is declared. A node no contract yaml declares — a dbt model,
-// or a python node in another service — is not packaged by this fix and so
-// cannot reject its shadow release.
+// The failing set is read from the ORIGINAL release's failing nodes, keyed by
+// node id, and each other id is resolved against the same checkout to see
+// where it is declared. A node no contract yaml declares — a dbt model, or a
+// python node in another service — is not packaged by this fix and so cannot
+// fail its verification run.
 //
-// A verdict that cannot be read ends the attempt with an error rather than a
-// guess, so the driver redelivers: this decides whether the shadow release can
-// mean anything at all, and it is the same release the image-tag read already
-// treats as required.
+// A release read that fails ends the attempt with an error rather than a
+// guess, so the driver redelivers: this decides whether the verification run
+// can mean anything at all, and it is the same release the image-tag read
+// already treats as required.
 func siblingFailure(ctx context.Context, svc Services, in Input, located ports.Located, root string) (string, error) {
-	verdict, err := svc.Releases.Verdict(ctx, in.ReleaseID)
+	nodeErrors, err := svc.Releases.FailingNodes(ctx, in.ReleaseID)
 	if err != nil {
-		return "", fmt.Errorf("read verdict of release %s: %w", in.ReleaseID, err)
+		return "", fmt.Errorf("read failing nodes of release %s: %w", in.ReleaseID, err)
 	}
-	others := make([]string, 0, len(verdict.NodeErrors))
-	for nodeID := range verdict.NodeErrors {
+	others := make([]string, 0, len(nodeErrors))
+	for nodeID := range nodeErrors {
 		if nodeID != in.NodeID {
 			others = append(others, nodeID)
 		}
@@ -758,7 +758,7 @@ func pythonContractEntry(ctx context.Context, svc Services, in Input) (string, e
 }
 
 // loadPriorAttempts returns the earlier attempts at this same failure, oldest
-// first, each with the error its shadow release reported and the diffs it
+// first, each with the error its verification run reported and the diffs it
 // applied. This is what makes attempt N+1 better informed than attempt N; it is
 // still best-effort, so an unreadable attempt history costs the section rather
 // than the heal. The in-flight attempt's own row is excluded — it is this

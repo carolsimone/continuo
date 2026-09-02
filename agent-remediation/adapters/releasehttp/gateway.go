@@ -231,15 +231,30 @@ func (g *Gateway) fetchMessage(ctx context.Context, uri string) string {
 	return sr.Message
 }
 
-// releaseResponse mirrors GET /releases/{id}, narrowed to what ImageTag reads.
+// releaseNodeResult mirrors a per_node_results entry of GET /releases/{id}
+// (release-controller's release.NodeValidationResult), narrowed to what
+// FailingNodes reads.
+type releaseNodeResult struct {
+	Stage         string `json:"stage"`
+	NodeID        string `json:"node_id"`
+	Status        string `json:"status"`
+	RunResultsURI string `json:"run_results_uri"`
+}
+
+// releaseResponse mirrors GET /releases/{id}, narrowed to what ImageTag and
+// FailingNodes read.
 type releaseResponse struct {
-	ImageTags map[string]string `json:"image_tags"`
+	ImageTags    map[string]string   `json:"image_tags"`
+	RejectReason string              `json:"reject_reason"`
+	RejectDetail string              `json:"reject_detail"`
+	FailingNodes []string            `json:"failing_nodes"`
+	PerNode      []releaseNodeResult `json:"per_node_results"`
 }
 
 // ImageTag returns image_tags[service] of the candidate release releaseID.
 func (g *Gateway) ImageTag(ctx context.Context, releaseID, service string) (string, error) {
-	var rel releaseResponse
-	if err := g.getJSON(ctx, "/releases/"+releaseID, &rel); err != nil {
+	rel, err := g.getRelease(ctx, releaseID)
+	if err != nil {
 		return "", err
 	}
 	tag, ok := rel.ImageTags[service]
@@ -247,6 +262,63 @@ func (g *Gateway) ImageTag(ctx context.Context, releaseID, service string) (stri
 		return "", fmt.Errorf("release %s has no image tag for service %q", releaseID, service)
 	}
 	return tag, nil
+}
+
+// getRelease fetches and decodes GET /releases/{releaseID}.
+func (g *Gateway) getRelease(ctx context.Context, releaseID string) (releaseResponse, error) {
+	var rel releaseResponse
+	if err := g.getJSON(ctx, "/releases/"+releaseID, &rel); err != nil {
+		return releaseResponse{}, err
+	}
+	return rel, nil
+}
+
+// releaseFailFallback combines the release's reject_reason and reject_detail
+// into one human-readable string, the same "reason — detail" shape ui's
+// ReleaseDetailPage renders, so a node whose own structured result can't be
+// resolved — or that release-controller named only in failing_nodes, with no
+// per_node_results entry of its own — still carries a meaningful error text.
+func releaseFailFallback(rel releaseResponse) string {
+	switch {
+	case rel.RejectDetail == "":
+		return rel.RejectReason
+	case rel.RejectReason == "":
+		return rel.RejectDetail
+	}
+	return rel.RejectReason + " — " + rel.RejectDetail
+}
+
+// FailingNodes returns the ORIGINAL candidate release's failing validation
+// nodes: node_id -> error text, one entry per node release-controller
+// recorded as failing. Every id in failing_nodes starts out mapped to the
+// release-level fallback text; per_node_results then overwrites each
+// validation-stage entry that did not pass with its own text — the sentinel
+// JSON's message, read from its run_results_uri through the EvidenceReader,
+// or the same fallback when that read yields nothing. A node
+// release-controller named in failing_nodes without a validation-stage result
+// of its own (a compile or duplicate_table rejection, which reports failing
+// nodes with no per-node validation detail) is left at the fallback.
+func (g *Gateway) FailingNodes(ctx context.Context, releaseID string) (map[string]string, error) {
+	rel, err := g.getRelease(ctx, releaseID)
+	if err != nil {
+		return nil, err
+	}
+	fallback := releaseFailFallback(rel)
+	out := make(map[string]string, len(rel.FailingNodes))
+	for _, id := range rel.FailingNodes {
+		out[id] = fallback
+	}
+	for _, n := range rel.PerNode {
+		if n.Stage != "validation" || n.Status == "ok" {
+			continue
+		}
+		msg := g.fetchMessage(ctx, n.RunResultsURI)
+		if msg == "" {
+			msg = fallback
+		}
+		out[n.NodeID] = msg
+	}
+	return out, nil
 }
 
 // getJSON fetches and decodes one release-controller resource.

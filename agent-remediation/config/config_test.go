@@ -188,85 +188,85 @@ func TestLoad_SQLDialectRejectsUnsupportedEngine(t *testing.T) {
 	assert.Contains(t, strings.Join(missing, " "), "duckdb")
 }
 
-// TestLoad_ReleaseGatewayDefaults verifies that an install which never set
-// RELEASE_CONTROLLER_URL or SHADOW_VERIFY_TIMEOUT gets the documented
+// TestLoad_VerificationPipelineDefaults verifies that an install which never
+// set RELEASE_CONTROLLER_URL or VERIFICATION_TIMEOUT gets the documented
 // defaults: the release-controller's in-cluster service address, and a 20
-// minute cap on how long a shadow verification is polled for.
-func TestLoad_ReleaseGatewayDefaults(t *testing.T) {
+// minute cap on how long a verification run is polled for.
+func TestLoad_VerificationPipelineDefaults(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("RELEASE_CONTROLLER_URL", "")
-	t.Setenv("SHADOW_VERIFY_TIMEOUT", "")
+	t.Setenv("VERIFICATION_TIMEOUT", "")
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
 	assert.Equal(t, "http://release-controller:8088", cfg.ReleaseControllerURL)
-	assert.Equal(t, 20*time.Minute, cfg.ShadowVerifyTimeout)
+	assert.Equal(t, 20*time.Minute, cfg.VerificationTimeout)
 }
 
-// TestLoad_ReleaseGatewayOverrides verifies both env vars override their
-// defaults.
-func TestLoad_ReleaseGatewayOverrides(t *testing.T) {
+// TestLoad_VerificationPipelineOverrides verifies both env vars override
+// their defaults.
+func TestLoad_VerificationPipelineOverrides(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("RELEASE_CONTROLLER_URL", "http://release-controller.other:9000")
-	t.Setenv("SHADOW_VERIFY_TIMEOUT", "5m")
+	t.Setenv("VERIFICATION_TIMEOUT", "5m")
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
 	assert.Equal(t, "http://release-controller.other:9000", cfg.ReleaseControllerURL)
-	assert.Equal(t, 5*time.Minute, cfg.ShadowVerifyTimeout)
+	assert.Equal(t, 5*time.Minute, cfg.VerificationTimeout)
 }
 
-// TestLoad_ShadowVerifyTimeoutNonPositiveFallsBackToDefault verifies a zero
+// TestLoad_VerificationTimeoutNonPositiveFallsBackToDefault verifies a zero
 // or negative timeout is clamped back to the default rather than producing a
 // poll loop with no cap (0) or one that never runs (negative).
-func TestLoad_ShadowVerifyTimeoutNonPositiveFallsBackToDefault(t *testing.T) {
+func TestLoad_VerificationTimeoutNonPositiveFallsBackToDefault(t *testing.T) {
 	for _, val := range []string{"0s", "-1s"} {
 		t.Run(val, func(t *testing.T) {
 			setBaseEnv(t)
-			t.Setenv("SHADOW_VERIFY_TIMEOUT", val)
+			t.Setenv("VERIFICATION_TIMEOUT", val)
 			v := &pkgconfig.Validator{}
 			cfg := Load(v)
 			require.Empty(t, v.Missing())
-			assert.Equal(t, 20*time.Minute, cfg.ShadowVerifyTimeout)
+			assert.Equal(t, 20*time.Minute, cfg.VerificationTimeout)
 		})
 	}
 }
 
-// TestLoad_ShadowVerifyPollIntervalDefault verifies an install that never set
-// SHADOW_VERIFY_POLL_INTERVAL gets the documented 15 second cadence for the
-// loop that reads each waiting attempt's shadow release.
-func TestLoad_ShadowVerifyPollIntervalDefault(t *testing.T) {
+// TestLoad_VerificationPollIntervalDefault verifies an install that never set
+// VERIFICATION_POLL_INTERVAL gets the documented 15 second cadence for the
+// loop that reads each waiting attempt's verification runs.
+func TestLoad_VerificationPollIntervalDefault(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("SHADOW_VERIFY_POLL_INTERVAL", "")
+	t.Setenv("VERIFICATION_POLL_INTERVAL", "")
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
-	assert.Equal(t, 15*time.Second, cfg.ShadowVerifyPollInterval)
+	assert.Equal(t, 15*time.Second, cfg.VerificationPollInterval)
 }
 
-// TestLoad_ShadowVerifyPollIntervalOverride verifies the env var overrides the
-// default cadence.
-func TestLoad_ShadowVerifyPollIntervalOverride(t *testing.T) {
+// TestLoad_VerificationPollIntervalOverride verifies the env var overrides
+// the default cadence.
+func TestLoad_VerificationPollIntervalOverride(t *testing.T) {
 	setBaseEnv(t)
-	t.Setenv("SHADOW_VERIFY_POLL_INTERVAL", "5s")
+	t.Setenv("VERIFICATION_POLL_INTERVAL", "5s")
 	v := &pkgconfig.Validator{}
 	cfg := Load(v)
 	require.Empty(t, v.Missing())
-	assert.Equal(t, 5*time.Second, cfg.ShadowVerifyPollInterval)
+	assert.Equal(t, 5*time.Second, cfg.VerificationPollInterval)
 }
 
-// TestLoad_ShadowVerifyPollIntervalNonPositiveFallsBackToDefault verifies a
+// TestLoad_VerificationPollIntervalNonPositiveFallsBackToDefault verifies a
 // zero or negative interval is clamped back to the default rather than
 // producing a hot loop (0 panics a ticker) or one that never runs.
-func TestLoad_ShadowVerifyPollIntervalNonPositiveFallsBackToDefault(t *testing.T) {
+func TestLoad_VerificationPollIntervalNonPositiveFallsBackToDefault(t *testing.T) {
 	for _, val := range []string{"0s", "-1s"} {
 		t.Run(val, func(t *testing.T) {
 			setBaseEnv(t)
-			t.Setenv("SHADOW_VERIFY_POLL_INTERVAL", val)
+			t.Setenv("VERIFICATION_POLL_INTERVAL", val)
 			v := &pkgconfig.Validator{}
 			cfg := Load(v)
 			require.Empty(t, v.Missing())
-			assert.Equal(t, 15*time.Second, cfg.ShadowVerifyPollInterval)
+			assert.Equal(t, 15*time.Second, cfg.VerificationPollInterval)
 		})
 	}
 }
@@ -284,8 +284,8 @@ func TestLoad_MalformedDurationFailsStartup(t *testing.T) {
 		"LLM_CACHE_TTL",
 		"REMEDIATION_PR_POLL_INTERVAL",
 		"REMEDIATION_PR_OPENING_GRACE_PERIOD",
-		"SHADOW_VERIFY_TIMEOUT",
-		"SHADOW_VERIFY_POLL_INTERVAL",
+		"VERIFICATION_TIMEOUT",
+		"VERIFICATION_POLL_INTERVAL",
 	} {
 		t.Run(key, func(t *testing.T) {
 			setBaseEnv(t)
@@ -313,6 +313,6 @@ func TestLoad_UnsetDurationIsNotAMisconfiguration(t *testing.T) {
 	assert.Equal(t, time.Hour, cfg.LLMCacheTTL)
 	assert.Equal(t, time.Minute, cfg.PRPollInterval)
 	assert.Equal(t, 10*time.Minute, cfg.PROpeningGracePeriod)
-	assert.Equal(t, 20*time.Minute, cfg.ShadowVerifyTimeout)
-	assert.Equal(t, 15*time.Second, cfg.ShadowVerifyPollInterval)
+	assert.Equal(t, 20*time.Minute, cfg.VerificationTimeout)
+	assert.Equal(t, 15*time.Second, cfg.VerificationPollInterval)
 }

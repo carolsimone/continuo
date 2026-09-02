@@ -15,23 +15,23 @@ import (
 
 // errUnmappedEdit marks an edit whose path lies outside every service this
 // install configures a repository path for. Nothing downstream can run such an
-// edit — a shadow release is submitted for one service, and the overlay it lays
-// down is relative to that service's project — so the attempt ends with the
-// reason recorded rather than being redelivered forever.
+// edit — a verification run is submitted for one service, and the overlay it
+// lays down is relative to that service's project — so the attempt ends with
+// the reason recorded rather than being redelivered forever.
 var errUnmappedEdit = errors.New("edit belongs to no configured service")
 
 // errMixedManifestKinds marks a service whose edits would have to be verified
 // as two different manifest kinds at once: a packaged python contract plus at
-// least one edit to something that is not a python node's contract. A release
-// parses one kind, so whichever lane were chosen would verify only half the
-// change and silently ignore the rest.
+// least one edit to something that is not a python node's contract. A
+// verification run parses one kind, so whichever lane were chosen would
+// verify only half the change and silently ignore the rest.
 var errMixedManifestKinds = errors.New("mixes a python contract with dbt edits in one attempt; a release verifies one manifest kind")
 
 // errDuplicateEditPath marks an attempt carrying two edits to one repository
 // path. A source overlay holds one file per path and a python service is
 // verified by one packaged contract, so the second edit would silently replace
-// the first: the shadow release would run a file the attempt does not describe,
-// and the proposal would record an edit nothing ever verified.
+// the first: the verification run would run a file the attempt does not
+// describe, and the proposal would record an edit nothing ever verified.
 var errDuplicateEditPath = errors.New("two edits change the same file")
 
 // unverifiable reports whether a verification failure is permanent — the edits
@@ -43,21 +43,21 @@ func unverifiable(err error) bool {
 		errors.Is(err, errDuplicateEditPath)
 }
 
-// submitVerifications posts one shadow verification release per service the
-// attempt edits, and returns what it posted. A shadow release is a real release
-// that runs the full parse → candidate-schema → validation pipeline and stops at
-// "validated" instead of promoting, so it is what decides whether these edits
-// actually fix the failing release.
+// submitVerifications posts one verification run per service the attempt
+// edits, and returns what it posted. A verification run carries the full
+// parse -> candidate-schema -> validation pipeline through to a terminal
+// passed/failed verdict without ever promoting, so it is what decides whether
+// these edits actually fix the failing release.
 //
-// What the shadow runs depends on the service's manifest kind. A python service
-// is verified by the contract yaml its fix packaged, uploaded under the shadow's
-// own id. A dbt service is verified by re-running its project with the proposed
-// content laid over it, so each edit's content is read back from the artifact the
-// Fixer wrote and packed into one source overlay, keyed by the edit's path
-// within that service's project.
+// What the run verifies depends on the service's manifest kind. A python
+// service is verified by the contract yaml its fix packaged, uploaded under
+// the run's own id. A dbt service is verified by re-running its project with
+// the proposed content laid over it, so each edit's content is read back from
+// the artifact the Fixer wrote and packed into one source overlay, keyed by
+// the edit's path within that service's project.
 //
 // Both the artifact writes and the submission are idempotent on the attempt's
-// keys — the shadow id is a pure function of (release, service, attempt) — so a
+// keys — the run id is a pure function of (release, service, attempt) — so a
 // redelivery repeats this safely.
 func submitVerifications(
 	ctx context.Context, deps Deps, t Trigger, attempt int,
@@ -92,8 +92,8 @@ func submitVerifications(
 
 	// Every service is checked before any is submitted, so an attempt one of
 	// them cannot verify spends no release slot on the others — the attempt is
-	// recorded as a whole, and a half-submitted one would leave shadow releases
-	// running for a fix that was never recorded as being verified.
+	// recorded as a whole, and a half-submitted one would leave verification
+	// runs running for a fix that was never recorded as being verified.
 	for _, service := range services {
 		if contracts[service] == nil {
 			continue
@@ -108,18 +108,18 @@ func submitVerifications(
 
 	verifications := make([]proposal.Verification, 0, len(services))
 	for _, service := range services {
-		shadowID := ShadowReleaseID(t.ReleaseID, service, attempt)
-		kind := ports.ShadowKindDbt
+		runID := VerificationRunID(t.ReleaseID, service, attempt)
+		kind := ports.VerificationKindDbt
 		overlayURI := ""
 
 		if contract := contracts[service]; contract != nil {
 			// A python service's artifact IS the packaged contract: there is no
-			// project to overlay, so the shadow release reads the contract
-			// written under its own id.
-			kind = ports.ShadowKindPython
+			// project to overlay, so the run reads the contract written under its
+			// own id.
+			kind = ports.VerificationKindPython
 			if _, err := deps.Artifacts.Write(ctx,
-				service+"/"+shadowID+"/contract.yaml", string(contract), "application/yaml"); err != nil {
-				return nil, fmt.Errorf("write shadow contract for %s: %w", service, err)
+				service+"/"+runID+"/contract.yaml", string(contract), "application/yaml"); err != nil {
+				return nil, fmt.Errorf("write verification contract for %s: %w", service, err)
 			}
 		} else {
 			files := make([]overlay.File, 0, len(byService[service]))
@@ -138,44 +138,35 @@ func submitVerifications(
 				return nil, fmt.Errorf("build source overlay for %s: %w", service, err)
 			}
 			overlayURI, err = deps.Artifacts.Write(ctx,
-				service+"/"+shadowID+"/source-overlay.tar.gz", string(tarball), "application/gzip")
+				service+"/"+runID+"/source-overlay.tar.gz", string(tarball), "application/gzip")
 			if err != nil {
 				return nil, fmt.Errorf("write source overlay for %s: %w", service, err)
 			}
 		}
 
 		// The trigger carries no image tag, so the failing release's own tag is
-		// read and reused: a shadow never promotes, so it never reaches the path
-		// an image tag would otherwise drive.
+		// read and reused: a verification run never promotes, so it never
+		// reaches the path an image tag would otherwise drive.
 		imageTag, err := deps.Releases.ImageTag(ctx, t.ReleaseID, service)
 		if err != nil {
 			return nil, fmt.Errorf("read image tag of release %s for %s: %w", t.ReleaseID, service, err)
 		}
-		if err := deps.Releases.Submit(ctx, ports.ShadowSubmission{
-			ReleaseID:        shadowID,
-			Service:          service,
-			ImageTag:         imageTag,
-			Repo:             t.Repo,
-			CommitSHA:        t.CommitSHA,
-			Kind:             kind,
-			SourceOverlayURI: overlayURI,
-			// The shadow verifies THIS release's rejection. When the fix edits a
-			// different service than the rejected release changed, that release's
-			// own candidate is what the shadow must run its edited service
-			// against, not the service's production manifest.
+		if err := deps.Pipeline.Submit(ctx, ports.VerificationRequest{
+			RunID:             runID,
+			Service:           service,
+			ImageTag:          imageTag,
+			Kind:              kind,
 			VerifiesReleaseID: t.ReleaseID,
+			Attempt:           attempt,
+			SourceOverlayURI:  overlayURI,
 		}); err != nil {
-			return nil, fmt.Errorf("submit shadow release %s: %w", shadowID, err)
+			return nil, fmt.Errorf("submit verification run %s: %w", runID, err)
 		}
-		deps.Logger.Info("shadow verification release submitted",
+		deps.Logger.Info("verification run submitted",
 			"release", t.ReleaseID, "attempt", attempt, "service", service,
-			"shadow", shadowID, "kind", kind, "edits", len(byService[service]))
+			"run", runID, "kind", kind, "edits", len(byService[service]))
 
-		verifications = append(verifications, proposal.Verification{
-			Service: service,
-			Kind:    kind,
-			RunID:   shadowID,
-		})
+		verifications = append(verifications, proposal.Verification{Service: service, Kind: kind, RunID: runID, Phase: proposal.PhaseQueued})
 	}
 	return verifications, nil
 }
@@ -184,7 +175,8 @@ func submitVerifications(
 // not a python node's contract, and whether one exists. An edit qualifies only
 // when it changes the source of a failing node the trigger carries and that
 // node is a python kind; an edit to a dbt node, or to an upstream ancestor the
-// trigger never named, is something a python release cannot verify.
+// trigger never named, is something a python service's verification run cannot
+// verify.
 func nonContractEdit(t Trigger, edits []proposal.FileEdit) (proposal.FileEdit, bool) {
 	for _, e := range edits {
 		n, ok := nodeByID(t, e.TargetNodeID)

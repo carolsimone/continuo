@@ -43,7 +43,7 @@ func TestBuild_RejectsUnsafePaths(t *testing.T) {
 
 // TestBuild_CarriesEachFileContent proves the tarball is the files themselves,
 // not just their names: the member read back out must be byte-identical to what
-// went in, since the shadow release's compile leg runs whatever this lays down.
+// went in, since the verification run's compile leg runs whatever this lays down.
 func TestBuild_CarriesEachFileContent(t *testing.T) {
 	tarball, err := Build([]File{
 		{Path: "models/a.sql", Content: []byte("select 1")},

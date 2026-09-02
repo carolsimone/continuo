@@ -170,7 +170,7 @@ func TestCsvValidation_HappyPath(t *testing.T) {
 // sanctioned repair: when the evidence shows the declared uri itself is
 // stale (rather than output_columns being wrong), the fix corrects the "csv"
 // read's VALUE instead. The key survives, so the guard passes and the fix
-// reaches a shadow release exactly as an output_columns-only fix does.
+// reaches a verification run exactly as an output_columns-only fix does.
 func TestCsvValidation_AnswerCorrectsTheCsvURI_Verifies(t *testing.T) {
 	root := csvRepoTree(t)
 	svc, _, pkgr, _, _ := csvSvc(t, root)
@@ -198,9 +198,9 @@ func TestCsvValidation_AnswerCorrectsTheCsvURI_Verifies(t *testing.T) {
 }
 
 // TestCsvValidation_AnswerDeletesTheCsvRead_Fails covers the cheapest way to
-// make a shadow release pass without repairing anything: delete the "csv"
+// make a verification run pass without repairing anything: delete the "csv"
 // read entirely, or rename it, and there is nothing left for the runtime to
-// load — the release validates on a node that is no longer a csv node at all.
+// load — the run passes on a node that is no longer a csv node at all.
 func TestCsvValidation_AnswerDeletesTheCsvRead_Fails(t *testing.T) {
 	const target = "services/service-csv/contracts/py_csv_orders.yml"
 
@@ -322,8 +322,8 @@ func TestCsvValidation_AnswerChangesKind_Fails(t *testing.T) {
 
 // TestCsvValidation_AnswerThatChangesNodeIdentity_Fails verifies that an
 // answer which re-identifies the failing node — here by renaming its table —
-// is refused before any shadow release is spent proving it, the same identity
-// guard the python-model lane already enforces.
+// is refused before any verification run is spent proving it, the same
+// identity guard the python-model lane already enforces.
 func TestCsvValidation_AnswerThatChangesNodeIdentity_Fails(t *testing.T) {
 	root := csvRepoTree(t)
 	svc, _, pkgr, _, arts := csvSvc(t, root)
@@ -432,10 +432,10 @@ func TestCsvValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 
 	// other.yml sits in the same contracts/ directory as the failing node's
 	// own declaring file, so packaging one packages both.
-	rel.verdict = ports.ShadowVerdict{Terminal: true, NodeErrors: map[string]string{
+	rel.failingNodes = map[string]string{
 		"analytics.py_csv_orders": "csv header missing declared column(s): ['customer_id']",
 		"analytics.other":         "column country does not exist",
-	}}
+	}
 
 	r, err := csvValidationFixer{}.Propose(context.Background(), svc, csvInput())
 	require.NoError(t, err)
@@ -443,10 +443,10 @@ func TestCsvValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 	require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
 	require.Contains(t, r.Proposal.Rationale, "analytics.other",
 		"the rationale must name the node that makes this fix unverifiable")
-	require.Equal(t, []string{"rel-2"}, rel.verdictCalls,
-		"the sibling check reads the ORIGINAL failing release, not a shadow")
+	require.Equal(t, []string{"rel-2"}, rel.failingNodesCalls,
+		"the sibling check reads the ORIGINAL failing release, not a verification run")
 	require.Equal(t, 0, llm.calls, "no model call is worth making for an unverifiable fix")
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, r.ShadowContract, "no release slot is spent on a shadow that cannot pass")
+	require.Empty(t, r.ShadowContract, "no release-queue slot is spent on a fix that cannot pass")
 	require.Empty(t, arts.written)
 }

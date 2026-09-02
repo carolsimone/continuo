@@ -138,8 +138,8 @@ func (f *fakeLLM) Propose(_ context.Context, _ ports.ProposeRequest) (ports.Prop
 
 // fakeArtifacts records writes in memory and returns deterministic URIs. The
 // URI shape matters to the driver: it reads a proposed edit's content back
-// through the evidence reader to build the shadow release's source overlay, so
-// tests key their evidence fixtures on exactly these URIs.
+// through the evidence reader to build the verification run's source overlay,
+// so tests key their evidence fixtures on exactly these URIs.
 type fakeArtifacts struct {
 	written map[string]string
 }
@@ -152,24 +152,36 @@ func (f *fakeArtifacts) Write(_ context.Context, key, body, _ string) (string, e
 	return "s3://art/" + key, nil
 }
 
-// fakeGateway records the shadow releases the driver submits and answers with a
-// scripted image tag for the failing release.
+// fakeGateway records the verification runs the driver submits and answers
+// with a scripted image tag for the failing release. It implements both
+// ports.VerificationPipeline (Submit) and ports.ReleaseReader (ImageTag,
+// FailingNodes), the same split the real releasehttp.Gateway satisfies, so a
+// test wires one fake to both Deps.Pipeline and Deps.Releases.
 type fakeGateway struct {
 	imageTag  string
-	submitted []ports.ShadowSubmission
+	submitted []ports.VerificationRequest
 }
 
-func (g *fakeGateway) Submit(_ context.Context, s ports.ShadowSubmission) error {
-	g.submitted = append(g.submitted, s)
+var (
+	_ ports.VerificationPipeline = (*fakeGateway)(nil)
+	_ ports.ReleaseReader        = (*fakeGateway)(nil)
+)
+
+func (g *fakeGateway) Submit(_ context.Context, r ports.VerificationRequest) error {
+	g.submitted = append(g.submitted, r)
 	return nil
 }
 
-func (g *fakeGateway) Verdict(context.Context, string) (ports.ShadowVerdict, error) {
-	return ports.ShadowVerdict{}, nil
+func (g *fakeGateway) Status(context.Context, string) (ports.VerificationStatus, error) {
+	return ports.VerificationStatus{}, nil
 }
 
 func (g *fakeGateway) ImageTag(context.Context, string, string) (string, error) {
 	return g.imageTag, nil
+}
+
+func (g *fakeGateway) FailingNodes(context.Context, string) (map[string]string, error) {
+	return nil, nil
 }
 
 // tarNames lists the member paths of a gzip tarball, in archive order.
@@ -481,6 +493,7 @@ func newFakeUoW() *fakeUoW {
 }
 
 func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
+	gw := &fakeGateway{imageTag: "tag-0"}
 	return Deps{
 		NewUoW:           func() uow.UnitOfWork { return u },
 		LLM:              llm,
@@ -497,7 +510,8 @@ func deps(u *fakeUoW, ev fakeEvidence, llm *fakeLLM, art *fakeArtifacts) Deps {
 		CandidateSource:  fakeCandidateSource{err: ports.ErrNotFound},
 		Upstream:         fakeUpstream{},
 		Versions:         fakeVersions{},
-		Releases:         &fakeGateway{imageTag: "tag-0"},
+		Pipeline:         gw,
+		Releases:         gw,
 	}
 }
 
@@ -513,7 +527,7 @@ func baseTrigger() Trigger {
 // TestProposeFix_CompileSource verifies the compile branch: a compile node
 // carries no candidate SQL but a FilePath. The handler must read the offending
 // source from version control, prompt the LLM with the dbt error + raw source,
-// and record a source-resolved attempt awaiting the shadow release that will
+// and record a source-resolved attempt awaiting the verification run that will
 // judge it. A non-empty proposed-fix artifact is written.
 func TestProposeFix_CompileSource(t *testing.T) {
 	u := newFakeUoW()
@@ -548,6 +562,7 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		// Service "core" maps to the repo root, so the full path equals FilePath.
 		ServiceRepoPaths: map[string]string{"core": ""},
 		Precedents:       fakePrecedents{},
+		Pipeline:         gw,
 		Releases:         gw,
 	}
 	tr := Trigger{
@@ -575,13 +590,13 @@ func TestProposeFix_CompileSource(t *testing.T) {
 		}
 	}
 	require.NotZero(t, nonEmpty, "expected a non-empty proposed-fix artifact")
-	// A service rooted at the repository root still owns the edit, so the shadow
-	// release lays the file down at the path the project already uses.
+	// A service rooted at the repository root still owns the edit, so the
+	// verification run lays the file down at the path the project already uses.
 	require.Len(t, gw.submitted, 1)
-	require.Equal(t, "shadow-r1-core-a1", gw.submitted[0].ReleaseID)
+	require.Equal(t, "verify-r1-core-a1", gw.submitted[0].RunID)
 	require.Equal(t, []string{"models/daily_transactions.sql"},
-		tarNames(t, []byte(art.written["core/shadow-r1-core-a1/source-overlay.tar.gz"])))
-	require.Empty(t, u.ob.entries, "the driver announces nothing; the reconciler does once the shadow validates")
+		tarNames(t, []byte(art.written["core/verify-r1-core-a1/source-overlay.tar.gz"])))
+	require.Empty(t, u.ob.entries, "the driver announces nothing; the reconciler does once the verification run passes")
 	require.True(t, u.committed)
 }
 
@@ -620,6 +635,7 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 		MaxAttempts:      3,
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 		Precedents:       fakePrecedents{},
+		Pipeline:         gw,
 		Releases:         gw,
 	}
 	tr := Trigger{
@@ -640,7 +656,7 @@ func TestProposeFix_SeedSourceViaThreadedPayload(t *testing.T) {
 	require.Equal(t, "services/svc/seeds/customers.csv", p.FilePath)
 	require.Equal(t, "services/svc/seeds/customers.csv", src.readPath)
 	require.Equal(t, []string{"seeds/customers.csv"},
-		tarNames(t, []byte(art.written["svc/shadow-r1-svc-a1/source-overlay.tar.gz"])),
+		tarNames(t, []byte(art.written["svc/verify-r1-svc-a1/source-overlay.tar.gz"])),
 		"an overlay member is relative to the service's own project, not the repository")
 	require.Empty(t, u.ob.entries)
 }
@@ -663,6 +679,7 @@ func TestProposeFix_SeedSourceFallsBackToLocator(t *testing.T) {
 	}, nil)
 	art := &fakeArtifacts{}
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
+	gw := &fakeGateway{imageTag: "tag-s"}
 
 	d := Deps{
 		NewUoW:           func() uow.UnitOfWork { return u },
@@ -677,7 +694,8 @@ func TestProposeFix_SeedSourceFallsBackToLocator(t *testing.T) {
 		MaxAttempts:      3,
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 		Precedents:       fakePrecedents{},
-		Releases:         &fakeGateway{imageTag: "tag-s"},
+		Pipeline:         gw,
+		Releases:         gw,
 	}
 	// No FilePath or Service on the node: must fall back to the NodeLocator.
 	tr := Trigger{
@@ -712,6 +730,7 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaLocator(t *testing.T) 
 	}, nil)
 	art := &fakeArtifacts{}
 	src := &fakeSource{content: "id,name\n1,alice,extra"}
+	gw := &fakeGateway{imageTag: "tag-s"}
 
 	d := Deps{
 		NewUoW:   func() uow.UnitOfWork { return u },
@@ -729,7 +748,8 @@ func TestProposeFix_SeedFilePathSetServiceEmptyResolvesViaLocator(t *testing.T) 
 		MaxAttempts:      3,
 		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
 		Precedents:       fakePrecedents{},
-		Releases:         &fakeGateway{imageTag: "tag-s"},
+		Pipeline:         gw,
+		Releases:         gw,
 	}
 	tr := Trigger{
 		Source: "seed_build", ReleaseID: "r1", Repo: "o/r", CommitSHA: "sha", MessageID: "9-0",
@@ -767,6 +787,7 @@ func TestProposeFix_HappyPath(t *testing.T) {
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select custmer_id from t", Runtime: ports.RuntimeDbt}}
 
@@ -782,13 +803,13 @@ func TestProposeFix_HappyPath(t *testing.T) {
 	require.Equal(t, "services/svc/models/n.sql", p.FilePath)
 	require.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.n"].Status)
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-svc-a1",
+		Service: "svc", Kind: ports.VerificationKindDbt, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
 	}}, p.Verifications)
-	require.Equal(t, "shadow-r1-svc-a1", p.VerificationRunID, "the representative shadow is the first verification's")
+	require.Equal(t, "verify-r1-svc-a1", p.VerificationRunID, "the representative verification run is the first one's")
 
 	require.Len(t, gw.submitted, 1)
 	require.Equal(t, "tag-1", gw.submitted[0].ImageTag)
-	require.Equal(t, "s3://art/svc/shadow-r1-svc-a1/source-overlay.tar.gz", gw.submitted[0].SourceOverlayURI)
+	require.Equal(t, "s3://art/svc/verify-r1-svc-a1/source-overlay.tar.gz", gw.submitted[0].SourceOverlayURI)
 	require.Empty(t, u.ob.entries, "an unverified fix must not be announced")
 	require.True(t, u.committed)
 }
@@ -815,6 +836,7 @@ func TestProposeFix_AttemptCapEscalatesEveryNode(t *testing.T) {
 	llm := newFakeLLM(ports.ProposeResult{}, nil)
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, fakeEvidence{}, &llm, &fakeArtifacts{})
+	d.Pipeline = gw
 	d.Releases = gw
 	tr := baseTrigger()
 	tr.Nodes = []TriggerNode{
@@ -929,6 +951,7 @@ func TestProposeFix_EmptyCandidateSQLSkips(t *testing.T) {
 	llm := newFakeLLM(ports.ProposeResult{}, nil)
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, fakeEvidence{}, &llm, &fakeArtifacts{})
+	d.Pipeline = gw
 	d.Releases = gw
 
 	require.NoError(t, ProposeFix(context.Background(), d, tr))
@@ -975,7 +998,7 @@ func TestProposeFix_LLMEmptyFails(t *testing.T) {
 // TestProposeFix_DuplicateTriggerIsDeduped calls ProposeFix twice with
 // identical trigger data (same MessageID / OutboxEntryID). The second call
 // must be recognised as a duplicate and return nil without inserting a second
-// proposal row or submitting a second shadow release.
+// proposal row or submitting a second verification run.
 func TestProposeFix_DuplicateTriggerIsDeduped(t *testing.T) {
 	// Both calls share the same UoW factory state (fakeMsgProcRepo is reused
 	// across calls, which is what the fake is designed for).
@@ -988,6 +1011,7 @@ func TestProposeFix_DuplicateTriggerIsDeduped(t *testing.T) {
 	llm := sourceFixLLM("select customer_id from t", "typo", "high")
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, ev, &llm, &fakeArtifacts{})
+	d.Pipeline = gw
 	d.Releases = gw
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select custmer_id from t", Runtime: ports.RuntimeDbt}}
 
@@ -1004,7 +1028,7 @@ func TestProposeFix_DuplicateTriggerIsDeduped(t *testing.T) {
 	require.NoError(t, ProposeFix(context.Background(), d, tr), "a duplicate must return nil")
 
 	require.Len(t, u.pr.inserted, 1, "the duplicate must not write a second row")
-	require.Len(t, gw.submitted, 1, "the duplicate must not submit a second shadow release")
+	require.Len(t, gw.submitted, 1, "the duplicate must not submit a second verification run")
 }
 
 // TestProposeFix_MarksGeneratingBeforeLLM verifies the in-flight indicator
@@ -1146,7 +1170,7 @@ func TestProposeFix_NoNodesIsAcknowledged(t *testing.T) {
 
 // TestProposeFix_TwoIndependentNodes_OneVerifyingProposalWithTwoEdits is the
 // shape of a batched attempt: two unrelated failures in one service become one
-// proposal with two edits and one shadow release carrying both.
+// proposal with two edits and one verification run carrying both.
 func TestProposeFix_TwoIndependentNodes_OneVerifyingProposalWithTwoEdits(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
@@ -1163,6 +1187,7 @@ func TestProposeFix_TwoIndependentNodes_OneVerifyingProposalWithTwoEdits(t *test
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select x", Runtime: ports.RuntimeDbt}}
 	tr := baseTrigger()
@@ -1186,22 +1211,22 @@ func TestProposeFix_TwoIndependentNodes_OneVerifyingProposalWithTwoEdits(t *test
 	assert.Equal(t, proposal.ConfidenceMedium, p.Confidence, "the proposal's confidence is the lowest cluster's")
 	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.a"].Status)
 	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.b"].Status)
-	require.Len(t, p.Verifications, 1, "both edits are in one service: one shadow")
-	assert.Equal(t, proposal.Verification{Service: "svc", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-svc-a1"}, p.Verifications[0])
+	require.Len(t, p.Verifications, 1, "both edits are in one service: one verification run")
+	assert.Equal(t, proposal.Verification{Service: "svc", Kind: ports.VerificationKindDbt, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued}, p.Verifications[0])
 	assert.Equal(t, tr.RawPayload, p.TriggerPayload)
 
 	require.Len(t, gw.submitted, 1)
 	sub := gw.submitted[0]
-	assert.Equal(t, "shadow-r1-svc-a1", sub.ReleaseID)
+	assert.Equal(t, "verify-r1-svc-a1", sub.RunID)
 	assert.Equal(t, "tag-1", sub.ImageTag)
-	assert.Equal(t, ports.ShadowKindDbt, sub.Kind)
-	assert.Equal(t, "s3://art/svc/shadow-r1-svc-a1/source-overlay.tar.gz", sub.SourceOverlayURI)
+	assert.Equal(t, ports.VerificationKindDbt, sub.Kind)
+	assert.Equal(t, "s3://art/svc/verify-r1-svc-a1/source-overlay.tar.gz", sub.SourceOverlayURI)
 	assert.Equal(t, "r1", sub.VerifiesReleaseID,
-		"the shadow must name the rejected release it verifies, so release-controller assembles that release's candidate for the service it changed")
-	overlayBytes := art.written["svc/shadow-r1-svc-a1/source-overlay.tar.gz"]
+		"the verification run must name the rejected release it verifies, so release-controller assembles that release's candidate for the service it changed")
+	overlayBytes := art.written["svc/verify-r1-svc-a1/source-overlay.tar.gz"]
 	names := tarNames(t, []byte(overlayBytes))
 	assert.Equal(t, []string{"models/a.sql", "models/b.sql"}, names, "overlay paths are project-relative")
-	assert.Empty(t, u.ob.entries, "the driver announces nothing; the reconciler does once the shadow validates")
+	assert.Empty(t, u.ob.entries, "the driver announces nothing; the reconciler does once the verification run passes")
 	assert.Equal(t, 4, llm.calls, "one two-step fix per independent cluster")
 }
 
@@ -1228,6 +1253,7 @@ func TestProposeFix_SharedUpstream_OneEditToTheAncestor(t *testing.T) {
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select id from s.base", Runtime: ports.RuntimeDbt}}
 	d.Versions = fakeVersions{v: ports.CurrentVersion{RawCode: "select id, amount from s.base"}, ok: true}
@@ -1245,8 +1271,8 @@ func TestProposeFix_SharedUpstream_OneEditToTheAncestor(t *testing.T) {
 	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.w"].Status)
 	require.Len(t, gw.submitted, 1)
 	assert.Equal(t, []string{"models/u.sql"},
-		tarNames(t, []byte(art.written["svc/shadow-r1-svc-a1/source-overlay.tar.gz"])),
-		"the ancestor's corrected source is what the shadow release runs")
+		tarNames(t, []byte(art.written["svc/verify-r1-svc-a1/source-overlay.tar.gz"])),
+		"the ancestor's corrected source is what the verification run runs")
 }
 
 // twoSignatureUpstreamTrigger is the batch that groups into two same-signature
@@ -1284,6 +1310,7 @@ func TestProposeFix_TwoSignaturesOneAncestor_IsOneCluster(t *testing.T) {
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select id from s.base", Runtime: ports.RuntimeDbt}}
 	d.Versions = fakeVersions{v: ports.CurrentVersion{RawCode: "select id, amount from s.base"}, ok: true}
@@ -1303,7 +1330,7 @@ func TestProposeFix_TwoSignaturesOneAncestor_IsOneCluster(t *testing.T) {
 	}
 	require.Len(t, gw.submitted, 1)
 	assert.Equal(t, []string{"models/u.sql"},
-		tarNames(t, []byte(art.written["svc/shadow-r1-svc-a1/source-overlay.tar.gz"])))
+		tarNames(t, []byte(art.written["svc/verify-r1-svc-a1/source-overlay.tar.gz"])))
 }
 
 // editByTarget returns the edit whose TargetNodeID matches target, or the zero
@@ -1518,6 +1545,7 @@ func TestSubmitVerifications_DuplicateEditPathIsPermanent(t *testing.T) {
 	art := &fakeArtifacts{}
 	llm := newFakeLLM(ports.ProposeResult{}, nil)
 	d := deps(newFakeUoW(), fakeEvidence{vals: map[string]string{"s3://a/1": "select 1", "s3://a/2": "select 2"}}, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	edits := []proposal.FileEdit{
 		{Path: "services/svc/models/u.sql", ContentURI: "s3://a/1", TargetNodeID: "s.u"},
@@ -1550,6 +1578,7 @@ func TestProposeFix_UpstreamTargetUnlocatable_FallsBackToIndependent(t *testing.
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select id from s.base", Runtime: ports.RuntimeDbt}}
 	d.Versions = fakeVersions{v: ports.CurrentVersion{RawCode: "select id, amount from s.base"}, ok: true}
@@ -1594,6 +1623,7 @@ func TestProposeFix_UpstreamDeclined_FallsBackToIndependent(t *testing.T) {
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select id from s.base", Runtime: ports.RuntimeDbt}}
 	d.Versions = fakeVersions{v: ports.CurrentVersion{RawCode: "select id, amount from s.base"}, ok: true}
@@ -1615,8 +1645,8 @@ func TestProposeFix_UpstreamDeclined_FallsBackToIndependent(t *testing.T) {
 }
 
 // TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField pins that the
-// lane and the shadow release's service come from where the edits actually live,
-// not from the service field the trigger happens to carry: a python node whose
+// lane and the verification run's service come from where the edits actually
+// live, not from the service field the trigger happens to carry: a python node whose
 // trigger names no service at all is still verified as python, under the service
 // its contract file belongs to.
 func TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField(t *testing.T) {
@@ -1624,6 +1654,7 @@ func TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField(t *testing
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-py"}
 	d := deps(u, fakeEvidence{}, nil, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	tr := baseTrigger()
 	tr.Nodes = []TriggerNode{{NodeID: "analytics.py_daily_kpis", ErrorSignature: "sig",
@@ -1637,12 +1668,12 @@ func TestSubmitVerifications_PythonLaneIgnoresTheTriggersServiceField(t *testing
 	require.NoError(t, err)
 
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.ShadowKindPython, RunID: "shadow-r1-svc-a1",
+		Service: "svc", Kind: ports.VerificationKindPython, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
 	}}, got)
-	require.Equal(t, "merged: contract\n", art.written["svc/shadow-r1-svc-a1/contract.yaml"])
-	require.NotContains(t, art.written, "svc/shadow-r1-svc-a1/source-overlay.tar.gz")
+	require.Equal(t, "merged: contract\n", art.written["svc/verify-r1-svc-a1/contract.yaml"])
+	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/source-overlay.tar.gz")
 	require.Len(t, gw.submitted, 1)
-	require.Equal(t, ports.ShadowKindPython, gw.submitted[0].Kind)
+	require.Equal(t, ports.VerificationKindPython, gw.submitted[0].Kind)
 	require.Empty(t, gw.submitted[0].SourceOverlayURI)
 }
 
@@ -1661,6 +1692,7 @@ func TestProposeFix_MixedOutcomes_SkippedMemberDoesNotBlockVerification(t *testi
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select x", Runtime: ports.RuntimeDbt}}
 	tr := baseTrigger()
@@ -1683,8 +1715,8 @@ func TestProposeFix_MixedOutcomes_SkippedMemberDoesNotBlockVerification(t *testi
 	require.Len(t, p.Verifications, 1)
 	require.Len(t, gw.submitted, 1)
 	assert.Equal(t, []string{"models/b.sql"},
-		tarNames(t, []byte(art.written["svc/shadow-r1-svc-a1/source-overlay.tar.gz"])),
-		"the skipped node contributes nothing to the shadow release")
+		tarNames(t, []byte(art.written["svc/verify-r1-svc-a1/source-overlay.tar.gz"])),
+		"the skipped node contributes nothing to the verification run")
 }
 
 // TestProposeFix_AllSkipped_RecordsSkippedWithoutVerification: nothing was
@@ -1695,6 +1727,7 @@ func TestProposeFix_AllSkipped_RecordsSkippedWithoutVerification(t *testing.T) {
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, fakeEvidence{}, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	tr := baseTrigger()
 	tr.Nodes = []TriggerNode{
@@ -1715,10 +1748,10 @@ func TestProposeFix_AllSkipped_RecordsSkippedWithoutVerification(t *testing.T) {
 	assert.Zero(t, llm.calls)
 }
 
-// TestProposeFix_TwoServices_OneShadowEach: a release's failing set can span
-// services, and a shadow release verifies exactly one service, so each edited
-// service gets its own.
-func TestProposeFix_TwoServices_OneShadowEach(t *testing.T) {
+// TestProposeFix_TwoServices_OneVerificationRunEach: a release's failing set
+// can span services, and a verification run verifies exactly one service, so
+// each edited service gets its own.
+func TestProposeFix_TwoServices_OneVerificationRunEach(t *testing.T) {
 	u := newFakeUoW()
 	ev := fakeEvidence{vals: map[string]string{
 		"s3://b/sql-a": "select a", "s3://b/sql-b": "select b", "s3://b/log": "column does not exist",
@@ -1734,6 +1767,7 @@ func TestProposeFix_TwoServices_OneShadowEach(t *testing.T) {
 	art := &fakeArtifacts{}
 	gw := &fakeGateway{imageTag: "tag-1"}
 	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
 	d.Releases = gw
 	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select x", Runtime: ports.RuntimeDbt}}
 	tr := baseTrigger()
@@ -1747,15 +1781,15 @@ func TestProposeFix_TwoServices_OneShadowEach(t *testing.T) {
 	p := u.pr.inserted[0]
 	assert.Equal(t, proposal.StatusVerifying, p.Status)
 	require.Len(t, p.Verifications, 2)
-	assert.Equal(t, proposal.Verification{Service: "other", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-other-a1"}, p.Verifications[0])
-	assert.Equal(t, proposal.Verification{Service: "svc", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-svc-a1"}, p.Verifications[1])
-	assert.Equal(t, "shadow-r1-other-a1", p.VerificationRunID)
+	assert.Equal(t, proposal.Verification{Service: "other", Kind: ports.VerificationKindDbt, RunID: "verify-r1-other-a1", Phase: proposal.PhaseQueued}, p.Verifications[0])
+	assert.Equal(t, proposal.Verification{Service: "svc", Kind: ports.VerificationKindDbt, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued}, p.Verifications[1])
+	assert.Equal(t, "verify-r1-other-a1", p.VerificationRunID)
 
 	require.Len(t, gw.submitted, 2)
 	assert.Equal(t, "other", gw.submitted[0].Service)
 	assert.Equal(t, "svc", gw.submitted[1].Service)
-	assert.Equal(t, []string{"models/b.sql"}, tarNames(t, []byte(art.written["other/shadow-r1-other-a1/source-overlay.tar.gz"])))
-	assert.Equal(t, []string{"models/a.sql"}, tarNames(t, []byte(art.written["svc/shadow-r1-svc-a1/source-overlay.tar.gz"])))
+	assert.Equal(t, []string{"models/b.sql"}, tarNames(t, []byte(art.written["other/verify-r1-other-a1/source-overlay.tar.gz"])))
+	assert.Equal(t, []string{"models/a.sql"}, tarNames(t, []byte(art.written["svc/verify-r1-svc-a1/source-overlay.tar.gz"])))
 }
 
 // TestProposeFix_Step2_SourceResolved verifies that when the node's location and
@@ -1782,7 +1816,9 @@ func TestProposeFix_Step2_SourceResolved(t *testing.T) {
 	d := deps(u, ev, &llm, art)
 	d.Source = src
 	d.Locator = fakeLocator{filePath: "models/table_e.sql", serviceName: "svc"}
-	d.Releases = &fakeGateway{imageTag: "tag-1"}
+	gw1 := &fakeGateway{imageTag: "tag-1"}
+	d.Pipeline = gw1
+	d.Releases = gw1
 	tr := baseTrigger()
 	tr.Nodes[0].FilePath = "" // no threaded path: the locator answers instead
 
@@ -1810,9 +1846,9 @@ func TestProposeFix_Step2_SourceResolved(t *testing.T) {
 // TestProposeFix_CandidateOnlyFixCannotBeVerified covers every way Step 2
 // degrades to a candidate-only answer: the source read fails, the location is
 // unknown, the service is unmapped, or the model returns nothing better. None
-// of them produces a file edit, so there is nothing a shadow release could run
-// and nothing a pull request could carry — the attempt fails, and no release
-// slot is spent on it.
+// of them produces a file edit, so there is nothing a verification run could
+// run and nothing a pull request could carry — the attempt fails, and no
+// release-queue slot is spent on it.
 func TestProposeFix_CandidateOnlyFixCannotBeVerified(t *testing.T) {
 	const originalSQL = "{{ config(materialized='table') }}\nselect custmer_id from {{ ref('t') }}"
 	step1 := ports.ProposeResult{ProposedSQL: "select customer_id from t", Rationale: "typo fix", Confidence: "high", Model: "m"}
@@ -1879,6 +1915,7 @@ func TestProposeFix_CandidateOnlyFixCannotBeVerified(t *testing.T) {
 			d.Source = tc.source
 			d.Locator = tc.locator
 			d.ServiceRepoPaths = tc.paths
+			d.Pipeline = gw
 			d.Releases = gw
 			tr := baseTrigger()
 			tr.Nodes[0].FilePath = "" // no threaded path: the locator answers instead
@@ -1924,7 +1961,9 @@ func TestProposeFix_SourceResolvedPersistsSourceLocation(t *testing.T) {
 	d.Source = &fakeSource{content: "{{ config() }}\nselect custmer_id from {{ ref('t') }}"}
 	d.Locator = fakeLocator{filePath: "models/orders_d.sql", serviceName: "service-3"}
 	d.ServiceRepoPaths = map[string]string{"service-3": "services/service-3"}
-	d.Releases = &fakeGateway{imageTag: "tag-1"}
+	gw1 := &fakeGateway{imageTag: "tag-1"}
+	d.Pipeline = gw1
+	d.Releases = gw1
 
 	tr := baseTrigger()
 	tr.Repo = "owner/continuo-demo"
@@ -1970,7 +2009,7 @@ func TestRecord_NormalizesRepresentativeViews(t *testing.T) {
 		Edits: []proposal.FileEdit{
 			{Path: "services/svc/models/orders_d.sql", ContentURI: "s3://real/content", DiffURI: "s3://real/diff"},
 		},
-		Verifications: []proposal.Verification{{Service: "svc", Kind: ports.ShadowKindDbt, RunID: "shadow-r1-svc-a1"}},
+		Verifications: []proposal.Verification{{Service: "svc", Kind: ports.VerificationKindDbt, RunID: "verify-r1-svc-a1"}},
 	}
 
 	require.NoError(t, record(context.Background(), d, tr, 1, p))
@@ -1984,12 +2023,12 @@ func TestRecord_NormalizesRepresentativeViews(t *testing.T) {
 		"an attempt that names no set addresses the trigger's whole failing set")
 	require.Equal(t, "s.a", got.NodeID)
 	require.Equal(t, "sig-a", got.ErrorSignature)
-	require.Equal(t, "shadow-r1-svc-a1", got.VerificationRunID)
+	require.Equal(t, "verify-r1-svc-a1", got.VerificationRunID)
 	require.Empty(t, u.ob.entries, "record announces nothing")
 }
 
 // TestEnqueue_CarriesTheResolvedSetAndEveryEdit pins the announcement the
-// shadow-verification reconciler makes once a fix is verified: it names every
+// verification reconciler makes once a fix is verified: it names every
 // node the attempt resolved and every file it changed, keyed on
 // (release, attempt) so a repeated announcement collapses to one event.
 func TestEnqueue_CarriesTheResolvedSetAndEveryEdit(t *testing.T) {
@@ -2022,9 +2061,9 @@ func TestEnqueue_CarriesTheResolvedSetAndEveryEdit(t *testing.T) {
 }
 
 // TestServiceForPath_PicksTheNearestConfiguredRoot pins how an edit is routed
-// to the service whose shadow release will run it: the longest configured root
-// wins, a root at the repository itself catches what nothing else claims, and a
-// path outside every root is refused rather than guessed at.
+// to the service whose verification run will run it: the longest configured
+// root wins, a root at the repository itself catches what nothing else
+// claims, and a path outside every root is refused rather than guessed at.
 func TestServiceForPath_PicksTheNearestConfiguredRoot(t *testing.T) {
 	paths := map[string]string{"svc": "services/svc", "nested": "services/svc/nested", "root": ""}
 

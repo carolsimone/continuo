@@ -81,24 +81,22 @@ func (f *fakePackager) Merge(_ context.Context, contractDir, repoRoot, service, 
 }
 
 // fakeReleases answers the sibling-failure check's read of the ORIGINAL
-// failing release with a fixed verdict; verdictCalls records the ids it was
-// asked for, so a test can prove the original release is read and not a
-// shadow. A fixer never submits a release or reads an image tag — that is the
-// driver's job — so Submit and ImageTag error if a test forgets to assert
-// that and the production code regresses into calling them.
+// failing release's failing-node set; failingNodesCalls records the ids it
+// was asked for, so a test can prove the original release is read and not a
+// verification run. A fixer never reads an image tag — that is the driver's
+// job — so ImageTag errors if a test forgets to assert that and the
+// production code regresses into calling it.
 type fakeReleases struct {
-	verdict      ports.ShadowVerdict
-	verdictErr   error
-	verdictCalls []string
+	failingNodes      map[string]string
+	failingNodesErr   error
+	failingNodesCalls []string
 }
 
-func (f *fakeReleases) Submit(_ context.Context, _ ports.ShadowSubmission) error {
-	return fmt.Errorf("a fixer must never submit a shadow release; the driver does")
-}
+var _ ports.ReleaseReader = (*fakeReleases)(nil)
 
-func (f *fakeReleases) Verdict(_ context.Context, releaseID string) (ports.ShadowVerdict, error) {
-	f.verdictCalls = append(f.verdictCalls, releaseID)
-	return f.verdict, f.verdictErr
+func (f *fakeReleases) FailingNodes(_ context.Context, releaseID string) (map[string]string, error) {
+	f.failingNodesCalls = append(f.failingNodesCalls, releaseID)
+	return f.failingNodes, f.failingNodesErr
 }
 
 func (f *fakeReleases) ImageTag(_ context.Context, _, _ string) (string, error) {
@@ -249,11 +247,11 @@ func TestPythonValidation_HappyPath(t *testing.T) {
 	// The merged contract is returned in memory for the driver, not uploaded.
 	require.Equal(t, []byte("merged: contract\n"), r.ShadowContract)
 
-	// The sibling check read the ORIGINAL failing release, not a shadow.
-	require.Equal(t, []string{"rel-1"}, rel.verdictCalls)
+	// The sibling check read the ORIGINAL failing release, not a verification run.
+	require.Equal(t, []string{"rel-1"}, rel.failingNodesCalls)
 
 	// The proposal is complete and carries the edit; the driver decides
-	// whether it survives a shadow release.
+	// whether it survives a verification run.
 	p := r.Proposal
 	require.Equal(t, proposal.StatusProposed, p.Status)
 	require.True(t, p.SourceResolved)
@@ -360,8 +358,9 @@ func TestPythonValidation_NoFiles_Fails(t *testing.T) {
 
 // TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence verifies the
 // property that makes retrying worthwhile: the second attempt's prompt shows
-// what the first attempt changed and the error its shadow release came back
-// with. Without it every attempt would re-propose the same rejected change.
+// what the first attempt changed and the error its verification run came
+// back with. Without it every attempt would re-propose the same rejected
+// change.
 func TestPythonValidation_SecondAttempt_PromptCarriesPriorEvidence(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, _, _, _ := pythonSvc(t, root)
@@ -593,11 +592,12 @@ func TestPythonValidation_UnusableTrigger_Skips(t *testing.T) {
 
 // TestPythonValidation_DuplicatePath_Fails verifies that an answer naming the
 // same file twice is refused. Applying it would leave the last entry's content
-// on disk — which is what gets packaged and what the shadow release actually
-// verifies — while the recorded edits, and the proposal's own single-file view
-// built from edits[0], would describe the first entry instead. A human would
-// then approve a change that was never the one validated, which is precisely
-// what verifying the real bytes is meant to rule out.
+// on disk — which is what gets packaged and what the verification run
+// actually verifies — while the recorded edits, and the proposal's own
+// single-file view built from edits[0], would describe the first entry
+// instead. A human would then approve a change that was never the one
+// validated, which is precisely what verifying the real bytes is meant to
+// rule out.
 func TestPythonValidation_DuplicatePath_Fails(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, pkgr, _, arts := pythonSvc(t, root)
@@ -761,11 +761,11 @@ func TestPythonValidation_AnswerRedeclaringTheNodeElsewhere_Fails(t *testing.T) 
 }
 
 // TestPythonValidation_AnswerThatDropsADeclaredRead_Fails covers the cheapest
-// way to make a shadow release pass without repairing anything.
+// way to make a verification run pass without repairing anything.
 //
 // The validation runner bind-checks the reads a contract declares, one by one.
 // Delete the read that could not bind and there is nothing left to check: the
-// release validates, the answer is recorded as a proven fix, and a human is
+// run passes, the answer is recorded as a proven fix, and a human is
 // offered a pull request that deletes the declaration of a read the node's
 // script still performs — which this lane cannot see, because it edits the
 // contract yaml and never the script. The verdict would be true of what was
@@ -873,13 +873,13 @@ func TestPythonValidation_AnswerThatDropsADeclaredRead_Fails(t *testing.T) {
 //
 // The fix is packaged from the WHOLE contract directory, but the classifier
 // emits one trigger per failing node. So when two nodes declared in one
-// directory both fail, each attempt's shadow release re-runs both and is
-// rejected by the one it did not fix — however correct the fix is. The
-// rejection is then recorded as the next attempt's evidence, naming a node the
+// directory both fail, each attempt's verification run re-runs both and is
+// failed by the one it did not fix — however correct the fix is. The
+// failure is then recorded as the next attempt's evidence, naming a node the
 // prompt never shows the model, so every attempt ends the same way and the
-// per-failure budget is spent on full validation releases that could not have
-// passed, each holding the single global release slot. The attempt ends up
-// front instead, naming the node that makes it unverifiable.
+// per-failure budget is spent on full verification runs that could not have
+// passed, each holding the single global release-queue slot. The attempt ends
+// up front instead, naming the node that makes it unverifiable.
 func TestPythonValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, pkgr, rel, arts := pythonSvc(t, root)
@@ -887,10 +887,10 @@ func TestPythonValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 
 	// other.yml sits in the same contracts/ directory as the failing node's
 	// own declaring file, so packaging one packages both.
-	rel.verdict = ports.ShadowVerdict{Terminal: true, NodeErrors: map[string]string{
+	rel.failingNodes = map[string]string{
 		"analytics.py_daily_kpis": "column revenue_total does not exist",
 		"analytics.other":         "column country does not exist",
-	}}
+	}
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
@@ -898,18 +898,18 @@ func TestPythonValidation_SiblingFailureInSameDirectory_Skips(t *testing.T) {
 	require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
 	require.Contains(t, r.Proposal.Rationale, "analytics.other",
 		"the rationale must name the node that makes this fix unverifiable")
-	require.Equal(t, []string{"rel-1"}, rel.verdictCalls,
-		"the sibling check reads the ORIGINAL failing release, not a shadow")
+	require.Equal(t, []string{"rel-1"}, rel.failingNodesCalls,
+		"the sibling check reads the ORIGINAL failing release, not a verification run")
 	require.Equal(t, 0, llm.calls, "no model call is worth making for an unverifiable fix")
 	require.Empty(t, pkgr.calls)
-	require.Empty(t, r.ShadowContract, "no release slot is spent on a shadow that cannot pass")
+	require.Empty(t, r.ShadowContract, "no release-queue slot is spent on a fix that cannot pass")
 	require.Empty(t, arts.written)
 }
 
 // TestPythonValidation_FailureElsewhereDoesNotBlock is the control: a node that
 // also failed the release but is NOT declared in this contract directory —
 // another python service, or a dbt model that no contract yaml declares at all
-// — is not packaged by this fix and so cannot reject its shadow release. The
+// — is not packaged by this fix and so cannot fail its verification run. The
 // heal must proceed.
 func TestPythonValidation_FailureElsewhereDoesNotBlock(t *testing.T) {
 	root := pythonRepoTree(t)
@@ -919,11 +919,11 @@ func TestPythonValidation_FailureElsewhereDoesNotBlock(t *testing.T) {
 		[]byte("nodes:\n  - schema: analytics\n    table: z\n"), 0o600))
 
 	svc, _, pkgr, rel, _ := pythonSvc(t, root)
-	rel.verdict = ports.ShadowVerdict{Terminal: true, NodeErrors: map[string]string{
+	rel.failingNodes = map[string]string{
 		"analytics.py_daily_kpis": "column revenue_total does not exist",
 		"analytics.z":             "declared in another service's contract directory",
 		"model.shop.orders":       "no contract yaml declares a dbt model",
-	}}
+	}
 
 	r, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.NoError(t, err)
@@ -932,14 +932,14 @@ func TestPythonValidation_FailureElsewhereDoesNotBlock(t *testing.T) {
 	require.NotEmpty(t, r.ShadowContract)
 }
 
-// TestPythonValidation_UnreadableVerdictIsTransient pins that a release read
-// which fails is not answered by guessing. The sibling check decides whether a
-// shadow release can mean anything at all, so an unanswerable read ends the
-// call with an error — the driver redelivers.
-func TestPythonValidation_UnreadableVerdictIsTransient(t *testing.T) {
+// TestPythonValidation_UnreadableFailingNodesIsTransient pins that a release
+// read which fails is not answered by guessing. The sibling check decides
+// whether a verification run can mean anything at all, so an unanswerable
+// read ends the call with an error — the driver redelivers.
+func TestPythonValidation_UnreadableFailingNodesIsTransient(t *testing.T) {
 	root := pythonRepoTree(t)
 	svc, _, pkgr, rel, _ := pythonSvc(t, root)
-	rel.verdictErr = fmt.Errorf("release-controller unreachable")
+	rel.failingNodesErr = fmt.Errorf("release-controller unreachable")
 
 	_, err := pythonValidationFixer{}.Propose(context.Background(), svc, pythonInput())
 	require.Error(t, err)

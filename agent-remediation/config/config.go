@@ -72,26 +72,25 @@ type Config struct {
 	SQLDialect string
 
 	// ReleaseControllerURL is release-controller's HTTP root, used by the
-	// ReleaseGateway adapter to submit shadow verification releases and poll
-	// their verdicts.
+	// VerificationPipeline adapter to submit fix-verification runs and poll
+	// their status.
 	ReleaseControllerURL string
 
-	// ShadowVerifyTimeout bounds how long a proposal awaits its shadow
-	// release's verdict before the shadow-verify reconciler ends the attempt as
-	// failed. It is measured from when that release left the release queue and
-	// started running, so a backlog never spends it; when no verdict can be
+	// VerificationTimeout bounds how long a proposal awaits its verification
+	// runs' verdict before the verification reconciler ends the attempt as
+	// failed. It is measured from when a run left the release queue and
+	// started running, so a backlog never spends it; when no status can be
 	// read at all, it is measured from when the attempt was recorded instead.
 	// Non-positive values fall back to the default so a misconfiguration can
 	// never leave a proposal waiting indefinitely; a value that is not a Go
 	// duration at all fails start-up.
-	ShadowVerifyTimeout time.Duration
+	VerificationTimeout time.Duration
 
-	// ShadowVerifyPollInterval is how often the shadow-verify reconciler reads
-	// the shadow release of every proposal awaiting a verdict. Non-positive
-	// values fall back to the default so a misconfigured interval can never
-	// produce a hot loop; a value that is not a Go duration at all fails
-	// start-up.
-	ShadowVerifyPollInterval time.Duration
+	// VerificationPollInterval is how often the verification reconciler reads
+	// the runs of every proposal awaiting a verdict. Non-positive values fall
+	// back to the default so a misconfigured interval can never produce a hot
+	// loop; a value that is not a Go duration at all fails start-up.
+	VerificationPollInterval time.Duration
 }
 
 // serviceReposFile is the on-disk structure of config/service_repos.yaml.
@@ -118,16 +117,16 @@ const defaultPROpeningGracePeriod = 10 * time.Minute
 // address, matching the same default ui already uses to reach it.
 const defaultReleaseControllerURL = "http://release-controller:8088"
 
-// defaultShadowVerifyTimeout bounds how long a shadow release is polled for a
-// terminal verdict. It comfortably exceeds the compile+parse+validate
-// pipeline a healthy shadow release completes in, while still failing an
-// attempt whose shadow release wedges rather than polling forever.
-const defaultShadowVerifyTimeout = 20 * time.Minute
+// defaultVerificationTimeout bounds how long a verification run is polled for
+// a terminal verdict. It comfortably exceeds the compile+parse+validate
+// pipeline a healthy run completes in, while still failing an attempt whose
+// run wedges rather than polling forever.
+const defaultVerificationTimeout = 20 * time.Minute
 
-// defaultShadowVerifyPollInterval paces the shadow-verify reconciler. Fifteen
-// seconds keeps a verified fix at most one tick behind the release that
-// proved it, at the cost of one cheap release read per waiting attempt.
-const defaultShadowVerifyPollInterval = 15 * time.Second
+// defaultVerificationPollInterval paces the verification reconciler. Fifteen
+// seconds keeps a verified fix at most one tick behind the run that proved
+// it, at the cost of one cheap read per waiting attempt.
+const defaultVerificationPollInterval = 15 * time.Second
 
 // engineDialects maps WAREHOUSE_ENGINE (the chart's validation.engine value,
 // published to every service on the shared ConfigMap) to the sqlglot dialect
@@ -202,9 +201,9 @@ func Load(v *pkgconfig.Validator) Config {
 		OrchestratorAddr:     pkgconfig.EnvOrDefault("CONTINUO_ORCHESTRATOR_ADDR", "orchestrator:50052"),
 		ServiceRepoMapPath:   pkgconfig.EnvOrDefault("SERVICE_REPO_MAP_PATH", ""),
 		ReleaseControllerURL: pkgconfig.EnvOrDefault("RELEASE_CONTROLLER_URL", defaultReleaseControllerURL),
-		ShadowVerifyTimeout:  v.DurationOrDefault("SHADOW_VERIFY_TIMEOUT", defaultShadowVerifyTimeout),
-		ShadowVerifyPollInterval: v.DurationOrDefault(
-			"SHADOW_VERIFY_POLL_INTERVAL", defaultShadowVerifyPollInterval),
+		VerificationTimeout:  v.DurationOrDefault("VERIFICATION_TIMEOUT", defaultVerificationTimeout),
+		VerificationPollInterval: v.DurationOrDefault(
+			"VERIFICATION_POLL_INTERVAL", defaultVerificationPollInterval),
 	}
 	cfg.SQLDialect = resolveSQLDialect(v)
 	switch cfg.LLMProvider {
@@ -231,11 +230,11 @@ func Load(v *pkgconfig.Validator) Config {
 	if cfg.PROpeningGracePeriod <= 0 {
 		cfg.PROpeningGracePeriod = defaultPROpeningGracePeriod
 	}
-	if cfg.ShadowVerifyTimeout <= 0 {
-		cfg.ShadowVerifyTimeout = defaultShadowVerifyTimeout
+	if cfg.VerificationTimeout <= 0 {
+		cfg.VerificationTimeout = defaultVerificationTimeout
 	}
-	if cfg.ShadowVerifyPollInterval <= 0 {
-		cfg.ShadowVerifyPollInterval = defaultShadowVerifyPollInterval
+	if cfg.VerificationPollInterval <= 0 {
+		cfg.VerificationPollInterval = defaultVerificationPollInterval
 	}
 	cfg.ServiceRepoPaths = loadServiceRepos(cfg.ServiceRepoMapPath)
 	return cfg

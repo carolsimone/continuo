@@ -51,7 +51,13 @@ type VerificationPipeline interface {
 // ReleaseReader reads facts about a candidate release: the image tag its
 // changed service was posted with, which a verification of a fix to that
 // service reuses verbatim (a verification never promotes, so the tag never
-// reaches the path a promotion would drive).
+// reaches the path a promotion would drive), and the release's own failing
+// validation nodes.
 type ReleaseReader interface {
 	ImageTag(ctx context.Context, releaseID, service string) (string, error)
+	// FailingNodes returns the ORIGINAL candidate release's failing validation
+	// nodes: node_id -> error text, one entry per node that failed validation
+	// when that release was rejected. releaseID names the same failing
+	// release ImageTag reads, not a verification run.
+	FailingNodes(ctx context.Context, releaseID string) (map[string]string, error)
 }

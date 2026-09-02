@@ -202,3 +202,53 @@ func TestImageTag_ReadsTheReleaseNotTheRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "img:9", tag)
 }
+
+func TestFailingNodes_ReadsTheReleaseNotTheRun(t *testing.T) {
+	ev := &fakeEvidence{byURI: map[string]string{"s3://r/orders.json": `{"status":"error","message":"column x does not exist"}`}}
+	srv := releaseServer(t, "/releases/rel-1", http.StatusOK,
+		`{"release_id":"rel-1","reject_reason":"validation_failed","reject_detail":"",
+		  "failing_nodes":["model.core.orders"],
+		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://r/orders.json"},
+		                      {"stage":"validation","node_id":"model.core.ok","status":"ok"}]}`)
+	defer srv.Close()
+	g := NewGateway(srv.URL, ev, nil)
+	nodes, err := g.FailingNodes(context.Background(), "rel-1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"model.core.orders": "column x does not exist"}, nodes)
+}
+
+// TestFailingNodes_FallsBackToRejectReasonAndDetail covers the node whose own
+// structured result cannot be read: it falls back to the release-level
+// reject reason and detail, the same fallback Status uses for a
+// verification run's fail_reason/fail_detail.
+func TestFailingNodes_FallsBackToRejectReasonAndDetail(t *testing.T) {
+	srv := releaseServer(t, "/releases/rel-1", http.StatusOK,
+		`{"release_id":"rel-1","reject_reason":"seed_build_failed","reject_detail":"csv is malformed",
+		  "failing_nodes":["model.core.orders"],
+		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed"}]}`)
+	defer srv.Close()
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	nodes, err := g.FailingNodes(context.Background(), "rel-1")
+	require.NoError(t, err)
+	assert.Equal(t, "seed_build_failed — csv is malformed", nodes["model.core.orders"])
+}
+
+// TestFailingNodes_NodeWithNoPerNodeResultFallsBackByID covers a node
+// release-controller named only in failing_nodes — a compile or
+// duplicate_table rejection, which carries no validation-stage
+// per_node_results entry at all — still reporting the release-level
+// fallback rather than being dropped from the map.
+func TestFailingNodes_NodeWithNoPerNodeResultFallsBackByID(t *testing.T) {
+	srv := releaseServer(t, "/releases/rel-1", http.StatusOK,
+		`{"release_id":"rel-1","reject_reason":"duplicate_table","reject_detail":"claimed twice",
+		  "failing_nodes":["model.core.orders","model.core.returns"],
+		  "per_node_results":[]}`)
+	defer srv.Close()
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	nodes, err := g.FailingNodes(context.Background(), "rel-1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"model.core.orders":  "duplicate_table — claimed twice",
+		"model.core.returns": "duplicate_table — claimed twice",
+	}, nodes)
+}

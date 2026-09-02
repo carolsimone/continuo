@@ -145,7 +145,7 @@ func TestTriggerFromRequested_SeedServiceField(t *testing.T) {
 // TestTriggerFromPayload_LeavesTheDedupIdentityToTheCaller pins the split
 // between the payload and the message that delivered it: decoding the payload
 // alone yields every trigger field but no dedup identity, so a caller
-// replaying stored bytes — the shadow-verify reconciler starting the attempt
+// replaying stored bytes — the verification reconciler starting the attempt
 // that follows a failed verification — supplies an identity of its own rather
 // than inheriting the identity of the message the first attempt consumed.
 func TestTriggerFromPayload_LeavesTheDedupIdentityToTheCaller(t *testing.T) {
