@@ -8,6 +8,7 @@ import {
   proposalShadowIds, shadowVerifyPhase,
 } from './release-helpers';
 import { fetchProposals } from './remediation-api';
+import { LogView } from './node-results';
 
 // A remediation round is capped at this many attempts; the release-controller
 // enforces the same limit and answers 409 rounds_exhausted past it.
@@ -156,35 +157,6 @@ function FixCell({ state, verifyPhase, note }: {
   }
   if (note) return <span className="nodes-reason">{note}</span>;
   return null;
-}
-
-function LogView({ uri }: { uri: string }) {
-  const [open, setOpen] = useState(false);
-  const [content, setContent] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const logUrl = `/api/releases/log?key=${encodeURIComponent(uri)}`;
-
-  const toggle = () => {
-    if (open) { setOpen(false); return; }
-    setOpen(true);
-    if (content === null) {
-      setErr(null);
-      fetch(logUrl)
-        .then(r => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
-        .then(setContent)
-        .catch(e => setErr(e.message));
-    }
-  };
-
-  return (
-    <>
-      <button type="button" className="btn btn--secondary" onClick={toggle}>{open ? 'hide' : 'view'}</button>{' '}
-      <a className="btn btn--secondary" href={logUrl} target="_blank" rel="noreferrer">open full log ↗</a>
-      {open && (err
-        ? <div className="info-strip info-strip--error"><span className="info-strip__icon">⚠</span>{err}</div>
-        : <pre className="log-block">{content ?? 'loading…'}</pre>)}
-    </>
-  );
 }
 
 export default function ReleaseDetailPage() {

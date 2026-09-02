@@ -1,27 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { firstInFlight, IN_FLIGHT_STATUSES, releasePillClass, reasonLabel } from '../../src/client/release-helpers';
-import { ReleaseListItem } from '../../src/client/types';
-
-const mk = (id: string, status: string): ReleaseListItem => ({
-  release_id: id, status, created_at: '', resolved_at: null, node_count: 0, bootstrap: false, shadow: false,
-});
-
-describe('firstInFlight', () => {
-  it('returns the first non-terminal release', () => {
-    const list = [mk('a', 'promoted'), mk('b', 'validating'), mk('c', 'received')];
-    expect(firstInFlight(list)?.release_id).toBe('b');
-  });
-  it('returns null when all terminal', () => {
-    expect(firstInFlight([mk('a', 'promoted'), mk('b', 'rejected')])).toBeNull();
-  });
-  it('IN_FLIGHT_STATUSES covers every active pipeline state in lifecycle order', () => {
-    expect(IN_FLIGHT_STATUSES).toEqual(['received', 'compiling', 'parsing', 'seed_building', 'validating']);
-  });
-  it('treats compiling and seed_building as in flight', () => {
-    expect(firstInFlight([mk('a', 'promoted'), mk('b', 'compiling')])?.release_id).toBe('b');
-    expect(firstInFlight([mk('a', 'promoted'), mk('b', 'seed_building')])?.release_id).toBe('b');
-  });
-});
+import { releasePillClass, reasonLabel } from '../../src/client/release-helpers';
 
 describe('releasePillClass', () => {
   it('maps release lifecycle statuses to pill variants', () => {
@@ -35,9 +13,9 @@ describe('releasePillClass', () => {
     expect(releasePillClass('superseded')).toBe('pill--cancelled');
   });
 
-  it('maps validated (a shadow release that passed verification) to succeeded, not the pending fallback', () => {
-    expect(releasePillClass('validated')).not.toBe('pill--pending');
-    expect(releasePillClass('validated')).toBe('pill--succeeded');
+  it('maps passed (a verification run that judged its candidate good) to succeeded, not the pending fallback', () => {
+    expect(releasePillClass('passed')).not.toBe('pill--pending');
+    expect(releasePillClass('passed')).toBe('pill--succeeded');
   });
 
   it('maps per-node validation statuses (ok / failed) to pill variants', () => {

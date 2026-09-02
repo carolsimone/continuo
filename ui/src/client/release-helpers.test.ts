@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   groupByStage, stageLabel, reasonLabel, proposalKey,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
-  proposalShadowIds, shadowVerifyPhase,
+  releasePillClass, verificationPhase, verificationRunPhase, verificationRunIds,
 } from './release-helpers';
 import { NodeValidationResult } from './types';
 import type { ProposalDTO } from './types';
@@ -67,7 +67,7 @@ const base = {
   id: 'p', source: 'validation', release_id: 'r', node_id: 's.a', error_signature: 's', attempt: 1,
   status: 'verifying', confidence: 'high', rationale: 'overall', proposed_sql_uri: '', diff_uri: '', candidate_fix_sql_uri: '',
   candidate_fix_diff_uri: '', source_resolved: true, repo: '', commit_sha: '', file_path: '', model: '', created_at: '',
-  pr_url: '', pr_number: 0, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '', shadow_release_id: '', verify_error: '',
+  pr_url: '', pr_number: 0, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '', verification_run_id: '', verify_error: '',
 } as ProposalDTO;
 
 describe('batched proposal helpers', () => {
@@ -85,59 +85,60 @@ describe('batched proposal helpers', () => {
   });
 });
 
-describe('proposalShadowIds', () => {
-  it('lists one shadow release per verification, dropping empty ids', () => {
-    const p = {
-      ...base,
-      shadow_release_id: 'rel_legacy',
-      verifications: [
-        { service: 'svc_a', kind: 'dbt', shadow_release_id: 'rel_a' },
-        { service: 'svc_b', kind: 'dbt', shadow_release_id: '' },
-        { service: 'svc_c', kind: 'python', shadow_release_id: 'rel_c' },
-      ],
-    };
-    expect(proposalShadowIds(p)).toEqual(['rel_a', 'rel_c']);
+describe('verificationPhase', () => {
+  const p = (phases: string[]): ProposalDTO => ({
+    ...base, status: 'verifying',
+    verifications: phases.map((phase, i) => ({ service: `s${i}`, kind: 'dbt', run_id: `verify-${i}`, phase, activated_at: '', error: '' } as any)),
   });
-
-  it('falls back to the singular shadow_release_id when there are no verifications', () => {
-    expect(proposalShadowIds({ ...base, shadow_release_id: 'rel_legacy' })).toEqual(['rel_legacy']);
+  it('is running when any run is running', () => {
+    expect(verificationPhase(p(['queued', 'running']))).toBe('running');
   });
-
-  it('is empty when an attempt was judged without any shadow release', () => {
-    expect(proposalShadowIds(base)).toEqual([]);
+  it('is queued when every known phase is queued', () => {
+    expect(verificationPhase(p(['queued', 'queued']))).toBe('queued');
+  });
+  it('is undefined without positive evidence', () => {
+    expect(verificationPhase(p(['', '']))).toBeUndefined();
+    expect(verificationPhase(p(['passed', 'failed']))).toBeUndefined();
+    expect(verificationPhase({ ...base, verifications: [] })).toBeUndefined();
   });
 });
 
-describe('shadowVerifyPhase', () => {
-  const running = ['compiling', 'parsing', 'seed_building', 'validating'];
+describe('verificationRunPhase', () => {
+  it('maps run statuses onto phases', () => {
+    expect(verificationRunPhase('received')).toBe('queued');
+    for (const s of ['compiling', 'parsing', 'seed_building', 'validating']) expect(verificationRunPhase(s)).toBe('running');
+    expect(verificationRunPhase('passed')).toBe('passed');
+    expect(verificationRunPhase('failed')).toBe('failed');
+  });
+});
 
-  it.each(running)('reads a shadow at %s as running', (status) => {
-    expect(shadowVerifyPhase(['rel_a'], new Map([['rel_a', status]]))).toBe('running');
+describe('verificationRunIds', () => {
+  it('lists one run id per verification, dropping empty ids', () => {
+    const p = {
+      ...base,
+      verification_run_id: 'verify-legacy',
+      verifications: [
+        { service: 'svc_a', kind: 'dbt', run_id: 'verify-a', phase: '', activated_at: '', error: '' },
+        { service: 'svc_b', kind: 'dbt', run_id: '', phase: '', activated_at: '', error: '' },
+        { service: 'svc_c', kind: 'python', run_id: 'verify-c', phase: '', activated_at: '', error: '' },
+      ],
+    } as ProposalDTO;
+    expect(verificationRunIds(p)).toEqual(['verify-a', 'verify-c']);
   });
 
-  it('reads a shadow still received (waiting its turn in the queue) as queued', () => {
-    expect(shadowVerifyPhase(['rel_a'], new Map([['rel_a', 'received']]))).toBe('queued');
+  it('falls back to the singular verification_run_id when there are no verifications', () => {
+    expect(verificationRunIds({ ...base, verification_run_id: 'verify-legacy' })).toEqual(['verify-legacy']);
   });
 
-  it('lets running win when one shadow is queued and another has started', () => {
-    const status = new Map([['rel_a', 'received'], ['rel_b', 'validating']]);
-    expect(shadowVerifyPhase(['rel_a', 'rel_b'], status)).toBe('running');
+  it('is empty when an attempt was judged without any verification run', () => {
+    expect(verificationRunIds(base)).toEqual([]);
   });
+});
 
-  it('reads queued only when every observed shadow is still received', () => {
-    const status = new Map([['rel_a', 'received'], ['rel_b', 'received']]);
-    expect(shadowVerifyPhase(['rel_a', 'rel_b'], status)).toBe('queued');
-  });
-
-  it('stays running (the existing chip) when no shadow status is observed yet', () => {
-    expect(shadowVerifyPhase(['rel_a'], new Map())).toBe('running');
-    expect(shadowVerifyPhase([], new Map())).toBe('running');
-  });
-
-  it('ignores a terminal shadow status, keeping the running fallback', () => {
-    // A shadow that already reached 'validated'/'rejected' is not queued; the
-    // node's own outcome is about to flip, so the chip must not read 'queued'.
-    expect(shadowVerifyPhase(['rel_a'], new Map([['rel_a', 'validated']]))).toBe('running');
-    expect(shadowVerifyPhase(['rel_a'], new Map([['rel_a', 'rejected']]))).toBe('running');
+describe('releasePillClass for verification statuses', () => {
+  it('colours passed as succeeded, failed as failed, queued as pending', () => {
+    expect(releasePillClass('passed')).toBe('pill--succeeded');
+    expect(releasePillClass('failed')).toBe('pill--failed');
+    expect(releasePillClass('queued')).toBe('pill--pending');
   });
 });
