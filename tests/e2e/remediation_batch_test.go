@@ -42,17 +42,17 @@ const (
 const ftableGUniqueID = "e2e_schema.ftable_g"
 
 // Budgets shared by both batched-remediation tests. Each drives two full
-// release pipelines in kind — the rejected release, then the shadow release
-// that verifies the proposed fix — with one or two model calls in between, so
-// the ceilings are sized for a cold-ish stack rather than for the ~3 minutes a
-// warm one takes.
+// pipeline runs in kind — the rejected candidate release, then the
+// verification run that verifies the proposed fix — with one or two model
+// calls in between, so the ceilings are sized for a cold-ish stack rather
+// than for the ~3 minutes a warm one takes.
 const (
 	batchCtxBudget      = 35 * time.Minute
 	batchRejectBudget   = 10 * time.Minute
 	batchTriggerBudget  = 3 * time.Minute
 	batchProposalBudget = 20 * time.Minute
 	batchEventBudget    = 3 * time.Minute
-	batchShadowBudget   = 2 * time.Minute
+	batchVerifyBudget   = 2 * time.Minute
 )
 
 // TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest proves that a
@@ -67,7 +67,7 @@ const (
 //	→ ONE remediation.requested:v2 carrying both nodes, each with no changed ancestor
 //	→ ONE proposal row for the release (attempt 1) holding TWO file edits,
 //	  each naming the node whose source it repairs
-//	→ ONE dbt shadow release (both edits belong to service-2) that validates
+//	→ ONE dbt verification run (both edits belong to service-2) that passes
 //	→ the reconciler flips the attempt verifying → proposed
 //	→ ONE remediation.proposed:v1
 //	→ ONE pull request, titled for the two nodes it fixes
@@ -172,8 +172,8 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 	t.Logf("✅ one %s carries both independent failures", streams.RemediationRequestedV2)
 
 	// 5. ONE proposal row for the whole release, reaching 'proposed' only after
-	//    its shadow release has judged the fix. The representative node_id is the
-	//    lowest resolved id, so the row is addressed by ftable_e.
+	//    its verification run has judged the fix. The representative node_id is
+	//    the lowest resolved id, so the row is addressed by ftable_e.
 	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
 	require.Equal(t, 1, countProposalsForRelease(t, ctx, clients, releaseID),
 		"one release yields one fix attempt, not one per failing node")
@@ -203,18 +203,19 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 		"services/service-2/models/ftable_k.sql": ftableKUniqueID,
 	}, targetsByPath, "each edit must name the node whose source it changes")
 
-	// 7. Both edits belong to service-2, so ONE shadow release verified the whole
-	//    attempt — and it really ran: it reached 'validated' and is flagged as a
-	//    shadow in the release list the operator UI reads.
+	// 7. Both edits belong to service-2, so ONE verification run verified the
+	//    whole attempt — and it really ran: the pipeline names it while it is
+	//    active, it reaches 'passed', and it is never readable as a release.
 	verifications := decodeVerifications(t, row.Verifications)
 	require.Len(t, verifications, 1,
-		"both files belong to service-2, so one shadow release judged the attempt; got %+v", verifications)
+		"both files belong to service-2, so one verification run judged the attempt; got %+v", verifications)
 	require.Equal(t, "dbt", verifications[0].Kind, "a dbt model's fix is verified under a dbt manifest")
 	require.Equal(t, changedService, verifications[0].Service, "verification service")
-	require.NotEmpty(t, verifications[0].ShadowReleaseID, "a verification must name the release that judged it")
-	waitForReleaseStatus(t, ctx, clients, verifications[0].ShadowReleaseID, "validated", batchShadowBudget)
-	assertReleaseListedAsShadow(t, ctx, clients, verifications[0].ShadowReleaseID)
-	t.Logf("✅ one shadow release %s validated both edits", verifications[0].ShadowReleaseID)
+	require.NotEmpty(t, verifications[0].RunID, "a verification must name the run that judged it")
+	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, batchVerifyBudget)
+	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", batchVerifyBudget)
+	assertNotListedAsRelease(t, ctx, clients, verifications[0].RunID)
+	t.Logf("✅ one verification run %s passed for both edits", verifications[0].RunID)
 
 	// 8. ONE announcement, carrying the same batched view as the row.
 	proposed := waitForBatchProposedEvent(t, ctx, clients, releaseID, batchEventBudget)
@@ -255,7 +256,7 @@ func TestE2E_BatchedRemediation_TwoIndependentFailuresOnePullRequest(t *testing.
 //	  and both name ftable_u as their changed ancestor
 //	→ the driver forms ONE shared-upstream cluster targeting ftable_u
 //	→ ONE proposal with ONE edit — to ftable_u's source, a node that never failed
-//	→ ONE dbt shadow release that validates the repaired ancestor and its
+//	→ ONE dbt verification run that passes for the repaired ancestor and its
 //	  descendants
 //	→ ONE pull request fixing two nodes by changing one file
 //
@@ -402,19 +403,20 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 	require.Equal(t, ftableUUniqueID, edits[0].TargetNodeID,
 		"the edit must name the ancestor it repairs, which is not one of the failing nodes")
 
-	// 7. The single edit was verified by a real shadow release.
+	// 7. The single edit was verified by a real verification run.
 	verifications := decodeVerifications(t, row.Verifications)
 	require.Len(t, verifications, 1,
-		"one edited service, so one shadow release; got %+v", verifications)
+		"one edited service, so one verification run; got %+v", verifications)
 	require.Equal(t, "dbt", verifications[0].Kind, "a dbt model's fix is verified under a dbt manifest")
 	require.Equal(t, changedService, verifications[0].Service, "verification service")
-	waitForReleaseStatus(t, ctx, clients, verifications[0].ShadowReleaseID, "validated", batchShadowBudget)
-	assertReleaseListedAsShadow(t, ctx, clients, verifications[0].ShadowReleaseID)
-	t.Logf("✅ shadow release %s validated the upstream fix", verifications[0].ShadowReleaseID)
+	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, batchVerifyBudget)
+	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", batchVerifyBudget)
+	assertNotListedAsRelease(t, ctx, clients, verifications[0].RunID)
+	t.Logf("✅ verification run %s passed for the upstream fix", verifications[0].RunID)
 
 	// 8. The proposed source really restores the column both descendants read —
-	//    the shadow could not have validated otherwise, but asserting it names
-	//    what the fix was, not just that one existed.
+	//    the verification run could not have passed otherwise, but asserting it
+	//    names what the fix was, not just that one existed.
 	contentKey := stripS3Prefix(edits[0].ContentURI)
 	require.NotEmpty(t, contentKey, "could not parse key from content_uri=%s", edits[0].ContentURI)
 	body := string(getS3ObjectByKey(t, ctx, clients, contentKey))
@@ -504,7 +506,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 //	→ validation fails on both nodes → release "rejected"
 //	→ ONE remediation.requested:v2 carrying both nodes
 //	→ ONE proposal row (attempt 1) holding TWO file edits, one per service
-//	→ TWO dbt shadow releases (one per edited service) that both validate
+//	→ TWO dbt verification runs (one per edited service) that both pass
 //	→ ONE remediation.proposed:v1
 //	→ POST /proposals/:id/pull-request opens TWO pull requests, distinct
 //	  branches and numbers, one per service
@@ -627,9 +629,9 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 	require.ElementsMatch(t, []string{changedService, otherService}, proposalPB.GetPrServices(),
 		"a proposal split across two services must report both in pr_services; got %v", proposalPB.GetPrServices())
 
-	// 6. TWO shadow releases, one per edited service.
+	// 6. TWO verification runs, one per edited service.
 	verifications := decodeVerifications(t, row.Verifications)
-	require.Len(t, verifications, 2, "two edited services must be verified by two independent shadow releases; got %+v", verifications)
+	require.Len(t, verifications, 2, "two edited services must be verified by two independent verification runs; got %+v", verifications)
 	verificationsByService := map[string]pyVerification{}
 	for _, v := range verifications {
 		require.Equal(t, "dbt", v.Kind, "a dbt model's fix is verified under a dbt manifest")
@@ -638,13 +640,14 @@ func TestE2E_BatchedRemediation_TwoServicesTwoPullRequests(t *testing.T) {
 	require.Contains(t, verificationsByService, changedService)
 	require.Contains(t, verificationsByService, otherService)
 	for svc, v := range verificationsByService {
-		require.NotEmpty(t, v.ShadowReleaseID, "verification for %s must name the release that judged it", svc)
-		waitForReleaseStatus(t, ctx, clients, v.ShadowReleaseID, "validated", batchShadowBudget)
-		assertReleaseListedAsShadow(t, ctx, clients, v.ShadowReleaseID)
+		require.NotEmpty(t, v.RunID, "verification for %s must name the run that judged it", svc)
+		assertPipelineNamedVerification(t, ctx, clients, v.RunID, batchVerifyBudget)
+		waitForVerificationStatus(t, ctx, clients, v.RunID, "passed", batchVerifyBudget)
+		assertNotListedAsRelease(t, ctx, clients, v.RunID)
 	}
-	t.Logf("✅ two shadow releases validated: %s=%s %s=%s",
-		changedService, verificationsByService[changedService].ShadowReleaseID,
-		otherService, verificationsByService[otherService].ShadowReleaseID)
+	t.Logf("✅ two verification runs passed: %s=%s %s=%s",
+		changedService, verificationsByService[changedService].RunID,
+		otherService, verificationsByService[otherService].RunID)
 
 	// 7. pr_services names both owning-service groups, and the route opens
 	//    two pull requests with distinct branches and numbers.
@@ -791,8 +794,9 @@ func TestE2E_BatchedRemediation_AmendedMergeMarksProvenanceAmended(t *testing.T)
 	require.Equal(t, ftableEUniqueID, edits[0].TargetNodeID, "the edit's target node")
 
 	verifications := decodeVerifications(t, row.Verifications)
-	require.Len(t, verifications, 1, "one edited service, so one shadow release; got %+v", verifications)
-	waitForReleaseStatus(t, ctx, clients, verifications[0].ShadowReleaseID, "validated", batchShadowBudget)
+	require.Len(t, verifications, 1, "one edited service, so one verification run; got %+v", verifications)
+	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, batchVerifyBudget)
+	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", batchVerifyBudget)
 
 	// 2. Open the pull request as usual.
 	prNumber := openRemediationPR(t, ctx, clients, row.ID, releaseID, changedService)
@@ -854,8 +858,8 @@ FROM e2e_schema.ftable_c c`
 }
 
 // batchProposalRow is the batched view of a proposal row: the set the attempt
-// addressed, each node's outcome, every file it changed, and every shadow
-// release that judged it. The single-node projection is proposalRow in
+// addressed, each node's outcome, every file it changed, and every
+// verification run that judged it. The single-node projection is proposalRow in
 // remediation_agent_test.go; a batched attempt cannot be read through that one,
 // because its scalar node_id and file_path columns hold only a representative.
 type batchProposalRow struct {

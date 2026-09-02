@@ -44,8 +44,8 @@ import (
 //	  classifies the parse/compilation error as healable → remediation.requested:v2 (source="compile")
 //	→ agent-remediation proposeFromSource: reads model source from GitHub (stub-github),
 //	  asks stub-llm to fix it → proposal row (source="compile", file_path)
-//	→ a shadow release lays the corrected file over the fixture service's dbt
-//	  project and compiles and validates it; when it reports validated the
+//	→ a verification run lays the corrected file over the fixture service's dbt
+//	  project and compiles and validates it; when it reports passed the
 //	  proposal is finalized → remediation.proposed:v1.
 //
 // Unlike the validation path, the compile leg is the FIRST leg and rejects
@@ -80,7 +80,7 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 
 	// 35 minutes: strictly greater than the 34 this test's stage budgets sum to
 	// (rejection 12 + rejected event 2 + trigger 4 + decision 0.5 + proposal 15
-	// + proposal row 0.5). The proposal budget covers the shadow release that
+	// + proposal row 0.5). The proposal budget covers the verification run that
 	// lays the corrected file over the fixture project and compiles it.
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
@@ -176,10 +176,10 @@ func TestE2E_Remediation_CompileFailureProposesFix(t *testing.T) {
 	require.Equal(t, "emit", decision.Decision, "a compile parse/syntax error must route to emit, not drop")
 
 	// 6. remediation.proposed:v1 must be emitted for the compile failure with
-	//    source=="compile". The agent posts a shadow release that lays the
+	//    source=="compile". The agent posts a verification run that lays the
 	//    corrected file over the fixture service's dbt project and compiles it;
-	//    the event follows only once that release reports validated, so this
-	//    budget covers a whole second release pipeline.
+	//    the event follows only once that run reports passed, so this budget
+	//    covers a whole second pipeline run.
 	var proposed remediationProposedPayload
 	pollUntil(t, ctx, 15*time.Minute, 3*time.Second, func() (bool, error) {
 		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationProposedV1, "-", "+").Result()

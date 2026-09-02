@@ -30,11 +30,11 @@ import (
 //	→ agent-remediation consumes it and groups its failing set
 //	→ calls stub-llm (propose_fix tool call → deterministic SQL fix)
 //	→ writes proposed SQL and diff to S3
-//	→ inserts proposal row (status=verifying, attempt=1) and posts one shadow
-//	  release per edited service, which lays the proposed source over the
-//	  service's dbt project and runs the real compile + validation pipeline
-//	→ the shadow release stops at "validated"
-//	→ the shadow-verify reconciler flips the proposal to status=proposed
+//	→ inserts proposal row (status=verifying, attempt=1) and posts one
+//	  verification run per edited service, which lays the proposed source over
+//	  the service's dbt project and runs the real compile + validation pipeline
+//	→ the verification run stops at "passed"
+//	→ the reconciler flips the proposal to status=proposed
 //	→ emits remediation.proposed:v1 via outbox publisher
 //
 // The stub-llm (tests/e2e/stub-llm/main.go) detects the propose_fix tool in
@@ -45,9 +45,9 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	// 35 minutes: the rejected release and the shadow release that verifies
+	// 35 minutes: the rejected release and the verification run that verifies
 	// the fix each run a full compile + validation pipeline in kind, and the
-	// shadow runs only after the model has answered.
+	// verification run only runs after the model has answered.
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
 
@@ -141,10 +141,10 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 
 	// 7. Poll remediation.proposed:v1. The agent-remediation consumes the trigger,
 	//    calls the stub-llm (which returns a deterministic propose_fix tool call),
-	//    writes artifacts to S3, persists the proposal row, and posts a shadow
-	//    release that compiles and validates the proposed source. This event is
-	//    published only once that shadow release reports back validated, so the
-	//    budget covers a whole second release pipeline, not just the model call.
+	//    writes artifacts to S3, persists the proposal row, and posts a
+	//    verification run that compiles and validates the proposed source. This
+	//    event is published only once that run reports back passed, so the
+	//    budget covers a whole second pipeline run, not just the model call.
 	var proposed remediationProposedPayload
 	pollUntil(t, ctx, 20*time.Minute, 3*time.Second, func() (bool, error) {
 		msgs, err := clients.redisClient.XRange(ctx, streams.RemediationProposedV1, "-", "+").Result()
@@ -231,25 +231,28 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 		proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 	t.Logf("proposed SQL object fetched from %s: %q", proposed.ProposedSQLURI, strings.TrimSpace(string(sqlBody)))
 
-	// (c2) The proposal was verified by a real dbt shadow release, not accepted
-	//      on the model's word: the row names one verification, for a dbt-kind
-	//      manifest, and that release reached "validated". waitForReleaseStatus
-	//      returns immediately here — the event in (7) is emitted only after the
-	//      verdict — so this reads the verdict rather than waiting for it.
+	// (c2) The proposal was verified by a real dbt verification run, not
+	//      accepted on the model's word: the row names one verification, for a
+	//      dbt-kind manifest, and that run reached "passed". It is also never
+	//      readable as a release. Both waits below return immediately here —
+	//      the event in (7) is emitted only after the verdict, so the run is
+	//      already terminal — reading it rather than waiting for it.
 	var verificationsJSON []byte
 	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &verificationsJSON,
 		`SELECT verifications FROM proposal WHERE release_id = $1 AND node_id = $2 AND attempt = 1`,
 		releaseID, ftableEUniqueID))
 	verifications := decodeVerifications(t, verificationsJSON)
 	require.Len(t, verifications, 1,
-		"the fix edits one service, so exactly one shadow release judged it")
+		"the fix edits one service, so exactly one verification run judged it")
 	require.Equal(t, "dbt", verifications[0].Kind,
 		"a dbt model's fix must be verified under a dbt manifest, not a python contract")
-	require.NotEmpty(t, verifications[0].ShadowReleaseID,
-		"a verification must name the release that produced its verdict")
-	waitForReleaseStatus(t, ctx, clients, verifications[0].ShadowReleaseID, "validated", 2*time.Minute)
-	t.Logf("shadow verification confirmed: service=%s kind=%s release=%s",
-		verifications[0].Service, verifications[0].Kind, verifications[0].ShadowReleaseID)
+	require.NotEmpty(t, verifications[0].RunID,
+		"a verification must name the run that produced its verdict")
+	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, 2*time.Minute)
+	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", 2*time.Minute)
+	assertNotListedAsRelease(t, ctx, clients, verifications[0].RunID)
+	t.Logf("verification confirmed: service=%s kind=%s run=%s",
+		verifications[0].Service, verifications[0].Kind, verifications[0].RunID)
 
 	// (f) SELECT the proposal's id from the DB so we can call the PR-creation endpoint.
 	var proposalID string
