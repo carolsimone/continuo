@@ -181,13 +181,13 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				n, err := handlers.PruneResolvedReleases(ctx, deps, retentionDays)
+				n, err := handlers.PruneFinishedRuns(ctx, deps, retentionDays)
 				if err != nil {
 					logger.Error("retention prune failed", "error", err)
 					continue
 				}
 				if n > 0 {
-					logger.Info("pruned resolved releases", "count", n)
+					logger.Info("pruned finished pipeline runs", "count", n)
 				}
 			}
 		}

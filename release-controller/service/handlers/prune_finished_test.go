@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPruneResolvedReleases_PassesCutoffAndKeepIDs(t *testing.T) {
+func TestPruneFinishedRuns_PassesCutoffAndKeepIDs(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	// Build deps via the shared helper so Clock/Telemetry/Logger are set
@@ -36,7 +36,7 @@ func TestPruneResolvedReleases_PassesCutoffAndKeepIDs(t *testing.T) {
 
 	// now is supplied via deps' fakeClock (set by newDeps), so the handler
 	// derives the cutoff from d.Clock.Now() rather than a caller-supplied time.
-	n, err := handlers.PruneResolvedReleases(context.Background(), deps, 90)
+	n, err := handlers.PruneFinishedRuns(context.Background(), deps, 90)
 	require.NoError(t, err)
 	require.NotNil(t, captured, "NewUoW factory was never called")
 	assert.Equal(t, 3, n)
@@ -44,7 +44,7 @@ func TestPruneResolvedReleases_PassesCutoffAndKeepIDs(t *testing.T) {
 	assert.True(t, captured.lastCutoff.Equal(now.AddDate(0, 0, -90)))
 }
 
-func TestPruneResolvedReleases_IncludesServiceProdReleaseIDs(t *testing.T) {
+func TestPruneFinishedRuns_IncludesServiceProdReleaseIDs(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	deps, _ := newDeps(now)
@@ -64,7 +64,7 @@ func TestPruneResolvedReleases_IncludesServiceProdReleaseIDs(t *testing.T) {
 		return u
 	}
 
-	_, err := handlers.PruneResolvedReleases(context.Background(), deps, 90)
+	_, err := handlers.PruneFinishedRuns(context.Background(), deps, 90)
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 
@@ -72,7 +72,7 @@ func TestPruneResolvedReleases_IncludesServiceProdReleaseIDs(t *testing.T) {
 	assert.ElementsMatch(t, []string{"cp-1", "sp-a", "sp-b"}, captured.lastKeepReleaseIDs)
 }
 
-func TestPruneResolvedReleases_EmptyKeepSetWhenNoProdPointers(t *testing.T) {
+func TestPruneFinishedRuns_EmptyKeepSetWhenNoProdPointers(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	deps, _ := newDeps(now)
@@ -87,7 +87,7 @@ func TestPruneResolvedReleases_EmptyKeepSetWhenNoProdPointers(t *testing.T) {
 		return u
 	}
 
-	_, err := handlers.PruneResolvedReleases(context.Background(), deps, 90)
+	_, err := handlers.PruneFinishedRuns(context.Background(), deps, 90)
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 
@@ -95,7 +95,7 @@ func TestPruneResolvedReleases_EmptyKeepSetWhenNoProdPointers(t *testing.T) {
 	assert.Empty(t, captured.lastKeepReleaseIDs)
 }
 
-func TestPruneResolvedReleases_DeduplicatesOverlappingIDs(t *testing.T) {
+func TestPruneFinishedRuns_DeduplicatesOverlappingIDs(t *testing.T) {
 	now := time.Unix(1_000_000, 0).UTC()
 
 	deps, _ := newDeps(now)
@@ -112,7 +112,7 @@ func TestPruneResolvedReleases_DeduplicatesOverlappingIDs(t *testing.T) {
 		return u
 	}
 
-	_, err := handlers.PruneResolvedReleases(context.Background(), deps, 90)
+	_, err := handlers.PruneFinishedRuns(context.Background(), deps, 90)
 	require.NoError(t, err)
 	require.NotNil(t, captured)
 

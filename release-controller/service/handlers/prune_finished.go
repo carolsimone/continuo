@@ -5,12 +5,9 @@ import (
 	"fmt"
 )
 
-// PruneResolvedReleases deletes terminal releases older than retentionDays,
-// preserving any release still referenced by current_prod or by a service_prod
-// row. Returns the number deleted. Runs in its own transaction. The cutoff is
-// taken from the injected Clock so the time source stays consistent with the
-// other handlers and is deterministic under test.
-func PruneResolvedReleases(ctx context.Context, d *Deps, retentionDays int) (int, error) {
+// PruneFinishedRuns deletes terminal runs of either kind older than retentionDays,
+// preserving any run still referenced by current_prod or a service_prod row.
+func PruneFinishedRuns(ctx context.Context, d *Deps, retentionDays int) (int, error) {
 	cutoff := d.Clock.Now().AddDate(0, 0, -retentionDays)
 
 	u := d.NewUoW()
