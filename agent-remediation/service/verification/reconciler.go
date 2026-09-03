@@ -229,7 +229,7 @@ func (r *Reconciler) resolve(ctx context.Context, v proposal.View) {
 	case allTerminal:
 		r.verified(ctx, v, final)
 	default:
-		r.failIfVerificationExpired(ctx, v, runningSince)
+		r.failIfVerificationExpired(ctx, v, runningSince, final)
 	}
 }
 
@@ -375,13 +375,16 @@ func (r *Reconciler) rejected(ctx context.Context, v proposal.View, verifyErr st
 // The wait is still bounded: a queue that never advances is a stopped pipeline,
 // and a run that starts and then wedges is caught by its own budget from the
 // moment it started.
-func (r *Reconciler) failIfVerificationExpired(ctx context.Context, v proposal.View, runningSince []time.Time) {
+// final carries the phases and activation times observed in this pass, so a run
+// first seen running after its timeout is recorded with the status just read,
+// not the stale slice loaded before polling.
+func (r *Reconciler) failIfVerificationExpired(ctx context.Context, v proposal.View, runningSince []time.Time, final []proposal.Verification) {
 	now := r.clock.Now()
 	for _, since := range runningSince {
 		if now.Sub(since) < r.timeout {
 			continue
 		}
-		r.rejected(ctx, v, timedOutError, verificationsOf(v))
+		r.rejected(ctx, v, timedOutError, final)
 		return
 	}
 }
