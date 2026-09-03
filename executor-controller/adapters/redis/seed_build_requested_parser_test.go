@@ -183,15 +183,15 @@ func TestParseSeedBuildRequested_SeedHasNoUpstreamsOrSQLURI(t *testing.T) {
 }
 
 // TestParseSeedBuildRequested_CarriesSourceOverlayURI verifies the parser
-// decodes the shadow-release source overlay, so a proposed seed fix reaches the
-// seed-build Job that verifies it.
+// decodes the verification run's source overlay, so a proposed seed fix
+// reaches the seed-build Job that verifies it.
 func TestParseSeedBuildRequested_CarriesSourceOverlayURI(t *testing.T) {
 	p := seedBuildPayload()
-	p["source_overlay_uri"] = "s3://continuo/shop/shadow-rel-456-shop-a1/source-overlay.tar.gz"
+	p["source_overlay_uri"] = "s3://continuo/shop/verify-rel-456-shop-a1/source-overlay.tar.gz"
 
 	evt, err := ParseSeedBuildRequested(seedBuildMsg(t, p, ""))
 	require.NoError(t, err)
-	assert.Equal(t, "s3://continuo/shop/shadow-rel-456-shop-a1/source-overlay.tar.gz", evt.SourceOverlayURI)
+	assert.Equal(t, "s3://continuo/shop/verify-rel-456-shop-a1/source-overlay.tar.gz", evt.SourceOverlayURI)
 }
 
 // TestParseSeedBuildRequested_AbsentSourceOverlayURIIsEmpty verifies a payload

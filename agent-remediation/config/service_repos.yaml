@@ -2,7 +2,7 @@
 # Maps a service name (orchestrator topology service_name; dbt or python) to
 # its project root within that service's own repository. The agent joins
 # <repo_path> with the offending file's path to read the model source from
-# GitHub, and routes the shadow release that verifies a fix by the project
+# GitHub, and routes the verification run that verifies a fix by the project
 # root that owns the edited file — so a service absent from the map has its
 # fix recorded as unverifiable, and its compile, seed, and duplicate-table
 # proposals skipped.

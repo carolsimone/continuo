@@ -182,9 +182,9 @@ func TestDeployCompile_CreatesJobWithMappedFields(t *testing.T) {
 }
 
 // TestDeploySeedBuild_ThreadsSourceOverlayURI verifies the seed-build deploy
-// path forwards a shadow release's source overlay from the domain spec onto the
-// Job it creates. A dropped field here silently verifies a proposed seed fix
-// against the checked-in CSV instead of the proposed one.
+// path forwards a verification run's source overlay from the domain spec onto
+// the Job it creates. A dropped field here silently verifies a proposed seed
+// fix against the checked-in CSV instead of the proposed one.
 func TestDeploySeedBuild_ThreadsSourceOverlayURI(t *testing.T) {
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	t.Setenv("S3_BUCKET", "")
@@ -192,22 +192,22 @@ func TestDeploySeedBuild_ThreadsSourceOverlayURI(t *testing.T) {
 	d := NewDeployer(client, "default")
 
 	err := d.DeploySeedBuild(context.Background(), deploy.ValidationJobSpec{
-		JobName:          "seedbuild-shadow-fx",
-		ReleaseID:        "shadow-rel-1-core-a1",
+		JobName:          "seedbuild-verify-fx",
+		ReleaseID:        "verify-rel-1-core-a1",
 		NodeID:           "seed.core.fx",
 		ServiceName:      "core",
 		SchemaName:       "analytics",
 		TableName:        "fx",
 		NodeType:         string(pkg_model.NodeTypeDbtSeed),
 		ImageTag:         "abc123",
-		CandidateSchema:  "_candidate_shadow_rel_1",
-		SourceOverlayURI: "s3://continuo/core/shadow-rel-1-core-a1/source-overlay.tar.gz",
+		CandidateSchema:  "_candidate_verify_rel_1",
+		SourceOverlayURI: "s3://continuo/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 	})
 	require.NoError(t, err)
 
-	spec := fetchJob(t, client, "default", "seedbuild-shadow-fx").Spec.Template.Spec
+	spec := fetchJob(t, client, "default", "seedbuild-verify-fx").Spec.Template.Spec
 	require.Len(t, spec.InitContainers, 1)
 	assert.Equal(t, "overlay", spec.InitContainers[0].Name)
-	assert.Equal(t, "s3://continuo/core/shadow-rel-1-core-a1/source-overlay.tar.gz",
+	assert.Equal(t, "s3://continuo/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 		envOf(spec.InitContainers[0], "SOURCE_OVERLAY_URI"))
 }

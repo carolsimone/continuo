@@ -71,9 +71,9 @@ type ValidationDeployTask struct {
 	// job_params JSON byte-identical.
 	ParseProdS3URI      string `json:"parse_prod_s3_uri,omitempty"`
 	ParseCandidateS3URI string `json:"parse_candidate_s3_uri,omitempty"`
-	// SourceOverlayURI locates the source-overlay tarball a shadow release's
-	// compile Job lays over the project before compiling; empty for every
-	// production release. omitempty keeps pre-feature job_params JSON
+	// SourceOverlayURI locates the source-overlay tarball a verification
+	// run's compile Job lays over the project before compiling; empty for
+	// every production release. omitempty keeps pre-feature job_params JSON
 	// byte-identical.
 	SourceOverlayURI string `json:"source_overlay_uri,omitempty"`
 }

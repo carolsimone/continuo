@@ -50,9 +50,9 @@ func (h *SeedBuildRequestedHandler) Handle(
 			ImageTag:        s.ImageTag,
 			JobName:         BuildValidationJobName(evt.ReleaseID, s.NodeID),
 			CandidateSchema: evt.CandidateSchema,
-			// A shadow release verifying a proposed fix carries the overlay of
-			// proposed source files; the seed Job lays it over the checked-in
-			// project so `dbt seed` loads the proposed CSV.
+			// A verification run verifying a proposed fix carries the overlay
+			// of proposed source files; the seed Job lays it over the
+			// checked-in project so `dbt seed` loads the proposed CSV.
 			SourceOverlayURI: evt.SourceOverlayURI,
 			// Seed-build tasks have no SQL URI, upstreams, validation op, or prod schema.
 		}

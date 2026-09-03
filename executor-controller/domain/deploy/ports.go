@@ -57,9 +57,9 @@ type ValidationJobSpec struct {
 	// parse-export leg for this release.
 	ParseProdS3URI      string
 	ParseCandidateS3URI string
-	// SourceOverlayURI locates the source-overlay tarball a shadow release's
-	// compile Job lays over the project before compiling. Populated only for
-	// mode=compile dispatches of a shadow release.
+	// SourceOverlayURI locates the source-overlay tarball a verification
+	// run's compile Job lays over the project before compiling. Populated
+	// only for mode=compile dispatches of a verification run.
 	SourceOverlayURI string
 }
 

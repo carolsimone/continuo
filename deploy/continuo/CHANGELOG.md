@@ -38,7 +38,7 @@ shipped in those.
 ### Fixed
 - `templates/networkpolicy.yaml`: added the two remediation reachability edges
   the default-deny policy was missing — `agent-remediation → release-controller`
-  on 8088 (the shadow-verify lane: submitting/polling shadow releases and
+  on 8088 (the verification lane: submitting/polling verification runs and
   reading the failing release's image tags) and `release-controller →
   agent-remediation` on 50054 (`ListProposals` before a retry round). Without
   them, on a cluster whose CNI enforces NetworkPolicy every proposed fix stalled
