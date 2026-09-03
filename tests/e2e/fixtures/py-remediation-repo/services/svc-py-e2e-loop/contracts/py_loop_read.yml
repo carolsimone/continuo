@@ -2,8 +2,8 @@ nodes:
   # Same unbindable-read failure as svc-py-e2e's py_bad_read, declared under a
   # second service so the two remediation scenarios never share a contract
   # directory: the packaging step merges a whole directory, so one still-broken
-  # node beside the node under repair would sink the other scenario's shadow
-  # release.
+  # node beside the node under repair would sink the other scenario's
+  # verification run.
   #
   # The node is repaired over two attempts: the canned model in
   # tests/e2e/stub-llm answers a first attempt with a read that still cannot

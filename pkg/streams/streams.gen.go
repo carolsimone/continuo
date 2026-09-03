@@ -76,7 +76,7 @@ const (
 	RemediationRetryRequestedV1 = "remediation.retry_requested:v1"
 	// RemediationRequestedV2 — One batched remediation trigger per rejected release carrying its whole healable node set (each node with the classifier's evidence and its changed ancestors); emitted by the remediation classifier, consumed by the heal agent and by orchestrator's case-base rejections group.
 	RemediationRequestedV2 = "remediation.requested:v2"
-	// RemediationProposedV1 — One shadow-verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
+	// RemediationProposedV1 — One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
 	RemediationProposedV1 = "remediation.proposed:v1"
 	// RemediationPrOpenedV1 — Emitted when an operator opens a GitHub PR from a fix proposal, one per (release, attempt) and carrying every node the PR resolves; consumed by orchestrator's case-base proposals group.
 	RemediationPrOpenedV1 = "remediation.pr_opened:v1"

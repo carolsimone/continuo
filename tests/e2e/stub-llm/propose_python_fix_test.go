@@ -17,8 +17,8 @@ const (
 
 // priorAttemptSection is the earlier-attempts section a retry's prompt carries,
 // rendered exactly as prompt.AssemblePythonContractFix renders it: the heading,
-// the attempt line with the error its shadow release reported, and the diff that
-// attempt applied.
+// the attempt line with the error its verification run reported, and the diff
+// that attempt applied.
 const priorAttemptSection = "Previous fix attempts for this node, oldest first — do not repeat a change that was already rejected:\n" +
 	"Attempt 1 — verification failed: relation \"public.still_wrong_name\" does not exist\n" +
 	"  Changed " + loopFixturePath + ":\n" +
@@ -104,16 +104,16 @@ func readLoopFixture(t *testing.T) string {
 // TestProposePythonFix_LoopFixture_FirstAttemptStaysBroken is the guard on the
 // property the loop e2e test rests on: shown the loop fixture with no earlier
 // attempt, the stub must answer with a read that still cannot bind, so the
-// shadow release verifying it is rejected and its error becomes the second
+// verification run checking it is rejected and its error becomes the second
 // attempt's evidence.
 //
 // It reads the PRISTINE fixture from disk rather than an inline copy, because
 // the way this has broken before is a fixture drifting away from what the stub
 // assumes about it: a comment added to the file named the still-broken relation,
 // the stub took that as proof of an earlier attempt, and the very first attempt
-// got the answer meant for the retry. The whole loop then validated on its first
-// shadow release and the e2e test timed out waiting for a rejection it could no
-// longer get. Reading the real file is what makes this test notice.
+// got the answer meant for the retry. The whole loop then validated on its
+// first verification run and the e2e test timed out waiting for a rejection
+// it could no longer get. Reading the real file is what makes this test notice.
 func TestProposePythonFix_LoopFixture_FirstAttemptStaysBroken(t *testing.T) {
 	path, content := proposedFile(t, pythonFixPrompt(readLoopFixture(t), ""))
 
@@ -147,7 +147,7 @@ func TestProposePythonFix_LoopFixture_CommentsCannotAnswerForTheModel(t *testing
 // TestProposePythonFix_LoopFixture_RetryShownTheErrorBinds is the other half:
 // once the prompt carries what the rejected attempt changed and why it failed,
 // the stub answers with the relation the e2e test creates in the warehouse, so
-// the second shadow release validates.
+// the second verification run validates.
 func TestProposePythonFix_LoopFixture_RetryShownTheErrorBinds(t *testing.T) {
 	_, content := proposedFile(t, pythonFixPrompt(readLoopFixture(t), priorAttemptSection))
 

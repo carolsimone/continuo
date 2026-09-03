@@ -19,8 +19,8 @@
 //     source of the changed ancestor a whole cluster failed below;
 //     "Original model source" (prompt.AssembleSourceFix) → the corrected real
 //     model source; neither → the Step-1 candidate-SQL fix (compiled SQL).
-//     Every source answer uses physical schema.table names, because a shadow
-//     release lays it over the real dbt project and compiles it.
+//     Every source answer uses physical schema.table names, because a
+//     verification run lays it over the real dbt project and compiles it.
 //
 //  2. propose_python_fix mode: when the request body contains a tool named
 //     "propose_python_fix", the server returns a NON-STREAMING response whose
@@ -236,7 +236,7 @@ const step2Marker = "Original model source"
 // and keeps the surviving read as a physical schema.table name.
 //
 // Physical names rather than {{ ref(...) }} macros because every proposed fix
-// is now verified by a shadow release that lays this exact text over the
+// is verified by a verification run that lays this exact text over the
 // service's dbt project and compiles it. A {{ ref('table_b') }} does not
 // resolve inside service-2 (table_b belongs to service-1's project), so the
 // overlay compile would abort and no fix could ever verify.
@@ -321,7 +321,7 @@ const priorAttemptsHeading = "Previous fix attempts for this node"
 // answer comes back. A comment inside a fixture naming one of the relations
 // below would otherwise flip the answer, and would do so on the FIRST attempt —
 // handing back the fix that is supposed to arrive only on a retry, and making a
-// test that drives the retry loop pass its first shadow release instead.
+// test that drives the retry loop pass its first verification run instead.
 func promptAroundContract(userContent, contract string) string {
 	if contract == "" {
 		return userContent
@@ -352,16 +352,17 @@ func isRetryShownTheRejectedRead(userContent, contract string) bool {
 // Which rewrite depends on the fixture, so one stub drives both e2e scenarios:
 //
 //   - the loop fixture (loopBrokenRead) on a FIRST attempt gets
-//     stillBrokenRead — a relation that does not exist either, so the shadow
-//     release verifying it is rejected and its error becomes the next
-//     attempt's evidence;
-//   - the loop fixture on a retry gets bindingRead, so the second shadow
-//     release validates. A retry is recognised by isRetryShownTheRejectedRead:
-//     the prompt's prior-attempts section exists AND it names the relation the
-//     earlier attempt declared, which reaches the prompt only through that
-//     attempt's recorded verification error or the diff it applied. A retry
-//     whose prompt lost that evidence therefore keeps getting the answer that
-//     already failed, and the e2e test driving it never goes green;
+//     stillBrokenRead — a relation that does not exist either, so the
+//     verification run checking it is rejected and its error becomes the
+//     next attempt's evidence;
+//   - the loop fixture on a retry gets bindingRead, so the second
+//     verification run validates. A retry is recognised by
+//     isRetryShownTheRejectedRead: the prompt's prior-attempts section exists
+//     AND it names the relation the earlier attempt declared, which reaches
+//     the prompt only through that attempt's recorded verification error or
+//     the diff it applied. A retry whose prompt lost that evidence therefore
+//     keeps getting the answer that already failed, and the e2e test driving
+//     it never goes green;
 //   - every other fixture gets bindingRead immediately.
 //
 // A prompt with no contract file in it yields an empty updated_files list,

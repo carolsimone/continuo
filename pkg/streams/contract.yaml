@@ -361,7 +361,7 @@ streams:
 
   - name: remediation.proposed:v1
     const: RemediationProposedV1
-    description: One shadow-verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
+    description: One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
     producers: [agent-remediation]
     consumers: []
 

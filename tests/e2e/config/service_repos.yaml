@@ -7,8 +7,8 @@
 # ships (deploy/continuo/files/service_repos.yaml).
 #
 # Every service the compose stack can produce a fix for must appear here: a
-# shadow release is routed by the project root that owns the edited file, so a
-# service missing from the map has its fix recorded as unverifiable rather
+# verification run is routed by the project root that owns the edited file,
+# so a service missing from the map has its fix recorded as unverifiable rather
 # than being verified, and compile, seed, and duplicate-table proposals for it
 # are skipped outright. Add a service here when a new e2e test proposes a fix
 # for it, then restart agent-remediation.

@@ -136,8 +136,8 @@ func (s *fakeStore) GetServiceProd(serviceName string) *release.ServiceProd {
 // CurrentProdUpsertCalls returns how many times CurrentProdRepo.Upsert has
 // been called against this store, across every UoW instance backed by it.
 // Used by tests to assert that a route which must never promote (e.g. a
-// shadow release) never touches current_prod, rather than only inferring it
-// from the stored value.
+// verification run) never touches current_prod, rather than only inferring
+// it from the stored value.
 func (s *fakeStore) CurrentProdUpsertCalls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

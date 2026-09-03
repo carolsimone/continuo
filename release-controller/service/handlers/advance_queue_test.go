@@ -274,8 +274,8 @@ func TestAdvanceQueue_CompileRequestedCarriesSourceOverlayURI(t *testing.T) {
 
 // verifiedOriginal is a rejected candidate release of svc-a, parsed (so its
 // candidate manifest exists at its canonical key) and carrying its own image
-// tag for svc-a. A shadow release verifying it must assemble THAT manifest for
-// svc-a rather than svc-a's live production pointer.
+// tag for svc-a. A verification run verifying it must assemble THAT manifest
+// for svc-a rather than svc-a's live production pointer.
 func verifiedOriginal(id string, now time.Time) *pipeline.Run {
 	return pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:             id,
@@ -290,19 +290,19 @@ func verifiedOriginal(id string, now time.Time) *pipeline.Run {
 	})
 }
 
-// TestAdvanceQueue_ShadowVerifiesTheRejectedReleasesCandidate covers the fix
-// whose edit lands in a DIFFERENT service than the one whose release was
+// TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate covers the
+// fix whose edit lands in a DIFFERENT service than the one whose release was
 // rejected: the rejection came from svc-a's candidate, so verifying the fix
 // against svc-a's PRODUCTION manifest would judge it on code the rejection was
 // never about. The verification names the release it verifies, and svc-a is
 // assembled from that release's candidate — manifest key and image tag both.
-func TestAdvanceQueue_ShadowVerifiesTheRejectedReleasesCandidate(t *testing.T) {
+func TestAdvanceQueue_VerificationVerifiesTheRejectedReleasesCandidate(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO", deps.Clock.Now()))
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	store.SeedRelease(pipeline.NewVerification("rShadow", "svc-b", "img:1", "rO", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(pipeline.NewVerification("rVerify", "svc-b", "img:1", "rO", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -311,23 +311,23 @@ func TestAdvanceQueue_ShadowVerifiesTheRejectedReleasesCandidate(t *testing.T) {
 	uris := manifestKeyURIs(t, entries[0].Payload)
 	assert.Equal(t, "s3://b/svc-a/rO/manifest.json", uris["svc-a"],
 		"svc-a must be assembled from the rejected release's candidate, not from its production pointer")
-	assert.Equal(t, "s3://b/svc-b/rShadow/contract.yaml", uris["svc-b"], "the shadow's own service is its own delta")
+	assert.Equal(t, "s3://b/svc-b/rVerify/contract.yaml", uris["svc-b"], "the verification run's own service is its own delta")
 
-	r, _ := store.GetRelease("rShadow")
+	r, _ := store.GetRelease("rVerify")
 	assert.Equal(t, "tag-a-candidate", r.ImageTags()["svc-a"],
 		"the image tag must come from the rejected release too, or the run would execute production's image against the candidate manifest")
 }
 
-// TestAdvanceQueue_ShadowVerifyingAnUnknownRelease_FallsBackToProd covers the
-// verified release having been deleted (or never persisted): the verification
-// still runs, assembled from the live production pointers exactly as any
-// other run is, rather than failing to activate.
-func TestAdvanceQueue_ShadowVerifyingAnUnknownRelease_FallsBackToProd(t *testing.T) {
+// TestAdvanceQueue_VerificationVerifyingAnUnknownRelease_FallsBackToProd
+// covers the verified release having been deleted (or never persisted): the
+// verification still runs, assembled from the live production pointers
+// exactly as any other run is, rather than failing to activate.
+func TestAdvanceQueue_VerificationVerifyingAnUnknownRelease_FallsBackToProd(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedServiceProd(release.NewServiceProd("svc-a", "rProd", "s3://b/svc-a/rProd/manifest.json", "tag-a-prod", release.ManifestKindDbt, time.Unix(0, 0)))
 
-	store.SeedRelease(pipeline.NewVerification("rShadow2", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(pipeline.NewVerification("rVerify2", "svc-b", "img:1", "rGone", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
@@ -335,28 +335,28 @@ func TestAdvanceQueue_ShadowVerifyingAnUnknownRelease_FallsBackToProd(t *testing
 	uris := manifestKeyURIs(t, entries[0].Payload)
 	assert.Equal(t, "s3://b/svc-a/rProd/manifest.json", uris["svc-a"])
 
-	r, _ := store.GetRelease("rShadow2")
+	r, _ := store.GetRelease("rVerify2")
 	assert.Equal(t, "tag-a-prod", r.ImageTags()["svc-a"])
 }
 
-// TestAdvanceQueue_ShadowVerifyingItsOwnServicesRelease_ChangesNothing covers
-// the ordinary verification, whose fix edits the very service whose release
-// was rejected: that service is the verification's own delta already, so
-// there is nothing to override.
-func TestAdvanceQueue_ShadowVerifyingItsOwnServicesRelease_ChangesNothing(t *testing.T) {
+// TestAdvanceQueue_VerificationVerifyingItsOwnServicesRelease_ChangesNothing
+// covers the ordinary verification, whose fix edits the very service whose
+// release was rejected: that service is the verification's own delta
+// already, so there is nothing to override.
+func TestAdvanceQueue_VerificationVerifyingItsOwnServicesRelease_ChangesNothing(t *testing.T) {
 	deps, store := newDeps(time.Unix(200, 0).UTC())
 	deps.Bucket = "b"
 	store.SeedRelease(verifiedOriginal("rO2", deps.Clock.Now()))
 
-	store.SeedRelease(pipeline.NewVerification("rShadow3", "svc-a", "img:2", "rO2", 1, "", release.ManifestKindPython, deps.Clock.Now()))
+	store.SeedRelease(pipeline.NewVerification("rVerify3", "svc-a", "img:2", "rO2", 1, "", release.ManifestKindPython, deps.Clock.Now()))
 	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 1)
 	uris := manifestKeyURIs(t, entries[0].Payload)
-	assert.Equal(t, "s3://b/svc-a/rShadow3/contract.yaml", uris["svc-a"], "the shadow's own delta wins")
+	assert.Equal(t, "s3://b/svc-a/rVerify3/contract.yaml", uris["svc-a"], "the verification run's own delta wins")
 
-	r, _ := store.GetRelease("rShadow3")
+	r, _ := store.GetRelease("rVerify3")
 	assert.Equal(t, "img:2", r.ImageTags()["svc-a"])
 }
 
