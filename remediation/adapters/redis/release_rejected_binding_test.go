@@ -288,11 +288,24 @@ func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
 }
 
 func TestEvidenceFromRejected_IgnoresUnknownTopLevelFields(t *testing.T) {
-	raw := []byte(`{"release_id":"r","stage":"validation","reason":"validation_failed","shadow":true,
+	raw := []byte(`{"release_id":"r","stage":"validation","reason":"validation_failed","future_field":true,
 		"per_node":[{"node_id":"model.core.orders","status":"failed"}]}`)
 	evs, err := evidenceFromRejected(raw)
 	require.NoError(t, err)
 	require.Len(t, evs, 1, "a field this binding does not model changes nothing")
+}
+
+func TestEvidenceFromRejected_DropsLegacyShadowRejection(t *testing.T) {
+	// A pre-cutover fix-verification rejection carries shadow:true. Current
+	// release-controller never emits one — a verification failure rides no
+	// release event — so it can only be a legacy backlog message, and it must
+	// produce no evidence: classifying it would mint a remediation trigger for
+	// a run id that is now a verification run, which cannot be resolved.
+	raw := []byte(`{"release_id":"r","stage":"validation","reason":"validation_failed","shadow":true,
+		"per_node":[{"node_id":"model.core.orders","status":"failed"}]}`)
+	evs, err := evidenceFromRejected(raw)
+	require.NoError(t, err)
+	require.Empty(t, evs, "a legacy shadow rejection is dropped, not classified")
 }
 
 // TestEvidenceFromRejected_CarriesCodeBundleURI verifies that a top-level

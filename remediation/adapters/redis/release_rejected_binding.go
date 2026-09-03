@@ -31,7 +31,13 @@ type rejectedPayload struct {
 	// stamped by release-controller. Absent (and thus empty) for a payload
 	// from before the field existed or for a rejection with no bundle.
 	CodeBundleURI string `json:"code_bundle_uri"`
-	PerNode       []struct {
+	// Shadow marks a pre-cutover fix-verification rejection. Current
+	// release-controller never sets it — a verification run's failure emits no
+	// release event at all — so it can only appear on a legacy message left in
+	// the backlog across an upgrade. It exists solely so those messages can be
+	// dropped (see evidenceFromRejected) rather than misclassified.
+	Shadow  bool `json:"shadow"`
+	PerNode []struct {
 		NodeID               string `json:"node_id"`
 		Status               string `json:"status"`
 		DBTLogURI            string `json:"dbt_log_uri"`
@@ -139,6 +145,16 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	var p rejectedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal release.rejected payload: %w", err)
+	}
+
+	// A pre-cutover fix-verification rejection may still sit in the backlog
+	// during an upgrade. Classifying it would mint a remediation trigger for a
+	// run V21 has converted to a verification id — which agent-remediation
+	// cannot resolve for an image tag through /releases/{id}, leaving a bogus
+	// attempt that retries forever. Current release-controller never flags a
+	// payload shadow, so dropping these costs nothing but the legacy case.
+	if p.Shadow {
+		return nil, nil
 	}
 
 	// Parse-export-leg rejections are not model failures: a rehearsal miss is
