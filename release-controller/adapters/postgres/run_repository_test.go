@@ -73,6 +73,28 @@ func TestRunRepository_SaveAndGet(t *testing.T) {
 	assert.Equal(t, release.ManifestKindDbt, got.ManifestKind())
 }
 
+// TestRunRepository_SaveRejectsCrossKindIDCollision proves the upsert refuses a
+// cross-kind id collision atomically: once a candidate owns an id, a
+// verification racing on the same id (both having read no row first) does not
+// silently take it over — Save reports ErrRunKindConflict and the candidate row
+// is left intact, so the losing caller answers 409 instead of stranding a run
+// its kind-specific endpoint would 404.
+func TestRunRepository_SaveRejectsCrossKindIDCollision(t *testing.T) {
+	db := openTestDB(t)
+	repo := postgres.NewRunRepository(db, nil)
+	ctx := context.Background()
+
+	cand := pipeline.NewCandidate("rClash", "svc", "t", false, "acme/demo", "deadbeef", release.ManifestKindDbt, time.Unix(100, 0).UTC())
+	require.NoError(t, repo.Save(ctx, cand))
+
+	verify := pipeline.NewVerification("rClash", "svc", "t", "rOrig", 1, "", release.ManifestKindDbt, time.Unix(200, 0).UTC())
+	require.ErrorIs(t, repo.Save(ctx, verify), repository.ErrRunKindConflict)
+
+	got, err := repo.Get(ctx, "rClash")
+	require.NoError(t, err)
+	require.Equal(t, pipeline.KindCandidate, got.Kind())
+}
+
 // TestRunRepository_ManifestKindRoundTrips verifies that the manifest kind a
 // run was constructed with (dbt or python) survives a Save/Get round trip
 // through the manifest_kind column, which is immutable after insert.

@@ -151,7 +151,12 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	if p := run.RejectionPayload(); len(p) > 0 {
 		rejectionPayload = p
 	}
-	_, err = r.q.ExecContext(ctx,
+	// The WHERE on the upsert refuses a cross-kind collision atomically: an id
+	// that already names a run of the other kind matches on run_id but fails the
+	// kind predicate, so no row is written and RowsAffected is 0. Two submissions
+	// racing on one id both read no row before this, so the WHERE — not the read
+	// — is what stops the loser from silently taking over the winner's kind.
+	res, err := r.q.ExecContext(ctx,
 		`INSERT INTO release_pipeline_runs (`+runColumns+`)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
 		 ON CONFLICT (run_id) DO UPDATE SET
@@ -166,7 +171,8 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 		   transitions = EXCLUDED.transitions,
 		   code_bundle_uri = EXCLUDED.code_bundle_uri,
 		   remediation_round = EXCLUDED.remediation_round,
-		   rejection_payload = EXCLUDED.rejection_payload`,
+		   rejection_payload = EXCLUDED.rejection_payload
+		 WHERE release_pipeline_runs.run_kind = EXCLUDED.run_kind`,
 		run.ID(), string(run.Kind()), string(run.Status()), imageTagsJSON, run.ChangedService(),
 		topoJSON, pq.StringArray(run.ValidationNodeIDs()), failReason, run.FailDetail(), pq.StringArray(run.FailingNodes()),
 		perNodeJSON, run.CreatedAt(), transitionsJSON, run.CodeBundleURI(), string(run.ManifestKind()),
@@ -174,6 +180,9 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 		run.VerifiesReleaseID(), run.Attempt(), run.SourceOverlayURI())
 	if err != nil {
 		return fmt.Errorf("upsert run: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("save run %s: %w", run.ID(), repository.ErrRunKindConflict)
 	}
 	return nil
 }

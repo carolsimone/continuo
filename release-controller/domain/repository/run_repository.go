@@ -2,10 +2,17 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 )
+
+// ErrRunKindConflict is returned by RunRepository.Save when a run's id already
+// names a persisted run of the other kind. It is the atomic backstop for the
+// pre-write kind check: two submissions racing on one id both read no row, and
+// this is what stops the loser from silently overwriting the winner's kind.
+var ErrRunKindConflict = errors.New("run id already names a run of another kind")
 
 // ListCursor is the keyset position for paginating runs newest-first.
 type ListCursor struct {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/repository"
 )
 
 // ErrInvalidInput marks a submission the caller must fix; the HTTP layer
@@ -14,8 +15,10 @@ import (
 var ErrInvalidInput = errors.New("invalid input")
 
 // ErrRunKindConflict marks a submission whose id already names a run of the
-// other kind; the HTTP layer answers 409.
-var ErrRunKindConflict = errors.New("run id already names a run of another kind")
+// other kind; the HTTP layer answers 409. It aliases the repository sentinel so
+// the same error covers both the pre-write kind check here and the atomic
+// backstop RunRepository.Save raises when two ids race.
+var ErrRunKindConflict = repository.ErrRunKindConflict
 
 // ReceiveVerificationInput is the POST /verification-runs body: a
 // fix-verification run agent-remediation submits for one edited service.
