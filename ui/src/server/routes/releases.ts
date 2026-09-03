@@ -115,6 +115,16 @@ export function createReleasesRouter(
     }
   });
 
+  // GET /api/releases/:id/verifications — the verification runs that judged
+  // fixes proposed for this release, newest first.
+  router.get('/:id/verifications', async (req, res) => {
+    try {
+      res.json(await client.listVerificationRuns(req.params.id));
+    } catch (err: any) {
+      res.status(err.status || 502).json({ error: 'release-controller request failed' });
+    }
+  });
+
   // GET /api/releases/:id
   router.get('/:id', async (req, res) => {
     try {

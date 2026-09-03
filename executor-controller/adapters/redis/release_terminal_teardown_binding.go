@@ -16,6 +16,14 @@ import (
 // release.promoted:v1) and drops the release's candidate schema from the dbt
 // warehouse when candidate_schema is present in the payload.
 //
+// These consumers back up the kind-neutral pipeline.run.finished:v1 teardown:
+// a candidate terminal that reached executor-controller on release.promoted:v1
+// or release.rejected:v1 without a matching pipeline.run.finished:v1 (a message
+// left in the group before that stream carried the teardown) still has its
+// schema reclaimed here. The drop is idempotent, so a run whose schema the
+// finished-event or validation-result path already reclaimed costs a harmless
+// no-op.
+//
 // candidate_schema is always present on release.promoted (set by
 // handle_validation_result.go). For normal validation releases the schema is
 // already torn down by the validation.result:v1 terminal row (via

@@ -17,8 +17,9 @@ import (
 // in-flight attempt.
 //
 // It is idempotent: FailGenerating filters on status, so a row already in a
-// terminal state (a redundant drop notification, or a shadow reconciler that
-// closed it first) is left exactly as it is and zero rows move.
+// terminal state (a redundant drop notification, or the verification
+// reconciler that closed it first) is left exactly as it is and zero rows
+// move.
 func FailInFlight(ctx context.Context, deps Deps, releaseID, reason string) (int, error) {
 	u := deps.NewUoW()
 	if err := u.Begin(ctx); err != nil {

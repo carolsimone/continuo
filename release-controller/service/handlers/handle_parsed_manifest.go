@@ -12,6 +12,7 @@ import (
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
@@ -40,7 +41,7 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.ReleaseRepo().Get(ctx, in.ReleaseID)
+	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
@@ -61,12 +62,9 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	return handleParseOK(ctx, d, u, r, in, now)
 }
 
-func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
-	if err := r.TransitionToRejected("parse_failed", in.ErrorDetail, nil, now); err != nil {
+func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleParsedManifestInput, now time.Time) error {
+	if err := r.Fail("parse_failed", in.ErrorDetail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
-	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
 	}
 
 	payload, err := json.Marshal(map[string]any{
@@ -74,34 +72,29 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *releas
 		"reason":       "parse_failed",
 		"error_class":  in.ErrorClass,
 		"error_detail": in.ErrorDetail,
-		"shadow":       r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(in.ReleaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+		return err
+	}
+	if err := u.RunRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, false, 0)
-	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "parse_failed", nil)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 
-func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleParsedManifestInput, now time.Time) error {
+func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleParsedManifestInput, now time.Time) error {
 	topo := joinImageTags(in.Topology, r.ImageTags())
 	r.SetCodeBundleURI(in.CodeBundleURI)
 
@@ -141,13 +134,13 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	// Derive the validation seed set: candidate nodes that are new or whose
 	// content_hash changed. A production release measures that against
 	// current_prod alone (bootstrap, with no prod row, treats every candidate
-	// node as new and validates the whole topology). A shadow release verifying
-	// a fix measures the diff against BOTH current_prod and the rejected
-	// candidate and keeps only the nodes that differ from both — the fix's own
-	// delta, never a sibling service's still-unfixed failure the shadow
-	// assembles unchanged, nor an unrelated node another release promoted since
-	// the rejection.
-	changed := shadowChangedNodeIDs(ctx, u, d, r, topo, cp)
+	// node as new and validates the whole topology). A verification run
+	// measures the diff against BOTH current_prod and the rejected candidate
+	// it verifies and keeps only the nodes that differ from both — the fix's
+	// own delta, never a sibling service's still-unfixed failure the
+	// verification assembles unchanged, nor an unrelated node another release
+	// promoted since the rejection.
+	changed := changedNodeIDsFor(ctx, u, d, r, topo, cp)
 
 	// Validate the changed-and-downstream closure plus the FULL transitive
 	// upstream closure (across service boundaries) so every upstream is built as an
@@ -178,35 +171,33 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	// release would block the queue indefinitely. Promote directly instead — an
 	// empty candidate diff trivially passes the gate.
 	//
-	// A shadow release takes the same trivial pass, ending in validated instead
+	// A verification run takes the same trivial pass, ending in passed instead
 	// of promoted (promoteToProduction): a candidate identical to production IS
-	// production's validated code, so the fix it carries is proven by identity
-	// with that baseline. This is the shape of a fix that restores a
-	// compile-broken model to its promoted content — the shadow already proved
-	// the fix by compiling it, and there is nothing left to measure. Only a
-	// shadow whose candidate declares no node at all is rejected here: it
-	// measured nothing and can prove nothing.
+	// production's already-proven code, so the fix it carries is proven by
+	// identity with that baseline. This is the shape of a fix that restores a
+	// compile-broken model to its promoted content — the verification already
+	// proved the fix by compiling it, and there is nothing left to measure.
+	// Only a verification whose candidate declares no node at all is rejected
+	// here: it measured nothing and can prove nothing.
 	if len(validationIDs) == 0 {
-		if r.IsShadow() && len(topo) == 0 {
-			return rejectShadowWithNothingToValidate(ctx, d, u, r, in.ReleaseID, now)
+		if r.Kind() == pipeline.KindVerification && len(topo) == 0 {
+			return failVerificationNothingToValidate(ctx, d, u, r, now)
 		}
 		if err := r.TransitionToValidating(topo, validationIDs, now); err != nil {
 			return fmt.Errorf("transition to validating: %w", err)
 		}
-		if err := promoteToProduction(ctx, d, u, r, in.ReleaseID, now); err != nil {
+		if err := concludeValidated(ctx, d, u, r, now); err != nil {
 			return err
 		}
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		// Emit the full lifecycle span sequence (parsed → validated-0-nodes →
+		// Emit the full lifecycle span sequence (parsed → checked-0-nodes →
 		// promoted) so this no-validation-needed promotion is observable the same
 		// way a normal pass is, just with a zero-node validation.
 		d.Telemetry.ReleaseParseCompleted(ctx, in.ReleaseID, true, 0)
 		d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, 0, 0, 0)
-		if !r.IsShadow() {
-			d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(topo))
-		}
+		recordTerminalTelemetry(ctx, d, r, len(topo))
 		return nil
 	}
 
@@ -224,7 +215,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 		return fmt.Errorf("transition to validating: %w", err)
 	}
 
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -269,47 +260,48 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Re
 	return nil
 }
 
-// shadowChangedNodeIDs returns the release's validation seed set — the
-// candidate node ids whose content_hash marks them changed. Every production
-// release, and every shadow that names no verified release, returns the nodes
+// changedNodeIDsFor returns the run's validation seed set — the candidate
+// node ids whose content_hash marks them changed. Every candidate release,
+// and every verification that names no verified release, returns the nodes
 // that differ from current_prod alone.
 //
-// A shadow release exists to verify a proposed fix, and a fix may span two
+// A verification run exists to verify a proposed fix, and a fix may span two
 // services: the whole failing set is repaired in one attempt but submitted as
-// one shadow release per edited service, because a release is one service's
-// delta. Each shadow therefore assembles the OTHER edited service's node
-// unchanged — still carrying its not-yet-fixed failure — at the very
-// content_hash that node had in the rejected candidate. A shadow that names the
-// rejected release it verifies re-validates a node ONLY IF the shadow's fix
+// one verification run per edited service, because a run is one service's
+// delta. Each verification therefore assembles the OTHER edited service's
+// node unchanged — still carrying its not-yet-fixed failure — at the very
+// content_hash that node had in the rejected candidate. A verification that
+// names the rejected release it verifies re-validates a node ONLY IF its fix
 // changed it relative to BOTH current_prod AND that rejected candidate: the
 // intersection of the two diffs.
 //   - The fix's own edited node differs from current_prod (old or absent) and
-//     from the rejected candidate (broken) — in both, so validated.
+//     from the rejected candidate (broken) — in both, so it is checked.
 //   - A sibling service's still-unfixed failure differs from current_prod
 //     (which never advanced past the rejection, or holds the node at its
 //     pre-rejection hash) but is byte-identical to the rejected candidate — in
-//     only one, so excluded and not re-validated.
+//     only one, so excluded and not checked again.
 //   - An unrelated node another release promoted since the rejection matches
 //     current_prod (even though it differs from the rejected candidate's stale
-//     copy) — in only one, so excluded, never dragged into a fix-only shadow.
+//     copy) — in only one, so excluded, never dragged into a fix-only
+//     verification.
 //
 // If the verified release cannot be read, or never parsed far enough to hold a
-// candidate topology, the shadow falls back to the plain current_prod diff — a
-// weaker but still-running verification, mirroring assembleFor's graceful
+// candidate topology, the verification falls back to the plain current_prod
+// diff — a weaker but still-running check, mirroring assembleFor's graceful
 // degradation.
-func shadowChangedNodeIDs(ctx context.Context, u uow.UnitOfWork, d *Deps, r *release.Release, topo release.Topology, cp *release.CurrentProd) []string {
+func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo release.Topology, cp *release.CurrentProd) []string {
 	changedVsProd := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
-	if !r.IsShadow() || r.VerifiesReleaseID() == "" {
+	if r.Kind() == pipeline.KindCandidate || r.VerifiesReleaseID() == "" {
 		return changedVsProd
 	}
-	original, err := u.ReleaseRepo().Get(ctx, r.VerifiesReleaseID())
+	original, err := u.RunRepo().Get(ctx, r.VerifiesReleaseID())
 	if err != nil || original == nil {
-		d.Logger.Warn("shadow release verifies a release that cannot be read; measuring its changed set against production instead",
+		d.Logger.Warn("verification run verifies a release that cannot be read; measuring its changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", r.VerifiesReleaseID(), "error", err)
 		return changedVsProd
 	}
 	if len(original.CandidateTopology()) == 0 {
-		d.Logger.Warn("the verified release has no candidate topology; measuring the shadow's changed set against production instead",
+		d.Logger.Warn("the verified release has no candidate topology; measuring the verification's changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", original.ID())
 		return changedVsProd
 	}
@@ -318,8 +310,8 @@ func shadowChangedNodeIDs(ctx context.Context, u uow.UnitOfWork, d *Deps, r *rel
 }
 
 // newChangedSeedIDs returns the validation-set node IDs that are dbt-seeds in the
-// changed-closure (new or content-changed). These cannot be adapter-validated
-// (no compiled SQL) and cannot be cloned (structure may have changed) — they are
+// changed-closure (new or content-changed). These cannot be checked by the
+// adapter (no compiled SQL) and cannot be cloned (structure may have changed) — they are
 // built into the candidate schema by the seed-build leg. Sorted for determinism.
 func newChangedSeedIDs(topo release.Topology, validationIDs []string, changedClosureSet map[string]bool) []string {
 	inSet := make(map[string]bool, len(validationIDs))
@@ -339,7 +331,7 @@ func newChangedSeedIDs(topo release.Topology, validationIDs []string, changedClo
 // seedBuildNodesInOrder returns one map per seed node (sorted by seedIDs order)
 // carrying the fields executor-controller needs to build the seed into the
 // candidate schema with the team image. No candidate_artifact_uri / validation_op:
-// seeds are built, not adapter-validated; no upstreams: seeds are roots.
+// seeds are built, not checked by the adapter; no upstreams: seeds are roots.
 func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
@@ -366,13 +358,13 @@ func seedBuildNodesInOrder(topo release.Topology, seedIDs []string) []map[string
 // emitSeedBuildRequested transitions the release to SeedBuilding (recording the
 // full candidate topology + validation IDs for the later validation.requested),
 // emits seed.build.requested:v1 with ONLY the seed nodes, and commits.
-func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release,
+func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run,
 	releaseID string, topo release.Topology, validationIDs, seedIDs []string, now time.Time) error {
 
 	if err := r.TransitionToSeedBuilding(topo, validationIDs, now); err != nil {
 		return fmt.Errorf("transition to seed building: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -385,9 +377,9 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		"seeds":             seedBuildNodesInOrder(topo, seedIDs),
 		"seed_ids_in_order": seedIDs,
 	}
-	// A shadow release verifying a proposed fix carries the overlay of proposed
-	// source files; the seed Job lays it over the checked-in project so a fixed
-	// seed CSV is what gets loaded. Omitted entirely for production releases.
+	// A verification run carries the overlay of proposed source files; the
+	// seed Job lays it over the checked-in project so a fixed seed CSV is what
+	// gets loaded. Omitted entirely for a candidate release.
 	if uri := r.SourceOverlayURI(); uri != "" {
 		body["source_overlay_uri"] = uri
 	}
@@ -419,17 +411,20 @@ func emitSeedBuildRequested(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 // promoteBootstrap promotes a bootstrap release without validation: it records
 // the candidate topology (TransitionToValidating with no validation nodes) and
 // runs the shared promoteToProduction path, which seeds current_prod and emits
-// release.promoted:v1. The full parse/validated/promoted telemetry span is
+// release.promoted:v1. The full parse/checked/promoted telemetry span is
 // emitted (with a zero-node validation) so a bootstrap is observable like any
 // other promotion.
-func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, topo release.Topology, now time.Time) error {
+func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, topo release.Topology, now time.Time) error {
 	// TransitionToValidating records the candidate topology and satisfies
 	// promoteToProduction's Validating precondition; no nodes are submitted to
 	// validation.
 	if err := r.TransitionToValidating(topo, nil, now); err != nil {
 		return fmt.Errorf("transition to validating (bootstrap): %w", err)
 	}
-	if err := promoteToProduction(ctx, d, u, r, releaseID, now); err != nil {
+	// A verification run is never bootstrap (NewVerification never sets it), so
+	// this always calls promoteToProduction directly rather than
+	// concludeValidated: the run reaching here is always a candidate.
+	if err := promoteToProduction(ctx, d, u, r, now); err != nil {
 		return err
 	}
 	if err := u.Commit(); err != nil {
@@ -439,9 +434,7 @@ func promoteBootstrap(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release
 	// no-validation promote path's zero-node validation span).
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
 	d.Telemetry.ReleaseValidationCompleted(ctx, releaseID, true, 0, 0, 0)
-	if !r.IsShadow() {
-		d.Telemetry.ReleasePromoted(ctx, releaseID, len(topo))
-	}
+	recordTerminalTelemetry(ctx, d, r, len(topo))
 	return nil
 }
 
@@ -555,65 +548,47 @@ func intersectSorted(a, b []string) []string {
 	return out
 }
 
-// rejectShadowWithNothingToValidate ends a shadow release whose packaged
+// failVerificationNothingToValidate ends a verification run whose packaged
 // candidate declares no node at all.
 //
-// A shadow release runs the real pipeline for one purpose: to find out whether
-// a proposed fix survives it. Its terminal "validated" status is the only
-// evidence anyone has that the fix works, and it is what a human is shown
-// before being asked to merge that fix. A candidate with no node would have
-// built and checked nothing, so taking the trivial-pass path here would report
-// an unmeasured fix as verified. It is rejected instead, which routes it into
-// the handling a fix that failed verification already gets: the attempt is
-// recorded as failed with this reason as its evidence, and either the next
+// A verification run runs the real pipeline for one purpose: to find out
+// whether a proposed fix survives it. Its terminal "passed" status is the
+// only evidence anyone has that the fix works, and it is what a human is
+// shown before being asked to merge that fix. A candidate with no node would
+// have built and checked nothing, so taking the trivial-pass path here would
+// report an unmeasured fix as verified. It fails instead, which routes it
+// into the handling a fix that failed verification already gets: the attempt
+// is recorded as failed with this reason as its evidence, and either the next
 // attempt starts or the operator is left with the failure.
 //
 // A non-empty candidate whose every node matches production is NOT this case:
-// that candidate is production's own validated code, so the fix is proven by
-// identity with it and the shadow ends validated (see handleParseOK).
+// that candidate is production's own proven code, so the fix is proven by
+// identity with it and the verification ends passed (see handleParseOK).
 //
-// The rejection carries no stage and no per_node entries, so remediation
-// derives no failure evidence from it and opens no heal trigger for it;
-// shadow:true is the same signal every other shadow rejection carries.
-func rejectShadowWithNothingToValidate(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, now time.Time) error {
-	const detail = "a shadow release verifies a fix by running it through the pipeline, and its candidate " +
+// A verification's failure is never a release rejection (Global Constraint):
+// this emits no release.rejected:v1, only pipeline.run.finished:v1, so
+// remediation derives no failure evidence from it and opens no heal trigger
+// for it.
+func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
+	const detail = "a verification run verifies a fix by running it through the pipeline, and its candidate " +
 		"declares no node at all, so nothing was built or checked and the fix is unproven"
 
-	if err := r.TransitionToRejected("nothing_to_validate", detail, nil, now); err != nil {
-		return fmt.Errorf("transition to rejected: %w", err)
+	if err := r.Fail("nothing_to_validate", detail, nil, now); err != nil {
+		return fmt.Errorf("transition to failed: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-	payload, err := json.Marshal(map[string]any{
-		"release_id":   releaseID,
-		"reason":       "nothing_to_validate",
-		"error_detail": detail,
-		"shadow":       true,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(releaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
-	// The parse itself succeeded; the release is rejected because what it
-	// proposes cannot be measured, not on a malformed artifact.
-	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
-	d.Telemetry.ReleaseRejected(ctx, releaseID, "nothing_to_validate", nil)
+	// The parse itself succeeded; the run is failed because what it proposes
+	// cannot be measured, not on a malformed artifact.
+	d.Telemetry.ReleaseParseCompleted(ctx, r.ID(), true, 0)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 
@@ -621,43 +596,35 @@ func rejectShadowWithNothingToValidate(ctx context.Context, d *Deps, u uow.UnitO
 // emits release.rejected:v1 naming the offending edge(s) — upstreams that are
 // referenced by a changed node but absent from the candidate topology and
 // therefore cannot be built into the candidate schema.
-func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
+func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
 	detail := formatCrossServiceEdges(edges)
-	if err := r.TransitionToRejected("unbuildable_cross_service_upstream", detail, nil, now); err != nil {
+	if err := r.Fail("unbuildable_cross_service_upstream", detail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
-	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
-		return fmt.Errorf("save release: %w", err)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"release_id":   releaseID,
 		"reason":       "unbuildable_cross_service_upstream",
 		"error_class":  "validation_unsupported",
 		"error_detail": detail,
-		"shadow":       r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(releaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+		return err
+	}
+	if err := u.RunRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save release: %w", err)
+	}
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 	// Parse phase succeeded; the release is rejected at validation-policy level, not parse level.
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
-	d.Telemetry.ReleaseRejected(ctx, releaseID, "unbuildable_cross_service_upstream", nil)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 
@@ -721,7 +688,7 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 // agent proposes nothing rather than guessing at a file it cannot see, and
 // error_detail already names every claimant with its path so an operator can
 // resolve the collision by hand.
-func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release,
+func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run,
 	releaseID string, claims []release.DuplicateClaim, now time.Time) error {
 
 	detail := release.FormatDuplicateClaims(claims)
@@ -758,7 +725,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 		})
 	}
 
-	if err := r.TransitionToRejected("duplicate_table", detail, failing, now); err != nil {
+	if err := r.Fail("duplicate_table", detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
@@ -772,29 +739,19 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 		"repo":            r.Repo(),
 		"commit_sha":      r.CommitSHA(),
 		"code_bundle_uri": r.CodeBundleURI(),
-		"shadow":          r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	r.SetRejectionPayload(payload)
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+		return err
+	}
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(releaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 	if err := u.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
@@ -802,7 +759,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rel
 	// The parse itself succeeded; the release is rejected on a topology
 	// invariant, not on a malformed artifact.
 	d.Telemetry.ReleaseParseCompleted(ctx, releaseID, true, 0)
-	d.Telemetry.ReleaseRejected(ctx, releaseID, "duplicate_table", failing)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }
 

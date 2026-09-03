@@ -22,9 +22,9 @@ import (
 // trigger carries remediation_round=2 and the proposal continues the attempt
 // numbering. A retry while that proposal is open is refused with the link.
 //
-// Each round's proposal reaches 'proposed' only after its own shadow release
+// Each round's proposal reaches 'proposed' only after its own verification run
 // has compiled and validated the proposed source, so both round waits below
-// cover a full release pipeline rather than just a model call.
+// cover a full pipeline run rather than just a model call.
 func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping E2E test in short mode")
@@ -32,7 +32,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 
 	// 35 minutes: strictly greater than the 34 this test's stage budgets sum to
 	// (rejection 10 + round-1 proposal 12 + round-2 proposal 12), each of the
-	// last two covering a shadow release of its own.
+	// last two covering a verification run of its own.
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
 
@@ -94,7 +94,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	waitForReleaseRejected(t, ctx, clients, releaseID, 10*time.Minute)
 
 	// 2. Round 1 proposes a fix (stub LLM answers high confidence) once the
-	//    shadow release verifying it has validated.
+	//    verification run judging it has passed.
 	var round1 retryProposalRow
 	pollUntil(t, ctx, 12*time.Minute, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &round1,
@@ -126,7 +126,7 @@ func TestE2E_RemediationRetry_RoundTwo(t *testing.T) {
 	require.Equal(t, "retry_in_progress", body["error"])
 
 	// 7. A round-2 trigger reaches the agent and a new proposal continues the
-	//    attempt numbering, once its own shadow release has validated.
+	//    attempt numbering, once its own verification run has passed.
 	var round2 retryProposalRow
 	pollUntil(t, ctx, 12*time.Minute, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &round2,

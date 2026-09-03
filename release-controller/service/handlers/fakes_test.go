@@ -2,19 +2,23 @@ package handlers_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
+	"testing"
 	"time"
 
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 // --- fakeClock ---
@@ -27,16 +31,22 @@ var _ ports.Clock = (*fakeClock)(nil)
 
 // --- spyTelemetry ---
 
-// spyTelemetry embeds NoOpTelemetry and records ReleasePromoted calls so
-// tests can assert the promoted span does not fire on a route that must not
-// promote (e.g. a shadow release stopping at Validated).
+// spyTelemetry embeds NoOpTelemetry and records ReleasePromoted and
+// VerificationFinished calls so tests can assert the promoted span does not
+// fire on a route that must not promote (e.g. a verification run stopping at
+// Passed), and that a verification's terminal decision emits its own span.
 type spyTelemetry struct {
 	ports.NoOpTelemetry
-	releasePromotedCalls int
+	releasePromotedCalls      int
+	verificationFinishedCalls int
 }
 
 func (s *spyTelemetry) ReleasePromoted(_ context.Context, _ string, _ int) {
 	s.releasePromotedCalls++
+}
+
+func (s *spyTelemetry) VerificationFinished(context.Context, string, string, int) {
+	s.verificationFinishedCalls++
 }
 
 var _ ports.Telemetry = (*spyTelemetry)(nil)
@@ -49,8 +59,8 @@ var _ ports.Telemetry = (*spyTelemetry)(nil)
 // state after multiple handler calls — each of which obtains its own UoW.
 type fakeStore struct {
 	mu            sync.Mutex
-	releases      map[string]*release.Release
-	order         []string // insertion order, oldest first; drives NextQueuedRelease FIFO
+	releases      map[string]*pipeline.Run
+	order         []string // insertion order, oldest first; drives NextQueued FIFO
 	cp            *release.CurrentProd
 	cpUpsertCalls int
 	serviceProd   map[string]*release.ServiceProd
@@ -59,14 +69,14 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		releases:    map[string]*release.Release{},
+		releases:    map[string]*pipeline.Run{},
 		serviceProd: map[string]*release.ServiceProd{},
 	}
 }
 
 // GetRelease returns the stored release by ID, or an error if not found.
 // Convenience accessor for test assertions.
-func (s *fakeStore) GetRelease(id string) (*release.Release, error) {
+func (s *fakeStore) GetRelease(id string) (*pipeline.Run, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.releases[id]
@@ -78,7 +88,7 @@ func (s *fakeStore) GetRelease(id string) (*release.Release, error) {
 
 // SeedRelease installs a release directly, simulating a row already persisted
 // by an earlier stage of the pipeline.
-func (s *fakeStore) SeedRelease(r *release.Release) {
+func (s *fakeStore) SeedRelease(r *pipeline.Run) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.releases[r.ID()]; !exists {
@@ -126,8 +136,8 @@ func (s *fakeStore) GetServiceProd(serviceName string) *release.ServiceProd {
 // CurrentProdUpsertCalls returns how many times CurrentProdRepo.Upsert has
 // been called against this store, across every UoW instance backed by it.
 // Used by tests to assert that a route which must never promote (e.g. a
-// shadow release) never touches current_prod, rather than only inferring it
-// from the stored value.
+// verification run) never touches current_prod, rather than only inferring
+// it from the stored value.
 func (s *fakeStore) CurrentProdUpsertCalls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -143,19 +153,19 @@ func (s *fakeStore) OutboxEntries() []*pkgoutbox.Entry {
 	return out
 }
 
-// --- fakeReleaseRepo ---
+// --- fakeRunRepo ---
 
-type fakeReleaseRepo struct {
+type fakeRunRepo struct {
 	store              *fakeStore
 	lastCutoff         time.Time
 	lastKeepReleaseIDs []string
 	deletedCount       int
 }
 
-// Get mirrors the Postgres ReleaseRepository contract: a missing release yields
+// Get mirrors the Postgres RunRepository contract: a missing run yields
 // (nil, nil), not an error. Handlers must nil-check the result, so the fake must
 // reproduce that contract or it would mask nil-deref bugs.
-func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*release.Release, error) {
+func (f *fakeRunRepo) Get(_ context.Context, id string) (*pipeline.Run, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	return f.store.releases[id], nil
@@ -163,13 +173,13 @@ func (f *fakeReleaseRepo) Get(_ context.Context, id string) (*release.Release, e
 
 // Load mirrors Get: the in-memory fake has no row-level locking to simulate,
 // so it returns the same result as Get.
-func (f *fakeReleaseRepo) Load(_ context.Context, id string) (*release.Release, error) {
+func (f *fakeRunRepo) Load(_ context.Context, id string) (*pipeline.Run, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	return f.store.releases[id], nil
 }
 
-func (f *fakeReleaseRepo) Save(_ context.Context, r *release.Release) error {
+func (f *fakeRunRepo) Save(_ context.Context, r *pipeline.Run) error {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	if _, exists := f.store.releases[r.ID()]; !exists {
@@ -179,28 +189,28 @@ func (f *fakeReleaseRepo) Save(_ context.Context, r *release.Release) error {
 	return nil
 }
 
-// NextQueuedRelease returns the oldest release in StatusReceived, or nil.
-func (f *fakeReleaseRepo) NextQueuedRelease(_ context.Context) (*release.Release, error) {
+// NextQueued returns the oldest run in StatusReceived, or nil.
+func (f *fakeRunRepo) NextQueued(_ context.Context) (*pipeline.Run, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	for _, id := range f.store.order {
-		if f.store.releases[id].Status() == release.StatusReceived {
+		if f.store.releases[id].Status() == pipeline.StatusReceived {
 			return f.store.releases[id], nil
 		}
 	}
 	return nil, nil
 }
 
-// ActiveRelease returns the single release in StatusCompiling, StatusParsing,
+// Active returns the single run in StatusCompiling, StatusParsing,
 // StatusSeedBuilding, or StatusValidating, or nil. Mirrors the Postgres query
-// that guards AdvanceQueue from launching a second concurrent release.
-func (f *fakeReleaseRepo) ActiveRelease(_ context.Context) (*release.Release, error) {
+// that guards AdvanceQueue from launching a second concurrent run.
+func (f *fakeRunRepo) Active(_ context.Context) (*pipeline.Run, error) {
 	f.store.mu.Lock()
 	defer f.store.mu.Unlock()
 	for _, id := range f.store.order {
 		s := f.store.releases[id].Status()
-		if s == release.StatusCompiling || s == release.StatusParsing ||
-			s == release.StatusSeedBuilding || s == release.StatusValidating {
+		if s == pipeline.StatusCompiling || s == pipeline.StatusParsing ||
+			s == pipeline.StatusSeedBuilding || s == pipeline.StatusValidating {
 			return f.store.releases[id], nil
 		}
 	}
@@ -208,19 +218,19 @@ func (f *fakeReleaseRepo) ActiveRelease(_ context.Context) (*release.Release, er
 }
 
 // List returns an empty page; handler unit tests do not exercise the list path.
-func (f *fakeReleaseRepo) List(_ context.Context, _ repository.ListFilter) ([]*release.Release, *repository.ListCursor, error) {
+func (f *fakeRunRepo) List(_ context.Context, _ repository.ListFilter) ([]*pipeline.Run, *repository.ListCursor, error) {
 	return nil, nil, nil
 }
 
-// DeleteResolvedBefore records the call parameters and returns the configured
+// DeleteFinishedBefore records the call parameters and returns the configured
 // deletedCount so handler tests can assert on retention behaviour.
-func (f *fakeReleaseRepo) DeleteResolvedBefore(_ context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
+func (f *fakeRunRepo) DeleteFinishedBefore(_ context.Context, cutoff time.Time, keepReleaseIDs []string) (int, error) {
 	f.lastCutoff = cutoff
 	f.lastKeepReleaseIDs = keepReleaseIDs
 	return f.deletedCount, nil
 }
 
-var _ repository.ReleaseRepository = (*fakeReleaseRepo)(nil)
+var _ repository.RunRepository = (*fakeRunRepo)(nil)
 
 // --- fakeCurrentProdRepo ---
 
@@ -369,7 +379,7 @@ var _ ports.ProposalReader = (*fakeProposals)(nil)
 // handlers each obtain a fresh UoW from the factory while still seeing all
 // writes from prior calls.
 type fakeUoW struct {
-	releases *fakeReleaseRepo
+	releases *fakeRunRepo
 	cp       *fakeCurrentProdRepo
 	sp       *fakeServiceProdRepo
 	outbox   *fakeOutbox
@@ -378,14 +388,14 @@ type fakeUoW struct {
 
 func newFakeUoW(store *fakeStore) *fakeUoW {
 	return &fakeUoW{
-		releases: &fakeReleaseRepo{store: store},
+		releases: &fakeRunRepo{store: store},
 		cp:       &fakeCurrentProdRepo{store: store},
 		sp:       &fakeServiceProdRepo{store: store},
 		outbox:   &fakeOutbox{store: store},
 	}
 }
 
-func (f *fakeUoW) ReleaseRepo() repository.ReleaseRepository           { return f.releases }
+func (f *fakeUoW) RunRepo() repository.RunRepository                   { return f.releases }
 func (f *fakeUoW) CurrentProdRepo() repository.CurrentProdRepository   { return f.cp }
 func (f *fakeUoW) ServiceProdRepo() repository.ServiceProdRepository   { return f.sp }
 func (f *fakeUoW) OutboxRepo() pkgoutbox.Repository                    { return f.outbox }
@@ -395,7 +405,7 @@ func (f *fakeUoW) Commit() error                                       { return 
 func (f *fakeUoW) Rollback() error                                     { return nil }
 
 // LockReleaseQueue is a no-op in the fake: unit tests execute sequentially,
-// so the tx-scoped advisory lock semantics are validated end-to-end against
+// so the tx-scoped advisory lock semantics are proven end-to-end against
 // real Postgres in integration_test/concurrent_advance_no_duplicate_test.go.
 func (f *fakeUoW) LockReleaseQueue(_ context.Context) error { return nil }
 
@@ -422,4 +432,27 @@ func newDeps(now time.Time) (*handlers.Deps, *fakeStore) {
 // store. Use this in handler tests to inspect outbox state after handler calls.
 func outboxEntries(store *fakeStore) []*pkgoutbox.Entry {
 	return store.OutboxEntries()
+}
+
+// lastEntryOn returns the newest outbox entry the store holds for stream, or nil.
+func lastEntryOn(s *fakeStore, stream string) *pkgoutbox.Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.entries) - 1; i >= 0; i-- {
+		if s.entries[i].StreamName == stream {
+			return s.entries[i]
+		}
+	}
+	return nil
+}
+
+// outcomeOf decodes the outcome field of a pipeline.run.finished:v1 entry.
+func outcomeOf(t *testing.T, e *pkgoutbox.Entry) string {
+	t.Helper()
+	require.NotNil(t, e, "expected a pipeline.run.finished:v1 entry")
+	var p struct {
+		Outcome string `json:"outcome"`
+	}
+	require.NoError(t, json.Unmarshal(e.Payload, &p))
+	return p.Outcome
 }

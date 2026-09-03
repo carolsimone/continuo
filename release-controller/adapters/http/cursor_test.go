@@ -11,10 +11,10 @@ import (
 )
 
 func TestCursorRoundTrip(t *testing.T) {
-	in := &repository.ListCursor{CreatedAt: time.Unix(100, 500).UTC(), ReleaseID: "r-x"}
+	in := &repository.ListCursor{CreatedAt: time.Unix(100, 500).UTC(), RunID: "r-x"}
 	out, err := decodeCursor(encodeCursor(in))
 	require.NoError(t, err)
-	assert.Equal(t, in.ReleaseID, out.ReleaseID)
+	assert.Equal(t, in.RunID, out.RunID)
 	assert.True(t, in.CreatedAt.Equal(out.CreatedAt))
 }
 

@@ -70,6 +70,10 @@ BREAKING: "manifest-controller" is now "topology-controller". It has no
 database of its own, so no rename is needed there. After upgrading, delete
 the drained consumer group: XGROUP DESTROY release.requested:v1
 manifest-controller-release-requested.
+
+  BREAKING — if your values override agentRemediation.env.SHADOW_VERIFY_TIMEOUT or
+  SHADOW_VERIFY_POLL_INTERVAL, rename them to VERIFICATION_TIMEOUT and
+  VERIFICATION_POLL_INTERVAL; the old keys are no longer read.
 {{- end }}
 
 {{- $uiPort := 8090 }}

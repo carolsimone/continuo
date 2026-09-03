@@ -97,7 +97,7 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 				"s.a": {Status: proposal.StatusProposed, Reason: "fixed"},
 			},
 			Verifications: []proposal.Verification{
-				{Service: "service-1", Kind: "dbt", ShadowReleaseID: "shadow-x"},
+				{Service: "service-1", Kind: "dbt", RunID: "verify-x", Phase: proposal.PhasePassed},
 			},
 			Confidence:     proposal.Confidence("high"),
 			Rationale:      "reason",
@@ -168,7 +168,8 @@ func TestProposalsServer_ListProposals_HappyPath(t *testing.T) {
 	require.Len(t, p.Verifications, 1)
 	assert.Equal(t, "service-1", p.Verifications[0].Service)
 	assert.Equal(t, "dbt", p.Verifications[0].Kind)
-	assert.Equal(t, "shadow-x", p.Verifications[0].ShadowReleaseId)
+	assert.Equal(t, "verify-x", p.Verifications[0].RunId)
+	assert.Equal(t, "passed", p.Verifications[0].Phase)
 }
 
 func TestProposalsServer_ListProposals_InternalError(t *testing.T) {
@@ -191,6 +192,18 @@ func TestProposalsServer_ListProposals_FiltersByReleaseID(t *testing.T) {
 	_, err := s.ListProposals(context.Background(), &remediationv1.ListProposalsRequest{ReleaseId: "rel-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "rel-1", svc.lastFilter.ReleaseID)
+}
+
+// TestProposalsServer_ListProposals_FiltersByService verifies that
+// ListProposalsRequest.service reaches the service as ProposalFilter.Service
+// unchanged, so a listing can be narrowed to one team's work.
+func TestProposalsServer_ListProposals_FiltersByService(t *testing.T) {
+	svc := &fakeSvc{}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	_, err := s.ListProposals(context.Background(), &remediationv1.ListProposalsRequest{Service: "core"})
+	require.NoError(t, err)
+	assert.Equal(t, "core", svc.lastFilter.Service)
 }
 
 // ---- GetProposal ----

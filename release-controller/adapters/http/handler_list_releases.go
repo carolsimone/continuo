@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 )
 
@@ -17,11 +17,14 @@ type releaseListItem struct {
 	ResolvedAt   *string `json:"resolved_at"`
 	NodeCount    int     `json:"node_count"`
 	Bootstrap    bool    `json:"bootstrap"`
-	Shadow       bool    `json:"shadow"`
 	RejectReason string  `json:"reject_reason,omitempty"`
 	Repo         string  `json:"repo"`
 	CommitSHA    string  `json:"commit_sha"`
 }
+
+// candidateKind narrows GET /releases to candidates: a verification run is
+// not a release and is read through GET /verification-runs instead.
+var candidateKind = pipeline.KindCandidate
 
 // handleListReleases returns paginated release history, newest-first.
 // Query params: status (optional), limit (optional), cursor (optional).
@@ -34,7 +37,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	}
 	// limit is best-effort: an unparseable, non-positive, or out-of-range value
 	// falls back to the default page size, which the repository clamps (see
-	// ReleaseRepository.List). Only the cursor is strictly validated, since a
+	// RunRepository.List). Only the cursor is strictly checked, since a
 	// malformed cursor is an unambiguous client error.
 	limit := 0
 	if n, err := strconv.Atoi(q.Get("limit")); err == nil {
@@ -47,8 +50,8 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u := s.deps.NewUoW()
-	items, next, err := u.ReleaseRepo().List(r.Context(), repository.ListFilter{
-		Status: statusPtr, Limit: limit, Cursor: cursor,
+	items, next, err := u.RunRepo().List(r.Context(), repository.ListFilter{
+		Kind: &candidateKind, Status: statusPtr, Limit: limit, Cursor: cursor,
 	})
 	if err != nil {
 		s.log.Error("list releases failed", "error", err)
@@ -71,7 +74,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 // toReleaseListItem projects a release aggregate onto the JSON list row. repo
 // and commit_sha are carried so the UI can resolve the commit author for the
 // Releases tab without a per-release detail fetch.
-func toReleaseListItem(rel *release.Release) releaseListItem {
+func toReleaseListItem(rel *pipeline.Run) releaseListItem {
 	var resolved *string
 	if t := resolvedAt(rel); t != nil {
 		resolvedStr := t.UTC().Format(time.RFC3339)
@@ -84,21 +87,19 @@ func toReleaseListItem(rel *release.Release) releaseListItem {
 		ResolvedAt:   resolved,
 		NodeCount:    len(rel.CandidateTopology()),
 		Bootstrap:    rel.IsBootstrap(),
-		Shadow:       rel.IsShadow(),
-		RejectReason: rel.RejectReason(),
+		RejectReason: rel.FailReason(),
 		Repo:         rel.Repo(),
 		CommitSHA:    rel.CommitSHA(),
 	}
 }
 
 // resolvedAt returns the timestamp of the terminal transition, or nil if the
-// release has not resolved. The resolved_at column is not persisted, so it is
+// run has not resolved. The resolved_at column is not persisted, so it is
 // derived from the transition history.
-func resolvedAt(rel *release.Release) *time.Time {
+func resolvedAt(rel *pipeline.Run) *time.Time {
 	ts := rel.Transitions()
 	for i := len(ts) - 1; i >= 0; i-- {
-		switch ts[i].To {
-		case release.StatusPromoted, release.StatusRejected, release.StatusSuperseded, release.StatusValidated:
+		if ts[i].To.IsTerminal() {
 			at := ts[i].At
 			return &at
 		}

@@ -145,13 +145,14 @@ export function createRemediationRouter(
         // agent-remediation maps three distinct causes to FAILED_PRECONDITION:
         // this service already has a pull request (the message embeds its
         // URL), the proposal has no real source to fix, or the claim raced
-        // past 'proposed' (a shadow verdict landed, or the attempt budget was
-        // exhausted) since pr_services was read. Only the first is a
-        // success — skip creating a duplicate and report the existing PR
-        // instead of losing it from the response. The other two carry no
-        // URL and are genuine per-service failures, not an already-open PR;
-        // reporting them as a success would fabricate an empty-url entry
-        // and silently mask the real failure from the 200/207/502 accounting.
+        // past 'proposed' (a verification run reached a verdict, or the
+        // attempt budget was exhausted) since pr_services was read. Only the
+        // first is a success — skip creating a duplicate and report the
+        // existing PR instead of losing it from the response. The other two
+        // carry no URL and are genuine per-service failures, not an
+        // already-open PR; reporting them as a success would fabricate an
+        // empty-url entry and silently mask the real failure from the
+        // 200/207/502 accounting.
         const message: string = err.details ?? err.message ?? '';
         const pr_url = extractPrUrl(message);
         if (pr_url) {

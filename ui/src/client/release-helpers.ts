@@ -1,23 +1,14 @@
-import { NodeValidationResult, ProposalDTO, PullRequestDTO, ReleaseListItem } from './types';
-
-// In-flight = a release actively moving through the pipeline, in lifecycle order:
-// received -> compiling -> parsing -> seed_building -> validating.
-export const IN_FLIGHT_STATUSES = ['received', 'compiling', 'parsing', 'seed_building', 'validating'];
-
-// firstInFlight returns the newest non-terminal release (the candidate currently
-// moving through the pipeline), or null if every listed release is terminal.
-export function firstInFlight(items: ReleaseListItem[]): ReleaseListItem | null {
-  return items.find(r => IN_FLIGHT_STATUSES.includes(r.status)) ?? null;
-}
+import { NodeValidationResult, ProposalDTO, PullRequestDTO } from './types';
 
 // releasePillClass maps a status to a design-system pill variant. It handles
-// release lifecycle statuses (promoted/rejected/validating/…) and per-node
-// validation statuses (`ok`/`failed`), and falls back to run-style keyword
-// matching, defaulting to pending when nothing matches.
+// release lifecycle statuses (promoted/rejected/validating/…), verification-run
+// statuses/phases (passed/queued/…), and per-node validation statuses
+// (`ok`/`failed`), and falls back to run-style keyword matching, defaulting to
+// pending when nothing matches.
 export function releasePillClass(status: string): string {
   switch (status) {
     case 'promoted':   return 'pill--succeeded';
-    case 'validated':  return 'pill--succeeded';
+    case 'passed':     return 'pill--succeeded';
     case 'ok':         return 'pill--succeeded';
     case 'rejected':   return 'pill--failed';
     case 'validating':
@@ -25,6 +16,7 @@ export function releasePillClass(status: string): string {
     case 'compiling':
     case 'parsing':    return 'pill--running';
     case 'received':   return 'pill--pending';
+    case 'queued':     return 'pill--pending';
     case 'superseded': return 'pill--cancelled';
   }
   if (status.includes('succeed')) return 'pill--succeeded';
@@ -151,43 +143,37 @@ export function proposalPrStateForService(p: ProposalDTO, service: string): stri
   return proposalPullRequests(p).find((pr) => pr.service === service)?.pr_state ?? '';
 }
 
-// Shadow-release statuses that mean a fix verification has left the global
-// one-at-a-time release queue and is actively running the validation pipeline.
-// A shadow still 'received' is waiting its turn behind other releases; the
-// terminal 'validated'/'rejected' are the verdict, not a running phase.
-export const SHADOW_RUNNING_STATUSES = new Set([
-  'compiling', 'parsing', 'seed_building', 'validating',
-]);
-
-// proposalShadowIds lists the shadow release(s) a batched attempt ran to verify
-// its fix — one per edited service (verifications), or the legacy singular
-// shadow_release_id for a proposal that only ever tracked one. Empty when the
-// attempt was judged without any shadow release.
-export function proposalShadowIds(p: ProposalDTO): string[] {
-  if (p.verifications && p.verifications.length > 0) {
-    return p.verifications.map((v) => v.shadow_release_id).filter(Boolean);
+// verificationRunPhase reads a verification run's status as the phase an
+// operator cares about: still queued behind other runs, running a leg, or
+// its verdict.
+export function verificationRunPhase(status: string): 'queued' | 'running' | 'passed' | 'failed' {
+  switch (status) {
+    case 'received': return 'queued';
+    case 'passed':   return 'passed';
+    case 'failed':   return 'failed';
+    default:         return 'running';
   }
-  return p.shadow_release_id ? [p.shadow_release_id] : [];
 }
 
-// shadowVerifyPhase decides whether a fix in the 'verifying' state is being
-// actively validated or is still waiting its turn in the global release queue,
-// from the statuses of the shadow release(s) backing it (shadowStatus maps a
-// shadow release id to its last-observed status). Running wins: any shadow that
-// has started means the fix is being verified now. A shadow observed still
-// 'received' — queued behind other releases — reads as queued. Absent any
-// running/received status (not fetched yet, no shadow id, or a terminal
-// verdict), it stays 'running', so the queued signal is only ever shown on
-// positive evidence and the chip never regresses to a false wait.
-export function shadowVerifyPhase(
-  shadowIds: string[],
-  shadowStatus: Map<string, string>,
-): 'queued' | 'running' {
-  let sawQueued = false;
-  for (const id of shadowIds) {
-    const status = shadowStatus.get(id);
-    if (status && SHADOW_RUNNING_STATUSES.has(status)) return 'running';
-    if (status === 'received') sawQueued = true;
+// verificationRunIds lists the verification runs that judged one attempt —
+// one per edited service, or the legacy singular verification_run_id.
+export function verificationRunIds(p: ProposalDTO): string[] {
+  if (p.verifications && p.verifications.length > 0) {
+    return p.verifications.map(v => v.run_id).filter(Boolean);
   }
-  return sawQueued ? 'queued' : 'running';
+  return p.verification_run_id ? [p.verification_run_id] : [];
+}
+
+// verificationPhase decides whether an attempt in 'verifying' is being run
+// now or is still waiting its turn, from the phases agent-remediation
+// recorded on its verifications. Running wins. Queued needs positive
+// evidence. Anything else (no phase recorded yet, or only verdicts) is
+// undefined so the chip keeps its flat wording rather than claiming a wait.
+export function verificationPhase(p: ProposalDTO): 'queued' | 'running' | undefined {
+  let sawQueued = false;
+  for (const v of p.verifications ?? []) {
+    if (v.phase === 'running') return 'running';
+    if (v.phase === 'queued') sawQueued = true;
+  }
+  return sawQueued ? 'queued' : undefined;
 }

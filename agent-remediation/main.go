@@ -34,8 +34,8 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
-	"github.com/carolsimone/continuo/agent-remediation/service/shadowverify"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/agent-remediation/service/verification"
 )
 
 // llmClientTimeout bounds a single LLM HTTP request. Without it the LLM path
@@ -191,10 +191,11 @@ func main() {
 	// adapter.
 	gh := ragithub.NewSourceReader(cfg.GitHubBaseURL, cfg.GitHubToken, &http.Client{Timeout: 30 * time.Second})
 
-	// Shadow verification: a proposed python-node fix is packaged by the same
-	// continuo-runtime CLI the team's release CI runs, then submitted to
-	// release-controller as a release that runs the full validation pipeline
-	// but stops before promoting.
+	// Fix verification: a proposed fix's edits are packaged (a merged contract
+	// for a python service, a source overlay for a dbt one) and submitted to
+	// release-controller as a verification run that carries the full
+	// parse -> candidate-schema -> validation pipeline through to a terminal
+	// passed/failed verdict without ever promoting.
 	releaseGateway := releasehttp.NewGateway(cfg.ReleaseControllerURL, store,
 		&http.Client{Timeout: 30 * time.Second})
 
@@ -235,6 +236,7 @@ func main() {
 		// and reading the declarations a file holds are one yaml shape.
 		ContractInspector: contracts,
 		Packager:          packager,
+		Pipeline:          releaseGateway,
 		Releases:          releaseGateway,
 		PriorAttempts:     proposalRepo,
 		SQLDialect:        cfg.SQLDialect,
@@ -311,15 +313,15 @@ func main() {
 	})
 	go reconciler.Run(ctx)
 
-	// Resolve proposals whose fix is being judged by a shadow release: read
-	// each waiting attempt's release, finalize the ones it validated so an
+	// Resolve proposals whose fix is being judged by a verification run: read
+	// each waiting attempt's runs, finalize the ones that passed so an
 	// operator can review them, and record why the rest failed before starting
 	// the next attempt. The decoder and the fix proposer are the same ones the
 	// remediation.requested consumer uses, so a retried attempt runs through
 	// exactly the code path the original trigger did.
-	shadowReconciler := shadowverify.New(shadowverify.Deps{
+	verifyReconciler := verification.New(verification.Deps{
 		Lister:   proposalRepo,
-		Releases: releaseGateway,
+		Pipeline: releaseGateway,
 		NewUoW:   func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, logger, cfg.ServiceRepoPaths) },
 		Decode:   rredis.TriggerFromPayload,
 		Propose: func(ctx context.Context, t handlers.Trigger) error {
@@ -327,10 +329,10 @@ func main() {
 		},
 		Clock:    ports.SystemClock{},
 		Logger:   logger,
-		Interval: cfg.ShadowVerifyPollInterval,
-		Timeout:  cfg.ShadowVerifyTimeout,
+		Interval: cfg.VerificationPollInterval,
+		Timeout:  cfg.VerificationTimeout,
 	})
-	go shadowReconciler.Run(ctx)
+	go verifyReconciler.Run(ctx)
 
 	logger.Info("agent-remediation started", "http_port", cfg.HTTPPort, "grpc_port", cfg.GRPCPort)
 	<-ctx.Done()

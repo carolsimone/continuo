@@ -518,8 +518,8 @@ services:
       # Postgres, same as topology-controller's WAREHOUSE_ENGINE.
       - WAREHOUSE_ENGINE=postgres
       - RELEASE_CONTROLLER_URL=http://release-controller:8088
-      - SHADOW_VERIFY_TIMEOUT=${SHADOW_VERIFY_TIMEOUT:-20m}
-      - SHADOW_VERIFY_POLL_INTERVAL=${SHADOW_VERIFY_POLL_INTERVAL:-5s}
+      - VERIFICATION_TIMEOUT=${VERIFICATION_TIMEOUT:-20m}
+      - VERIFICATION_POLL_INTERVAL=${VERIFICATION_POLL_INTERVAL:-5s}
     volumes:
       # The local stack runs on the e2e map, which adds the suite's fixture
       # services to the demo ones. The map agent-remediation documents for

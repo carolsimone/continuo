@@ -13,7 +13,7 @@ type AttemptDiff struct {
 }
 
 // PriorAttempt is one earlier fix attempt for the same failing node: the diffs
-// it applied and the error the shadow release that verified it reported back.
+// it applied and the error the verification run that judged it reported back.
 // Showing both is what makes a later attempt better informed than the one
 // before it — without them the model would keep re-proposing the change that
 // has already been tried and rejected.
@@ -138,7 +138,7 @@ func renderUpstreamChanges(b *strings.Builder, cs []UpstreamChange) {
 }
 
 // renderPriorAttempts writes the earlier-attempts section: what each attempt
-// changed and why its shadow verification rejected it. No attempts → no
+// changed and why its verification run failed it. No attempts → no
 // section.
 func renderPriorAttempts(b *strings.Builder, as []PriorAttempt) {
 	if len(as) == 0 {

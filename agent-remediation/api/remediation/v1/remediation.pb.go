@@ -61,12 +61,10 @@ type Proposal struct {
 	// reaches a terminal outcome (pr_state 'merged' or 'rejected').
 	PrClosedAt string      `protobuf:"bytes,25,opt,name=pr_closed_at,json=prClosedAt,proto3" json:"pr_closed_at,omitempty"`
 	Edits      []*FileEdit `protobuf:"bytes,26,rep,name=edits,proto3" json:"edits,omitempty"`
-	// shadow_release_id names the release that ran this attempt's fix through
-	// the whole validation pipeline to decide whether it holds. It is set while
-	// the attempt is 'verifying' and stays set on the 'proposed' or 'failed' row
-	// that attempt became, so a reader can always reach the release that decided
-	// it. Empty on an attempt judged without one.
-	ShadowReleaseId string `protobuf:"bytes,27,opt,name=shadow_release_id,json=shadowReleaseId,proto3" json:"shadow_release_id,omitempty"`
+	// verification_run_id names the pipeline run that verified this attempt's
+	// fix — the first of `verifications`. Set while the attempt is 'verifying'
+	// and kept on the row it became. Empty on an attempt judged without one.
+	VerificationRunId string `protobuf:"bytes,27,opt,name=verification_run_id,json=verificationRunId,proto3" json:"verification_run_id,omitempty"`
 	// verify_error is why that release rejected the fix — the reason a python
 	// contract attempt reached 'failed', and the evidence the next attempt is
 	// shown. Empty unless verification failed.
@@ -80,8 +78,8 @@ type Proposal struct {
 	// cluster whose fixer skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]*NodeOutcome `protobuf:"bytes,31,rep,name=node_outcomes,json=nodeOutcomes,proto3" json:"node_outcomes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// verifications is one shadow release per edited service; the first entry
-	// is the view mirrored onto shadow_release_id.
+	// verifications is one fix-verification run per edited service; the first
+	// entry is the view mirrored onto verification_run_id.
 	Verifications []*Verification `protobuf:"bytes,32,rep,name=verifications,proto3" json:"verifications,omitempty"`
 	// pull_requests is one entry per (proposal, service) pull request; empty
 	// for a proposal that never entered the PR lifecycle. service = "" is the
@@ -307,9 +305,9 @@ func (x *Proposal) GetEdits() []*FileEdit {
 	return nil
 }
 
-func (x *Proposal) GetShadowReleaseId() string {
+func (x *Proposal) GetVerificationRunId() string {
 	if x != nil {
-		return x.ShadowReleaseId
+		return x.VerificationRunId
 	}
 	return ""
 }
@@ -370,6 +368,7 @@ type ListProposalsRequest struct {
 	PrState       string                 `protobuf:"bytes,2,opt,name=pr_state,json=prState,proto3" json:"pr_state,omitempty"`
 	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
 	ReleaseId     string                 `protobuf:"bytes,4,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"` // when set, only proposals of this release
+	Service       string                 `protobuf:"bytes,5,opt,name=service,proto3" json:"service,omitempty"`                      // when set, only proposals whose services contain it
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -428,6 +427,13 @@ func (x *ListProposalsRequest) GetLimit() int32 {
 func (x *ListProposalsRequest) GetReleaseId() string {
 	if x != nil {
 		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *ListProposalsRequest) GetService() string {
+	if x != nil {
+		return x.Service
 	}
 	return ""
 }
@@ -1120,15 +1126,20 @@ func (x *NodeOutcome) GetReason() string {
 	return ""
 }
 
-// Verification is one shadow release posted to verify the edits made to a
-// single service.
+// Verification is one fix-verification run per edited service and the
+// durable summary of how it went. phase is queued | running | passed |
+// failed (” before the first read); activated_at is RFC 3339 or empty;
+// error is the named per-node errors on a failed run.
 type Verification struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Service         string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
-	Kind            string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	ShadowReleaseId string                 `protobuf:"bytes,3,opt,name=shadow_release_id,json=shadowReleaseId,proto3" json:"shadow_release_id,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Service       string                 `protobuf:"bytes,1,opt,name=service,proto3" json:"service,omitempty"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	RunId         string                 `protobuf:"bytes,3,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Phase         string                 `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
+	ActivatedAt   string                 `protobuf:"bytes,5,opt,name=activated_at,json=activatedAt,proto3" json:"activated_at,omitempty"`
+	Error         string                 `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Verification) Reset() {
@@ -1175,9 +1186,30 @@ func (x *Verification) GetKind() string {
 	return ""
 }
 
-func (x *Verification) GetShadowReleaseId() string {
+func (x *Verification) GetRunId() string {
 	if x != nil {
-		return x.ShadowReleaseId
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *Verification) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *Verification) GetActivatedAt() string {
+	if x != nil {
+		return x.ActivatedAt
+	}
+	return ""
+}
+
+func (x *Verification) GetError() string {
+	if x != nil {
+		return x.Error
 	}
 	return ""
 }
@@ -1303,7 +1335,7 @@ var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xc1\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xc5\n" +
 	"\n" +
 	"\bProposal\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
@@ -1340,8 +1372,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"prOpenedBy\x12 \n" +
 	"\fpr_closed_at\x18\x19 \x01(\tR\n" +
 	"prClosedAt\x12.\n" +
-	"\x05edits\x18\x1a \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12*\n" +
-	"\x11shadow_release_id\x18\x1b \x01(\tR\x0fshadowReleaseId\x12!\n" +
+	"\x05edits\x18\x1a \x03(\v2\x18.remediation.v1.FileEditR\x05edits\x12.\n" +
+	"\x13verification_run_id\x18\x1b \x01(\tR\x11verificationRunId\x12!\n" +
 	"\fverify_error\x18\x1c \x01(\tR\vverifyError\x12+\n" +
 	"\x11remediation_round\x18\x1d \x01(\x05R\x10remediationRound\x12*\n" +
 	"\x11resolved_node_ids\x18\x1e \x03(\tR\x0fresolvedNodeIds\x12O\n" +
@@ -1352,13 +1384,14 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"prServices\x1a\\\n" +
 	"\x11NodeOutcomesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
-	"\x05value\x18\x02 \x01(\v2\x1b.remediation.v1.NodeOutcomeR\x05value:\x028\x01\"~\n" +
+	"\x05value\x18\x02 \x01(\v2\x1b.remediation.v1.NodeOutcomeR\x05value:\x028\x01\"\x98\x01\n" +
 	"\x14ListProposalsRequest\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x19\n" +
 	"\bpr_state\x18\x02 \x01(\tR\aprState\x12\x14\n" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x1d\n" +
 	"\n" +
-	"release_id\x18\x04 \x01(\tR\treleaseId\"O\n" +
+	"release_id\x18\x04 \x01(\tR\treleaseId\x12\x18\n" +
+	"\aservice\x18\x05 \x01(\tR\aservice\"O\n" +
 	"\x15ListProposalsResponse\x126\n" +
 	"\tproposals\x18\x01 \x03(\v2\x18.remediation.v1.ProposalR\tproposals\"$\n" +
 	"\x12GetProposalRequest\x12\x0e\n" +
@@ -1413,11 +1446,14 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\x0etarget_node_id\x18\x04 \x01(\tR\ftargetNodeId\"=\n" +
 	"\vNodeOutcome\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"h\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xa2\x01\n" +
 	"\fVerification\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\x12*\n" +
-	"\x11shadow_release_id\x18\x03 \x01(\tR\x0fshadowReleaseId\"\x88\x02\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x15\n" +
+	"\x06run_id\x18\x03 \x01(\tR\x05runId\x12\x14\n" +
+	"\x05phase\x18\x04 \x01(\tR\x05phase\x12!\n" +
+	"\factivated_at\x18\x05 \x01(\tR\vactivatedAt\x12\x14\n" +
+	"\x05error\x18\x06 \x01(\tR\x05error\"\x88\x02\n" +
 	"\vPullRequest\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
 	"\x04repo\x18\x02 \x01(\tR\x04repo\x12\x16\n" +

@@ -78,8 +78,8 @@ func (d *Deployer) DeployValidation(ctx context.Context, spec deploy.ValidationJ
 // DeploySeedBuild maps the domain ValidationJobSpec to K8s seed-build job
 // params and creates the Job (idempotent by job name). The job uses the team
 // image and runs `dbt seed --select <TableName>` into the candidate schema; a
-// shadow release's SourceOverlayURI travels with it so the seed is loaded from
-// the proposed source rather than the checked-in project.
+// verification run's SourceOverlayURI travels with it so the seed is loaded
+// from the proposed source rather than the checked-in project.
 // An unparseable node type can never succeed, so it is reported as a permanent error.
 func (d *Deployer) DeploySeedBuild(ctx context.Context, spec deploy.ValidationJobSpec) error {
 	nodeType, err := pkg_model.ParseNodeType(spec.NodeType)

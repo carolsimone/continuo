@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -47,11 +48,11 @@ func TestIntegration_FailedValidationKeepsCurrentProdUnchanged(t *testing.T) {
 		AggregateStatus: "partial_failed",
 	}))
 
-	r, _ := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rFAIL")
-	assert.Equal(t, release.StatusRejected, r.Status())
+	r, _ := deps.NewUoW().RunRepo().Get(context.Background(), "rFAIL")
+	assert.Equal(t, pipeline.StatusRejected, r.Status())
 
 	require.Len(t, r.PerNodeResults(), 2)
-	var bResult release.NodeValidationResult
+	var bResult pipeline.NodeValidationResult
 	for _, n := range r.PerNodeResults() {
 		if n.NodeID == "b" {
 			bResult = n

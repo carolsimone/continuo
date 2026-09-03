@@ -51,15 +51,19 @@ type View struct {
 	// cluster whose fixer skipped or failed leaves its members
 	// skipped/failed while other members verify.
 	NodeOutcomes map[string]NodeOutcome
-	// Verifications is one shadow release per edited service;
-	// ShadowReleaseID is the view of the first.
+	// Verifications is one fix-verification run per edited service;
+	// VerificationRunID is the view of the first.
 	Verifications []Verification
-	// ShadowReleaseID is the id of the shadow release posted to verify this
-	// attempt's fix, written when Status is (or was) 'verifying'. It is kept
-	// when the attempt is finalized, so a resolved row still names the release
-	// that judged it. Empty for an attempt that never entered verification.
-	ShadowReleaseID string
-	// VerifyError is the shadow release's failure reason, recorded by
+	// VerificationRunID is the run id of the first verification — the
+	// single-run view of Verifications. Written when Status is (or was)
+	// 'verifying'. It is kept when the attempt is finalized, so a resolved row
+	// still names the run that judged it. Empty for an attempt that never
+	// entered verification.
+	VerificationRunID string
+	// Services is every service this attempt touched: the failing nodes'
+	// services plus the edited ones.
+	Services []string
+	// VerifyError is the verification run's failure reason, recorded by
 	// MarkVerifyFailed; empty unless verification failed.
 	VerifyError string
 	// TriggerPayload is the raw remediation.requested:v1 payload this attempt

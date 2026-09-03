@@ -10,12 +10,12 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 )
 
-// encodeCursor renders a ListCursor as base64("<unixnano>|<release_id>").
+// encodeCursor renders a ListCursor as base64("<unixnano>|<run_id>").
 func encodeCursor(c *repository.ListCursor) string {
 	if c == nil {
 		return ""
 	}
-	raw := fmt.Sprintf("%d|%s", c.CreatedAt.UTC().UnixNano(), c.ReleaseID)
+	raw := fmt.Sprintf("%d|%s", c.CreatedAt.UTC().UnixNano(), c.RunID)
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
@@ -36,5 +36,5 @@ func decodeCursor(s string) (*repository.ListCursor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cursor timestamp: %w", err)
 	}
-	return &repository.ListCursor{CreatedAt: time.Unix(0, ns).UTC(), ReleaseID: parts[1]}, nil
+	return &repository.ListCursor{CreatedAt: time.Unix(0, ns).UTC(), RunID: parts[1]}, nil
 }

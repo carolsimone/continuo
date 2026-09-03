@@ -4,7 +4,7 @@
 // to read the model's answer. A Fixer only produces the proposal — its edits
 // and, for a python contract fix, the packaged contract bytes — and never
 // submits anything; the driver in service/handlers collects a release's
-// proposals, submits one shadow release per edited service, and verifies
+// proposals, submits one fix-verification run per edited service, and reads
 // them. This package imports no adapter, and every collaborator is a port
 // with one exception: the python contract fixer writes the model's answer
 // straight onto the repository checkout RepoArchive extracted (see applyFiles),
@@ -109,14 +109,14 @@ type Services struct {
 	// Packager turns a directory of python-node contract yaml files into the
 	// merged wire contract a release is submitted with.
 	Packager ports.ContractPackager
-	// Releases reads a release's verdict. The python contract lanes use it to
-	// check whether another node declared in the same contract directory as
-	// the one being fixed also failed the original release (see
-	// siblingFailure): a fix that shares a shadow release with an
-	// already-broken sibling could never be verified, so it is skipped before
-	// any model call is made. Submitting and reading the image tag of a
-	// shadow release belong to the driver, not a Fixer.
-	Releases ports.ReleaseGateway
+	// Releases reads the original failing release's node-failure set. The
+	// python contract lanes use it to check whether another node declared in
+	// the same contract directory as the one being fixed also failed that
+	// release (see siblingFailure): a fix that shares a verification run with
+	// an already-broken sibling could never pass, so it is skipped before any
+	// model call is made. Submitting a verification run and reading its
+	// status belong to the driver, not a Fixer.
+	Releases ports.ReleaseReader
 	// PriorAttempts reads the attempts already recorded for the failing node,
 	// so a later attempt's prompt can show what earlier ones tried.
 	PriorAttempts repository.AttemptLister
@@ -135,11 +135,11 @@ type Services struct {
 type Result struct {
 	Proposal      proposal.Proposal
 	SuspectedRoot string
-	// ShadowContract is the packaged contract.yaml a python fix must be
-	// verified with, for the driver to upload alongside the shadow release it
-	// submits; nil for a dbt fix, whose edits are verified by re-running the
-	// project directly.
-	ShadowContract []byte
+	// VerificationContract is the packaged contract.yaml a python fix must be
+	// verified with, for the driver to upload alongside the verification run
+	// it submits; nil for a dbt fix, whose edits are verified by re-running
+	// the project directly.
+	VerificationContract []byte
 }
 
 // Gathered holds every source file a single-shot Fixer read, keyed by
@@ -174,13 +174,13 @@ type Fixer interface {
 // nodeType selects a lane only for validation failures, where the three node
 // kinds need entirely different fixes: a dbt model is corrected in its SQL
 // file; a python-model node is corrected in the contract yaml that declares
-// it, preserving whatever reads its script performs, and verified by a shadow
-// release; a python-csv node has no script at all, so its fix corrects the
-// contract to match the csv file that is its source of truth — a narrower set
-// of rules and a narrower post-apply guard than a python-model node's, hence
-// its own lane rather than a shared one. Every other error class ignores
-// nodeType — those classes have no python fix to offer, and each already
-// refuses a python node in its own way.
+// it, preserving whatever reads its script performs, and verified by a
+// verification run; a python-csv node has no script at all, so its fix
+// corrects the contract to match the csv file that is its source of truth —
+// a narrower set of rules and a narrower post-apply guard than a
+// python-model node's, hence its own lane rather than a shared one. Every
+// other error class ignores nodeType — those classes have no python fix to
+// offer, and each already refuses a python node in its own way.
 func For(source, nodeType string) (Fixer, error) {
 	switch source {
 	case sourceCompile:

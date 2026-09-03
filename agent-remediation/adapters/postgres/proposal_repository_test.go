@@ -9,18 +9,21 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
+	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/pkg/testmigrations"
-	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
-	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -47,10 +50,12 @@ func getEnvOrDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
-// newTestDB boots a PostgreSQL testcontainer, applies the agent_remediation
-// migration, and returns a ready *sqlx.DB. The container is terminated when
-// the test finishes via t.Cleanup.
-func newTestDB(t *testing.T) *sqlx.DB {
+// newRawTestDB boots a PostgreSQL testcontainer and returns a connected
+// *sqlx.DB with no migrations applied. The container is terminated when the
+// test finishes via t.Cleanup. Most tests want newTestDB (the fully
+// migrated database); this is the raw connection a test stages an older
+// schema on top of, applying only a prefix of the migration files itself.
+func newRawTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
 	ctx := context.Background()
 
@@ -102,6 +107,15 @@ func newTestDB(t *testing.T) *sqlx.DB {
 		time.Sleep(500 * time.Millisecond)
 	}
 	require.NoError(t, err, "connect to postgres after retries")
+
+	return db
+}
+
+// newTestDB boots a PostgreSQL testcontainer, applies every agent_remediation
+// migration, and returns a ready *sqlx.DB.
+func newTestDB(t *testing.T) *sqlx.DB {
+	t.Helper()
+	db := newRawTestDB(t)
 
 	dir, err := agentRemediationMigrationDir()
 	require.NoError(t, err, "resolve agent_remediation migration dir")
@@ -1045,17 +1059,17 @@ func TestBeginPR_RejectsUnresolvedSource(t *testing.T) {
 // turned into a pull request.
 //
 // A python contract fix is persisted as 'verifying' with source_resolved=true
-// while a shadow release is still judging it, and a rejected one becomes
+// while a verification run is still judging it, and a failed one becomes
 // 'failed' with only its status changed. Claiming on source_resolved and
 // pr_state alone therefore let a caller open a PR for a fix still being
-// verified, or for one a release had already rejected. The UI's own
+// verified, or for one a run had already failed. The UI's own
 // status==='proposed' predicate is not that invariant: it does not run for a
 // direct or stale gRPC client.
 func TestBeginPR_RejectsAnAttemptThatIsNotProposed(t *testing.T) {
 	for name, status := range map[string]proposal.Status{
-		"still being verified by a shadow release": proposal.StatusVerifying,
-		"rejected by its shadow release":           proposal.StatusFailed,
-		"still being generated":                    proposal.StatusGenerating,
+		"still being verified by a verification run": proposal.StatusVerifying,
+		"failed by its verification run":             proposal.StatusFailed,
+		"still being generated":                      proposal.StatusGenerating,
 	} {
 		t.Run(name, func(t *testing.T) {
 			db := newTestDB(t)
@@ -1063,21 +1077,21 @@ func TestBeginPR_RejectsAnAttemptThatIsNotProposed(t *testing.T) {
 			repo := NewProposalRepository(db, nil)
 
 			id := seedProposal(t, repo, db, proposal.Proposal{
-				Source:          "validation",
-				ReleaseID:       "r-notproposed-" + string(status),
-				NodeID:          "analytics.py_daily_kpis",
-				ErrorSignature:  "sig",
-				Attempt:         1,
-				Status:          status,
-				ShadowReleaseID: "shadow-r-1-analytics.py_daily_kpis-a1",
-				Confidence:      proposal.ConfidenceHigh,
-				Rationale:       "rationale",
-				SourceResolved:  true,
-				Repo:            "owner/demo",
-				CommitSHA:       "deadbeef",
-				FilePath:        "services/svc-py/contracts/py_daily_kpis.yml",
-				Model:           "test-model",
-				CreatedAt:       time.Now().UTC(),
+				Source:            "validation",
+				ReleaseID:         "r-notproposed-" + string(status),
+				NodeID:            "analytics.py_daily_kpis",
+				ErrorSignature:    "sig",
+				Attempt:           1,
+				Status:            status,
+				VerificationRunID: "verify-r-1-analytics.py_daily_kpis-a1",
+				Confidence:        proposal.ConfidenceHigh,
+				Rationale:         "rationale",
+				SourceResolved:    true,
+				Repo:              "owner/demo",
+				CommitSHA:         "deadbeef",
+				FilePath:          "services/svc-py/contracts/py_daily_kpis.yml",
+				Model:             "test-model",
+				CreatedAt:         time.Now().UTC(),
 			})
 
 			_, err := repo.BeginPR(ctx, id, "", "b", time.Now().UTC())
@@ -1271,7 +1285,7 @@ func TestProposalRepository_FileEditsRoundTripAndLegacySynthesis(t *testing.T) {
 		"model.p.ancestor":   {Status: proposal.StatusSkipped, Reason: "no source"},
 	}
 	verifications := []proposal.Verification{
-		{Service: "service-1", Kind: "dbt", ShadowReleaseID: "shadow-r-service-1-a1"},
+		{Service: "service-1", Kind: "dbt", RunID: "verify-r-service-1-a1"},
 	}
 	p := proposal.Proposal{
 		Source:          "validation",
@@ -1441,12 +1455,12 @@ func TestBeginPR_ClaimCarriesFileEdits(t *testing.T) {
 		"a row with no resolved_node_ids must claim with one entry synthesized from node_id")
 }
 
-// TestProposalRepositoryVerifyingLifecycle verifies the round trip a shadow
-// release drives: a proposal upserted with status='verifying' carries its
-// shadow_release_id and trigger_payload, is surfaced by ListVerifying, and
-// MarkVerified finalizes it to 'proposed' and removes it from the verifying
-// list. A second MarkVerified call is an idempotent no-op (hit=false) since
-// the row is no longer 'verifying'.
+// TestProposalRepositoryVerifyingLifecycle verifies the round trip a
+// verification run drives: a proposal upserted with status='verifying'
+// carries its verification_run_id and trigger_payload, is surfaced by
+// ListVerifying, and MarkVerified finalizes it to 'proposed' and removes it
+// from the verifying list. A second MarkVerified call is an idempotent no-op
+// (hit=false) since the row is no longer 'verifying'.
 func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -1454,18 +1468,18 @@ func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 
 	trigger := []byte(`{"source":"validation","node_id":"model.p.orders","message_id":"123-0"}`)
 	p := proposal.Proposal{
-		Source:          "validation",
-		ReleaseID:       "rel-verify-1",
-		NodeID:          "model.p.orders",
-		ErrorSignature:  "sig-verify-1",
-		Attempt:         1,
-		Status:          proposal.StatusVerifying,
-		ShadowReleaseID: "shadow-rel-abc",
-		TriggerPayload:  trigger,
-		Confidence:      proposal.ConfidenceHigh,
-		Rationale:       "proposed fix awaiting shadow verification",
-		Model:           "claude-3-5-sonnet",
-		CreatedAt:       time.Now().UTC(),
+		Source:            "validation",
+		ReleaseID:         "rel-verify-1",
+		NodeID:            "model.p.orders",
+		ErrorSignature:    "sig-verify-1",
+		Attempt:           1,
+		Status:            proposal.StatusVerifying,
+		VerificationRunID: "verify-rel-abc",
+		TriggerPayload:    trigger,
+		Confidence:        proposal.ConfidenceHigh,
+		Rationale:         "proposed fix awaiting verification",
+		Model:             "claude-3-5-sonnet",
+		CreatedAt:         time.Now().UTC(),
 	}
 	id := seedProposal(t, repo, db, p)
 
@@ -1474,14 +1488,14 @@ func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 	require.Len(t, verifying, 1, "the verifying proposal must be listed")
 	require.Equal(t, id, verifying[0].ID)
 	require.Equal(t, string(proposal.StatusVerifying), string(verifying[0].Status))
-	require.Equal(t, "shadow-rel-abc", verifying[0].ShadowReleaseID, "shadow_release_id must round-trip")
+	require.Equal(t, "verify-rel-abc", verifying[0].VerificationRunID, "verification_run_id must round-trip")
 	// JSONB is a binary format: Postgres re-serializes it on read (e.g. adding
 	// a space after ':' and ','), so the column never preserves the writer's
 	// exact bytes. JSONEq compares the two payloads for JSON-semantic
 	// equality instead of a literal byte match.
 	require.JSONEq(t, string(trigger), string(verifying[0].TriggerPayload), "trigger_payload must round-trip semantically")
 
-	hit, err := repo.MarkVerified(ctx, id)
+	hit, err := repo.MarkVerified(ctx, id, nil)
 	require.NoError(t, err)
 	require.True(t, hit, "first MarkVerified must fire the CAS")
 
@@ -1493,7 +1507,7 @@ func TestProposalRepositoryVerifyingLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, verifying, "a finalized proposal must no longer be listed as verifying")
 
-	hit, err = repo.MarkVerified(ctx, id)
+	hit, err = repo.MarkVerified(ctx, id, nil)
 	require.NoError(t, err)
 	require.False(t, hit, "second MarkVerified must be a no-op: the row is no longer 'verifying'")
 }
@@ -1507,46 +1521,46 @@ func TestProposalRepositoryMarkVerifyFailed(t *testing.T) {
 	repo := NewProposalRepository(db, nil)
 
 	p := proposal.Proposal{
-		Source:          "validation",
-		ReleaseID:       "rel-verify-2",
-		NodeID:          "model.p.customers",
-		ErrorSignature:  "sig-verify-2",
-		Attempt:         1,
-		Status:          proposal.StatusVerifying,
-		ShadowReleaseID: "shadow-rel-def",
-		TriggerPayload:  []byte(`{"source":"validation","node_id":"model.p.customers"}`),
-		Confidence:      proposal.ConfidenceMedium,
-		Rationale:       "proposed fix awaiting shadow verification",
-		Model:           "claude-3-5-sonnet",
-		CreatedAt:       time.Now().UTC(),
+		Source:            "validation",
+		ReleaseID:         "rel-verify-2",
+		NodeID:            "model.p.customers",
+		ErrorSignature:    "sig-verify-2",
+		Attempt:           1,
+		Status:            proposal.StatusVerifying,
+		VerificationRunID: "verify-rel-def",
+		TriggerPayload:    []byte(`{"source":"validation","node_id":"model.p.customers"}`),
+		Confidence:        proposal.ConfidenceMedium,
+		Rationale:         "proposed fix awaiting verification",
+		Model:             "claude-3-5-sonnet",
+		CreatedAt:         time.Now().UTC(),
 	}
 	id := seedProposal(t, repo, db, p)
 
-	hit, err := repo.MarkVerifyFailed(ctx, id, "shadow release rel-shadow-def failed: validation rejected 3 rows")
+	hit, err := repo.MarkVerifyFailed(ctx, id, "verification run verify-rel-def failed: validation rejected 3 rows", nil)
 	require.NoError(t, err)
 	require.True(t, hit, "first MarkVerifyFailed must fire the CAS")
 
 	got, err := repo.Get(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, string(proposal.StatusFailed), string(got.Status), "MarkVerifyFailed must flip status to 'failed'")
-	require.Equal(t, "shadow release rel-shadow-def failed: validation rejected 3 rows", got.VerifyError)
+	require.Equal(t, "verification run verify-rel-def failed: validation rejected 3 rows", got.VerifyError)
 
 	verifying, err := repo.ListVerifying(ctx)
 	require.NoError(t, err)
 	require.Empty(t, verifying, "a proposal failed out of verification must no longer be listed as verifying")
 
-	hit, err = repo.MarkVerifyFailed(ctx, id, "a different error")
+	hit, err = repo.MarkVerifyFailed(ctx, id, "a different error", nil)
 	require.NoError(t, err)
 	require.False(t, hit, "second MarkVerifyFailed must be a no-op: the row is no longer 'verifying'")
 	got2, err := repo.Get(ctx, id)
 	require.NoError(t, err)
-	require.Equal(t, "shadow release rel-shadow-def failed: validation rejected 3 rows", got2.VerifyError,
+	require.Equal(t, "verification run verify-rel-def failed: validation rejected 3 rows", got2.VerifyError,
 		"the no-op call must not overwrite the already-recorded verify_error")
 }
 
 // TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes verifies that the
 // UPDATE finalizing an attempt also finalizes its per-node outcomes: every node
-// that was waiting on a shadow release becomes 'proposed', while a node the
+// that was waiting on verification becomes 'proposed', while a node the
 // attempt had already settled keeps the status and reason it was recorded with.
 // Without the rewrite the row would report itself proposed while its own nodes
 // still read as verifying, and every reader of node_outcomes would keep showing
@@ -1568,11 +1582,11 @@ func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
 			"model.p.a": {Status: proposal.StatusVerifying},
 			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
 		},
-		ShadowReleaseID: "shadow-rel-verify-outcomes-1",
-		CreatedAt:       time.Now().UTC(),
+		VerificationRunID: "verify-rel-verify-outcomes-1",
+		CreatedAt:         time.Now().UTC(),
 	})
 
-	hit, err := repo.MarkVerified(ctx, id)
+	hit, err := repo.MarkVerified(ctx, id, nil)
 	require.NoError(t, err)
 	require.True(t, hit, "MarkVerified must fire the CAS")
 
@@ -1588,17 +1602,17 @@ func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
 	// zero entries, which must still write an empty object rather than the SQL
 	// NULL the column forbids.
 	emptyID := seedProposal(t, repo, db, proposal.Proposal{
-		Source:          "validation",
-		ReleaseID:       "rel-verify-outcomes-1",
-		NodeID:          "model.p.no_outcomes",
-		ErrorSignature:  "sig-verify-outcomes-1",
-		Attempt:         2,
-		Status:          proposal.StatusVerifying,
-		ShadowReleaseID: "shadow-rel-verify-outcomes-2",
-		CreatedAt:       time.Now().UTC(),
+		Source:            "validation",
+		ReleaseID:         "rel-verify-outcomes-1",
+		NodeID:            "model.p.no_outcomes",
+		ErrorSignature:    "sig-verify-outcomes-1",
+		Attempt:           2,
+		Status:            proposal.StatusVerifying,
+		VerificationRunID: "verify-rel-verify-outcomes-2",
+		CreatedAt:         time.Now().UTC(),
 	})
 
-	hit, err = repo.MarkVerified(ctx, emptyID)
+	hit, err = repo.MarkVerified(ctx, emptyID, nil)
 	require.NoError(t, err)
 	require.True(t, hit, "a row with no per-node outcomes must still finalize")
 
@@ -1609,8 +1623,8 @@ func TestProposalRepositoryMarkVerifiedRewritesNodeOutcomes(t *testing.T) {
 }
 
 // TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes is the mirror of
-// the rewrite above for a rejected attempt: every node that was waiting on a
-// shadow release becomes 'failed', and a node the attempt had already settled
+// the rewrite above for a failed attempt: every node that was waiting on
+// verification becomes 'failed', and a node the attempt had already settled
 // keeps its own outcome.
 func TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
 	db := newTestDB(t)
@@ -1629,11 +1643,11 @@ func TestProposalRepositoryMarkVerifyFailedRewritesNodeOutcomes(t *testing.T) {
 			"model.p.a": {Status: proposal.StatusVerifying},
 			"model.p.b": {Status: proposal.StatusSkipped, Reason: "no source to fix"},
 		},
-		ShadowReleaseID: "shadow-rel-verify-outcomes-3",
-		CreatedAt:       time.Now().UTC(),
+		VerificationRunID: "verify-rel-verify-outcomes-3",
+		CreatedAt:         time.Now().UTC(),
 	})
 
-	hit, err := repo.MarkVerifyFailed(ctx, id, "model.p.a: still broken")
+	hit, err := repo.MarkVerifyFailed(ctx, id, "model.p.a: still broken", nil)
 	require.NoError(t, err)
 	require.True(t, hit, "MarkVerifyFailed must fire the CAS")
 
@@ -1666,12 +1680,12 @@ func TestListVerifying_OrderedOldestFirstAndLimited(t *testing.T) {
 			NodeID:         fmt.Sprintf("model.p.node_%02d", i),
 			ErrorSignature: "sig-verify-order",
 			// Distinct attempt per row: (release_id, attempt) is the unique key.
-			Attempt:         i + 1,
-			Status:          proposal.StatusVerifying,
-			ShadowReleaseID: fmt.Sprintf("shadow-rel-%02d", i),
-			Confidence:      proposal.ConfidenceLow,
-			Model:           "claude-3-5-sonnet",
-			CreatedAt:       base.Add(time.Duration(i) * time.Minute),
+			Attempt:           i + 1,
+			Status:            proposal.StatusVerifying,
+			VerificationRunID: fmt.Sprintf("verify-rel-%02d", i),
+			Confidence:        proposal.ConfidenceLow,
+			Model:             "claude-3-5-sonnet",
+			CreatedAt:         base.Add(time.Duration(i) * time.Minute),
 		})
 	}
 
@@ -1680,7 +1694,7 @@ func TestListVerifying_OrderedOldestFirstAndLimited(t *testing.T) {
 	require.Len(t, verifying, 20, "ListVerifying must cap at 20 rows even though 25 are in flight")
 
 	for i, v := range verifying {
-		require.Equal(t, fmt.Sprintf("shadow-rel-%02d", i), v.ShadowReleaseID,
+		require.Equal(t, fmt.Sprintf("verify-rel-%02d", i), v.VerificationRunID,
 			"row %d must be the %d-th oldest proposal (oldest first)", i, i)
 	}
 	for i := 1; i < len(verifying); i++ {
@@ -1691,7 +1705,7 @@ func TestListVerifying_OrderedOldestFirstAndLimited(t *testing.T) {
 
 // TestProposalRepositoryCountAttemptsExcludesVerifying verifies that an
 // in-flight 'verifying' row is not counted toward the attempt cap, for the
-// same reason an in-flight 'generating' row is not: the shadow release has
+// same reason an in-flight 'generating' row is not: the verification run has
 // not concluded, so counting it would inflate the attempt cap and shift the
 // attempt number on a redelivery of the trigger that started it.
 func TestProposalRepositoryCountAttemptsExcludesVerifying(t *testing.T) {
@@ -1712,11 +1726,11 @@ func TestProposalRepositoryCountAttemptsExcludesVerifying(t *testing.T) {
 			Attempt: i, Status: proposal.StatusProposed, CreatedAt: now,
 		}), "insert terminal attempt %d", i)
 	}
-	// A third, in-flight attempt marked verifying: a shadow release is still
+	// A third, in-flight attempt marked verifying: a verification run is still
 	// running for it.
 	require.NoError(t, repo.Upsert(ctx, proposal.Proposal{
 		Source: source, ReleaseID: "release-v", NodeID: nodeID, ErrorSignature: sig,
-		Attempt: 3, Status: proposal.StatusVerifying, ShadowReleaseID: "shadow-count-1", CreatedAt: now,
+		Attempt: 3, Status: proposal.StatusVerifying, VerificationRunID: "verify-count-1", CreatedAt: now,
 	}))
 
 	n, err := repo.CountAttempts(ctx, "release-v", 1)
@@ -1849,7 +1863,7 @@ func TestProposalRepositoryFailGenerating(t *testing.T) {
 	settled := inFlight
 	settled.Attempt = 1
 	settled.Status = proposal.StatusFailed
-	settled.Rationale = "the shadow release rejected this fix"
+	settled.Rationale = "the verification run failed this fix"
 	settledID := seedProposal(t, repo, db, settled)
 
 	n, err := repo.FailGenerating(ctx, "rel-fg-1",
@@ -1869,7 +1883,7 @@ func TestProposalRepositoryFailGenerating(t *testing.T) {
 
 	stillSettled, err := repo.Get(ctx, settledID)
 	require.NoError(t, err)
-	require.Equal(t, "the shadow release rejected this fix", stillSettled.Rationale,
+	require.Equal(t, "the verification run failed this fix", stillSettled.Rationale,
 		"a row that already reached a terminal state must not be rewritten")
 
 	n, err = repo.FailGenerating(ctx, "rel-fg-1", "again")
@@ -2360,4 +2374,186 @@ func TestProposalRepositoryFailGenerating_FailsNodeOutcomes(t *testing.T) {
 		require.Equal(t, string(proposal.StatusFailed), got.Status, "node %s status must be failed", node)
 		require.Equal(t, "poison-dropped after exhausting redelivery", got.Reason, "node %s reason", node)
 	}
+}
+
+// TestUpdateVerificationPhase_TouchesOnlyThatRun verifies that
+// UpdateVerificationPhase rewrites only the element matching the given
+// run_id, leaving the row's other verification runs — and their phases —
+// untouched.
+func TestUpdateVerificationPhase_TouchesOnlyThatRun(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewProposalRepository(db, nil)
+	ctx := context.Background()
+	id := seedVerifying(t, db, "rel-1", []proposal.Verification{
+		{Service: "core", Kind: "dbt", RunID: "verify-rel-1-core-a1", Phase: proposal.PhaseQueued},
+		{Service: "ops", Kind: "dbt", RunID: "verify-rel-1-ops-a1", Phase: proposal.PhaseQueued},
+	})
+	at := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	require.NoError(t, repo.UpdateVerificationPhase(ctx, id, "verify-rel-1-ops-a1", proposal.PhaseRunning, &at))
+
+	v, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	require.Len(t, v.Verifications, 2)
+	assert.Equal(t, proposal.PhaseQueued, v.Verifications[0].Phase)
+	assert.Equal(t, proposal.PhaseRunning, v.Verifications[1].Phase)
+	require.NotNil(t, v.Verifications[1].ActivatedAt)
+	assert.True(t, v.Verifications[1].ActivatedAt.Equal(at))
+}
+
+// TestMarkVerifyFailed_StoresTheFinalVerifications verifies that
+// MarkVerifyFailed writes the caller's final per-run summary — including the
+// failed run's phase and error — in the same statement that finalizes the
+// row's status.
+func TestMarkVerifyFailed_StoresTheFinalVerifications(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewProposalRepository(db, nil)
+	ctx := context.Background()
+	id := seedVerifying(t, db, "rel-1", []proposal.Verification{{Service: "core", Kind: "dbt", RunID: "verify-rel-1-core-a1", Phase: proposal.PhaseRunning}})
+	final := []proposal.Verification{{Service: "core", Kind: "dbt", RunID: "verify-rel-1-core-a1", Phase: proposal.PhaseFailed, Error: "model.core.orders: column x does not exist"}}
+	hit, err := repo.MarkVerifyFailed(ctx, id, "model.core.orders: column x does not exist", final)
+	require.NoError(t, err)
+	require.True(t, hit)
+	v, err := repo.Get(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, proposal.StatusFailed, v.Status)
+	assert.Equal(t, proposal.PhaseFailed, v.Verifications[0].Phase)
+	assert.Equal(t, "model.core.orders: column x does not exist", v.Verifications[0].Error)
+}
+
+// TestList_FiltersByService verifies that ProposalFilter.Service matches
+// proposals whose services array contains it, narrowing a listing to one
+// team's work.
+func TestList_FiltersByService(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewProposalRepository(db, nil)
+	ctx := context.Background()
+	seedTerminal(t, db, "rel-1", []string{"core"})
+	seedTerminal(t, db, "rel-2", []string{"ops", "core"})
+	seedTerminal(t, db, "rel-3", []string{"ops"})
+	rows, err := repo.List(ctx, repository.ProposalFilter{Service: "core"})
+	require.NoError(t, err)
+	ids := map[string]bool{}
+	for _, r := range rows {
+		ids[r.ReleaseID] = true
+	}
+	assert.Equal(t, map[string]bool{"rel-1": true, "rel-2": true}, ids)
+}
+
+// applyUpTo applies the migration files whose version is <= max, from a temp
+// copy of dir, so a test can stage a schema from before a given migration.
+func applyUpTo(t *testing.T, db *sqlx.DB, dir string, max int) {
+	t.Helper()
+	tmp := t.TempDir()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		m := regexp.MustCompile(`^V(\d+)__`).FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		v, _ := strconv.Atoi(m[1])
+		if v > max {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(tmp, e.Name()), b, 0o600))
+	}
+	require.NoError(t, testmigrations.Apply(db.DB, tmp))
+}
+
+// applyOnly applies exactly one migration file from dir.
+func applyOnly(t *testing.T, db *sqlx.DB, dir, name string) {
+	t.Helper()
+	tmp := t.TempDir()
+	b, err := os.ReadFile(filepath.Join(dir, name))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, name), b, 0o600))
+	require.NoError(t, testmigrations.Apply(db.DB, tmp))
+}
+
+// TestV18_ConvertsLegacyVerificationRows verifies the V18 backfill against a
+// schema staged at V17: shadow_release_id is renamed and read back as
+// verification_run_id, services is populated from the trigger payload's node
+// services (falling back to the verifications array), and each stored
+// verification element is rewritten from its legacy shadow_release_id key to
+// run_id, with phase/error derived from the row's terminal status and
+// activated_at left null (unknown for a row this old).
+func TestV18_ConvertsLegacyVerificationRows(t *testing.T) {
+	db := newRawTestDB(t) // newTestDB without the migration step; see Step 2
+	dir, err := agentRemediationMigrationDir()
+	require.NoError(t, err)
+	applyUpTo(t, db, dir, 17)
+	_, err = db.Exec(`INSERT INTO proposal (source, release_id, remediation_round, node_id, error_signature, attempt, status,
+	                    shadow_release_id, verify_error, trigger_payload, verifications, resolved_node_ids, node_outcomes, created_at)
+	                  VALUES ('validation','rel-1',1,'model.core.orders','sig',1,'proposed',
+	                    'shadow-rel-1-core-a1','',
+	                    '{"nodes":[{"node_id":"model.core.orders","service":"core"},{"node_id":"model.ops.x","service":"ops"}]}',
+	                    '[{"service":"core","kind":"dbt","shadow_release_id":"shadow-rel-1-core-a1"}]',
+	                    '["model.core.orders"]','{}', now())`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO proposal (source, release_id, remediation_round, node_id, error_signature, attempt, status,
+	                    shadow_release_id, verify_error, trigger_payload, verifications, resolved_node_ids, node_outcomes, created_at)
+	                  VALUES ('validation','rel-2',1,'model.core.orders','sig',1,'failed',
+	                    'shadow-rel-2-core-a1','model.core.orders: boom','{}',
+	                    '[{"service":"core","kind":"dbt","shadow_release_id":"shadow-rel-2-core-a1"}]',
+	                    '["model.core.orders"]','{}', now())`)
+	require.NoError(t, err)
+
+	applyOnly(t, db, dir, "V18__proposal_verification_phase_and_services.sql")
+
+	var rows []struct {
+		ReleaseID         string         `db:"release_id"`
+		VerificationRunID string         `db:"verification_run_id"`
+		Services          pq.StringArray `db:"services"`
+		Verifications     []byte         `db:"verifications"`
+	}
+	require.NoError(t, db.Select(&rows, `SELECT release_id, verification_run_id, services, verifications FROM proposal ORDER BY release_id`))
+	require.Len(t, rows, 2)
+	assert.Equal(t, "shadow-rel-1-core-a1", rows[0].VerificationRunID)
+	assert.Equal(t, pq.StringArray{"core", "ops"}, rows[0].Services)
+	assert.JSONEq(t, `[{"service":"core","kind":"dbt","run_id":"shadow-rel-1-core-a1","phase":"passed","activated_at":null,"error":""}]`, string(rows[0].Verifications))
+	assert.JSONEq(t, `[{"service":"core","kind":"dbt","run_id":"shadow-rel-2-core-a1","phase":"failed","activated_at":null,"error":"model.core.orders: boom"}]`, string(rows[1].Verifications))
+}
+
+// seedVerifying records one attempt for releaseID parked in 'verifying' with
+// the given verification runs, and returns the row id.
+func seedVerifying(t *testing.T, db *sqlx.DB, releaseID string, vs []proposal.Verification) string {
+	t.Helper()
+	repo := NewProposalRepository(db, nil)
+	ctx := context.Background()
+	p := proposal.Proposal{
+		Source: "validation", ReleaseID: releaseID, RemediationRound: 1, NodeID: "model.core.orders",
+		ResolvedNodeIDs: []string{"model.core.orders"}, ErrorSignature: "sig", Attempt: 1,
+		Status: proposal.StatusVerifying, Verifications: vs, Services: proposal.UnionServices(verificationServiceNames(vs)),
+		TriggerPayload: []byte(`{}`), CreatedAt: time.Now().UTC(),
+	}
+	p.NormalizeRepresentativeViews()
+	require.NoError(t, repo.InsertGenerating(ctx, p))
+	require.NoError(t, repo.Upsert(ctx, p))
+	var id string
+	require.NoError(t, db.Get(&id, `SELECT id FROM proposal WHERE release_id = $1 AND attempt = 1`, releaseID))
+	return id
+}
+
+// seedTerminal records one 'proposed' attempt for releaseID touching the
+// given services.
+func seedTerminal(t *testing.T, db *sqlx.DB, releaseID string, services []string) {
+	t.Helper()
+	repo := NewProposalRepository(db, nil)
+	p := proposal.Proposal{
+		Source: "validation", ReleaseID: releaseID, RemediationRound: 1, NodeID: "model.core.orders",
+		ResolvedNodeIDs: []string{"model.core.orders"}, ErrorSignature: "sig", Attempt: 1,
+		Status: proposal.StatusProposed, Services: services, TriggerPayload: []byte(`{}`), CreatedAt: time.Now().UTC(),
+	}
+	p.NormalizeRepresentativeViews()
+	require.NoError(t, repo.Upsert(context.Background(), p))
+}
+
+func verificationServiceNames(vs []proposal.Verification) []string {
+	out := make([]string, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, v.Service)
+	}
+	return out
 }

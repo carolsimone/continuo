@@ -4,10 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/google/uuid"
 )
 
 // HandleCompileResultInput carries the aggregated compile outcome from
@@ -56,9 +52,10 @@ func compileRejection(perNode []NodeResult) (reason, errorClass, errorDetail str
 // manifest_keys — payload shape identical to the pre-compile-leg behaviour so
 // topology-controller requires no change.
 //
-// failed path: TransitionToRejected with a reason derived from the per-node
-// failed_container attribution (compile_failed, parse_rehearsal_failed, or
-// artifact_upload_failed — see compileRejection), emits release.rejected:v1.
+// failed path: Fail with a reason derived from the per-node failed_container
+// attribution (compile_failed, parse_rehearsal_failed, or
+// artifact_upload_failed — see compileRejection). A candidate emits
+// release.rejected:v1; a run of either kind emits pipeline.run.finished:v1.
 //
 // unknown release: drops the message (ack).
 func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInput) error {
@@ -68,7 +65,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.ReleaseRepo().Get(ctx, in.ReleaseID)
+	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
 	}
@@ -96,7 +93,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		}
 
 		r.RecordStageResults("compile", results)
-		if err := r.TransitionToRejected(reason, errorDetail, failing, now); err != nil {
+		if err := r.Fail(reason, errorDetail, failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
 
@@ -130,34 +127,24 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			"repo":            r.Repo(),
 			"commit_sha":      r.CommitSHA(),
 			"code_bundle_uri": r.CodeBundleURI(),
-			"shadow":          r.IsShadow(),
 		})
 		if err != nil {
 			return fmt.Errorf("marshal payload: %w", err)
 		}
 
-		r.SetRejectionPayload(payload)
-		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+		if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+			return err
+		}
+		if err := u.RunRepo().Save(ctx, r); err != nil {
 			return fmt.Errorf("save release: %w", err)
 		}
-
-		if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-			ID:            uuid.New(),
-			AggregateType: "release-controller",
-			AggregateID:   AggregateIDForRelease(in.ReleaseID),
-			EventType:     "release_rejected",
-			Payload:       payload,
-			StreamName:    streams.ReleaseRejectedV1,
-			Status:        "pending",
-			MaxRetries:    pkgoutbox.DefaultMaxRetries,
-			CreatedAt:     now,
-		}); err != nil {
-			return fmt.Errorf("outbox insert: %w", err)
+		if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+			return err
 		}
 		if err := u.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
-		d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, reason, failing)
+		recordTerminalTelemetry(ctx, d, r, 0)
 		return nil
 	}
 
@@ -168,7 +155,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 	if err := r.TransitionFromCompiling(now); err != nil {
 		return fmt.Errorf("transition from compiling: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 

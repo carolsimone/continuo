@@ -1,8 +1,8 @@
-// Package overlay builds the source-overlay tarball a dbt shadow release lays
-// over the team's project before it compiles: the proposed content of every
-// file the fix edits, keyed by its path within that project. It is pure — it
-// takes the files and returns the bytes, performing no I/O — so the archive's
-// shape is testable without object storage or a release.
+// Package overlay builds the source-overlay tarball a dbt fix-verification
+// run lays over the team's project before it compiles: the proposed content
+// of every file the fix edits, keyed by its path within that project. It is
+// pure — it takes the files and returns the bytes, performing no I/O — so the
+// archive's shape is testable without object storage or a release.
 //
 // The archive is deterministic: the same set of files always produces the same
 // bytes, whatever order they arrive in. Two attempts that propose identical

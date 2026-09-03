@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -134,57 +133,47 @@ func TestIntegration_PostReleases_UnknownKind_Returns400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "unknown manifest kind")
 
-	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rBadKind")
+	r, err := deps.NewUoW().RunRepo().Get(context.Background(), "rBadKind")
 	require.NoError(t, err)
 	assert.Nil(t, r, "no release row should be persisted for a rejected kind")
 }
 
-// TestIntegration_ShadowReleaseExposedInDetailAndList verifies that a shadow
-// release's shadow flag is exposed by both GET /releases/{id} and its list
-// item, and that a release resolved into the terminal 'validated' status
-// carries a non-empty resolved_at in its list item — the same as any other
-// terminal status.
-func TestIntegration_ShadowReleaseExposedInDetailAndList(t *testing.T) {
+// TestIntegration_VerificationRunExposedOnItsOwnRoutesOnly verifies that a
+// fix-verification run, saved through the real Postgres repository, is
+// readable only via the verification-run routes: GET /releases/{id} treats
+// its id as unknown, and GET /releases never lists it.
+func TestIntegration_VerificationRunExposedOnItsOwnRoutesOnly(t *testing.T) {
 	srv, deps, db := setup(t)
 	defer db.Close()
 	ctx := context.Background()
 
-	r := release.Rehydrate(release.RehydrateInput{
-		ID:             "rShadowV",
-		Status:         release.StatusValidated,
-		ChangedService: "service-1",
-		ImageTags:      map[string]string{"service-1": "t"},
-		Shadow:         true,
-		Repo:           "acme/demo",
-		CommitSHA:      "deadbeefcafe1234",
-		ManifestKind:   release.ManifestKindDbt,
-		CreatedAt:      time.Unix(100, 0).UTC(),
-		Transitions: []release.Transition{
-			{To: release.StatusReceived, At: time.Unix(100, 0).UTC()},
-			{To: release.StatusValidating, At: time.Unix(101, 0).UTC()},
-			{To: release.StatusValidated, At: time.Unix(102, 0).UTC()},
-		},
-	})
-	require.NoError(t, deps.NewUoW().ReleaseRepo().Save(ctx, r))
+	require.NoError(t, handlers.ReceiveVerification(ctx, deps, handlers.ReceiveVerificationInput{
+		RunID: "verify-rv1", Service: "service-1", ImageTag: "t", Kind: "dbt",
+		VerifiesReleaseID: "rv1", Attempt: 1,
+	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/releases/rShadowV", nil)
+	req := httptest.NewRequest(http.MethodGet, "/verification-runs/verify-rv1", nil)
 	w := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	var detail map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &detail))
-	assert.Equal(t, true, detail["shadow"], "detail response must expose shadow=true")
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, "received", got["status"])
 
-	reqList := httptest.NewRequest(http.MethodGet, "/releases", nil)
-	wList := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(wList, reqList)
-	require.Equal(t, http.StatusOK, wList.Code)
-	var listResp struct {
+	req = httptest.NewRequest(http.MethodGet, "/releases/verify-rv1", nil)
+	w = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	req = httptest.NewRequest(http.MethodGet, "/releases", nil)
+	w = httptest.NewRecorder()
+	srv.Routes().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var list struct {
 		Releases []map[string]any `json:"releases"`
 	}
-	require.NoError(t, json.Unmarshal(wList.Body.Bytes(), &listResp))
-	require.Len(t, listResp.Releases, 1)
-	item := listResp.Releases[0]
-	assert.Equal(t, true, item["shadow"], "list item must expose shadow=true")
-	assert.NotEmpty(t, item["resolved_at"], "a validated release's list item must have a non-empty resolved_at")
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
+	for _, rel := range list.Releases {
+		assert.NotEqual(t, "verify-rv1", rel["release_id"])
+	}
 }

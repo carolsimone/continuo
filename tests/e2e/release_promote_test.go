@@ -742,7 +742,7 @@ func parseManifestNodes(t *testing.T, body []byte) []manifestNode {
 func resetReleaseControllerQueue(t *testing.T, ctx context.Context, clients *testClients) {
 	t.Helper()
 	_, err := clients.releaseDB.ExecContext(ctx,
-		`DELETE FROM releases WHERE status IN ('received','compiling','parsing','seed_building','validating')`)
+		`DELETE FROM release_pipeline_runs WHERE status IN ('received','compiling','parsing','seed_building','validating')`)
 	require.NoError(t, err, "reset releases queue")
 	_, err = clients.releaseDB.ExecContext(ctx,
 		`DELETE FROM release_controller_outbox WHERE status = 'pending'`)

@@ -45,7 +45,7 @@ func TestKeyErrorLine_RealLogsYieldTheMessageNotTheBanner(t *testing.T) {
 		t.Run(tc.fixture, func(t *testing.T) {
 			got := keyErrorLine(realLog(t, tc.fixture))
 			assert.Equal(t, tc.want, got)
-			assert.Equal(t, tc.want, Classify(FailureEvidence{}, realLog(t, tc.fixture)).Excerpt,
+			assert.Equal(t, tc.want, Classify(realLog(t, tc.fixture)).Excerpt,
 				"the excerpt recorded in the case base is the key line")
 		})
 	}
@@ -77,7 +77,7 @@ func TestSignature_DistinctRealFailuresAreDistinct(t *testing.T) {
 	}
 	seen := map[string]string{}
 	for _, f := range fixtures {
-		sig := Classify(FailureEvidence{}, realLog(t, f)).Signature
+		sig := Classify(realLog(t, f)).Signature
 		if prev, dup := seen[sig]; dup {
 			t.Fatalf("%s and %s share signature %s", prev, f, sig)
 		}
@@ -93,7 +93,7 @@ func TestSignature_SameFailureIsStableAcrossRuns(t *testing.T) {
 	require.Contains(t, first, "13:28:04")
 	later := strings.NewReplacer("13:28:03", "09:01:58", "13:28:04", "09:01:59").Replace(first)
 	require.NotEqual(t, first, later)
-	assert.Equal(t, Classify(FailureEvidence{}, first).Signature, Classify(FailureEvidence{}, later).Signature)
+	assert.Equal(t, Classify(first).Signature, Classify(later).Signature)
 }
 
 // TestKeyErrorLine_BannerAloneFallsBackToTheBanner: a log that ends at the

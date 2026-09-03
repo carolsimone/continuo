@@ -4,6 +4,7 @@ import DashboardPage from './DashboardPage';
 import DetailPage from './DetailPage';
 import NodeDetailPage from './NodeDetailPage';
 import ReleaseDetailPage from './ReleaseDetailPage';
+import VerificationDetailPage from './VerificationDetailPage';
 import ChatContainer from './chat/ChatContainer';
 import { useAuth } from './auth/useAuth';
 import { AuthContext } from './auth/AuthContext';
@@ -38,6 +39,7 @@ export default function App() {
               <Route path="/schedule/:name/latest" element={<DetailPage mode="latest" />} />
               <Route path="/node/:fqn" element={<NodeDetailPage />} />
               <Route path="/releases/:id" element={<ReleaseDetailPage />} />
+              <Route path="/verifications/:id" element={<VerificationDetailPage />} />
             </Routes>
           </div>
           {chatEnabled && auth.user.role === 'operator' && <ChatContainer />}

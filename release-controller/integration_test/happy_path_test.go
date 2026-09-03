@@ -13,8 +13,10 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/liveness"
+	"github.com/carolsimone/continuo/pkg/streams"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
@@ -33,7 +35,7 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
-	_, err = db.Exec("TRUNCATE releases, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
+	_, err = db.Exec("TRUNCATE release_pipeline_runs, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, slog.Default(), nil) },
@@ -65,18 +67,18 @@ func TestIntegration_HappyPath(t *testing.T) {
 
 	// 2. Verify release is Compiling (AdvanceQueue ran on POST, promoting the
 	// release into the compile leg rather than straight to Parsing).
-	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
+	r, err := deps.NewUoW().RunRepo().Get(context.Background(), "rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusCompiling, r.Status())
+	assert.Equal(t, pipeline.StatusCompiling, r.Status())
 
 	// 2b. Simulate the dbt compile job completing ok: Compiling -> Parsing.
 	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
 		ReleaseID: "rA",
 		Status:    "ok",
 	}))
-	r, err = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
+	r, err = deps.NewUoW().RunRepo().Get(context.Background(), "rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusParsing, r.Status())
+	assert.Equal(t, pipeline.StatusParsing, r.Status())
 
 	// 3. Simulate topology-controller reply
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -87,8 +89,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 			{UniqueID: "b", ServiceName: "service-1", UpstreamUniqueIDs: []string{"a"}},
 		},
 	}))
-	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
-	assert.Equal(t, release.StatusValidating, r.Status())
+	r, _ = deps.NewUoW().RunRepo().Get(context.Background(), "rA")
+	assert.Equal(t, pipeline.StatusValidating, r.Status())
 
 	// 4. Project each node's result via the kind=node messages, then deliver the
 	// terminal decision. The kind=complete terminal message carries only the
@@ -103,8 +105,8 @@ func TestIntegration_HappyPath(t *testing.T) {
 		ReleaseID:       "rA",
 		AggregateStatus: "ok",
 	}))
-	r, _ = deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
-	assert.Equal(t, release.StatusPromoted, r.Status())
+	r, _ = deps.NewUoW().RunRepo().Get(context.Background(), "rA")
+	assert.Equal(t, pipeline.StatusPromoted, r.Status())
 	require.NotNil(t, r)
 	require.NotEmpty(t, r.PerNodeResults())
 	assert.Equal(t, "ok", r.PerNodeResults()[0].Status)
@@ -123,9 +125,18 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NoError(t, db.Get(&spCount, `SELECT count(*) FROM service_prod WHERE service_name = 'service-1'`))
 	assert.Equal(t, 1, spCount, "service_prod must have a row for the promoted service")
 
-	// 7. Outbox has 4 entries (compile.requested + release.requested +
-	// validation.requested + release.promoted)
+	// 7. Outbox has 5 entries (compile.requested + release.requested +
+	// validation.requested + release.promoted + pipeline.run.finished — the
+	// kind-neutral teardown event enqueued in the same transaction as the
+	// candidate's terminal promotion).
 	var count int
 	require.NoError(t, db.Get(&count, `SELECT count(*) FROM release_controller_outbox`))
-	assert.Equal(t, 4, count)
+	assert.Equal(t, 5, count)
+
+	var finishedCount int
+	require.NoError(t, db.Get(&finishedCount,
+		`SELECT count(*) FROM release_controller_outbox WHERE stream_name = $1`,
+		streams.PipelineRunFinishedV1))
+	assert.Equal(t, 1, finishedCount,
+		"a candidate's terminal promotion enqueues exactly one pipeline.run.finished:v1")
 }

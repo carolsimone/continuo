@@ -64,13 +64,13 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 			return fmt.Errorf("upsert decision %s: %w", it.ev.NodeID, err)
 		}
 		// The classifier's Decision is the single gate on emitting (drop for an
-		// infrastructure failure and for any shadow-release rejection); only a
-		// newly-recorded emit joins the batch, so a redelivery never re-emits.
+		// infrastructure failure); only a newly-recorded emit joins the batch,
+		// so a redelivery never re-emits.
 		emitted := inserted && it.c.Decision == failure.DecisionEmit
 		deps.Logger.Info("classified failure",
 			"node", it.ev.NodeID, "release", it.ev.ReleaseID,
 			"category", it.c.Category, "decision", it.c.Decision, "reason", it.c.Reason,
-			"shadow", it.ev.Shadow, "emitted", emitted)
+			"emitted", emitted)
 		if emitted {
 			emit = append(emit, it)
 		}
@@ -86,7 +86,6 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 			Repo:             head.Repo,
 			CommitSHA:        head.CommitSHA,
 			CodeBundleURI:    head.CodeBundleURI,
-			Shadow:           head.Shadow,
 			ClassifiedAt:     deps.Clock.Now().Format("2006-01-02T15:04:05Z07:00"),
 		}
 		for _, it := range emit {

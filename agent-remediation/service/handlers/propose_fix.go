@@ -5,10 +5,10 @@
 // The driver here works a whole rejected release at a time. One
 // remediation.requested:v2 trigger carries the release's healable failing set;
 // the driver groups it into fix clusters, calls one Fixer per cluster, submits
-// one shadow verification release per edited service, and records a single
+// one fix-verification run per edited service, and records a single
 // proposal row for the attempt carrying every node's outcome. Nothing is
-// announced from here: the shadow-verification reconciler emits
-// remediation.proposed:v1 once a shadow release has judged the fix.
+// announced from here: the verification reconciler emits
+// remediation.proposed:v1 once every run judging the fix has passed.
 package handlers
 
 import (
@@ -22,9 +22,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/carolsimone/continuo/pkg/messageprocessing"
-	"github.com/carolsimone/continuo/pkg/outbox"
-	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
@@ -34,6 +31,9 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	"github.com/carolsimone/continuo/pkg/messageprocessing"
+	"github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/pkg/streams"
 )
 
 // Deps holds every collaborator ProposeFix needs, all behind ports so the
@@ -73,9 +73,12 @@ type Deps struct {
 	// Packager merges a directory of python-node contract yaml files into the
 	// wire contract a release is submitted with.
 	Packager ports.ContractPackager
-	// Releases submits shadow verification releases and reads a release's
-	// image tag.
-	Releases ports.ReleaseGateway
+	// Pipeline submits fix-verification runs and reads their status.
+	Pipeline ports.VerificationPipeline
+	// Releases reads a candidate release's image tag for the service a
+	// verification re-runs, and its original failing validation nodes for the
+	// sibling-failure check a contract fix opens with.
+	Releases ports.ReleaseReader
 	// PriorAttempts reads the attempts already recorded for a failing node, so
 	// a fixer can show the model what earlier attempts tried.
 	PriorAttempts repository.AttemptLister
@@ -89,12 +92,12 @@ type Deps struct {
 // the failing set into clusters (a shared changed ancestor is fixed once for
 // every node it broke; everything else is fixed in its own source), dispatches
 // each cluster to the Fixer its error class and node kind resolve to, submits
-// one shadow verification release per edited service, and records a single
+// one fix-verification run per edited service, and records a single
 // proposal row for the attempt with each node's outcome on it.
 //
-// It announces nothing. A fix is a proposal only once a shadow release has run
-// it through the full pipeline, and the reconciler that reads that verdict is
-// what emits remediation.proposed:v1.
+// It announces nothing. A fix is a proposal only once every verification run
+// judging it has passed, and the reconciler that polls those runs is what
+// emits remediation.proposed:v1.
 func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	// A trigger without a remediation round (unset, or explicit 0) belongs to
 	// round 1, the round every rejection starts a release at.
@@ -198,7 +201,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		// The contract is keyed by the service its own edits belong to, derived
 		// from their paths exactly as submitVerifications groups them, so the
 		// contract and the edits it packages can never end up on different
-		// shadow releases — which would silently verify these edits as a dbt
+		// verification runs — which would silently verify these edits as a dbt
 		// project instead.
 		if out.contract != nil && len(out.edits) > 0 {
 			if service, _, ok := serviceForPath(deps.ServiceRepoPaths, out.edits[0].Path); ok {
@@ -251,8 +254,8 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		})
 	}
 	if err != nil {
-		// Transient: artifact writes and shadow submissions are both idempotent
-		// on the attempt's keys, so a redelivery repeats them safely.
+		// Transient: artifact writes and verification submissions are both
+		// idempotent on the attempt's keys, so a redelivery repeats them safely.
 		return err
 	}
 
@@ -335,7 +338,7 @@ func coalesceUpstream(clusters []typology.Cluster) []typology.Cluster {
 type clusterOutcome struct {
 	edits []proposal.FileEdit
 	// contract is the packaged contract yaml a python fix must be verified
-	// with, uploaded under the shadow release of whichever service this
+	// with, uploaded under the verification run of whichever service this
 	// cluster's edits belong to; nil for a dbt fix, whose edits are verified by
 	// re-running the project itself.
 	contract []byte
@@ -413,13 +416,13 @@ func fixCluster(ctx context.Context, deps Deps, svc fixer.Services, t Trigger, c
 
 // outcomeFromResult projects a Fixer's Result onto a clusterOutcome. A result
 // labelled proposed that named no file is downgraded to failed: a fix with no
-// edit changes nothing a shadow release could run, and no pull request could
+// edit changes nothing a verification run could run, and no pull request could
 // carry it either, so recording its members as being verified would promise a
 // verdict that never arrives.
 func outcomeFromResult(r fixer.Result) clusterOutcome {
 	out := clusterOutcome{
 		edits:          append([]proposal.FileEdit(nil), r.Proposal.Edits...),
-		contract:       r.ShadowContract,
+		contract:       r.VerificationContract,
 		status:         r.Proposal.Status,
 		reason:         r.Proposal.Rationale,
 		rationale:      r.Proposal.Rationale,
@@ -654,6 +657,7 @@ func markGenerating(ctx context.Context, deps Deps, t Trigger, attempt int) erro
 		NodeOutcomes:     outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusGenerating}),
 		Attempt:          attempt,
 		Status:           proposal.StatusGenerating,
+		Services:         t.Services(),
 		CreatedAt:        deps.Clock.Now(),
 	}
 	p.NormalizeRepresentativeViews()
@@ -669,16 +673,16 @@ func markGenerating(ctx context.Context, deps Deps, t Trigger, attempt int) erro
 
 // record finalizes the attempt: it stamps the trigger's identity onto the
 // proposal, derives the representative views of its batched fields, and upserts
-// the row. It announces nothing — a fix becomes a proposal only once a shadow
-// release has judged it, and the reconciler that reads that verdict is what
-// emits.
+// the row. It announces nothing — a fix becomes a proposal only once every
+// verification run judging it has passed, and the reconciler that polls those
+// runs is what emits.
 //
 // A caller that does not narrow the addressed set gets the trigger's whole
 // failing set, and the attempt's error signature is the representative node's.
-// An attempt awaiting a shadow release also stores the raw trigger, so the
-// reconciler resolving that release can rebuild the trigger and retry with the
-// shadow's error as new evidence; every other status resolves within this call
-// and needs nothing to replay.
+// An attempt awaiting verification also stores the raw trigger, so the
+// reconciler resolving those runs can rebuild the trigger and retry with their
+// error as new evidence; every other status resolves within this call and
+// needs nothing to replay.
 //
 // Inbound dedup is performed atomically inside the transaction: the
 // message_processing claim and the proposal write commit or roll back together.
@@ -694,6 +698,7 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	if len(p.ResolvedNodeIDs) == 0 {
 		p.ResolvedNodeIDs = t.NodeIDs()
 	}
+	p.Services = proposal.UnionServices(t.Services(), verificationServices(p.Verifications))
 	p.NormalizeRepresentativeViews()
 	p.ErrorSignature = signatureFor(t, p.NodeID)
 	if p.Status == proposal.StatusVerifying {
@@ -733,8 +738,17 @@ func record(ctx context.Context, deps Deps, t Trigger, attempt int, p proposal.P
 	return nil
 }
 
+// verificationServices is the services an attempt's verification runs cover.
+func verificationServices(vs []proposal.Verification) []string {
+	out := make([]string, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, v.Service)
+	}
+	return out
+}
+
 // Enqueue builds the deterministic remediation.proposed:v1 outbox entry for an
-// attempt whose fix a shadow release has verified, and creates it on the
+// attempt whose fix every verification run has passed, and creates it on the
 // repository bound to the caller's transaction. p carries the whole
 // announcement: the failure it addresses (source, release, representative node,
 // error signature), every node it resolves, and every file it changes — each

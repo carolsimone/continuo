@@ -157,4 +157,13 @@ describe('releases router', () => {
     const res = await request(app).post('/api/releases/rel-1/retry-remediation');
     expect(res.status).toBe(502);
   });
+
+  it('lists a release\'s verification runs', async () => {
+    const client = { listVerificationRuns: vi.fn().mockResolvedValue({ runs: [{ run_id: 'verify-rel-1-core-a1', status: 'passed' }] }) };
+    const app = appWith({ client, getLog: vi.fn() });
+    const res = await request(app).get('/api/releases/rel-1/verifications');
+    expect(res.status).toBe(200);
+    expect(res.body.runs[0].run_id).toBe('verify-rel-1-core-a1');
+    expect(client.listVerificationRuns).toHaveBeenCalledWith('rel-1');
+  });
 });

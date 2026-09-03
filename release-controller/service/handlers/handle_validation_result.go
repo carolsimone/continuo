@@ -8,6 +8,7 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
@@ -35,10 +36,13 @@ type HandleValidationResultInput struct {
 // dropped — the decision still stands on aggregate_status and logs the missing
 // nodes rather than blocking.
 //
-// If every present validation node passed and the aggregate status is ok:
-// promotes the release to production, updates CurrentProd, upserts the changed
-// service's service_prod pointer, and emits release.promoted:v1. Otherwise
-// rejects the release and emits release.rejected:v1.
+// If every present validation node passed and the aggregate status is ok: a
+// candidate promotes to production (updates CurrentProd, upserts the changed
+// service's service_prod pointer, emits release.promoted:v1) and a
+// verification passes without touching either. Otherwise a candidate rejects
+// and emits release.rejected:v1, while a verification fails and emits no
+// release event. A run of either kind, on either outcome, emits
+// pipeline.run.finished:v1.
 func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationResultInput) error {
 	u := d.NewUoW()
 	if err := u.Begin(ctx); err != nil {
@@ -46,7 +50,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	}
 	defer u.Rollback() //nolint:errcheck
 
-	r, err := u.ReleaseRepo().Load(ctx, in.ReleaseID) // FOR UPDATE: serialize against per-node upserts
+	r, err := u.RunRepo().Load(ctx, in.ReleaseID) // FOR UPDATE: serialize against per-node upserts
 	if err != nil {
 		return fmt.Errorf("load release: %w", err)
 	}
@@ -65,7 +69,7 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	// Per-node content lives in the read model, projected from the earlier
 	// kind=node messages on validation.result:v1. Read the validation-stage
 	// results the stream already stored rather than re-carrying them here.
-	stored := map[string]release.NodeValidationResult{}
+	stored := map[string]pipeline.NodeValidationResult{}
 	for _, n := range r.PerNodeResults() {
 		if n.Stage == "validation" {
 			stored[n.NodeID] = n
@@ -107,27 +111,39 @@ func HandleValidationResult(ctx context.Context, d *Deps, in HandleValidationRes
 	return handleValidationOK(ctx, d, u, r, in, now)
 }
 
+// finishVerification ends a verification that survived the pipeline: it
+// passes, saves, and announces the terminal decision. It never reads or
+// writes current_prod or service_prod and emits no release event.
+func finishVerification(ctx context.Context, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
+	if err := r.Pass(now); err != nil {
+		return fmt.Errorf("pass verification %s: %w", r.ID(), err)
+	}
+	if err := u.RunRepo().Save(ctx, r); err != nil {
+		return fmt.Errorf("save verification %s: %w", r.ID(), err)
+	}
+	return enqueueRunFinished(ctx, u, r, now)
+}
+
+// concludeValidated ends a run whose validation set passed (or was empty): a
+// candidate is promoted to production, a verification passes.
+func concludeValidated(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
+	if r.Kind() == pipeline.KindVerification {
+		return finishVerification(ctx, u, r, now)
+	}
+	return promoteToProduction(ctx, d, u, r, now)
+}
+
 // promoteToProduction applies the promotion effects shared by the
 // validation-passed path and the nothing-to-validate short-circuit: it points
 // current_prod at this release's candidate topology, upserts the changed
 // service's service_prod pointer, transitions the release to Promoted, persists
-// it, and writes the release.promoted:v1 outbox row. The caller owns
-// Begin/Commit and any telemetry. The release must already hold its candidate
-// topology (i.e. be in Validating).
-func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, releaseID string, now time.Time) error {
-	// A shadow release runs the same parse+validation pipeline as a normal
-	// release but must never reach production: it exists only to verify a
-	// proposed fix. Stop at Validated instead of touching current_prod,
-	// service_prod, or emitting release.promoted:v1.
-	if r.IsShadow() {
-		if err := r.TransitionToValidated(now); err != nil {
-			return fmt.Errorf("transition shadow release %s to validated: %w", releaseID, err)
-		}
-		if err := u.ReleaseRepo().Save(ctx, r); err != nil {
-			return fmt.Errorf("save validated shadow release %s: %w", releaseID, err)
-		}
-		return nil
-	}
+// it, and writes the release.promoted:v1 and pipeline.run.finished:v1 outbox
+// rows. The caller owns Begin/Commit and any telemetry. The release must
+// already hold its candidate topology (i.e. be in Validating) and be a
+// candidate — call concludeValidated instead when the run's kind is unknown
+// to the caller.
+func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, now time.Time) error {
+	releaseID := r.ID()
 
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
@@ -165,10 +181,10 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		return fmt.Errorf("upsert service_prod: %w", err)
 	}
 
-	if err := r.TransitionToPromoted(now); err != nil {
+	if err := r.Promote(now); err != nil {
 		return fmt.Errorf("transition to promoted: %w", err)
 	}
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
 
@@ -217,7 +233,7 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	return u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
+	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		ID:            uuid.New(),
 		AggregateType: "release-controller",
 		AggregateID:   AggregateIDForRelease(releaseID),
@@ -227,11 +243,14 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *rele
 		Status:        "pending",
 		MaxRetries:    pkgoutbox.DefaultMaxRetries,
 		CreatedAt:     now,
-	})
+	}); err != nil {
+		return fmt.Errorf("outbox insert: %w", err)
+	}
+	return enqueueRunFinished(ctx, u, r, now)
 }
 
-func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, now time.Time) error {
-	if err := promoteToProduction(ctx, d, u, r, in.ReleaseID, now); err != nil {
+func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, now time.Time) error {
+	if err := concludeValidated(ctx, d, u, r, now); err != nil {
 		return err
 	}
 
@@ -239,9 +258,7 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 		return fmt.Errorf("commit: %w", err)
 	}
 	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, true, len(r.ValidationNodeIDs()), 0, 0)
-	if !r.IsShadow() {
-		d.Telemetry.ReleasePromoted(ctx, in.ReleaseID, len(r.CandidateTopology()))
-	}
+	recordTerminalTelemetry(ctx, d, r, len(r.CandidateTopology()))
 	return nil
 }
 
@@ -254,15 +271,15 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *relea
 // kind=node messages projected, not from this terminal message. A node whose
 // projection write was permanently dropped may be absent from the read model, in
 // which case only present, non-ok nodes appear in failing.
-func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *release.Release, in HandleValidationResultInput, failing []string, now time.Time) error {
-	if err := r.TransitionToRejected("validation_failed", "", failing, now); err != nil {
+func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, failing []string, now time.Time) error {
+	if err := r.Fail("validation_failed", "", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
 	// Build a per-node lookup over the candidate topology so each entry in the
 	// rejected payload carries, alongside its outcome:
 	//   - candidate_artifact_uri: the S3 pointer to the artifact that was
-	//     validated — mirroring the dbt_log_uri pattern as a pointer, not inline
+	//     checked — mirroring the dbt_log_uri pattern as a pointer, not inline
 	//     content;
 	//   - node_type, file_path, service: the node's kind and source location as
 	//     THIS candidate declares them.
@@ -354,29 +371,19 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 		"repo":             r.Repo(),
 		"commit_sha":       r.CommitSHA(),
 		"code_bundle_uri":  r.CodeBundleURI(),
-		"shadow":           r.IsShadow(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	r.SetRejectionPayload(payload)
-	if err := u.ReleaseRepo().Save(ctx, r); err != nil {
+	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
+		return err
+	}
+	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)
 	}
-
-	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
-		ID:            uuid.New(),
-		AggregateType: "release-controller",
-		AggregateID:   AggregateIDForRelease(in.ReleaseID),
-		EventType:     "release_rejected",
-		Payload:       payload,
-		StreamName:    streams.ReleaseRejectedV1,
-		Status:        "pending",
-		MaxRetries:    pkgoutbox.DefaultMaxRetries,
-		CreatedAt:     now,
-	}); err != nil {
-		return fmt.Errorf("outbox insert: %w", err)
+	if err := enqueueRunFinished(ctx, u, r, now); err != nil {
+		return err
 	}
 
 	if err := u.Commit(); err != nil {
@@ -385,6 +392,6 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *r
 
 	okCount := len(r.ValidationNodeIDs()) - len(failing)
 	d.Telemetry.ReleaseValidationCompleted(ctx, in.ReleaseID, false, okCount, len(failing), 0)
-	d.Telemetry.ReleaseRejected(ctx, in.ReleaseID, "validation_failed", failing)
+	recordTerminalTelemetry(ctx, d, r, 0)
 	return nil
 }

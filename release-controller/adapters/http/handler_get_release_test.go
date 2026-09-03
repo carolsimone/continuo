@@ -2,9 +2,12 @@ package http
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,10 +17,10 @@ import (
 // per_node_results exposes its stage (and file_path when present) so the UI can
 // group results into Compilation / Seed / Validation sections.
 func TestGetReleaseResponse_PerNodeResultsIncludeStage(t *testing.T) {
-	rel := release.Rehydrate(release.RehydrateInput{
+	rel := pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:     "rSTAGE",
-		Status: release.StatusRejected,
-		PerNodeResults: []release.NodeValidationResult{
+		Status: pipeline.StatusRejected,
+		PerNodeResults: []pipeline.NodeValidationResult{
 			{Stage: "compile", NodeID: "model.svc.node_a", Status: "failed", FilePath: "models/node_a.sql"},
 			{Stage: "validation", NodeID: "model.svc.node_b", Status: "ok"},
 		},
@@ -46,9 +49,9 @@ func TestGetReleaseResponse_PerNodeResultsIncludeStage(t *testing.T) {
 }
 
 func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
-	rel := release.Rehydrate(release.RehydrateInput{
+	rel := pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:        "rPROV",
-		Status:    release.StatusRejected,
+		Status:    pipeline.StatusRejected,
 		Repo:      "acme/demo",
 		CommitSHA: "deadbeefcafe1234",
 	})
@@ -61,30 +64,36 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 	assert.Equal(t, "acme/demo", decoded["repo"])
 	assert.Equal(t, "deadbeefcafe1234", decoded["commit_sha"])
 	// Guard the full response shape so an accidental field drop in the extracted
-	// helper is caught: 11 pre-existing keys plus repo + commit_sha + shadow +
-	// remediation_round.
-	assert.Len(t, decoded, 15)
+	// helper is caught: 11 pre-existing keys plus repo + commit_sha +
+	// remediation_round. There is no shadow key: a candidate response never
+	// carries one, since GET /releases/{id} only ever returns a candidate.
+	assert.Len(t, decoded, 14)
 	assert.Equal(t, "rPROV", decoded["release_id"])
+	_, hasShadow := decoded["shadow"]
+	assert.False(t, hasShadow, "a candidate response must not carry a shadow key")
 }
 
-// TestGetReleaseResponse_IncludesShadow verifies that the shadow flag is
-// exposed by GET /releases/{id} so a caller can distinguish a fix-verification
-// release from a normal one.
-func TestGetReleaseResponse_IncludesShadow(t *testing.T) {
-	shadowRel := release.New("rel-shadow", "finance", "tag", false, true, "owner/repo", "abc123",
-		release.ManifestKindDbt, time.Unix(1, 0).UTC())
-	assert.Equal(t, true, getReleaseResponse(shadowRel)["shadow"])
+// TestHandleGetRelease_VerificationIDAnswers404 verifies that GET
+// /releases/{id} treats a verification run's id as unknown: a verification
+// is not a release and is read through GET /verification-runs instead.
+func TestHandleGetRelease_VerificationIDAnswers404(t *testing.T) {
+	now := time.Unix(1, 0).UTC()
+	v := pipeline.NewVerification("verify-1", "finance", "tag", "rel-orig", 1, "", release.ManifestKindDbt, now)
+	deps, releases := newRetryRemediationDeps(now)
+	releases.releases["verify-1"] = v
 
-	plainRel := release.New("rel-plain", "finance", "tag", false, false, "owner/repo", "abc123",
-		release.ManifestKindDbt, time.Unix(1, 0).UTC())
-	assert.Equal(t, false, getReleaseResponse(plainRel)["shadow"])
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/releases/verify-1", nil)
+	newTestServer(deps).Routes().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestGetReleaseResponse_IncludesRejectDetail(t *testing.T) {
-	r := release.New("rel-1", "finance", "tag", false, false, "owner/repo", "abc123",
+	r := pipeline.NewCandidate("rel-1", "finance", "tag", false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(1, 0).UTC())
 	require.NoError(t, r.TransitionToParsing(time.Unix(2, 0).UTC()))
-	require.NoError(t, r.TransitionToRejected("duplicate_table",
+	require.NoError(t, r.Fail("duplicate_table",
 		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
 		[]string{"analytics.orders"}, time.Unix(3, 0).UTC()))
 

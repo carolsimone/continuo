@@ -18,28 +18,6 @@ type Classification struct {
 	Excerpt string
 }
 
-// ReasonShadowVerification is the reason recorded when a rejection is dropped
-// because it came from a shadow release.
-const ReasonShadowVerification = "shadow_verification"
-
-// forShadow applies the one routing rule that depends on which kind of release
-// was rejected rather than on what went wrong: a shadow release exists only to
-// verify a proposed fix, so its rejection means the fix did not work.
-// Remediating that would answer a failed fix attempt with another fix attempt,
-// without bound, so the rejection is dropped. Everything that diagnoses the
-// failure — category, signature, excerpt — is left exactly as classified, so
-// the recorded decision still explains what went wrong; only the routing and
-// the reason for it change. Every entry point applies this last, so no
-// classification can escape the domain without it.
-func (c Classification) forShadow(shadow bool) Classification {
-	if !shadow {
-		return c
-	}
-	c.Decision = DecisionDrop
-	c.Reason = ReasonShadowVerification
-	return c
-}
-
 // maxExcerptBytes bounds the excerpt carried on the trigger event: it is one
 // log line kept as precedent evidence, not a transport for whole logs.
 const maxExcerptBytes = 4 * 1024
@@ -96,14 +74,11 @@ var logicRules = []rule{
 // resource/permission class (statement timeout, permission denied, deadlock,
 // out of memory) — falls through to unknown and is emitted. The classifier is
 // pure and never errors; an empty log is classified unknown:log_unavailable.
-// A rejection from a shadow release is dropped whatever the log says — see
-// forShadow.
-func Classify(ev FailureEvidence, logText string) Classification {
-	return classifyLogText(logText).forShadow(ev.Shadow)
+func Classify(logText string) Classification {
+	return classifyLogText(logText)
 }
 
-// classifyLogText applies the rule tables to a dbt log's text. It is the
-// diagnosis alone: the shadow rule is applied by the exported entry points.
+// classifyLogText applies the rule tables to a dbt log's text.
 func classifyLogText(logText string) Classification {
 	if strings.TrimSpace(logText) == "" {
 		return Classification{
@@ -143,14 +118,12 @@ func classifyLogText(logText string) Classification {
 // rules used for the text log, but against the exact error message rather than
 // scraped console output. When structured is nil (no run_results_uri, or the
 // fetch/parse failed) — or the structured record carries no message — it degrades
-// to the text-log Classify path unchanged. A rejection from a shadow release is
-// dropped whatever the structured result says — see forShadow.
-func ClassifyWithStructured(ev FailureEvidence, structured *StructuredResult, logText string) Classification {
-	return classifyStructured(structured, logText).forShadow(ev.Shadow)
+// to the text-log Classify path unchanged.
+func ClassifyWithStructured(structured *StructuredResult, logText string) Classification {
+	return classifyStructured(structured, logText)
 }
 
-// classifyStructured is ClassifyWithStructured's diagnosis alone: the shadow
-// rule is applied by the exported entry point.
+// classifyStructured is ClassifyWithStructured's diagnosis.
 func classifyStructured(structured *StructuredResult, logText string) Classification {
 	if structured == nil {
 		return classifyLogText(logText)
@@ -192,8 +165,7 @@ func classifyStructured(structured *StructuredResult, logText string) Classifica
 // physical collision into two signatures the moment the changed service
 // alternates. RelationID falls back to NodeID when empty (a trigger from
 // before the field existed), which keeps this degenerate-but-safe for the
-// duration of a rollout. A rejection from a shadow release is dropped — see
-// forShadow.
+// duration of a rollout.
 func ClassifyDuplicateTable(ev FailureEvidence) Classification {
 	relationID := ev.RelationID
 	if relationID == "" {
@@ -205,7 +177,7 @@ func ClassifyDuplicateTable(ev FailureEvidence) Classification {
 		Decision:  DecisionEmit,
 		Reason:    "logic:duplicate_table",
 		Excerpt:   excerptOf("multiple nodes produce the relation " + relationID),
-	}.forShadow(ev.Shadow)
+	}
 }
 
 func firstMatch(lower string, rules []rule) (rule, bool) {

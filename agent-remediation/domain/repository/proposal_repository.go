@@ -22,11 +22,12 @@ var (
 	// completed source resolution (source_resolved=false), so a PR cannot be opened.
 	ErrNotSourceResolved = errors.New("proposal source not resolved")
 	// ErrNotProposed is returned by BeginPR when the attempt has not reached
-	// 'proposed'. A fix still being generated, still being verified by a shadow
-	// release, or already rejected by one is not a fix anyone may open a pull
-	// request for, and status is the only thing that says so: a python contract
-	// fix carries source_resolved=true from the moment it is submitted for
-	// verification, and a shadow rejection changes nothing but the status.
+	// 'proposed'. A fix still being generated, still being verified by a
+	// verification run, or already failed by one is not a fix anyone may open
+	// a pull request for, and status is the only thing that says so: a python
+	// contract fix carries source_resolved=true from the moment it is
+	// submitted for verification, and a failed verification changes nothing
+	// but the status.
 	ErrNotProposed = errors.New("proposal is not in the proposed state")
 )
 
@@ -44,7 +45,9 @@ type ProposalFilter struct {
 	ReleaseID string
 	Source    string
 	NodeID    string
-	Limit     int
+	// Service, when set, matches proposals whose services contain it.
+	Service string
+	Limit   int
 }
 
 // AttemptLister is the repository slice a fixer reads while assembling
@@ -107,7 +110,7 @@ type ProposalRepository interface {
 	// within one release: a human's "try again" on a rejected release starts a
 	// fresh round, and its attempts are never charged to an earlier round's
 	// exhausted budget. In-flight rows — 'generating' (the model call has not
-	// resolved) and 'verifying' (a shadow release is still validating a
+	// resolved) and 'verifying' (a verification run is still validating a
 	// proposed fix) — are excluded so an attempt that has not yet concluded
 	// neither inflates the attempt cap nor shifts the attempt number on a
 	// redelivery.
@@ -132,10 +135,10 @@ type ProposalRepository interface {
 	// It exists for the one writer that starts an attempt with nothing behind it
 	// to redeliver. A trigger consumed from the stream is redelivered when the
 	// driver errors, and the redelivery reuses the in-flight row the driver had
-	// already committed. The shadow-verification reconciler starts an attempt
-	// from a release's verdict instead, so when the driver errors there the row
-	// stays in flight with nothing that will ever finish it — and every reader,
-	// the release page included, keeps reporting a fix as still being generated.
+	// already committed. The verification reconciler starts an attempt from a
+	// run's status instead, so when the driver errors there the row stays in
+	// flight with nothing that will ever finish it — and every reader, the
+	// release page included, keeps reporting a fix as still being generated.
 	//
 	// The match is releaseID alone: one attempt now addresses the release's
 	// whole failing set, so at most one row can be generating for a release at
@@ -168,7 +171,7 @@ type ProposalRepository interface {
 	// it to FailStuckOpeningPR if it later needs to release this exact claim.
 	// Claiming requires the parent's status='proposed' as well as
 	// source_resolved, so a fix still being generated or verified — or one a
-	// shadow release already rejected — can never be turned into a pull request.
+	// verification run already failed — can never be turned into a pull request.
 	// Returns ErrNotSourceResolved if source_resolved=false, ErrNotProposed if
 	// the attempt has not reached 'proposed', ErrPRConflict if that service is
 	// already claimed, ErrNotFound if the id is unknown.
@@ -231,24 +234,32 @@ type ProposalRepository interface {
 	// terminal or never opened) — an idempotent no-op.
 	RecordPROutcome(ctx context.Context, id, service string, outcome proposal.PROutcome, closedAt time.Time) (bool, error)
 
-	// ListVerifying returns proposals awaiting shadow-release verification
+	// ListVerifying returns proposals awaiting verification
 	// (status='verifying'), oldest first, capped at 20 rows so the polling
 	// reconciler always makes bounded progress across every in-flight
 	// verification rather than being starved by one stuck row.
 	ListVerifying(ctx context.Context) ([]proposal.View, error)
 
-	// MarkVerified finalizes a proposal whose shadow release validated the
-	// fix, transitioning status 'verifying' -> 'proposed'. It also rewrites
-	// every node_outcomes entry still at 'verifying' to 'proposed', so a
-	// per-node reader agrees with the row's own status. hit reports whether
-	// the CAS fired; false means the row was no longer 'verifying' — already
+	// MarkVerified finalizes a proposal every verification run passed,
+	// transitioning status 'verifying' -> 'proposed'. It also rewrites every
+	// node_outcomes entry still at 'verifying' to 'proposed', so a per-node
+	// reader agrees with the row's own status. verifications is the final
+	// per-run summary, written in the same statement. hit reports whether the
+	// CAS fired; false means the row was no longer 'verifying' — already
 	// finalized by a concurrent or repeated reconciler pass.
-	MarkVerified(ctx context.Context, id string) (hit bool, err error)
+	MarkVerified(ctx context.Context, id string, verifications []proposal.Verification) (hit bool, err error)
 
-	// MarkVerifyFailed finalizes a proposal whose shadow release failed to
-	// validate the fix, transitioning status 'verifying' -> 'failed' and
-	// recording verifyErr so the next attempt can use it as evidence. It also
-	// rewrites every node_outcomes entry still at 'verifying' to 'failed'. hit
-	// reports whether the CAS fired, with the same semantics as MarkVerified.
-	MarkVerifyFailed(ctx context.Context, id, verifyErr string) (hit bool, err error)
+	// MarkVerifyFailed finalizes a proposal a verification run rejected,
+	// transitioning status 'verifying' -> 'failed' and recording verifyErr so
+	// the next attempt can use it as evidence. It also rewrites every
+	// node_outcomes entry still at 'verifying' to 'failed'. verifications is
+	// the final per-run summary, written in the same statement. hit reports
+	// whether the CAS fired, with the same semantics as MarkVerified.
+	MarkVerifyFailed(ctx context.Context, id, verifyErr string, verifications []proposal.Verification) (hit bool, err error)
+
+	// UpdateVerificationPhase records the phase (and, once known, the
+	// activation time) of one of the proposal's verification runs, leaving
+	// the others untouched. Called by the reconciler only when the phase it
+	// read differs from the stored one.
+	UpdateVerificationPhase(ctx context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error
 }

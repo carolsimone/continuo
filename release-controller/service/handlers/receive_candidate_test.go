@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +24,7 @@ func TestReceiveCandidate_PersistsAsReceived(t *testing.T) {
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusReceived, r.Status())
+	assert.Equal(t, pipeline.StatusReceived, r.Status())
 	assert.Equal(t, "service-1", r.ChangedService())
 	assert.Equal(t, map[string]string{"service-1": "sha-abc"}, r.ImageTags())
 }
@@ -41,7 +42,7 @@ func TestReceiveCandidate_IsIdempotentOnReleaseID(t *testing.T) {
 	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, input))
 	r, err := store.GetRelease("sha-abc")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusReceived, r.Status())
+	assert.Equal(t, pipeline.StatusReceived, r.Status())
 }
 
 func TestReceiveCandidate_RejectsEmptyReleaseID(t *testing.T) {
@@ -134,27 +135,6 @@ func TestReceiveCandidate_PersistsPythonKind(t *testing.T) {
 	assert.Equal(t, release.ManifestKindPython, r.ManifestKind())
 }
 
-func TestReceiveCandidate_SourceOverlayRequiresShadow(t *testing.T) {
-	deps, _ := newDeps(time.Now())
-	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "r-ov", ImageTag: "t", Repo: "o/r", CommitSHA: "sha",
-		SourceOverlayURI: "s3://b/svc/r-ov/source-overlay.tar.gz",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "source_overlay_uri")
-}
-
-func TestReceiveCandidate_ShadowPersistsSourceOverlayURI(t *testing.T) {
-	deps, store := newDeps(time.Now())
-	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
-		Service: "svc", ReleaseID: "r-ov", ImageTag: "t", Repo: "o/r", CommitSHA: "sha", Shadow: true,
-		SourceOverlayURI: "s3://b/svc/r-ov/source-overlay.tar.gz",
-	}))
-	r, err := store.GetRelease("r-ov")
-	require.NoError(t, err)
-	assert.Equal(t, "s3://b/svc/r-ov/source-overlay.tar.gz", r.SourceOverlayURI())
-}
-
 func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
@@ -165,4 +145,14 @@ func TestReceiveCandidate_RejectsUnknownKind(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown manifest kind")
 	r, _ := store.GetRelease("rK3")
 	assert.Nil(t, r, "an invalid kind must not persist a release")
+}
+
+func TestReceiveCandidate_ConflictsWithAVerification(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	deps, store := newDeps(now)
+	store.SeedRelease(pipeline.NewVerification("run-9", "core", "img", "rel-0", 1, "", release.ManifestKindDbt, now))
+	err := handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "core", ReleaseID: "run-9", ImageTag: "img", Repo: "acme/demo", CommitSHA: "deadbeef",
+	})
+	assert.ErrorIs(t, err, handlers.ErrRunKindConflict)
 }

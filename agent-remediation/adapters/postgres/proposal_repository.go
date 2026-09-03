@@ -45,7 +45,7 @@ func NewProposalRepository(q Queryer, serviceRepoPaths map[string]string) *Propo
 
 // CountAttempts returns the number of TERMINAL proposal attempts recorded for
 // one remediation round of one release. In-flight rows — 'generating' (the
-// model call has not resolved) and 'verifying' (a shadow release is still
+// model call has not resolved) and 'verifying' (a verification run is still
 // validating a proposed fix) — are excluded so an attempt that has not yet
 // concluded neither inflates the attempt cap nor shifts the attempt number on
 // a redelivery.
@@ -71,6 +71,17 @@ func roundOrDefault(n int) int {
 	return n
 }
 
+// servicesArray serialises a proposal's services for the NOT NULL services
+// column. A nil slice becomes the empty array '{}' (the column's default)
+// rather than SQL NULL, so a proposal whose services are not yet known — a
+// generating row built from a trigger that carried none — still inserts.
+func servicesArray(s []string) pq.StringArray {
+	if len(s) == 0 {
+		return pq.StringArray{}
+	}
+	return pq.StringArray(s)
+}
+
 // InsertGenerating persists an in-flight 'generating' row for the attempt right
 // before the model is called. It is idempotent: ON CONFLICT on the natural key
 // (release_id, attempt) DO NOTHING, so a redelivery that re-runs the same
@@ -82,8 +93,8 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, remediation_round, node_id, error_signature, attempt, status, created_at,
-			 resolved_node_ids, node_outcomes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			 resolved_node_ids, node_outcomes, services)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (release_id, attempt) DO NOTHING`
 	resolved, err := marshalResolved(p.ResolvedNodeIDs)
 	if err != nil {
@@ -96,7 +107,7 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
 		proposal.StatusGenerating, p.CreatedAt,
-		resolved, outcomes,
+		resolved, outcomes, servicesArray(p.Services),
 	); err != nil {
 		return fmt.Errorf("insert generating proposal: %w", err)
 	}
@@ -152,16 +163,16 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	const stmt = `
 		INSERT INTO proposal
 			(source, release_id, remediation_round, node_id, error_signature, attempt,
-			 status, shadow_release_id, trigger_payload,
+			 status, verification_run_id, trigger_payload,
 			 confidence, rationale, proposed_sql_uri, diff_uri,
 			 candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 			 model, created_at,
 			 repo, commit_sha, file_path, file_edits,
-			 resolved_node_ids, node_outcomes, verifications)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+			 resolved_node_ids, node_outcomes, verifications, services)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 		ON CONFLICT (release_id, attempt) DO UPDATE SET
 			status                 = EXCLUDED.status,
-			shadow_release_id      = EXCLUDED.shadow_release_id,
+			verification_run_id    = EXCLUDED.verification_run_id,
 			trigger_payload        = EXCLUDED.trigger_payload,
 			confidence             = EXCLUDED.confidence,
 			rationale              = EXCLUDED.rationale,
@@ -178,7 +189,8 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 			file_edits             = EXCLUDED.file_edits,
 			resolved_node_ids      = EXCLUDED.resolved_node_ids,
 			node_outcomes          = EXCLUDED.node_outcomes,
-			verifications          = EXCLUDED.verifications`
+			verifications          = EXCLUDED.verifications,
+			services               = EXCLUDED.services`
 	edits, err := marshalFileEdits(p.Edits)
 	if err != nil {
 		return fmt.Errorf("marshal proposal file edits: %w", err)
@@ -197,12 +209,12 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 	}
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
-		p.Status, p.ShadowReleaseID, triggerPayloadOrDefault(p.TriggerPayload),
+		p.Status, p.VerificationRunID, triggerPayloadOrDefault(p.TriggerPayload),
 		p.Confidence, p.Rationale, p.ProposedSQLURI, p.DiffURI,
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
 		p.Repo, p.CommitSHA, p.FilePath, edits,
-		resolved, outcomes, verifications,
+		resolved, outcomes, verifications, servicesArray(p.Services),
 	); err != nil {
 		return fmt.Errorf("insert proposal: %w", err)
 	}
@@ -224,39 +236,40 @@ func triggerPayloadOrDefault(raw []byte) []byte {
 // tags (a persistence concern) live here in the adapter so the domain
 // proposal.View stays free of storage annotations.
 type proposalRow struct {
-	ID                  string     `db:"id"`
-	Source              string     `db:"source"`
-	ReleaseID           string     `db:"release_id"`
-	RemediationRound    int        `db:"remediation_round"`
-	NodeID              string     `db:"node_id"`
-	ErrorSignature      string     `db:"error_signature"`
-	Attempt             int        `db:"attempt"`
-	Status              string     `db:"status"`
-	ShadowReleaseID     string     `db:"shadow_release_id"`
-	VerifyError         string     `db:"verify_error"`
-	TriggerPayload      []byte     `db:"trigger_payload"`
-	Confidence          string     `db:"confidence"`
-	Rationale           string     `db:"rationale"`
-	ProposedSQLURI      string     `db:"proposed_sql_uri"`
-	DiffURI             string     `db:"diff_uri"`
-	CandidateFixSQLURI  string     `db:"candidate_fix_sql_uri"`
-	CandidateFixDiffURI string     `db:"candidate_fix_diff_uri"`
-	SourceResolved      bool       `db:"source_resolved"`
-	Repo                string     `db:"repo"`
-	CommitSHA           string     `db:"commit_sha"`
-	FilePath            string     `db:"file_path"`
-	FileEdits           []byte     `db:"file_edits"`
-	ResolvedNodeIDs     []byte     `db:"resolved_node_ids"`
-	NodeOutcomes        []byte     `db:"node_outcomes"`
-	Verifications       []byte     `db:"verifications"`
-	Model               string     `db:"model"`
-	CreatedAt           time.Time  `db:"created_at"`
-	PrURL               string     `db:"pr_url"`
-	PrNumber            int        `db:"pr_number"`
-	PrState             string     `db:"pr_state"`
-	PrOpenedAt          *time.Time `db:"pr_opened_at"`
-	PrOpenedBy          string     `db:"pr_opened_by"`
-	PrClosedAt          *time.Time `db:"pr_closed_at"`
+	ID                  string         `db:"id"`
+	Source              string         `db:"source"`
+	ReleaseID           string         `db:"release_id"`
+	RemediationRound    int            `db:"remediation_round"`
+	NodeID              string         `db:"node_id"`
+	ErrorSignature      string         `db:"error_signature"`
+	Attempt             int            `db:"attempt"`
+	Status              string         `db:"status"`
+	VerificationRunID   string         `db:"verification_run_id"`
+	VerifyError         string         `db:"verify_error"`
+	TriggerPayload      []byte         `db:"trigger_payload"`
+	Confidence          string         `db:"confidence"`
+	Rationale           string         `db:"rationale"`
+	ProposedSQLURI      string         `db:"proposed_sql_uri"`
+	DiffURI             string         `db:"diff_uri"`
+	CandidateFixSQLURI  string         `db:"candidate_fix_sql_uri"`
+	CandidateFixDiffURI string         `db:"candidate_fix_diff_uri"`
+	SourceResolved      bool           `db:"source_resolved"`
+	Repo                string         `db:"repo"`
+	CommitSHA           string         `db:"commit_sha"`
+	FilePath            string         `db:"file_path"`
+	FileEdits           []byte         `db:"file_edits"`
+	ResolvedNodeIDs     []byte         `db:"resolved_node_ids"`
+	NodeOutcomes        []byte         `db:"node_outcomes"`
+	Verifications       []byte         `db:"verifications"`
+	Services            pq.StringArray `db:"services"`
+	Model               string         `db:"model"`
+	CreatedAt           time.Time      `db:"created_at"`
+	PrURL               string         `db:"pr_url"`
+	PrNumber            int            `db:"pr_number"`
+	PrState             string         `db:"pr_state"`
+	PrOpenedAt          *time.Time     `db:"pr_opened_at"`
+	PrOpenedBy          string         `db:"pr_opened_by"`
+	PrClosedAt          *time.Time     `db:"pr_closed_at"`
 }
 
 // fileEditRow is the persistence DTO for one element of the file_edits JSONB
@@ -358,9 +371,12 @@ func unmarshalNodeOutcomes(raw []byte) map[string]proposal.NodeOutcome {
 // verifications JSONB column. The json tags live here so the domain
 // proposal.Verification carries no serialization annotations.
 type verificationRow struct {
-	Service         string `json:"service"`
-	Kind            string `json:"kind"`
-	ShadowReleaseID string `json:"shadow_release_id"`
+	Service     string     `json:"service"`
+	Kind        string     `json:"kind"`
+	RunID       string     `json:"run_id"`
+	Phase       string     `json:"phase"`
+	ActivatedAt *time.Time `json:"activated_at"`
+	Error       string     `json:"error"`
 }
 
 // marshalVerifications encodes the domain verifications as the verifications
@@ -369,14 +385,17 @@ type verificationRow struct {
 func marshalVerifications(v []proposal.Verification) ([]byte, error) {
 	rows := make([]verificationRow, 0, len(v))
 	for _, e := range v {
-		rows = append(rows, verificationRow{Service: e.Service, Kind: e.Kind, ShadowReleaseID: e.ShadowReleaseID})
+		rows = append(rows, verificationRow{
+			Service: e.Service, Kind: e.Kind, RunID: e.RunID,
+			Phase: string(e.Phase), ActivatedAt: e.ActivatedAt, Error: e.Error,
+		})
 	}
 	return json.Marshal(rows)
 }
 
 // unmarshalVerifications decodes the verifications JSONB column. A malformed
 // or empty blob decodes as nil rather than an empty non-nil slice, so a row
-// that never posted a shadow release reads back as unset.
+// that never posted a verification run reads back as unset.
 func unmarshalVerifications(raw []byte) []proposal.Verification {
 	var rows []verificationRow
 	_ = json.Unmarshal(raw, &rows)
@@ -385,7 +404,10 @@ func unmarshalVerifications(raw []byte) []proposal.Verification {
 	}
 	verifications := make([]proposal.Verification, 0, len(rows))
 	for _, r := range rows {
-		verifications = append(verifications, proposal.Verification{Service: r.Service, Kind: r.Kind, ShadowReleaseID: r.ShadowReleaseID})
+		verifications = append(verifications, proposal.Verification{
+			Service: r.Service, Kind: r.Kind, RunID: r.RunID,
+			Phase: proposal.Phase(r.Phase), ActivatedAt: r.ActivatedAt, Error: r.Error,
+		})
 	}
 	return verifications
 }
@@ -427,7 +449,8 @@ func (row proposalRow) toView() proposal.View {
 		Status:              proposal.Status(row.Status),
 		NodeOutcomes:        unmarshalNodeOutcomes(row.NodeOutcomes),
 		Verifications:       unmarshalVerifications(row.Verifications),
-		ShadowReleaseID:     row.ShadowReleaseID,
+		VerificationRunID:   row.VerificationRunID,
+		Services:            []string(row.Services),
 		VerifyError:         row.VerifyError,
 		TriggerPayload:      row.TriggerPayload,
 		Confidence:          proposal.Confidence(row.Confidence),
@@ -453,12 +476,12 @@ func (row proposalRow) toView() proposal.View {
 }
 
 const proposalColumns = `id, source, release_id, remediation_round, node_id, error_signature, attempt,
-		       status, shadow_release_id, verify_error, trigger_payload,
+		       status, verification_run_id, verify_error, trigger_payload,
 		       confidence, rationale, proposed_sql_uri, diff_uri,
 		       candidate_fix_sql_uri, candidate_fix_diff_uri, source_resolved,
 		       repo, commit_sha, file_path, file_edits, model, created_at,
 		       pr_url, pr_number, pr_state, pr_opened_at, pr_opened_by, pr_closed_at,
-		       resolved_node_ids, node_outcomes, verifications`
+		       resolved_node_ids, node_outcomes, verifications, services`
 
 // claimRow is the persistence DTO for the BeginPR RETURNING projection.
 type claimRow struct {
@@ -663,6 +686,10 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 		args = append(args, filter.NodeID)
 		q += fmt.Sprintf(" AND resolved_node_ids ? $%d", len(args))
 	}
+	if filter.Service != "" {
+		args = append(args, filter.Service)
+		q += fmt.Sprintf(" AND $%d = ANY(services)", len(args))
+	}
 	q += " ORDER BY created_at DESC"
 	if filter.Limit > 0 {
 		args = append(args, filter.Limit)
@@ -690,7 +717,7 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 }
 
 // beginPRClaimCAS is the atomic claim BeginPR issues: it moves a (proposal,
-// service) child row from '' or 'failed' to 'opening' — stamping pr_claimed_at
+// service) child row from ” or 'failed' to 'opening' — stamping pr_claimed_at
 // — only while the parent proposal is still source-resolved and 'proposed'. The
 // correlated EXISTS re-checks those two preconditions inside the same UPDATE as
 // the pr_state guard, so a status or source_resolved change committed between
@@ -720,10 +747,10 @@ const beginPRClaimCAS = `
 // The parent-proposal preconditions are read first so each returns its own
 // error rather than collapsing into the CAS's "already claimed". Claiming
 // requires status='proposed' as well as source_resolved: a python contract fix
-// is written as 'verifying' with source_resolved=true the moment its shadow
-// release is submitted, and a shadow rejection changes nothing but the status —
-// so without the status guard a caller could open a pull request for a fix
-// still being judged, or for one already judged wrong.
+// is written as 'verifying' with source_resolved=true the moment its
+// verification run is submitted, and a failed verification changes nothing
+// but the status — so without the status guard a caller could open a pull
+// request for a fix still being judged, or for one already judged wrong.
 //
 // Returns ErrNotSourceResolved when source_resolved=false, ErrNotProposed when
 // the attempt has not reached 'proposed', ErrPRConflict when the service is
@@ -967,8 +994,8 @@ func (r *ProposalRepository) RecordPROutcome(ctx context.Context, id, service st
 // makes bounded progress on each tick.
 const verifyingBatchLimit = 20
 
-// ListVerifying returns proposals awaiting shadow-release verification
-// (status='verifying'), oldest first, capped at verifyingBatchLimit.
+// ListVerifying returns proposals awaiting verification (status='verifying'),
+// oldest first, capped at verifyingBatchLimit.
 func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View, error) {
 	q := `SELECT ` + proposalColumns + ` FROM proposal
 	      WHERE status = $1 ORDER BY created_at ASC LIMIT $2`
@@ -985,9 +1012,10 @@ func (r *ProposalRepository) ListVerifying(ctx context.Context) ([]proposal.View
 
 // rewriteVerifyingOutcomes is the node_outcomes assignment that carries an
 // attempt's per-node outcomes along with the attempt itself: every node still
-// waiting on a shadow release takes the status the attempt just reached, while
+// waiting on verification takes the status the attempt just reached, while
 // a node the attempt had already settled — skipped, or failed while being
-// fixed — keeps the entry it was recorded with, since no release judged it.
+// fixed — keeps the entry it was recorded with, since no verification run
+// judged it.
 //
 // The COALESCE is what keeps the column (NOT NULL) writable: aggregating over a
 // row that recorded no per-node outcome at all yields SQL NULL, not an empty
@@ -999,17 +1027,22 @@ const rewriteVerifyingOutcomes = `
 		FROM jsonb_each(node_outcomes) AS e(k, v)
 	), '{}'::jsonb)`
 
-// MarkVerified finalizes a proposal whose shadow releases validated the fix,
-// transitioning status 'verifying' -> 'proposed' and carrying every node that
-// was waiting on those releases to 'proposed' with it. The WHERE
-// status='verifying' guard is the same compare-and-set contract as every other
-// state transition in this file: a row already finalized by a concurrent or
-// repeated reconciler pass leaves 0 rows affected rather than a blind
-// overwrite. hit reports whether the CAS fired.
-func (r *ProposalRepository) MarkVerified(ctx context.Context, id string) (bool, error) {
+// MarkVerified finalizes a proposal every verification run validated the fix,
+// transitioning status 'verifying' -> 'proposed', carrying every node that
+// was waiting on those runs to 'proposed' with it, and writing verifications
+// as the final per-run summary. The WHERE status='verifying' guard is the
+// same compare-and-set contract as every other state transition in this
+// file: a row already finalized by a concurrent or repeated reconciler pass
+// leaves 0 rows affected rather than a blind overwrite. hit reports whether
+// the CAS fired.
+func (r *ProposalRepository) MarkVerified(ctx context.Context, id string, verifications []proposal.Verification) (bool, error) {
+	v, err := marshalVerifications(verifications)
+	if err != nil {
+		return false, fmt.Errorf("marshal proposal verifications: %w", err)
+	}
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$3, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
-		id, proposal.StatusVerifying, proposal.StatusProposed)
+		`UPDATE proposal SET status=$3, verifications=$4, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		id, proposal.StatusVerifying, proposal.StatusProposed, v)
 	if err != nil {
 		return false, fmt.Errorf("mark verified: %w", err)
 	}
@@ -1020,15 +1053,19 @@ func (r *ProposalRepository) MarkVerified(ctx context.Context, id string) (bool,
 	return n > 0, nil
 }
 
-// MarkVerifyFailed finalizes a proposal whose shadow releases failed to
-// validate the fix, transitioning status 'verifying' -> 'failed', carrying
-// every node that was waiting on those releases to 'failed' with it, and
-// recording verifyErr so the next attempt can use it as evidence. The CAS
-// guard and hit semantics mirror MarkVerified.
-func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string) (bool, error) {
+// MarkVerifyFailed finalizes a proposal a verification run rejected,
+// transitioning status 'verifying' -> 'failed', carrying every node that was
+// waiting on those runs to 'failed' with it, recording verifyErr so the next
+// attempt can use it as evidence, and writing verifications as the final
+// per-run summary. The CAS guard and hit semantics mirror MarkVerified.
+func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr string, verifications []proposal.Verification) (bool, error) {
+	v, err := marshalVerifications(verifications)
+	if err != nil {
+		return false, fmt.Errorf("marshal proposal verifications: %w", err)
+	}
 	res, err := r.q.ExecContext(ctx,
-		`UPDATE proposal SET status=$3, verify_error=$4, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
-		id, proposal.StatusVerifying, proposal.StatusFailed, verifyErr)
+		`UPDATE proposal SET status=$3, verify_error=$4, verifications=$5, `+rewriteVerifyingOutcomes+` WHERE id=$1 AND status=$2`,
+		id, proposal.StatusVerifying, proposal.StatusFailed, verifyErr, v)
 	if err != nil {
 		return false, fmt.Errorf("mark verify failed: %w", err)
 	}
@@ -1037,4 +1074,25 @@ func (r *ProposalRepository) MarkVerifyFailed(ctx context.Context, id, verifyErr
 		return false, fmt.Errorf("mark verify failed: rows affected: %w", err)
 	}
 	return n > 0, nil
+}
+
+// UpdateVerificationPhase rewrites one element of the verifications array,
+// matched by run_id, with the phase and activation time given. Elements for
+// other runs are copied through unchanged, in their stored order.
+func (r *ProposalRepository) UpdateVerificationPhase(ctx context.Context, id, runID string, phase proposal.Phase, activatedAt *time.Time) error {
+	var at sql.NullString
+	if activatedAt != nil {
+		at = sql.NullString{String: activatedAt.UTC().Format(time.RFC3339Nano), Valid: true}
+	}
+	_, err := r.q.ExecContext(ctx, `
+		UPDATE proposal SET verifications = COALESCE((
+			SELECT jsonb_agg(CASE WHEN v->>'run_id' = $2
+			         THEN v || jsonb_build_object('phase', $3::text, 'activated_at', $4::text)
+			         ELSE v END ORDER BY ord)
+			  FROM jsonb_array_elements(verifications) WITH ORDINALITY AS x(v, ord)), '[]'::jsonb)
+		 WHERE id = $1`, id, runID, string(phase), at)
+	if err != nil {
+		return fmt.Errorf("update verification phase: %w", err)
+	}
+	return nil
 }

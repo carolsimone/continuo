@@ -50,6 +50,7 @@ func pythonDeps(t *testing.T, u *fakeUoW, llm *fakeLLM, art *fakeArtifacts, gw *
 	d.ContractLocator = contracts
 	d.ContractInspector = contracts
 	d.Packager = handlerPackager{}
+	d.Pipeline = gw
 	d.Releases = gw
 	d.PriorAttempts = u.pr
 	d.SQLDialect = "postgres"
@@ -90,9 +91,9 @@ func pythonFixResult() ports.ProposeResult {
 
 // TestProposeFix_PythonValidation_RecordsVerifying verifies what the driver has
 // to do differently for a fix that cannot be judged synchronously: it persists
-// the attempt as 'verifying' with the shadow release that will judge it and the
-// raw trigger that produced it, uploads the packaged contract the shadow runs
-// under that release's own id, and emits nothing — the proposal is not a
+// the attempt as 'verifying' with the verification run that will judge it and
+// the raw trigger that produced it, uploads the packaged contract the run
+// reads under that run's own id, and emits nothing — the proposal is not a
 // proposal yet, so announcing it would surface an unverified fix to operators.
 func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 	u := newFakeUoW()
@@ -107,38 +108,38 @@ func TestProposeFix_PythonValidation_RecordsVerifying(t *testing.T) {
 	require.Len(t, u.pr.inserted, 1)
 	got := u.pr.inserted[0]
 	require.Equal(t, proposal.StatusVerifying, got.Status)
-	require.Equal(t, "shadow-r1-svc-a1", got.ShadowReleaseID)
+	require.Equal(t, "verify-r1-svc-a1", got.VerificationRunID)
 	require.Equal(t, tr.RawPayload, got.TriggerPayload,
-		"a verifying row must carry the trigger that produced it, so the attempt can be rebuilt once the shadow release answers")
+		"a verifying row must carry the trigger that produced it, so the attempt can be rebuilt once the verification run answers")
 	require.Equal(t, "services/svc/contracts/kpis.yml", got.FilePath)
 	require.Len(t, got.Edits, 1)
 	require.Equal(t, "analytics.py_daily_kpis", got.Edits[0].TargetNodeID)
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.ShadowKindPython, ShadowReleaseID: "shadow-r1-svc-a1",
+		Service: "svc", Kind: ports.VerificationKindPython, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
 	}}, got.Verifications)
 	require.Equal(t, proposal.StatusVerifying, got.NodeOutcomes["analytics.py_daily_kpis"].Status)
 
-	// A python shadow runs the packaged contract written under its own id;
-	// there is no project to lay a source overlay over.
-	require.Equal(t, "merged: contract\n", art.written["svc/shadow-r1-svc-a1/contract.yaml"])
-	require.NotContains(t, art.written, "svc/shadow-r1-svc-a1/source-overlay.tar.gz")
+	// A python verification run reads the packaged contract written under its
+	// own id; there is no project to lay a source overlay over.
+	require.Equal(t, "merged: contract\n", art.written["svc/verify-r1-svc-a1/contract.yaml"])
+	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/source-overlay.tar.gz")
 
 	require.Len(t, gw.submitted, 1)
-	require.Equal(t, ports.ShadowSubmission{
-		ReleaseID: "shadow-r1-svc-a1", Service: "svc", ImageTag: "ghcr.io/o/svc:v9",
-		Repo: "o/r", CommitSHA: "abc", Kind: ports.ShadowKindPython,
-		// The shadow names the rejected release it judges, so release-controller
+	require.Equal(t, ports.VerificationRequest{
+		RunID: "verify-r1-svc-a1", Service: "svc", ImageTag: "ghcr.io/o/svc:v9",
+		Kind: ports.VerificationKindPython,
+		// The run names the rejected release it judges, so release-controller
 		// assembles that release's candidate for the service it changed.
-		VerifiesReleaseID: "r1",
+		VerifiesReleaseID: "r1", Attempt: 1,
 	}, gw.submitted[0])
 	require.Empty(t, u.ob.entries, "an unverified fix must not be announced")
 }
 
 // TestProposeFix_PythonValidation_ServiceDerivedFromTheEditPath pins that the
-// contract and the edits it packages always land on the same shadow release.
+// contract and the edits it packages always land on the same verification run.
 // The trigger's own service field names something this install has no repository
 // path for; the contract is still keyed by the service the fix's file belongs to,
-// so the release is submitted as python. Keyed by the trigger's field instead,
+// so the run is submitted as python. Keyed by the trigger's field instead,
 // the lookup would miss and these very edits would be verified as a dbt project
 // — silently, since a dbt overlay of a contract yaml compiles to nothing.
 func TestProposeFix_PythonValidation_ServiceDerivedFromTheEditPath(t *testing.T) {
@@ -158,13 +159,13 @@ func TestProposeFix_PythonValidation_ServiceDerivedFromTheEditPath(t *testing.T)
 	got := u.pr.inserted[0]
 	require.Equal(t, proposal.StatusVerifying, got.Status)
 	require.Equal(t, []proposal.Verification{{
-		Service: "svc", Kind: ports.ShadowKindPython, ShadowReleaseID: "shadow-r1-svc-a1",
+		Service: "svc", Kind: ports.VerificationKindPython, RunID: "verify-r1-svc-a1", Phase: proposal.PhaseQueued,
 	}}, got.Verifications)
-	require.Equal(t, "merged: contract\n", art.written["svc/shadow-r1-svc-a1/contract.yaml"])
-	require.NotContains(t, art.written, "svc/shadow-r1-svc-a1/source-overlay.tar.gz")
+	require.Equal(t, "merged: contract\n", art.written["svc/verify-r1-svc-a1/contract.yaml"])
+	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/source-overlay.tar.gz")
 	require.Len(t, gw.submitted, 1)
 	require.Equal(t, "svc", gw.submitted[0].Service)
-	require.Equal(t, ports.ShadowKindPython, gw.submitted[0].Kind)
+	require.Equal(t, ports.VerificationKindPython, gw.submitted[0].Kind)
 }
 
 // TestProposeFix_PythonContractWithDbtEditInOneService covers the attempt that
@@ -206,17 +207,17 @@ func TestProposeFix_PythonContractWithDbtEditInOneService(t *testing.T) {
 		require.Equal(t, reason, got.NodeOutcomes[id].Reason)
 	}
 	require.Empty(t, got.Verifications)
-	require.Empty(t, gw.submitted, "no release slot is spent on a change one release cannot verify")
-	require.NotContains(t, art.written, "svc/shadow-r1-svc-a1/contract.yaml",
+	require.Empty(t, gw.submitted, "no release-queue slot is spent on a change one release cannot verify")
+	require.NotContains(t, art.written, "svc/verify-r1-svc-a1/contract.yaml",
 		"every service is checked before any is submitted, so nothing is uploaded either")
 	require.Empty(t, u.ob.entries)
 }
 
 // TestProposeFix_PythonValidation_EditOutsideEveryConfiguredService covers the
 // install whose python service has no repository-path mapping: the fix names a
-// real file, but no shadow release could ever run it, and a redelivery would map
-// it no better. The attempt ends failed with the reason recorded rather than
-// being retried forever.
+// real file, but no verification run could ever run it, and a redelivery would
+// map it no better. The attempt ends failed with the reason recorded rather
+// than being retried forever.
 func TestProposeFix_PythonValidation_EditOutsideEveryConfiguredService(t *testing.T) {
 	u := newFakeUoW()
 	llm := newFakeLLM(pythonFixResult(), nil)
@@ -232,7 +233,7 @@ func TestProposeFix_PythonValidation_EditOutsideEveryConfiguredService(t *testin
 	got := u.pr.inserted[0]
 	require.Equal(t, proposal.StatusFailed, got.Status)
 	require.Contains(t, got.NodeOutcomes["analytics.py_daily_kpis"].Reason, "services/svc/contracts/kpis.yml")
-	require.Empty(t, gw.submitted, "no release slot is spent on edits nothing can run")
+	require.Empty(t, gw.submitted, "no release-queue slot is spent on edits nothing can run")
 	require.Empty(t, u.ob.entries)
 }
 
@@ -253,5 +254,5 @@ func TestProposeFix_DbtValidation_StoresNoTriggerPayload(t *testing.T) {
 
 	require.Len(t, u.pr.inserted, 1)
 	require.Empty(t, u.pr.inserted[0].TriggerPayload)
-	require.Empty(t, u.pr.inserted[0].ShadowReleaseID)
+	require.Empty(t, u.pr.inserted[0].VerificationRunID)
 }

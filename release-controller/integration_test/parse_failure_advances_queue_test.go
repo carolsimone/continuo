@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,8 +51,8 @@ func TestIntegration_ParseRejection_AdvancesQueuedRelease(t *testing.T) {
 
 	// rA must be Rejected; rB must now be Compiling (queue unblocked — Compiling
 	// is where AdvanceQueue lands a newly-activated release since the compile leg).
-	rA, _ := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
-	rB, _ := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rB")
-	assert.Equal(t, release.StatusRejected, rA.Status())
-	assert.Equal(t, release.StatusCompiling, rB.Status())
+	rA, _ := deps.NewUoW().RunRepo().Get(context.Background(), "rA")
+	rB, _ := deps.NewUoW().RunRepo().Get(context.Background(), "rB")
+	assert.Equal(t, pipeline.StatusRejected, rA.Status())
+	assert.Equal(t, pipeline.StatusCompiling, rB.Status())
 }

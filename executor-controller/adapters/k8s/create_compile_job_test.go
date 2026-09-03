@@ -174,21 +174,22 @@ func TestBuildCompilePodSpec_NoParseLegWhenCandidateSchemaEmpty(t *testing.T) {
 	}
 }
 
-// TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir verifies a shadow
-// release's compile Job fetches the proposed source into /shared/overlay and
-// then runs dbt from a staged copy of the team project under /work — never
-// writing the proposed files into the image's own project directory — and that
-// the manifest it hands to the upload container is the one dbt wrote in that
-// copy, not the configured path inside the image.
+// TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir verifies a
+// verification run's compile Job fetches the proposed source into
+// /shared/overlay and then runs dbt from a staged copy of the team project
+// under /work — never writing the proposed files into the image's own
+// project directory — and that the manifest it hands to the upload container
+// is the one dbt wrote in that copy, not the configured path inside the
+// image.
 func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 	t.Setenv("DOCKERHUB_USERNAME", "carolsimone")
 	t.Setenv("VALIDATION_WAREHOUSE_SECRET", "wh-secret")
 	c := newValidationTestClient()
 	p := ValidationJobParams{
-		JobName: "compile-svc-shadow", ReleaseID: "shadow-rel-1-svc-a1", NodeID: "core",
+		JobName: "compile-svc-verify", ReleaseID: "verify-rel-1-svc-a1", NodeID: "core",
 		ServiceName: "core", ImageTag: "abc123",
-		ManifestS3URI:    "s3://continuo/core/shadow-rel-1-svc-a1/manifest.json",
-		SourceOverlayURI: "s3://continuo/core/shadow-rel-1-svc-a1/source-overlay.tar.gz",
+		ManifestS3URI:    "s3://continuo/core/verify-rel-1-svc-a1/manifest.json",
+		SourceOverlayURI: "s3://continuo/core/verify-rel-1-svc-a1/source-overlay.tar.gz",
 		Namespace:        "default",
 	}
 	require.NoError(t, c.CreateCompileJob(context.Background(), p))
@@ -199,7 +200,7 @@ func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 	assert.Equal(t, "overlay", overlay.Name)
 	assert.Equal(t, "carolsimone/s3-sidecar:latest", overlay.Image)
 	assert.Equal(t, []string{"python", "/overlay_fetcher.py"}, overlay.Command)
-	assert.Equal(t, "s3://continuo/core/shadow-rel-1-svc-a1/source-overlay.tar.gz", envOf(overlay, "SOURCE_OVERLAY_URI"))
+	assert.Equal(t, "s3://continuo/core/verify-rel-1-svc-a1/source-overlay.tar.gz", envOf(overlay, "SOURCE_OVERLAY_URI"))
 	assert.Equal(t, "/shared/overlay", envOf(overlay, "OVERLAY_DEST"))
 	assert.Equal(t, "shared", overlay.VolumeMounts[0].Name)
 
@@ -225,7 +226,7 @@ func TestCreateCompileJob_SourceOverlayStagesProjectInWorkdir(t *testing.T) {
 }
 
 // TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers verifies that
-// when a shadow release's overlay is set alongside CandidateSchema, every
+// when a verification run's overlay is set alongside CandidateSchema, every
 // team-image container stages the project into its own workdir — not just
 // compile — so parse rehearsal exercises the overlaid source rather than the
 // pristine checked-in project, and reads back the partial-parse artifact from
@@ -237,11 +238,11 @@ func TestBuildCompilePodSpec_SourceOverlayAppliesToParseContainers(t *testing.T)
 	p := ValidationJobParams{
 		ServiceName:         "core",
 		ImageTag:            "abc123",
-		ManifestS3URI:       "s3://continuo/core/shadow-rel-1/manifest.json",
-		SourceOverlayURI:    "s3://continuo/core/shadow-rel-1/source-overlay.tar.gz",
+		ManifestS3URI:       "s3://continuo/core/verify-rel-1/manifest.json",
+		SourceOverlayURI:    "s3://continuo/core/verify-rel-1/source-overlay.tar.gz",
 		CandidateSchema:     "candidate_x",
-		ParseProdS3URI:      "s3://continuo/core/shadow-rel-1/parse/prod.msgpack",
-		ParseCandidateS3URI: "s3://continuo/core/shadow-rel-1/parse/candidate.msgpack",
+		ParseProdS3URI:      "s3://continuo/core/verify-rel-1/parse/prod.msgpack",
+		ParseCandidateS3URI: "s3://continuo/core/verify-rel-1/parse/candidate.msgpack",
 	}
 	spec, err := buildCompilePodSpec(p, []string{"dbt", "compile"}, "/project/target/manifest.json",
 		[]string{"dbt", "parse"}, "/project/target/partial_parse.msgpack")

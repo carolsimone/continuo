@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/streams"
-	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,7 +68,7 @@ func TestIntegration_ConcurrentAdvance_PromotesAtMostOnce(t *testing.T) {
 	assert.Equal(t, 1, count, "AdvanceQueue must not write duplicate compile.requested:v1 entries under concurrent invocation")
 
 	// And the release transitioned to Compiling exactly once.
-	r, err := deps.NewUoW().ReleaseRepo().Get(context.Background(), "rA")
+	r, err := deps.NewUoW().RunRepo().Get(context.Background(), "rA")
 	require.NoError(t, err)
-	assert.Equal(t, release.StatusCompiling, r.Status())
+	assert.Equal(t, pipeline.StatusCompiling, r.Status())
 }

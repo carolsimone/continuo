@@ -24,11 +24,21 @@ shipped in those.
   `classification_decision` unique key; affected messages stay pending on
   their stream and are processed once the new pod is up. No values or
   template change.
+- Fix-verification runs are no longer releases: they leave `GET /releases` and the
+  Releases tab, get their own `GET /verification-runs/{id}` and UI page
+  `/verifications/:id`, and end in `passed`/`failed`. Existing rows are
+  converted in place by the release-controller migration. No values change.
+
+### Breaking
+- `agentRemediation.env.SHADOW_VERIFY_TIMEOUT` and
+  `agentRemediation.env.SHADOW_VERIFY_POLL_INTERVAL` are renamed
+  `VERIFICATION_TIMEOUT` and `VERIFICATION_POLL_INTERVAL` (same defaults,
+  `20m` and `15s`). An override of the old keys is ignored after upgrade. MAJOR.
 
 ### Fixed
 - `templates/networkpolicy.yaml`: added the two remediation reachability edges
   the default-deny policy was missing — `agent-remediation → release-controller`
-  on 8088 (the shadow-verify lane: submitting/polling shadow releases and
+  on 8088 (the verification lane: submitting/polling verification runs and
   reading the failing release's image tags) and `release-controller →
   agent-remediation` on 50054 (`ListProposals` before a retry round). Without
   them, on a cluster whose CNI enforces NetworkPolicy every proposed fix stalled

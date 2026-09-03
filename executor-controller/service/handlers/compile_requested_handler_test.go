@@ -146,11 +146,11 @@ func TestCompileRequestedHandler_ThreadsSourceOverlayURI(t *testing.T) {
 	u := &uow.FakeUnitOfWork{Deployments: depl}
 
 	evt := events.CompileRequested{
-		ReleaseID:        "shadow-rel-1-svc-a1",
+		ReleaseID:        "verify-rel-1-svc-a1",
 		Service:          "finance",
-		ImageTag:         "sha-shadow-1",
+		ImageTag:         "sha-verify-1",
 		Bucket:           "my-artifacts-bucket",
-		SourceOverlayURI: "s3://my-artifacts-bucket/finance/shadow-rel-1-svc-a1/source-overlay.tar.gz",
+		SourceOverlayURI: "s3://my-artifacts-bucket/finance/verify-rel-1-svc-a1/source-overlay.tar.gz",
 	}
 
 	h := handlers.NewCompileRequestedHandler(discardLogger())

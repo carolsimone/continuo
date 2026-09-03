@@ -30,9 +30,9 @@ type SeedBuildNode struct {
 // SeedIDsInOrder lists the same dbt unique_ids as Seeds[].NodeID. The parser
 // guarantees the two agree as a set.
 //
-// SourceOverlayURI locates the tarball of proposed source files a shadow
-// release lays over the checked-in project before running its seeds; it is
-// empty for every production release.
+// SourceOverlayURI locates the tarball of proposed source files a
+// verification run lays over the checked-in project before running its
+// seeds; it is empty for every production release.
 type SeedBuildRequested struct {
 	OutboxEntryID    uuid.UUID
 	ReleaseID        string

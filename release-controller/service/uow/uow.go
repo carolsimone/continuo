@@ -12,7 +12,7 @@ import (
 // transaction-scoped repositories handlers need. Bindings own its
 // lifecycle: Begin → (work) → Commit, with Rollback on any failure.
 type UnitOfWork interface {
-	ReleaseRepo() repository.ReleaseRepository
+	RunRepo() repository.RunRepository
 	CurrentProdRepo() repository.CurrentProdRepository
 	ServiceProdRepo() repository.ServiceProdRepository
 	OutboxRepo() pkgoutbox.Repository

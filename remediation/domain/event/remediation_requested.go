@@ -51,13 +51,9 @@ type RemediationRequested struct {
 	CommitSHA        string `json:"commit_sha"`
 	// CodeBundleURI locates the rejected release's code-bundle document; empty
 	// when parse never completed (compile-stage failures).
-	CodeBundleURI string `json:"code_bundle_uri,omitempty"`
-	// Shadow is true when the rejected release was itself a fix-verification
-	// release. Such rejections are recorded but never emitted, so a Shadow
-	// trigger is never produced; the field travels for the case base.
-	Shadow       bool          `json:"shadow"`
-	ClassifiedAt string        `json:"classified_at"`
-	Nodes        []FailingNode `json:"nodes"`
+	CodeBundleURI string        `json:"code_bundle_uri,omitempty"`
+	ClassifiedAt  string        `json:"classified_at"`
+	Nodes         []FailingNode `json:"nodes"`
 }
 
 // FailingNode is one classified failure inside a batched trigger.

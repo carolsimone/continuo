@@ -321,7 +321,7 @@ streams:
 
   - name: release.rejected:v1
     const: ReleaseRejectedV1
-    description: Release rejected (parse or validation failure); emitted for telemetry and UI surfaces, and consumed by the remediation classifier.
+    description: Candidate release rejected (compile, parse, seed-build, or validation failure); consumed by the remediation classifier. A verification run's failure never rides this stream.
     producers: [release-controller]
     consumers:
       - service: remediation
@@ -330,6 +330,15 @@ streams:
       - service: executor-controller
         group: executor-release-rejected
         const: ExecutorReleaseRejected
+
+  - name: pipeline.run.finished:v1
+    const: PipelineRunFinishedV1
+    description: A pipeline run of either kind (a candidate release or a fix-verification run) reached a terminal status; carries the run's candidate schema so executor-controller can drop it whatever the outcome.
+    producers: [release-controller]
+    consumers:
+      - service: executor-controller
+        group: executor-pipeline-run-finished
+        const: ExecutorPipelineRunFinished
 
   - name: remediation.retry_requested:v1
     const: RemediationRetryRequestedV1
@@ -358,7 +367,7 @@ streams:
 
   - name: remediation.proposed:v1
     const: RemediationProposedV1
-    description: One shadow-verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
+    description: One verified fix proposal per (release, attempt), carrying every node the attempt resolves and every file it edits; emitted by the remediation agent, consumed by the PR creator and approval surfaces.
     producers: [agent-remediation]
     consumers: []
 

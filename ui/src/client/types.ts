@@ -136,12 +136,11 @@ export interface ReleaseAuthor {
 
 export interface ReleaseListItem {
   release_id: string;
-  status: string; // received|compiling|parsing|seed_building|validating|promoted|validated|rejected|superseded
+  status: string; // received|compiling|parsing|seed_building|validating|promoted|rejected|superseded
   created_at: string;
   resolved_at: string | null;
   node_count: number;
   bootstrap: boolean;
-  shadow: boolean;
   reject_reason?: string;
   repo?: string;
   commit_sha?: string;
@@ -184,7 +183,6 @@ export interface ReleaseDetail {
   per_node_results: NodeValidationResult[] | null;
   image_tags: Record<string, string>;
   bootstrap: boolean;
-  shadow: boolean;
   // How many remediation rounds have run for this release. 1 for every release
   // that has not been retried; "Try again" increments it up to the 3-round cap.
   remediation_round: number;
@@ -249,13 +247,18 @@ export interface PullRequestDTO {
   pr_closed_at: string;
 }
 
-// One shadow release a batched attempt ran to verify its fix for one edited
-// service. A multi-service proposal can carry several: one per service whose
-// edits needed a shadow release to judge.
+// One fix-verification run a batched attempt ran for one edited service, with
+// the durable summary agent-remediation keeps of how it went. phase is ''
+// until the reconciler first reads the run, then queued | running | passed |
+// failed. activated_at is when the run left the pipeline's queue ('' while
+// queued); error is the named per-node errors of a failed run.
 export interface VerificationDTO {
   service: string;
   kind: string;
-  shadow_release_id: string;
+  run_id: string;
+  phase: '' | 'queued' | 'running' | 'passed' | 'failed';
+  activated_at: string;
+  error: string;
 }
 
 export interface ProposalDTO {
@@ -267,9 +270,9 @@ export interface ProposalDTO {
   attempt: number;
   // Lifecycle of one fix attempt. Two are in flight and carry no reviewable
   // fix yet: 'generating' while the fix is being produced, and 'verifying'
-  // while a shadow release runs the produced fix through the full validation
-  // pipeline. The rest are terminal: 'proposed' (a fix ready for review),
-  // 'skipped', 'failed', 'escalated'.
+  // while a verification run judges the produced fix through the full
+  // validation pipeline. The rest are terminal: 'proposed' (a fix ready for
+  // review), 'skipped', 'failed', 'escalated'.
   status: string;
   confidence: string;
   rationale: string;
@@ -289,13 +292,13 @@ export interface ProposalDTO {
   pr_opened_at: string;
   pr_opened_by: string;
   pr_closed_at: string;
-  // shadow_release_id names the release that ran this attempt's fix through
-  // the whole validation pipeline to decide whether it holds. Set while the
-  // attempt is 'verifying' and still set on the 'proposed' or 'failed' row it
-  // became, so the release that decided an attempt is always reachable from
-  // it. Empty on an attempt judged without one.
-  shadow_release_id: string;
-  // verify_error is why that release rejected the fix — the reason a python
+  // verification_run_id is the run id of the first verification; the
+  // single-run view of verifications. Set while the attempt is 'verifying'
+  // and still set on the 'proposed' or 'failed' row it became, so the run
+  // that decided an attempt is always reachable from it. Empty on an attempt
+  // judged without one.
+  verification_run_id: string;
+  // verify_error is why that run rejected the fix — the reason a python
   // contract attempt reached 'failed'. Empty unless verification failed.
   verify_error: string;
   // Every file this proposal changes. Absent or empty on a proposal that has
@@ -317,9 +320,10 @@ export interface ProposalDTO {
   // status/rationale describe that node too. See proposalStatusForNode /
   // proposalReasonForNode.
   node_outcomes?: Record<string, NodeOutcomeDTO>;
-  // verifications lists the shadow releases this attempt ran, one per edited
-  // service that needed verification. Empty on a proposal judged without one,
-  // or a legacy row that only ever tracked a single shadow_release_id.
+  // verifications lists the verification runs this attempt ran, one per
+  // edited service that needed verification. Empty on a proposal judged
+  // without one, or a legacy row that only ever tracked a single
+  // verification_run_id.
   verifications?: VerificationDTO[];
   // pull_requests is one entry per (proposal, service) pull request; absent
   // or empty on a proposal that never entered the PR lifecycle, or one from
@@ -331,4 +335,56 @@ export interface ProposalDTO {
   // requests split into; absent, or [''], for a legacy (unsplit) proposal.
   // See proposalPrServices.
   pr_services?: string[];
+}
+
+// A verification run judges one candidate against the full validation
+// pipeline without becoming prod: a fix-verification run for a remediation
+// attempt, or a standalone pipeline check. verifies_release_id names the
+// release the run judges a fix for.
+export interface VerificationRunDetail {
+  run_id: string;
+  status: string; // received|compiling|parsing|seed_building|validating|passed|failed
+  changed_service: string;
+  verifies_release_id: string;
+  attempt: number;
+  created_at: string;
+  activated_at: string;
+  finished_at: string;
+  transitions: ReleaseTransition[];
+  validation_node_ids: string[] | null;
+  failing_nodes: string[] | null;
+  fail_reason: string;
+  fail_detail: string;
+  per_node_results: NodeValidationResult[] | null;
+  image_tags: Record<string, string>;
+  manifest_kind: string;
+}
+
+// One row of a release's verification-run list, newest first.
+export interface VerificationRunSummary {
+  run_id: string;
+  status: string;
+  service: string;
+  attempt: number;
+  created_at: string;
+  activated_at: string;
+  finished_at: string;
+  fail_reason?: string;
+}
+
+// The one run — a release candidate or a verification run — currently
+// occupying the pipeline's single slot. verifies_release_id and attempt are
+// present only when run_kind is 'verification'.
+export interface PipelineActive {
+  run_id: string;
+  run_kind: 'candidate' | 'verification';
+  status: string;
+  service: string;
+  since: string;
+  verifies_release_id?: string;
+  attempt?: number;
+}
+
+export interface PipelineResponse {
+  active: PipelineActive | null;
 }

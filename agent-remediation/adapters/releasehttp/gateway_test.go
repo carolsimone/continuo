@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
@@ -38,205 +40,123 @@ func releaseServer(t *testing.T, wantPath string, status int, body string) *http
 	}))
 }
 
-func TestSubmit_AcceptedPostsExactShadowBody(t *testing.T) {
-	var gotBody map[string]any
+func TestSubmit_PostsTheVerificationBody(t *testing.T) {
+	var got map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodPost, r.Method)
-		require.Equal(t, "/releases", r.URL.Path)
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"release_id":"shadow-1","status":"received"}`))
-	}))
-	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	err := g.Submit(context.Background(), ports.ShadowSubmission{
-		ReleaseID: "shadow-1",
-		Service:   "svc-py",
-		ImageTag:  "docker.io/x/svc-py:abc",
-		Repo:      "acme/dbt-repo",
-		CommitSHA: "deadbeef",
-		Kind:      ports.ShadowKindPython,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "shadow-1", gotBody["release_id"])
-	require.Equal(t, "svc-py", gotBody["service"])
-	require.Equal(t, "docker.io/x/svc-py:abc", gotBody["image_tag"])
-	require.Equal(t, false, gotBody["bootstrap"])
-	require.Equal(t, "acme/dbt-repo", gotBody["repo"])
-	require.Equal(t, "deadbeef", gotBody["commit_sha"])
-	require.Equal(t, "python", gotBody["kind"])
-	require.Equal(t, true, gotBody["shadow"])
-	require.NotContains(t, gotBody, "source_overlay_uri", "a python submission must omit source_overlay_uri entirely")
-	require.NotContains(t, gotBody, "verifies_release_id", "a submission naming no verified release omits the field entirely")
-}
-
-// TestSubmit_DbtCarriesSourceOverlayURI covers the dbt shadow case: the
-// compile leg lays a source overlay tarball over the project, and its S3 URI
-// travels in the POST body alongside kind:"dbt".
-func TestSubmit_DbtCarriesSourceOverlayURI(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"release_id":"shadow-1","status":"received"}`))
-	}))
-	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	err := g.Submit(context.Background(), ports.ShadowSubmission{
-		ReleaseID:        "shadow-1",
-		Service:          "svc-dbt",
-		ImageTag:         "docker.io/x/svc-dbt:abc",
-		Repo:             "acme/dbt-repo",
-		CommitSHA:        "deadbeef",
-		Kind:             ports.ShadowKindDbt,
-		SourceOverlayURI: "s3://b/svc/shadow-1/source-overlay.tar.gz",
-	})
-	require.NoError(t, err)
-	require.Equal(t, "dbt", gotBody["kind"])
-	require.Equal(t, "s3://b/svc/shadow-1/source-overlay.tar.gz", gotBody["source_overlay_uri"])
-}
-
-// TestSubmit_EmptyKindIsError pins that Submit refuses to silently default an
-// unset Kind to "python" — an empty Kind is a caller bug, and the request
-// must fail before any HTTP call is made.
-func TestSubmit_EmptyKindIsError(t *testing.T) {
-	called := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
+		require.Equal(t, "/verification-runs", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	err := g.Submit(context.Background(), ports.ShadowSubmission{
-		ReleaseID: "shadow-1",
-		Service:   "svc-py",
-		ImageTag:  "docker.io/x/svc-py:abc",
-		Repo:      "acme/dbt-repo",
-		CommitSHA: "deadbeef",
-	})
-	require.Error(t, err)
-	require.False(t, called, "an empty Kind must fail before any HTTP call is made")
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{
+		RunID: "verify-rel-1-core-a1", Service: "core", ImageTag: "img:1", Kind: ports.VerificationKindDbt,
+		VerifiesReleaseID: "rel-1", Attempt: 1, SourceOverlayURI: "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
+	}))
+	assert.Equal(t, map[string]any{
+		"run_id": "verify-rel-1-core-a1", "service": "core", "image_tag": "img:1", "kind": "dbt",
+		"verifies_release_id": "rel-1", "attempt": float64(1),
+		"source_overlay_uri": "s3://b/core/verify-rel-1-core-a1/source-overlay.tar.gz",
+	}, got)
 }
 
-func TestSubmit_NonAcceptedIsError(t *testing.T) {
+func TestSubmit_PythonOmitsTheOverlay(t *testing.T) {
+	var got map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "invalid JSON: boom", http.StatusBadRequest)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	err := g.Submit(context.Background(), ports.ShadowSubmission{ReleaseID: "shadow-1", Service: "svc-py", ImageTag: "t", Repo: "acme/r", CommitSHA: "sha", Kind: ports.ShadowKindPython})
-	require.Error(t, err)
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	require.NoError(t, g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Service: "py", ImageTag: "i", Kind: ports.VerificationKindPython, VerifiesReleaseID: "rel-1", Attempt: 2}))
+	_, has := got["source_overlay_uri"]
+	assert.False(t, has)
 }
 
-// TestVerdict_ValidatingIsNonTerminal covers case (a): a release still moving
-// through the pipeline is neither validated nor rejected.
-func TestVerdict_ValidatingIsNonTerminal(t *testing.T) {
-	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK,
-		`{"release_id":"shadow-1","status":"validating","per_node_results":[]}`)
+// TestSubmit_RequiresKind pins that Submit refuses to silently default an
+// unset Kind — an empty Kind is a caller bug, and the request must fail
+// before any HTTP call is made.
+func TestSubmit_RequiresKind(t *testing.T) {
+	g := NewGateway("http://unused", &fakeEvidence{}, nil)
+	err := g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Service: "s", ImageTag: "i", VerifiesReleaseID: "rel-1", Attempt: 1})
+	require.ErrorContains(t, err, "kind is required")
+}
+
+func TestSubmit_NonAcceptedStatusIsAnError(t *testing.T) {
+	srv := releaseServer(t, "/verification-runs", http.StatusConflict, `run id already names a candidate`)
 	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	v, err := g.Verdict(context.Background(), "shadow-1")
-	require.NoError(t, err)
-	require.False(t, v.Terminal, "a validating release must not be reported terminal")
-	require.False(t, v.Validated)
-	require.Empty(t, v.NodeErrors)
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	err := g.Submit(context.Background(), ports.VerificationRequest{RunID: "v", Service: "s", ImageTag: "i", Kind: "dbt", VerifiesReleaseID: "rel-1", Attempt: 1})
+	require.ErrorContains(t, err, "status 409")
 }
 
-// TestVerdict_Validated covers case (b): status validated means terminal and
-// validated, with no node errors.
-func TestVerdict_Validated(t *testing.T) {
-	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK,
-		`{"release_id":"shadow-1","status":"validated","per_node_results":[]}`)
+func TestStatus_PhaseFromRunStatus(t *testing.T) {
+	for status, want := range map[string]proposal.Phase{
+		"received": proposal.PhaseQueued, "compiling": proposal.PhaseRunning, "parsing": proposal.PhaseRunning,
+		"seed_building": proposal.PhaseRunning, "validating": proposal.PhaseRunning,
+		"passed": proposal.PhasePassed, "failed": proposal.PhaseFailed,
+	} {
+		t.Run(status, func(t *testing.T) {
+			srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+				`{"run_id":"verify-x","status":"`+status+`","activated_at":"","per_node_results":[]}`)
+			defer srv.Close()
+			g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+			st, err := g.Status(context.Background(), "verify-x")
+			require.NoError(t, err)
+			assert.Equal(t, want, st.Phase)
+		})
+	}
+}
+
+func TestStatus_ActivatedAtIsReadFromTheResponse(t *testing.T) {
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"compiling","activated_at":"2026-09-02T10:00:00Z","per_node_results":[]}`)
 	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	v, err := g.Verdict(context.Background(), "shadow-1")
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
-	require.True(t, v.Terminal)
-	require.True(t, v.Validated)
-	require.Empty(t, v.NodeErrors)
+	assert.Equal(t, time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC), st.ActivatedAt)
 }
 
-// TestVerdict_RejectedExtractsNodeErrorsFromEvidence covers case (c): a
-// rejected release with one failed validation node resolves its run_results_uri
-// through the EvidenceReader to the sentinel JSON's message.
-func TestVerdict_RejectedExtractsNodeErrorsFromEvidence(t *testing.T) {
-	body := `{
-		"release_id": "shadow-1",
-		"status": "rejected",
-		"reject_reason": "validation_failed",
-		"reject_detail": "1 node failed",
-		"per_node_results": [
-			{"stage": "validation", "node_id": "analytics.py_daily_kpis", "status": "failed", "run_results_uri": "s3://bucket/run-results/analytics.py_daily_kpis.json"},
-			{"stage": "validation", "node_id": "analytics.py_other", "status": "ok"}
-		]
-	}`
-	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK, body)
+func TestStatus_FailedCarriesNodeErrorsFromRunResults(t *testing.T) {
+	ev := &fakeEvidence{byURI: map[string]string{"s3://r/orders.json": `{"status":"error","message":"column x does not exist"}`}}
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"",
+		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://r/orders.json"},
+		                      {"stage":"validation","node_id":"model.core.ok","status":"ok"}]}`)
 	defer srv.Close()
-
-	evidence := &fakeEvidence{byURI: map[string]string{
-		"s3://bucket/run-results/analytics.py_daily_kpis.json": `{"status":"error","message":"column \"day\" does not exist"}`,
-	}}
-	g := NewGateway(srv.URL, evidence, srv.Client())
-	v, err := g.Verdict(context.Background(), "shadow-1")
+	g := NewGateway(srv.URL, ev, nil)
+	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
-	require.True(t, v.Terminal)
-	require.False(t, v.Validated)
-	require.Len(t, v.NodeErrors, 1, "the passing node must not appear in NodeErrors")
-	require.Contains(t, v.NodeErrors["analytics.py_daily_kpis"], `column "day" does not exist`)
+	assert.Equal(t, proposal.PhaseFailed, st.Phase)
+	assert.Equal(t, map[string]string{"model.core.orders": "column x does not exist"}, st.NodeErrors)
 }
 
-// TestVerdict_RejectedFallsBackToReleaseRejectDetail covers the fallback path:
-// when the evidence read yields no message (missing/unresolvable
-// run_results_uri), the node's error text falls back to the release's
-// reject_reason and reject_detail.
-func TestVerdict_RejectedFallsBackToReleaseRejectDetail(t *testing.T) {
-	body := `{
-		"release_id": "shadow-1",
-		"status": "rejected",
-		"reject_reason": "validation_failed",
-		"reject_detail": "1 node failed",
-		"per_node_results": [
-			{"stage": "validation", "node_id": "analytics.py_daily_kpis", "status": "failed", "run_results_uri": ""}
-		]
-	}`
-	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK, body)
+func TestStatus_FailedFallsBackToFailReasonAndDetail(t *testing.T) {
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"failed","fail_reason":"seed_build_failed","fail_detail":"csv is malformed",
+		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed"}]}`)
 	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	v, err := g.Verdict(context.Background(), "shadow-1")
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
-	require.Contains(t, v.NodeErrors["analytics.py_daily_kpis"], "validation_failed")
-	require.Contains(t, v.NodeErrors["analytics.py_daily_kpis"], "1 node failed")
+	assert.Equal(t, "seed_build_failed — csv is malformed", st.NodeErrors["model.core.orders"])
 }
 
-// TestVerdict_RejectedReadsSentinelJSONSurroundedByOutput pins that the object
-// at run_results_uri is not required to be pure JSON. k8s-controller uploads
-// the raw text captured between the validation pod's sentinel markers, which
+// TestStatus_FailedReadsSentinelJSONSurroundedByOutput pins that the object at
+// run_results_uri is not required to be pure JSON. k8s-controller uploads the
+// raw text captured between the validation pod's sentinel markers, which
 // carries whatever the runner wrote around the structured record: a log
 // preamble before it — possibly with braces of its own — and further output
 // after it. A strict decode of the whole body fails on all of that and drops
-// the node to the release-level fallback, which for a validation rejection is
-// the bare word "validation_failed" with no detail, leaving the next fix
-// attempt with no real error to learn from.
-func TestVerdict_RejectedReadsSentinelJSONSurroundedByOutput(t *testing.T) {
-	body := `{
-		"release_id": "shadow-1",
-		"status": "rejected",
-		"reject_reason": "validation_failed",
-		"reject_detail": "",
-		"per_node_results": [
-			{"stage": "validation", "node_id": "analytics.py_daily_kpis", "status": "failed", "run_results_uri": "s3://bucket/run-results/analytics.py_daily_kpis.json"}
-		]
-	}`
-	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK, body)
+// the node to the run-level fallback, which for a validation failure is the
+// bare word "validation_failed" with no detail, leaving the next fix attempt
+// with no real error to learn from.
+func TestStatus_FailedReadsSentinelJSONSurroundedByOutput(t *testing.T) {
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"",
+		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://bucket/run-results/orders.json"}]}`)
 	defer srv.Close()
 
 	// A brace-bearing log line first, then the structured record, then more
@@ -245,113 +165,90 @@ func TestVerdict_RejectedReadsSentinelJSONSurroundedByOutput(t *testing.T) {
 		`{"status":"error","message":"column \"revenue_total\" does not exist"}` + "\n" +
 		"INFO: uploading artifacts\n"
 
-	evidence := &fakeEvidence{byURI: map[string]string{
-		"s3://bucket/run-results/analytics.py_daily_kpis.json": noisy,
+	ev := &fakeEvidence{byURI: map[string]string{
+		"s3://bucket/run-results/orders.json": noisy,
 	}}
-	g := NewGateway(srv.URL, evidence, srv.Client())
-	v, err := g.Verdict(context.Background(), "shadow-1")
+	g := NewGateway(srv.URL, ev, nil)
+	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
-	require.Equal(t, `column "revenue_total" does not exist`, v.NodeErrors["analytics.py_daily_kpis"],
+	assert.Equal(t, `column "revenue_total" does not exist`, st.NodeErrors["model.core.orders"],
 		"the node's own error must survive a log preamble and trailing output")
 }
 
-// TestVerdict_RejectedFallsBackWhenNoSentinelJSON pins the other half of the
-// lenient scan: a body holding no status-bearing JSON object at all is still a
-// miss, so the node falls back to the release-level reject text rather than
+// TestStatus_FailedFallsBackWhenNoSentinelJSON pins the other half of the
+// lenient scan: a body holding no status-bearing JSON object at all is still
+// a miss, so the node falls back to the run-level fail text rather than
 // reporting a message scraped out of unrelated output.
-func TestVerdict_RejectedFallsBackWhenNoSentinelJSON(t *testing.T) {
-	body := `{
-		"release_id": "shadow-1",
-		"status": "rejected",
-		"reject_reason": "validation_failed",
-		"reject_detail": "1 node failed",
-		"per_node_results": [
-			{"stage": "validation", "node_id": "analytics.py_daily_kpis", "status": "failed", "run_results_uri": "s3://bucket/run-results/analytics.py_daily_kpis.json"}
-		]
-	}`
-	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK, body)
+func TestStatus_FailedFallsBackWhenNoSentinelJSON(t *testing.T) {
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"failed","fail_reason":"validation_failed","fail_detail":"1 node failed",
+		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://bucket/run-results/orders.json"}]}`)
 	defer srv.Close()
 
-	evidence := &fakeEvidence{byURI: map[string]string{
-		"s3://bucket/run-results/analytics.py_daily_kpis.json": "traceback: the runner died before writing a result {\"attempt\": 1}\n",
+	ev := &fakeEvidence{byURI: map[string]string{
+		"s3://bucket/run-results/orders.json": "traceback: the runner died before writing a result {\"attempt\": 1}\n",
 	}}
-	g := NewGateway(srv.URL, evidence, srv.Client())
-	v, err := g.Verdict(context.Background(), "shadow-1")
+	g := NewGateway(srv.URL, ev, nil)
+	st, err := g.Status(context.Background(), "verify-x")
 	require.NoError(t, err)
-	require.Equal(t, "validation_failed — 1 node failed", v.NodeErrors["analytics.py_daily_kpis"])
+	assert.Equal(t, "validation_failed — 1 node failed", st.NodeErrors["model.core.orders"])
 }
 
-// TestImageTag covers case (d): ImageTag reads image_tags[service] from the
-// release the id names, erroring for a service absent from that map.
-func TestImageTag(t *testing.T) {
-	srv := releaseServer(t, "/releases/rel-original", http.StatusOK,
-		`{"release_id":"rel-original","status":"promoted","image_tags":{"svc-py":"docker.io/x/svc-py:abc"}}`)
+func TestImageTag_ReadsTheReleaseNotTheRun(t *testing.T) {
+	srv := releaseServer(t, "/releases/rel-1", http.StatusOK, `{"release_id":"rel-1","image_tags":{"core":"img:9"}}`)
 	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	tag, err := g.ImageTag(context.Background(), "rel-original", "svc-py")
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	tag, err := g.ImageTag(context.Background(), "rel-1", "core")
 	require.NoError(t, err)
-	require.Equal(t, "docker.io/x/svc-py:abc", tag)
-
-	_, err = g.ImageTag(context.Background(), "rel-original", "svc-unknown")
-	require.Error(t, err)
+	assert.Equal(t, "img:9", tag)
 }
 
-// TestVerdict_ReportsWhenTheReleaseLeftTheQueue pins the moment the caller
-// measures a verification budget from. A shadow release joins the same global
-// FIFO queue as every other release and sits in "received" until its turn, so
-// the wait a timeout is meant to bound starts when the pipeline actually picked
-// it up — the first transition past "received" — not when it was submitted.
-func TestVerdict_ReportsWhenTheReleaseLeftTheQueue(t *testing.T) {
-	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK,
-		`{"release_id":"shadow-1","status":"validating","per_node_results":[],
-		  "transitions":[{"to":"received","at":"2026-08-19T10:00:00Z"},
-		                 {"to":"parsing","at":"2026-08-19T11:30:00Z"},
-		                 {"to":"validating","at":"2026-08-19T11:32:00Z"}]}`)
+func TestFailingNodes_ReadsTheReleaseNotTheRun(t *testing.T) {
+	ev := &fakeEvidence{byURI: map[string]string{"s3://r/orders.json": `{"status":"error","message":"column x does not exist"}`}}
+	srv := releaseServer(t, "/releases/rel-1", http.StatusOK,
+		`{"release_id":"rel-1","reject_reason":"validation_failed","reject_detail":"",
+		  "failing_nodes":["model.core.orders"],
+		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed","run_results_uri":"s3://r/orders.json"},
+		                      {"stage":"validation","node_id":"model.core.ok","status":"ok"}]}`)
 	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	v, err := g.Verdict(context.Background(), "shadow-1")
+	g := NewGateway(srv.URL, ev, nil)
+	nodes, err := g.FailingNodes(context.Background(), "rel-1")
 	require.NoError(t, err)
-	require.Equal(t, time.Date(2026, 8, 19, 11, 30, 0, 0, time.UTC), v.ActivatedAt.UTC(),
-		"activation is the first transition past 'received', not the last one and not the submission")
+	assert.Equal(t, map[string]string{"model.core.orders": "column x does not exist"}, nodes)
 }
 
-// TestVerdict_AQueuedReleaseHasNoActivationMoment is the other half: a release
-// still waiting its turn reports no activation at all, so a caller can tell
-// "this has been running too long" apart from "this has not started".
-func TestVerdict_AQueuedReleaseHasNoActivationMoment(t *testing.T) {
-	srv := releaseServer(t, "/releases/shadow-1", http.StatusOK,
-		`{"release_id":"shadow-1","status":"received","per_node_results":[],
-		  "transitions":[{"to":"received","at":"2026-08-19T10:00:00Z"}]}`)
+// TestFailingNodes_FallsBackToRejectReasonAndDetail covers the node whose own
+// structured result cannot be read: it falls back to the release-level
+// reject reason and detail, the same fallback Status uses for a
+// verification run's fail_reason/fail_detail.
+func TestFailingNodes_FallsBackToRejectReasonAndDetail(t *testing.T) {
+	srv := releaseServer(t, "/releases/rel-1", http.StatusOK,
+		`{"release_id":"rel-1","reject_reason":"seed_build_failed","reject_detail":"csv is malformed",
+		  "failing_nodes":["model.core.orders"],
+		  "per_node_results":[{"stage":"validation","node_id":"model.core.orders","status":"failed"}]}`)
 	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	v, err := g.Verdict(context.Background(), "shadow-1")
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	nodes, err := g.FailingNodes(context.Background(), "rel-1")
 	require.NoError(t, err)
-	require.False(t, v.Terminal)
-	require.True(t, v.ActivatedAt.IsZero(), "a release still in the queue has not started being verified")
+	assert.Equal(t, "seed_build_failed — csv is malformed", nodes["model.core.orders"])
 }
 
-// TestSubmit_CarriesVerifiesReleaseID pins the field that tells
-// release-controller which rejected release this shadow is judging. Without it
-// the shadow assembles every other service from production, so a fix in a
-// DOWNSTREAM service would be validated against the upstream service's
-// production code rather than the candidate whose rejection it answers.
-func TestSubmit_CarriesVerifiesReleaseID(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"release_id":"shadow-1","status":"received"}`))
-	}))
+// TestFailingNodes_NodeWithNoPerNodeResultFallsBackByID covers a node
+// release-controller named only in failing_nodes — a compile or
+// duplicate_table rejection, which carries no validation-stage
+// per_node_results entry at all — still reporting the release-level
+// fallback rather than being dropped from the map.
+func TestFailingNodes_NodeWithNoPerNodeResultFallsBackByID(t *testing.T) {
+	srv := releaseServer(t, "/releases/rel-1", http.StatusOK,
+		`{"release_id":"rel-1","reject_reason":"duplicate_table","reject_detail":"claimed twice",
+		  "failing_nodes":["model.core.orders","model.core.returns"],
+		  "per_node_results":[]}`)
 	defer srv.Close()
-
-	g := NewGateway(srv.URL, &fakeEvidence{}, srv.Client())
-	require.NoError(t, g.Submit(context.Background(), ports.ShadowSubmission{
-		ReleaseID: "shadow-1", Service: "svc-b", ImageTag: "img:1",
-		Repo: "acme/dbt-repo", CommitSHA: "deadbeef", Kind: ports.ShadowKindDbt,
-		VerifiesReleaseID: "rel-rejected",
-	}))
-	require.Equal(t, "rel-rejected", gotBody["verifies_release_id"])
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	nodes, err := g.FailingNodes(context.Background(), "rel-1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"model.core.orders":  "duplicate_table — claimed twice",
+		"model.core.returns": "duplicate_table — claimed twice",
+	}, nodes)
 }

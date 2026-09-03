@@ -47,13 +47,16 @@ const DETAIL_OK = {
 // 'proposed' row surfaces the "Proposed fix available →" link.
 const PROPOSAL_G = { release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'proposed' };
 
-// A fix being verified by a shadow release. The FIX cell splits its 'verifying'
-// chip on that shadow release's own status: 'Queued for verification' while it
-// waits its turn in the global release queue, 'Verifying fix…' once it starts.
-const PROPOSAL_G_VERIFYING = {
-  release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'verifying',
-  shadow_release_id: 'rel_shadow',
-};
+// A fix being verified: the FIX cell splits its 'verifying' chip on the phase
+// agent-remediation recorded for the run judging it — 'Queued for
+// verification' while it waits its turn in the pipeline's global queue,
+// 'Verifying fix…' once it starts.
+function proposalVerifying(phase: 'queued' | 'running') {
+  return {
+    release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'verifying',
+    verifications: [{ service: '', kind: '', run_id: 'verify-1', phase, activated_at: '', error: '' }],
+  };
+}
 
 function renderDetail() {
   return render(
@@ -80,34 +83,6 @@ function mockFetch(detail: any, proposalsRef: { current: any[] }) {
 function proposalCallCount(fetchMock: ReturnType<typeof vi.fn>): number {
   return fetchMock.mock.calls.filter(c => String(c[0]).includes('/api/remediation/proposals')).length;
 }
-
-// Like mockFetch, but also answers GET /api/releases/rel_shadow with a shadow
-// release whose status is read live from shadowStatusRef — so a test can drive
-// the verify chip between 'received' (queued) and a running pipeline status.
-function mockFetchWithShadow(
-  detail: any,
-  proposalsRef: { current: any[] },
-  shadowStatusRef: { current: string },
-) {
-  return vi.fn((url: any) => {
-    const u = String(url);
-    if (u.includes('/api/remediation/proposals')) {
-      return Promise.resolve({ ok: true, json: async () => ({ proposals: proposalsRef.current }) });
-    }
-    if (u.includes('/api/releases/rel_shadow')) {
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ release_id: 'rel_shadow', status: shadowStatusRef.current, transitions: [] }),
-      });
-    }
-    return Promise.resolve({ ok: true, json: async () => detail });
-  });
-}
-
-// Settle the chained async: the proposals poll marks a node 'verifying', which
-// arms the shadow-status poll, whose fetch then flips the chip. A few flushes
-// drain both hops.
-async function settle() { for (let i = 0; i < 5; i++) await flush(); }
 
 // Flush pending microtasks + zero-delay timers so React applies state updates.
 async function flush() {
@@ -234,7 +209,7 @@ describe('ReleaseDetailPage — proposal link polling', () => {
     expect(proposalCallCount(fetchMock)).toBe(capped); // capped, no more polling
   });
 
-  it('keeps polling past the cap while a shadow release is still verifying a fix', async () => {
+  it('keeps polling past the cap while a verification run is still judging a fix', async () => {
     // Backend verification runs a whole release — parse, candidate schema,
     // validation — behind a global release queue, so it routinely outlasts the
     // three-minute cap that exists for failures which will never be healed. A
@@ -340,63 +315,59 @@ describe('ReleaseDetailPage — proposal link polling', () => {
 });
 
 describe('ReleaseDetailPage — verify chip: queued vs running', () => {
-  it('reads a shadow release still waiting its turn as "Queued for verification"', async () => {
+  it('reads a phase recorded as queued as "Queued for verification"', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [PROPOSAL_G_VERIFYING] };
-    const shadowStatus = { current: 'received' };
-    vi.stubGlobal('fetch', mockFetchWithShadow(DETAIL_FAILED, proposals, shadowStatus));
+    const proposals = { current: [proposalVerifying('queued')] };
+    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, proposals));
 
     renderDetail();
-    await settle();
+    await flush();
 
     expect(screen.getByText('Queued for verification')).toBeInTheDocument();
     expect(screen.queryByText('Verifying fix…')).not.toBeInTheDocument();
   });
 
-  it('reads a shadow release running the pipeline as "Verifying fix…"', async () => {
+  it('reads a phase recorded as running as "Verifying fix…"', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [PROPOSAL_G_VERIFYING] };
-    const shadowStatus = { current: 'validating' };
-    vi.stubGlobal('fetch', mockFetchWithShadow(DETAIL_FAILED, proposals, shadowStatus));
+    const proposals = { current: [proposalVerifying('running')] };
+    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, proposals));
 
     renderDetail();
-    await settle();
+    await flush();
 
     expect(screen.getByText('Verifying fix…')).toBeInTheDocument();
     expect(screen.queryByText('Queued for verification')).not.toBeInTheDocument();
   });
 
-  it('flips from queued to verifying once the shadow release leaves the queue', async () => {
+  it('flips from queued to running once the next proposal poll observes the updated phase', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [PROPOSAL_G_VERIFYING] };
-    const shadowStatus = { current: 'received' };
-    vi.stubGlobal('fetch', mockFetchWithShadow(DETAIL_FAILED, proposals, shadowStatus));
+    const proposals = { current: [proposalVerifying('queued')] };
+    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, proposals));
 
     renderDetail();
-    await settle();
+    await flush();
     expect(screen.getByText('Queued for verification')).toBeInTheDocument();
 
-    // The shadow reaches the head of the queue and starts compiling; the next
-    // shadow-status poll observes it and the chip flips without a reload.
-    shadowStatus.current = 'compiling';
+    // The run leaves the queue and starts; the next proposal poll observes
+    // the updated phase and the chip flips without a reload.
+    proposals.current = [proposalVerifying('running')];
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-    await settle();
+    await flush();
 
     expect(screen.getByText('Verifying fix…')).toBeInTheDocument();
     expect(screen.queryByText('Queued for verification')).not.toBeInTheDocument();
   });
 
-  it('falls back to "Verifying fix…" when the attempt carries no shadow release id', async () => {
+  it('falls back to "Verifying fix…" when the attempt carries no recorded verification phase', async () => {
     vi.useFakeTimers();
-    const proposals = { current: [{ ...PROPOSAL_G_VERIFYING, shadow_release_id: '' }] };
-    const shadowStatus = { current: 'received' };
-    vi.stubGlobal('fetch', mockFetchWithShadow(DETAIL_FAILED, proposals, shadowStatus));
+    const proposals = { current: [{ release_id: 'rel_abc', node_id: 'analytics.table_g', status: 'verifying' }] };
+    vi.stubGlobal('fetch', mockFetch(DETAIL_FAILED, proposals));
 
     renderDetail();
-    await settle();
+    await flush();
 
-    // No shadow id to check, so the chip stays the existing flat one rather than
-    // claiming a queue wait it cannot substantiate.
+    // No phase recorded yet, so the chip stays the existing flat one rather
+    // than claiming a queue wait it cannot substantiate.
     expect(screen.getByText('Verifying fix…')).toBeInTheDocument();
     expect(screen.queryByText('Queued for verification')).not.toBeInTheDocument();
   });

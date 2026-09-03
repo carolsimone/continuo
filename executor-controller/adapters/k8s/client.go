@@ -247,9 +247,10 @@ type ValidationJobParams struct {
 	ParseProdS3URI      string
 	ParseCandidateS3URI string
 
-	// SourceOverlayURI locates the source-overlay tarball a shadow release lays
-	// over a staged copy of the team project before dbt runs. Populated only
-	// for mode=compile and mode=seed_build dispatches of a shadow release.
+	// SourceOverlayURI locates the source-overlay tarball a verification run
+	// lays over a staged copy of the team project before dbt runs. Populated
+	// only for mode=compile and mode=seed_build dispatches of a verification
+	// run.
 	SourceOverlayURI string
 
 	Namespace string
@@ -1018,13 +1019,13 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 // SCHEMA/TABLE_NAME env) and adds DBT_TARGET_SCHEMA=<CandidateSchema> so the
 // generate_schema_name macro materializes the seed into the candidate schema.
 // ImageTag must be non-empty — the team image must be explicitly versioned.
-// When p.SourceOverlayURI is non-empty (a shadow release verifying a proposed
-// fix), an "overlay" initContainer using the s3-sidecar image fetches the
-// proposed source files into /shared/overlay, the pod gets a writable workdir
-// emptyDir, and the team container's command is wrapped in `sh -c` and prefixed
-// with overlayStagePrefix, so `dbt seed` loads the proposed CSV from a staged
-// copy of the project rather than the checked-in one — the same treatment
-// buildCompilePodSpec gives its team-image containers.
+// When p.SourceOverlayURI is non-empty (a verification run verifying a
+// proposed fix), an "overlay" initContainer using the s3-sidecar image fetches
+// the proposed source files into /shared/overlay, the pod gets a writable
+// workdir emptyDir, and the team container's command is wrapped in `sh -c` and
+// prefixed with overlayStagePrefix, so `dbt seed` loads the proposed CSV from
+// a staged copy of the project rather than the checked-in one — the same
+// treatment buildCompilePodSpec gives its team-image containers.
 // When S3_BUCKET is set, the pod also gets a hydrate-parse-cache initContainer
 // that pre-seeds the candidate-context partial-parse artifact (see
 // parseCacheInitContainer); partialParsePath is the service's resolved
@@ -1072,10 +1073,10 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 	}
 
 	if p.SourceOverlayURI != "" {
-		// A shadow release verifies a proposed fix: the overlay fetcher lays the
-		// proposed files into /shared/overlay and the team container stages the
-		// project into its workdir, lays them over the copy, and seeds from
-		// there, so a proposed seed CSV is what gets loaded.
+		// A verification run verifies a proposed fix: the overlay fetcher lays
+		// the proposed files into /shared/overlay and the team container
+		// stages the project into its workdir, lays them over the copy, and
+		// seeds from there, so a proposed seed CSV is what gets loaded.
 		mount := sharedVolumeMount()
 		teamContainer := spec.Containers[0].Name
 		spec.InitContainers = append(spec.InitContainers, corev1.Container{
@@ -1115,8 +1116,8 @@ func buildSeedBuildPodSpec(p ValidationJobParams, command []string, partialParse
 // job name). The Job pod has a shared emptyDir volume "shared" mounted at
 // /shared in every container:
 //   - when params.SourceOverlayURI is set, initContainer "overlay": the
-//     s3-sidecar image fetches a shadow release's proposed source files into
-//     /shared/overlay before any other team-image init container runs.
+//     s3-sidecar image fetches a verification run's proposed source files
+//     into /shared/overlay before any other team-image init container runs.
 //   - initContainer "compile": team image runs the service's resolved compile
 //     command and copies the manifest from its declared path into
 //     /shared/manifest.json, with the warehouse-Secret envFrom attached; when
@@ -1199,7 +1200,7 @@ func (c *K8sClient) CreateCompileJob(ctx context.Context, params ValidationJobPa
 //   - when p.SourceOverlayURI is non-empty, an initContainer "overlay" using
 //     the shared s3-sidecar image that runs `python /overlay_fetcher.py` with
 //     SOURCE_OVERLAY_URI, OVERLAY_DEST=/shared/overlay, and the S3 credential
-//     envs, laying a shadow release's proposed source files into
+//     envs, laying a verification run's proposed source files into
 //     /shared/overlay before any other team-image init container runs. Every
 //     team-image init container's shell command (compile and both parse legs
 //     below) is then prefixed with overlayStagePrefix and gets a workdir
@@ -1259,7 +1260,7 @@ func buildCompilePodSpec(p ValidationJobParams, compileArgv []string, manifestPa
 		{Name: "MANIFEST_S3_URI", Value: p.ManifestS3URI},
 	}, s3CredEnvVars()...)
 
-	// staged is true for a shadow release verifying a proposed fix. Every
+	// staged is true for a verification run verifying a proposed fix. Every
 	// team-image init container then stages the project into its own workdir,
 	// lays the proposed files over the copy and runs dbt there, and reads the
 	// artifacts dbt wrote back from that copy rather than from the configured

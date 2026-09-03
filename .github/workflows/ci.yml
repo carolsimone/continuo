@@ -275,10 +275,10 @@ jobs:
         #   - 70m, the two longest per-test ceilings (35m + 35m) wedging in one
         #     run. Five tests now carry a 35m ceiling — the compile, agent,
         #     retry, and both batched remediation tests — and they all wait on
-        #     the same globally serialized shadow-release queue, so a wedged
-        #     queue stalls several of them one after another. Covering two is
-        #     the minimum that still buys a named assertion; covering all five
-        #     would put the ceiling past 3.5 hours.
+        #     the same globally serialized verification/candidate run queue, so
+        #     a wedged queue stalls several of them one after another. Covering
+        #     two is the minimum that still buys a named assertion; covering
+        #     all five would put the ceiling past 3.5 hours.
         #   - 55m for the rest of the suite. A healthy full run measures ~39m
         #     warm (2360s, 45 tests); 55m is that plus cold-stack headroom.
         timeout-minutes: 140

@@ -53,15 +53,15 @@ func TestCreateSeedBuildJob_EmptyImageTagErrors(t *testing.T) {
 	require.Error(t, c.CreateSeedBuildJob(context.Background(), p))
 }
 
-// seedOverlayParams returns seed-build params for a shadow release verifying a
-// proposed fix to a team's seed CSV.
+// seedOverlayParams returns seed-build params for a verification run
+// verifying a proposed fix to a team's seed CSV.
 func seedOverlayParams() ValidationJobParams {
 	return ValidationJobParams{
-		JobName: "seedbuild-fx-shadow", ReleaseID: "shadow-rel-1-core-a1", NodeID: "seed.core.fx",
+		JobName: "seedbuild-fx-verify", ReleaseID: "verify-rel-1-core-a1", NodeID: "seed.core.fx",
 		ServiceName: "core", SchemaName: "analytics", TableName: "fx",
 		NodeType: pkg_model.NodeTypeDbtSeed, ImageTag: "abc123",
-		CandidateSchema:  "_candidate_shadow_rel_1",
-		SourceOverlayURI: "s3://continuo/core/shadow-rel-1-core-a1/source-overlay.tar.gz",
+		CandidateSchema:  "_candidate_verify_rel_1",
+		SourceOverlayURI: "s3://continuo/core/verify-rel-1-core-a1/source-overlay.tar.gz",
 		Namespace:        "default",
 	}
 }

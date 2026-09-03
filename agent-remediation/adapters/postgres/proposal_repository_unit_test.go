@@ -21,7 +21,7 @@ func TestFileEditsRoundTripCarryTargetNode(t *testing.T) {
 
 // TestNodeOutcomesAndVerificationsRoundTrip verifies the codecs for the two
 // new batched-attempt columns: node_outcomes (one outcome per failing node)
-// and verifications (one shadow release per edited service), and that an
+// and verifications (one fix-verification run per edited service), and that an
 // empty verifications array decodes to nil rather than an empty non-nil slice.
 func TestNodeOutcomesAndVerificationsRoundTrip(t *testing.T) {
 	outcomes := map[string]proposal.NodeOutcome{"s.a": {Status: proposal.StatusVerifying}, "s.b": {Status: proposal.StatusSkipped, Reason: "no source"}}
@@ -29,7 +29,7 @@ func TestNodeOutcomesAndVerificationsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, outcomes, unmarshalNodeOutcomes(raw))
 
-	vs := []proposal.Verification{{Service: "svc", Kind: "dbt", ShadowReleaseID: "shadow-r-svc-a1"}}
+	vs := []proposal.Verification{{Service: "svc", Kind: "dbt", RunID: "verify-r-svc-a1", Phase: proposal.PhasePassed}}
 	rawV, err := marshalVerifications(vs)
 	require.NoError(t, err)
 	assert.Equal(t, vs, unmarshalVerifications(rawV))

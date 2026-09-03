@@ -40,7 +40,7 @@ const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   pr_opened_at: '',
   pr_opened_by: '',
   pr_closed_at: '',
-  shadow_release_id: '',
+  verification_run_id: '',
   verify_error: '',
   ...overrides,
 });
@@ -352,7 +352,7 @@ describe('RemediationPanel', () => {
   });
 });
 
-describe('RemediationPanel — a fix awaiting shadow verification', () => {
+describe('RemediationPanel — a fix awaiting verification', () => {
   const operator: AuthUser = {
     userId: 'u-1', email: 'op@example.com', name: 'Op', role: 'operator',
   };
@@ -377,12 +377,12 @@ describe('RemediationPanel — a fix awaiting shadow verification', () => {
     expect(screen.queryByText('verifying')).toBeNull();
   });
 
-  it('links a verifying proposal to the release that is judging it', async () => {
+  it('links a verifying proposal to the run that is judging it', async () => {
     // The chip says a fix is being verified; without the link the operator has
-    // no way to reach the release doing the verifying, which is on another
-    // screen under a name they have never been shown.
+    // no way to reach the run doing the verifying, which is on another screen
+    // under a name they have never been shown.
     mockFetchProposals.mockResolvedValue([
-      makeProposal({ status: 'verifying', shadow_release_id: 'shadow-rel-abc-svc.schema.my_model-a1' }),
+      makeProposal({ status: 'verifying', verification_run_id: 'verify-rel-abc-svc.schema.my_model-a1' }),
     ]);
 
     renderPanelAsOperator();
@@ -390,8 +390,8 @@ describe('RemediationPanel — a fix awaiting shadow verification', () => {
     await screen.findByText(/Verifying fix/);
     fireEvent.click(screen.getByText('svc.schema.my_model'));
 
-    const link = await screen.findByRole('link', { name: /shadow-rel-abc-svc.schema.my_model-a1/ });
-    expect(link).toHaveAttribute('href', '/releases/shadow-rel-abc-svc.schema.my_model-a1');
+    const link = await screen.findByRole('link', { name: /verify-rel-abc-svc.schema.my_model-a1/ });
+    expect(link).toHaveAttribute('href', '/verifications/verify-rel-abc-svc.schema.my_model-a1');
   });
 
   it('shows why verification failed instead of the bare word "failed"', async () => {
@@ -401,7 +401,7 @@ describe('RemediationPanel — a fix awaiting shadow verification', () => {
     mockFetchProposals.mockResolvedValue([
       makeProposal({
         status: 'failed',
-        shadow_release_id: 'shadow-rel-abc-svc.schema.my_model-a1',
+        verification_run_id: 'verify-rel-abc-svc.schema.my_model-a1',
         verify_error: 'column "revenue_total" does not exist',
       }),
     ]);
@@ -460,38 +460,40 @@ describe('RemediationPanel — a batched proposal spanning several nodes', () =>
     expect(screen.queryByText('s.a, s.b')).toBeNull();
   });
 
-  it('renders one verification link per entry in verifications, not just the single shadow_release_id', async () => {
+  it('links every verification run and says where it stands', async () => {
     const proposal = makeProposal({
-      status: 'proposed',
-      source_resolved: true,
+      status: 'verifying',
       resolved_node_ids: ['s.a', 's.b'],
       verifications: [
-        { service: 'svc-a', kind: 'shadow', shadow_release_id: 'shadow-rel-a' },
-        { service: 'svc-b', kind: 'shadow', shadow_release_id: 'shadow-rel-b' },
+        { service: 'core', kind: 'dbt', run_id: 'verify-rel-1-core-a1', phase: 'running', activated_at: '2026-09-02T10:01:00Z', error: '' },
+        { service: 'ops', kind: 'python', run_id: 'verify-rel-1-ops-a1', phase: 'queued', activated_at: '', error: '' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
-    const linkA = await screen.findByRole('link', { name: /shadow-rel-a/ });
-    const linkB = await screen.findByRole('link', { name: /shadow-rel-b/ });
-    expect(linkA).toHaveAttribute('href', '/releases/shadow-rel-a');
-    expect(linkB).toHaveAttribute('href', '/releases/shadow-rel-b');
+    await screen.findByText(/Verifying fix/);
+    fireEvent.click(screen.getByText('s.a, s.b'));
+
+    expect(screen.getByRole('link', { name: /verify-rel-1-core-a1/ })).toHaveAttribute('href', '/verifications/verify-rel-1-core-a1');
+    expect(screen.getByText(/core · dbt · Verifying fix…/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /verify-rel-1-ops-a1/ })).toHaveAttribute('href', '/verifications/verify-rel-1-ops-a1');
+    expect(screen.getByText(/ops · python · Queued for verification/)).toBeInTheDocument();
   });
 
-  it('falls back to the single shadow_release_id link when verifications is empty', async () => {
+  it('falls back to the single verification_run_id link when verifications is empty', async () => {
     const proposal = makeProposal({
       status: 'verifying',
-      shadow_release_id: 'shadow-rel-abc-svc.schema.my_model-a1',
+      verification_run_id: 'verify-rel-abc-svc.schema.my_model-a1',
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
     fireEvent.click(await screen.findByText('svc.schema.my_model'));
-    const link = await screen.findByRole('link', { name: /shadow-rel-abc-svc.schema.my_model-a1/ });
-    expect(link).toHaveAttribute('href', '/releases/shadow-rel-abc-svc.schema.my_model-a1');
+    const link = await screen.findByRole('link', { name: /verify-rel-abc-svc.schema.my_model-a1/ });
+    expect(link).toHaveAttribute('href', '/verifications/verify-rel-abc-svc.schema.my_model-a1');
   });
 });
 
