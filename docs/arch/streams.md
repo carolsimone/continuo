@@ -89,23 +89,33 @@ future or third-party producer that omits the field still parses. See
 `docs/arch/services/topology-controller.md` for the per-kind parse and
 failure behavior.
 
-**`release.rejected:v1`** — emitted by release-controller for every terminal
-rejection regardless of which leg failed. The payload always includes:
+**`release.rejected:v1`** — **candidate-only**: emitted by release-controller for every
+terminal rejection of a candidate release, regardless of which leg failed. A
+fix-verification run's failure never rides this stream, whatever caused it —
+its only announcement is `pipeline.run.finished:v1` (below). The payload always includes:
 `release_id`, `stage` (`compile` | `seed_build` | `validation`; absent for parse-phase rejections), `reason`,
-`repo`, `commit_sha`, `code_bundle_uri`, `shadow`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
+`repo`, `commit_sha`, `code_bundle_uri`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
 `status`, `dbt_log_uri`, optional `run_results_uri`). Validation entries
 additionally carry `candidate_artifact_uri` plus the candidate topology's
 `node_type`, `file_path`, and `service` for that node; seed_build entries carry
 `file_path`/`service` from the same source, and the payload carries
-`candidate_schema`. `shadow` is true when the rejected release was a
-fix-verification release posted by `agent-remediation` rather than a change
-anyone shipped; the remediation classifier records such a rejection and then
-drops it, so a failed fix attempt is never handed back as a fresh failure to
-heal. A payload written before the field existed decodes it as false, which is
-the correct reading for every release that predates shadow verification.
+`candidate_schema`.
 Consumers must not assume `stage` is always `validation`
 — all three legs reuse this single stream. See `docs/arch/services/release-controller.md`
 for the full per-leg payload shape.
+
+**`pipeline.run.finished:v1`** — emitted by release-controller for every terminal
+status of every pipeline run, of either kind: `promoted` | `rejected` | `superseded`
+for a candidate release, `passed` | `failed` for a fix-verification run. The payload
+is `{run_id, run_kind, outcome, service, candidate_schema, verifies_release_id,
+attempt, finished_at}`; every field is always present regardless of kind — a
+candidate carries an empty `verifies_release_id` and a zero `attempt` rather than
+omitting the keys, so one consumer decodes the same shape whichever kind ended.
+`candidate_schema` is always named, so the sole consumer — executor-controller
+(group `executor-pipeline-run-finished`) — can drop that schema on receipt
+whatever the outcome; a drop of a schema already gone (the `validation.result:v1`
+teardown got there first) is a no-op. See `docs/arch/services/release-controller.md`
+and `docs/arch/services/executor-controller.md` for the full behavior.
 
 **`remediation.retry_requested:v1`** — emitted by release-controller when a
 human asks a rejected release to "try again" (`POST
@@ -121,8 +131,7 @@ produces this event is refused before it is ever published unless the
 release is `rejected`, its stored reason is healable (`compile_failed`,
 `seed_build_failed`, `validation_failed`, or `duplicate_table`), it has a
 stored rejection payload at all (a release rejected before this column
-existed, or rejected for a non-healable reason such as `parse_failed` or the
-shadow-only `nothing_to_validate`, has none), its round is below the cap
+existed, or rejected for the non-healable reason `parse_failed`, has none), its round is below the cap
 (`MaxRemediationRounds = 3`), and agent-remediation's `ListProposals` reports
 no attempt still in flight, proposed, or already carrying an
 opening/open/merged PR for the release. See
@@ -134,7 +143,7 @@ release per remediation round**, carrying every healable failing node of that
 rejection in a `nodes[]` array. The release, not the node, is the unit of
 remediation: one trigger becomes one fix attempt, one proposal, and one pull
 request downstream. Release-level fields (`source`, `release_id`,
-`remediation_round`, `repo`, `commit_sha`, `code_bundle_uri`, `shadow`,
+`remediation_round`, `repo`, `commit_sha`, `code_bundle_uri`,
 `classified_at`) sit at the top level; each `nodes[]` entry carries its own
 `category`, `error_signature`, `reason`, `error_excerpt` (the classifier's key
 error line, capped at 4 KiB), `dbt_log_uri`, `candidate_artifact_uri`,
