@@ -71,6 +71,17 @@ func roundOrDefault(n int) int {
 	return n
 }
 
+// servicesArray serialises a proposal's services for the NOT NULL services
+// column. A nil slice becomes the empty array '{}' (the column's default)
+// rather than SQL NULL, so a proposal whose services are not yet known — a
+// generating row built from a trigger that carried none — still inserts.
+func servicesArray(s []string) pq.StringArray {
+	if len(s) == 0 {
+		return pq.StringArray{}
+	}
+	return pq.StringArray(s)
+}
+
 // InsertGenerating persists an in-flight 'generating' row for the attempt right
 // before the model is called. It is idempotent: ON CONFLICT on the natural key
 // (release_id, attempt) DO NOTHING, so a redelivery that re-runs the same
@@ -96,7 +107,7 @@ func (r *ProposalRepository) InsertGenerating(ctx context.Context, p proposal.Pr
 	if _, err := r.q.ExecContext(ctx, stmt,
 		p.Source, p.ReleaseID, roundOrDefault(p.RemediationRound), p.NodeID, p.ErrorSignature, p.Attempt,
 		proposal.StatusGenerating, p.CreatedAt,
-		resolved, outcomes, pq.StringArray(p.Services),
+		resolved, outcomes, servicesArray(p.Services),
 	); err != nil {
 		return fmt.Errorf("insert generating proposal: %w", err)
 	}
@@ -203,7 +214,7 @@ func (r *ProposalRepository) Upsert(ctx context.Context, p proposal.Proposal) er
 		p.CandidateFixSQLURI, p.CandidateFixDiffURI, p.SourceResolved,
 		p.Model, p.CreatedAt,
 		p.Repo, p.CommitSHA, p.FilePath, edits,
-		resolved, outcomes, verifications, pq.StringArray(p.Services),
+		resolved, outcomes, verifications, servicesArray(p.Services),
 	); err != nil {
 		return fmt.Errorf("insert proposal: %w", err)
 	}
