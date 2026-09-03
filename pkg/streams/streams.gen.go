@@ -154,8 +154,12 @@ const (
 	OrchestratorReleasePromoted = "orchestrator-release-promoted"
 	// OrchestratorReleasePromotedVersions — orchestrator consumer group on release.promoted:v1.
 	OrchestratorReleasePromotedVersions = "orchestrator-release-promoted-versions"
+	// ExecutorReleasePromoted — executor-controller consumer group on release.promoted:v1.
+	ExecutorReleasePromoted = "executor-release-promoted"
 	// RemediationReleaseRejected — remediation consumer group on release.rejected:v1.
 	RemediationReleaseRejected = "remediation-release-rejected"
+	// ExecutorReleaseRejected — executor-controller consumer group on release.rejected:v1.
+	ExecutorReleaseRejected = "executor-release-rejected"
 	// ExecutorPipelineRunFinished — executor-controller consumer group on pipeline.run.finished:v1.
 	ExecutorPipelineRunFinished = "executor-pipeline-run-finished"
 	// RemediationRetryRequested — remediation consumer group on remediation.retry_requested:v1.

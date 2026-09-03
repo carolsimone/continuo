@@ -235,6 +235,13 @@ func main() {
 		candidateSchemaCleaner, logger)
 	pipelineRunFinishedTeardownBinding := redis.NewPipelineRunFinishedTeardownBinding(
 		candidateSchemaCleaner, logger)
+	// Idempotent backstops for a terminal release event that reached executor
+	// on release.promoted:v1 / release.rejected:v1 without a matching
+	// pipeline.run.finished:v1.
+	releasePromotedTeardownBinding := redis.NewReleasePromotedTeardownBinding(
+		candidateSchemaCleaner, logger)
+	releaseRejectedTeardownBinding := redis.NewReleaseRejectedTeardownBinding(
+		candidateSchemaCleaner, logger)
 
 	// ========================================================================
 	// INITIALIZE REDIS PRODUCERS + CONSUMERS
@@ -311,6 +318,18 @@ func main() {
 		pipelineRunFinishedTeardownBinding, logger, schemaOpReclaim)
 	logger.Info("pipeline.run.finished teardown consumer initialized",
 		"stream", streams.PipelineRunFinishedV1, "group", streams.ExecutorPipelineRunFinished)
+
+	releasePromotedTeardownConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ReleasePromotedV1, streams.ExecutorReleasePromoted,
+		releasePromotedTeardownBinding, logger, schemaOpReclaim)
+	logger.Info("release.promoted teardown consumer initialized",
+		"stream", streams.ReleasePromotedV1, "group", streams.ExecutorReleasePromoted)
+
+	releaseRejectedTeardownConsumer := pkgredis.NewStreamConsumer(
+		redisClient, streams.ReleaseRejectedV1, streams.ExecutorReleaseRejected,
+		releaseRejectedTeardownBinding, logger, schemaOpReclaim)
+	logger.Info("release.rejected teardown consumer initialized",
+		"stream", streams.ReleaseRejectedV1, "group", streams.ExecutorReleaseRejected)
 
 	// ========================================================================
 	// INITIALIZE OUTBOX PROCESSOR
@@ -424,6 +443,8 @@ func main() {
 	runConsumer("compile_node_completed", compileNodeConsumer)
 	runSchemaOpConsumer("validation_result_teardown", validationResultTeardownConsumer)
 	runSchemaOpConsumer("pipeline_run_finished_teardown", pipelineRunFinishedTeardownConsumer)
+	runSchemaOpConsumer("release_promoted_teardown", releasePromotedTeardownConsumer)
+	runSchemaOpConsumer("release_rejected_teardown", releaseRejectedTeardownConsumer)
 
 	// Block until the full shutdown sequence has completed: intake stopped,
 	// tracked goroutines drained, and infra-close handlers run.

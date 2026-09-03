@@ -315,6 +315,9 @@ streams:
       - service: orchestrator
         group: orchestrator-release-promoted-versions
         const: OrchestratorReleasePromotedVersions
+      - service: executor-controller
+        group: executor-release-promoted
+        const: ExecutorReleasePromoted
 
   - name: release.rejected:v1
     const: ReleaseRejectedV1
@@ -324,6 +327,9 @@ streams:
       - service: remediation
         group: remediation-release-rejected
         const: RemediationReleaseRejected
+      - service: executor-controller
+        group: executor-release-rejected
+        const: ExecutorReleaseRejected
 
   - name: pipeline.run.finished:v1
     const: PipelineRunFinishedV1
