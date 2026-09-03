@@ -101,7 +101,14 @@ additionally carry `candidate_artifact_uri` plus the candidate topology's
 `file_path`/`service` from the same source, and the payload carries
 `candidate_schema`.
 Consumers must not assume `stage` is always `validation`
-— all three legs reuse this single stream. See `docs/arch/services/release-controller.md`
+— all three legs reuse this single stream. The remediation classifier
+(group `remediation-release-rejected`) triages the failing set;
+executor-controller (group `executor-release-rejected`) consumes it too, as an
+idempotent candidate-schema teardown backstop, dropping `candidate_schema` when
+the payload carries one and it is not already reclaimed by the
+`pipeline.run.finished:v1` or `validation.result:v1` path.
+`release.promoted:v1` has the same executor teardown backstop
+(group `executor-release-promoted`). See `docs/arch/services/release-controller.md`
 for the full per-leg payload shape.
 
 **`pipeline.run.finished:v1`** — emitted by release-controller for every terminal
