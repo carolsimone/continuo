@@ -1,0 +1,23 @@
+name: site-rebuild
+
+# Tells continuo-data.com to rebuild when a doc it mirrors changes on main.
+# The mirrored list lives in continuo-site/docs.manifest.yaml. Keep the two in step.
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/try-it-locally.md
+      - deploy/README.md
+      - docs/roadmap.md
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the Cloudflare Pages deploy hook
+        env:
+          SITE_DEPLOY_HOOK_URL: ${{ secrets.SITE_DEPLOY_HOOK_URL }}
+        run: curl -sf -X POST "$SITE_DEPLOY_HOOK_URL"
