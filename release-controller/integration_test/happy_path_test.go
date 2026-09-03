@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/pkg/liveness"
+	"github.com/carolsimone/continuo/pkg/streams"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
@@ -34,7 +35,7 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 	}
 	db, err := sqlx.Connect("postgres", dsn)
 	require.NoError(t, err)
-	_, err = db.Exec("TRUNCATE releases, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
+	_, err = db.Exec("TRUNCATE release_pipeline_runs, current_prod, release_controller_outbox, message_processing, service_prod RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
 	deps := &handlers.Deps{
 		NewUoW:    func() uow.UnitOfWork { return postgres.NewUnitOfWork(db, slog.Default(), nil) },
@@ -124,9 +125,18 @@ func TestIntegration_HappyPath(t *testing.T) {
 	require.NoError(t, db.Get(&spCount, `SELECT count(*) FROM service_prod WHERE service_name = 'service-1'`))
 	assert.Equal(t, 1, spCount, "service_prod must have a row for the promoted service")
 
-	// 7. Outbox has 4 entries (compile.requested + release.requested +
-	// validation.requested + release.promoted)
+	// 7. Outbox has 5 entries (compile.requested + release.requested +
+	// validation.requested + release.promoted + pipeline.run.finished — the
+	// kind-neutral teardown event enqueued in the same transaction as the
+	// candidate's terminal promotion).
 	var count int
 	require.NoError(t, db.Get(&count, `SELECT count(*) FROM release_controller_outbox`))
-	assert.Equal(t, 4, count)
+	assert.Equal(t, 5, count)
+
+	var finishedCount int
+	require.NoError(t, db.Get(&finishedCount,
+		`SELECT count(*) FROM release_controller_outbox WHERE stream_name = $1`,
+		streams.PipelineRunFinishedV1))
+	assert.Equal(t, 1, finishedCount,
+		"a candidate's terminal promotion enqueues exactly one pipeline.run.finished:v1")
 }
