@@ -342,18 +342,29 @@ export default function RemediationPanel() {
   const [error, setError] = useState<string | null>(null);
   const [createPrProposalId, setCreatePrProposalId] = useState<string | null>(null);
   const detailRef = useRef<HTMLTableRowElement | null>(null);
+  // Monotonic id of the most recently issued proposals fetch. Changing the
+  // Service filter fires a new fetch before earlier ones settle; only the
+  // latest request may write state, so a slower earlier response (or a stale
+  // failure) can never overwrite the current filter's results.
+  const proposalsReqSeq = useRef(0);
 
   // loadProposals is the single path that populates the list from the
   // server, used both on filter change and to refresh authoritative state
   // after an action (e.g. creating a PR) — never a bespoke fetch. It honours
-  // the current service filter.
+  // the current service filter and ignores any response that a newer request
+  // has superseded.
   const loadProposals = useCallback(() => {
+    const seq = ++proposalsReqSeq.current;
     fetchProposals(service ? { service } : {})
       .then(data => {
+        if (seq !== proposalsReqSeq.current) return;
         setProposals(data);
         setError(null);
       })
-      .catch(e => setError(e.message));
+      .catch(e => {
+        if (seq !== proposalsReqSeq.current) return;
+        setError(e.message);
+      });
   }, [service]);
 
   useEffect(() => { loadProposals(); }, [loadProposals]);

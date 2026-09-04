@@ -526,6 +526,34 @@ describe('RemediationPanel — service filter', () => {
     await waitFor(() => expect(mockFetchProposals).toHaveBeenLastCalledWith({ service: 'billing' }));
   });
 
+  it('ignores a superseded (slower, earlier) proposals response so it cannot overwrite the current filter', async () => {
+    mockFetchNodeServices.mockResolvedValue(['billing', 'ledger']);
+
+    // The initial unfiltered request is held open and resolves LAST; the
+    // filtered request resolves first. The stale unfiltered result must not
+    // win the race and clobber the filtered list.
+    let resolveInitial!: (p: ProposalDTO[]) => void;
+    const initial = new Promise<ProposalDTO[]>(r => { resolveInitial = r; });
+    const filtered = [makeProposal({ id: 'f1', node_id: 'billing.only', status: 'skipped' })];
+    const stale = [makeProposal({ id: 's1', node_id: 'stale.everything', status: 'skipped' })];
+    mockFetchProposals
+      .mockReturnValueOnce(initial)                 // mount (service='')
+      .mockResolvedValueOnce(filtered);             // after selecting billing
+
+    renderPanel();
+    const select = await screen.findByLabelText('Service');
+    fireEvent.change(select, { target: { value: 'billing' } });
+
+    // Filtered result lands first.
+    await waitFor(() => screen.getByText('billing.only'));
+
+    // Now the earlier unfiltered request finally resolves — it must be ignored.
+    resolveInitial(stale);
+    await new Promise(r => setTimeout(r, 0));
+    expect(screen.queryByText('stale.everything')).toBeNull();
+    expect(screen.getByText('billing.only')).toBeInTheDocument();
+  });
+
   it('leaves the list working with only an All services option when the services fetch fails', async () => {
     mockFetchNodeServices.mockRejectedValue(new Error('nope'));
 

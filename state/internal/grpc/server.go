@@ -196,6 +196,11 @@ func (s *Server) ListNodeNames(ctx context.Context, req *statev1.ListNodeNamesRe
 	return s.nodeRunHandler.ListNodeNames(ctx, req)
 }
 
+// ListNodeServices delegates to node run handler
+func (s *Server) ListNodeServices(ctx context.Context, req *statev1.ListNodeServicesRequest) (*statev1.ListNodeServicesResponse, error) {
+	return s.nodeRunHandler.ListNodeServices(ctx, req)
+}
+
 // ============================================================================
 // INTERCEPTORS
 // ============================================================================
