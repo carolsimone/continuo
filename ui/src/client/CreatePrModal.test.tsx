@@ -73,6 +73,12 @@ function renderPanel() {
   );
 }
 
+// attemptStatusCell finds the attempt row's Status cell by its whole text —
+// the status pill followed by the pull request's state chip, e.g.
+// "proposed opening" — since the pills split the cell's text across nodes.
+const attemptStatusCell = (text: string) =>
+  screen.queryByText((_, el) => el?.tagName === 'TD' && (el.textContent ?? '').replace(/\s+/g, ' ').trim() === text);
+
 describe('CreatePrModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -352,13 +358,13 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     // Recording the PR against the proposal is best-effort server side, so
     // until the refetch resolves the only state the client can honestly
     // claim is 'opening' — the one BeginPullRequest already guaranteed.
-    expect(screen.getByText('proposed · opening')).toBeInTheDocument();
+    expect(attemptStatusCell('proposed opening')).toBeInTheDocument();
 
     // The refetch lands and reports what the server actually recorded.
     resolveRefetch([{ ...proposal, pr_url: 'https://github.com/org/repo/pull/55', pr_number: 55, pr_state: 'open' }]);
 
     await waitFor(() => {
-      expect(screen.getByText('proposed · open')).toBeInTheDocument();
+      expect(attemptStatusCell('proposed open')).toBeInTheDocument();
     });
   });
 
@@ -393,8 +399,8 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     // The row never claims 'open' — it truthfully stays at 'opening' both
     // before and after the refetch, since that is what the server reports.
     await waitFor(() => {
-      expect(screen.getByText('proposed · opening')).toBeInTheDocument();
+      expect(attemptStatusCell('proposed opening')).toBeInTheDocument();
     });
-    expect(screen.queryByText('proposed · open')).toBeNull();
+    expect(attemptStatusCell('proposed open')).toBeNull();
   });
 });

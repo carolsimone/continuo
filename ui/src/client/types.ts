@@ -341,6 +341,12 @@ export interface ProposalDTO {
   // requests split into; absent, or [''], for a legacy (unsplit) proposal.
   // See proposalPrServices.
   pr_services?: string[];
+  // services is every service this attempt touched — the failing nodes'
+  // services plus the edited ones, sorted — the same set the server's
+  // `service` list filter matches a proposal on. Absent from a proposal
+  // served by an agent-remediation that predates the field. See
+  // proposalServices.
+  services?: string[];
 }
 
 // A verification run judges one candidate against the full validation

@@ -47,6 +47,18 @@ func TestViewToProto_PrServicesPassesThroughVerbatim(t *testing.T) {
 	require.Empty(t, p.PullRequests)
 }
 
+// TestViewToProto_ServicesPassesThroughVerbatim verifies that the row's
+// services — every service the attempt touched, the set ListProposals'
+// service filter matches on — reach the wire unchanged, so a listing can
+// show the same services the filter selected by.
+func TestViewToProto_ServicesPassesThroughVerbatim(t *testing.T) {
+	p := viewToProto(proposal.View{ID: "p1", Services: []string{"analytics", "billing"}}, []string{""})
+	require.Equal(t, []string{"analytics", "billing"}, p.Services)
+
+	p = viewToProto(proposal.View{ID: "p2"}, []string{""})
+	require.Empty(t, p.Services)
+}
+
 // TestEditsToProto_EmptyInputYieldsNoElements verifies that a nil or empty
 // edit list converts to an absent repeated field rather than a one-element
 // list holding a zero-valued FileEdit. A proposal that resolves no source file

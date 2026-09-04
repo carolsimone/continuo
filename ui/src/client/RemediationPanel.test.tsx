@@ -122,17 +122,37 @@ describe('RemediationPanel — group list', () => {
   it('shows the union of services and nodes for a group', async () => {
     const proposal = makeProposal({
       status: 'skipped',
-      node_id: 'core.a',
-      resolved_node_ids: ['core.a', 'finance.b'],
-      pr_services: ['finance', 'core'],
+      node_id: 'core_schema.a',
+      resolved_node_ids: ['core_schema.a', 'finance_schema.b'],
+      services: ['finance', 'core'],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('core.a, finance.b'));
+    await waitFor(() => screen.getByText('core_schema.a, finance_schema.b'));
     // Services union is sorted.
     expect(screen.getByText('core, finance')).toBeInTheDocument();
+  });
+
+  it('reads the Services column from the services the proposal carries, never from its node ids', async () => {
+    // A remediation node id is "<schema>.<table>" — it names no service —
+    // so the column shows the services agent-remediation recorded for the
+    // attempt (the same set the Service filter matches on), and a schema
+    // never leaks into it.
+    const proposal = makeProposal({
+      status: 'skipped',
+      node_id: 'e2e_schema.table_a',
+      resolved_node_ids: ['e2e_schema.table_a', 'e2e_schema.table_b'],
+      services: ['service-1'],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('e2e_schema.table_a, e2e_schema.table_b'));
+    expect(screen.getByText('service-1')).toBeInTheDocument();
+    expect(screen.queryByText(/e2e_schema(,|$)/)).toBeNull();
   });
 
   it('shows the neutral info-strip when there are no proposals', async () => {
@@ -157,12 +177,83 @@ describe('RemediationPanel — group list', () => {
     expect(chip).toHaveClass('pr-chip', 'pr-chip--rejected');
   });
 
-  it('reads a verifying group as "Verifying fix…" in the Latest status column, without expanding', async () => {
+  it('reads a verifying group as an in-progress pill in the Latest status column, without expanding', async () => {
     mockFetchProposals.mockResolvedValue([makeProposal({ status: 'verifying' })]);
     renderPanel();
-    const chip = await screen.findByText(/Verifying fix/);
-    expect(chip).toHaveAttribute('aria-busy', 'true');
-    expect(screen.queryByText('verifying')).toBeNull();
+    const pill = await screen.findByText('verifying');
+    expect(pill).toHaveClass('pill-sm', 'pill-sm--running');
+    expect(pill).toHaveAttribute('aria-busy', 'true');
+  });
+});
+
+describe('RemediationPanel — status pills', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
+  });
+
+  it.each([
+    ['proposed',   'pill-sm--succeeded'],
+    ['failed',     'pill-sm--failed'],
+    ['escalated',  'pill-sm--failed'],
+    ['skipped',    'pill-sm--skipped'],
+    ['generating', 'pill-sm--pending'],
+  ])('renders the %s status as a %s pill in the Latest status column', async (status, cls) => {
+    // source_resolved=false keeps a 'proposed' attempt from auto-expanding,
+    // so the only status text on screen is the group row's.
+    mockFetchProposals.mockResolvedValue([makeProposal({ status, source_resolved: false })]);
+    renderPanel();
+    const pill = await screen.findByText(status);
+    expect(pill).toHaveClass('pill-sm', cls);
+  });
+
+  it('renders the attempt row status as the same pill once the group is open', async () => {
+    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'failed' })]);
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+
+    const pills = screen.getAllByText('failed');
+    expect(pills).toHaveLength(2); // group row + attempt row
+    for (const pill of pills) expect(pill).toHaveClass('pill-sm', 'pill-sm--failed');
+  });
+});
+
+describe('RemediationPanel — attempts are nested inside their group', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
+  });
+
+  it('renders the attempt rows and their column labels inside the group\'s contained block, not as a peer table', async () => {
+    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'skipped' })]);
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+
+    // The attempt row and the inner column labels both live inside the
+    // .remediation-attempts block hosted by the group's expansion row…
+    const block = screen.getByText('high').closest('.remediation-attempts');
+    expect(block).not.toBeNull();
+    expect(screen.getByText('Confidence').closest('.remediation-attempts')).toBe(block);
+    expect(block!.closest('tr')).toHaveClass('remediation-group__body');
+    // …while the outer header is not inside any such block.
+    expect(screen.getByText('Latest status').closest('.remediation-attempts')).toBeNull();
+  });
+
+  it('reads the source column as resolved / unresolved rather than yes / no', async () => {
+    mockFetchProposals.mockResolvedValue([
+      makeProposal({ id: 'a', status: 'skipped', source_resolved: true, attempt: 1 }),
+      makeProposal({ id: 'b', status: 'skipped', source_resolved: false, attempt: 2, created_at: '2026-06-24T11:00:00Z' }),
+    ]);
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+
+    expect(screen.getByText('resolved')).toBeInTheDocument();
+    expect(screen.getByText('unresolved')).toBeInTheDocument();
+    expect(screen.queryByText('yes')).toBeNull();
+    expect(screen.queryByText('no')).toBeNull();
   });
 });
 
@@ -390,8 +481,11 @@ describe('RemediationPanel — verification runs on an attempt', () => {
     expect(screen.getAllByRole('link', { name: /open run →/ })[0]).toHaveAttribute('href', '/verifications/verify-rel-1-core-a1');
     // A queued run with no activation time omits the "since" clause.
     expect(screen.getByText(/ops · python · Queued for verification$/)).toBeInTheDocument();
-    expect(screen.getByText(/ops · python · Queued for verification/).closest('.detail-card__row')!
+    expect(screen.getByText(/ops · python · Queued for verification/).closest('.remediation-verif__run')!
       .querySelector('a')).toHaveAttribute('href', '/verifications/verify-rel-1-ops-a1');
+    // Both runs sit in the attempt's verification sub-row, inside the group's block.
+    expect(screen.getByText(/core · dbt · Verifying fix/).closest('.remediation-verif')).not.toBeNull();
+    expect(screen.getByText(/core · dbt · Verifying fix/).closest('.remediation-attempts')).not.toBeNull();
   });
 
   it('falls back to the single verification_run_id link when verifications is empty', async () => {
@@ -402,7 +496,9 @@ describe('RemediationPanel — verification runs on an attempt', () => {
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
 
-    const link = await screen.findByRole('link', { name: /verify-rel-abc-a1/ });
+    const line = await screen.findByText('verification run verify-rel-abc-a1');
+    const link = line.closest('.remediation-verif__run')!.querySelector('a');
+    expect(link).toHaveTextContent('open run →');
     expect(link).toHaveAttribute('href', '/verifications/verify-rel-abc-a1');
   });
 
@@ -466,10 +562,31 @@ describe('RemediationPanel — pull requests split across owning services', () =
 
     const mergedChip = await screen.findByText('merged');
     expect(mergedChip).toHaveClass('pr-chip', 'pr-chip--merged');
-    expect(mergedChip.closest('.pr-chip-labeled')).toHaveTextContent('merged (core)');
+    expect(mergedChip.closest('.pr-chip-labeled')).toHaveTextContent('core merged');
 
     const rejectedChip = screen.getByText('rejected');
-    expect(rejectedChip.closest('.pr-chip-labeled')).toHaveTextContent('rejected (finance)');
+    expect(rejectedChip.closest('.pr-chip-labeled')).toHaveTextContent('finance rejected');
+
+    // Both labelled chips share one wrapping row in the PR cell, so a
+    // proposal split across many services stays one compact cell.
+    const row = mergedChip.closest('.remediation-prs')!;
+    expect(row).not.toBeNull();
+    expect(rejectedChip.closest('.remediation-prs')).toBe(row);
+    expect(row.querySelectorAll('.pr-chip-labeled')).toHaveLength(2);
+  });
+
+  it.each([
+    ['open',    'pr-chip--open'],
+    ['opening', 'pr-chip--opening'],
+    ['failed',  'pr-chip--failed'],
+  ])('renders a non-terminal %s pull-request state as a chip too, so the PR column reads uniformly', async (pr_state, cls) => {
+    const proposal = makeProposal({ status: 'skipped', pr_state, pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
+    mockFetchProposals.mockResolvedValue([proposal]);
+    renderPanel();
+    const chip = await screen.findByText(pr_state);
+    expect(chip).toHaveClass('pr-chip', cls);
+    // A legacy (unsplit) proposal's chip carries no service prefix.
+    expect(chip.closest('.pr-chip-labeled')).toBeNull();
   });
 
   it('stays actionable (auto-expanded) while one service still needs a PR', async () => {

@@ -26,6 +26,25 @@ export function releasePillClass(status: string): string {
   return 'pill--pending';
 }
 
+// proposalPillClass maps a remediation attempt's lifecycle status to a pill
+// variant. The attempt vocabulary (proposed/verifying/generating/failed/
+// escalated/skipped) is distinct from the release one, so each status is
+// mapped on purpose: a proposed fix is the good outcome (green), an attempt
+// still being verified is in progress (the running hue), one still being
+// generated is waiting (grey), and both failed and escalated are dead ends
+// that need a human (red). Anything else falls back to releasePillClass.
+export function proposalPillClass(status: string): string {
+  switch (status) {
+    case 'proposed':   return 'pill--succeeded';
+    case 'verifying':  return 'pill--running';
+    case 'generating': return 'pill--pending';
+    case 'failed':     return 'pill--failed';
+    case 'escalated':  return 'pill--failed';
+    case 'skipped':    return 'pill--skipped';
+  }
+  return releasePillClass(status);
+}
+
 // Fixed display order of release failure stages. Matches the pipeline order the
 // release-controller runs them in (compile → seed_build → validation).
 export const STAGE_ORDER = ['compile', 'seed_build', 'validation'] as const;
@@ -188,26 +207,41 @@ export function effectiveRound(p: ProposalDTO): number {
 }
 
 // ProposalGroup aggregates every remediation attempt for one (release, round):
-// the attempts newest first, the union of the services they edit and the nodes
-// they resolve, the newest attempt's status, and the newest attempt that
-// carries a pull request.
+// the attempts newest first, the union of the services they touch and the
+// nodes they resolve, the newest attempt's status, and the newest attempt
+// that carries a pull request.
 export interface ProposalGroup {
   key: string;
   releaseId: string;
   round: number;
   attempts: ProposalDTO[];       // newest first
   latest: ProposalDTO;           // attempts[0]
-  services: string[];            // pr_services union, '' dropped, sorted
+  services: string[];            // see proposalServices; union, sorted
   nodeIds: string[];             // resolved-node union, sorted
   latestPrProposal: ProposalDTO | null;
+}
+
+// proposalServices lists the services one attempt touched, as recorded by
+// agent-remediation on the proposal itself: the failing nodes' services plus
+// the edited ones — the same set the server's `service` list filter matches
+// a proposal on, so the Services column and the filter agree. A remediation
+// node id is "<schema>.<table>" and names no service, so nothing is ever
+// parsed out of resolved_node_ids. A proposal served by an agent-remediation
+// that predates the field carries no services; the owning services its pull
+// requests split into (the legacy '' sentinel dropped) are the nearest thing
+// it does carry, and a legacy proposal with neither yields none.
+export function proposalServices(p: ProposalDTO): string[] {
+  const carried = (p.services ?? []).filter((s) => s !== '');
+  if (carried.length > 0) return Array.from(new Set(carried)).sort();
+  return Array.from(new Set(proposalPrServices(p).filter((s) => s !== ''))).sort();
 }
 
 // groupProposals buckets proposals by (release_id, remediation round), newest
 // group first by its latest attempt. Within a group the attempts are newest
 // first (created_at, then attempt number). `services` unions each attempt's
-// pr_services (the legacy '' sentinel dropped); `nodeIds` unions their
-// resolved nodes; `latestPrProposal` is the newest attempt that has opened a
-// pull request, or null when none has.
+// proposalServices; `nodeIds` unions their resolved nodes; `latestPrProposal`
+// is the newest attempt that has opened a pull request, or null when none
+// has.
 export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
   const buckets = new Map<string, ProposalDTO[]>();
   for (const p of proposals) {
@@ -226,9 +260,7 @@ export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
     const latest = attempts[0];
 
     const serviceSet = new Set<string>();
-    for (const p of attempts) {
-      for (const s of proposalPrServices(p)) if (s !== '') serviceSet.add(s);
-    }
+    for (const p of attempts) for (const s of proposalServices(p)) serviceSet.add(s);
     const nodeSet = new Set<string>();
     for (const p of attempts) for (const n of proposalNodeIds(p)) nodeSet.add(n);
 

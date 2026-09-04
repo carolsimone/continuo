@@ -3,7 +3,7 @@ import {
   groupByStage, stageLabel, reasonLabel, proposalKey,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
   releasePillClass, verificationPhase, verificationRunPhase, verificationRunIds,
-  effectiveRound, groupProposals,
+  effectiveRound, groupProposals, proposalPillClass,
 } from './release-helpers';
 import { NodeValidationResult } from './types';
 import type { ProposalDTO } from './types';
@@ -163,6 +163,7 @@ describe('groupProposals', () => {
     node_id: o.node_id ?? 'n0',
     resolved_node_ids: o.resolved_node_ids,
     pr_services: o.pr_services,
+    services: o.services,
     pull_requests: o.pull_requests,
     pr_url: o.pr_url ?? '',
     pr_state: o.pr_state ?? '',
@@ -196,16 +197,34 @@ describe('groupProposals', () => {
     expect(groups[0].latest.id).toBe('a2');
   });
 
-  it('unions pr_services across attempts, dropping the legacy empty sentinel', () => {
+  it('unions the services each attempt carries, sorted and de-duplicated', () => {
     const groups = groupProposals([
-      mk({ id: 'a', pr_services: ['billing'] }),
-      mk({ id: 'b', pr_services: ['ledger', 'billing'] }),
+      mk({ id: 'a', services: ['ledger', 'analytics'] }),
+      mk({ id: 'b', services: ['analytics'] }),
     ]);
-    expect(groups[0].services).toEqual(['billing', 'ledger']);
+    expect(groups[0].services).toEqual(['analytics', 'ledger']);
   });
 
-  it('yields no services for a group whose attempts are all legacy (unsplit)', () => {
-    const groups = groupProposals([mk({ id: 'a', pr_services: [''] }), mk({ id: 'b' })]);
+  it('never parses a service out of a node id — a remediation node id is "<schema>.<table>"', () => {
+    const groups = groupProposals([
+      mk({ id: 'a', node_id: 'e2e_schema.table_a', resolved_node_ids: ['e2e_schema.table_a', 'e2e_schema.table_b'], services: ['service-1'] }),
+    ]);
+    expect(groups[0].services).toEqual(['service-1']);
+  });
+
+  it('falls back to the non-empty pr_services of an attempt that carries no services', () => {
+    // A proposal served by an agent-remediation that predates the services
+    // field arrives with it absent; the owning services its pull requests
+    // split into are the nearest thing it does carry.
+    const groups = groupProposals([
+      mk({ id: 'a', pr_services: ['shared', 'analytics'] }),
+      mk({ id: 'b', pr_services: [''] }),
+    ]);
+    expect(groups[0].services).toEqual(['analytics', 'shared']);
+  });
+
+  it('yields no services for a legacy attempt carrying neither services nor split pull requests', () => {
+    const groups = groupProposals([mk({ id: 'a', node_id: 'core_schema.t', pr_services: [''] })]);
     expect(groups[0].services).toEqual([]);
   });
 
@@ -228,5 +247,23 @@ describe('groupProposals', () => {
   it('sets latestPrProposal to null when no attempt has a pull request', () => {
     const groups = groupProposals([mk({ id: 'a' }), mk({ id: 'b' })]);
     expect(groups[0].latestPrProposal).toBeNull();
+  });
+});
+
+describe('proposalPillClass', () => {
+  it.each([
+    ['proposed',   'pill--succeeded'],
+    ['verifying',  'pill--running'],
+    ['generating', 'pill--pending'],
+    ['failed',     'pill--failed'],
+    ['escalated',  'pill--failed'],
+    ['skipped',    'pill--skipped'],
+  ])('maps the %s attempt status to %s', (status, cls) => {
+    expect(proposalPillClass(status)).toBe(cls);
+  });
+
+  it('falls back to the release vocabulary for an unknown status', () => {
+    expect(proposalPillClass('cancelled_by_operator')).toBe('pill--cancelled');
+    expect(proposalPillClass('whatever')).toBe('pill--pending');
   });
 });
