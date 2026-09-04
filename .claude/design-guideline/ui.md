@@ -565,6 +565,11 @@ Rules:
   that rotates to point down while the group is open and darkens on row
   hover — with the whole row as the click target (Grouped table rows
   keyboard/role contract).
+- Pull-request states are `.pr-chip` chips (`--merged` green, `--rejected`
+  red, `--open` indigo, anything else the grey base), prefixed by their
+  service via `.pr-chip-labeled` (11px muted `__service` + chip, never split
+  across lines) and laid out in one wrapping `.remediation-prs` row — a
+  proposal split across many services stays one compact cell.
 - Status pills for remediation attempts come from `proposalPillClass`
   (`release-helpers.ts`), not `releasePillClass`: `proposed` → succeeded,
   `verifying` → running, `generating` → pending, `failed`/`escalated` →

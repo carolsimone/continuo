@@ -560,10 +560,31 @@ describe('RemediationPanel — pull requests split across owning services', () =
 
     const mergedChip = await screen.findByText('merged');
     expect(mergedChip).toHaveClass('pr-chip', 'pr-chip--merged');
-    expect(mergedChip.closest('.pr-chip-labeled')).toHaveTextContent('merged (core)');
+    expect(mergedChip.closest('.pr-chip-labeled')).toHaveTextContent('core merged');
 
     const rejectedChip = screen.getByText('rejected');
-    expect(rejectedChip.closest('.pr-chip-labeled')).toHaveTextContent('rejected (finance)');
+    expect(rejectedChip.closest('.pr-chip-labeled')).toHaveTextContent('finance rejected');
+
+    // Both labelled chips share one wrapping row in the PR cell, so a
+    // proposal split across many services stays one compact cell.
+    const row = mergedChip.closest('.remediation-prs')!;
+    expect(row).not.toBeNull();
+    expect(rejectedChip.closest('.remediation-prs')).toBe(row);
+    expect(row.querySelectorAll('.pr-chip-labeled')).toHaveLength(2);
+  });
+
+  it.each([
+    ['open',    'pr-chip--open'],
+    ['opening', 'pr-chip--opening'],
+    ['failed',  'pr-chip--failed'],
+  ])('renders a non-terminal %s pull-request state as a chip too, so the PR column reads uniformly', async (pr_state, cls) => {
+    const proposal = makeProposal({ status: 'skipped', pr_state, pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
+    mockFetchProposals.mockResolvedValue([proposal]);
+    renderPanel();
+    const chip = await screen.findByText(pr_state);
+    expect(chip).toHaveClass('pr-chip', cls);
+    // A legacy (unsplit) proposal's chip carries no service prefix.
+    expect(chip.closest('.pr-chip-labeled')).toBeNull();
   });
 
   it('stays actionable (auto-expanded) while one service still needs a PR', async () => {

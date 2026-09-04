@@ -1284,12 +1284,12 @@ a.release-author:hover { text-decoration: underline; }
 .nodes-table tbody tr.remediation-group--open,
 .nodes-table tbody tr.remediation-group--open.nodes-row--static:hover { background: #f8fafc; }
 .nodes-table tbody tr.remediation-group--open:hover { background: #f1f5f9; }
-/* Short columns stay on one line; the node and service lists take the
-   remaining width and wrap between ids (never inside one), so the table
-   has no dead space to give away. */
+/* Short columns (including the service list, which is a few short names)
+   stay on one line; the node list and the PR chips take the remaining
+   width and wrap between items (never inside one), so the table has no
+   dead space to give away. */
 .remediation-table thead th,
 .remediation-table tbody td { white-space: nowrap; }
-.remediation-table tbody td.remediation-group__services,
 .remediation-table tbody td.remediation-group__nodes,
 .remediation-table tbody td.remediation-group__prs { white-space: normal; }
 /* Same count-pill treatment as .section-header__count / .tabs__count. */
@@ -1366,12 +1366,16 @@ a.release-author:hover { text-decoration: underline; }
   margin-right: 4px;
 }
 
+/* Pull-request state chip. The base is the neutral (grey) look every
+   state gets; merged, rejected and open override it. */
 .pr-chip {
   display: inline-block;
   padding: 0.05rem 0.5rem;
   border-radius: 999px;
   font-size: 0.85em;
   font-weight: 600;
+  background: #f1f5f9;
+  color: #64748b;
 }
 .pr-chip--merged {
   background: #dcfce7;
@@ -1381,6 +1385,14 @@ a.release-author:hover { text-decoration: underline; }
   background: #fee2e2;
   color: #dc2626;
 }
-/* A chip and the service it is labeled with stay on one line; several
-   labeled chips may still wrap between each other. */
-.pr-chip-labeled { white-space: nowrap; }
+.pr-chip--open {
+  background: #eef2ff;
+  color: #4338ca;
+}
+/* A chip prefixed by the service it belongs to, in small muted type so the
+   chip stays the emphasis; the pair never splits across lines. */
+.pr-chip-labeled { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.pr-chip-labeled__service { font-size: 11px; color: #64748b; }
+/* One wrapping row for a status pill and/or several labeled chips, so a
+   proposal split across many services stays one compact cell. */
+.remediation-prs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }

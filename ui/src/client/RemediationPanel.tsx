@@ -118,32 +118,35 @@ function hasVerificationRuns(p: ProposalDTO): boolean {
   return (p.verifications?.length ?? 0) > 0 || Boolean(p.verification_run_id);
 }
 
-// prStateBadge renders terminal PR outcomes as colored chips; non-terminal
-// pr_state values stay plain text.
+// prStateBadge renders a pull request's state as a chip: merged green,
+// rejected red, open (awaiting review) indigo, opening and failed grey — so
+// the PR column reads uniformly whatever state each request is in.
 function prStateBadge(prState: string) {
-  if (prState === 'merged' || prState === 'rejected') {
-    return <span className={`pr-chip pr-chip--${prState}`}>{prState}</span>;
-  }
-  return <>{prState}</>;
+  return <span className={`pr-chip pr-chip--${prState}`}>{prState}</span>;
 }
 
-// prStateBadgeLabeled renders one pull request's state chip, labeled with
-// its owning service when the proposal is split across several — the
-// legacy (service '') group keeps the unlabeled chip, unwrapped so its own
-// text content is still just the bare state word.
+// prStateBadgeLabeled renders one pull request's state chip, prefixed by
+// its owning service in small muted type when the proposal is split across
+// several — the legacy (service '') group keeps the bare chip, unwrapped so
+// its own text content is still just the state word.
 function prStateBadgeLabeled(pr: PullRequestDTO) {
   const badge = prStateBadge(pr.pr_state);
   if (!pr.service) return badge;
-  return <span className="pr-chip-labeled">{badge} ({pr.service})</span>;
+  return (
+    <span className="pr-chip-labeled">
+      <span className="pr-chip-labeled__service">{pr.service}</span> {badge}
+    </span>
+  );
 }
 
 // prStateChips renders every recorded per-service pull-request state for one
-// proposal, each preceded by a separator so it reads after the status pill.
+// proposal as a run of chips, laid out by the .remediation-prs row they
+// sit in.
 function prStateChips(proposal: ProposalDTO) {
   return proposalPullRequests(proposal)
     .filter((pr) => pr.pr_state)
     .map((pr) => (
-      <Fragment key={pr.service || 'legacy'}> · {prStateBadgeLabeled(pr)}</Fragment>
+      <Fragment key={pr.service || 'legacy'}> {prStateBadgeLabeled(pr)}</Fragment>
     ));
 }
 
@@ -311,7 +314,7 @@ function AttemptRows({
                 <td className="nodes-attempt">#{p.attempt}</td>
                 <td>{p.confidence}</td>
                 <td className="nodes-reason">{sourceLabel(p.source_resolved)}</td>
-                <td><StatusPill status={p.status} />{prStateChips(p)}</td>
+                <td><div className="remediation-prs"><StatusPill status={p.status} />{prStateChips(p)}</div></td>
               </tr>
 
               {showRuns && (
@@ -491,11 +494,7 @@ export default function RemediationPanel() {
                     <td><span className="remediation-group__count">{g.attempts.length}</span></td>
                     <td className="remediation-group__prs">
                       {g.latestPrProposal
-                        ? proposalPullRequests(g.latestPrProposal)
-                            .filter((pr) => pr.pr_state)
-                            .map((pr) => (
-                              <Fragment key={pr.service || 'legacy'}>{prStateBadgeLabeled(pr)} </Fragment>
-                            ))
+                        ? <div className="remediation-prs">{prStateChips(g.latestPrProposal)}</div>
                         : <span className="nodes-dash">—</span>}
                     </td>
                   </tr>
