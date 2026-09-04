@@ -135,6 +135,24 @@ describe('RemediationPanel — group list', () => {
     expect(screen.getByText('core, finance')).toBeInTheDocument();
   });
 
+  it('derives the Services column from the nodes an unsplit attempt resolves', async () => {
+    // No pr_services: a legacy or single-service attempt. The services still
+    // come from the resolved node ids — the first dotted segment of a
+    // "{service}.{schema}.{table}" id, or the whole id for a compile-stage
+    // node, which is the bare service name.
+    const proposal = makeProposal({
+      status: 'skipped',
+      node_id: 'analytics.public.orders',
+      resolved_node_ids: ['analytics.public.orders', 'analytics.public.customers', 'billing'],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+
+    await waitFor(() => screen.getByText('analytics.public.customers, analytics.public.orders, billing'));
+    expect(screen.getByText('analytics, billing')).toBeInTheDocument();
+  });
+
   it('shows the neutral info-strip when there are no proposals', async () => {
     mockFetchProposals.mockResolvedValue([]);
     renderPanel();
@@ -157,12 +175,83 @@ describe('RemediationPanel — group list', () => {
     expect(chip).toHaveClass('pr-chip', 'pr-chip--rejected');
   });
 
-  it('reads a verifying group as "Verifying fix…" in the Latest status column, without expanding', async () => {
+  it('reads a verifying group as an in-progress pill in the Latest status column, without expanding', async () => {
     mockFetchProposals.mockResolvedValue([makeProposal({ status: 'verifying' })]);
     renderPanel();
-    const chip = await screen.findByText(/Verifying fix/);
-    expect(chip).toHaveAttribute('aria-busy', 'true');
-    expect(screen.queryByText('verifying')).toBeNull();
+    const pill = await screen.findByText('verifying');
+    expect(pill).toHaveClass('pill-sm', 'pill-sm--running');
+    expect(pill).toHaveAttribute('aria-busy', 'true');
+  });
+});
+
+describe('RemediationPanel — status pills', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
+  });
+
+  it.each([
+    ['proposed',   'pill-sm--succeeded'],
+    ['failed',     'pill-sm--failed'],
+    ['escalated',  'pill-sm--failed'],
+    ['skipped',    'pill-sm--skipped'],
+    ['generating', 'pill-sm--pending'],
+  ])('renders the %s status as a %s pill in the Latest status column', async (status, cls) => {
+    // source_resolved=false keeps a 'proposed' attempt from auto-expanding,
+    // so the only status text on screen is the group row's.
+    mockFetchProposals.mockResolvedValue([makeProposal({ status, source_resolved: false })]);
+    renderPanel();
+    const pill = await screen.findByText(status);
+    expect(pill).toHaveClass('pill-sm', cls);
+  });
+
+  it('renders the attempt row status as the same pill once the group is open', async () => {
+    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'failed' })]);
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+
+    const pills = screen.getAllByText('failed');
+    expect(pills).toHaveLength(2); // group row + attempt row
+    for (const pill of pills) expect(pill).toHaveClass('pill-sm', 'pill-sm--failed');
+  });
+});
+
+describe('RemediationPanel — attempts are nested inside their group', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
+  });
+
+  it('renders the attempt rows and their column labels inside the group\'s contained block, not as a peer table', async () => {
+    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'skipped' })]);
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+
+    // The attempt row and the inner column labels both live inside the
+    // .remediation-attempts block hosted by the group's expansion row…
+    const block = screen.getByText('high').closest('.remediation-attempts');
+    expect(block).not.toBeNull();
+    expect(screen.getByText('Confidence').closest('.remediation-attempts')).toBe(block);
+    expect(block!.closest('tr')).toHaveClass('remediation-group__body');
+    // …while the outer header is not inside any such block.
+    expect(screen.getByText('Latest status').closest('.remediation-attempts')).toBeNull();
+  });
+
+  it('reads the source column as resolved / unresolved rather than yes / no', async () => {
+    mockFetchProposals.mockResolvedValue([
+      makeProposal({ id: 'a', status: 'skipped', source_resolved: true, attempt: 1 }),
+      makeProposal({ id: 'b', status: 'skipped', source_resolved: false, attempt: 2, created_at: '2026-06-24T11:00:00Z' }),
+    ]);
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+
+    expect(screen.getByText('resolved')).toBeInTheDocument();
+    expect(screen.getByText('unresolved')).toBeInTheDocument();
+    expect(screen.queryByText('yes')).toBeNull();
+    expect(screen.queryByText('no')).toBeNull();
   });
 });
 
@@ -390,8 +479,11 @@ describe('RemediationPanel — verification runs on an attempt', () => {
     expect(screen.getAllByRole('link', { name: /open run →/ })[0]).toHaveAttribute('href', '/verifications/verify-rel-1-core-a1');
     // A queued run with no activation time omits the "since" clause.
     expect(screen.getByText(/ops · python · Queued for verification$/)).toBeInTheDocument();
-    expect(screen.getByText(/ops · python · Queued for verification/).closest('.detail-card__row')!
+    expect(screen.getByText(/ops · python · Queued for verification/).closest('.remediation-verif__run')!
       .querySelector('a')).toHaveAttribute('href', '/verifications/verify-rel-1-ops-a1');
+    // Both runs sit in the attempt's verification sub-row, inside the group's block.
+    expect(screen.getByText(/core · dbt · Verifying fix/).closest('.remediation-verif')).not.toBeNull();
+    expect(screen.getByText(/core · dbt · Verifying fix/).closest('.remediation-attempts')).not.toBeNull();
   });
 
   it('falls back to the single verification_run_id link when verifications is empty', async () => {
@@ -402,7 +494,9 @@ describe('RemediationPanel — verification runs on an attempt', () => {
     await waitFor(() => screen.getByText('svc.schema.my_model'));
     expandGroupByNodes('svc.schema.my_model');
 
-    const link = await screen.findByRole('link', { name: /verify-rel-abc-a1/ });
+    const line = await screen.findByText('verification run verify-rel-abc-a1');
+    const link = line.closest('.remediation-verif__run')!.querySelector('a');
+    expect(link).toHaveTextContent('open run →');
     expect(link).toHaveAttribute('href', '/verifications/verify-rel-abc-a1');
   });
 

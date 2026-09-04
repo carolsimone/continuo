@@ -4,7 +4,7 @@ import { ProposalDTO, PullRequestDTO } from './types';
 import { fetchProposals, fetchNodeServices } from './remediation-api';
 import type { CreatePullRequestResponse } from './remediation-api';
 import {
-  proposalNodeIds, proposalPrServices, proposalPullRequests,
+  proposalNodeIds, proposalPrServices, proposalPullRequests, proposalPillClass,
   effectiveRound, groupProposals, ProposalGroup,
 } from './release-helpers';
 import { useCurrentUser } from './auth/AuthContext';
@@ -45,8 +45,10 @@ function DiffView({ uri }: { uri: string }) {
   );
 }
 
+// sourceLabel says whether the attempt found the real source file it needed
+// to change: only a resolved source can become a pull request.
 function sourceLabel(resolved: boolean): string {
-  return resolved ? 'yes' : 'no';
+  return resolved ? 'resolved' : 'unresolved';
 }
 
 // verificationPhaseLabel is the wording for one run's recorded phase. The
@@ -63,52 +65,57 @@ function verificationPhaseLabel(phase: string): string {
   }
 }
 
-// verificationLines renders one attempt's verification runs — one per edited
-// service — as "<service> · <kind> · <phase> · since <activated_at> · open
-// run →", each linking to that run's page. A legacy attempt with only the
-// singular verification_run_id shows the one link; an attempt judged without a
-// run shows nothing.
-function verificationLines(proposal: ProposalDTO) {
-  if (proposal.verifications && proposal.verifications.length > 0) {
-    return proposal.verifications.map((v) => (
-      <div className="detail-card__row" key={v.run_id || v.service}>
-        <span className="nodes-reason">
-          {v.service} · {v.kind} · {verificationPhaseLabel(v.phase)}
-          {v.activated_at ? ` · since ${v.activated_at}` : ''}
-        </span>{' '}
-        <Link to={`/verifications/${v.run_id}`} className="btn btn--secondary">
-          open run →
-        </Link>
-      </div>
-    ));
-  }
-  if (proposal.verification_run_id) {
-    return (
-      <div className="detail-card__row">
-        <Link to={`/verifications/${proposal.verification_run_id}`} className="btn btn--secondary">
-          verification run {proposal.verification_run_id} →
-        </Link>
-      </div>
-    );
-  }
-  return null;
+// StatusPill renders an attempt's lifecycle status in the same small pill the
+// Releases list uses for a release status, coloured by proposalPillClass so
+// the two surfaces share one vocabulary. A status still in flight (a fix
+// being generated or verified) is marked busy for assistive tech.
+function StatusPill({ status }: { status: string }) {
+  const busy = status === 'verifying' || status === 'generating';
+  return (
+    <span
+      className={`pill-sm ${proposalPillClass(status).replace('pill--', 'pill-sm--')}`}
+      aria-busy={busy ? 'true' : undefined}
+    >
+      {status}
+    </span>
+  );
 }
 
-// statusChip renders a proposal's status. 'verifying' is the one status whose
-// raw word does not say what is happening — the fix is written and a
-// verification run is putting it through the full validation pipeline to
-// decide whether it holds — so it reads as that wait, in the same
-// non-actionable busy chip the release page shows for an in-flight fix.
-// Every other status is already a plain statement of where the attempt ended.
-function statusChip(status: string) {
-  if (status === 'verifying') {
-    return (
-      <span className="btn btn--secondary is-disabled" aria-disabled="true" aria-busy="true">
-        Verifying fix…
-      </span>
-    );
-  }
-  return <>{status}</>;
+// VerificationRuns lists one attempt's verification runs — one per edited
+// service — as compact labelled lines, "<service> · <kind> · <phase> · since
+// <activated_at>", each linking to that run's page. A legacy attempt with
+// only the singular verification_run_id shows the one link; an attempt
+// judged without a run renders nothing.
+function VerificationRuns({ proposal }: { proposal: ProposalDTO }) {
+  const runs = proposal.verifications && proposal.verifications.length > 0
+    ? proposal.verifications.map((v) => ({
+        key: v.run_id || v.service,
+        runId: v.run_id,
+        text: `${v.service} · ${v.kind} · ${verificationPhaseLabel(v.phase)}${v.activated_at ? ` · since ${v.activated_at}` : ''}`,
+      }))
+    : proposal.verification_run_id
+      ? [{ key: proposal.verification_run_id, runId: proposal.verification_run_id, text: `verification run ${proposal.verification_run_id}` }]
+      : [];
+  if (runs.length === 0) return null;
+  return (
+    <div className="remediation-verif__runs">
+      <span className="remediation-verif__label">verification</span>
+      {runs.map((run) => (
+        <div className="remediation-verif__run" key={run.key}>
+          <span>{run.text}</span>
+          <Link to={`/verifications/${run.runId}`} className="btn btn--secondary">
+            open run →
+          </Link>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// hasVerificationRuns mirrors VerificationRuns' empty case so the row that
+// hosts it is only rendered when there is something to show.
+function hasVerificationRuns(p: ProposalDTO): boolean {
+  return (p.verifications?.length ?? 0) > 0 || Boolean(p.verification_run_id);
 }
 
 // prStateBadge renders terminal PR outcomes as colored chips; non-terminal
@@ -122,8 +129,8 @@ function prStateBadge(prState: string) {
 
 // prStateBadgeLabeled renders one pull request's state chip, labeled with
 // its owning service when the proposal is split across several — the
-// legacy (service '') group keeps today's unlabeled chip exactly as before,
-// unwrapped so its own text content is still just the bare state word.
+// legacy (service '') group keeps the unlabeled chip, unwrapped so its own
+// text content is still just the bare state word.
 function prStateBadgeLabeled(pr: PullRequestDTO) {
   const badge = prStateBadge(pr.pr_state);
   if (!pr.service) return badge;
@@ -131,7 +138,7 @@ function prStateBadgeLabeled(pr: PullRequestDTO) {
 }
 
 // prStateChips renders every recorded per-service pull-request state for one
-// proposal, each preceded by a separator so it reads after the status word.
+// proposal, each preceded by a separator so it reads after the status pill.
 function prStateChips(proposal: ProposalDTO) {
   return proposalPullRequests(proposal)
     .filter((pr) => pr.pr_state)
@@ -241,10 +248,13 @@ function ProposalDetailCard({
   );
 }
 
-// AttemptRows renders one group's remediation attempts, newest first: each a
-// compact row (attempt · confidence · source · status), its verification runs
-// listed beneath, and — for the actionable attempt (auto) or a manually
-// selected one — its full detail card with diffs and Create PR.
+// AttemptRows renders one group's remediation attempts, newest first, inside
+// the group's contained block: each a compact row (attempt · confidence ·
+// source · status pill), its verification runs as a labelled sub-row
+// beneath, and — for the actionable attempt (auto) or a manually selected
+// one — its full detail card with diffs and Create PR. The column labels
+// are a muted sub-label of the block, not a peer of the group table's
+// header.
 function AttemptRows({
   group,
   isOperator,
@@ -261,7 +271,7 @@ function AttemptRows({
   detailRef: (el: HTMLTableRowElement | null) => void;
 }) {
   return (
-    <table className="nodes-table remediation-attempts">
+    <table className="nodes-table remediation-attempts__table">
       <thead>
         <tr>
           <th>Attempt</th>
@@ -275,12 +285,12 @@ function AttemptRows({
           const autoExpanded = isActionable(p);
           const isSelected = !autoExpanded && selectedId === p.id;
           const showCard = autoExpanded || isSelected;
-          const verifs = verificationLines(p);
+          const showRuns = hasVerificationRuns(p);
           const toggle = () => onToggleAttempt(p);
           const compactRowClass = [
             autoExpanded ? 'nodes-row--static' : '',
             isSelected ? 'nodes-row--selected' : '',
-            showCard || verifs ? 'nodes-row--no-border' : '',
+            showCard || showRuns ? 'nodes-row--no-border' : '',
           ].filter(Boolean).join(' ');
 
           return (
@@ -298,15 +308,15 @@ function AttemptRows({
                   }
                 }}
               >
-                <td>{p.attempt}</td>
+                <td className="nodes-attempt">#{p.attempt}</td>
                 <td>{p.confidence}</td>
-                <td>{sourceLabel(p.source_resolved)}</td>
-                <td>{statusChip(p.status)}{prStateChips(p)}</td>
+                <td className="nodes-reason">{sourceLabel(p.source_resolved)}</td>
+                <td><StatusPill status={p.status} />{prStateChips(p)}</td>
               </tr>
 
-              {verifs && (
-                <tr className={showCard ? 'nodes-row--static nodes-row--no-border' : 'nodes-row--static'}>
-                  <td colSpan={4}>{verifs}</td>
+              {showRuns && (
+                <tr className={`remediation-verif nodes-row--static${showCard ? ' nodes-row--no-border' : ''}`}>
+                  <td colSpan={4}><VerificationRuns proposal={p} /></td>
                 </tr>
               )}
 
@@ -429,7 +439,7 @@ export default function RemediationPanel() {
       )}
 
       {groups.length > 0 && (
-        <table className="nodes-table">
+        <table className="nodes-table remediation-table">
           <thead>
             <tr>
               <th aria-hidden="true"></th>
@@ -448,8 +458,9 @@ export default function RemediationPanel() {
               const isOpen = autoExpanded || openGroups.has(g.key);
               const toggle = () => toggleGroup(g.key);
               const rowClass = [
+                'remediation-group',
                 autoExpanded ? 'nodes-row--static' : '',
-                isOpen ? 'nodes-row--no-border' : '',
+                isOpen ? 'remediation-group--open nodes-row--no-border' : '',
               ].filter(Boolean).join(' ');
 
               return (
@@ -467,34 +478,40 @@ export default function RemediationPanel() {
                       }
                     }}
                   >
-                    <td aria-hidden="true">{isOpen ? '▾' : '▸'}</td>
-                    <td>{g.releaseId}</td>
+                    <td className="remediation-group__toggle" aria-hidden="true">
+                      <span className={`remediation-chevron${isOpen ? ' remediation-chevron--open' : ''}`}>▸</span>
+                    </td>
+                    <td className="nodes-node-name">{g.releaseId}</td>
                     <td>{g.round}</td>
-                    <td>{g.services.length > 0 ? g.services.join(', ') : '—'}</td>
-                    <td>{g.nodeIds.join(', ')}</td>
-                    <td>{statusChip(g.latest.status)}</td>
-                    <td>{g.attempts.length}</td>
-                    <td>
+                    <td className="remediation-group__services">
+                      {g.services.length > 0 ? g.services.join(', ') : <span className="nodes-dash">—</span>}
+                    </td>
+                    <td className="remediation-group__nodes">{g.nodeIds.join(', ')}</td>
+                    <td><StatusPill status={g.latest.status} /></td>
+                    <td><span className="remediation-group__count">{g.attempts.length}</span></td>
+                    <td className="remediation-group__prs">
                       {g.latestPrProposal
                         ? proposalPullRequests(g.latestPrProposal)
                             .filter((pr) => pr.pr_state)
                             .map((pr) => (
                               <Fragment key={pr.service || 'legacy'}>{prStateBadgeLabeled(pr)} </Fragment>
                             ))
-                        : '—'}
+                        : <span className="nodes-dash">—</span>}
                     </td>
                   </tr>
                   {isOpen && (
-                    <tr className="nodes-row--static">
+                    <tr className="remediation-group__body nodes-row--static">
                       <td colSpan={8}>
-                        <AttemptRows
-                          group={g}
-                          isOperator={currentUser?.role === 'operator'}
-                          selectedId={selected?.id ?? null}
-                          onToggleAttempt={toggleAttempt}
-                          onCreatePr={(p) => setCreatePrProposalId(p.id)}
-                          detailRef={(el) => { detailRef.current = el; }}
-                        />
+                        <div className="remediation-attempts">
+                          <AttemptRows
+                            group={g}
+                            isOperator={currentUser?.role === 'operator'}
+                            selectedId={selected?.id ?? null}
+                            onToggleAttempt={toggleAttempt}
+                            onCreatePr={(p) => setCreatePrProposalId(p.id)}
+                            detailRef={(el) => { detailRef.current = el; }}
+                          />
+                        </div>
                       </td>
                     </tr>
                   )}

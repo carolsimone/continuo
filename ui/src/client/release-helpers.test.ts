@@ -3,7 +3,7 @@ import {
   groupByStage, stageLabel, reasonLabel, proposalKey,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
   releasePillClass, verificationPhase, verificationRunPhase, verificationRunIds,
-  effectiveRound, groupProposals,
+  effectiveRound, groupProposals, proposalPillClass,
 } from './release-helpers';
 import { NodeValidationResult } from './types';
 import type { ProposalDTO } from './types';
@@ -196,17 +196,30 @@ describe('groupProposals', () => {
     expect(groups[0].latest.id).toBe('a2');
   });
 
-  it('unions pr_services across attempts, dropping the legacy empty sentinel', () => {
+  it('names the service of every node an attempt resolves, sorted and de-duplicated', () => {
     const groups = groupProposals([
-      mk({ id: 'a', pr_services: ['billing'] }),
-      mk({ id: 'b', pr_services: ['ledger', 'billing'] }),
+      mk({ id: 'a', node_id: 'ledger.public.balances', resolved_node_ids: ['ledger.public.balances', 'analytics.public.orders'] }),
+      mk({ id: 'b', node_id: 'analytics.public.customers', resolved_node_ids: ['analytics.public.customers'] }),
     ]);
-    expect(groups[0].services).toEqual(['billing', 'ledger']);
+    expect(groups[0].services).toEqual(['analytics', 'ledger']);
   });
 
-  it('yields no services for a group whose attempts are all legacy (unsplit)', () => {
-    const groups = groupProposals([mk({ id: 'a', pr_services: [''] }), mk({ id: 'b' })]);
-    expect(groups[0].services).toEqual([]);
+  it('reads a compile-stage node id (a bare service name) as that service', () => {
+    const groups = groupProposals([mk({ id: 'a', node_id: 'billing', resolved_node_ids: ['billing'] })]);
+    expect(groups[0].services).toEqual(['billing']);
+  });
+
+  it('adds the pr_services an attempt edited, dropping the legacy empty sentinel', () => {
+    const groups = groupProposals([
+      mk({ id: 'a', node_id: 'analytics.public.orders', pr_services: ['shared', 'analytics'] }),
+      mk({ id: 'b', node_id: 'analytics.public.orders', pr_services: [''] }),
+    ]);
+    expect(groups[0].services).toEqual(['analytics', 'shared']);
+  });
+
+  it('still names a service for a legacy (unsplit, single-node) attempt', () => {
+    const groups = groupProposals([mk({ id: 'a', node_id: 'core.public.t', pr_services: [''] })]);
+    expect(groups[0].services).toEqual(['core']);
   });
 
   it('unions resolved node ids across attempts, sorted', () => {
@@ -228,5 +241,23 @@ describe('groupProposals', () => {
   it('sets latestPrProposal to null when no attempt has a pull request', () => {
     const groups = groupProposals([mk({ id: 'a' }), mk({ id: 'b' })]);
     expect(groups[0].latestPrProposal).toBeNull();
+  });
+});
+
+describe('proposalPillClass', () => {
+  it.each([
+    ['proposed',   'pill--succeeded'],
+    ['verifying',  'pill--running'],
+    ['generating', 'pill--pending'],
+    ['failed',     'pill--failed'],
+    ['escalated',  'pill--failed'],
+    ['skipped',    'pill--skipped'],
+  ])('maps the %s attempt status to %s', (status, cls) => {
+    expect(proposalPillClass(status)).toBe(cls);
+  });
+
+  it('falls back to the release vocabulary for an unknown status', () => {
+    expect(proposalPillClass('cancelled_by_operator')).toBe('pill--cancelled');
+    expect(proposalPillClass('whatever')).toBe('pill--pending');
   });
 });

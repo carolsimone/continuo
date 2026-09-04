@@ -517,6 +517,60 @@ Rules:
   accent dot, service name, count pill (`.dag-service-vertex-*`), with the
   vertex fill/border painted by rolled-up status.
 
+### Nested attempt rows
+
+When a group row expands into rows that are its *children* — the
+remediation attempts of one (release, round) — the children render inside
+one contained block hosted by the group's expansion row, never as a second
+full-width table whose header competes with the group table's:
+
+```jsx
+<tr className="remediation-group remediation-group--open nodes-row--no-border" role="button" aria-expanded>
+  <td className="remediation-group__toggle" aria-hidden="true">
+    <span className="remediation-chevron remediation-chevron--open">▸</span>
+  </td>
+  <td className="nodes-node-name">rel-…</td>
+  {/* … round · services · nodes · <StatusPill/> · count · PR chips */}
+</tr>
+<tr className="remediation-group__body nodes-row--static">
+  <td colSpan={8}>
+    <div className="remediation-attempts">
+      <table className="nodes-table remediation-attempts__table">…</table>
+    </div>
+  </td>
+</tr>
+```
+
+```css
+.remediation-attempts { background: #f8fafc; border-left: 3px solid #c7d2fe;
+                        border-radius: 0 8px 8px 0; padding: 2px 4px 6px; }
+.remediation-attempts__table thead th { position: static; background: transparent;
+                                        font-size: 10px; color: #a8b3c2; }
+```
+
+Rules:
+
+- The expansion row's cell indents the block under the release id (34px),
+  the block is tinted and carries a 3px left accent rail, and an open group
+  row is tinted the same and drops its divider — so the block reads as the
+  group row's continuation.
+- The inner column labels are a **muted sub-label** of the block (10px,
+  lighter than `.nodes-table thead th`, never sticky, no background), not a
+  peer header. Inner rows keep the table row contract (hover, selected,
+  static) and use `.pill-sm` for status.
+- Per-item detail lines under a row (a verification run, say) are a
+  `.remediation-verif` sub-row: a 10px uppercase label followed by compact
+  12px lines, each with its `.btn--secondary` link-out.
+- The expander is `.remediation-chevron` in the first cell — a 14px chevron
+  that rotates to point down while the group is open and darkens on row
+  hover — with the whole row as the click target (Grouped table rows
+  keyboard/role contract).
+- Status pills for remediation attempts come from `proposalPillClass`
+  (`release-helpers.ts`), not `releasePillClass`: `proposed` → succeeded,
+  `verifying` → running, `generating` → pending, `failed`/`escalated` →
+  failed, `skipped` → skipped. Do not map a new lifecycle vocabulary through
+  the release fallback and let everything land on grey.
+
 ### Inline actionable rows
 
 A row whose item still needs a human decision renders its `.detail-card`
