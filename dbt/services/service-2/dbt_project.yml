@@ -23,6 +23,14 @@ models:
       +tags: ["e2e-schedule-failure"]
     xprobe_down:
       +tags: ["xprobe"]
+    # xbreak_down is the downstream half of a DELIBERATELY-BROKEN cross-service
+    # pair: it reads the amount_eur column of service-3's xbreak_up by raw
+    # schema-qualified name, but the current xbreak_up no longer produces that
+    # column. Valid SQL that compiles; the break surfaces only at validation, as
+    # `column "amount_eur" does not exist`. Its own tag keeps it off every shared
+    # schedule so only the column-break e2e test builds it.
+    xbreak_down:
+      +tags: ["xbreak"]
     # The batched-remediation fixtures. A model with no tags is dropped by
     # topology-controller (an untagged model has no schedule, and only seeds
     # have a default one), so it never reaches a candidate topology and no
