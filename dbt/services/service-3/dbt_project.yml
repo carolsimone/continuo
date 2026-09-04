@@ -29,3 +29,9 @@ models:
       +tags: ["e2e-schedule-failure"]
     xprobe_up:
       +tags: ["xprobe"]
+    # xbreak_up is the upstream half of a DELIBERATELY-BROKEN cross-service pair
+    # (see xbreak_down in service-2). It produces only `id`: the amount_eur column
+    # a downstream service still reads has been dropped upstream. Its own tag keeps
+    # it off every shared schedule so only the column-break e2e test builds it.
+    xbreak_up:
+      +tags: ["xbreak"]
