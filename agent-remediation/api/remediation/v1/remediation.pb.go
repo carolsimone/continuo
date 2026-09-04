@@ -88,7 +88,11 @@ type Proposal struct {
 	PullRequests []*PullRequest `protobuf:"bytes,33,rep,name=pull_requests,json=pullRequests,proto3" json:"pull_requests,omitempty"`
 	// pr_services is the sorted owning-service groups this proposal's pull
 	// requests split into; [""] for a legacy (unsplit) proposal.
-	PrServices    []string `protobuf:"bytes,34,rep,name=pr_services,json=prServices,proto3" json:"pr_services,omitempty"`
+	PrServices []string `protobuf:"bytes,34,rep,name=pr_services,json=prServices,proto3" json:"pr_services,omitempty"`
+	// services is every service this attempt touched — the failing nodes'
+	// services plus the edited ones, sorted — the same set the
+	// ListProposalsRequest.service filter matches a proposal on.
+	Services      []string `protobuf:"bytes,35,rep,name=services,proto3" json:"services,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -357,6 +361,13 @@ func (x *Proposal) GetPullRequests() []*PullRequest {
 func (x *Proposal) GetPrServices() []string {
 	if x != nil {
 		return x.PrServices
+	}
+	return nil
+}
+
+func (x *Proposal) GetServices() []string {
+	if x != nil {
+		return x.Services
 	}
 	return nil
 }
@@ -1335,7 +1346,7 @@ var File_proto_remediation_v1_remediation_proto protoreflect.FileDescriptor
 
 const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\n" +
-	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xc5\n" +
+	"&proto/remediation/v1/remediation.proto\x12\x0eremediation.v1\"\xe1\n" +
 	"\n" +
 	"\bProposal\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
@@ -1381,7 +1392,8 @@ const file_proto_remediation_v1_remediation_proto_rawDesc = "" +
 	"\rverifications\x18  \x03(\v2\x1c.remediation.v1.VerificationR\rverifications\x12@\n" +
 	"\rpull_requests\x18! \x03(\v2\x1b.remediation.v1.PullRequestR\fpullRequests\x12\x1f\n" +
 	"\vpr_services\x18\" \x03(\tR\n" +
-	"prServices\x1a\\\n" +
+	"prServices\x12\x1a\n" +
+	"\bservices\x18# \x03(\tR\bservices\x1a\\\n" +
 	"\x11NodeOutcomesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
 	"\x05value\x18\x02 \x01(\v2\x1b.remediation.v1.NodeOutcomeR\x05value:\x028\x01\"\x98\x01\n" +

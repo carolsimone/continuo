@@ -1,5 +1,4 @@
 import { NodeValidationResult, ProposalDTO, PullRequestDTO } from './types';
-import { serviceOfNode } from './service-helpers';
 
 // releasePillClass maps a status to a design-system pill variant. It handles
 // release lifecycle statuses (promoted/rejected/validating/…), verification-run
@@ -222,21 +221,19 @@ export interface ProposalGroup {
   latestPrProposal: ProposalDTO | null;
 }
 
-// proposalServices lists the services one attempt touched: the service of
-// every failing node it resolves (a node id is "{service}.{schema}.{table}";
-// a compile-stage node id is the bare service name, so the service is the
-// first dotted segment either way) plus every owning service its pull
-// requests split into. This is the same set the server's `service` list
-// filter matches a proposal on, so the Services column and the filter agree.
-// The legacy '' pr_services sentinel is dropped.
+// proposalServices lists the services one attempt touched, as recorded by
+// agent-remediation on the proposal itself: the failing nodes' services plus
+// the edited ones — the same set the server's `service` list filter matches
+// a proposal on, so the Services column and the filter agree. A remediation
+// node id is "<schema>.<table>" and names no service, so nothing is ever
+// parsed out of resolved_node_ids. A proposal served by an agent-remediation
+// that predates the field carries no services; the owning services its pull
+// requests split into (the legacy '' sentinel dropped) are the nearest thing
+// it does carry, and a legacy proposal with neither yields none.
 export function proposalServices(p: ProposalDTO): string[] {
-  const set = new Set<string>();
-  for (const n of proposalNodeIds(p)) {
-    const s = serviceOfNode(n);
-    if (s !== '') set.add(s);
-  }
-  for (const s of proposalPrServices(p)) if (s !== '') set.add(s);
-  return Array.from(set).sort();
+  const carried = (p.services ?? []).filter((s) => s !== '');
+  if (carried.length > 0) return Array.from(new Set(carried)).sort();
+  return Array.from(new Set(proposalPrServices(p).filter((s) => s !== ''))).sort();
 }
 
 // groupProposals buckets proposals by (release_id, remediation round), newest

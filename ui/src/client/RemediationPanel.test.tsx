@@ -122,35 +122,37 @@ describe('RemediationPanel — group list', () => {
   it('shows the union of services and nodes for a group', async () => {
     const proposal = makeProposal({
       status: 'skipped',
-      node_id: 'core.a',
-      resolved_node_ids: ['core.a', 'finance.b'],
-      pr_services: ['finance', 'core'],
+      node_id: 'core_schema.a',
+      resolved_node_ids: ['core_schema.a', 'finance_schema.b'],
+      services: ['finance', 'core'],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('core.a, finance.b'));
+    await waitFor(() => screen.getByText('core_schema.a, finance_schema.b'));
     // Services union is sorted.
     expect(screen.getByText('core, finance')).toBeInTheDocument();
   });
 
-  it('derives the Services column from the nodes an unsplit attempt resolves', async () => {
-    // No pr_services: a legacy or single-service attempt. The services still
-    // come from the resolved node ids — the first dotted segment of a
-    // "{service}.{schema}.{table}" id, or the whole id for a compile-stage
-    // node, which is the bare service name.
+  it('reads the Services column from the services the proposal carries, never from its node ids', async () => {
+    // A remediation node id is "<schema>.<table>" — it names no service —
+    // so the column shows the services agent-remediation recorded for the
+    // attempt (the same set the Service filter matches on), and a schema
+    // never leaks into it.
     const proposal = makeProposal({
       status: 'skipped',
-      node_id: 'analytics.public.orders',
-      resolved_node_ids: ['analytics.public.orders', 'analytics.public.customers', 'billing'],
+      node_id: 'e2e_schema.table_a',
+      resolved_node_ids: ['e2e_schema.table_a', 'e2e_schema.table_b'],
+      services: ['service-1'],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('analytics.public.customers, analytics.public.orders, billing'));
-    expect(screen.getByText('analytics, billing')).toBeInTheDocument();
+    await waitFor(() => screen.getByText('e2e_schema.table_a, e2e_schema.table_b'));
+    expect(screen.getByText('service-1')).toBeInTheDocument();
+    expect(screen.queryByText(/e2e_schema(,|$)/)).toBeNull();
   });
 
   it('shows the neutral info-strip when there are no proposals', async () => {

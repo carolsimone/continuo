@@ -354,6 +354,7 @@ func viewToProto(v proposal.View, prServices []string) *remediationv1.Proposal {
 		Verifications:       verificationsToProto(v.Verifications),
 		PullRequests:        pullRequestsToProto(v.PullRequests),
 		PrServices:          prServices,
+		Services:            v.Services,
 	}
 }
 

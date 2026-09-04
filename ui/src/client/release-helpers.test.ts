@@ -163,6 +163,7 @@ describe('groupProposals', () => {
     node_id: o.node_id ?? 'n0',
     resolved_node_ids: o.resolved_node_ids,
     pr_services: o.pr_services,
+    services: o.services,
     pull_requests: o.pull_requests,
     pr_url: o.pr_url ?? '',
     pr_state: o.pr_state ?? '',
@@ -196,30 +197,35 @@ describe('groupProposals', () => {
     expect(groups[0].latest.id).toBe('a2');
   });
 
-  it('names the service of every node an attempt resolves, sorted and de-duplicated', () => {
+  it('unions the services each attempt carries, sorted and de-duplicated', () => {
     const groups = groupProposals([
-      mk({ id: 'a', node_id: 'ledger.public.balances', resolved_node_ids: ['ledger.public.balances', 'analytics.public.orders'] }),
-      mk({ id: 'b', node_id: 'analytics.public.customers', resolved_node_ids: ['analytics.public.customers'] }),
+      mk({ id: 'a', services: ['ledger', 'analytics'] }),
+      mk({ id: 'b', services: ['analytics'] }),
     ]);
     expect(groups[0].services).toEqual(['analytics', 'ledger']);
   });
 
-  it('reads a compile-stage node id (a bare service name) as that service', () => {
-    const groups = groupProposals([mk({ id: 'a', node_id: 'billing', resolved_node_ids: ['billing'] })]);
-    expect(groups[0].services).toEqual(['billing']);
+  it('never parses a service out of a node id — a remediation node id is "<schema>.<table>"', () => {
+    const groups = groupProposals([
+      mk({ id: 'a', node_id: 'e2e_schema.table_a', resolved_node_ids: ['e2e_schema.table_a', 'e2e_schema.table_b'], services: ['service-1'] }),
+    ]);
+    expect(groups[0].services).toEqual(['service-1']);
   });
 
-  it('adds the pr_services an attempt edited, dropping the legacy empty sentinel', () => {
+  it('falls back to the non-empty pr_services of an attempt that carries no services', () => {
+    // A proposal served by an agent-remediation that predates the services
+    // field arrives with it absent; the owning services its pull requests
+    // split into are the nearest thing it does carry.
     const groups = groupProposals([
-      mk({ id: 'a', node_id: 'analytics.public.orders', pr_services: ['shared', 'analytics'] }),
-      mk({ id: 'b', node_id: 'analytics.public.orders', pr_services: [''] }),
+      mk({ id: 'a', pr_services: ['shared', 'analytics'] }),
+      mk({ id: 'b', pr_services: [''] }),
     ]);
     expect(groups[0].services).toEqual(['analytics', 'shared']);
   });
 
-  it('still names a service for a legacy (unsplit, single-node) attempt', () => {
-    const groups = groupProposals([mk({ id: 'a', node_id: 'core.public.t', pr_services: [''] })]);
-    expect(groups[0].services).toEqual(['core']);
+  it('yields no services for a legacy attempt carrying neither services nor split pull requests', () => {
+    const groups = groupProposals([mk({ id: 'a', node_id: 'core_schema.t', pr_services: [''] })]);
+    expect(groups[0].services).toEqual([]);
   });
 
   it('unions resolved node ids across attempts, sorted', () => {

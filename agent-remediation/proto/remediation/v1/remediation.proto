@@ -89,6 +89,10 @@ message Proposal {
   // pr_services is the sorted owning-service groups this proposal's pull
   // requests split into; [""] for a legacy (unsplit) proposal.
   repeated string pr_services = 34;
+  // services is every service this attempt touched — the failing nodes'
+  // services plus the edited ones, sorted — the same set the
+  // ListProposalsRequest.service filter matches a proposal on.
+  repeated string services = 35;
 }
 
 // ListProposalsRequest filters the proposal list. Empty fields are ignored.
