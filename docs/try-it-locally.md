@@ -39,12 +39,18 @@ needs a cloud account.
 **Room to run it.** Continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
 identity provider in this mode, plus ten of its own services, and then runs your
 nodes as Kubernetes Jobs alongside all of that. Give the container runtime
-at least **4 CPUs, 8 GiB of memory and 20 GB of free disk**, and close anything
-else large that is running on it. On colima that is:
+**4 CPUs, 12 GiB of memory and 20 GB of free disk** — 8 GiB is the bare floor,
+and only if nothing else large is running. Close other heavy containers, and a
+second local cluster especially, before you start. On colima that is:
 
 ```bash
-colima start --cpu 4 --memory 8 --disk 60
+colima start --cpu 4 --memory 12 --disk 60
 ```
+
+A memory-starved runtime does not fail with a clear message: the cluster's API
+server stops answering — `kubectl` hangs or returns `net/http: TLS handshake
+timeout` — and the pods sit un-ready for a long time. If you hit that, give the
+runtime more memory (or stop other containers), then reinstall.
 
 **A GitHub account.** You will fork the example projects so that the code
 you release is yours — which matters in chapter 10, where Continuo reads
@@ -79,7 +85,7 @@ kind create cluster --name continuo
 
 # Continuo itself, from the published chart
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.4.0 -n continuo --create-namespace
+  --version 0.4.1 -n continuo --create-namespace
 
 # Wait for everything to come up (5-10 minutes on a first install)
 kubectl -n continuo get pods -w
@@ -785,7 +791,7 @@ Then reinstall with the credentials wired in:
 
 ```bash
 helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
-  --version 0.4.0 -n continuo \
+  --version 0.4.1 -n continuo \
   --set llm.apiKey='<your-api-key>' \
   --set github.token='<your-read-only-PAT>'
 ```
