@@ -123,6 +123,15 @@ func (h *NodeRunHandler) ListNodeNames(ctx context.Context, req *statev1.ListNod
 	return &statev1.ListNodeNamesResponse{TableNames: names}, nil
 }
 
+func (h *NodeRunHandler) ListNodeServices(ctx context.Context, req *statev1.ListNodeServicesRequest) (*statev1.ListNodeServicesResponse, error) {
+	services, err := h.repo.ListNodeServices(ctx)
+	if err != nil {
+		h.logger.Error("ListNodeServices repo error", "error", err)
+		return nil, status.Errorf(codes.Internal, "ListNodeServices: %v", err)
+	}
+	return &statev1.ListNodeServicesResponse{ServiceNames: services}, nil
+}
+
 func timePtrToRFC(t *time.Time) string {
 	if t == nil {
 		return ""

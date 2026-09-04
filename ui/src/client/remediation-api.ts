@@ -1,4 +1,4 @@
-import { ProposalDTO } from './types';
+import { ProposalDTO, ServicesResponse } from './types';
 
 // One pull request the server opened (or already had open) for one owning
 // service, as returned by POST .../pull-request.
@@ -31,10 +31,11 @@ export interface CreatePullRequestError {
   errors?: CreatePullRequestErrorEntry[];
 }
 
-export function fetchProposals(filter: { status?: string; pr_state?: string } = {}): Promise<ProposalDTO[]> {
+export function fetchProposals(filter: { status?: string; pr_state?: string; service?: string } = {}): Promise<ProposalDTO[]> {
   const qs = new URLSearchParams();
   if (filter.status) qs.set('status', filter.status);
   if (filter.pr_state) qs.set('pr_state', filter.pr_state);
+  if (filter.service) qs.set('service', filter.service);
   const query = qs.toString();
   const url = query
     ? `/api/remediation/proposals?${query}`
@@ -47,6 +48,14 @@ export function fetchProposals(filter: { status?: string; pr_state?: string } = 
 export function fetchProposal(id: string): Promise<ProposalDTO> {
   return fetch(`/api/remediation/proposals/${encodeURIComponent(id)}`)
     .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))));
+}
+
+// fetchNodeServices returns the distinct active service names for the
+// Remediation tab's Service filter.
+export function fetchNodeServices(): Promise<string[]> {
+  return fetch('/api/nodes/services')
+    .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+    .then((data: ServicesResponse) => data.services ?? []);
 }
 
 // createPullRequest opens one pull request per owning service the proposal

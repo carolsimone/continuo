@@ -9,17 +9,19 @@ import { ProposalDTO } from './types';
 vi.mock('./remediation-api', () => ({
   fetchProposals: vi.fn(),
   createPullRequest: vi.fn(),
+  fetchNodeServices: vi.fn(),
 }));
 
 vi.mock('./auth/AuthContext', () => ({
   useCurrentUser: vi.fn(),
 }));
 
-import { fetchProposals, createPullRequest } from './remediation-api';
+import { fetchProposals, createPullRequest, fetchNodeServices } from './remediation-api';
 import { useCurrentUser } from './auth/AuthContext';
 
 const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;
 const mockCreatePullRequest = createPullRequest as ReturnType<typeof vi.fn>;
+const mockFetchNodeServices = fetchNodeServices as ReturnType<typeof vi.fn>;
 const mockUseCurrentUser = useCurrentUser as ReturnType<typeof vi.fn>;
 
 const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
@@ -197,6 +199,7 @@ describe('CreatePrModal', () => {
 describe('RemediationPanel — Create PR trigger gating', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
   });
 
   it('shows Create PR trigger for operator when source_resolved=true and no pr_url', async () => {
@@ -233,8 +236,10 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     renderPanel();
 
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    fireEvent.click(screen.getByText('svc.schema.my_model')); // expand group
+    fireEvent.click(screen.getByText('high'));                // open attempt card
 
+    expect(screen.getByText(/No real-source fix/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
@@ -250,8 +255,10 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     renderPanel();
 
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    fireEvent.click(screen.getByText('svc.schema.my_model')); // expand group
+    fireEvent.click(screen.getByText('high'));                // open attempt card
 
+    expect(screen.getByRole('link', { name: /open PR ↗/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
@@ -266,7 +273,8 @@ describe('RemediationPanel — Create PR trigger gating', () => {
     renderPanel();
 
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    fireEvent.click(screen.getByText('svc.schema.my_model')); // expand group
+    fireEvent.click(screen.getByText('high'));                // open attempt card
 
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });

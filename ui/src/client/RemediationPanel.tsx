@@ -1,9 +1,12 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { ProposalDTO, PullRequestDTO } from './types';
-import { fetchProposals } from './remediation-api';
+import { fetchProposals, fetchNodeServices } from './remediation-api';
 import type { CreatePullRequestResponse } from './remediation-api';
-import { proposalNodeIds, proposalPrServices, proposalPullRequests } from './release-helpers';
+import {
+  proposalNodeIds, proposalPrServices, proposalPullRequests,
+  effectiveRound, groupProposals, ProposalGroup,
+} from './release-helpers';
 import { useCurrentUser } from './auth/AuthContext';
 import CreatePrModal from './CreatePrModal';
 
@@ -60,6 +63,37 @@ function verificationPhaseLabel(phase: string): string {
   }
 }
 
+// verificationLines renders one attempt's verification runs — one per edited
+// service — as "<service> · <kind> · <phase> · since <activated_at> · open
+// run →", each linking to that run's page. A legacy attempt with only the
+// singular verification_run_id shows the one link; an attempt judged without a
+// run shows nothing.
+function verificationLines(proposal: ProposalDTO) {
+  if (proposal.verifications && proposal.verifications.length > 0) {
+    return proposal.verifications.map((v) => (
+      <div className="detail-card__row" key={v.run_id || v.service}>
+        <span className="nodes-reason">
+          {v.service} · {v.kind} · {verificationPhaseLabel(v.phase)}
+          {v.activated_at ? ` · since ${v.activated_at}` : ''}
+        </span>{' '}
+        <Link to={`/verifications/${v.run_id}`} className="btn btn--secondary">
+          open run →
+        </Link>
+      </div>
+    ));
+  }
+  if (proposal.verification_run_id) {
+    return (
+      <div className="detail-card__row">
+        <Link to={`/verifications/${proposal.verification_run_id}`} className="btn btn--secondary">
+          verification run {proposal.verification_run_id} →
+        </Link>
+      </div>
+    );
+  }
+  return null;
+}
+
 // statusChip renders a proposal's status. 'verifying' is the one status whose
 // raw word does not say what is happening — the fix is written and a
 // verification run is putting it through the full validation pipeline to
@@ -94,6 +128,16 @@ function prStateBadgeLabeled(pr: PullRequestDTO) {
   const badge = prStateBadge(pr.pr_state);
   if (!pr.service) return badge;
   return <span className="pr-chip-labeled">{badge} ({pr.service})</span>;
+}
+
+// prStateChips renders every recorded per-service pull-request state for one
+// proposal, each preceded by a separator so it reads after the status word.
+function prStateChips(proposal: ProposalDTO) {
+  return proposalPullRequests(proposal)
+    .filter((pr) => pr.pr_state)
+    .map((pr) => (
+      <Fragment key={pr.service || 'legacy'}> · {prStateBadgeLabeled(pr)}</Fragment>
+    ));
 }
 
 // isActionable is the predicate for a proposal that still needs a human
@@ -140,37 +184,14 @@ function ProposalDetailCard({
         </p>
 
         {/* Why the release rejected this fix. It is the whole reason a fix
-            verified by a release reached 'failed', so a card that omitted it
-            would leave the operator with the word alone. */}
+            put through a verification run reached 'failed', so a card that
+            omitted it would leave the operator with the word alone. */}
         {proposal.verify_error && (
           <div className="info-strip info-strip--error detail-card__row">
             <span className="info-strip__icon">⚠</span>
             Verification failed: {proposal.verify_error}
           </div>
         )}
-
-        {/* The runs that judged this fix — one per edited service — with where
-            each stands, so the operator can tell "waiting its turn" from
-            "running" without opening the run. */}
-        {proposal.verifications && proposal.verifications.length > 0
-          ? proposal.verifications.map((v) => (
-              <div className="detail-card__row" key={v.run_id}>
-                <Link to={`/verifications/${v.run_id}`} className="btn btn--secondary">
-                  verification run {v.run_id} →
-                </Link>
-                {' '}
-                <span className="nodes-reason">
-                  {v.service} · {v.kind} · {verificationPhaseLabel(v.phase)}
-                </span>
-              </div>
-            ))
-          : proposal.verification_run_id && (
-              <div className="detail-card__row">
-                <Link to={`/verifications/${proposal.verification_run_id}`} className="btn btn--secondary">
-                  verification run {proposal.verification_run_id} →
-                </Link>
-              </div>
-            )}
 
         {proposal.edits && proposal.edits.length > 0
           ? proposal.edits.map((edit) => (
@@ -220,29 +241,131 @@ function ProposalDetailCard({
   );
 }
 
+// AttemptRows renders one group's remediation attempts, newest first: each a
+// compact row (attempt · confidence · source · status), its verification runs
+// listed beneath, and — for the actionable attempt (auto) or a manually
+// selected one — its full detail card with diffs and Create PR.
+function AttemptRows({
+  group,
+  isOperator,
+  selectedId,
+  onToggleAttempt,
+  onCreatePr,
+  detailRef,
+}: {
+  group: ProposalGroup;
+  isOperator: boolean;
+  selectedId: string | null;
+  onToggleAttempt: (p: ProposalDTO) => void;
+  onCreatePr: (p: ProposalDTO) => void;
+  detailRef: (el: HTMLTableRowElement | null) => void;
+}) {
+  return (
+    <table className="nodes-table remediation-attempts">
+      <thead>
+        <tr>
+          <th>Attempt</th>
+          <th>Confidence</th>
+          <th>Source</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {group.attempts.map((p) => {
+          const autoExpanded = isActionable(p);
+          const isSelected = !autoExpanded && selectedId === p.id;
+          const showCard = autoExpanded || isSelected;
+          const verifs = verificationLines(p);
+          const toggle = () => onToggleAttempt(p);
+          const compactRowClass = [
+            autoExpanded ? 'nodes-row--static' : '',
+            isSelected ? 'nodes-row--selected' : '',
+            showCard || verifs ? 'nodes-row--no-border' : '',
+          ].filter(Boolean).join(' ');
+
+          return (
+            <Fragment key={p.id}>
+              <tr
+                className={compactRowClass}
+                onClick={autoExpanded ? undefined : toggle}
+                role={autoExpanded ? undefined : 'button'}
+                tabIndex={autoExpanded ? undefined : 0}
+                aria-expanded={autoExpanded ? undefined : isSelected}
+                onKeyDown={autoExpanded ? undefined : (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggle();
+                  }
+                }}
+              >
+                <td>{p.attempt}</td>
+                <td>{p.confidence}</td>
+                <td>{sourceLabel(p.source_resolved)}</td>
+                <td>{statusChip(p.status)}{prStateChips(p)}</td>
+              </tr>
+
+              {verifs && (
+                <tr className={showCard ? 'nodes-row--static nodes-row--no-border' : 'nodes-row--static'}>
+                  <td colSpan={4}>{verifs}</td>
+                </tr>
+              )}
+
+              {showCard && (
+                <tr
+                  className="nodes-row--static"
+                  ref={el => { if (isSelected) detailRef(el); }}
+                >
+                  <td colSpan={4}>
+                    <ProposalDetailCard
+                      proposal={p}
+                      isOperator={isOperator}
+                      onCreatePr={() => onCreatePr(p)}
+                    />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
 export default function RemediationPanel() {
   const currentUser = useCurrentUser();
   const [proposals, setProposals] = useState<ProposalDTO[]>([]);
+  const [services, setServices] = useState<string[]>([]);
+  const [service, setService] = useState('');
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<ProposalDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [createPrProposalId, setCreatePrProposalId] = useState<string | null>(null);
   const detailRef = useRef<HTMLTableRowElement | null>(null);
 
   // loadProposals is the single path that populates the list from the
-  // server, used both on mount and to refresh authoritative state after an
-  // action (e.g. creating a PR) — never a bespoke fetch.
-  const loadProposals = () => {
-    fetchProposals()
+  // server, used both on filter change and to refresh authoritative state
+  // after an action (e.g. creating a PR) — never a bespoke fetch. It honours
+  // the current service filter.
+  const loadProposals = useCallback(() => {
+    fetchProposals(service ? { service } : {})
       .then(data => {
         setProposals(data);
         setError(null);
       })
       .catch(e => setError(e.message));
-  };
+  }, [service]);
 
-  useEffect(loadProposals, []);
+  useEffect(() => { loadProposals(); }, [loadProposals]);
 
-  // Scroll a manually-opened detail card into view — an auto-expanded card
+  // The Service filter's options come from the node catalog, fetched once on
+  // mount. A failure leaves the list working with only the "All services"
+  // option rather than surfacing as the panel error.
+  useEffect(() => {
+    fetchNodeServices().then(setServices).catch(() => setServices([]));
+  }, []);
+
+  // Scroll a manually-opened attempt card into view — an auto-expanded card
   // needs no scroll, it is already in place at its row.
   useEffect(() => {
     if (selected) {
@@ -251,103 +374,124 @@ export default function RemediationPanel() {
   }, [selected]);
 
   const createPrProposal = proposals.find(p => p.id === createPrProposalId) ?? null;
+  const groups = groupProposals(proposals);
+
+  const toggleGroup = (key: string) => setOpenGroups(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
+
+  const toggleAttempt = (p: ProposalDTO) => setSelected(prev => (prev?.id === p.id ? null : p));
 
   return (
     <>
+      <div className="section-header">
+        <div className="section-header__main">
+          <span className="section-header__title">Proposals</span>
+          <span className="section-header__count">{proposals.length}</span>
+        </div>
+        <div className="section-header__sub">
+          <label htmlFor="remediation-service">Service</label>{' '}
+          <select
+            id="remediation-service"
+            value={service}
+            onChange={e => setService(e.target.value)}
+          >
+            <option value="">All services</option>
+            {services.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+      </div>
+
       {error && (
         <div className="info-strip info-strip--error">
           <span className="info-strip__icon">⚠</span>{error}
         </div>
       )}
 
-      {proposals.length === 0 && !error && (
+      {groups.length === 0 && !error && (
         <div className="info-strip info-strip--neutral">
           <span className="info-strip__icon">○</span>No proposals yet.
         </div>
       )}
 
-      {proposals.length > 0 && (
-        <>
-          <div className="section-header">
-            <div className="section-header__main">
-              <span className="section-header__title">Proposals</span>
-              <span className="section-header__count">{proposals.length}</span>
-            </div>
-          </div>
-          <table className="nodes-table">
-            <thead>
-              <tr>
-                <th>Node</th>
-                <th>Release</th>
-                <th>Confidence</th>
-                <th>Source</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {proposals.map(p => {
-                const autoExpanded = isActionable(p);
-                const isSelected = !autoExpanded && selected?.id === p.id;
-                const showCard = autoExpanded || isSelected;
-                const toggle = () => setSelected(prev => (prev?.id === p.id ? null : p));
-                // Whichever row sits directly above its own card — auto-expanded
-                // or manually selected — drops its border so it doesn't draw a
-                // hairline against that card. The card row itself keeps its own
-                // border, which is what separates it from the next proposal.
-                const compactRowClass = [
-                  autoExpanded ? 'nodes-row--static' : '',
-                  isSelected ? 'nodes-row--selected' : '',
-                  showCard ? 'nodes-row--no-border' : '',
-                ].filter(Boolean).join(' ');
+      {groups.length > 0 && (
+        <table className="nodes-table">
+          <thead>
+            <tr>
+              <th aria-hidden="true"></th>
+              <th>Release</th>
+              <th>Round</th>
+              <th>Services</th>
+              <th>Nodes</th>
+              <th>Latest status</th>
+              <th>Attempts</th>
+              <th>PR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map(g => {
+              const autoExpanded = g.attempts.some(isActionable);
+              const isOpen = autoExpanded || openGroups.has(g.key);
+              const toggle = () => toggleGroup(g.key);
+              const rowClass = [
+                autoExpanded ? 'nodes-row--static' : '',
+                isOpen ? 'nodes-row--no-border' : '',
+              ].filter(Boolean).join(' ');
 
-                return (
-                  <Fragment key={p.id}>
-                    <tr
-                      className={compactRowClass}
-                      onClick={autoExpanded ? undefined : toggle}
-                      role={autoExpanded ? undefined : 'button'}
-                      tabIndex={autoExpanded ? undefined : 0}
-                      aria-expanded={autoExpanded ? undefined : isSelected}
-                      onKeyDown={autoExpanded ? undefined : (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          toggle();
-                        }
-                      }}
-                    >
-                      <td>{proposalNodeIds(p).join(', ')}</td>
-                      <td>{p.release_id}</td>
-                      <td>{p.confidence}</td>
-                      <td>{sourceLabel(p.source_resolved)}</td>
-                      <td>
-                        {statusChip(p.status)}
-                        {proposalPullRequests(p)
-                          .filter((pr) => pr.pr_state)
-                          .map((pr) => (
-                            <Fragment key={pr.service || 'legacy'}> · {prStateBadgeLabeled(pr)}</Fragment>
-                          ))}
+              return (
+                <Fragment key={g.key}>
+                  <tr
+                    className={rowClass}
+                    onClick={autoExpanded ? undefined : toggle}
+                    role={autoExpanded ? undefined : 'button'}
+                    tabIndex={autoExpanded ? undefined : 0}
+                    aria-expanded={autoExpanded ? undefined : isOpen}
+                    onKeyDown={autoExpanded ? undefined : (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggle();
+                      }
+                    }}
+                  >
+                    <td aria-hidden="true">{isOpen ? '▾' : '▸'}</td>
+                    <td>{g.releaseId}</td>
+                    <td>{g.round}</td>
+                    <td>{g.services.length > 0 ? g.services.join(', ') : '—'}</td>
+                    <td>{g.nodeIds.join(', ')}</td>
+                    <td>{statusChip(g.latest.status)}</td>
+                    <td>{g.attempts.length}</td>
+                    <td>
+                      {g.latestPrProposal
+                        ? proposalPullRequests(g.latestPrProposal)
+                            .filter((pr) => pr.pr_state)
+                            .map((pr) => (
+                              <Fragment key={pr.service || 'legacy'}>{prStateBadgeLabeled(pr)} </Fragment>
+                            ))
+                        : '—'}
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr className="nodes-row--static">
+                      <td colSpan={8}>
+                        <AttemptRows
+                          group={g}
+                          isOperator={currentUser?.role === 'operator'}
+                          selectedId={selected?.id ?? null}
+                          onToggleAttempt={toggleAttempt}
+                          onCreatePr={(p) => setCreatePrProposalId(p.id)}
+                          detailRef={(el) => { detailRef.current = el; }}
+                        />
                       </td>
                     </tr>
-                    {showCard && (
-                      <tr
-                        className="nodes-row--static"
-                        ref={el => { if (isSelected) detailRef.current = el; }}
-                      >
-                        <td colSpan={5}>
-                          <ProposalDetailCard
-                            proposal={p}
-                            isOperator={currentUser?.role === 'operator'}
-                            onCreatePr={() => setCreatePrProposalId(p.id)}
-                          />
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       )}
 
       {createPrProposal && (
@@ -394,9 +538,11 @@ export default function RemediationPanel() {
             };
             setProposals(prev => prev.map(p => (p.id === updated.id ? updated : p)));
             // The proposal may have just left the retryable-claim state
-            // (isActionable goes false when every service settled), so it
-            // might no longer auto-expand. Select it manually so its row
-            // stays open and shows the new link(s) instead of collapsing.
+            // (isActionable goes false when every service settled), so its
+            // group might no longer auto-expand. Pin the group open and
+            // select the attempt so its row stays open and shows the new
+            // link(s) instead of collapsing.
+            setOpenGroups(prev => new Set(prev).add(`${updated.release_id} ${effectiveRound(updated)}`));
             setSelected(updated);
             loadProposals();
           }}

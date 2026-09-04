@@ -32,6 +32,7 @@ type NodeRunRepository interface {
 	List(ctx context.Context, serviceName, schemaName, tableName, operation string, limit int) ([]*projection.NodeRun, error)
 	ListNodes(ctx context.Context, search, serviceName, operation string, limit, offset int) ([]*projection.NodeSummary, int, error)
 	ListNodeNames(ctx context.Context, serviceName string) ([]string, error)
+	ListNodeServices(ctx context.Context) ([]string, error)
 }
 
 type nodeRunRepository struct {
@@ -324,6 +325,19 @@ func (r *nodeRunRepository) ListNodeNames(ctx context.Context, serviceName strin
 		return nil, fmt.Errorf("failed to list node names: %w", err)
 	}
 	return names, nil
+}
+
+func (r *nodeRunRepository) ListNodeServices(ctx context.Context) ([]string, error) {
+	const query = `
+		SELECT DISTINCT service_name
+		FROM task_tracker
+		ORDER BY service_name`
+	services := []string{}
+	if err := r.db.SelectContext(ctx, &services, query); err != nil {
+		r.logger.Error("Failed to list node services", "error", err)
+		return nil, fmt.Errorf("failed to list node services: %w", err)
+	}
+	return services, nil
 }
 
 func toNodeSummary(row nodeSummaryRow) *projection.NodeSummary {

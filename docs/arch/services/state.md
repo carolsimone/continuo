@@ -149,6 +149,7 @@ gRPC is now the interface for UI reads and user-initiated commands only. All int
 | `ListNodeRuns` | Read-only query returning the most recent task instances that executed on a given node, ordered by `scheduler_tracker.created_at DESC`, scoped to one `operation`. See `ListNodeRuns` detail below. |
 | `ListNodes` | Read-only query returning the node catalog: one summary row per node that has run under the requested `operation`, with stats aggregated over each node's most recent 50 runs. See `ListNodes` detail below. |
 | `ListNodeNames` | Distinct table names of nodes that have run, optionally filtered by service. Powers the Nodes-tab search autocomplete. |
+| `ListNodeServices` | Distinct service names of nodes that have run (`SELECT DISTINCT service_name FROM task_tracker ORDER BY service_name`, no filter). Powers the catalog and Remediation-tab service filters. |
 | `TriggerRerun` | Mint a new `scheduler_tracker` row (`kind='rerun'`, `source_run_id=src`) on the source's schedule + write `trigger.rerun:v1` outbox entry. Same eligibility as `TriggerRebase`: source FAILED/CANCELLED, has ≥1 non-SUCCEEDED task, no active run on `schedule_name`. Backed by the shared `synthesise_derived_run.go` helper. Returns `run_id` + `schedule_name`. |
 | `TriggerSingleNodeRun` | Create a one-task run for a single node; write `trigger.single_node_run:v1` outbox entry. Accepts an optional `operation` (`""` \| `"run"` \| `"test"` \| `"build"`, default `run`), forwarded onto `trigger.single_node_run:v1` for the orchestrator to resolve the dbt verb and, for `test`, gate zero-test nodes. `operation=build` has no equivalent gate — a node with zero tests is still built (`dbt build --select <node>`). |
 | `TriggerRebase` | Mint a new `scheduler_tracker` row (`kind='rebase'`, `source_run_id=src`) on the source's schedule + write `trigger.rebase:v1` outbox entry. Source row is left untouched. Returns `run_id` + `schedule_name`. |
@@ -543,7 +544,7 @@ Dedup against `message_processing` is performed by the binding before the handle
 
 | Service | Methods used |
 |---|---|
-| `ui` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `ListNodeNames`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule` |
+| `ui` | `ListAllSchedules`, `GetScheduler`, `ListTasks`, `ListTaskExecutions`, `ListNodeRuns`, `ListNodes`, `ListNodeNames`, `ListNodeServices`, `TriggerRerun`, `TriggerRebase`, `TriggerSingleNodeRun`, `TriggerSchedule`, `CancelSchedule` |
 | `continuo CLI` | `ListAllSchedules`, `TriggerSchedule` |
 | `tests/e2e` | `TriggerSingleNodeRun`, `TriggerRebase` |
 

@@ -177,3 +177,77 @@ export function verificationPhase(p: ProposalDTO): 'queued' | 'running' | undefi
   }
   return sawQueued ? 'queued' : undefined;
 }
+
+// effectiveRound is the remediation round a proposal belongs to. The gRPC
+// client (ui/src/server/remediation-client.ts) loads the proto with
+// `defaults: true`, so a proposal recorded before remediation_round existed
+// arrives over the wire as 0, not undefined — a plain `?? 1` fallback would
+// not catch it. Both a missing field and an explicit 0 read as round 1.
+export function effectiveRound(p: ProposalDTO): number {
+  return p.remediation_round && p.remediation_round > 0 ? p.remediation_round : 1;
+}
+
+// ProposalGroup aggregates every remediation attempt for one (release, round):
+// the attempts newest first, the union of the services they edit and the nodes
+// they resolve, the newest attempt's status, and the newest attempt that
+// carries a pull request.
+export interface ProposalGroup {
+  key: string;
+  releaseId: string;
+  round: number;
+  attempts: ProposalDTO[];       // newest first
+  latest: ProposalDTO;           // attempts[0]
+  services: string[];            // pr_services union, '' dropped, sorted
+  nodeIds: string[];             // resolved-node union, sorted
+  latestPrProposal: ProposalDTO | null;
+}
+
+// groupProposals buckets proposals by (release_id, remediation round), newest
+// group first by its latest attempt. Within a group the attempts are newest
+// first (created_at, then attempt number). `services` unions each attempt's
+// pr_services (the legacy '' sentinel dropped); `nodeIds` unions their
+// resolved nodes; `latestPrProposal` is the newest attempt that has opened a
+// pull request, or null when none has.
+export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
+  const buckets = new Map<string, ProposalDTO[]>();
+  for (const p of proposals) {
+    const key = `${p.release_id} ${effectiveRound(p)}`;
+    const list = buckets.get(key);
+    if (list) list.push(p);
+    else buckets.set(key, [p]);
+  }
+
+  const groups: ProposalGroup[] = [];
+  for (const [key, attempts] of buckets) {
+    attempts.sort((a, b) => {
+      if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
+      return b.attempt - a.attempt;
+    });
+    const latest = attempts[0];
+
+    const serviceSet = new Set<string>();
+    for (const p of attempts) {
+      for (const s of proposalPrServices(p)) if (s !== '') serviceSet.add(s);
+    }
+    const nodeSet = new Set<string>();
+    for (const p of attempts) for (const n of proposalNodeIds(p)) nodeSet.add(n);
+
+    groups.push({
+      key,
+      releaseId: latest.release_id,
+      round: effectiveRound(latest),
+      attempts,
+      latest,
+      services: Array.from(serviceSet).sort(),
+      nodeIds: Array.from(nodeSet).sort(),
+      latestPrProposal: attempts.find(p => proposalPullRequests(p).some(pr => pr.pr_state)) ?? null,
+    });
+  }
+
+  groups.sort((a, b) => {
+    if (a.latest.created_at !== b.latest.created_at) return a.latest.created_at < b.latest.created_at ? 1 : -1;
+    if (a.releaseId !== b.releaseId) return a.releaseId < b.releaseId ? -1 : 1;
+    return b.round - a.round;
+  });
+  return groups;
+}
