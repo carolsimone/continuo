@@ -36,6 +36,7 @@ const (
 	StateService_ListNodeRuns_FullMethodName             = "/state.v1.StateService/ListNodeRuns"
 	StateService_ListNodes_FullMethodName                = "/state.v1.StateService/ListNodes"
 	StateService_ListNodeNames_FullMethodName            = "/state.v1.StateService/ListNodeNames"
+	StateService_ListNodeServices_FullMethodName         = "/state.v1.StateService/ListNodeServices"
 	StateService_GetTaskExecution_FullMethodName         = "/state.v1.StateService/GetTaskExecution"
 	StateService_ListTaskExecutions_FullMethodName       = "/state.v1.StateService/ListTaskExecutions"
 )
@@ -117,6 +118,10 @@ type StateServiceClient interface {
 	// optionally filtered by service. Powers the Nodes-tab search autocomplete
 	// (the complete name list, independent of the paginated catalog).
 	ListNodeNames(ctx context.Context, in *ListNodeNamesRequest, opts ...grpc.CallOption) (*ListNodeNamesResponse, error)
+	// ListNodeServices returns the distinct service names of nodes that have run.
+	// Powers the catalog and Remediation-tab service filters (the complete
+	// service list, independent of the paginated catalog).
+	ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error)
 	ListTaskExecutions(ctx context.Context, in *ListTaskExecutionsRequest, opts ...grpc.CallOption) (*ListTaskExecutionsResponse, error)
@@ -300,6 +305,16 @@ func (c *stateServiceClient) ListNodeNames(ctx context.Context, in *ListNodeName
 	return out, nil
 }
 
+func (c *stateServiceClient) ListNodeServices(ctx context.Context, in *ListNodeServicesRequest, opts ...grpc.CallOption) (*ListNodeServicesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListNodeServicesResponse)
+	err := c.cc.Invoke(ctx, StateService_ListNodeServices_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *stateServiceClient) GetTaskExecution(ctx context.Context, in *GetTaskExecutionRequest, opts ...grpc.CallOption) (*TaskExecutionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TaskExecutionResponse)
@@ -397,6 +412,10 @@ type StateServiceServer interface {
 	// optionally filtered by service. Powers the Nodes-tab search autocomplete
 	// (the complete name list, independent of the paginated catalog).
 	ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error)
+	// ListNodeServices returns the distinct service names of nodes that have run.
+	// Powers the catalog and Remediation-tab service filters (the complete
+	// service list, independent of the paginated catalog).
+	ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error)
 	// TaskExecution operations
 	GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error)
 	ListTaskExecutions(context.Context, *ListTaskExecutionsRequest) (*ListTaskExecutionsResponse, error)
@@ -460,6 +479,9 @@ func (UnimplementedStateServiceServer) ListNodes(context.Context, *ListNodesRequ
 }
 func (UnimplementedStateServiceServer) ListNodeNames(context.Context, *ListNodeNamesRequest) (*ListNodeNamesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodeNames not implemented")
+}
+func (UnimplementedStateServiceServer) ListNodeServices(context.Context, *ListNodeServicesRequest) (*ListNodeServicesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListNodeServices not implemented")
 }
 func (UnimplementedStateServiceServer) GetTaskExecution(context.Context, *GetTaskExecutionRequest) (*TaskExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTaskExecution not implemented")
@@ -794,6 +816,24 @@ func _StateService_ListNodeNames_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StateService_ListNodeServices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNodeServicesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StateServiceServer).ListNodeServices(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StateService_ListNodeServices_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StateServiceServer).ListNodeServices(ctx, req.(*ListNodeServicesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _StateService_GetTaskExecution_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTaskExecutionRequest)
 	if err := dec(in); err != nil {
@@ -904,6 +944,10 @@ var StateService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListNodeNames",
 			Handler:    _StateService_ListNodeNames_Handler,
+		},
+		{
+			MethodName: "ListNodeServices",
+			Handler:    _StateService_ListNodeServices_Handler,
 		},
 		{
 			MethodName: "GetTaskExecution",

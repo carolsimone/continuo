@@ -9,10 +9,12 @@ import type { AuthUser } from './auth/useAuth';
 
 vi.mock('./remediation-api', () => ({
   fetchProposals: vi.fn(),
+  fetchNodeServices: vi.fn(),
 }));
 
-import { fetchProposals } from './remediation-api';
+import { fetchProposals, fetchNodeServices } from './remediation-api';
 const mockFetchProposals = fetchProposals as ReturnType<typeof vi.fn>;
+const mockFetchNodeServices = fetchNodeServices as ReturnType<typeof vi.fn>;
 
 const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   id: 'prop-1',
@@ -45,6 +47,8 @@ const makeProposal = (overrides: Partial<ProposalDTO> = {}): ProposalDTO => ({
   ...overrides,
 });
 
+const operator: AuthUser = { userId: 'u-1', email: 'op@example.com', name: 'Op', role: 'operator' };
+
 function renderPanel() {
   return render(
     <MemoryRouter>
@@ -53,17 +57,35 @@ function renderPanel() {
   );
 }
 
-describe('RemediationPanel', () => {
+function renderPanelAsOperator() {
+  return render(
+    <AuthContext.Provider value={operator}>
+      <MemoryRouter>
+        <RemediationPanel />
+      </MemoryRouter>
+    </AuthContext.Provider>
+  );
+}
+
+// The Nodes cell of a group row carries the union of the group's node ids; it
+// is the group row's clickable handle in these tests. clicking it toggles the
+// (non-actionable) group open.
+const expandGroupByNodes = (nodesText: string) => fireEvent.click(screen.getByText(nodesText));
+
+// Confidence is rendered only in an attempt row, never the group row, so it is
+// an unambiguous handle for opening a single non-actionable attempt.
+const openAttemptByConfidence = (confidence = 'high') => fireEvent.click(screen.getByText(confidence));
+
+describe('RemediationPanel — group list', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
   });
 
-  it('renders a row per proposal returned from fetchProposals', async () => {
+  it('renders one group row per (release, round), newest group first', async () => {
     const proposals = [
-      // status: skipped keeps both rows compact, so this test stays about
-      // row rendering rather than the auto-expanded card.
-      makeProposal({ id: 'p1', node_id: 'svc.schema.model_a', release_id: 'rel-1', confidence: 'high', status: 'skipped' }),
-      makeProposal({ id: 'p2', node_id: 'svc.schema.model_b', release_id: 'rel-2', confidence: 'medium', status: 'skipped' }),
+      makeProposal({ id: 'p1', node_id: 'svc.schema.model_a', release_id: 'rel-1', status: 'skipped', created_at: '2026-06-24T10:00:00Z' }),
+      makeProposal({ id: 'p2', node_id: 'svc.schema.model_b', release_id: 'rel-2', status: 'skipped', created_at: '2026-06-25T10:00:00Z' }),
     ];
     mockFetchProposals.mockResolvedValue(proposals);
 
@@ -73,79 +95,145 @@ describe('RemediationPanel', () => {
       expect(screen.getByText('svc.schema.model_a')).toBeInTheDocument();
       expect(screen.getByText('svc.schema.model_b')).toBeInTheDocument();
     });
-
     expect(screen.getByText('rel-1')).toBeInTheDocument();
     expect(screen.getByText('rel-2')).toBeInTheDocument();
-    expect(screen.getAllByText('high')).toHaveLength(1);
-    expect(screen.getByText('medium')).toBeInTheDocument();
+
+    // Newest group (rel-2, created later) sorts first.
+    const releaseCells = screen.getAllByText(/^rel-\d$/).map(el => el.textContent);
+    expect(releaseCells).toEqual(['rel-2', 'rel-1']);
   });
 
-  it('clicking a row reveals the proposal rationale', async () => {
+  it('collapses several attempts of one (release, round) into a single group row', async () => {
+    const proposals = [
+      makeProposal({ id: 'a1', release_id: 'rel-x', remediation_round: 1, attempt: 1, status: 'failed', created_at: '2026-06-24T10:00:00Z' }),
+      makeProposal({ id: 'a2', release_id: 'rel-x', remediation_round: 1, attempt: 2, status: 'skipped', created_at: '2026-06-24T11:00:00Z' }),
+    ];
+    mockFetchProposals.mockResolvedValue(proposals);
+
+    renderPanel();
+
+    // One group row, and its Attempts cell reads 2.
+    await waitFor(() => screen.getByText('rel-x'));
+    expect(screen.getAllByText('rel-x')).toHaveLength(1);
+    const groupRow = screen.getByText('rel-x').closest('tr')!;
+    expect(groupRow).toHaveTextContent('2'); // attempts count
+  });
+
+  it('shows the union of services and nodes for a group', async () => {
     const proposal = makeProposal({
       status: 'skipped',
-      rationale: 'Fixes the JOIN clause that was missing a condition.',
+      node_id: 'core.a',
+      resolved_node_ids: ['core.a', 'finance.b'],
+      pr_services: ['finance', 'core'],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('svc.schema.my_model'));
-
-    // Rationale not yet visible
-    expect(screen.queryByText('Fixes the JOIN clause that was missing a condition.')).toBeNull();
-
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
-
-    expect(screen.getByText('Fixes the JOIN clause that was missing a condition.')).toBeInTheDocument();
-  });
-
-  it('shows the warning info-strip when source_resolved is false', async () => {
-    const proposal = makeProposal({ source_resolved: false });
-    mockFetchProposals.mockResolvedValue([proposal]);
-
-    renderPanel();
-
-    await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
-
-    expect(
-      screen.getByText(/No real-source fix — a PR cannot be opened for this proposal/)
-    ).toBeInTheDocument();
+    await waitFor(() => screen.getByText('core.a, finance.b'));
+    // Services union is sorted.
+    expect(screen.getByText('core, finance')).toBeInTheDocument();
   });
 
   it('shows the neutral info-strip when there are no proposals', async () => {
     mockFetchProposals.mockResolvedValue([]);
-
     renderPanel();
-
-    await waitFor(() => {
-      expect(screen.getByText('No proposals yet.')).toBeInTheDocument();
-    });
+    await waitFor(() => expect(screen.getByText('No proposals yet.')).toBeInTheDocument());
   });
 
-  it('shows open PR link when proposal has a pr_url', async () => {
-    const proposal = makeProposal({ pr_url: 'https://github.com/org/repo/pull/42', pr_number: 42, pr_state: 'open' });
+  it('renders the merged chip in the group PR column without expanding', async () => {
+    const proposal = makeProposal({ status: 'skipped', pr_state: 'merged', pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
+    mockFetchProposals.mockResolvedValue([proposal]);
+    renderPanel();
+    const chip = await screen.findByText('merged');
+    expect(chip).toHaveClass('pr-chip', 'pr-chip--merged');
+  });
+
+  it('renders the rejected chip in the group PR column without expanding', async () => {
+    const proposal = makeProposal({ status: 'skipped', pr_state: 'rejected', pr_url: 'https://github.com/org/repo/pull/7', pr_number: 7 });
+    mockFetchProposals.mockResolvedValue([proposal]);
+    renderPanel();
+    const chip = await screen.findByText('rejected');
+    expect(chip).toHaveClass('pr-chip', 'pr-chip--rejected');
+  });
+
+  it('reads a verifying group as "Verifying fix…" in the Latest status column, without expanding', async () => {
+    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'verifying' })]);
+    renderPanel();
+    const chip = await screen.findByText(/Verifying fix/);
+    expect(chip).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText('verifying')).toBeNull();
+  });
+});
+
+describe('RemediationPanel — expanding a group and its attempts', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
+  });
+
+  it('reveals attempt rows on group click, then the rationale on attempt click', async () => {
+    const proposal = makeProposal({ status: 'skipped', rationale: 'Fixes the JOIN clause that was missing a condition.' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
-
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    // Nothing from the attempt is visible until the group is opened.
+    expect(screen.queryByText('high')).toBeNull();
+    expect(screen.queryByText('Fixes the JOIN clause that was missing a condition.')).toBeNull();
 
-    const link = screen.getByRole('link', { name: /open PR ↗/i });
-    expect(link).toHaveAttribute('href', 'https://github.com/org/repo/pull/42');
+    expandGroupByNodes('svc.schema.my_model');
+    // Attempt row now visible (confidence cell).
+    expect(screen.getByText('high')).toBeInTheDocument();
+    // Card still requires an attempt click.
+    expect(screen.queryByText('Fixes the JOIN clause that was missing a condition.')).toBeNull();
+
+    openAttemptByConfidence();
+    expect(screen.getByText('Fixes the JOIN clause that was missing a condition.')).toBeInTheDocument();
   });
 
-  it('shows diff view/hide toggle button when a proposal with diff_uri is selected', async () => {
+  it('opens a collapsed group on Enter and closes it on Space', async () => {
+    const proposal = makeProposal({ status: 'skipped' });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    const groupRow = screen.getByText('svc.schema.my_model').closest('tr')!;
+    expect(groupRow).toHaveAttribute('role', 'button');
+    expect(groupRow).toHaveAttribute('tabIndex', '0');
+    expect(groupRow).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.keyDown(groupRow, { key: 'Enter' });
+    expect(groupRow).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('high')).toBeInTheDocument(); // attempt row shown
+
+    fireEvent.keyDown(groupRow, { key: ' ' });
+    expect(groupRow).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('high')).toBeNull();
+  });
+
+  it('shows the source warning in the attempt card', async () => {
+    const proposal = makeProposal({ status: 'skipped', source_resolved: false });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+    openAttemptByConfidence();
+
+    expect(screen.getByText(/No real-source fix — a PR cannot be opened for this proposal/)).toBeInTheDocument();
+  });
+
+  it('shows the diff view/hide toggle in the attempt card', async () => {
     const proposal = makeProposal({ status: 'skipped', diff_uri: 's3://bucket/my.patch' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
-
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+    openAttemptByConfidence();
 
-    expect(screen.getByRole('button', { name: /view/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^view$/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /open full ↗/i })).toBeInTheDocument();
   });
 
@@ -161,9 +249,9 @@ describe('RemediationPanel', () => {
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
-
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+    openAttemptByConfidence();
 
     expect(screen.getByText('contracts/a.yml')).toBeInTheDocument();
     expect(screen.getByText('scripts/a.py')).toBeInTheDocument();
@@ -173,294 +261,117 @@ describe('RemediationPanel', () => {
     expect(links).toHaveLength(2);
     expect(links[0].getAttribute('href')).toContain(encodeURIComponent('s3://bucket/a.diff'));
     expect(links[1].getAttribute('href')).toContain(encodeURIComponent('s3://bucket/py.diff'));
-    // The per-file diffs replace the single-file preview rather than adding to it.
-    expect(
-      links.some((l) => l.getAttribute('href')?.includes(encodeURIComponent('s3://bucket/legacy.patch'))),
-    ).toBe(false);
+    expect(links.some((l) => l.getAttribute('href')?.includes(encodeURIComponent('s3://bucket/legacy.patch')))).toBe(false);
   });
 
   it('falls back to the single unlabelled diff view when the proposal carries no edits', async () => {
-    const proposal = makeProposal({
-      status: 'skipped',
-      diff_uri: 's3://bucket/candidate.patch',
-      edits: [],
-    });
+    const proposal = makeProposal({ status: 'skipped', diff_uri: 's3://bucket/candidate.patch', edits: [] });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
-
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+    openAttemptByConfidence();
 
     const links = screen.getAllByRole('link', { name: /open full ↗/i });
     expect(links).toHaveLength(1);
     expect(links[0].getAttribute('href')).toContain(encodeURIComponent('s3://bucket/candidate.patch'));
   });
 
-  it('renders a merged chip for a proposal whose PR was merged', async () => {
-    const proposal = makeProposal({
-      pr_state: 'merged',
-      pr_url: 'https://github.com/org/repo/pull/7',
-      pr_number: 7,
-      pr_closed_at: '2026-07-03T10:00:00Z',
-    });
+  it('the attempt row within an expanded group carries the button role, the group row above it too', async () => {
+    const proposal = makeProposal({ status: 'skipped' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
-
-    const chip = await screen.findByText('merged');
-    expect(chip).toHaveClass('pr-chip', 'pr-chip--merged');
-  });
-
-  it('renders a rejected chip for a proposal whose PR was closed without merge', async () => {
-    const proposal = makeProposal({
-      pr_state: 'rejected',
-      pr_url: 'https://github.com/org/repo/pull/7',
-      pr_number: 7,
-      pr_closed_at: '2026-07-03T10:00:00Z',
-    });
-    mockFetchProposals.mockResolvedValue([proposal]);
-
-    renderPanel();
-
-    const chip = await screen.findByText('rejected');
-    expect(chip).toHaveClass('pr-chip', 'pr-chip--rejected');
-  });
-
-  it('renders the detail card inline with no click, for an actionable proposal', async () => {
-    const proposal = makeProposal({
-      status: 'proposed',
-      source_resolved: true,
-      pr_url: '',
-      rationale: 'Adds the missing GROUP BY column.',
-    });
-    mockFetchProposals.mockResolvedValue([proposal]);
-
-    renderPanel();
-
-    // The node id shows both in the compact row and in the auto-expanded
-    // card's title — no click needed to make the card appear.
-    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
-
-    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
-  });
-
-  it.each([
-    // status stays 'proposed' for the PR-lifecycle cases below: agent-remediation
-    // never mutates status after insert, so a merged/rejected/already-opened/
-    // in-flight PR is recorded on pr_state, not on status.
-    ['a claim already in flight', { status: 'proposed', source_resolved: true, pr_url: '', pr_state: 'opening' }],
-    ['a PR already opened', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'open' }],
-    ['merged', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'merged' }],
-    ['rejected', { status: 'proposed', source_resolved: true, pr_url: 'https://github.com/org/repo/pull/9', pr_state: 'rejected' }],
-    // skipped/escalated are real classifier outcomes distinct from 'proposed'.
-    ['skipped', { status: 'skipped', source_resolved: true, pr_url: '' }],
-    ['escalated', { status: 'escalated', source_resolved: true, pr_url: '' }],
-  ])('renders a compact row with no card until clicked, when %s', async (_label, overrides) => {
-    const proposal = makeProposal({
-      rationale: 'Adds the missing GROUP BY column.',
-      ...overrides,
-    });
-    mockFetchProposals.mockResolvedValue([proposal]);
-
-    renderPanel();
-
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
+    expandGroupByNodes('svc.schema.my_model');
 
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
-    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+    const attemptRow = screen.getByText('high').closest('tr')!;
+    expect(attemptRow).toHaveAttribute('role', 'button');
+    expect(attemptRow).toHaveAttribute('tabIndex', '0');
+  });
+});
+
+describe('RemediationPanel — an actionable proposal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
   });
 
-  it.each(['', 'failed'])(
-    'auto-expands and shows Create PR when pr_state is %j (retryable claim state)',
-    async (pr_state) => {
-      const proposal = makeProposal({
-        status: 'proposed',
-        source_resolved: true,
-        pr_url: '',
-        pr_state,
-        rationale: 'Adds the missing GROUP BY column.',
-      });
-      mockFetchProposals.mockResolvedValue([proposal]);
-
-      renderPanel();
-
-      await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
-      expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
-    }
-  );
-
-  it('does not auto-expand and offers no Create PR when pr_state is opening', async () => {
-    const proposal = makeProposal({
-      status: 'proposed',
-      source_resolved: true,
-      pr_url: '',
-      pr_state: 'opening',
-      rationale: 'Adds the missing GROUP BY column.',
-    });
+  it('auto-expands the group and its card with no click', async () => {
+    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '', rationale: 'Adds the missing GROUP BY column.' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
 
-    await waitFor(() => screen.getByText('svc.schema.my_model'));
-    // No auto-expansion: the rationale is not visible without a click.
-    expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
-
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
+    // The card title and the group Nodes cell both carry the node id — no click.
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(1));
     expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
-    // Even once manually opened, the claim is already in flight — no second
-    // Create PR trigger, which would just 409 against the live claim.
-    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
-  it('opens a collapsed row on Enter and closes it on Space', async () => {
-    const proposal = makeProposal({
-      status: 'skipped',
-      rationale: 'Adds the missing GROUP BY column.',
-    });
-    mockFetchProposals.mockResolvedValue([proposal]);
-
-    renderPanel();
-
-    await waitFor(() => screen.getByText('svc.schema.my_model'));
-    const row = screen.getByText('svc.schema.my_model').closest('tr')!;
-    expect(row).toHaveAttribute('role', 'button');
-    expect(row).toHaveAttribute('tabIndex', '0');
-    expect(row).toHaveAttribute('aria-expanded', 'false');
-
-    fireEvent.keyDown(row, { key: 'Enter' });
-    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
-    expect(row).toHaveAttribute('aria-expanded', 'true');
-    expect(row).toHaveClass('nodes-row--selected');
-
-    fireEvent.keyDown(row, { key: ' ' });
-    expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
-  });
-
-  it('an auto-expanded row has no role or tabIndex attributes', async () => {
+  it('an auto-expanded group row has no role or tabIndex', async () => {
     const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
-
     await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
-    // First match is the compact row's cell, not the card's title.
-    const row = screen.getAllByText('svc.schema.my_model')[0].closest('tr')!;
-    expect(row).not.toHaveAttribute('role');
-    expect(row).not.toHaveAttribute('tabIndex');
-  });
-});
-
-describe('RemediationPanel — a fix awaiting verification', () => {
-  const operator: AuthUser = {
-    userId: 'u-1', email: 'op@example.com', name: 'Op', role: 'operator',
-  };
-
-  function renderPanelAsOperator() {
-    return render(
-      <AuthContext.Provider value={operator}>
-        <MemoryRouter>
-          <RemediationPanel />
-        </MemoryRouter>
-      </AuthContext.Provider>
-    );
-  }
-
-  it('reads as "Verifying fix…" instead of the raw status word', async () => {
-    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'verifying' })]);
-
-    renderPanelAsOperator();
-
-    const chip = await screen.findByText(/Verifying fix/);
-    expect(chip).toHaveAttribute('aria-busy', 'true');
-    expect(screen.queryByText('verifying')).toBeNull();
+    const groupRow = screen.getAllByText('svc.schema.my_model')[0].closest('tr')!;
+    expect(groupRow).not.toHaveAttribute('role');
+    expect(groupRow).not.toHaveAttribute('tabIndex');
   });
 
-  it('links a verifying proposal to the run that is judging it', async () => {
-    // The chip says a fix is being verified; without the link the operator has
-    // no way to reach the run doing the verifying, which is on another screen
-    // under a name they have never been shown.
-    mockFetchProposals.mockResolvedValue([
-      makeProposal({ status: 'verifying', verification_run_id: 'verify-rel-abc-svc.schema.my_model-a1' }),
-    ]);
+  it.each(['', 'failed'])(
+    'auto-expands and offers Create PR to an operator when pr_state is %j (retryable claim state)',
+    async (pr_state) => {
+      const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '', pr_state, rationale: 'Adds the missing GROUP BY column.' });
+      mockFetchProposals.mockResolvedValue([proposal]);
+
+      renderPanelAsOperator();
+
+      expect(await screen.findByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Create PR/i })).toBeInTheDocument();
+    }
+  );
+
+  it('does not auto-expand the card and offers no Create PR when pr_state is opening', async () => {
+    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '', pr_state: 'opening', rationale: 'Adds the missing GROUP BY column.' });
+    mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanelAsOperator();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    // Not actionable: nothing from the attempt is shown until the group opens.
+    expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
 
-    await screen.findByText(/Verifying fix/);
-    fireEvent.click(screen.getByText('svc.schema.my_model'));
-
-    const link = await screen.findByRole('link', { name: /verify-rel-abc-svc.schema.my_model-a1/ });
-    expect(link).toHaveAttribute('href', '/verifications/verify-rel-abc-svc.schema.my_model-a1');
-  });
-
-  it('shows why verification failed instead of the bare word "failed"', async () => {
-    // verify_error is the whole reason a python contract attempt failed. Left
-    // unrendered it sits unread in the database while the operator is told
-    // only "failed".
-    mockFetchProposals.mockResolvedValue([
-      makeProposal({
-        status: 'failed',
-        verification_run_id: 'verify-rel-abc-svc.schema.my_model-a1',
-        verify_error: 'column "revenue_total" does not exist',
-      }),
-    ]);
-
-    renderPanelAsOperator();
-
-    fireEvent.click(await screen.findByText('svc.schema.my_model'));
-    expect(await screen.findByText(/column "revenue_total" does not exist/)).toBeInTheDocument();
-  });
-
-  it('offers an operator no Create PR while the fix is still being verified', async () => {
-    mockFetchProposals.mockResolvedValue([
-      makeProposal({ status: 'verifying', source_resolved: true, pr_state: '' }),
-    ]);
-
-    renderPanelAsOperator();
-
-    await screen.findByText(/Verifying fix/);
+    expandGroupByNodes('svc.schema.my_model');
+    openAttemptByConfidence();
+    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
   });
 
-  it('offers that same operator Create PR once verification finished and the fix is proposed', async () => {
-    mockFetchProposals.mockResolvedValue([
-      makeProposal({ status: 'proposed', source_resolved: true, pr_state: '' }),
-    ]);
+  it.each([
+    ['skipped', { status: 'skipped', source_resolved: true, pr_url: '' }],
+    ['escalated', { status: 'escalated', source_resolved: true, pr_url: '' }],
+  ])('keeps a %s group collapsed until clicked', async (_label, overrides) => {
+    const proposal = makeProposal({ rationale: 'Adds the missing GROUP BY column.', ...overrides });
+    mockFetchProposals.mockResolvedValue([proposal]);
 
-    renderPanelAsOperator();
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
 
-    expect(await screen.findByRole('button', { name: /Create PR/i })).toBeInTheDocument();
+    expandGroupByNodes('svc.schema.my_model');
+    openAttemptByConfidence();
+    expect(screen.getByText('Adds the missing GROUP BY column.')).toBeInTheDocument();
   });
 });
 
-describe('RemediationPanel — a batched proposal spanning several nodes', () => {
-  it('joins every resolved node in the row and the card title, not just the representative one', async () => {
-    const proposal = makeProposal({
-      node_id: 's.a',
-      status: 'skipped',
-      resolved_node_ids: ['s.a', 's.b'],
-    });
-    mockFetchProposals.mockResolvedValue([proposal]);
-
-    renderPanel();
-
-    await waitFor(() => screen.getByText('s.a, s.b'));
-    fireEvent.click(screen.getByText('s.a, s.b'));
-    expect(screen.getAllByText('s.a, s.b').length).toBeGreaterThan(0);
+describe('RemediationPanel — verification runs on an attempt', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
   });
 
-  it('still shows the single node_id for a legacy proposal with no resolved_node_ids', async () => {
-    const proposal = makeProposal({ node_id: 's.a', status: 'skipped' });
-    mockFetchProposals.mockResolvedValue([proposal]);
-
-    renderPanel();
-
-    await waitFor(() => screen.getByText('s.a'));
-    expect(screen.queryByText('s.a, s.b')).toBeNull();
-  });
-
-  it('links every verification run and says where it stands', async () => {
+  it('lists each verification run beneath its attempt with a link to the run', async () => {
     const proposal = makeProposal({
       status: 'verifying',
       resolved_node_ids: ['s.a', 's.b'],
@@ -472,82 +383,81 @@ describe('RemediationPanel — a batched proposal spanning several nodes', () =>
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
+    await waitFor(() => screen.getByText('s.a, s.b'));
+    expandGroupByNodes('s.a, s.b');
 
-    await screen.findByText(/Verifying fix/);
-    fireEvent.click(screen.getByText('s.a, s.b'));
-
-    expect(screen.getByRole('link', { name: /verify-rel-1-core-a1/ })).toHaveAttribute('href', '/verifications/verify-rel-1-core-a1');
-    expect(screen.getByText(/core · dbt · Verifying fix…/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /verify-rel-1-ops-a1/ })).toHaveAttribute('href', '/verifications/verify-rel-1-ops-a1');
-    expect(screen.getByText(/ops · python · Queued for verification/)).toBeInTheDocument();
+    expect(screen.getByText(/core · dbt · Verifying fix… · since 2026-09-02T10:01:00Z/)).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /open run →/ })[0]).toHaveAttribute('href', '/verifications/verify-rel-1-core-a1');
+    // A queued run with no activation time omits the "since" clause.
+    expect(screen.getByText(/ops · python · Queued for verification$/)).toBeInTheDocument();
+    expect(screen.getByText(/ops · python · Queued for verification/).closest('.detail-card__row')!
+      .querySelector('a')).toHaveAttribute('href', '/verifications/verify-rel-1-ops-a1');
   });
 
   it('falls back to the single verification_run_id link when verifications is empty', async () => {
+    const proposal = makeProposal({ status: 'verifying', verification_run_id: 'verify-rel-abc-a1' });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+
+    const link = await screen.findByRole('link', { name: /verify-rel-abc-a1/ });
+    expect(link).toHaveAttribute('href', '/verifications/verify-rel-abc-a1');
+  });
+
+  it('shows why verification failed in the attempt card', async () => {
     const proposal = makeProposal({
-      status: 'verifying',
-      verification_run_id: 'verify-rel-abc-svc.schema.my_model-a1',
+      status: 'failed',
+      verification_run_id: 'verify-rel-abc-a1',
+      verify_error: 'column "revenue_total" does not exist',
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+    openAttemptByConfidence();
 
-    fireEvent.click(await screen.findByText('svc.schema.my_model'));
-    const link = await screen.findByRole('link', { name: /verify-rel-abc-svc.schema.my_model-a1/ });
-    expect(link).toHaveAttribute('href', '/verifications/verify-rel-abc-svc.schema.my_model-a1');
+    expect(await screen.findByText(/column "revenue_total" does not exist/)).toBeInTheDocument();
   });
 });
 
 describe('RemediationPanel — pull requests split across owning services', () => {
-  it('renders one labeled open PR link per pull_requests entry', async () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchNodeServices.mockResolvedValue([]);
+  });
+
+  it('renders one labeled open PR link per pull_requests entry in the actionable card', async () => {
     const proposal = makeProposal({
       status: 'proposed',
       source_resolved: true,
+      node_id: 'core.a',
       resolved_node_ids: ['core.a', 'finance.b'],
       pr_services: ['core', 'finance'],
       pull_requests: [
-        {
-          service: 'core', repo: 'org/core-repo', branch: 'remediation/rel/attempt1/core',
-          pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open',
-          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
-        },
-        {
-          service: 'finance', repo: 'org/finance-repo', branch: 'remediation/rel/attempt1/finance',
-          pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'merged',
-          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z',
-        },
+        { service: 'core', repo: 'org/core-repo', branch: 'b', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
+        { service: 'finance', repo: 'org/finance-repo', branch: 'b', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: '', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
+    // Actionable (finance still '' → retryable), so the card is auto-shown.
+    await waitFor(() => expect(screen.getAllByText('core.a, finance.b').length).toBeGreaterThan(0));
 
-    await waitFor(() => screen.getByText('core.a, finance.b'));
-    fireEvent.click(screen.getByText('core.a, finance.b'));
-
-    const coreLink = screen.getByRole('link', { name: /open PR \(core\) ↗/i });
-    expect(coreLink).toHaveAttribute('href', 'https://github.com/org/core-repo/pull/10');
-    const financeLink = screen.getByRole('link', { name: /open PR \(finance\) ↗/i });
-    expect(financeLink).toHaveAttribute('href', 'https://github.com/org/finance-repo/pull/11');
-    // Not the legacy unlabeled form.
+    expect(screen.getByRole('link', { name: /open PR \(core\) ↗/i })).toHaveAttribute('href', 'https://github.com/org/core-repo/pull/10');
     expect(screen.queryByRole('link', { name: /^open PR ↗$/i })).toBeNull();
   });
 
-  it('shows a state chip per pull_requests entry, labeled by service', async () => {
+  it('shows a per-service state chip labeled by service in the group PR column', async () => {
     const proposal = makeProposal({
-      status: 'proposed',
-      source_resolved: true,
+      status: 'skipped',
       pr_services: ['core', 'finance'],
       pull_requests: [
-        {
-          service: 'core', repo: '', branch: '',
-          pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged',
-          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
-        },
-        {
-          service: 'finance', repo: '', branch: '',
-          pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'rejected',
-          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
-        },
+        { service: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
+        { service: 'finance', repo: '', branch: '', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'rejected', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
@@ -559,58 +469,100 @@ describe('RemediationPanel — pull requests split across owning services', () =
     expect(mergedChip.closest('.pr-chip-labeled')).toHaveTextContent('merged (core)');
 
     const rejectedChip = screen.getByText('rejected');
-    expect(rejectedChip).toHaveClass('pr-chip', 'pr-chip--rejected');
     expect(rejectedChip.closest('.pr-chip-labeled')).toHaveTextContent('rejected (finance)');
   });
 
-  it('stays actionable (auto-expanded) while one service still needs a PR, even though another already merged', async () => {
+  it('stays actionable (auto-expanded) while one service still needs a PR', async () => {
     const proposal = makeProposal({
       status: 'proposed',
       source_resolved: true,
       pr_services: ['core', 'finance'],
-      // core is already settled; finance has no entry at all yet.
       pull_requests: [
-        {
-          service: 'core', repo: '', branch: '',
-          pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged',
-          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z',
-        },
+        { service: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
-
-    // Auto-expanded with no click: the node id shows both in the compact
-    // row and the card title.
-    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText('svc.schema.my_model').length).toBeGreaterThan(1));
   });
 
-  it('is not actionable once every owning service has a settled (non-retryable) PR', async () => {
+  it('is not actionable once every owning service has a settled PR', async () => {
     const proposal = makeProposal({
       status: 'proposed',
       source_resolved: true,
       rationale: 'Adds the missing GROUP BY column.',
       pr_services: ['core', 'finance'],
       pull_requests: [
-        {
-          service: 'core', repo: '', branch: '',
-          pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open',
-          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '',
-        },
-        {
-          service: 'finance', repo: '', branch: '',
-          pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'merged',
-          pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z',
-        },
+        { service: 'core', repo: '', branch: '', pr_url: 'https://github.com/org/core-repo/pull/10', pr_number: 10, pr_state: 'open', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '' },
+        { service: 'finance', repo: '', branch: '', pr_url: 'https://github.com/org/finance-repo/pull/11', pr_number: 11, pr_state: 'merged', pr_opened_at: '', pr_opened_by: '', pr_closed_at: '2026-07-01T00:00:00Z' },
       ],
     });
     mockFetchProposals.mockResolvedValue([proposal]);
 
     renderPanel();
-
     await waitFor(() => screen.getByText('svc.schema.my_model'));
-    // Not auto-expanded: the rationale is not visible without a click.
+    // Not auto-expanded: the rationale is not visible without opening the group.
     expect(screen.queryByText('Adds the missing GROUP BY column.')).toBeNull();
+  });
+});
+
+describe('RemediationPanel — service filter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchProposals.mockResolvedValue([makeProposal({ status: 'skipped' })]);
+  });
+
+  it('populates the Service select from fetchNodeServices and filters the fetch on change', async () => {
+    mockFetchNodeServices.mockResolvedValue(['billing', 'ledger']);
+
+    renderPanel();
+
+    const select = await screen.findByLabelText('Service');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'billing' })).toBeInTheDocument());
+    expect(mockFetchProposals).toHaveBeenLastCalledWith({}); // initial fetch, no filter
+
+    fireEvent.change(select, { target: { value: 'billing' } });
+    await waitFor(() => expect(mockFetchProposals).toHaveBeenLastCalledWith({ service: 'billing' }));
+  });
+
+  it('ignores a superseded (slower, earlier) proposals response so it cannot overwrite the current filter', async () => {
+    mockFetchNodeServices.mockResolvedValue(['billing', 'ledger']);
+
+    // The initial unfiltered request is held open and resolves LAST; the
+    // filtered request resolves first. The stale unfiltered result must not
+    // win the race and clobber the filtered list.
+    let resolveInitial!: (p: ProposalDTO[]) => void;
+    const initial = new Promise<ProposalDTO[]>(r => { resolveInitial = r; });
+    const filtered = [makeProposal({ id: 'f1', node_id: 'billing.only', status: 'skipped' })];
+    const stale = [makeProposal({ id: 's1', node_id: 'stale.everything', status: 'skipped' })];
+    mockFetchProposals
+      .mockReturnValueOnce(initial)                 // mount (service='')
+      .mockResolvedValueOnce(filtered);             // after selecting billing
+
+    renderPanel();
+    const select = await screen.findByLabelText('Service');
+    fireEvent.change(select, { target: { value: 'billing' } });
+
+    // Filtered result lands first.
+    await waitFor(() => screen.getByText('billing.only'));
+
+    // Now the earlier unfiltered request finally resolves — it must be ignored.
+    resolveInitial(stale);
+    await new Promise(r => setTimeout(r, 0));
+    expect(screen.queryByText('stale.everything')).toBeNull();
+    expect(screen.getByText('billing.only')).toBeInTheDocument();
+  });
+
+  it('leaves the list working with only an All services option when the services fetch fails', async () => {
+    mockFetchNodeServices.mockRejectedValue(new Error('nope'));
+
+    renderPanel();
+
+    // The proposals still render.
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    // Only the default option exists.
+    const options = screen.getAllByRole('option').map(o => o.textContent);
+    expect(options).toEqual(['All services']);
   });
 });

@@ -85,10 +85,12 @@ export function createRemediationRouter(
 ): Router {
   const router = Router();
 
-  // GET /api/remediation/proposals?status=&pr_state=&limit=
+  // GET /api/remediation/proposals?status=&pr_state=&limit=&service=
+  // `service` narrows to proposals whose service set includes it (forwarded to
+  // ListProposals, which matches when `service` is among a proposal's services).
   router.get('/proposals', async (req, res) => {
     const params: Record<string, string> = {};
-    for (const k of ['status', 'pr_state', 'limit']) {
+    for (const k of ['status', 'pr_state', 'limit', 'service']) {
       const v = req.query[k];
       if (typeof v === 'string' && v !== '') params[k] = v;
     }

@@ -33,6 +33,10 @@ type fakeNodeRunRepo struct {
 	nodeNames       []string
 	nodeNamesErr    error
 	gotNamesService string
+
+	// node-services (ListNodeServices) canned return
+	nodeServices    []string
+	nodeServicesErr error
 }
 
 func (f *fakeNodeRunRepo) List(_ context.Context, _, _, _, _ string, limit int) ([]*projection.NodeRun, error) {
@@ -54,6 +58,10 @@ func (f *fakeNodeRunRepo) ListNodes(_ context.Context, search, service, operatio
 func (f *fakeNodeRunRepo) ListNodeNames(_ context.Context, service string) ([]string, error) {
 	f.gotNamesService = service
 	return f.nodeNames, f.nodeNamesErr
+}
+
+func (f *fakeNodeRunRepo) ListNodeServices(_ context.Context) ([]string, error) {
+	return f.nodeServices, f.nodeServicesErr
 }
 
 func TestNodeRunHandler_ListNodeRuns_HappyPath(t *testing.T) {
@@ -183,5 +191,25 @@ func TestNodeRunHandler_ListNodeNames(t *testing.T) {
 	}
 	if len(resp.TableNames) != 2 || resp.TableNames[0] != "customers" {
 		t.Errorf("TableNames = %v", resp.TableNames)
+	}
+}
+
+func TestNodeRunHandler_ListNodeServices(t *testing.T) {
+	repo := &fakeNodeRunRepo{nodeServices: []string{"billing", "ledger"}}
+	h := NewNodeRunHandler(repo, nil)
+	resp, err := h.ListNodeServices(context.Background(), &statev1.ListNodeServicesRequest{})
+	if err != nil {
+		t.Fatalf("ListNodeServices: %v", err)
+	}
+	if len(resp.ServiceNames) != 2 || resp.ServiceNames[0] != "billing" {
+		t.Errorf("ServiceNames = %v", resp.ServiceNames)
+	}
+}
+
+func TestNodeRunHandler_ListNodeServices_Error(t *testing.T) {
+	repo := &fakeNodeRunRepo{nodeServicesErr: errors.New("boom")}
+	h := NewNodeRunHandler(repo, nil)
+	if _, err := h.ListNodeServices(context.Background(), &statev1.ListNodeServicesRequest{}); err == nil {
+		t.Fatal("expected error")
 	}
 }

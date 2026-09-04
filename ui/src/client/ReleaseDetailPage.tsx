@@ -5,7 +5,7 @@ import {
   releasePillClass, proposalKey, reasonLabel,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
   proposalPullRequests, proposalPrServices, proposalPrStateForService,
-  verificationPhase, verificationRunPhase,
+  verificationPhase, verificationRunPhase, effectiveRound,
 } from './release-helpers';
 import { fetchProposals } from './remediation-api';
 import { NodeResultsTable } from './node-results';
@@ -64,15 +64,6 @@ function isFixState(status: string): status is FixState {
 // as a fixNote (see refresh() below). 'generating'/'verifying' are the only
 // non-terminal statuses a node can carry.
 const TERMINAL_NODE_STATUSES = new Set(['proposed', 'skipped', 'failed', 'escalated']);
-
-// effectiveRound is the remediation round a proposal belongs to. The gRPC
-// client (ui/src/server/remediation-client.ts) loads the proto with
-// `defaults: true`, so a proposal recorded before remediation_round existed
-// arrives over the wire as 0, not undefined — a plain `?? 1` fallback would
-// not catch it. Both a missing field and an explicit 0 read as round 1.
-function effectiveRound(p: ProposalDTO): number {
-  return p.remediation_round && p.remediation_round > 0 ? p.remediation_round : 1;
-}
 
 // proposalIsDeadEnd mirrors release-controller's isDeadEnd: a batched attempt
 // opens one pull request per owning service, so it is a dead end only once

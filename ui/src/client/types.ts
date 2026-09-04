@@ -207,6 +207,12 @@ export interface NodesResponse {
   nodes: NodeSummary[];
 }
 
+// The distinct active service names, from GET /api/nodes/services. Feeds the
+// catalog and Remediation-tab service filters.
+export interface ServicesResponse {
+  services: string[];
+}
+
 // Where the user arrived at /node/:fqn from — drives the back link.
 export type NodeDetailFrom =
   | { type: 'schedule'; name: string; mode: 'run' | 'latest' }

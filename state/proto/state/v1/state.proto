@@ -89,6 +89,11 @@ service StateService {
   // (the complete name list, independent of the paginated catalog).
   rpc ListNodeNames(ListNodeNamesRequest) returns (ListNodeNamesResponse);
 
+  // ListNodeServices returns the distinct service names of nodes that have run.
+  // Powers the catalog and Remediation-tab service filters (the complete
+  // service list, independent of the paginated catalog).
+  rpc ListNodeServices(ListNodeServicesRequest) returns (ListNodeServicesResponse);
+
   // TaskExecution operations
   rpc GetTaskExecution(GetTaskExecutionRequest) returns (TaskExecutionResponse);
   rpc ListTaskExecutions(ListTaskExecutionsRequest) returns (ListTaskExecutionsResponse);
@@ -426,4 +431,10 @@ message ListNodeNamesRequest {
 
 message ListNodeNamesResponse {
   repeated string table_names = 1;  // distinct, sorted ascending
+}
+
+message ListNodeServicesRequest {}
+
+message ListNodeServicesResponse {
+  repeated string service_names = 1;  // distinct, sorted ascending
 }

@@ -2832,6 +2832,86 @@ func (x *ListNodeNamesResponse) GetTableNames() []string {
 	return nil
 }
 
+type ListNodeServicesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNodeServicesRequest) Reset() {
+	*x = ListNodeServicesRequest{}
+	mi := &file_proto_state_v1_state_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNodeServicesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNodeServicesRequest) ProtoMessage() {}
+
+func (x *ListNodeServicesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_state_v1_state_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNodeServicesRequest.ProtoReflect.Descriptor instead.
+func (*ListNodeServicesRequest) Descriptor() ([]byte, []int) {
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{43}
+}
+
+type ListNodeServicesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServiceNames  []string               `protobuf:"bytes,1,rep,name=service_names,json=serviceNames,proto3" json:"service_names,omitempty"` // distinct, sorted ascending
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNodeServicesResponse) Reset() {
+	*x = ListNodeServicesResponse{}
+	mi := &file_proto_state_v1_state_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNodeServicesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNodeServicesResponse) ProtoMessage() {}
+
+func (x *ListNodeServicesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_state_v1_state_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNodeServicesResponse.ProtoReflect.Descriptor instead.
+func (*ListNodeServicesResponse) Descriptor() ([]byte, []int) {
+	return file_proto_state_v1_state_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *ListNodeServicesResponse) GetServiceNames() []string {
+	if x != nil {
+		return x.ServiceNames
+	}
+	return nil
+}
+
 var File_proto_state_v1_state_proto protoreflect.FileDescriptor
 
 const file_proto_state_v1_state_proto_rawDesc = "" +
@@ -3072,7 +3152,10 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\fservice_name\x18\x01 \x01(\tR\vserviceName\"8\n" +
 	"\x15ListNodeNamesResponse\x12\x1f\n" +
 	"\vtable_names\x18\x01 \x03(\tR\n" +
-	"tableNames*\xea\x01\n" +
+	"tableNames\"\x19\n" +
+	"\x17ListNodeServicesRequest\"?\n" +
+	"\x18ListNodeServicesResponse\x12#\n" +
+	"\rservice_names\x18\x01 \x03(\tR\fserviceNames*\xea\x01\n" +
 	"\x0fSchedulerStatus\x12 \n" +
 	"\x1cSCHEDULER_STATUS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18SCHEDULER_STATUS_PENDING\x10\x01\x12\x1c\n" +
@@ -3089,7 +3172,7 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\x15TASK_STATUS_SUCCEEDED\x10\x03\x12\x16\n" +
 	"\x12TASK_STATUS_FAILED\x10\x04\x12\x19\n" +
 	"\x15TASK_STATUS_CANCELLED\x10\x05\x12\x17\n" +
-	"\x13TASK_STATUS_SKIPPED\x10\x062\xea\f\n" +
+	"\x13TASK_STATUS_SKIPPED\x10\x062\xc5\r\n" +
 	"\fStateService\x12J\n" +
 	"\fGetScheduler\x12\x1d.state.v1.GetSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12P\n" +
 	"\x0fCancelScheduler\x12 .state.v1.CancelSchedulerRequest\x1a\x1b.state.v1.SchedulerResponse\x12Y\n" +
@@ -3107,7 +3190,8 @@ const file_proto_state_v1_state_proto_rawDesc = "" +
 	"\rTriggerRebase\x12\x1e.state.v1.TriggerRebaseRequest\x1a\x1f.state.v1.TriggerRebaseResponse\x12M\n" +
 	"\fListNodeRuns\x12\x1d.state.v1.ListNodeRunsRequest\x1a\x1e.state.v1.ListNodeRunsResponse\x12D\n" +
 	"\tListNodes\x12\x1a.state.v1.ListNodesRequest\x1a\x1b.state.v1.ListNodesResponse\x12P\n" +
-	"\rListNodeNames\x12\x1e.state.v1.ListNodeNamesRequest\x1a\x1f.state.v1.ListNodeNamesResponse\x12V\n" +
+	"\rListNodeNames\x12\x1e.state.v1.ListNodeNamesRequest\x1a\x1f.state.v1.ListNodeNamesResponse\x12Y\n" +
+	"\x10ListNodeServices\x12!.state.v1.ListNodeServicesRequest\x1a\".state.v1.ListNodeServicesResponse\x12V\n" +
 	"\x10GetTaskExecution\x12!.state.v1.GetTaskExecutionRequest\x1a\x1f.state.v1.TaskExecutionResponse\x12_\n" +
 	"\x12ListTaskExecutions\x12#.state.v1.ListTaskExecutionsRequest\x1a$.state.v1.ListTaskExecutionsResponseB<Z:github.com/carolsimone/continuo/state/api/state/v1;statev1b\x06proto3"
 
@@ -3124,7 +3208,7 @@ func file_proto_state_v1_state_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_state_v1_state_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_state_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_proto_state_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_proto_state_v1_state_proto_goTypes = []any{
 	(SchedulerStatus)(0),                    // 0: state.v1.SchedulerStatus
 	(TaskStatus)(0),                         // 1: state.v1.TaskStatus
@@ -3171,31 +3255,33 @@ var file_proto_state_v1_state_proto_goTypes = []any{
 	(*NodeSummary)(nil),                     // 42: state.v1.NodeSummary
 	(*ListNodeNamesRequest)(nil),            // 43: state.v1.ListNodeNamesRequest
 	(*ListNodeNamesResponse)(nil),           // 44: state.v1.ListNodeNamesResponse
-	(*timestamppb.Timestamp)(nil),           // 45: google.protobuf.Timestamp
+	(*ListNodeServicesRequest)(nil),         // 45: state.v1.ListNodeServicesRequest
+	(*ListNodeServicesResponse)(nil),        // 46: state.v1.ListNodeServicesResponse
+	(*timestamppb.Timestamp)(nil),           // 47: google.protobuf.Timestamp
 }
 var file_proto_state_v1_state_proto_depIdxs = []int32{
 	0,  // 0: state.v1.Scheduler.status:type_name -> state.v1.SchedulerStatus
-	45, // 1: state.v1.Scheduler.created_at:type_name -> google.protobuf.Timestamp
-	45, // 2: state.v1.Scheduler.started_at:type_name -> google.protobuf.Timestamp
-	45, // 3: state.v1.Scheduler.completed_at:type_name -> google.protobuf.Timestamp
-	45, // 4: state.v1.Scheduler.last_heartbeat_at:type_name -> google.protobuf.Timestamp
-	45, // 5: state.v1.Scheduler.cancelled_at:type_name -> google.protobuf.Timestamp
-	45, // 6: state.v1.Task.created_at:type_name -> google.protobuf.Timestamp
+	47, // 1: state.v1.Scheduler.created_at:type_name -> google.protobuf.Timestamp
+	47, // 2: state.v1.Scheduler.started_at:type_name -> google.protobuf.Timestamp
+	47, // 3: state.v1.Scheduler.completed_at:type_name -> google.protobuf.Timestamp
+	47, // 4: state.v1.Scheduler.last_heartbeat_at:type_name -> google.protobuf.Timestamp
+	47, // 5: state.v1.Scheduler.cancelled_at:type_name -> google.protobuf.Timestamp
+	47, // 6: state.v1.Task.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 7: state.v1.Task.status:type_name -> state.v1.TaskStatus
-	45, // 8: state.v1.Task.cancelled_at:type_name -> google.protobuf.Timestamp
-	45, // 9: state.v1.TaskExecution.created_at:type_name -> google.protobuf.Timestamp
-	45, // 10: state.v1.TaskExecution.started_at:type_name -> google.protobuf.Timestamp
-	45, // 11: state.v1.TaskExecution.completed_at:type_name -> google.protobuf.Timestamp
-	45, // 12: state.v1.TaskExecution.cancelled_at:type_name -> google.protobuf.Timestamp
+	47, // 8: state.v1.Task.cancelled_at:type_name -> google.protobuf.Timestamp
+	47, // 9: state.v1.TaskExecution.created_at:type_name -> google.protobuf.Timestamp
+	47, // 10: state.v1.TaskExecution.started_at:type_name -> google.protobuf.Timestamp
+	47, // 11: state.v1.TaskExecution.completed_at:type_name -> google.protobuf.Timestamp
+	47, // 12: state.v1.TaskExecution.cancelled_at:type_name -> google.protobuf.Timestamp
 	2,  // 13: state.v1.SchedulerResponse.scheduler:type_name -> state.v1.Scheduler
 	1,  // 14: state.v1.ListTasksRequest.status:type_name -> state.v1.TaskStatus
 	3,  // 15: state.v1.ListTasksResponse.tasks:type_name -> state.v1.Task
 	3,  // 16: state.v1.TaskResponse.task:type_name -> state.v1.Task
 	4,  // 17: state.v1.TaskExecutionResponse.task_execution:type_name -> state.v1.TaskExecution
 	4,  // 18: state.v1.ListTaskExecutionsResponse.task_executions:type_name -> state.v1.TaskExecution
-	45, // 19: state.v1.ScheduleSummary.last_run_at:type_name -> google.protobuf.Timestamp
+	47, // 19: state.v1.ScheduleSummary.last_run_at:type_name -> google.protobuf.Timestamp
 	20, // 20: state.v1.ListAllSchedulesResponse.schedules:type_name -> state.v1.ScheduleSummary
-	45, // 21: state.v1.ListStuckCandidatesRequest.cutoff:type_name -> google.protobuf.Timestamp
+	47, // 21: state.v1.ListStuckCandidatesRequest.cutoff:type_name -> google.protobuf.Timestamp
 	27, // 22: state.v1.ListStuckCandidatesResponse.candidates:type_name -> state.v1.StuckCandidate
 	39, // 23: state.v1.ListNodeRunsResponse.runs:type_name -> state.v1.NodeRun
 	42, // 24: state.v1.ListNodesResponse.nodes:type_name -> state.v1.NodeSummary
@@ -3216,29 +3302,31 @@ var file_proto_state_v1_state_proto_depIdxs = []int32{
 	37, // 39: state.v1.StateService.ListNodeRuns:input_type -> state.v1.ListNodeRunsRequest
 	40, // 40: state.v1.StateService.ListNodes:input_type -> state.v1.ListNodesRequest
 	43, // 41: state.v1.StateService.ListNodeNames:input_type -> state.v1.ListNodeNamesRequest
-	13, // 42: state.v1.StateService.GetTaskExecution:input_type -> state.v1.GetTaskExecutionRequest
-	15, // 43: state.v1.StateService.ListTaskExecutions:input_type -> state.v1.ListTaskExecutionsRequest
-	7,  // 44: state.v1.StateService.GetScheduler:output_type -> state.v1.SchedulerResponse
-	7,  // 45: state.v1.StateService.CancelScheduler:output_type -> state.v1.SchedulerResponse
-	18, // 46: state.v1.StateService.ActivateSchedule:output_type -> state.v1.ActivateScheduleResponse
-	21, // 47: state.v1.StateService.ListAllSchedules:output_type -> state.v1.ListAllSchedulesResponse
-	23, // 48: state.v1.StateService.TriggerSchedule:output_type -> state.v1.TriggerScheduleResponse
-	25, // 49: state.v1.StateService.CancelSchedule:output_type -> state.v1.CancelScheduleResponse
-	28, // 50: state.v1.StateService.ListStuckCandidates:output_type -> state.v1.ListStuckCandidatesResponse
-	12, // 51: state.v1.StateService.GetTask:output_type -> state.v1.TaskResponse
-	12, // 52: state.v1.StateService.GetTaskByScheduleAndNode:output_type -> state.v1.TaskResponse
-	11, // 53: state.v1.StateService.ListTasks:output_type -> state.v1.ListTasksResponse
-	30, // 54: state.v1.StateService.GetSchedulerInitStatus:output_type -> state.v1.GetSchedulerInitStatusResponse
-	32, // 55: state.v1.StateService.TriggerRerun:output_type -> state.v1.TriggerRerunResponse
-	34, // 56: state.v1.StateService.TriggerSingleNodeRun:output_type -> state.v1.TriggerSingleNodeRunResponse
-	36, // 57: state.v1.StateService.TriggerRebase:output_type -> state.v1.TriggerRebaseResponse
-	38, // 58: state.v1.StateService.ListNodeRuns:output_type -> state.v1.ListNodeRunsResponse
-	41, // 59: state.v1.StateService.ListNodes:output_type -> state.v1.ListNodesResponse
-	44, // 60: state.v1.StateService.ListNodeNames:output_type -> state.v1.ListNodeNamesResponse
-	14, // 61: state.v1.StateService.GetTaskExecution:output_type -> state.v1.TaskExecutionResponse
-	16, // 62: state.v1.StateService.ListTaskExecutions:output_type -> state.v1.ListTaskExecutionsResponse
-	44, // [44:63] is the sub-list for method output_type
-	25, // [25:44] is the sub-list for method input_type
+	45, // 42: state.v1.StateService.ListNodeServices:input_type -> state.v1.ListNodeServicesRequest
+	13, // 43: state.v1.StateService.GetTaskExecution:input_type -> state.v1.GetTaskExecutionRequest
+	15, // 44: state.v1.StateService.ListTaskExecutions:input_type -> state.v1.ListTaskExecutionsRequest
+	7,  // 45: state.v1.StateService.GetScheduler:output_type -> state.v1.SchedulerResponse
+	7,  // 46: state.v1.StateService.CancelScheduler:output_type -> state.v1.SchedulerResponse
+	18, // 47: state.v1.StateService.ActivateSchedule:output_type -> state.v1.ActivateScheduleResponse
+	21, // 48: state.v1.StateService.ListAllSchedules:output_type -> state.v1.ListAllSchedulesResponse
+	23, // 49: state.v1.StateService.TriggerSchedule:output_type -> state.v1.TriggerScheduleResponse
+	25, // 50: state.v1.StateService.CancelSchedule:output_type -> state.v1.CancelScheduleResponse
+	28, // 51: state.v1.StateService.ListStuckCandidates:output_type -> state.v1.ListStuckCandidatesResponse
+	12, // 52: state.v1.StateService.GetTask:output_type -> state.v1.TaskResponse
+	12, // 53: state.v1.StateService.GetTaskByScheduleAndNode:output_type -> state.v1.TaskResponse
+	11, // 54: state.v1.StateService.ListTasks:output_type -> state.v1.ListTasksResponse
+	30, // 55: state.v1.StateService.GetSchedulerInitStatus:output_type -> state.v1.GetSchedulerInitStatusResponse
+	32, // 56: state.v1.StateService.TriggerRerun:output_type -> state.v1.TriggerRerunResponse
+	34, // 57: state.v1.StateService.TriggerSingleNodeRun:output_type -> state.v1.TriggerSingleNodeRunResponse
+	36, // 58: state.v1.StateService.TriggerRebase:output_type -> state.v1.TriggerRebaseResponse
+	38, // 59: state.v1.StateService.ListNodeRuns:output_type -> state.v1.ListNodeRunsResponse
+	41, // 60: state.v1.StateService.ListNodes:output_type -> state.v1.ListNodesResponse
+	44, // 61: state.v1.StateService.ListNodeNames:output_type -> state.v1.ListNodeNamesResponse
+	46, // 62: state.v1.StateService.ListNodeServices:output_type -> state.v1.ListNodeServicesResponse
+	14, // 63: state.v1.StateService.GetTaskExecution:output_type -> state.v1.TaskExecutionResponse
+	16, // 64: state.v1.StateService.ListTaskExecutions:output_type -> state.v1.ListTaskExecutionsResponse
+	45, // [45:65] is the sub-list for method output_type
+	25, // [25:45] is the sub-list for method input_type
 	25, // [25:25] is the sub-list for extension type_name
 	25, // [25:25] is the sub-list for extension extendee
 	0,  // [0:25] is the sub-list for field type_name
@@ -3255,7 +3343,7 @@ func file_proto_state_v1_state_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_state_v1_state_proto_rawDesc), len(file_proto_state_v1_state_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   43,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

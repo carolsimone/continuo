@@ -3,6 +3,7 @@ import {
   groupByStage, stageLabel, reasonLabel, proposalKey,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
   releasePillClass, verificationPhase, verificationRunPhase, verificationRunIds,
+  effectiveRound, groupProposals,
 } from './release-helpers';
 import { NodeValidationResult } from './types';
 import type { ProposalDTO } from './types';
@@ -140,5 +141,92 @@ describe('releasePillClass for verification statuses', () => {
     expect(releasePillClass('passed')).toBe('pill--succeeded');
     expect(releasePillClass('failed')).toBe('pill--failed');
     expect(releasePillClass('queued')).toBe('pill--pending');
+  });
+});
+
+describe('effectiveRound', () => {
+  const p = (round?: number): ProposalDTO => ({ remediation_round: round } as ProposalDTO);
+  it('treats a missing round as 1', () => expect(effectiveRound(p(undefined))).toBe(1));
+  it('treats an explicit 0 as 1 (proto3 default over the wire)', () => expect(effectiveRound(p(0))).toBe(1));
+  it('passes a positive round through', () => expect(effectiveRound(p(3))).toBe(3));
+});
+
+describe('groupProposals', () => {
+  // A minimal proposal carrying only the fields groupProposals reads.
+  const mk = (o: Partial<ProposalDTO>): ProposalDTO => ({
+    id: o.id ?? 'x',
+    release_id: o.release_id ?? 'rel-1',
+    remediation_round: o.remediation_round,
+    created_at: o.created_at ?? '2026-09-03T10:00:00Z',
+    attempt: o.attempt ?? 1,
+    status: o.status ?? 'failed',
+    node_id: o.node_id ?? 'n0',
+    resolved_node_ids: o.resolved_node_ids,
+    pr_services: o.pr_services,
+    pull_requests: o.pull_requests,
+    pr_url: o.pr_url ?? '',
+    pr_state: o.pr_state ?? '',
+  } as ProposalDTO);
+
+  it('buckets by (release_id, round); same release+round is one group, different round is two', () => {
+    const groups = groupProposals([
+      mk({ id: 'a', release_id: 'r1', remediation_round: 1, created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 'b', release_id: 'r1', remediation_round: 1, created_at: '2026-09-03T11:00:00Z' }),
+      mk({ id: 'c', release_id: 'r1', remediation_round: 2, created_at: '2026-09-03T12:00:00Z' }),
+    ]);
+    expect(groups).toHaveLength(2);
+    const round1 = groups.find(g => g.round === 1)!;
+    expect(round1.attempts.map(a => a.id)).toEqual(['b', 'a']); // newest first
+    expect(round1.latest.id).toBe('b');
+  });
+
+  it('orders groups newest first by their latest attempt', () => {
+    const groups = groupProposals([
+      mk({ id: 'old', release_id: 'r1', remediation_round: 1, created_at: '2026-09-01T10:00:00Z' }),
+      mk({ id: 'new', release_id: 'r2', remediation_round: 1, created_at: '2026-09-05T10:00:00Z' }),
+    ]);
+    expect(groups.map(g => g.releaseId)).toEqual(['r2', 'r1']);
+  });
+
+  it('tie-breaks same created_at by higher attempt number for the latest', () => {
+    const groups = groupProposals([
+      mk({ id: 'a1', release_id: 'r1', remediation_round: 1, attempt: 1, created_at: '2026-09-03T10:00:00Z' }),
+      mk({ id: 'a2', release_id: 'r1', remediation_round: 1, attempt: 2, created_at: '2026-09-03T10:00:00Z' }),
+    ]);
+    expect(groups[0].latest.id).toBe('a2');
+  });
+
+  it('unions pr_services across attempts, dropping the legacy empty sentinel', () => {
+    const groups = groupProposals([
+      mk({ id: 'a', pr_services: ['billing'] }),
+      mk({ id: 'b', pr_services: ['ledger', 'billing'] }),
+    ]);
+    expect(groups[0].services).toEqual(['billing', 'ledger']);
+  });
+
+  it('yields no services for a group whose attempts are all legacy (unsplit)', () => {
+    const groups = groupProposals([mk({ id: 'a', pr_services: [''] }), mk({ id: 'b' })]);
+    expect(groups[0].services).toEqual([]);
+  });
+
+  it('unions resolved node ids across attempts, sorted', () => {
+    const groups = groupProposals([
+      mk({ id: 'a', resolved_node_ids: ['svc.b', 'svc.a'] }),
+      mk({ id: 'b', resolved_node_ids: ['svc.c', 'svc.a'] }),
+    ]);
+    expect(groups[0].nodeIds).toEqual(['svc.a', 'svc.b', 'svc.c']);
+  });
+
+  it('picks the newest attempt that has a pull request as latestPrProposal', () => {
+    const groups = groupProposals([
+      mk({ id: 'older', created_at: '2026-09-03T10:00:00Z', pr_state: 'merged' }),
+      mk({ id: 'newer', created_at: '2026-09-03T12:00:00Z' }), // no PR
+    ]);
+    expect(groups[0].latestPrProposal?.id).toBe('older');
+  });
+
+  it('sets latestPrProposal to null when no attempt has a pull request', () => {
+    const groups = groupProposals([mk({ id: 'a' }), mk({ id: 'b' })]);
+    expect(groups[0].latestPrProposal).toBeNull();
   });
 });

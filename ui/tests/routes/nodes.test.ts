@@ -8,6 +8,7 @@ const mockListNodeRuns = vi.fn();
 const mockTriggerSingleNodeRun = vi.fn();
 const mockListNodes = vi.fn();
 const mockListNodeNames = vi.fn();
+const mockListNodeServices = vi.fn();
 const mockGetNode = vi.fn();
 const mockGetNodeVersions = vi.fn();
 
@@ -16,6 +17,7 @@ const mockStateClient = {
   triggerSingleNodeRun: mockTriggerSingleNodeRun,
   listNodes: mockListNodes,
   listNodeNames: mockListNodeNames,
+  listNodeServices: mockListNodeServices,
 };
 
 const mockGraphClient = { getNode: mockGetNode, getNodeVersions: mockGetNodeVersions };
@@ -33,6 +35,7 @@ describe('nodes router', () => {
     mockTriggerSingleNodeRun.mockReset();
     mockListNodes.mockReset();
     mockListNodeNames.mockReset();
+    mockListNodeServices.mockReset();
     mockGetNode.mockReset();
     mockGetNodeVersions.mockReset();
   });
@@ -240,6 +243,30 @@ describe('nodes router', () => {
     expect(res.status).toBe(200);
     expect(res.body.names).toEqual(['customers', 'orders']);
     expect(mockListNodeNames).toHaveBeenCalledWith({ service_name: 'svc' }, expect.any(Function));
+  });
+
+  it('GET /services returns the distinct service list', async () => {
+    mockListNodeServices.mockImplementation((_req, cb) => cb(null, { service_names: ['billing', 'ledger'] }));
+    const res = await request(makeApp()).get('/api/nodes/services');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ services: ['billing', 'ledger'] });
+    expect(mockListNodeServices).toHaveBeenCalledWith({}, expect.any(Function));
+  });
+
+  it('GET /services defaults a missing service list to an empty array', async () => {
+    mockListNodeServices.mockImplementation((_req, cb) => cb(null, {}));
+    const res = await request(makeApp()).get('/api/nodes/services');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ services: [] });
+  });
+
+  it('GET /services maps a gRPC error to its HTTP status', async () => {
+    mockListNodeServices.mockImplementation((_req, cb) =>
+      cb({ code: grpc.status.UNAVAILABLE, message: 'state down' }),
+    );
+    const res = await request(makeApp()).get('/api/nodes/services');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain('state down');
   });
 
   it('GET /:svc/:schema/:table/meta maps node metadata', async () => {

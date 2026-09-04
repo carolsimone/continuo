@@ -66,6 +66,16 @@ export function createNodesRouter(stateClient: GrpcClient, graphClient: GrpcGrap
     });
   });
 
+  // GET /api/nodes/services — distinct active service names, for the catalog
+  // and Remediation-tab service filters. Backed by the ListNodeServices state
+  // read (a single DISTINCT query), independent of the paginated catalog.
+  router.get('/services', (_req, res) => {
+    stateClient.listNodeServices({}, (err: any, response: any) => {
+      if (err) return res.status(grpcToHttpStatus(err.code)).json({ error: err.message });
+      res.json({ services: response.service_names || [] });
+    });
+  });
+
   // GET /api/nodes/:service/:schema/:table/runs — last 50 raw runs on this node
   router.get('/:service/:schema/:table/runs', (req, res) => {
     const operation = parseNodeOperation(req.query.operation);

@@ -118,6 +118,30 @@ describe('remediation router', () => {
     expect(res.body.proposals).toEqual([]);
   });
 
+  it('forwards the service filter to ListProposals', async () => {
+    const remediation = makeRemediation({
+      listProposals: vi.fn().mockResolvedValue({ proposals: [] }),
+    });
+    const app = appWith({ remediation, getObject: makeGetObject() });
+
+    await request(app).get('/api/remediation/proposals?service=billing');
+    expect(remediation.listProposals).toHaveBeenCalledWith(
+      expect.objectContaining({ service: 'billing' }),
+    );
+  });
+
+  it('omits an empty service filter', async () => {
+    const remediation = makeRemediation({
+      listProposals: vi.fn().mockResolvedValue({ proposals: [] }),
+    });
+    const app = appWith({ remediation, getObject: makeGetObject() });
+
+    await request(app).get('/api/remediation/proposals?service=');
+    expect(remediation.listProposals).toHaveBeenCalledWith(
+      expect.not.objectContaining({ service: expect.anything() }),
+    );
+  });
+
   // ── GET /proposals/:id ────────────────────────────────────────────────────
 
   it('returns a proposal by id', async () => {
