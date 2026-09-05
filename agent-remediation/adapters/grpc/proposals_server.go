@@ -60,8 +60,8 @@ func NewProposalsServer(svc ProposalService) *ProposalsServer {
 }
 
 // ListProposals returns proposals matching the request filter — status,
-// pr_state, and release_id — ordered by created_at DESC. An empty filter
-// returns all stored proposals up to Limit.
+// pr_state, release_id, and service — ordered by created_at DESC. An empty
+// filter returns all stored proposals up to Limit.
 func (s *ProposalsServer) ListProposals(ctx context.Context, req *remediationv1.ListProposalsRequest) (*remediationv1.ListProposalsResponse, error) {
 	filter := repository.ProposalFilter{
 		Status:    req.Status,

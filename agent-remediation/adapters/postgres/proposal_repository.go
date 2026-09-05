@@ -717,7 +717,7 @@ func (r *ProposalRepository) List(ctx context.Context, filter repository.Proposa
 }
 
 // beginPRClaimCAS is the atomic claim BeginPR issues: it moves a (proposal,
-// service) child row from ” or 'failed' to 'opening' — stamping pr_claimed_at
+// service) child row from '' or 'failed' to 'opening' — stamping pr_claimed_at
 // — only while the parent proposal is still source-resolved and 'proposed'. The
 // correlated EXISTS re-checks those two preconditions inside the same UPDATE as
 // the pr_state guard, so a status or source_resolved change committed between
@@ -735,7 +735,7 @@ const beginPRClaimCAS = `
 	RETURNING pr_claimed_at`
 
 // BeginPR atomically claims one (proposal, service) pull request for creation:
-// the child proposal_pull_request row's pr_state moves from ” or 'failed' to
+// the child proposal_pull_request row's pr_state moves from '' or 'failed' to
 // 'opening', stamping pr_claimed_at with claimedAt. The child row is created on
 // first claim by an INSERT … ON CONFLICT DO NOTHING; the UPDATE … RETURNING is
 // the single-winner guard, so concurrent callers for the same service see 0
