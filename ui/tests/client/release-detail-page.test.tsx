@@ -395,7 +395,10 @@ describe('ReleaseDetailPage — brand header', () => {
 
 describe('ReleaseDetailPage — provenance line', () => {
   it('says which service the release changes and links its commit on GitHub', async () => {
-    const detail = { ...DETAIL, changed_service: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567' };
+    const detail = {
+      ...DETAIL, changed_service: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567',
+      commit_url: 'https://ghe.example.com/acme/demo/commit/abcdef1234567',
+    };
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
     const { container } = renderDetail();
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
@@ -404,12 +407,12 @@ describe('ReleaseDetailPage — provenance line', () => {
     expect(sub.textContent).toContain('Changes');
     expect(sub.querySelector('strong')?.textContent).toBe('service-1');
     const link = sub.querySelector('a')!;
-    expect(link).toHaveAttribute('href', 'https://github.com/acme/demo/commit/abcdef1234567');
+    expect(link).toHaveAttribute('href', 'https://ghe.example.com/acme/demo/commit/abcdef1234567');
     expect(link.textContent).toContain('acme/demo @ abcdef1');
   });
 
-  it('omits the commit link when the release carries no repo or commit', async () => {
-    const detail = { ...DETAIL, changed_service: 'service-1' };
+  it('omits the commit link when the server attached no commit URL', async () => {
+    const detail = { ...DETAIL, changed_service: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567' };
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
     const { container } = renderDetail();
     await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());

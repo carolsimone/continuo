@@ -4,7 +4,8 @@ import { releasePillClass, upcomingStages } from './release-helpers';
 // PipelineTimeline shows a run's path through the pipeline: one step per
 // recorded transition, coloured like the run's status pill and stamped with
 // when it happened, followed — while the run is still in flight — by the
-// stages it has not reached yet, ghosted and undated.
+// stages it has not reached yet: ghosted, undated, and read out as "(upcoming)"
+// so they are not mistaken for completed steps by ear.
 export default function PipelineTimeline({ transitions }: { transitions: ReleaseTransition[] }) {
   return (
     <>
@@ -27,8 +28,7 @@ export default function PipelineTimeline({ transitions }: { transitions: Release
           <li key={stage} className="release-timeline__step release-timeline__step--upcoming">
             <span className="release-timeline__connector" aria-hidden="true" />
             <div className="release-timeline__body">
-              <span className="pill-sm">{stage}</span>
-              <span className="release-timeline__at"> </span>
+              <span className="pill-sm">{stage}<span className="sr-only"> (upcoming)</span></span>
             </div>
           </li>
         ))}

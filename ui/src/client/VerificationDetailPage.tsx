@@ -72,7 +72,12 @@ export default function VerificationDetailPage() {
 
       <p className="page-sub">
         Verification run for release <Link to={`/releases/${run.verifies_release_id}`}>{run.verifies_release_id}</Link>
-        {' · '}attempt {run.attempt}{' · '}service {run.changed_service}{' · '}{run.manifest_kind}
+        <span className="page-sub__sep">·</span>
+        attempt {run.attempt}
+        <span className="page-sub__sep">·</span>
+        service {run.changed_service}
+        <span className="page-sub__sep">·</span>
+        {run.manifest_kind}
       </p>
 
       {run.fail_reason && (
@@ -89,7 +94,12 @@ export default function VerificationDetailPage() {
 
       <main className="page-content page-content--readable">
         <p>Submitted {fmt(run.created_at)} · started {fmt(run.activated_at)} · finished {fmt(run.finished_at)}</p>
-        <ServiceTiles imageTags={run.image_tags || {}} changedService={run.changed_service} subject="verification run" />
+        <ServiceTiles
+          imageTags={run.image_tags || {}}
+          changedService={run.changed_service}
+          subject="verification run"
+          carriedFrom={run.verifies_release_id}
+        />
         <PipelineTimeline transitions={run.transitions} />
 
         <NodeResultsTable perNode={run.per_node_results ?? []} />

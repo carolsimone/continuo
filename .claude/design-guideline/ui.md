@@ -775,7 +775,7 @@ is about, before any strip or section. Used on the release page
 <p className="page-sub">
   Changes <strong>core</strong>
   <span className="page-sub__sep">·</span>
-  <a href={commitUrl} target="_blank" rel="noopener noreferrer">acme/demo @ c2d1add ↗</a>
+  <a href={rel.commit_url} target="_blank" rel="noopener noreferrer">acme/demo @ c2d1add ↗</a>
 </p>
 ```
 
@@ -792,6 +792,10 @@ Rules:
 - One line, plain words; `strong` marks the subject, never a status.
 - A link-out ends with `↗` and opens in a new tab; a fact that cannot be
   linked (no repo or commit recorded) is simply absent, never a dead link.
+  The client never builds an external URL itself: the ui server attaches
+  `commit_url` under the install's GitHub host (derived from
+  `GITHUB_API_BASE_URL`), so a GitHub Enterprise install links to its own
+  host.
 - Separate facts with `.page-sub__sep`, not punctuation inside the text.
 
 ## Service tiles
@@ -828,7 +832,7 @@ on click, so there is no hover state.
 .service-tile       { display: flex; flex-direction: column; gap: 5px; min-width: 0;
                       padding: 10px 12px; background: #fff;
                       border: 1px solid #e2e8f0; border-radius: 6px; }
-.service-tile__head { display: flex; align-items: center; gap: 8px; }
+.service-tile__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .service-tile__name { flex: 1; font-size: 13px; font-weight: 600; color: #111827;
                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .service-tile__tag  { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 11.5px;
@@ -843,10 +847,12 @@ Rules:
   release; the accent dot is the service's colour from `buildServiceColors`
   (see Service accents), never a status hue.
 - Exactly one tile carries `--changed` and the `changed` chip: the service
-  whose image is new in this run. Every other image is carried over from
-  prod, and the section sub-line says so in those words, naming the kind of
-  run the page shows (`subject`: "release", or "verification run" on the
-  verification-run page); when the changed service is the only one, the
+  whose image is new in this run. The section sub-line says so and counts
+  the rest as carried over, naming the kind of run the page shows
+  (`subject`: "release", or "verification run") and where the rest came
+  from (`carriedFrom`: "prod" for a candidate; for a verification run, the
+  release it verifies, since its image set is that release's with the fixed
+  service swapped in). When the changed service is the only one, the
   sub-line stops after "is new in this release". Unknown changed service:
   no chip, no sub-line.
 - The image tag is whatever the release recorded — a short tag or a full
@@ -877,7 +883,8 @@ one step per recorded transition, in order, joined by connectors.
 .release-timeline           { display: flex; align-items: flex-start; list-style: none;
                               margin: 14px 0 18px; padding: 0 0 4px; overflow-x: auto; }
 .release-timeline__step     { display: flex; align-items: flex-start; }
-.release-timeline__connector { width: 28px; height: 1px; margin-top: 9px; background: #cbd5e1; }
+.release-timeline__connector { width: 28px; height: 1px; margin-top: 9px; background: #cbd5e1;
+                              flex-shrink: 0; }
 .release-timeline__step:first-child .release-timeline__connector { display: none; }
 .release-timeline__body     { display: flex; flex-direction: column; gap: 4px; }
 .release-timeline__at       { font-size: 11.5px; color: #64748b; white-space: nowrap;
@@ -894,8 +901,9 @@ Rules:
   status (`releasePillClass`), with the transition's timestamp beneath it.
 - While the run is still in flight, the stages it has not reached yet
   (`upcomingStages`) follow as ghosted, undated steps, so a two-step
-  timeline reads as progress rather than as a list. A finished run has no
-  ghosts.
+  timeline reads as progress rather than as a list. A ghost's pill carries
+  a visually hidden " (upcoming)" (`.sr-only`) so a screen reader does not
+  hear it as a completed step. A finished run has no ghosts.
 - The list scrolls horizontally inside its own container on narrow
   viewports; it never wraps and never scrolls the page sideways.
 

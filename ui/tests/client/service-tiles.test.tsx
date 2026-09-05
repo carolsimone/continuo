@@ -28,7 +28,7 @@ describe('ServiceTiles', () => {
       .toBe('core is new in this release · 3 carried over from prod');
   });
 
-  it('paints each tile with the service accent shared by every other surface', () => {
+  it('paints each tile with the accent buildServiceColors assigns it within this set of services', () => {
     const { container } = render(<ServiceTiles imageTags={TAGS} changedService="core" />);
     const colors = buildServiceColors(Object.keys(TAGS));
     for (const tile of Array.from(container.querySelectorAll('.service-tile'))) {
@@ -42,6 +42,14 @@ describe('ServiceTiles', () => {
     const { container } = render(<ServiceTiles imageTags={TAGS} changedService="core" subject="verification run" />);
     expect(container.querySelector('.section-header__sub')?.textContent)
       .toBe('core is new in this verification run · 3 carried over from prod');
+  });
+
+  it('names where the other images were carried over from, when it is not prod', () => {
+    const { container } = render(
+      <ServiceTiles imageTags={TAGS} changedService="core" subject="verification run" carriedFrom="rel-9f3e2a1-148" />,
+    );
+    expect(container.querySelector('.section-header__sub')?.textContent)
+      .toBe('core is new in this verification run · 3 carried over from rel-9f3e2a1-148');
   });
 
   it('drops the carried-over count when the changed service is the only one', () => {

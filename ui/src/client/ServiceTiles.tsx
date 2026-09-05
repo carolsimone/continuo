@@ -2,16 +2,19 @@ import { buildServiceColors } from './service-helpers';
 
 // ServiceTiles shows the set of service images a run executes with: one tile
 // per service, sorted by name so a service sits in the same place on every
-// release, carrying the service accent every other surface paints it with,
+// release, carrying the accent buildServiceColors assigns it within this set,
 // its name, and its image tag. The changed service — the one whose image is
-// new in this run, every other one being carried over from prod — is marked,
-// and the sub-line says so naming the kind of run the page shows (subject:
-// "release" unless the page says otherwise). Renders nothing when no image
+// new in this run — is marked, and the sub-line says so, naming the kind of
+// run the page shows (subject: "release" unless the page says otherwise) and
+// where every other image was carried over from (carriedFrom: "prod" for a
+// candidate; the verified release for a verification run, whose set is that
+// release's with the fixed service swapped in). Renders nothing when no image
 // has been recorded yet.
-export default function ServiceTiles({ imageTags, changedService, subject = 'release' }: {
+export default function ServiceTiles({ imageTags, changedService, subject = 'release', carriedFrom = 'prod' }: {
   imageTags: Record<string, string>;
   changedService?: string;
   subject?: string;
+  carriedFrom?: string;
 }) {
   const names = Object.keys(imageTags).sort();
   if (names.length === 0) return null;
@@ -19,7 +22,7 @@ export default function ServiceTiles({ imageTags, changedService, subject = 'rel
   const changed = changedService && names.includes(changedService) ? changedService : '';
   const carried = names.length - 1;
   const sub = changed
-    ? `${changed} is new in this ${subject}${carried > 0 ? ` · ${carried} carried over from prod` : ''}`
+    ? `${changed} is new in this ${subject}${carried > 0 ? ` · ${carried} carried over from ${carriedFrom}` : ''}`
     : '';
   return (
     <>

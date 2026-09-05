@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { releasePillClass, reasonLabel, upcomingStages, commitUrl, shortSha } from '../../src/client/release-helpers';
+import { releasePillClass, reasonLabel, upcomingStages, shortSha } from '../../src/client/release-helpers';
 
 describe('releasePillClass', () => {
   it('maps release lifecycle statuses to pill variants', () => {
@@ -62,17 +62,6 @@ describe('upcomingStages', () => {
   });
   it('is empty when nothing has been recorded yet', () => {
     expect(upcomingStages([])).toEqual([]);
-  });
-});
-
-describe('commitUrl', () => {
-  it('links an owner/name repo and commit to the GitHub commit page', () => {
-    expect(commitUrl('acme/demo', 'abcdef1234567')).toBe('https://github.com/acme/demo/commit/abcdef1234567');
-  });
-  it('is empty when either half is missing or the repo is not owner/name', () => {
-    expect(commitUrl('', 'abc')).toBe('');
-    expect(commitUrl('acme/demo', '')).toBe('');
-    expect(commitUrl('demo', 'abc')).toBe('');
   });
 });
 

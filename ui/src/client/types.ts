@@ -187,11 +187,14 @@ export interface ReleaseDetail {
   // that has not been retried; "Try again" increments it up to the 3-round cap.
   remediation_round: number;
   // The one service this candidate changes; every other entry in image_tags is
-  // carried over from prod. Absent on rows written before it was recorded.
+  // carried over from prod. Empty when the release row records none.
   changed_service?: string;
-  // Where the change came from: the GitHub owner/name repo and the commit.
+  // Where the change came from: the GitHub owner/name repo and the commit, and
+  // the commit's page under the install's GitHub host, attached by the ui
+  // server when both are recorded.
   repo?: string;
   commit_sha?: string;
+  commit_url?: string;
 }
 
 export interface NodeSummary {

@@ -11,7 +11,7 @@ const run = {
   validation_node_ids: ['model.core.orders'], failing_nodes: ['model.core.orders'],
   fail_reason: 'validation_failed', fail_detail: '',
   per_node_results: [{ stage: 'validation', node_id: 'model.core.orders', status: 'failed', dbt_log_uri: 's3://b/logs/x.log' }],
-  image_tags: { core: 'img:1' }, manifest_kind: 'dbt',
+  image_tags: { core: 'img:1', finance: 'img:2' }, manifest_kind: 'dbt',
 };
 
 function renderAt(id: string) {
@@ -74,7 +74,7 @@ describe('VerificationDetailPage — services and timeline', () => {
     const tile = document.querySelector('.service-tile--changed')!;
     expect(tile.querySelector('.service-tile__name')?.textContent).toBe('core');
     expect(tile.querySelector('.service-tile__tag')?.textContent).toBe('img:1');
-    expect(document.querySelector('.section-header__sub')?.textContent).toBe('core is new in this verification run');
+    expect(document.querySelector('.section-header__sub')?.textContent).toBe('core is new in this verification run · 1 carried over from rel-1');
     const steps = Array.from(document.querySelectorAll('.release-timeline__step .pill-sm')).map(e => e.textContent);
     expect(steps).toEqual(['received', 'failed']);
     expect(document.body.textContent).not.toContain('Image tags:');

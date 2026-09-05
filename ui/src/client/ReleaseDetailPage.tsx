@@ -6,7 +6,7 @@ import {
   releasePillClass, proposalKey, reasonLabel,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
   proposalPullRequests, proposalPrServices, proposalPrStateForService,
-  verificationPhase, verificationRunPhase, effectiveRound, commitUrl, shortSha,
+  verificationPhase, verificationRunPhase, effectiveRound, shortSha,
 } from './release-helpers';
 import { fetchProposals } from './remediation-api';
 import { NodeResultsTable } from './node-results';
@@ -476,7 +476,6 @@ export default function ReleaseDetailPage() {
   if (!rel) return <div className="page"><p className="empty">Loading…</p></div>;
 
   const perNode: NodeValidationResult[] = rel.per_node_results ?? [];
-  const commitLink = commitUrl(rel.repo ?? '', rel.commit_sha ?? '');
 
   return (
     <div className="page">
@@ -491,10 +490,10 @@ export default function ReleaseDetailPage() {
       {rel.changed_service && (
         <p className="page-sub">
           Changes <strong>{rel.changed_service}</strong>
-          {commitLink && (
+          {rel.commit_url && (
             <>
               <span className="page-sub__sep">·</span>
-              <a href={commitLink} target="_blank" rel="noopener noreferrer">
+              <a href={rel.commit_url} target="_blank" rel="noopener noreferrer">
                 {rel.repo} @ {shortSha(rel.commit_sha ?? '')} ↗
               </a>
             </>

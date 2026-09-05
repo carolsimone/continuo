@@ -28,8 +28,20 @@ describe('PipelineTimeline', () => {
       { to: 'compiling', at: '2026-09-05T14:25:37Z' },
     ]} />);
     const ghosts = Array.from(container.querySelectorAll('.release-timeline__step--upcoming'));
-    expect(ghosts.map(s => s.querySelector('.pill-sm')?.textContent)).toEqual(['parsing', 'seed_building', 'validating']);
-    for (const g of ghosts) expect(g.querySelector('.release-timeline__at')?.textContent?.trim()).toBe('');
+    // The stage name is what shows; "(upcoming)" is read out but visually hidden.
+    expect(ghosts.map(s => s.querySelector('.pill-sm')?.textContent)).toEqual([
+      'parsing (upcoming)', 'seed_building (upcoming)', 'validating (upcoming)',
+    ]);
+    for (const g of ghosts) {
+      expect(g.querySelector('.pill-sm .sr-only')?.textContent).toBe(' (upcoming)');
+      expect(g.querySelector('.release-timeline__at')).toBeNull();
+    }
     expect(container.querySelectorAll('.release-timeline__step').length).toBe(5);
+  });
+
+  it('renders the section with no steps when nothing has been recorded', () => {
+    const { container } = render(<PipelineTimeline transitions={[]} />);
+    expect(container.querySelector('.section-header__title')?.textContent).toBe('Timeline');
+    expect(container.querySelectorAll('.release-timeline__step').length).toBe(0);
   });
 });

@@ -300,16 +300,6 @@ export function upcomingStages(transitions: ReleaseTransition[]): string[] {
   return i === -1 ? [] : PIPELINE_STAGES.slice(i + 1);
 }
 
-// commitUrl is the GitHub page of the commit a release was built from. Empty
-// unless both halves are known and the repo is the owner/name form release-
-// controller records.
-export function commitUrl(repo: string, sha: string): string {
-  if (!repo || !sha) return '';
-  const [owner, name, ...rest] = repo.split('/');
-  if (!owner || !name || rest.length > 0) return '';
-  return `https://github.com/${owner}/${name}/commit/${sha}`;
-}
-
 // shortSha abbreviates a commit to the seven characters git itself shows.
 export function shortSha(sha: string): string {
   return sha.slice(0, 7);
