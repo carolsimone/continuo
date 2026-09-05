@@ -19,10 +19,11 @@ import (
 // typeflag defaults to a regular file; content is ignored for directories
 // and symlinks.
 type tarEntry struct {
-	name     string
-	content  []byte
-	typeflag byte
-	linkname string
+	name       string
+	content    []byte
+	typeflag   byte
+	linkname   string
+	paxRecords map[string]string
 }
 
 // buildTarball gzip-compresses a tar archive built from entries, for serving
@@ -42,6 +43,12 @@ func buildTarball(t *testing.T, entries []tarEntry) []byte {
 			Mode:     0o644,
 			Typeflag: typeflag,
 			Linkname: e.linkname,
+		}
+		if typeflag == tar.TypeXGlobalHeader {
+			// archive/tar encodes a global header from its PAX records alone
+			// and rejects any other field; the entry's on-disk name is chosen
+			// by the writer, as git archive chooses "pax_global_header".
+			hdr = &tar.Header{Typeflag: tar.TypeXGlobalHeader, PAXRecords: e.paxRecords}
 		}
 		if typeflag == tar.TypeReg {
 			hdr.Size = int64(len(e.content))
@@ -206,5 +213,43 @@ func TestFetch_SizeCapExceeded(t *testing.T) {
 			cleanup()
 		}
 		t.Fatal("expected error for archive exceeding size cap, got nil")
+	}
+}
+
+// GitHub builds its tarballs with git archive, whose first entry is a PAX
+// global header named "pax_global_header" (typeflag 'g', carrying the commit
+// sha as a comment record) that precedes the top-level directory. It is
+// metadata, not a file: extraction must skip it rather than read it as the
+// archive's top-level directory and then reject every real entry.
+func TestFetch_SkipsPaxGlobalHeaderBeforeTopLevelDir(t *testing.T) {
+	tb := buildTarball(t, []tarEntry{
+		{typeflag: tar.TypeXGlobalHeader, paxRecords: map[string]string{"comment": "0123456789abcdef0123456789abcdef01234567"}},
+		{name: "owner-repo-0123456/", typeflag: tar.TypeDir},
+		{name: "owner-repo-0123456/services/service-py/contracts/", typeflag: tar.TypeDir},
+		{name: "owner-repo-0123456/services/service-py/contracts/kpis.yml", content: []byte("nodes: []\n")},
+	})
+	srv := serveTarball(t, tb)
+	defer srv.Close()
+
+	g := NewSourceReader(srv.URL, "tok", srv.Client())
+	root, cleanup, err := g.Fetch(context.Background(), "owner/repo", "0123456789abcdef0123456789abcdef01234567")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	defer cleanup()
+
+	got, err := os.ReadFile(filepath.Join(root, "services", "service-py", "contracts", "kpis.yml")) //nolint:gosec // G304: root is the extraction directory Fetch just created for this test.
+	if err != nil {
+		t.Fatalf("read extracted file: %v", err)
+	}
+	if string(got) != "nodes: []\n" {
+		t.Fatalf("extracted content = %q", got)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read root: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "services" {
+		t.Fatalf("root must hold only the stripped tree, got %v", entries)
 	}
 }

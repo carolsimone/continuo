@@ -679,7 +679,7 @@ func handleTarball(w http.ResponseWriter, r *http.Request) {
 	// The archive is assembled in memory before a single byte is written, so a
 	// walk that fails part-way answers 500 rather than a truncated gzip stream
 	// the reader would report as a corrupt archive.
-	body, err := tarballOf(repoFixtureDir, fmt.Sprintf("%s-%s/", repo, ref))
+	body, err := tarballOf(repoFixtureDir, fmt.Sprintf("%s-%s/", repo, ref), ref)
 	if err != nil {
 		log.Printf("stub-github: build tarball for %s@%s: %v", repo, ref, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -694,10 +694,22 @@ func handleTarball(w http.ResponseWriter, r *http.Request) {
 // regular file under it, each entry named prefix + its root-relative path.
 // Irregular entries (symlinks, sockets, devices) are skipped: the reader on
 // the other side refuses to recreate them anyway.
-func tarballOf(root, prefix string) ([]byte, error) {
+//
+// The stream opens the way GitHub's does: git archive writes a PAX global
+// header entry (typeflag 'g') carrying the commit as a "comment" record before
+// the top-level directory, so a reader that mistakes that entry for the
+// top-level directory fails here exactly as it fails against GitHub.
+func tarballOf(root, prefix, commit string) ([]byte, error) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
+
+	if err := tw.WriteHeader(&tar.Header{
+		Typeflag:   tar.TypeXGlobalHeader,
+		PAXRecords: map[string]string{"comment": commit},
+	}); err != nil {
+		return nil, err
+	}
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

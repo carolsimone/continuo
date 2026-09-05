@@ -97,6 +97,16 @@ func extractTarball(r io.Reader, dir string) error {
 			return fmt.Errorf("read tar entry: %w", err)
 		}
 
+		// git archive (which builds GitHub's tarballs) opens the stream with a
+		// PAX global header entry — typeflag 'g', conventionally named
+		// "pax_global_header", carrying the commit sha as a comment record.
+		// archive/tar surfaces it as its own entry. It is archive metadata,
+		// not a path, so it is skipped before the top-level directory is
+		// derived from the first real entry.
+		if hdr.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
+
 		name := filepath.ToSlash(hdr.Name)
 		if strings.HasPrefix(name, "/") {
 			return fmt.Errorf("tar entry %q: absolute path not allowed", name)
