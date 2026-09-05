@@ -7,6 +7,8 @@ on:
     branches: [main]
     paths:
       - docs/try-it-locally.md
+      - docs/instantiate-continuo.md
+      - docs/run-projects-in-continuo.md
       - deploy/README.md
       - docs/roadmap.md
   workflow_dispatch:
