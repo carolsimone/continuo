@@ -650,7 +650,10 @@ Every skip path returns `status=skipped`, which the driver reads as the signal t
    the release it is submitted under, so without one there is nothing to
    submit.
 2. Fetch the repository tarball at the trigger's repo/commit_sha and extract it
-   (RepoArchive.Fetch). A missing repo or commit is permanent:
+   (RepoArchive.Fetch): the PAX global header git archive writes first is
+   skipped as metadata, GitHub's generated top-level directory is stripped,
+   and symlinks, escaping paths, and oversized archives are rejected. A
+   missing repo or commit is permanent:
    proposal(status=skipped) with the reason recorded, since redelivering would
    retry it forever. Any other fetch error is transient and the trigger is
    redelivered. The extracted tree is removed when the attempt finishes.

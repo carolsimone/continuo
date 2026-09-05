@@ -702,6 +702,18 @@ func TestHandleTarball_ServesFixtureUnderSingleTopDirectory(t *testing.T) {
 		t.Fatalf("open gzip stream: %v", err)
 	}
 	tr := tar.NewReader(gz)
+	// The first entry mirrors git archive: a PAX global header whose comment
+	// record is the requested ref, ahead of the top-level directory.
+	first, err := tr.Next()
+	if err != nil {
+		t.Fatalf("read first entry: %v", err)
+	}
+	if first.Typeflag != tar.TypeXGlobalHeader {
+		t.Fatalf("first entry typeflag = %q, want PAX global header", first.Typeflag)
+	}
+	if got := first.PAXRecords["comment"]; got != "deadbeef" {
+		t.Errorf("global header comment = %q, want %q", got, "deadbeef")
+	}
 	var names []string
 	for {
 		hdr, err := tr.Next()
