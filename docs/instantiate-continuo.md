@@ -100,9 +100,6 @@ Then open it:
 ```bash
 kubectl -n continuo port-forward svc/ui 8090:8090 &
 kubectl -n continuo port-forward svc/continuo-dex 5556:5556 &
-
-# One-time. Run this in a real terminal window — sudo reads the password from
-# the terminal, so it will not prompt inside an IDE panel or an agent shell.
 echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
 
 open http://localhost:8090
