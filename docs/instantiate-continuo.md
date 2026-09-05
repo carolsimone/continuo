@@ -5,6 +5,12 @@ in about ten minutes. The next guide,
 [Run dbt and Python projects in Continuo](run-projects-in-continuo.md), puts the
 real projects on it.
 
+> **Deploying to your own Kubernetes cluster?** This guide is the local
+> quickstart — a single-node cluster with Continuo's own bundled PostgreSQL,
+> Redis, Neo4j and MinIO, meant for evaluation. To install Continuo into a real
+> cluster, against your own datastores and with HA and backups, follow
+> [deploy/README.md](../deploy/README.md) instead.
+
 ---
 
 ## 1. What you need before you start
