@@ -411,21 +411,22 @@ export default function RemediationPanel() {
 
   return (
     <>
+      <div className="form-field">
+        <label htmlFor="remediation-service">Service</label>
+        <select
+          id="remediation-service"
+          value={service}
+          onChange={e => setService(e.target.value)}
+        >
+          <option value="">All services</option>
+          {services.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+
       <div className="section-header">
         <div className="section-header__main">
           <span className="section-header__title">Proposals</span>
           <span className="section-header__count">{proposals.length}</span>
-        </div>
-        <div className="section-header__sub">
-          <label htmlFor="remediation-service">Service</label>{' '}
-          <select
-            id="remediation-service"
-            value={service}
-            onChange={e => setService(e.target.value)}
-          >
-            <option value="">All services</option>
-            {services.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
         </div>
       </div>
 

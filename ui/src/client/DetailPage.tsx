@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import { ReactFlowProvider } from '@xyflow/react';
 import {
@@ -100,7 +100,6 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const location = useLocation();
 
   const [lastRunId, setLastRunId] = useState<string | null | undefined>(() => initialLastRunId(location.state));
-  const resolvedRef = useRef(false);
   const [scheduler, setScheduler] = useState<Scheduler | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [graph, setGraph] = useState<ScheduleGraph | null>(null);
@@ -121,9 +120,15 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [rerunModalOpen, setRerunModalOpen] = useState(false);
 
+  // Arriving at a schedule resets every piece of page state and resolves the
+  // run the page opens on. The dashboard card passes the schedule's last run
+  // id as navigation state so that lookup can be skipped; without it the id
+  // is read from the schedule list. Only the schedule name drives this effect:
+  // a navigation that changes just the query string — a panel tab — writes a
+  // new history entry with null state, and must not wipe the page.
   useEffect(() => {
-    resolvedRef.current = false;
-    setLastRunId(initialLastRunId(location.state));
+    const hintedLastRunId = initialLastRunId(location.state);
+    setLastRunId(hintedLastRunId);
     setScheduler(null);
     setTasks([]);
     setGraph(null);
@@ -135,27 +140,21 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
     setSelectedNodeId(null);
     setExpandedServices(new Set());
     setGraphState('loading');
-  }, [location.state, name]);
+    if (!name || hintedLastRunId !== undefined) return;
 
-  useEffect(() => {
-    if (!name) return;
-    if (resolvedRef.current) return;
-    if (location.state != null) {
-      resolvedRef.current = true;
-      return;
-    }
-
-    resolvedRef.current = true;
+    let cancelled = false;
     fetch('/api/schedules')
       .then((response) => response.json())
       .then((data: { schedules: ScheduleSummary[] }) => {
+        if (cancelled) return;
         const match = (data.schedules || []).find((schedule) => schedule.schedule_name === name);
         setLastRunId(match?.last_run_id ?? null);
       })
       .catch(() => {
-        setLastRunId(null);
+        if (!cancelled) setLastRunId(null);
       });
-  }, [location.state, name]);
+    return () => { cancelled = true; };
+  }, [name]);
 
   useEffect(() => {
     if (!name) return;

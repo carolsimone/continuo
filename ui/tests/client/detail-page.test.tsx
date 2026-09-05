@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import DetailPage from '../../src/client/DetailPage';
 import { TaskExecution } from '../../src/client/types';
@@ -961,5 +961,38 @@ describe('DetailPage — service grouping sync between graph and table', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('DetailPage — panel tabs keep loaded page state', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('keeps the loaded Past Runs list after the Past Runs tab is selected', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence({
+      ...freshRoutes(),
+      [`/api/schedules/${SCHED}/runs`]: async () => ({
+        runs: [
+          { run_id: 'run-a', schedule_name: SCHED, terminal_status: 'succeeded', created_at: '2026-09-01T10:00:00Z', completed_at: '2026-09-01T10:01:00Z' },
+          { run_id: 'run-b', schedule_name: SCHED, terminal_status: 'failed', created_at: '2026-09-02T10:00:00Z', completed_at: '2026-09-02T10:01:00Z' },
+        ],
+      }),
+    }));
+
+    // Arriving from the dashboard card: the last run id travels as navigation state.
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    const pastRunsTab = await screen.findByRole('tab', { name: /past runs/i });
+    await waitFor(() => expect(within(pastRunsTab).getByText('2')).toBeInTheDocument());
+
+    // Selecting a panel tab only rewrites the query string. That navigation
+    // carries no state and must not reset the page.
+    fireEvent.click(pastRunsTab);
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /past runs/i })).toHaveClass('tabs__tab--active');
+    });
+    expect(within(screen.getByRole('tab', { name: /past runs/i })).getByText('2')).toBeInTheDocument();
+    expect(screen.getAllByText(/^(succeeded|failed)$/, { selector: '.pill-sm' })).toHaveLength(2);
+    expect(screen.queryByText('No runs yet.')).toBeNull();
   });
 });
