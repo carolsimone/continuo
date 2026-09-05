@@ -211,7 +211,7 @@ message NodeOutcome {
 
 // Verification is one fix-verification run per edited service and the
 // durable summary of how it went. phase is queued | running | passed |
-// failed ('' before the first read); activated_at is RFC 3339 or empty;
+// failed (empty before the first read); activated_at is RFC 3339 or empty;
 // error is the named per-node errors on a failed run.
 message Verification {
   string service = 1;

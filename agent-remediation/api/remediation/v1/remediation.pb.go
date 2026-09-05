@@ -1139,7 +1139,7 @@ func (x *NodeOutcome) GetReason() string {
 
 // Verification is one fix-verification run per edited service and the
 // durable summary of how it went. phase is queued | running | passed |
-// failed (” before the first read); activated_at is RFC 3339 or empty;
+// failed (empty before the first read); activated_at is RFC 3339 or empty;
 // error is the named per-node errors on a failed run.
 type Verification struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
