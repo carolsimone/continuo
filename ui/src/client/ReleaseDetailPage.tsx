@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
+import PageHeader from './PageHeader';
 import { ReleaseDetail, NodeValidationResult, ProposalDTO, VerificationRunSummary } from './types';
 import {
   releasePillClass, proposalKey, reasonLabel,
   proposalNodeIds, proposalStatusForNode, proposalReasonForNode,
   proposalPullRequests, proposalPrServices, proposalPrStateForService,
-  verificationPhase, verificationRunPhase, effectiveRound,
+  verificationPhase, verificationRunPhase, effectiveRound, commitUrl, shortSha,
 } from './release-helpers';
 import { fetchProposals } from './remediation-api';
 import { NodeResultsTable } from './node-results';
+import ServiceTiles from './ServiceTiles';
+import PipelineTimeline from './PipelineTimeline';
 
 // A remediation round is capped at this many attempts; the release-controller
 // enforces the same limit and answers 409 rounds_exhausted past it.
@@ -473,16 +476,31 @@ export default function ReleaseDetailPage() {
   if (!rel) return <div className="page"><p className="empty">Loading…</p></div>;
 
   const perNode: NodeValidationResult[] = rel.per_node_results ?? [];
+  const commitLink = commitUrl(rel.repo ?? '', rel.commit_sha ?? '');
 
   return (
     <div className="page">
-      <header className="page-header">
+      <PageHeader>
         <button type="button" className="detail-back-link" onClick={() => navigate('/?tab=releases')}>← Back</button>
         <div className="detail-page-title">{rel.release_id}</div>
         <span className={`pill ${releasePillClass(rel.status)}`}>
           {rel.status}{rel.remediation_round > 1 ? ` · round ${rel.remediation_round}` : ''}
         </span>
-      </header>
+      </PageHeader>
+
+      {rel.changed_service && (
+        <p className="page-sub">
+          Changes <strong>{rel.changed_service}</strong>
+          {commitLink && (
+            <>
+              <span className="page-sub__sep">·</span>
+              <a href={commitLink} target="_blank" rel="noopener noreferrer">
+                {rel.repo} @ {shortSha(rel.commit_sha ?? '')} ↗
+              </a>
+            </>
+          )}
+        </p>
+      )}
 
       {rel.reject_reason && (
         <div className="info-strip info-strip--error">
@@ -529,18 +547,8 @@ export default function ReleaseDetailPage() {
       )}
 
       <main className="page-content page-content--readable">
-        <p>Image tags: {Object.entries(rel.image_tags || {}).map(([s, t]) => `${s}=${t}`).join(', ') || '—'}</p>
-
-        <div className="section-header">
-          <div className="section-header__main">
-            <span className="section-header__title">Timeline</span>
-          </div>
-        </div>
-        <ul>
-          {rel.transitions.map((t, i) => (
-            <li key={i}>{t.to} · {t.at.slice(0, 19).replace('T', ' ')}</li>
-          ))}
-        </ul>
+        <ServiceTiles imageTags={rel.image_tags || {}} changedService={rel.changed_service} />
+        <PipelineTimeline transitions={rel.transitions} />
 
         <NodeResultsTable
           perNode={perNode}

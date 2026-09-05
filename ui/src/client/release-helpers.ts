@@ -1,4 +1,4 @@
-import { NodeValidationResult, ProposalDTO, PullRequestDTO } from './types';
+import { NodeValidationResult, ProposalDTO, PullRequestDTO, ReleaseTransition } from './types';
 
 // releasePillClass maps a status to a design-system pill variant. It handles
 // release lifecycle statuses (promoted/rejected/validating/…), verification-run
@@ -282,4 +282,35 @@ export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
     return b.round - a.round;
   });
   return groups;
+}
+
+// The stages a run passes through, in order, before it leaves the pipeline
+// with a terminal status (promoted/rejected/superseded for a candidate,
+// passed/failed for a verification run).
+const PIPELINE_STAGES = ['received', 'compiling', 'parsing', 'seed_building', 'validating'];
+
+// upcomingStages lists the pipeline stages a run has not reached yet, so the
+// timeline can show where an in-flight run is going. Empty once the latest
+// transition is not a pipeline stage — the run has finished — or when nothing
+// has been recorded.
+export function upcomingStages(transitions: ReleaseTransition[]): string[] {
+  const last = transitions[transitions.length - 1];
+  if (!last) return [];
+  const i = PIPELINE_STAGES.indexOf(last.to);
+  return i === -1 ? [] : PIPELINE_STAGES.slice(i + 1);
+}
+
+// commitUrl is the GitHub page of the commit a release was built from. Empty
+// unless both halves are known and the repo is the owner/name form release-
+// controller records.
+export function commitUrl(repo: string, sha: string): string {
+  if (!repo || !sha) return '';
+  const [owner, name, ...rest] = repo.split('/');
+  if (!owner || !name || rest.length > 0) return '';
+  return `https://github.com/${owner}/${name}/commit/${sha}`;
+}
+
+// shortSha abbreviates a commit to the seven characters git itself shows.
+export function shortSha(sha: string): string {
+  return sha.slice(0, 7);
 }

@@ -102,7 +102,11 @@ describe('ReleaseDetailPage', () => {
     expect(container.querySelector('.detail-back-link')).toBeTruthy();
     expect(container.querySelector('.detail-page-title')).toBeTruthy();
     expect(container.querySelector('.page-header .pill')).toBeTruthy();
-    expect(container.querySelectorAll('.section-header').length).toBe(2);
+    // Services, Timeline, and the one per-node stage section.
+    expect(container.querySelectorAll('.section-header').length).toBe(3);
+    expect(container.querySelector('.service-tile')).toBeTruthy();
+    expect(container.querySelector('.release-timeline')).toBeTruthy();
+    expect(container.textContent).not.toContain('Image tags:');
     expect(container.querySelector('table.nodes-table')).toBeTruthy();
     expect(container.querySelector('.info-strip--error')?.textContent).toContain('schema drift');
 
@@ -370,5 +374,54 @@ describe('ReleaseDetailPage — verify chip: queued vs running', () => {
     // than claiming a queue wait it cannot substantiate.
     expect(screen.getByText('Verifying fix…')).toBeInTheDocument();
     expect(screen.queryByText('Queued for verification')).not.toBeInTheDocument();
+  });
+});
+
+describe('ReleaseDetailPage — brand header', () => {
+  it('starts the header with the brand, before the back link', async () => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(DETAIL) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+
+    const header = container.querySelector('.page-header')!;
+    const brand = header.querySelector('a.brand');
+    expect(brand).toHaveAttribute('href', '/');
+    const back = header.querySelector('.detail-back-link')!;
+    expect(brand!.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(header.querySelector('.page-header__divider')).toBeTruthy();
+  });
+});
+
+describe('ReleaseDetailPage — provenance line', () => {
+  it('says which service the release changes and links its commit on GitHub', async () => {
+    const detail = { ...DETAIL, changed_service: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567' };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+
+    const sub = container.querySelector('.page-sub')!;
+    expect(sub.textContent).toContain('Changes');
+    expect(sub.querySelector('strong')?.textContent).toBe('service-1');
+    const link = sub.querySelector('a')!;
+    expect(link).toHaveAttribute('href', 'https://github.com/acme/demo/commit/abcdef1234567');
+    expect(link.textContent).toContain('acme/demo @ abcdef1');
+  });
+
+  it('omits the commit link when the release carries no repo or commit', async () => {
+    const detail = { ...DETAIL, changed_service: 'service-1' };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    const sub = container.querySelector('.page-sub')!;
+    expect(sub.querySelector('strong')?.textContent).toBe('service-1');
+    expect(sub.querySelector('a')).toBeNull();
+  });
+
+  it('renders no provenance line when the release names no changed service', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(DETAIL) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    expect(container.querySelector('.page-sub')).toBeNull();
   });
 });

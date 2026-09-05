@@ -186,6 +186,12 @@ export interface ReleaseDetail {
   // How many remediation rounds have run for this release. 1 for every release
   // that has not been retried; "Try again" increments it up to the 3-round cap.
   remediation_round: number;
+  // The one service this candidate changes; every other entry in image_tags is
+  // carried over from prod. Absent on rows written before it was recorded.
+  changed_service?: string;
+  // Where the change came from: the GitHub owner/name repo and the commit.
+  repo?: string;
+  commit_sha?: string;
 }
 
 export interface NodeSummary {

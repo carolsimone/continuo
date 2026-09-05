@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { releasePillClass, reasonLabel } from '../../src/client/release-helpers';
+import { releasePillClass, reasonLabel, upcomingStages, commitUrl, shortSha } from '../../src/client/release-helpers';
 
 describe('releasePillClass', () => {
   it('maps release lifecycle statuses to pill variants', () => {
@@ -46,5 +46,39 @@ describe('reasonLabel', () => {
   });
   it('falls back to the raw value for an unknown reason', () => {
     expect(reasonLabel('meteor_strike')).toBe('meteor_strike');
+  });
+});
+
+describe('upcomingStages', () => {
+  const at = '2026-09-05T14:25:36Z';
+  it('lists the pipeline stages a run has not reached yet, in order', () => {
+    expect(upcomingStages([{ to: 'received', at }, { to: 'compiling', at }]))
+      .toEqual(['parsing', 'seed_building', 'validating']);
+  });
+  it('is empty once the run has left the pipeline (candidate or verification)', () => {
+    expect(upcomingStages([{ to: 'received', at }, { to: 'validating', at }, { to: 'rejected', at }])).toEqual([]);
+    expect(upcomingStages([{ to: 'received', at }, { to: 'validating', at }, { to: 'passed', at }])).toEqual([]);
+    expect(upcomingStages([{ to: 'received', at }, { to: 'superseded', at }])).toEqual([]);
+  });
+  it('is empty when nothing has been recorded yet', () => {
+    expect(upcomingStages([])).toEqual([]);
+  });
+});
+
+describe('commitUrl', () => {
+  it('links an owner/name repo and commit to the GitHub commit page', () => {
+    expect(commitUrl('acme/demo', 'abcdef1234567')).toBe('https://github.com/acme/demo/commit/abcdef1234567');
+  });
+  it('is empty when either half is missing or the repo is not owner/name', () => {
+    expect(commitUrl('', 'abc')).toBe('');
+    expect(commitUrl('acme/demo', '')).toBe('');
+    expect(commitUrl('demo', 'abc')).toBe('');
+  });
+});
+
+describe('shortSha', () => {
+  it('keeps the first seven characters', () => {
+    expect(shortSha('abcdef1234567')).toBe('abcdef1');
+    expect(shortSha('abc')).toBe('abc');
   });
 });
