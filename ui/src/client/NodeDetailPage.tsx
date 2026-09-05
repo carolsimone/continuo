@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams } from 'react-router';
+import PageHeader from './PageHeader';
 import type { NodeRun, NodeRunsResponse, NodeDetailFrom } from './types';
 import { kindLabel, computeNodeStats, formatDuration, formatRelative } from './node-helpers';
 import NodeTypeIcon from './NodeTypeIcon';
@@ -205,7 +206,7 @@ export default function NodeDetailPage() {
         document.body,
       )}
 
-      <header className="page-header">
+      <PageHeader>
         <button className="detail-back-link" onClick={() => navigate(backPath)}>
           {backLabel}
         </button>
@@ -221,7 +222,7 @@ export default function NodeDetailPage() {
             <div className="detail-node-source">source: {sourceUri}</div>
           )}
         </div>
-      </header>
+      </PageHeader>
 
       <div className="page-action-row">
         <div className="form-field">

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { ReleaseClient } from '../release-client';
 import type { CommitAuthorResolver, ReleaseAuthor } from '../github/commit-author';
+import { commitUrl } from '../github/web-base';
 
 // The subset of a release list row enrichAuthors reads and writes. The list
 // itself crosses the release-controller→ui boundary untyped; this pins the two
@@ -45,6 +46,7 @@ export function createReleasesRouter(
   client: ReleaseClient,
   getLog: (key: string) => Promise<string>,
   authorResolver?: CommitAuthorResolver,
+  githubWebBaseUrl = 'https://github.com',
 ) {
   const router = Router();
 
@@ -125,10 +127,14 @@ export function createReleasesRouter(
     }
   });
 
-  // GET /api/releases/:id
+  // GET /api/releases/:id — the release as release-controller returns it, plus
+  // commit_url, the page of its commit under the configured GitHub web host,
+  // when the release records a repo and commit.
   router.get('/:id', async (req, res) => {
     try {
-      res.json(await client.getRelease(req.params.id));
+      const release = await client.getRelease(req.params.id);
+      const url = commitUrl(githubWebBaseUrl, release?.repo ?? '', release?.commit_sha ?? '');
+      res.json(url ? { ...release, commit_url: url } : release);
     } catch (err: any) {
       res.status(err.status || 502).json({ error: 'release-controller request failed' });
     }

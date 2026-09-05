@@ -167,3 +167,22 @@ describe('releases router', () => {
     expect(client.listVerificationRuns).toHaveBeenCalledWith('rel-1');
   });
 });
+
+describe('releases router — commit link', () => {
+  it('attaches the commit page URL under the configured GitHub web host to a release detail', async () => {
+    const client = { getRelease: vi.fn().mockResolvedValue({ release_id: 'r1', repo: 'acme/demo', commit_sha: 'abcdef1234567' }) };
+    const app = express();
+    app.use('/api/releases', createReleasesRouter(client as any, vi.fn(), undefined, 'https://ghe.example.com'));
+    const res = await request(app).get('/api/releases/r1');
+    expect(res.status).toBe(200);
+    expect(res.body.commit_url).toBe('https://ghe.example.com/acme/demo/commit/abcdef1234567');
+  });
+
+  it('attaches no commit URL when the release records no repo or commit', async () => {
+    const client = { getRelease: vi.fn().mockResolvedValue({ release_id: 'r1', repo: 'acme/demo' }) };
+    const app = appWith({ client, getLog: vi.fn() });
+    const res = await request(app).get('/api/releases/r1');
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('commit_url');
+  });
+});

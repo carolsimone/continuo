@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
+import PageHeader from './PageHeader';
 import { ReactFlowProvider } from '@xyflow/react';
 import {
   RunGraph,
@@ -564,7 +565,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
 
   return (
     <div className="page">
-      <header className="page-header">
+      <PageHeader>
         <button className="detail-back-link" onClick={() => navigate('/')}>
           ← Back
         </button>
@@ -584,7 +585,7 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
             topology v{topologyGeneration}
           </span>
         )}
-      </header>
+      </PageHeader>
 
       {(name || showRerunFailed) && (
         <div className="page-action-row">

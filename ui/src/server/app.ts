@@ -30,6 +30,7 @@ export function createApp(
   remediationClient?: RemediationClient,
   prCreator?: PullRequestCreator,
   commitAuthorResolver?: CommitAuthorResolver,
+  githubWebBaseUrl?: string,
 ) {
   const app = express();
   app.use(express.json());
@@ -54,7 +55,7 @@ export function createApp(
   app.use('/api/config', createConfigRouter(configFilePath));
   app.use('/api/features', createFeaturesRouter(chatBridgeEnabled));
   const releaseClient = createReleaseClient(releaseControllerUrl);
-  app.use('/api/releases', createReleasesRouter(releaseClient, getLogObject, commitAuthorResolver));
+  app.use('/api/releases', createReleasesRouter(releaseClient, getLogObject, commitAuthorResolver, githubWebBaseUrl));
   app.use('/api/verifications', createVerificationsRouter(releaseClient));
   app.use('/api/pipeline', createPipelineRouter(releaseClient));
   if (remediationClient) {
