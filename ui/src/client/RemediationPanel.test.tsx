@@ -643,6 +643,24 @@ describe('RemediationPanel — service filter', () => {
     await waitFor(() => expect(mockFetchProposals).toHaveBeenLastCalledWith({ service: 'billing' }));
   });
 
+  it('renders the Service filter as a .form-field above the Proposals section header', async () => {
+    mockFetchNodeServices.mockResolvedValue(['billing']);
+
+    const { container } = renderPanel();
+
+    const select = await screen.findByLabelText('Service');
+    const field = select.closest('.form-field');
+    expect(field).not.toBeNull();
+    expect(field!.querySelector('label')).toHaveTextContent('Service');
+
+    // The filter drives the list, so it sits above the list's header — never
+    // inside the header's sub-line, which carries metadata only.
+    const header = container.querySelector('.section-header');
+    expect(header).not.toBeNull();
+    expect(header!.contains(select)).toBe(false);
+    expect(field!.compareDocumentPosition(header!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('ignores a superseded (slower, earlier) proposals response so it cannot overwrite the current filter', async () => {
     mockFetchNodeServices.mockResolvedValue(['billing', 'ledger']);
 
