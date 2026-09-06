@@ -19,3 +19,4 @@ services:
   core: services/core
   finance: services/finance
   marketing: services/marketing
+  service-py: services/service-py

@@ -19,6 +19,12 @@ shipped in those.
   keeps working unmodified. MINOR.
 
 ### Changed
+- The shipped `files/service_repos.yaml` (the `-service-repos` ConfigMap
+  agent-remediation reads) now maps the `service-py` python service to
+  `services/service-py`. Without it a python node's proposed contract fix
+  belongs to no configured service and the attempt is recorded failed before
+  verification. Installs that name their own ConfigMap in
+  `services.agent-remediation.volumes` are unaffected. PATCH.
 - During a rolling upgrade, the old `remediation` binary logs `ON CONFLICT`
   constraint errors for a few seconds after migration `V4` applies the wider
   `classification_decision` unique key; affected messages stay pending on
