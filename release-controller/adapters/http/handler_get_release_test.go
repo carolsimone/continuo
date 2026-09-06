@@ -67,7 +67,7 @@ func TestGetReleaseResponse_IncludesProvenance(t *testing.T) {
 	// helper is caught: 11 pre-existing keys plus repo + commit_sha +
 	// remediation_round. There is no shadow key: a candidate response never
 	// carries one, since GET /releases/{id} only ever returns a candidate.
-	assert.Len(t, decoded, 14)
+	assert.Len(t, decoded, 15)
 	assert.Equal(t, "rPROV", decoded["release_id"])
 	_, hasShadow := decoded["shadow"]
 	assert.False(t, hasShadow, "a candidate response must not carry a shadow key")
@@ -103,4 +103,22 @@ func TestGetReleaseResponse_IncludesRejectDetail(t *testing.T) {
 	assert.Equal(t,
 		"analytics.orders is produced by finance (models/orders.sql) and marketing (models/orders.sql)",
 		body["reject_detail"])
+}
+
+// TestGetReleaseResponse_IncludesManifestKind verifies the response names how
+// the release's artifact is parsed, so the UI can preview the stages that
+// apply to its kind (a python release has no compile leg).
+func TestGetReleaseResponse_IncludesManifestKind(t *testing.T) {
+	rel := pipeline.Rehydrate(pipeline.RehydrateInput{
+		ID:           "rKIND",
+		Status:       pipeline.StatusReceived,
+		ManifestKind: release.ManifestKindPython,
+	})
+
+	body, err := json.Marshal(getReleaseResponse(rel))
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(body, &decoded))
+	assert.Equal(t, "python", decoded["manifest_kind"])
 }

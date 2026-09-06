@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import PageHeader from './PageHeader';
 import { VerificationRunDetail } from './types';
 import { reasonLabel, releasePillClass, verificationRunPhase } from './release-helpers';
 import { NodeResultsTable } from './node-results';
+import ServiceTiles from './ServiceTiles';
+import PipelineTimeline from './PipelineTimeline';
 
 const POLL_INTERVAL_MS = 5000;
 const TERMINAL = new Set(['passed', 'failed']);
@@ -61,15 +64,20 @@ export default function VerificationDetailPage() {
 
   return (
     <div className="page">
-      <header className="page-header">
+      <PageHeader>
         <button type="button" className="detail-back-link" onClick={() => navigate('/?tab=remediation')}>← Back</button>
         <div className="detail-page-title">{run.run_id}</div>
         <span className={`pill ${releasePillClass(phase)}`}>{phase === 'running' ? run.status : phase}</span>
-      </header>
+      </PageHeader>
 
       <p className="page-sub">
         Verification run for release <Link to={`/releases/${run.verifies_release_id}`}>{run.verifies_release_id}</Link>
-        {' · '}attempt {run.attempt}{' · '}service {run.changed_service}{' · '}{run.manifest_kind}
+        <span className="page-sub__sep">·</span>
+        attempt {run.attempt}
+        <span className="page-sub__sep">·</span>
+        service {run.changed_service}
+        <span className="page-sub__sep">·</span>
+        {run.manifest_kind}
       </p>
 
       {run.fail_reason && (
@@ -86,16 +94,13 @@ export default function VerificationDetailPage() {
 
       <main className="page-content page-content--readable">
         <p>Submitted {fmt(run.created_at)} · started {fmt(run.activated_at)} · finished {fmt(run.finished_at)}</p>
-        <p>Image tags: {Object.entries(run.image_tags || {}).map(([s, t]) => `${s}=${t}`).join(', ') || '—'}</p>
-
-        <div className="section-header">
-          <div className="section-header__main"><span className="section-header__title">Timeline</span></div>
-        </div>
-        <ul>
-          {run.transitions.map((t, i) => (
-            <li key={i}>{t.to} · {fmt(t.at)}</li>
-          ))}
-        </ul>
+        <ServiceTiles
+          imageTags={run.image_tags || {}}
+          changedService={run.changed_service}
+          subject="verification run"
+          carriedFrom={run.verifies_release_id}
+        />
+        <PipelineTimeline transitions={run.transitions} run={{ manifestKind: run.manifest_kind }} />
 
         <NodeResultsTable perNode={run.per_node_results ?? []} />
       </main>

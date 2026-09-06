@@ -1,4 +1,4 @@
-import { NodeValidationResult, ProposalDTO, PullRequestDTO } from './types';
+import { NodeValidationResult, ProposalDTO, PullRequestDTO, ReleaseTransition } from './types';
 
 // releasePillClass maps a status to a design-system pill variant. It handles
 // release lifecycle statuses (promoted/rejected/validating/…), verification-run
@@ -282,4 +282,64 @@ export function groupProposals(proposals: ProposalDTO[]): ProposalGroup[] {
     return b.round - a.round;
   });
   return groups;
+}
+
+// The stages a run can pass through, in order, before it leaves the pipeline
+// with a terminal status (promoted/rejected/superseded for a candidate,
+// passed/failed for a verification run).
+const PIPELINE_STAGES = ['received', 'compiling', 'parsing', 'seed_building', 'validating'];
+
+// A stage a run has not reached yet, with the condition on it when it does
+// not run on every path.
+export interface UpcomingStage {
+  stage: string;
+  condition?: string;
+}
+
+// What decides a run's path through the pipeline: how its artifact is parsed
+// ('dbt' or 'python'), and whether it is a bootstrap release.
+export interface PipelineRun {
+  manifestKind?: string;
+  bootstrap?: boolean;
+}
+
+// pipelinePath lists the stages a run of this kind passes through, in order,
+// naming the condition on each stage that does not run on every path:
+// - compiling: dbt only — a python service's own CI compiles and uploads the
+//   contract before the release is posted, so activation goes straight to
+//   parsing;
+// - parsing: every run;
+// - seed_building: dbt only, and only when the validation set holds a new or
+//   changed seed;
+// - validating: unless nothing changed against prod (then the run promotes
+//   or, for a verification, ends at once), and never for a bootstrap
+//   release, which promotes right after parsing.
+// An unknown kind takes the dbt path, the common one.
+function pipelinePath(run: PipelineRun): UpcomingStage[] {
+  const python = run.manifestKind === 'python';
+  const path: UpcomingStage[] = [{ stage: 'received' }];
+  if (!python) path.push({ stage: 'compiling' });
+  path.push({ stage: 'parsing' });
+  if (run.bootstrap) return path;
+  if (!python) path.push({ stage: 'seed_building', condition: 'if seeds changed' });
+  path.push({ stage: 'validating', condition: 'unless nothing changed' });
+  return path;
+}
+
+// upcomingStages lists the stages a run has not reached yet on the path its
+// kind takes, so the timeline can show where an in-flight run is going
+// without promising a stage it will never enter. Empty once the latest
+// transition is not a pipeline stage — the run has finished — or when
+// nothing has been recorded.
+export function upcomingStages(transitions: ReleaseTransition[], run: PipelineRun = {}): UpcomingStage[] {
+  const last = transitions[transitions.length - 1];
+  if (!last) return [];
+  const reached = PIPELINE_STAGES.indexOf(last.to);
+  if (reached === -1) return [];
+  return pipelinePath(run).filter(s => PIPELINE_STAGES.indexOf(s.stage) > reached);
+}
+
+// shortSha abbreviates a commit to the seven characters git itself shows.
+export function shortSha(sha: string): string {
+  return sha.slice(0, 7);
 }

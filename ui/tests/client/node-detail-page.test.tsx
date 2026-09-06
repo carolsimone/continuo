@@ -499,3 +499,17 @@ describe('NodeDetailPage — history fetch race guard', () => {
     expect(screen.queryByText('run-img')).toBeNull();
   });
 });
+
+describe('NodeDetailPage — brand header', () => {
+  it('starts the header with the brand, before the back link', async () => {
+    mockFetch.mockImplementation(() => jsonResp({ runs: [] }));
+    const { container } = renderPage();
+    await screen.findByText(/svc\.schema\.tbl/);
+
+    const header = container.querySelector('.page-header')!;
+    const brand = header.querySelector('a.brand');
+    expect(brand).toHaveAttribute('href', '/');
+    const back = header.querySelector('.detail-back-link')!;
+    expect(brand!.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

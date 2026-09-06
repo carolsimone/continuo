@@ -996,3 +996,18 @@ describe('DetailPage — panel tabs keep loaded page state', () => {
     expect(screen.queryByText('No runs yet.')).toBeNull();
   });
 });
+
+describe('DetailPage — brand header', () => {
+  it('starts the header with the brand, before the back link', async () => {
+    const fetchMock = mockFetchSequence(failedRoutes());
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(withRouter({ last_run_id: RUN_ID }));
+    await screen.findByRole('button', { name: /^▶ Trigger run$/ });
+
+    const header = container.querySelector('.page-header')!;
+    const brand = header.querySelector('a.brand');
+    expect(brand).toHaveAttribute('href', '/');
+    const back = header.querySelector('.detail-back-link')!;
+    expect(brand!.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

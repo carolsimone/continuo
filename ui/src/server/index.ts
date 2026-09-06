@@ -9,6 +9,7 @@ import { createRemediationClient } from './remediation-client';
 import { resolveGithubAppPullRequestCreator } from './github/pull-request-creator';
 import { resolveGithubAppCommitAuthorResolver } from './github/commit-author';
 import { normalizePemPrivateKey } from './github/private-key';
+import { githubWebBaseUrl } from './github/web-base';
 import { createApp } from './app';
 import { assertS3Config } from './s3';
 import { attachChatWebSocket } from './ws/chat';
@@ -63,7 +64,7 @@ async function main() {
   // sign, in which case the Author column simply stays empty.
   const commitAuthorResolver = resolveGithubAppCommitAuthorResolver(githubAppCfg);
 
-  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator, commitAuthorResolver);
+  const app = createApp(client, graphClient, auth.app, CONFIG_FILE, RELEASE_CONTROLLER_URL, CHAT_BRIDGE_ENABLED, remediationClient, prCreator, commitAuthorResolver, githubWebBaseUrl(GITHUB_API_BASE_URL));
 
   if (process.env.NODE_ENV === 'production') {
     const staticDir = path.join(__dirname, '../dist');

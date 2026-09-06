@@ -12,22 +12,51 @@ Every top-level route renders the same shell. No exceptions.
 
 ```jsx
 <div className="page">
-  <header className="page-header">{/* back link, title, badges, actions */}</header>
+  <PageHeader actions={/* page-level badges */}>
+    {/* the page's own identity: back link, title, status pill, chips */}
+  </PageHeader>
   <main className="page-content">{/* full-width */}</main>
 </div>
 ```
 
+`PageHeader` (`ui/src/client/PageHeader.tsx`) renders the one header every
+page shares:
+
+```html
+<header class="page-header">
+  <a class="brand" href="/">◆ continuo</a>       <!-- h1-wrapped on the home page -->
+  <span class="page-header__divider"></span>    <!-- only when the page has an identity -->
+  ← Back   page-title   [STATUS]   ⚠ context chip
+  <div class="page-actions">…actions…  <UserMenu /></div>
+</header>
+```
+
 ```css
 .page         { min-height: 100vh; background: #f8f9fa; padding: 20px 24px; }
-.page-header  { display: flex; align-items: center; gap: 12px;
+.page-header  { display: flex; flex-wrap: wrap; align-items: center;
+                gap: 12px; row-gap: 8px;
                 padding-bottom: 16px; margin-bottom: 16px;
                 border-bottom: 1px solid #e2e8f0; }
+.page-header__divider { width: 1px; height: 22px; background: #e2e8f0; flex-shrink: 0; }
 .page-content {} /* full-width */
 .page-content--readable { max-width: 960px; margin: 0 auto; }
 ```
 
 Rules:
 
+- The brand comes first on every page, in the same place, and links home.
+  A back link never stands in for it: the page's own identity (back link,
+  title, status pill, chips) follows the brand after `.page-header__divider`.
+- The home page has no identity of its own — the brand is its title, so
+  `PageHeader` wraps it in the `h1` (`brandAsTitle`) and draws no divider.
+- `.page-actions` is right-aligned and always ends with the user menu, so
+  sign-out is reachable from every page. Page-level badges (the home page's
+  live badge) go in the `actions` slot before it.
+- The row wraps on a narrow viewport (`flex-wrap: wrap`): `.page-actions`
+  drops to its own line, the title shrinks and breaks (`min-width: 0;
+  overflow-wrap: anywhere`) rather than widening the page, and the email is
+  capped at 240px with an ellipsis. A header never makes the page scroll
+  sideways; `ui/tests/client/styles-page-header-wrap.test.ts` pins this.
 - Same top padding (20px) and side padding (24px) on every page.
 - Use `.page-content--readable` only for list/feed pages where row width
   should stay scannable on wide monitors (e.g. the homepage schedule
@@ -195,12 +224,12 @@ Example: `<span className="info-strip info-strip--info info-strip--inline">topol
 When a page has more than two action buttons in its header:
 
 ```
-Row 1: identity      ← Back   page-title   [STATUS]   ⚠ context chip
-Row 2: actions                                  [Action]  [Action]  [Action]
+Row 1: identity   ◆ continuo │ ← Back  page-title  [STATUS]  ⚠ context chip     user menu
+Row 2: actions                                        [Action]  [Action]  [Action]
 ```
 
-- Identity row carries: back navigation, page title, status pill,
-  *compact* info-strips (chips).
+- Identity row is `PageHeader`: the brand, then back navigation, page
+  title, status pill, *compact* info-strips (chips), then the user menu.
 - Action row sits below it, right-aligned, containing only `.btn`
   elements.
 - Errors from any action button render full-width directly below row 2
@@ -741,6 +770,162 @@ Content rules:
 - For "no topology yet" states render an `.info-strip--neutral` in
   place of the grid — do not render empty tiles.
 
+## Provenance line
+
+One line directly under the header of a detail page saying what the page
+is about, before any strip or section. Used on the release page
+(`Changes core · acme/demo @ c2d1add ↗`) and the verification-run page
+(`Verification run for release rel-1 · attempt 2 · service core · dbt`).
+
+```jsx
+<p className="page-sub">
+  Changes <strong>core</strong>
+  <span className="page-sub__sep">·</span>
+  <a href={rel.commit_url} target="_blank" rel="noopener noreferrer">acme/demo @ c2d1add ↗</a>
+</p>
+```
+
+```css
+.page-sub      { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+                 margin: -6px 0 14px; font-size: 12.5px; color: #6b7280; }
+.page-sub strong { color: #1e293b; font-weight: 600; }
+.page-sub a    { color: #4338ca; text-decoration: none; }
+.page-sub__sep { color: #cbd5e1; }
+```
+
+Rules:
+
+- One line, plain words; `strong` marks the subject, never a status.
+- A link-out ends with `↗` and opens in a new tab; a fact that cannot be
+  linked (no repo or commit recorded) is simply absent, never a dead link.
+  The client never builds an external URL itself: the ui server attaches
+  `commit_url` under the install's GitHub host (derived from
+  `GITHUB_API_BASE_URL`), so a GitHub Enterprise install links to its own
+  host.
+- Separate facts with `.page-sub__sep`, not punctuation inside the text.
+
+## Service tiles
+
+The set of service images a run executes with, on the release and
+verification-run detail pages (`ServiceTiles`, `ui/src/client/ServiceTiles.tsx`).
+One tile per service. Tiles are identity, not navigation: nothing happens
+on click, so there is no hover state.
+
+```jsx
+<div className="section-header">
+  <div className="section-header__main">
+    <span className="section-header__title">Services</span>
+    <span className="section-header__count">7</span>
+  </div>
+  <div className="section-header__sub">core is new in this release · 6 carried over from prod</div>
+</div>
+<div className="service-tile-grid">
+  <div className="service-tile service-tile--changed">
+    <div className="service-tile__head">
+      <span className="nodes-group-dot" style={{ background: accent }} />
+      <span className="service-tile__name">core</span>
+      <span className="pill-sm pill-sm--changed">changed</span>
+    </div>
+    <div className="service-tile__tag">c2d1add</div>
+  </div>
+  …
+</div>
+```
+
+```css
+.service-tile-grid  { display: grid; gap: 10px; margin: 12px 0 18px;
+                      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.service-tile       { display: flex; flex-direction: column; gap: 5px; min-width: 0;
+                      padding: 10px 12px; background: #fff;
+                      border: 1px solid #e2e8f0; border-radius: 6px; }
+.service-tile__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.service-tile__name { flex: 1; font-size: 13px; font-weight: 600; color: #111827;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.service-tile__tag  { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 11.5px;
+                      color: #6b7280; word-break: break-all; }
+.service-tile--changed { border-color: #c7d2fe; background: #fbfbff; }
+.pill-sm--changed   { background: #eef2ff; color: #4338ca; }
+```
+
+Rules:
+
+- Tiles sort by service name so a service sits in the same spot on every
+  release; the accent dot is the service's colour from `buildServiceColors`
+  (see Service accents), never a status hue.
+- Exactly one tile carries `--changed` and the `changed` chip: the service
+  whose image is new in this run. The section sub-line says so and counts
+  the rest as carried over, naming the kind of run the page shows
+  (`subject`: "release", or "verification run") and where the rest came
+  from (`carriedFrom`: "prod" for a candidate; for a verification run, the
+  release it verifies, since its image set is that release's with the fixed
+  service swapped in). When the changed service is the only one, the
+  sub-line stops after "is new in this release". Unknown changed service:
+  no chip, no sub-line.
+- The image tag is whatever the release recorded — a short tag or a full
+  registry reference — in monospace, wrapping inside its tile.
+- No images recorded yet: render nothing, not an empty section.
+
+## Pipeline timeline
+
+A run's path through the pipeline, on the release and verification-run
+detail pages (`PipelineTimeline`, `ui/src/client/PipelineTimeline.tsx`):
+one step per recorded transition, in order, joined by connectors.
+
+```jsx
+<div className="section-header">…Timeline…</div>
+<ol className="release-timeline">
+  <li className="release-timeline__step">
+    <span className="release-timeline__connector" aria-hidden="true" />
+    <div className="release-timeline__body">
+      <span className="pill-sm pill-sm--running">compiling</span>
+      <span className="release-timeline__at">2026-09-05 14:25:36</span>
+    </div>
+  </li>
+  <li className="release-timeline__step release-timeline__step--upcoming">
+    <span className="release-timeline__connector" aria-hidden="true" />
+    <div className="release-timeline__body">
+      <span className="pill-sm">seed_building<span className="sr-only"> (upcoming)</span></span>
+      <span className="release-timeline__hint">if seeds changed</span>
+    </div>
+  </li>
+</ol>
+```
+
+```css
+.release-timeline           { display: flex; align-items: flex-start; list-style: none;
+                              margin: 14px 0 18px; padding: 0 0 4px; overflow-x: auto; }
+.release-timeline__step     { display: flex; align-items: flex-start; }
+.release-timeline__connector { width: 28px; height: 1px; margin-top: 9px; background: #cbd5e1;
+                              flex-shrink: 0; }
+.release-timeline__step:first-child .release-timeline__connector { display: none; }
+.release-timeline__body     { display: flex; flex-direction: column; gap: 4px; }
+.release-timeline__at       { font-size: 11.5px; color: #64748b; white-space: nowrap;
+                              font-variant-numeric: tabular-nums; }
+.release-timeline__step--upcoming .pill-sm { background: transparent; color: #94a3b8;
+                              border: 1px dashed #cbd5e1; }
+.release-timeline__step--upcoming .release-timeline__connector { height: 0; background: transparent;
+                              border-top: 1px dashed #cbd5e1; }
+.release-timeline__hint     { font-size: 11px; color: #94a3b8; white-space: nowrap; }
+```
+
+Rules:
+
+- Each step's pill is the same `pill-sm` the header pill uses for that
+  status (`releasePillClass`), with the transition's timestamp beneath it.
+- While the run is still in flight, the stages it has not reached yet
+  follow as ghosted, undated steps, so a two-step timeline reads as
+  progress rather than as a list. The ghosts are the path the run's kind
+  takes (`upcomingStages`, fed `manifest_kind` and `bootstrap`): a python
+  run has no `compiling` and no `seed_building`; a bootstrap release ends
+  at `parsing`. A stage that does not run on every path carries a caption
+  saying what it depends on (`.release-timeline__hint`: "if seeds changed",
+  "unless nothing changed"), so the preview never promises a stage the run
+  will silently skip. A ghost's pill carries a visually hidden
+  " (upcoming)" (`.sr-only`) so a screen reader does not hear it as a
+  completed step. A finished run has no ghosts.
+- The list scrolls horizontally inside its own container on narrow
+  viewports; it never wraps and never scrolls the page sideways.
+
 ## Sign-in page
 
 The only page rendered to an unauthenticated user. Uses the standard `.page`
@@ -767,11 +952,13 @@ Rules:
 
 ## User menu
 
-Identity + sign-out, right-aligned in the homepage `.page-header`.
+Identity + sign-out, the last item of `.page-actions` in every page's
+`.page-header` (`PageHeader` renders it; pages never place it themselves).
 
 ```css
 .user-menu          { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.user-menu__email   { font-size: 12px; color: #6b7280; }
+.user-menu__email   { font-size: 12px; color: #6b7280; max-width: 240px;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 ```
 
 The sign-out action is a `.btn--secondary` following the standard button state

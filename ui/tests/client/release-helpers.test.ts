@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { releasePillClass, reasonLabel } from '../../src/client/release-helpers';
+import { releasePillClass, reasonLabel, upcomingStages, shortSha } from '../../src/client/release-helpers';
 
 describe('releasePillClass', () => {
   it('maps release lifecycle statuses to pill variants', () => {
@@ -46,5 +46,51 @@ describe('reasonLabel', () => {
   });
   it('falls back to the raw value for an unknown reason', () => {
     expect(reasonLabel('meteor_strike')).toBe('meteor_strike');
+  });
+});
+
+describe('upcomingStages', () => {
+  const at = '2026-09-05T14:25:36Z';
+  const t = (...to: string[]) => to.map(stage => ({ to: stage, at }));
+
+  it('previews the rest of a dbt release, naming the condition on the stages that may not run', () => {
+    expect(upcomingStages(t('received', 'compiling'), { manifestKind: 'dbt' })).toEqual([
+      { stage: 'parsing' },
+      { stage: 'seed_building', condition: 'if seeds changed' },
+      { stage: 'validating', condition: 'unless nothing changed' },
+    ]);
+  });
+  it('skips the compile leg and the seed build for a python release', () => {
+    expect(upcomingStages(t('received'), { manifestKind: 'python' })).toEqual([
+      { stage: 'parsing' },
+      { stage: 'validating', condition: 'unless nothing changed' },
+    ]);
+  });
+  it('ends at parsing for a bootstrap release, which promotes without validating', () => {
+    expect(upcomingStages(t('received'), { manifestKind: 'dbt', bootstrap: true })).toEqual([
+      { stage: 'compiling' },
+      { stage: 'parsing' },
+    ]);
+  });
+  it('treats an unknown kind as dbt, the common one', () => {
+    expect(upcomingStages(t('received', 'compiling', 'parsing'), {})).toEqual([
+      { stage: 'seed_building', condition: 'if seeds changed' },
+      { stage: 'validating', condition: 'unless nothing changed' },
+    ]);
+  });
+  it('is empty once the run has left the pipeline (candidate or verification)', () => {
+    expect(upcomingStages(t('received', 'validating', 'rejected'), { manifestKind: 'dbt' })).toEqual([]);
+    expect(upcomingStages(t('received', 'validating', 'passed'), { manifestKind: 'dbt' })).toEqual([]);
+    expect(upcomingStages(t('received', 'superseded'), { manifestKind: 'dbt' })).toEqual([]);
+  });
+  it('is empty when nothing has been recorded yet', () => {
+    expect(upcomingStages([], { manifestKind: 'dbt' })).toEqual([]);
+  });
+});
+
+describe('shortSha', () => {
+  it('keeps the first seven characters', () => {
+    expect(shortSha('abcdef1234567')).toBe('abcdef1');
+    expect(shortSha('abc')).toBe('abc');
   });
 });

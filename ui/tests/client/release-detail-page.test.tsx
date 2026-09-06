@@ -102,7 +102,11 @@ describe('ReleaseDetailPage', () => {
     expect(container.querySelector('.detail-back-link')).toBeTruthy();
     expect(container.querySelector('.detail-page-title')).toBeTruthy();
     expect(container.querySelector('.page-header .pill')).toBeTruthy();
-    expect(container.querySelectorAll('.section-header').length).toBe(2);
+    // Services, Timeline, and the one per-node stage section.
+    expect(container.querySelectorAll('.section-header').length).toBe(3);
+    expect(container.querySelector('.service-tile')).toBeTruthy();
+    expect(container.querySelector('.release-timeline')).toBeTruthy();
+    expect(container.textContent).not.toContain('Image tags:');
     expect(container.querySelector('table.nodes-table')).toBeTruthy();
     expect(container.querySelector('.info-strip--error')?.textContent).toContain('schema drift');
 
@@ -370,5 +374,79 @@ describe('ReleaseDetailPage — verify chip: queued vs running', () => {
     // than claiming a queue wait it cannot substantiate.
     expect(screen.getByText('Verifying fix…')).toBeInTheDocument();
     expect(screen.queryByText('Queued for verification')).not.toBeInTheDocument();
+  });
+});
+
+describe('ReleaseDetailPage — brand header', () => {
+  it('starts the header with the brand, before the back link', async () => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve(DETAIL) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+
+    const header = container.querySelector('.page-header')!;
+    const brand = header.querySelector('a.brand');
+    expect(brand).toHaveAttribute('href', '/');
+    const back = header.querySelector('.detail-back-link')!;
+    expect(brand!.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(header.querySelector('.page-header__divider')).toBeTruthy();
+  });
+});
+
+describe('ReleaseDetailPage — provenance line', () => {
+  it('says which service the release changes and links its commit on GitHub', async () => {
+    const detail = {
+      ...DETAIL, changed_service: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567',
+      commit_url: 'https://ghe.example.com/acme/demo/commit/abcdef1234567',
+    };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+
+    const sub = container.querySelector('.page-sub')!;
+    expect(sub.textContent).toContain('Changes');
+    expect(sub.querySelector('strong')?.textContent).toBe('service-1');
+    const link = sub.querySelector('a')!;
+    expect(link).toHaveAttribute('href', 'https://ghe.example.com/acme/demo/commit/abcdef1234567');
+    expect(link.textContent).toContain('acme/demo @ abcdef1');
+  });
+
+  it('omits the commit link when the server attached no commit URL', async () => {
+    const detail = { ...DETAIL, changed_service: 'service-1', repo: 'acme/demo', commit_sha: 'abcdef1234567' };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    const sub = container.querySelector('.page-sub')!;
+    expect(sub.querySelector('strong')?.textContent).toBe('service-1');
+    expect(sub.querySelector('a')).toBeNull();
+  });
+
+  it('renders no provenance line when the release names no changed service', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(DETAIL) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    expect(container.querySelector('.page-sub')).toBeNull();
+  });
+});
+
+describe('ReleaseDetailPage — timeline preview follows the release kind', () => {
+  it('shows no compile leg ahead of a python release', async () => {
+    const detail = { ...DETAIL, status: 'received', transitions: [{ to: 'received', at: '2026-06-01T10:00:00Z' }], manifest_kind: 'python' };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    const ghosts = Array.from(container.querySelectorAll('.release-timeline__step--upcoming .pill-sm'))
+      .map(p => p.firstChild?.textContent);
+    expect(ghosts).toEqual(['parsing', 'validating']);
+  });
+
+  it('shows no validation ahead of a bootstrap release', async () => {
+    const detail = { ...DETAIL, status: 'received', transitions: [{ to: 'received', at: '2026-06-01T10:00:00Z' }], manifest_kind: 'dbt', bootstrap: true };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    const ghosts = Array.from(container.querySelectorAll('.release-timeline__step--upcoming .pill-sm'))
+      .map(p => p.firstChild?.textContent);
+    expect(ghosts).toEqual(['compiling', 'parsing']);
   });
 });

@@ -6,9 +6,8 @@ import Tabs, { useActiveTab } from './Tabs';
 import ReleasesPanel from './ReleasesPanel';
 import NodesCatalogPanel from './NodesCatalogPanel';
 import RemediationPanel from './RemediationPanel';
-import UserMenu from './auth/UserMenu';
 import { fetchProposals } from './remediation-api';
-import Brand from './Brand';
+import PageHeader from './PageHeader';
 
 export default function DashboardPage() {
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
@@ -91,15 +90,10 @@ export default function DashboardPage() {
 
   return (
     <div className="page">
-      <header className="page-header">
-        <h1><Brand /></h1>
-        <div className="page-actions">
-          <span className={`live-badge live-badge--${liveState}`}>
-            ● {liveLabel}
-          </span>
-          <UserMenu />
-        </div>
-      </header>
+      <PageHeader
+        brandAsTitle
+        actions={<span className={`live-badge live-badge--${liveState}`}>● {liveLabel}</span>}
+      />
       <main className="page-content page-content--readable">
         <Tabs param="tab" defaultSlug="runs" tabs={tabSpecs} />
         {activeTab === 'runs' && (
