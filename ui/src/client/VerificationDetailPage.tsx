@@ -100,7 +100,7 @@ export default function VerificationDetailPage() {
           subject="verification run"
           carriedFrom={run.verifies_release_id}
         />
-        <PipelineTimeline transitions={run.transitions} />
+        <PipelineTimeline transitions={run.transitions} run={{ manifestKind: run.manifest_kind }} />
 
         <NodeResultsTable perNode={run.per_node_results ?? []} />
       </main>

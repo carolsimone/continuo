@@ -204,6 +204,8 @@ body {
   font-weight: 700;
   color: #0f172a;
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* ---- Pill badges ---- */
@@ -782,8 +784,10 @@ a.release-author:hover { text-decoration: underline; }
 
 .page-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  row-gap: 8px;
   padding-bottom: 16px;
   margin-bottom: 16px;
   border-bottom: 1px solid #e2e8f0;
@@ -907,6 +911,7 @@ a.release-author:hover { text-decoration: underline; }
   font-variant-numeric: tabular-nums;
 }
 .release-timeline__step--upcoming .pill-sm { background: transparent; border: 1px dashed #cbd5e1; color: #94a3b8; }
+.release-timeline__hint { font-size: 11px; color: #94a3b8; white-space: nowrap; }
 /* Text for assistive technology only: read out, never drawn. */
 .sr-only {
   position: absolute;
@@ -1364,7 +1369,8 @@ a.release-author:hover { text-decoration: underline; }
 
 /* User menu (see .claude/design-guideline/ui.md "User menu") */
 .user-menu          { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.user-menu__email   { font-size: 12px; color: #6b7280; }
+.user-menu__email   { font-size: 12px; color: #6b7280; max-width: 240px;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- Remediation panel ---- */
 /* Group rows: one per (release, remediation round). The first cell is the

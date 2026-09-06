@@ -33,7 +33,8 @@ page shares:
 
 ```css
 .page         { min-height: 100vh; background: #f8f9fa; padding: 20px 24px; }
-.page-header  { display: flex; align-items: center; gap: 12px;
+.page-header  { display: flex; flex-wrap: wrap; align-items: center;
+                gap: 12px; row-gap: 8px;
                 padding-bottom: 16px; margin-bottom: 16px;
                 border-bottom: 1px solid #e2e8f0; }
 .page-header__divider { width: 1px; height: 22px; background: #e2e8f0; flex-shrink: 0; }
@@ -51,6 +52,11 @@ Rules:
 - `.page-actions` is right-aligned and always ends with the user menu, so
   sign-out is reachable from every page. Page-level badges (the home page's
   live badge) go in the `actions` slot before it.
+- The row wraps on a narrow viewport (`flex-wrap: wrap`): `.page-actions`
+  drops to its own line, the title shrinks and breaks (`min-width: 0;
+  overflow-wrap: anywhere`) rather than widening the page, and the email is
+  capped at 240px with an ellipsis. A header never makes the page scroll
+  sideways; `ui/tests/client/styles-page-header-wrap.test.ts` pins this.
 - Same top padding (20px) and side padding (24px) on every page.
 - Use `.page-content--readable` only for list/feed pages where row width
   should stay scannable on wide monitors (e.g. the homepage schedule
@@ -875,7 +881,13 @@ one step per recorded transition, in order, joined by connectors.
       <span className="release-timeline__at">2026-09-05 14:25:36</span>
     </div>
   </li>
-  <li className="release-timeline__step release-timeline__step--upcoming">…parsing…</li>
+  <li className="release-timeline__step release-timeline__step--upcoming">
+    <span className="release-timeline__connector" aria-hidden="true" />
+    <div className="release-timeline__body">
+      <span className="pill-sm">seed_building<span className="sr-only"> (upcoming)</span></span>
+      <span className="release-timeline__hint">if seeds changed</span>
+    </div>
+  </li>
 </ol>
 ```
 
@@ -893,6 +905,7 @@ one step per recorded transition, in order, joined by connectors.
                               border: 1px dashed #cbd5e1; }
 .release-timeline__step--upcoming .release-timeline__connector { height: 0; background: transparent;
                               border-top: 1px dashed #cbd5e1; }
+.release-timeline__hint     { font-size: 11px; color: #94a3b8; white-space: nowrap; }
 ```
 
 Rules:
@@ -900,10 +913,16 @@ Rules:
 - Each step's pill is the same `pill-sm` the header pill uses for that
   status (`releasePillClass`), with the transition's timestamp beneath it.
 - While the run is still in flight, the stages it has not reached yet
-  (`upcomingStages`) follow as ghosted, undated steps, so a two-step
-  timeline reads as progress rather than as a list. A ghost's pill carries
-  a visually hidden " (upcoming)" (`.sr-only`) so a screen reader does not
-  hear it as a completed step. A finished run has no ghosts.
+  follow as ghosted, undated steps, so a two-step timeline reads as
+  progress rather than as a list. The ghosts are the path the run's kind
+  takes (`upcomingStages`, fed `manifest_kind` and `bootstrap`): a python
+  run has no `compiling` and no `seed_building`; a bootstrap release ends
+  at `parsing`. A stage that does not run on every path carries a caption
+  saying what it depends on (`.release-timeline__hint`: "if seeds changed",
+  "unless nothing changed"), so the preview never promises a stage the run
+  will silently skip. A ghost's pill carries a visually hidden
+  " (upcoming)" (`.sr-only`) so a screen reader does not hear it as a
+  completed step. A finished run has no ghosts.
 - The list scrolls horizontally inside its own container on narrow
   viewports; it never wraps and never scrolls the page sideways.
 
@@ -938,7 +957,8 @@ Identity + sign-out, the last item of `.page-actions` in every page's
 
 ```css
 .user-menu          { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.user-menu__email   { font-size: 12px; color: #6b7280; }
+.user-menu__email   { font-size: 12px; color: #6b7280; max-width: 240px;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 ```
 
 The sign-out action is a `.btn--secondary` following the standard button state

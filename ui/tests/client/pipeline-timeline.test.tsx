@@ -26,7 +26,7 @@ describe('PipelineTimeline', () => {
     const { container } = render(<PipelineTimeline transitions={[
       { to: 'received', at: '2026-09-05T14:25:36Z' },
       { to: 'compiling', at: '2026-09-05T14:25:37Z' },
-    ]} />);
+    ]} run={{ manifestKind: 'dbt' }} />);
     const ghosts = Array.from(container.querySelectorAll('.release-timeline__step--upcoming'));
     // The stage name is what shows; "(upcoming)" is read out but visually hidden.
     expect(ghosts.map(s => s.querySelector('.pill-sm')?.textContent)).toEqual([
@@ -37,6 +37,25 @@ describe('PipelineTimeline', () => {
       expect(g.querySelector('.release-timeline__at')).toBeNull();
     }
     expect(container.querySelectorAll('.release-timeline__step').length).toBe(5);
+  });
+
+  it('says under a ghost what it depends on, when the stage may not run', () => {
+    const { container } = render(<PipelineTimeline transitions={[
+      { to: 'received', at: '2026-09-05T14:25:36Z' },
+      { to: 'compiling', at: '2026-09-05T14:25:37Z' },
+    ]} run={{ manifestKind: 'dbt' }} />);
+    const ghosts = Array.from(container.querySelectorAll('.release-timeline__step--upcoming'));
+    expect(ghosts.map(g => g.querySelector('.release-timeline__hint')?.textContent ?? null))
+      .toEqual([null, 'if seeds changed', 'unless nothing changed']);
+  });
+
+  it('previews only the stages that apply to the run\'s kind', () => {
+    const { container } = render(<PipelineTimeline transitions={[
+      { to: 'received', at: '2026-09-05T14:25:36Z' },
+    ]} run={{ manifestKind: 'python' }} />);
+    const ghosts = Array.from(container.querySelectorAll('.release-timeline__step--upcoming .pill-sm'))
+      .map(p => p.firstChild?.textContent);
+    expect(ghosts).toEqual(['parsing', 'validating']);
   });
 
   it('renders the section with no steps when nothing has been recorded', () => {

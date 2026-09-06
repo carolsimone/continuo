@@ -547,7 +547,7 @@ export default function ReleaseDetailPage() {
 
       <main className="page-content page-content--readable">
         <ServiceTiles imageTags={rel.image_tags || {}} changedService={rel.changed_service} />
-        <PipelineTimeline transitions={rel.transitions} />
+        <PipelineTimeline transitions={rel.transitions} run={{ manifestKind: rel.manifest_kind, bootstrap: rel.bootstrap }} />
 
         <NodeResultsTable
           perNode={perNode}

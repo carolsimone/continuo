@@ -51,17 +51,40 @@ describe('reasonLabel', () => {
 
 describe('upcomingStages', () => {
   const at = '2026-09-05T14:25:36Z';
-  it('lists the pipeline stages a run has not reached yet, in order', () => {
-    expect(upcomingStages([{ to: 'received', at }, { to: 'compiling', at }]))
-      .toEqual(['parsing', 'seed_building', 'validating']);
+  const t = (...to: string[]) => to.map(stage => ({ to: stage, at }));
+
+  it('previews the rest of a dbt release, naming the condition on the stages that may not run', () => {
+    expect(upcomingStages(t('received', 'compiling'), { manifestKind: 'dbt' })).toEqual([
+      { stage: 'parsing' },
+      { stage: 'seed_building', condition: 'if seeds changed' },
+      { stage: 'validating', condition: 'unless nothing changed' },
+    ]);
+  });
+  it('skips the compile leg and the seed build for a python release', () => {
+    expect(upcomingStages(t('received'), { manifestKind: 'python' })).toEqual([
+      { stage: 'parsing' },
+      { stage: 'validating', condition: 'unless nothing changed' },
+    ]);
+  });
+  it('ends at parsing for a bootstrap release, which promotes without validating', () => {
+    expect(upcomingStages(t('received'), { manifestKind: 'dbt', bootstrap: true })).toEqual([
+      { stage: 'compiling' },
+      { stage: 'parsing' },
+    ]);
+  });
+  it('treats an unknown kind as dbt, the common one', () => {
+    expect(upcomingStages(t('received', 'compiling', 'parsing'), {})).toEqual([
+      { stage: 'seed_building', condition: 'if seeds changed' },
+      { stage: 'validating', condition: 'unless nothing changed' },
+    ]);
   });
   it('is empty once the run has left the pipeline (candidate or verification)', () => {
-    expect(upcomingStages([{ to: 'received', at }, { to: 'validating', at }, { to: 'rejected', at }])).toEqual([]);
-    expect(upcomingStages([{ to: 'received', at }, { to: 'validating', at }, { to: 'passed', at }])).toEqual([]);
-    expect(upcomingStages([{ to: 'received', at }, { to: 'superseded', at }])).toEqual([]);
+    expect(upcomingStages(t('received', 'validating', 'rejected'), { manifestKind: 'dbt' })).toEqual([]);
+    expect(upcomingStages(t('received', 'validating', 'passed'), { manifestKind: 'dbt' })).toEqual([]);
+    expect(upcomingStages(t('received', 'superseded'), { manifestKind: 'dbt' })).toEqual([]);
   });
   it('is empty when nothing has been recorded yet', () => {
-    expect(upcomingStages([])).toEqual([]);
+    expect(upcomingStages([], { manifestKind: 'dbt' })).toEqual([]);
   });
 });
 

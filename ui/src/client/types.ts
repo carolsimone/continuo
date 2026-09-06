@@ -195,6 +195,9 @@ export interface ReleaseDetail {
   repo?: string;
   commit_sha?: string;
   commit_url?: string;
+  // How the release's artifact is parsed: 'dbt' or 'python'. Decides the
+  // pipeline path — a python release has no compile leg.
+  manifest_kind?: string;
 }
 
 export interface NodeSummary {

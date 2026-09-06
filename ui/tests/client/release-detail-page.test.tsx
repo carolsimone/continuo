@@ -428,3 +428,25 @@ describe('ReleaseDetailPage — provenance line', () => {
     expect(container.querySelector('.page-sub')).toBeNull();
   });
 });
+
+describe('ReleaseDetailPage — timeline preview follows the release kind', () => {
+  it('shows no compile leg ahead of a python release', async () => {
+    const detail = { ...DETAIL, status: 'received', transitions: [{ to: 'received', at: '2026-06-01T10:00:00Z' }], manifest_kind: 'python' };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    const ghosts = Array.from(container.querySelectorAll('.release-timeline__step--upcoming .pill-sm'))
+      .map(p => p.firstChild?.textContent);
+    expect(ghosts).toEqual(['parsing', 'validating']);
+  });
+
+  it('shows no validation ahead of a bootstrap release', async () => {
+    const detail = { ...DETAIL, status: 'received', transitions: [{ to: 'received', at: '2026-06-01T10:00:00Z' }], manifest_kind: 'dbt', bootstrap: true };
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve(detail) })));
+    const { container } = renderDetail();
+    await waitFor(() => expect(screen.getByText('rel_abc')).toBeInTheDocument());
+    const ghosts = Array.from(container.querySelectorAll('.release-timeline__step--upcoming .pill-sm'))
+      .map(p => p.firstChild?.textContent);
+    expect(ghosts).toEqual(['compiling', 'parsing']);
+  });
+});
