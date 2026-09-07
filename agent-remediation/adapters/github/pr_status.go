@@ -80,7 +80,7 @@ func (g *GitHub) PRStatus(ctx context.Context, repo string, number int) (ports.P
 func (g *GitHub) FindByBranch(ctx context.Context, repo, branch string) (ports.PullRequestRef, bool, error) {
 	owner, _, ok := strings.Cut(repo, "/")
 	if !ok {
-		return ports.PullRequestRef{}, false, fmt.Errorf("find pr by branch: invalid repo %q", repo)
+		return ports.PullRequestRef{}, false, fmt.Errorf("find pr by branch: %w: %q", ports.ErrInvalidRepo, repo)
 	}
 	q := url.Values{
 		"head":     {owner + ":" + branch},

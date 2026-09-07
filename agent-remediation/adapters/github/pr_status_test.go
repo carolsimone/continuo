@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -161,11 +162,15 @@ func TestFindByBranch_NotFound(t *testing.T) {
 	require.Zero(t, ref)
 }
 
+// A repo that is not owner/name can never be looked up; the error is typed so
+// the reconciler can treat it as permanent rather than as a GitHub hiccup.
 func TestFindByBranch_InvalidRepoIsError(t *testing.T) {
-	g := NewSourceReader("https://api.github.com", "tkn", http.DefaultClient)
-	_, found, err := g.FindByBranch(context.Background(), "not-a-repo-slug", "branch")
+	g := NewSourceReader("http://unused", "tok", http.DefaultClient)
+	_, found, err := g.FindByBranch(context.Background(), "", "remediation/rel/attempt1")
 	require.Error(t, err)
-	require.False(t, found)
+	assert.False(t, found)
+	assert.ErrorIs(t, err, ports.ErrInvalidRepo)
+	assert.Contains(t, err.Error(), `""`)
 }
 
 func TestFindByBranch_ForbiddenIsPermissionDenied(t *testing.T) {
