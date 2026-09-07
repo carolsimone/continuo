@@ -193,6 +193,7 @@ func TestService_Begin_BuildsDeterministicBranch(t *testing.T) {
 		ReleaseID:      "r-1",
 		NodeID:         "model.p.orders_d",
 		Attempt:        1,
+		Repo:           "org/repo",
 		SourceResolved: true,
 	}}
 	svc := proposals.New(proposals.Deps{
@@ -215,6 +216,7 @@ func TestService_Begin_ThreadsService(t *testing.T) {
 		ID:             "p1",
 		ReleaseID:      "r-1",
 		Attempt:        1,
+		Repo:           "org/repo",
 		SourceResolved: true,
 		Edits: []proposal.FileEdit{
 			{Path: "services/core/models/a.sql", MemberNodeIDs: []string{"model.core.a"}},
@@ -262,6 +264,32 @@ func TestService_Begin_UnknownServiceRejected(t *testing.T) {
 	// A split proposal has no legacy "" group, so "" is also rejected.
 	_, err = svc.Begin(context.Background(), "p1", "")
 	require.ErrorIs(t, err, proposals.ErrUnknownService)
+}
+
+// TestService_Begin_NoRepositoryRefused verifies Begin refuses to claim a
+// proposal whose Repo is not owner/name: a proposal with no repository can
+// never open a pull request, so the claim is refused before any row is
+// touched, and a row a sweep has already failed cannot be walked back into
+// 'opening' by claiming it here.
+func TestService_Begin_NoRepositoryRefused(t *testing.T) {
+	repo := &fakeRepo{view: proposal.View{
+		ID:             "p1",
+		ReleaseID:      "r-1",
+		Attempt:        1,
+		Repo:           "",
+		SourceResolved: true,
+		Status:         proposal.StatusProposed,
+	}}
+	svc := proposals.New(proposals.Deps{
+		Repo:   repo,
+		NewUoW: repo.uowFactory,
+		Clock:  fixedClock{},
+	})
+
+	_, err := svc.Begin(context.Background(), "p1", "")
+
+	require.ErrorIs(t, err, proposals.ErrNoRepository)
+	require.Empty(t, repo.lastBranch, "no claim is attempted")
 }
 
 // TestService_PRServices_LegacyProposalSingleGroup verifies ruling 1: a

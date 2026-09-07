@@ -100,10 +100,10 @@ func (s *ProposalsServer) GetProposal(ctx context.Context, req *remediationv1.Ge
 // req.Service is not one of the proposal's PRServices. Returns
 // FAILED_PRECONDITION when the proposal is already claimed (carrying the
 // existing pr_url in the message), when source resolution has not completed,
-// or when the attempt has not reached 'proposed' — a fix still being
-// generated or verified, or one a verification run rejected, is not one a
-// pull request may be opened for. Returns NOT_FOUND when the proposal does not
-// exist.
+// when the attempt has not reached 'proposed' — a fix still being generated
+// or verified, or one a verification run rejected, is not one a pull request
+// may be opened for — or when the proposal records no repository. Returns
+// NOT_FOUND when the proposal does not exist.
 func (s *ProposalsServer) BeginPullRequest(ctx context.Context, req *remediationv1.BeginPullRequestRequest) (*remediationv1.BeginPullRequestResponse, error) {
 	claim, err := s.svc.Begin(ctx, req.Id, req.Service)
 	if err != nil {
@@ -197,6 +197,8 @@ func toGRPCError(err error) error {
 	case errors.Is(err, repository.ErrNotSourceResolved):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, repository.ErrNotProposed):
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, proposals.ErrNoRepository):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, proposals.ErrUnknownService):
 		// The caller passed a service argument that names none of this
