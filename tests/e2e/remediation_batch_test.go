@@ -376,6 +376,7 @@ func TestE2E_BatchedRemediation_SharedUpstreamFixedOnce(t *testing.T) {
 		require.Equal(t, "models/ftable_u.sql", n.ChangedAncestors[0].FilePath,
 			"the ancestor must carry the path THIS candidate declares — the file the upstream fix edits")
 		require.Equal(t, changedService, n.ChangedAncestors[0].Service, "the ancestor's owning service")
+		require.Equal(t, 1, n.ChangedAncestors[0].Depth, "ftable_u is a direct upstream of %s", n.NodeID)
 	}
 	t.Logf("✅ one %s names %s as the shared cause of both failures", streams.RemediationRequestedV2, ftableUUniqueID)
 
@@ -1211,4 +1212,150 @@ func seedModelTopologyNodes(t *testing.T, ctx context.Context, clients *testClie
 			map[string]interface{}{"ids": ids})
 	})
 	t.Logf("seeded topology nodes in Neo4j: %v", ids)
+}
+
+// TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer proves that a
+// consumer broken by a change in ANOTHER service is repaired at the producer,
+// keeping both the new and the old contract, and that nothing in the
+// consumer's service is edited: a fix there could never ship, because
+// releases are one service at a time and the consumer's release would be
+// validated against the producer's production code.
+//
+//	current_prod: xbreak_up (service-3) at a STALE hash, xbreak_down (service-2) real
+//	POST /releases (service-3) → xbreak_up changed, validates ok; xbreak_down
+//	  (its consumer, from service-2's production manifest) fails on amount_eur
+//	→ ONE remediation.requested:v2 with one node whose changed_ancestors names
+//	  xbreak_up@service-3 at depth 1
+//	→ CrossServiceCause targets xbreak_up; the stub keeps id AND amount_eur
+//	→ ONE edit to services/service-3/models/xbreak_up.sql, ONE verification
+//	  run for service-3 that passes (xbreak_down rebuilt as its descendant
+//	  binds again), ONE pull request for service-3, nothing for service-2
+//	→ merge → RESOLVED_BY for xbreak_down, EDITED to xbreak_up
+func TestE2E_BatchedRemediation_CrossServiceBreakFixedAtProducer(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), batchCtxBudget)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	releaseID := "e2e-rem-xsvc-" + uuid.NewString()[:8]
+	producerService := "service-3"
+	consumerService := "service-2"
+	t.Logf("release_id=%s producer=%s consumer=%s changed_node=%s expected_failure=%s",
+		releaseID, producerService, consumerService, xbreakUpUniqueID, xbreakDownUniqueID)
+
+	// 1. Production holds every baseline node; the producer at a stale hash so
+	//    it is the release's only changed node, the consumer at its real hash.
+	allServices := baselineServices(t, ctx, clients)
+	require.NotEmpty(t, allServices,
+		"no baseline manifests under s3://%s/<service>/e2e-baseline/ — setup.sh must run first", e2eS3Bucket)
+	producerImageTag := allServices[producerService].imageTag
+	require.NotEmpty(t, producerImageTag, "image_tag missing for %s — setup.sh must seed service_prod", producerService)
+
+	seen := map[string]bool{}
+	var prodNodes []map[string]string
+	for _, si := range allServices {
+		for _, n := range si.nodes {
+			seen[n.uniqueID] = true
+			hash := n.contentHash
+			if n.uniqueID == xbreakUpUniqueID {
+				hash = "stale-" + hash
+			}
+			prodNodes = append(prodNodes, map[string]string{"unique_id": n.uniqueID, "content_hash": hash})
+		}
+	}
+	for _, id := range []string{xbreakUpUniqueID, xbreakDownUniqueID} {
+		require.True(t, seen[id], "%s not found in any baseline manifest", id)
+	}
+
+	resetReleaseControllerQueue(t, ctx, clients)
+	seedCurrentProd(t, ctx, clients, prodNodes)
+	seedServiceProdExcept(t, ctx, clients, allServices, producerService)
+	// The producer is placed in the graph so the fixer's version read has
+	// something to diff against; its location travels on the trigger.
+	seedModelTopologyNodes(t, ctx, clients, topologyModel{
+		uniqueID: xbreakUpUniqueID, schema: "e2e_schema", table: "xbreak_up",
+		service: producerService, filePath: "models/xbreak_up.sql",
+	})
+
+	// 2. The release is rejected on the consumer alone.
+	postRelease(t, clients, producerService, releaseID, producerImageTag, false)
+	waitForReleaseRejected(t, ctx, clients, releaseID, batchRejectBudget)
+	failing := releaseFailingNodes(t, ctx, clients, releaseID)
+	require.Equal(t, []string{xbreakDownUniqueID}, failing,
+		"only the cross-service consumer of the dropped column may fail; got %v", failing)
+
+	// 3. The trigger names the producer, in the other service, as the cause.
+	trigger := waitForBatchedTrigger(t, ctx, clients, releaseID, []string{xbreakDownUniqueID}, batchTriggerBudget)
+	require.Len(t, trigger.Nodes, 1, "exactly the failing consumer; got %v", triggerNodeIDs(trigger))
+	down, ok := trigger.findNode(xbreakDownUniqueID)
+	require.True(t, ok)
+	require.Equal(t, consumerService, down.Service, "the failing node's own service")
+	require.Equal(t, []string{xbreakUpUniqueID}, down.ancestorIDs())
+	require.Equal(t, producerService, down.ChangedAncestors[0].Service, "the changed ancestor lives in the other service")
+	require.Equal(t, "models/xbreak_up.sql", down.ChangedAncestors[0].FilePath)
+	require.Equal(t, 1, down.ChangedAncestors[0].Depth)
+	t.Logf("✅ trigger names %s@%s (depth 1) as the cause of %s@%s",
+		xbreakUpUniqueID, producerService, xbreakDownUniqueID, consumerService)
+
+	// 4. ONE proposal, ONE edit — to the producer, in the producer's service.
+	row := waitForBatchProposal(t, ctx, clients, releaseID, 1, "proposed", batchProposalBudget)
+	require.Equal(t, 1, countProposalsForRelease(t, ctx, clients, releaseID))
+	require.Equal(t, []string{xbreakDownUniqueID}, decodeNodeIDs(t, row.ResolvedNodeIDs))
+	outcomes := decodeNodeOutcomes(t, row.NodeOutcomes)
+	require.Equal(t, "proposed", outcomes[xbreakDownUniqueID].Status, "node_outcomes=%s", row.NodeOutcomes)
+
+	edits := decodeFileEdits(t, row.FileEdits)
+	require.Len(t, edits, 1, "one cross-service failure is repaired by one edit at the producer; got %+v", edits)
+	require.Equal(t, "services/service-3/models/xbreak_up.sql", edits[0].Path, "the edit lands in the producer's service")
+	require.Equal(t, xbreakUpUniqueID, edits[0].TargetNodeID)
+	body := string(getS3ObjectByKey(t, ctx, clients, stripS3Prefix(edits[0].ContentURI)))
+	require.Contains(t, body, "amount_eur", "the producer keeps the column the consumer reads; got %q", strings.TrimSpace(body))
+	require.Contains(t, body, "1 AS id", "and keeps its own change; got %q", strings.TrimSpace(body))
+
+	// 5. ONE verification run, for the producer's service, that passes.
+	verifications := decodeVerifications(t, row.Verifications)
+	require.Len(t, verifications, 1, "one edited service, one verification run; got %+v", verifications)
+	require.Equal(t, "dbt", verifications[0].Kind)
+	require.Equal(t, producerService, verifications[0].Service, "verified as the producer's delta")
+	assertPipelineNamedVerification(t, ctx, clients, verifications[0].RunID, batchVerifyBudget)
+	waitForVerificationStatus(t, ctx, clients, verifications[0].RunID, "passed", batchVerifyBudget)
+	assertNotListedAsRelease(t, ctx, clients, verifications[0].RunID)
+	t.Logf("✅ verification %s passed with the consumer rebuilt against the repaired producer", verifications[0].RunID)
+
+	// 6. ONE pull request, for the producer's service; merge it and confirm
+	//    provenance: RESOLVED_BY for the consumer, EDITED to the producer.
+	prNumber := openRemediationPR(t, ctx, clients, row.ID, releaseID, producerService)
+	prRow := pollChildPRState(t, ctx, clients, row.ID, producerService, "open", 30*time.Second)
+	require.True(t, strings.HasSuffix(prRow.Branch, "/"+producerService), "branch %q must carry the producer's suffix", prRow.Branch)
+	var consumerPRs int
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &consumerPRs,
+		`SELECT count(*) FROM proposal_pull_request WHERE proposal_id = $1 AND service = $2`, row.ID, consumerService))
+	require.Zero(t, consumerPRs, "nothing is opened for the consumer's service")
+
+	mergeCommitSHA := mergePullRequestViaStub(t, ctx, row.Repo, prNumber)
+	t.Logf("merged PR #%d via stub-github: merge_commit_sha=%s", prNumber, mergeCommitSHA)
+	pollChildPRState(t, ctx, clients, row.ID, producerService, "merged", 60*time.Second)
+	pollNeo4jPRState(t, ctx, clients, row.ID, producerService, "merged", 60*time.Second)
+
+	resolvedRows := queryNeo4jRows(t, ctx, clients, `
+		MATCH (r:Rejection {release_id: $release_id, node_id: $node_id})-[rb:RESOLVED_BY]->(:Proposal {proposal_id: $proposal_id})
+		RETURN rb.amended AS amended`,
+		map[string]any{"release_id": releaseID, "node_id": xbreakDownUniqueID, "proposal_id": row.ID})
+	require.Len(t, resolvedRows, 1, "the consumer is resolved by the producer's merged fix")
+	editRows := queryNeo4jRows(t, ctx, clients, `
+		MATCH (p:Proposal {proposal_id: $proposal_id})-[e:EDITED]->(t:Table)
+		RETURN t.unique_id AS unique_id`,
+		map[string]any{"proposal_id": row.ID})
+	require.Len(t, editRows, 1)
+	require.Equal(t, xbreakUpUniqueID, editRows[0]["unique_id"], "EDITED must target the producer, not the consumer")
+	t.Logf("✅ provenance confirmed: RESOLVED_BY %s, EDITED -> %s", xbreakDownUniqueID, xbreakUpUniqueID)
 }

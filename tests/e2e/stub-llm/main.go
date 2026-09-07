@@ -257,6 +257,16 @@ const upstreamFixContent = `{{ config(materialized='table') }}
 SELECT id, 0 AS amount FROM e2e_schema.ftable_c
 `
 
+// xbreakUpNodeID is the producer in service-3 whose change dropped the
+// column service-2's xbreak_down reads.
+const xbreakUpNodeID = "e2e_schema.xbreak_up"
+
+// xbreakProducerFix keeps the producer's change AND the column its
+// cross-service consumer reads, so the consumer binds without changing.
+const xbreakProducerFix = `{{ config(materialized='table') }}
+SELECT 1 AS id, 0 AS amount_eur
+`
+
 // ybreakMarker names the same-service consumer fixture whose only changed
 // ancestor dropped the column it reads. The prompt for its fix shows
 // ybreak_up in the candidate SQL (step 1) and in the original source (step 2).
@@ -466,6 +476,11 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 			// the ancestor's source, whatever else a prompt happens to carry.
 			proposedSQL = upstreamFixContent
 			rationale = "restored the amount column the change dropped"
+			if strings.Contains(userContent, "Upstream node: "+xbreakUpNodeID) {
+				// Cross-service cluster: the producer keeps both columns.
+				proposedSQL = xbreakProducerFix
+				rationale = "kept amount_eur alongside id so the consumer in service-2 still binds"
+			}
 		case strings.Contains(userContent, ybreakMarker):
 			// Same-service consumer of a changed upstream: an edit that keeps
 			// reading the dropped column, for both the step-1 and step-2 prompts.
