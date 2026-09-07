@@ -319,6 +319,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		NodeID   string `json:"node_id"`
 		FilePath string `json:"file_path,omitempty"`
 		Service  string `json:"service,omitempty"`
+		Depth    int    `json:"depth"`
 	}
 	type perNodeEntry struct {
 		NodeID               string                 `json:"node_id"`
@@ -353,7 +354,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		if nr.Status != "ok" {
 			for _, a := range release.ChangedAncestors(r.CandidateTopology(), nr.NodeID, changedSet) {
 				entry.ChangedAncestors = append(entry.ChangedAncestors, changedAncestorEntry{
-					NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service,
+					NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth,
 				})
 			}
 		}

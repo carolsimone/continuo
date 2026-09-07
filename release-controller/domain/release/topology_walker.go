@@ -216,19 +216,24 @@ func UnbuildableCrossServiceUpstreams(candidate Topology, nodeIDs []string) []Cr
 // location travels with the id because a fix has to edit the file the candidate
 // holds the node in: an ancestor renamed or moved in this release still sits at
 // its old path in the promoted graph, so resolving the id there would send the
-// fix to a file that no longer holds the node.
+// fix to a file that no longer holds the node. Depth is the minimum number of
+// upstream hops from the failing node to this ancestor — 1 for a direct
+// upstream — so a fix that must pick one changed ancestor can pick the nearest,
+// the contract the failing node reads directly.
 type ChangedAncestor struct {
 	NodeID   string
 	FilePath string
 	Service  string
+	Depth    int
 }
 
 // ChangedAncestors returns the transitive upstream ancestors of nodeID — across
 // service boundaries — that are in changed, sorted by id, each with the file
-// path and service the candidate topology declares for it. nodeID itself is
-// never included even when it changed, and an unknown node yields nil. It
-// tells a remediation which changed nodes upstream of a failing node could be
-// the root cause of its failure, and where to edit them.
+// path and service the candidate topology declares for it and its minimum hop
+// distance. nodeID itself is never included even when it changed, and an
+// unknown node yields nil. It tells a remediation which changed nodes upstream
+// of a failing node could be the root cause of its failure, where to edit them,
+// and which is closest.
 func ChangedAncestors(topo Topology, nodeID string, changed map[string]bool) []ChangedAncestor {
 	byID := make(map[string]Node, len(topo))
 	for _, n := range topo {
@@ -237,8 +242,26 @@ func ChangedAncestors(topo Topology, nodeID string, changed map[string]bool) []C
 	if _, known := byID[nodeID]; !known {
 		return nil
 	}
+	// Breadth-first over known upstream edges: the first visit to a node is
+	// along a shortest path, so its recorded depth is the minimum hop count.
+	depth := map[string]int{nodeID: 0}
+	queue := []string{nodeID}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, up := range byID[cur].UpstreamUniqueIDs {
+			if _, known := byID[up]; !known {
+				continue // unknown edge: not a buildable ancestor
+			}
+			if _, seen := depth[up]; seen {
+				continue
+			}
+			depth[up] = depth[cur] + 1
+			queue = append(queue, up)
+		}
+	}
 	var out []ChangedAncestor
-	for _, id := range FullAncestorsClosure(topo, []string{nodeID}) {
+	for id, d := range depth {
 		if id == nodeID || !changed[id] {
 			continue
 		}
@@ -246,6 +269,7 @@ func ChangedAncestors(topo Topology, nodeID string, changed map[string]bool) []C
 			NodeID:   id,
 			FilePath: byID[id].OriginalFilePath,
 			Service:  byID[id].ServiceName,
+			Depth:    d,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
