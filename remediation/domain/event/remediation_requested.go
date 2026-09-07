@@ -83,9 +83,11 @@ type FailingNode struct {
 }
 
 // ChangedAncestor is one changed upstream of a failing node, with the location
-// the rejected release's candidate topology declares for it.
+// the rejected release's candidate topology declares for it and its minimum
+// upstream hop distance from the failing node.
 type ChangedAncestor struct {
 	NodeID   string `json:"node_id"`
 	FilePath string `json:"file_path,omitempty"`
 	Service  string `json:"service,omitempty"`
+	Depth    int    `json:"depth"`
 }

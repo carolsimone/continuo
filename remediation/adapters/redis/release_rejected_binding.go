@@ -83,11 +83,13 @@ type rejectedPayload struct {
 
 // changedAncestorPayload is one entry of a per_node entry's changed_ancestors
 // array: the changed upstream's id plus the file path and service the rejected
-// release's candidate topology declares for it.
+// release's candidate topology declares for it and its minimum upstream hop
+// distance from the failing node.
 type changedAncestorPayload struct {
 	NodeID   string `json:"node_id"`
 	FilePath string `json:"file_path"`
 	Service  string `json:"service"`
+	Depth    int    `json:"depth"`
 }
 
 // changedAncestors projects the decoded changed ancestors onto the domain
@@ -99,7 +101,7 @@ func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
 	}
 	out := make([]failure.ChangedAncestor, 0, len(in))
 	for _, a := range in {
-		out = append(out, failure.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service})
+		out = append(out, failure.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth})
 	}
 	return out
 }

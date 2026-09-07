@@ -501,7 +501,7 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 		DBTLogURI: "s3://b/k", CodeBundleURI: "s3://b/code-bundles/r1/bundle.json",
 	}
 	a, b := base, base
-	anc := []failure.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc"}}
+	anc := []failure.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc", Depth: 1}}
 	a.NodeID, a.ChangedAncestors = "s.a", anc
 	b.NodeID, b.ChangedAncestors = "s.b", anc
 
@@ -527,7 +527,8 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 		t.Fatalf("nodes must be carried in evidence order: %+v", p.Nodes)
 	}
 	if len(p.Nodes[0].ChangedAncestors) != 1 || p.Nodes[0].ChangedAncestors[0].NodeID != "s.u" ||
-		p.Nodes[0].ChangedAncestors[0].FilePath != "models/u.sql" || p.Nodes[0].ChangedAncestors[0].Service != "svc" {
+		p.Nodes[0].ChangedAncestors[0].FilePath != "models/u.sql" || p.Nodes[0].ChangedAncestors[0].Service != "svc" ||
+		p.Nodes[0].ChangedAncestors[0].Depth != 1 {
 		t.Fatalf("changed ancestors must travel onto the trigger with their candidate location: %+v", p.Nodes[0])
 	}
 	if p.Nodes[0].ErrorSignature == "" || p.Nodes[0].ErrorSignature != p.Nodes[1].ErrorSignature {
