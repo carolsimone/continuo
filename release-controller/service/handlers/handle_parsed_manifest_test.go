@@ -1562,20 +1562,17 @@ func TestHandleParsedManifest_DistinctRelationsPassTheGate(t *testing.T) {
 	assert.NotNil(t, entry, "a clean topology must still request validation")
 }
 
-// --- verification changed-set derivation ---
+// --- verification seed-set derivation ---
 //
-// A remediation that spans two services repairs the whole failing set in one
-// attempt but submits one verification run per edited service (a run is one
-// service's delta). Each verification assembles the OTHER edited service's
-// node UNCHANGED — still carrying its not-yet-fixed failure, byte-identical
-// to the rejected candidate. A verification that names the rejected release
-// it verifies must therefore re-validate a node only if the fix changed it
-// relative to BOTH current_prod AND that rejected candidate — the
-// intersection of the two diffs. The sibling's still-broken node differs
-// from current_prod but matches the rejected candidate, so it is excluded;
-// an unrelated node another release promoted since the rejection matches
-// current_prod, so it is excluded too; only the fix's own edit, which
-// departs from both, is checked.
+// A verification run re-measures a node when it differs from current_prod AND
+// either the fix touched it (it differs from the rejected candidate too) or the
+// rejected release did not record it as failing. A fix spanning two services
+// submits one run per edited service, and each run assembles the OTHER edited
+// service's node unchanged — still carrying its not-yet-fixed failure at the
+// exact content_hash it had in the rejected candidate, and listed in that
+// release's failing_nodes — so it is left out and cloned from production. A
+// node the rejected release changed and validated ok is rebuilt from the
+// candidate, so the fix is measured against the shape the release produced.
 
 const (
 	verifyEID = "svc2.ftable_e" // service-2's broken/fixed node
@@ -1607,15 +1604,18 @@ func seedReleaseInParsing(store *fakeStore, id, service string, verification boo
 }
 
 // seedRejectedOriginal installs the rejected release a verification run
-// verifies, carrying the candidate topology the sibling's unfixed failure
-// matches (and so is excluded by) in the intersection.
-func seedRejectedOriginal(store *fakeStore, id, service string, candidate release.Topology) {
+// verifies: its candidate topology and the nodes its validation recorded not ok
+// (failing_nodes). A node the fix did not touch is re-measured by the
+// verification only when it is absent from failing — the rejected release
+// already proved it.
+func seedRejectedOriginal(store *fakeStore, id, service string, candidate release.Topology, failing []string) {
 	store.SeedRelease(pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:                id,
 		Status:            pipeline.StatusRejected,
 		ImageTags:         map[string]string{service: "img-" + service},
 		ChangedService:    service,
 		CandidateTopology: candidate,
+		FailingNodes:      failing,
 		ManifestKind:      release.ManifestKindDbt,
 		RemediationRound:  1,
 		CreatedAt:         time.Unix(80, 0).UTC(),
@@ -1661,7 +1661,7 @@ func TestHandleParsedManifest_OK_VerificationBaselinesOnVerifiedCandidate(t *tes
 	deps.Bucket = "continuo"
 
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
-	seedRejectedOriginal(store, "orig", "service-2", verifyRejectedCandidate())
+	seedRejectedOriginal(store, "orig", "service-2", verifyRejectedCandidate(), []string{verifyEID, verifyGID})
 	seedReleaseInParsing(store, "verify2", "service-2", true, "orig")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1767,7 +1767,7 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedCandidateEmpty
 	deps.Bucket = "continuo"
 
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", verifyProdTopo(), time.Unix(50, 0).UTC()))
-	seedRejectedOriginal(store, "origempty", "service-2", nil) // no candidate topology
+	seedRejectedOriginal(store, "origempty", "service-2", nil, nil) // no candidate topology
 	seedReleaseInParsing(store, "verifyempty", "service-2", true, "origempty")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1800,7 +1800,7 @@ func TestHandleParsedManifest_OK_VerificationRestoringProductionAfterCompileReje
 		{UniqueID: "core.read_order", ServiceName: "core", NodeType: "dbt-model", ContentHash: "h_read_order"},
 	}
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
-	seedRejectedOriginal(store, "origcompile", "core", nil) // rejected at compile: no candidate topology
+	seedRejectedOriginal(store, "origcompile", "core", nil, nil) // rejected at compile: no candidate topology
 	seedReleaseInParsing(store, "verifyfix", "core", true, "origcompile")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1865,7 +1865,7 @@ func TestHandleParsedManifest_OK_VerificationBaselinePrefersNewerProdOverRejecte
 	}
 
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
-	seedRejectedOriginal(store, "origpromoted", "service-2", rejectedCandidate)
+	seedRejectedOriginal(store, "origpromoted", "service-2", rejectedCandidate, []string{verifyEID, verifyGID})
 	seedReleaseInParsing(store, "verifypromoted", "service-2", true, "origpromoted")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1932,7 +1932,7 @@ func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModificat
 	}
 
 	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
-	seedRejectedOriginal(store, "origestab", "service-2", rejectedCandidate)
+	seedRejectedOriginal(store, "origestab", "service-2", rejectedCandidate, []string{verifyEID, verifySID})
 	seedReleaseInParsing(store, "verifyestab", "service-2", true, "origestab")
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -1950,4 +1950,114 @@ func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModificat
 		"the sibling's still-broken modification differs from current_prod (which holds it at its pre-rejection hash) but matches the rejected candidate, so the intersection excludes it -> NOT checked again")
 	assert.NotContains(t, validIDs, verifyUID,
 		"an unchanged upstream is neither changed nor pulled into the build set")
+}
+
+// TestHandleParsedManifest_OK_VerificationRebuildsTheRejectedReleasesValidatedChange:
+// the rejected release changed verifyMID (validated ok) and that change broke
+// its consumer verifyDID in another service. A verification of a fix at
+// verifyDID must rebuild verifyMID from the candidate — build_from_sql, not
+// clone_from_prod — or the consumer is measured against production's old shape.
+func TestHandleParsedManifest_OK_VerificationRebuildsTheRejectedReleasesValidatedChange(t *testing.T) {
+	const (
+		verifyMID = "svc2.changed_ok"
+		verifyDID = "svc3.consumer"
+	)
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	prod := release.Topology{
+		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: verifyMID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "m_old"},
+		{UniqueID: verifyDID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "d_old", UpstreamUniqueIDs: []string{verifyMID}},
+	}
+	rejected := release.Topology{
+		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: verifyMID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "m_new"},
+		{UniqueID: verifyDID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "d_old", UpstreamUniqueIDs: []string{verifyMID}},
+	}
+	parsed := release.Topology{
+		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: verifyMID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "m_new", CandidateArtifactURI: "s3://c/m"},
+		{UniqueID: verifyDID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "d_fixed", UpstreamUniqueIDs: []string{verifyMID}, CandidateArtifactURI: "s3://c/d"},
+	}
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "origok", "service-2", rejected, []string{verifyDID})
+	seedReleaseInParsing(store, "verifyok", "service-3", true, "origok")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "verifyok",
+		Status:    "ok",
+		Topology:  parsed,
+	}))
+
+	r, err := store.GetRelease("verifyok")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, verifyMID, "the rejected release changed it and validated it ok -> rebuilt from the candidate")
+	assert.Contains(t, validIDs, verifyDID, "the fix's own edit -> rebuilt")
+	assert.NotContains(t, validIDs, verifyUID, "an unchanged node is neither changed nor pulled in")
+
+	entry := findEntry(t, store, streams.ValidationRequestedV1)
+	require.NotNil(t, entry)
+	var payload struct {
+		Nodes []struct {
+			UniqueID     string `json:"unique_id"`
+			ValidationOp string `json:"validation_op"`
+		} `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	ops := map[string]string{}
+	for _, n := range payload.Nodes {
+		ops[n.UniqueID] = n.ValidationOp
+	}
+	assert.Equal(t, "build_from_sql", ops[verifyMID], "the validated change is built from its candidate SQL, never cloned from production")
+	assert.Equal(t, "build_from_sql", ops[verifyDID])
+}
+
+// TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNodeAlone:
+// a node the rejected release changed but SKIPPED (its own upstream failed) is
+// as unproven as a failed one. Untouched by the fix, it is not re-measured.
+func TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNodeAlone(t *testing.T) {
+	const (
+		verifyXID = "svc3.broken_upstream"
+		verifyKID = "svc3.skipped_consumer"
+	)
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	prod := release.Topology{
+		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: verifyXID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "x_old"},
+		{UniqueID: verifyKID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "k_old", UpstreamUniqueIDs: []string{verifyXID}},
+	}
+	rejected := release.Topology{
+		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: verifyEID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "e_broken"},
+		{UniqueID: verifyXID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "x_broken"},
+		{UniqueID: verifyKID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "k_new", UpstreamUniqueIDs: []string{verifyXID}},
+	}
+	parsed := release.Topology{
+		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: verifyEID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "e_fixed"},
+		{UniqueID: verifyXID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "x_broken"},
+		{UniqueID: verifyKID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "k_new", UpstreamUniqueIDs: []string{verifyXID}},
+	}
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "origskip", "service-2", rejected, []string{verifyEID, verifyXID, verifyKID})
+	seedReleaseInParsing(store, "verifyskip", "service-2", true, "origskip")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "verifyskip",
+		Status:    "ok",
+		Topology:  parsed,
+	}))
+
+	r, err := store.GetRelease("verifyskip")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, verifyEID, "the fix's own edit -> rebuilt")
+	assert.NotContains(t, validIDs, verifyXID, "the sibling's still-broken node is left to its own verification")
+	assert.NotContains(t, validIDs, verifyKID, "a node the rejected release skipped is unproven and untouched -> not re-measured")
 }

@@ -135,11 +135,11 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// content_hash changed. A production release measures that against
 	// current_prod alone (bootstrap, with no prod row, treats every candidate
 	// node as new and validates the whole topology). A verification run
-	// measures the diff against BOTH current_prod and the rejected candidate
-	// it verifies and keeps only the nodes that differ from both — the fix's
-	// own delta, never a sibling service's still-unfixed failure the
-	// verification assembles unchanged, nor an unrelated node another release
-	// promoted since the rejection.
+	// re-measures a node that differs from current_prod when the fix touched
+	// it or the rejected release it verifies already validated it ok; a
+	// sibling service's still-unfixed failure, which the verification
+	// assembles unchanged, is left to its own verification and cloned from
+	// production here.
 	changed := changedNodeIDsFor(ctx, u, d, r, topo, cp)
 
 	// Validate the changed-and-downstream closure plus the FULL transitive
@@ -265,25 +265,20 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 // and every verification that names no verified release, returns the nodes
 // that differ from current_prod alone.
 //
-// A verification run exists to verify a proposed fix, and a fix may span two
-// services: the whole failing set is repaired in one attempt but submitted as
-// one verification run per edited service, because a run is one service's
-// delta. Each verification therefore assembles the OTHER edited service's
-// node unchanged — still carrying its not-yet-fixed failure — at the very
-// content_hash that node had in the rejected candidate. A verification that
-// names the rejected release it verifies re-validates a node ONLY IF its fix
-// changed it relative to BOTH current_prod AND that rejected candidate: the
-// intersection of the two diffs.
-//   - The fix's own edited node differs from current_prod (old or absent) and
-//     from the rejected candidate (broken) — in both, so it is checked.
-//   - A sibling service's still-unfixed failure differs from current_prod
-//     (which never advanced past the rejection, or holds the node at its
-//     pre-rejection hash) but is byte-identical to the rejected candidate — in
-//     only one, so excluded and not checked again.
-//   - An unrelated node another release promoted since the rejection matches
-//     current_prod (even though it differs from the rejected candidate's stale
-//     copy) — in only one, so excluded, never dragged into a fix-only
-//     verification.
+// A verification run exists to verify a proposed fix, and it is measured
+// against the graph the rejection happened in: the rejected candidate plus
+// the fix. Of the nodes that differ from current_prod it rebuilds from the
+// candidate (release.VerificationSeedSet):
+//   - the fix's own edited nodes — they differ from the rejected candidate;
+//   - every node the rejected release changed and validated ok — its
+//     descendants, the fix's node among them, must see the shape that release
+//     produced, not production's older one;
+// and it leaves out a node the rejected release recorded as not ok that the
+// fix did not touch: a fix may span two services and is submitted as one run
+// per edited service, so each run assembles the OTHER edited service's node
+// unchanged, still broken, and that node is measured by its own run. A node
+// another release promoted since the rejection matches current_prod and is
+// never a seed.
 //
 // If the verified release cannot be read, or never parsed far enough to hold a
 // candidate topology, the verification falls back to the plain current_prod
@@ -305,8 +300,7 @@ func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeli
 			"release_id", r.ID(), "verifies_release_id", original.ID())
 		return changedVsProd
 	}
-	changedVsCandidate := release.DerivedChangedNodeIDs(topo, original.CandidateTopology())
-	return intersectSorted(changedVsProd, changedVsCandidate)
+	return release.VerificationSeedSet(topo, cp.TopologySnapshot(), original.CandidateTopology(), original.FailingNodes())
 }
 
 // newChangedSeedIDs returns the validation-set node IDs that are dbt-seeds in the
@@ -524,25 +518,6 @@ func unionSorted(a, b []string) []string {
 	out := make([]string, 0, len(seen))
 	for s := range seen {
 		out = append(out, s)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// intersectSorted returns the deduplicated, lexically-sorted set of ids present
-// in BOTH input slices.
-func intersectSorted(a, b []string) []string {
-	inB := make(map[string]bool, len(b))
-	for _, s := range b {
-		inB[s] = true
-	}
-	seen := make(map[string]bool, len(a))
-	out := make([]string, 0, len(a))
-	for _, s := range a {
-		if inB[s] && !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
 	}
 	sort.Strings(out)
 	return out
