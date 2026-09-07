@@ -18,6 +18,8 @@ import (
 	"github.com/google/uuid"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TestE2E_AgentRemediation_ProposesFixForRejection drives a full remediation
@@ -459,6 +461,68 @@ func TestE2E_AgentRemediation_OpeningSweepRecoversStrandedPR(t *testing.T) {
 		"a recovered PR must use GitHub's own created_at, not the recovery moment")
 	t.Logf("opening sweep recovered the stranded PR: pr_state=%s pr_url=%s pr_number=%d pr_opened_at=%s",
 		row.PRState, row.PRUrl, row.PRNumber, row.PROpenedAt)
+}
+
+// TestE2E_AgentRemediation_OpeningSweepFailsClaimWithoutRepo proves that an
+// 'opening' claim whose proposal records no repository is failed by the very
+// next sweep, not retried every tick, and that the claim cannot be taken
+// again: BeginPullRequest refuses it and the proposal reports an empty repo.
+func TestE2E_AgentRemediation_OpeningSweepFailsClaimWithoutRepo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	releaseID := "e2e-norepo-sweep-" + uuid.NewString()[:8]
+	const nodeID = "model.p.norepo_sweep"
+	const attempt = 1
+
+	// 1. A proposed, source-resolved proposal with NO repository, and a child
+	//    pull-request row already in 'opening' with a fresh claim time — the
+	//    shape a legacy row left behind. Seeded directly: the claim path
+	//    itself now refuses such a proposal (asserted below), so the row
+	//    cannot be produced through it.
+	var proposalID string
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &proposalID, `
+		INSERT INTO proposal
+			(source, release_id, node_id, error_signature, attempt, status,
+			 source_resolved, repo, commit_sha, file_path, model, created_at)
+		VALUES ('validation', $1, $2, 'e2e-norepo-sweep', $3, 'proposed',
+			true, '', 'deadbeef', 'models/norepo_sweep.sql', 'claude-3-5-sonnet', NOW())
+		RETURNING id`,
+		releaseID, nodeID, attempt))
+	_, err := clients.agentRemediationDB.ExecContext(ctx, `
+		INSERT INTO proposal_pull_request (proposal_id, service, repo, branch, pr_state, pr_claimed_at)
+		VALUES ($1, '', '', $2, 'opening', NOW())`,
+		proposalID, "remediation/"+releaseID+"/attempt1")
+	require.NoError(t, err)
+	t.Logf("seeded proposal id=%s with an opening claim and no repository", proposalID)
+
+	// 2. The sweep (REMEDIATION_PR_POLL_INTERVAL, 5s in compose) fails the
+	//    claim at once — far inside REMEDIATION_PR_OPENING_GRACE_PERIOD (15s),
+	//    which an aged-claim release would have had to wait out.
+	row := pollChildPRState(t, ctx, clients, proposalID, "", "failed", 12*time.Second)
+	require.Nil(t, row.PRClaimedAt, "failing the claim clears pr_claimed_at")
+	t.Logf("opening sweep failed the claim: pr_state=%s", row.PRState)
+
+	// 3. The claim cannot be taken again.
+	_, err = clients.agentRemediationClient.BeginPullRequest(ctx,
+		&remediationv1.BeginPullRequestRequest{Id: proposalID})
+	require.Error(t, err)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Contains(t, status.Convert(err).Message(), "no repository recorded for this proposal")
+
+	// 4. And the proposal tells the UI why: its repo is empty.
+	got, err := clients.agentRemediationClient.GetProposal(ctx, &remediationv1.GetProposalRequest{Id: proposalID})
+	require.NoError(t, err)
+	require.Empty(t, got.GetRepo())
+	child := pollChildPRState(t, ctx, clients, proposalID, "", "failed", 5*time.Second)
+	require.Equal(t, "failed", child.PRState, "the refused claim wrote nothing")
 }
 
 // remediationProposedPayload mirrors the remediation.proposed:v1 wire shape
