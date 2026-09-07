@@ -143,6 +143,22 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		})
 	}
 
+	// A trigger that names no repository can never end in a pull request:
+	// there is nowhere to open one, and Begin refuses the claim. Record the
+	// attempt failed with the reason before any model call or verification
+	// run is spent on a fix no human could act on.
+	if t.Repo == "" {
+		reason := fmt.Sprintf("the trigger carried no repository for %s", t.ReleaseID)
+		deps.Logger.Warn("remediation.requested trigger names no repository; recording the attempt failed",
+			"release", t.ReleaseID, "attempt", attempt)
+		return record(ctx, deps, t, attempt, proposal.Proposal{
+			Status:          proposal.StatusFailed,
+			ResolvedNodeIDs: nodeIDs,
+			NodeOutcomes:    outcomesFor(nodeIDs, proposal.NodeOutcome{Status: proposal.StatusFailed, Reason: reason}),
+			Rationale:       reason,
+		})
+	}
+
 	clusters := groupClusters(t)
 
 	// Mark this attempt in-flight in its own committed transaction, right before
