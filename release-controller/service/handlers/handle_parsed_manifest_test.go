@@ -1902,7 +1902,7 @@ const verifySID = "svc3.ftable_s"
 // current_prod-only or current_prod-wins baseline would re-validate it and
 // re-fail the verification run on a node its fix was never about — sinking
 // the good fix. The sibling is in the rejected release's failing_nodes and the
-// fix did not touch it (it matches the rejected candidate), so VerificationSeedSet
+// fix did not touch it (it matches the rejected candidate), so VerificationBuildSets
 // leaves it out and clones it from production. The fix's own node, which the
 // fix touched, is still checked.
 func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModification(t *testing.T) {
@@ -2060,4 +2060,81 @@ func TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNod
 	assert.Contains(t, validIDs, verifyEID, "the fix's own edit -> rebuilt")
 	assert.NotContains(t, validIDs, verifyXID, "the sibling's still-broken node is left to its own verification")
 	assert.NotContains(t, validIDs, verifyKID, "a node the rejected release skipped is unproven and untouched -> not re-measured")
+}
+
+// TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContextRebuild:
+// the connected-sibling case. A shared ancestor A (verifyAncID) is changed by
+// the rejected release and validated ok, and its change broke TWO consumers in
+// two other services: B (verifyFixID), which this run fixes, and C (verifySibID),
+// whose fix ships on a separate run and is still broken. Rebuilding A for
+// context must NOT expand this run's validation scope down A's OTHER edge to C:
+// only A's descendants that are also in the fix's own closure belong to this
+// run. Were A a scope seed, DescendantsClosure(A) would pull C back in as
+// build_from_sql and re-fail this run on C's unfixed fault.
+func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContextRebuild(t *testing.T) {
+	const (
+		verifyAncID = "svc2.shared_ancestor" // A: changed by the rejected release, validated ok
+		verifyFixID = "svc3.fixed_consumer"  // B: this run's fix, downstream of A
+		verifySibID = "svc4.sibling_consumer" // C: still-broken sibling, downstream of A, separate run
+	)
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	prod := release.Topology{
+		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: verifyAncID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "a_old"},
+		{UniqueID: verifyFixID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "b_old", UpstreamUniqueIDs: []string{verifyAncID}},
+		{UniqueID: verifySibID, ServiceName: "service-4", NodeType: "dbt-model", ContentHash: "c_old", UpstreamUniqueIDs: []string{verifyAncID}},
+	}
+	// The rejected release changed A (validated ok) which broke B and C.
+	rejected := release.Topology{
+		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: verifyAncID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "a_new"},
+		{UniqueID: verifyFixID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "b_old", UpstreamUniqueIDs: []string{verifyAncID}},
+		{UniqueID: verifySibID, ServiceName: "service-4", NodeType: "dbt-model", ContentHash: "c_broken", UpstreamUniqueIDs: []string{verifyAncID}},
+	}
+	// This service-3 verification fixes B, rebuilds A at its candidate shape for
+	// context, and assembles C UNCHANGED (still broken) from the rejected candidate.
+	parsed := release.Topology{
+		{UniqueID: verifyUID, ServiceName: "shared", ContentHash: "h_u"},
+		{UniqueID: verifyAncID, ServiceName: "service-2", NodeType: "dbt-model", ContentHash: "a_new", CandidateArtifactURI: "s3://c/a"},
+		{UniqueID: verifyFixID, ServiceName: "service-3", NodeType: "dbt-model", ContentHash: "b_fixed", UpstreamUniqueIDs: []string{verifyAncID}, CandidateArtifactURI: "s3://c/b"},
+		{UniqueID: verifySibID, ServiceName: "service-4", NodeType: "dbt-model", ContentHash: "c_broken", UpstreamUniqueIDs: []string{verifyAncID}},
+	}
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", prod, time.Unix(50, 0).UTC()))
+	seedRejectedOriginal(store, "origconn", "service-2", rejected, []string{verifyFixID, verifySibID})
+	seedReleaseInParsing(store, "verifyconn", "service-3", true, "origconn")
+
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "verifyconn",
+		Status:    "ok",
+		Topology:  parsed,
+	}))
+
+	r, err := store.GetRelease("verifyconn")
+	require.NoError(t, err)
+	validIDs := r.ValidationNodeIDs()
+	assert.Contains(t, validIDs, verifyFixID, "the fix's own edit -> scope, rebuilt")
+	assert.Contains(t, validIDs, verifyAncID, "the changed ancestor is rebuilt for context, as an ancestor of the fix")
+	assert.NotContains(t, validIDs, verifySibID,
+		"the still-broken sibling is downstream of the shared ancestor but not of the fix, so the context rebuild must not drag it into this run")
+
+	entry := findEntry(t, store, streams.ValidationRequestedV1)
+	require.NotNil(t, entry)
+	var payload struct {
+		Nodes []struct {
+			UniqueID     string `json:"unique_id"`
+			ValidationOp string `json:"validation_op"`
+		} `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+	ops := map[string]string{}
+	for _, n := range payload.Nodes {
+		ops[n.UniqueID] = n.ValidationOp
+	}
+	assert.Equal(t, "build_from_sql", ops[verifyAncID], "the context ancestor is built from its candidate SQL")
+	assert.Equal(t, "build_from_sql", ops[verifyFixID])
+	_, sawSibling := ops[verifySibID]
+	assert.False(t, sawSibling, "the still-broken sibling is not in the validation request at all; nodes=%v", ops)
 }

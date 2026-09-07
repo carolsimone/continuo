@@ -131,23 +131,25 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		return fmt.Errorf("get current prod: %w", err)
 	}
 
-	// Derive the validation seed set: candidate nodes that are new or whose
-	// content_hash changed. A production release measures that against
-	// current_prod alone (bootstrap, with no prod row, treats every candidate
-	// node as new and validates the whole topology). A verification run
-	// re-measures a node that differs from current_prod when the fix touched
-	// it or the rejected release it verifies already validated it ok; a
-	// sibling service's still-unfixed failure, which the verification
-	// assembles unchanged, is left to its own verification and cloned from
-	// production here.
-	changed := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	// Derive the validation build sets: candidate nodes rebuilt from their own
+	// SQL rather than cloned from production, split into the fix's own delta
+	// (scope) and the rejected release's validated-ok changes (context). A
+	// production release returns every node that differs from current_prod as
+	// scope with no context (bootstrap, with no prod row, treats every candidate
+	// node as new and validates the whole topology). A verification run splits
+	// the two so the fix's shared changed ancestor is rebuilt for context
+	// without expanding this run to a sibling service's still-unfixed failure.
+	scope, contextRebuilds := changedNodeIDsFor(ctx, u, d, r, topo, cp)
 
-	// Validate the changed-and-downstream closure plus the FULL transitive
-	// upstream closure (across service boundaries) so every upstream is built as an
-	// empty table in the candidate schema before its dependents. The executor
-	// builds each node from compiled SQL whose schema-qualified refs are rewritten
-	// to the candidate schema, gated in dependency order.
-	changedClosure := release.DescendantsClosure(topo, changed)
+	// Validate the scope closure — the fix's own delta and everything downstream
+	// of it — plus the FULL transitive upstream closure (across service
+	// boundaries) so every upstream is built as an empty table in the candidate
+	// schema before its dependents. Only scope seeds the downstream closure: a
+	// verification's context rebuilds are pulled in only where they land in this
+	// set as ancestors, never expanded to their own other descendants. The
+	// executor builds each seed from compiled SQL whose schema-qualified refs are
+	// rewritten to the candidate schema, gated in dependency order.
+	changedClosure := release.DescendantsClosure(topo, scope)
 	validationIDs := unionSorted(changedClosure, release.FullAncestorsClosure(topo, changedClosure))
 
 	// Every node in the validation build set must have all its upstreams present
@@ -158,11 +160,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 		return rejectUnbuildableCrossServiceUpstream(ctx, d, u, r, in.ReleaseID, edges, now)
 	}
 
-	// Build changedClosureSet once (also used by validationNodesInOrder, Task A1).
-	changedClosureSet := make(map[string]bool, len(changedClosure))
-	for _, id := range changedClosure {
-		changedClosureSet[id] = true
-	}
+	rebuiltFromCandidate := rebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs)
 
 	// Nothing to validate: no candidate node is new or content-changed vs prod
 	// (e.g. a release that only bumps image tags, or removes a node). Emitting an
@@ -205,7 +203,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	// schema (real data, team image) BEFORE validation, so dependent candidate
 	// models validate against the correct seed structure. Route to the seed-build
 	// leg; validation.requested is emitted later, on seed.build.completed.
-	seedIDs := newChangedSeedIDs(topo, validationIDs, changedClosureSet)
+	seedIDs := newChangedSeedIDs(topo, validationIDs, rebuiltFromCandidate)
 	if len(seedIDs) > 0 {
 		return emitSeedBuildRequested(ctx, d, u, r, in.ReleaseID, topo, validationIDs, seedIDs, now)
 	}
@@ -229,7 +227,7 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,
 		"mode":              "validation",
-		"nodes":             validationNodesInOrder(topo, validationIDs, inSet, changedClosureSet),
+		"nodes":             validationNodesInOrder(topo, validationIDs, inSet, rebuiltFromCandidate),
 		"node_ids_in_order": validationIDs,
 		"image_tags":        r.ImageTags(),
 		"candidate_schema":  candidateSchema,
@@ -260,61 +258,93 @@ func handleParseOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.R
 	return nil
 }
 
-// changedNodeIDsFor returns the run's validation seed set — the candidate
-// node ids whose content_hash marks them changed. Every candidate release,
-// and every verification that names no verified release, returns the nodes
-// that differ from current_prod alone.
+// changedNodeIDsFor returns the run's validation build sets — the candidate
+// node ids rebuilt from their own SQL rather than cloned empty from
+// production, split into two roles:
+//   - scope: the fix's own delta. These seed the downstream validation
+//     closure, so the run measures the fix and everything below it.
+//   - context: nodes the rejected release changed and validated ok, rebuilt so
+//     the scope closure sees the shape that release produced, but which never
+//     seed the closure themselves.
+//
+// A candidate release, and every verification that names no verified release,
+// returns every node that differs from current_prod as scope with no context
+// (bootstrap, with no prod row, treats every candidate node as new and
+// validates the whole topology).
 //
 // A verification run exists to verify a proposed fix, and it is measured
-// against the graph the rejection happened in: the rejected candidate plus
-// the fix. Of the nodes that differ from current_prod it rebuilds from the
-// candidate (release.VerificationSeedSet):
-//   - the fix's own edited nodes — they differ from the rejected candidate;
-//   - every node the rejected release changed and validated ok — its
-//     descendants, the fix's node among them, must see the shape that release
-//     produced, not production's older one;
-// and it leaves out a node the rejected release recorded as not ok that the
-// fix did not touch: a fix may span two services and is submitted as one run
-// per edited service, so each run assembles the OTHER edited service's node
-// unchanged, still broken, and that node is measured by its own run. A node
-// another release promoted since the rejection matches current_prod and is
-// never a seed.
+// against the graph the rejection happened in: the rejected candidate plus the
+// fix (release.VerificationBuildSets). Splitting scope from context is what
+// keeps a fix spanning two services shippable: each service's fix is a separate
+// run, so a run rebuilds a shared changed ancestor for context but must not let
+// that ancestor drag the OTHER service's still-broken descendant — named in the
+// rejected release's failing_nodes — into this run and re-fail it. A node the
+// rejected release recorded as not ok that the fix did not touch is in neither
+// set; a node another release promoted since the rejection matches current_prod
+// and is in neither set.
 //
 // If the verified release cannot be read, or never parsed far enough to hold a
 // candidate topology, the verification falls back to the plain current_prod
-// diff — a weaker but still-running check, mirroring assembleFor's graceful
-// degradation.
-func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo release.Topology, cp *release.CurrentProd) []string {
+// diff as scope — a weaker but still-running check, mirroring assembleFor's
+// graceful degradation.
+func changedNodeIDsFor(ctx context.Context, u uow.UnitOfWork, d *Deps, r *pipeline.Run, topo release.Topology, cp *release.CurrentProd) (scope, context []string) {
 	changedVsProd := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
 	if r.Kind() == pipeline.KindCandidate || r.VerifiesReleaseID() == "" {
-		return changedVsProd
+		return changedVsProd, nil
 	}
 	original, err := u.RunRepo().Get(ctx, r.VerifiesReleaseID())
 	if err != nil || original == nil {
 		d.Logger.Warn("verification run verifies a release that cannot be read; measuring its changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", r.VerifiesReleaseID(), "error", err)
-		return changedVsProd
+		return changedVsProd, nil
 	}
 	if len(original.CandidateTopology()) == 0 {
 		d.Logger.Warn("the verified release has no candidate topology; measuring the verification's changed set against production instead",
 			"release_id", r.ID(), "verifies_release_id", original.ID())
-		return changedVsProd
+		return changedVsProd, nil
 	}
-	return release.VerificationSeedSet(topo, cp.TopologySnapshot(), original.CandidateTopology(), original.FailingNodes())
+	return release.VerificationBuildSets(topo, cp.TopologySnapshot(), original.CandidateTopology(), original.FailingNodes())
+}
+
+// rebuiltFromCandidateSet is the set of validation nodes built from their own
+// candidate SQL (build_from_sql / build_from_columns) rather than cloned empty
+// from production: the scope's descendant closure, plus any verification
+// context rebuild that lands in the validation set as an ancestor of the scope.
+// A context node outside the validation set is irrelevant to the run and is not
+// built. Both the parse leg and the seed-build leg derive their build strategy
+// and their built-seed set from this same set, so the two legs never disagree
+// on whether a node is rebuilt from the candidate.
+func rebuiltFromCandidateSet(changedClosure, contextRebuilds, validationIDs []string) map[string]bool {
+	set := make(map[string]bool, len(changedClosure)+len(contextRebuilds))
+	for _, id := range changedClosure {
+		set[id] = true
+	}
+	if len(contextRebuilds) > 0 {
+		inValidation := make(map[string]bool, len(validationIDs))
+		for _, id := range validationIDs {
+			inValidation[id] = true
+		}
+		for _, id := range contextRebuilds {
+			if inValidation[id] {
+				set[id] = true
+			}
+		}
+	}
+	return set
 }
 
 // newChangedSeedIDs returns the validation-set node IDs that are dbt-seeds in the
 // changed-closure (new or content-changed). These cannot be checked by the
 // adapter (no compiled SQL) and cannot be cloned (structure may have changed) — they are
 // built into the candidate schema by the seed-build leg. Sorted for determinism.
-func newChangedSeedIDs(topo release.Topology, validationIDs []string, changedClosureSet map[string]bool) []string {
+func newChangedSeedIDs(topo release.Topology, validationIDs []string, rebuiltFromCandidate map[string]bool) []string {
 	inSet := make(map[string]bool, len(validationIDs))
 	for _, id := range validationIDs {
 		inSet[id] = true
 	}
 	var out []string
 	for _, n := range topo {
-		if inSet[n.UniqueID] && changedClosureSet[n.UniqueID] && n.NodeType == "dbt-seed" {
+		if inSet[n.UniqueID] && rebuiltFromCandidate[n.UniqueID] && n.NodeType == "dbt-seed" {
 			out = append(out, n.UniqueID)
 		}
 	}
@@ -452,7 +482,7 @@ func joinImageTags(topo release.Topology, imageTags map[string]string) release.T
 // schema build. Dispatch ordering is deterministic but NOT topological; per-node
 // execution sequencing is enforced at runtime by the executor's gating on
 // upstream_node_ids, not by position in this list.
-func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet, changedClosureSet map[string]bool) []map[string]any {
+func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet, rebuiltFromCandidate map[string]bool) []map[string]any {
 	byID := make(map[string]release.Node, len(topo))
 	for _, n := range topo {
 		byID[n.UniqueID] = n
@@ -463,7 +493,7 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 		if !ok {
 			continue
 		}
-		op, prodSchema := validationOpFor(n, changedClosureSet)
+		op, prodSchema := validationOpFor(n, rebuiltFromCandidate)
 		out = append(out, map[string]any{
 			"unique_id":              n.UniqueID,
 			"service_name":           n.ServiceName,
@@ -487,8 +517,8 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 // (build_from_columns). Every other node in the validation set is an
 // unchanged upstream — there is no candidate artifact for it — so it is
 // cloned empty from its production schema regardless of kind.
-func validationOpFor(n release.Node, changedClosureSet map[string]bool) (op, prodSchema string) {
-	if changedClosureSet[n.UniqueID] {
+func validationOpFor(n release.Node, rebuiltFromCandidate map[string]bool) (op, prodSchema string) {
+	if rebuiltFromCandidate[n.UniqueID] {
 		if pkg_model.NodeType(n.NodeType).IsPython() {
 			return "build_from_columns", ""
 		}
