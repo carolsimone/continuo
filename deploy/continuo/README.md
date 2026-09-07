@@ -1,18 +1,16 @@
 # continuo Helm chart
 
-A single umbrella chart that installs the whole Continuo platform: every
-backend service plus, optionally, quickstart datastores (PostgreSQL, Redis,
-Neo4j, MinIO, Dex) so a fresh cluster needs nothing pre-created to try it.
-Production installs disable those and bring their own datastores instead.
+One umbrella chart that installs the whole continuo platform: every backend
+service, plus optional quickstart datastores (PostgreSQL, Redis, Neo4j, MinIO,
+Dex) so a fresh cluster needs nothing pre-created to try it. Production installs
+turn those off and bring their own.
 
-Requires Kubernetes `>=1.27.0-0` and Helm 3. Local `helm template`/`helm
-install` runs against an older client-default Kubernetes capability set, so
-pass `--kube-version 1.29.0` (or your real cluster's version) when rendering
-outside a live cluster — otherwise Helm rejects the chart's `kubeVersion` gate
-before it ever reads a template.
+Requires Kubernetes `>=1.27.0-0` and Helm 3. When you render outside a live
+cluster, `helm template`/`helm install` assumes an older Kubernetes version, so
+pass `--kube-version 1.29.0` (or your cluster's version). Without it, Helm
+rejects the chart's `kubeVersion` gate before it reads a template.
 
-Released versions are published as an OCI chart, so an install needs no repo
-clone at all:
+Released versions ship as an OCI chart, so an install needs no repo clone:
 
 ```bash
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
@@ -21,8 +19,8 @@ helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
 
 No `--set global.imageTag` here: the published chart's `appVersion` is the
 release tag (`v<X.Y.Z>`), which pins every continuo image to that release.
-Repo-clone installs (the rest of this README) keep passing `global.imageTag`
-explicitly because the in-repo `appVersion` is a dev placeholder.
+Repo-clone installs (the rest of this README) still pass `global.imageTag`
+explicitly, because the in-repo `appVersion` is a dev placeholder.
 
 ## 1. Quickstart (bundled everything)
 
@@ -41,35 +39,30 @@ echo "127.0.0.1 continuo-dex" | sudo tee -a /etc/hosts
 open http://localhost:8090   # demo login: admin@example.com / password
 ```
 
-Why the `/etc/hosts` line exists: ui authenticates through OIDC
-(OpenID Connect), and OIDC requires a *single* issuer URL that both parties
-can resolve — the browser, which drives the login redirect, and ui,
-which validates the resulting token server-side. ui reaches Dex fine
-over in-cluster DNS at `http://continuo-dex:5556/dex`; your browser cannot
-resolve that name at all. Port-forwarding `continuo-dex` to `localhost:5556`
-gets the browser a route to the same pod, but only if it requests the same
-hostname the issuer claims to be — hence one loopback line in `/etc/hosts`
-mapping `continuo-dex` to `127.0.0.1`. That is the smallest bridge between
-"browser-reachable" and "matches the issuer identity ui already
-trusts"; anything else (a second Dex listener, a reverse proxy) is more
-moving parts for the same result. `curl --resolve continuo-dex:5556:127.0.0.1
-http://continuo-dex:5556/dex/.well-known/openid-configuration` verifies the
-port-forward without touching `/etc/hosts` at all (bundled Dex serves plain
-HTTP, not HTTPS).
+Why the `/etc/hosts` line: ui authenticates through OIDC (OpenID Connect),
+which needs one issuer URL that both the browser (it drives the login redirect)
+and ui (it validates the token server-side) can resolve. ui reaches Dex over
+in-cluster DNS at `http://continuo-dex:5556/dex`, but your browser cannot
+resolve that name. Port-forwarding `continuo-dex` to `localhost:5556` routes
+the browser to the same pod — but only if it asks for the hostname the issuer
+claims. The one `/etc/hosts` line maps `continuo-dex` to `127.0.0.1` to make
+that match. To verify the port-forward without touching `/etc/hosts`:
+`curl --resolve continuo-dex:5556:127.0.0.1
+http://continuo-dex:5556/dex/.well-known/openid-configuration` (bundled Dex
+serves plain HTTP, not HTTPS).
 
-Run that `sudo` line in a real terminal window. sudo reads the password from
-the controlling terminal (`/dev/tty`), never from standard input unless you
-pass `-S`, so in a context with no terminal — an IDE terminal pane, an agent
-shell, a non-login shell — it does not prompt at all and exits with `sudo: a
-terminal is required to read the password`. The pipe into `tee` is unrelated to
-this: sudo ignores standard input either way. The password it wants is your
-local account password, not the Dex demo login below.
+Run that `sudo` line in a real terminal. sudo reads the password from the
+controlling terminal (`/dev/tty`), not from standard input unless you pass
+`-S`. In a context with no terminal — an IDE terminal pane, an agent shell, a
+non-login shell — it does not prompt at all and exits with `sudo: a terminal is
+required to read the password`. The pipe into `tee` does not change this: sudo
+ignores standard input either way. The password it wants is your local account
+password, not the Dex demo login below.
 
-Avoiding `/etc/hosts` entirely: point the browser's own resolver at the
-loopback port-forward instead of the system hosts file. This needs no root, and
-is the way out if sudo is unavailable. For Chrome, the separate
-`--user-data-dir` is required — an already-running Chrome ignores flags passed
-to a second launch.
+To avoid `/etc/hosts` entirely, point the browser's own resolver at the
+loopback port-forward instead of the system hosts file. This needs no root —
+use it when sudo is unavailable. Chrome needs the separate `--user-data-dir`,
+because an already-running Chrome ignores flags passed to a second launch.
 
 ```bash
 open -na "Google Chrome" --args \
@@ -79,19 +72,18 @@ open -na "Google Chrome" --args \
 ```
 
 The bundled datastores and the Dex demo user (`admin@example.com` /
-`password`, a bcrypt hash lifted verbatim from Dex's own example config) are
-for evaluation only. Passwords for bundled datastores are generated on first
-install and kept stable across upgrades (see Security defaults below), but
-none of this is meant to hold real data or face real users — there is no
-backup story, no HA, and one static login.
+`password`, a bcrypt hash taken verbatim from Dex's example config) are for
+evaluation only. Bundled-datastore passwords are generated on first install and
+stay stable across upgrades (see Security defaults below). None of this is meant
+to hold real data or face real users: no backups, no HA, one static login.
 
 **Reinstalling on top of old data.** `helm uninstall` deletes the release's
 generated Secrets, but the bundled datastores' `volumeClaimTemplates` PVCs
-(Persistent Volume Claims) are not owned by the release and survive it. A
-plain reinstall then generates brand-new random passwords while the old PVCs'
-data directories still hold the previous ones, and every bundled datastore
-crashloops on auth. For a full reset, delete the release's PVCs before
-reinstalling (`kubectl -n <namespace> delete pvc -l app.kubernetes.io/instance=<release>`).
+(Persistent Volume Claims) survive it — the release does not own them. A plain
+reinstall then generates new random passwords while the old PVCs' data
+directories still hold the previous ones, so every bundled datastore crashloops
+on auth. For a full reset, delete the release's PVCs before reinstalling
+(`kubectl -n <namespace> delete pvc -l app.kubernetes.io/instance=<release>`).
 
 To reinstall while keeping existing data, pre-create a Secret with the old
 password(s) for every bundled datastore still enabled and point the chart at
@@ -104,11 +96,11 @@ it before reinstalling:
 | Neo4j | `neo4j.auth.existingSecret` (+ `existingSecretPasswordKey`) | `password` by default |
 | MinIO | `minio.auth.existingSecret` (+ `existingSecretAccessKeyIdKey` / `existingSecretSecretKeyKey`) | `access-key-id` **and** `secret-access-key` — MinIO's Secret must carry both the root user and its password, unlike the single-key password Secrets above |
 
-Helm silently accepts any of these fields even while the matching `*.enabled`
-stays `true` — there is no validation step tying them together — so a typo'd
-field name or a Secret missing a key fails at Pod start (`CreateContainer
-ConfigError`), not at `helm install` time; double-check the Secret's keys
-against the table above before reinstalling.
+Helm accepts any of these fields even while the matching `*.enabled` stays
+`true` — nothing validates them together — so a mistyped field name or a Secret
+missing a key fails at Pod start (`CreateContainer ConfigError`), not at `helm
+install` time. Double-check the Secret's keys against the table above before
+reinstalling.
 
 ## 2. Production (bring your own datastores)
 
@@ -122,54 +114,52 @@ helm install continuo deploy/continuo -n continuo --create-namespace \
 
 Notes that matter before you commit to this path:
 
-- **PostgreSQL only, today.** `externalDatabase.*` is deliberately
-  database-agnostic in its key names, but every SQL statement the chart and
-  the services emit assumes Postgres. A different engine (MySQL is the only
-  one on the roadmap) needs its own migration and query-compatibility work
-  first — do not point `externalDatabase.host` at anything else yet.
-- **In-cluster encryption is your responsibility.** This chart does not
-  configure mTLS (mutual TLS) between pods; service-to-service traffic
-  inside the cluster is plaintext unless you run a service mesh (Istio,
-  Linkerd) or CNI-level encryption underneath it. External connections
-  (`externalDatabase`, `externalRedis`, `externalNeo4j`, `s3.*`) go over
-  whatever transport you configure at the endpoint (e.g. `sslMode: require`
-  for Postgres).
-- **`databaseInit` needs `CREATEDB`.** With it `enabled: true` (the
-  default), an init container connects as `externalDatabase.username` and
-  idempotently creates all 9 databases, including `continuo_dbt` (the dbt
-  warehouse — the one database no Flyway migration directory owns). If your
-  DBA provisions databases out-of-band, set `databaseInit.enabled: false` and
-  drop `CREATEDB` from the connecting user's grants.
-- **Upgrades keep the pre-install hook.** With `postgresql.enabled: false`,
-  the migration Job stays a Helm `pre-install,pre-upgrade` hook — the same
-  ordering the previous production deploy flow relied on — because your
-  database already exists before the release does, so Helm can safely block
-  on it before touching anything else. (The bundled-Postgres path can't use a
-  hook: pre-install hooks run before *any* release resource exists, so a hook
-  Job could never reach a Postgres that Helm hasn't created yet. That path
-  runs the migration as a regular, revision-suffixed resource instead, with
-  Postgres-backed services gating on it via an init container.) In bundled
-  mode, expect new pods to briefly crashloop-converge on an upgrade: the
-  `wait-for-migrations` init container only gates on `flyway_schema_history`
-  existing in the target database, not on the specific migration the upgrade
-  ships being applied yet, so a pod can start before that migration Job has
-  finished.
+- **PostgreSQL only, today.** `externalDatabase.*` uses database-agnostic key
+  names on purpose, but every SQL statement the chart and the services emit
+  assumes Postgres. Another engine (MySQL is the only one planned) needs its
+  own migration and query-compatibility work first — do not point
+  `externalDatabase.host` at anything else yet.
+- **In-cluster encryption is your responsibility.** The chart does not
+  configure mTLS (mutual TLS) between pods; service-to-service traffic inside
+  the cluster is plaintext unless you run a service mesh (Istio, Linkerd) or
+  CNI-level encryption underneath it. External connections
+  (`externalDatabase`, `externalRedis`, `externalNeo4j`, `s3.*`) use whatever
+  transport you configure at the endpoint (e.g. `sslMode: require` for
+  Postgres).
+- **`databaseInit` needs `CREATEDB`.** With `enabled: true` (the default), an
+  init container connects as `externalDatabase.username` and idempotently
+  creates all 9 databases, including `continuo_dbt` (the dbt warehouse — the
+  one database no Flyway migration directory owns). If your DBA provisions
+  databases out-of-band, set `databaseInit.enabled: false` and drop `CREATEDB`
+  from the connecting user's grants.
+- **How migrations run depends on the Postgres mode.** With
+  `postgresql.enabled: false`, the migration Job is a Helm
+  `pre-install,pre-upgrade` hook: your database already exists before the
+  release, so Helm blocks on the migration before touching anything else. The
+  bundled-Postgres path can't use a hook — pre-install hooks run before *any*
+  release resource exists, so a hook Job could never reach a Postgres that Helm
+  hasn't created yet. That path runs the migration as a regular,
+  revision-suffixed resource, with Postgres-backed services gating on it via an
+  init container. In bundled mode, expect new pods to briefly crashloop on an
+  upgrade: the `wait-for-migrations` init container only checks that
+  `flyway_schema_history` exists in the target database, not that the upgrade's
+  specific migration has been applied, so a pod can start before the migration
+  Job finishes.
 
 ## 3. Security defaults
 
 Every container in this chart, bundled or not, gets:
 
-- **Non-root execution.** `runAsNonRoot: true` at the pod level; Continuo's
-  own images run as uid `65532` (ui, built on `node`, runs as uid
-  `1000`). Bundled datastore images run as their own documented non-root
-  uid/gid (e.g. neo4j `7474:7474`).
+- **Non-root execution.** `runAsNonRoot: true` at the pod level. continuo's own
+  images run as uid `65532` (ui, built on `node`, runs as uid `1000`). Bundled
+  datastore images run as their own documented non-root uid/gid (e.g. neo4j
+  `7474:7474`).
 - **`seccompProfile: RuntimeDefault`** — the kernel syscall filter the
   container runtime ships, applied everywhere rather than left to cluster
   defaults.
 - **`allowPrivilegeEscalation: false` and `capabilities: drop: ["ALL"]`** on
-  every container — no container in this chart can gain more privileges than
-  it starts with or hold a Linux capability it wasn't explicitly given (none
-  are).
+  every container — no container in this chart can gain more privileges than it
+  starts with, or hold a Linux capability it wasn't given (none are).
 - **`readOnlyRootFilesystem: true`**, with a defensive `emptyDir` mounted at
   `/tmp` for the rare container that writes scratch files there. Two
   documented exceptions, each with an `ignore-check.kube-linter.io/
@@ -179,29 +169,29 @@ Every container in this chart, bundled or not, gets:
     filesystem must stay writable.
   - **the Flyway migration Job** — Flyway writes its migration report files
     under `/flyway` on every run; there is no flag to suppress that.
-- **Default-deny `NetworkPolicy`s** plus explicit allow rules derived from
-  the real service call graph (who calls whom, and which datastores each
-  service actually reaches). `networkPolicy.enabled` is on by default; it is
-  inert (accepted but not enforced) on a CNI (Container Network Interface)
-  that doesn't implement `NetworkPolicy`, so leaving it enabled costs nothing
-  even on a cluster that can't act on it.
+- **Default-deny `NetworkPolicy`s** plus explicit allow rules derived from the
+  real service call graph (who calls whom, and which datastores each service
+  actually reaches). `networkPolicy.enabled` is on by default; it is inert
+  (accepted but not enforced) on a CNI (Container Network Interface) that
+  doesn't implement `NetworkPolicy`, so leaving it enabled costs nothing even
+  on a cluster that can't act on it.
 - **No committed credentials.** Every credential value in `values.yaml`
   defaults to an empty string. Bundled datastores auto-generate a password on
-  first install via a Helm `lookup` against the live Secret, so upgrades
-  reuse the existing value instead of rotating it out from under a running
-  service (`helm template`/`--dry-run` can't perform that lookup and will
-  render a fresh random value each time — harmless for a dry render, since
-  only real installs and upgrades touch the actual Secret). External
-  credentials are `required` and fail closed: leaving one blank fails the
-  render instead of installing with an empty password.
+  first install via a Helm `lookup` against the live Secret, so upgrades reuse
+  the existing value instead of rotating it out from under a running service.
+  (`helm template`/`--dry-run` can't perform that lookup and renders a fresh
+  random value each time — harmless for a dry render, since only real installs
+  and upgrades touch the actual Secret.) External credentials are `required`
+  and fail closed: leaving one blank fails the render instead of installing
+  with an empty password.
 
 ## 4. Values reference
 
 | Key | Purpose |
 |---|---|
-| `global.imageRegistry` / `global.imageRepositoryPrefix` / `global.imageTag` | Compose Continuo-owned service image refs as `<registry>/<prefix>/continuo-<service>:<tag>`. Empty `imageTag` falls back to `Chart.appVersion`. Does not apply to the validation image — see `validation.engine` / `validation.imageTag` below. |
-| `global.teamImagePrefix` | Registry/namespace prefix executor-controller uses to compose per-team dbt images for compile/seed/scheduled Jobs (unrelated to `global.imageRepositoryPrefix`, which names Continuo's own images). |
-| `validation.engine` / `validation.imageTag` | Select and pin the external `continuo-python-runtime-<engine>` image, composed as `<registry>/<prefix>/continuo-python-runtime-<engine>:<imageTag>` (from the separate `continuo-python-runtime` repository, `github.com/carolsimone/continuo-python-runtime`, which ships both the python-node runtime and the validation runner in one image) — reuses `global.imageRegistry`/`global.imageRepositoryPrefix` but `imageTag` (default `v0.4.0`) must be non-empty and is versioned independently of `global.imageTag`/`appVersion`, since that image ships on its own release train. The engine is part of the image name, not the tag, so the tag position stays free for a digest. A plain tag is mutable — `continuo-python-runtime`'s publish workflow re-pushes `:vX.Y.Z` (and `:latest`) on every tag, so re-running a tag moves it under existing installs. For an immutable pin, set `imageTag` to `"vX.Y.Z@sha256:<digest>"`; if you mirror images into a private registry, mirror this ref explicitly — it is not covered by the same-appVersion assumption `global.imageTag` mirrors normally satisfy. |
+| `global.imageRegistry` / `global.imageRepositoryPrefix` / `global.imageTag` | Compose continuo-owned service image refs as `<registry>/<prefix>/continuo-<service>:<tag>`. Empty `imageTag` falls back to `Chart.appVersion`. Does not apply to the validation image — see `validation.engine` / `validation.imageTag` below. |
+| `global.teamImagePrefix` | Registry/namespace prefix executor-controller uses to compose per-team dbt images for compile/seed/scheduled Jobs (unrelated to `global.imageRepositoryPrefix`, which names continuo's own images). |
+| `validation.engine` / `validation.imageTag` | Select and pin the external `continuo-python-runtime-<engine>` image, composed as `<registry>/<prefix>/continuo-python-runtime-<engine>:<imageTag>` (one image ships both the python-node runtime and the validation runner). It ships from a separate repository (`github.com/carolsimone/continuo-python-runtime`) on its own release train, so `imageTag` (default `v0.4.1`) is versioned independently of `global.imageTag`/`appVersion` and must be non-empty. The engine is part of the image name, not the tag, leaving the tag position free for a digest. A plain tag is mutable — the publish workflow re-pushes `:vX.Y.Z` (and `:latest`) on every tag, so re-running a tag moves it under existing installs. For an immutable pin, set `imageTag` to `"vX.Y.Z@sha256:<digest>"`. If you mirror images into a private registry, mirror this ref explicitly — `global.imageTag`'s same-appVersion mirroring does not cover it. |
 | `global.storageClass` | Default `StorageClass` for every bundled datastore PVC (Persistent Volume Claim); each datastore's own `persistence.storageClass` overrides it. |
 | `postgresql.enabled` / `redis.enabled` / `neo4j.enabled` / `minio.enabled` / `dex.enabled` | Toggle the bundled quickstart instance of each datastore/identity-provider off to bring your own. |
 | `postgresql.auth.existingSecret` / `redis.auth.existingSecret` / `neo4j.auth.existingSecret` / `minio.auth.existingSecret` | Pre-created Secret for the *bundled* instance's credentials (see the reinstall table above for keys), instead of letting the chart generate one. Empty (default) = generate and keep stable across upgrades. |
@@ -223,24 +213,23 @@ Every PR that touches this chart (or the install-test harness under
 `helm template` + kube-linter across four values topologies (defaults,
 `values-byo.yaml.example`, BYO-inline, BYO-existingSecret), then three real
 kind installs — bundled, BYO with inline credentials, and BYO with a
-pre-created Secret — each verified for completed migrations, healthy pods,
-and answering ui/Dex endpoints. Install jobs also layer on a CI-only
+pre-created Secret. Each install is checked for completed migrations, healthy
+pods, and answering ui/Dex endpoints. Install jobs also add a CI-only
 low-CPU-request values override so the chart fits the runner's 2 vCPUs. PR
 installs use the latest published main-branch images, so they prove the
 install path; the e2e suite in `ci.yml` proves the code. The kind cluster
 these jobs create enforces `NetworkPolicy`, so the chart's default-deny and
-allow policies are behaviorally exercised here, not just rendered — the BYO
-fixture datastores need their own explicit ingress-allow policies precisely
-because the chart's default-deny would otherwise block them.
+allow policies are exercised here, not just rendered — the BYO fixture
+datastores need their own explicit ingress-allow policies because the chart's
+default-deny would otherwise block them.
 
 Pushing a `vX.Y.Z` git tag runs `release.yml`:
 
-1. `release.yml` first refuses any tag whose commit is not an ancestor of
-   `origin/main` — a release ships exactly what main ships. Every published
-   image is then retagged from the tagged commit's `:<git-sha>` to
-   `:vX.Y.Z`. The tag must point at a main commit whose push ran
-   `deploy.yml`'s build-publish job; otherwise the release fails closed with
-   remediation instructions
+1. It first refuses any tag whose commit is not an ancestor of `origin/main` —
+   a release ships exactly what main ships. Every published image is then
+   retagged from the tagged commit's `:<git-sha>` to `:vX.Y.Z`. The tag must
+   point at a main commit whose push ran `deploy.yml`'s build-publish job;
+   otherwise the release fails closed with remediation instructions
    (`gh workflow run deploy.yml --ref main -f force_publish=true`, then tag
    that head).
 2. The same install test runs against the `:vX.Y.Z` images and gates the
@@ -252,7 +241,7 @@ ghcr packages created by CI start private, and GitHub has no API for
 container-package visibility — the first publish needs a one-time manual flip
 to public in the package's UI settings (Package settings → Change visibility).
 
-ghcr OCI tags are mutable: re-pushing an existing `vX.Y.Z` git tag re-runs
-this whole flow and silently overwrites both the retagged images and the
-published chart version, so treat release tags as immutable by convention —
-never force-push or reuse one.
+ghcr OCI tags are mutable: re-pushing an existing `vX.Y.Z` git tag re-runs this
+whole flow and silently overwrites both the retagged images and the published
+chart version. Treat release tags as immutable by convention — never
+force-push or reuse one.
