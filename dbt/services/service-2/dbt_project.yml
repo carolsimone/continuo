@@ -31,6 +31,19 @@ models:
     # schedule so only the column-break e2e test builds it.
     xbreak_down:
       +tags: ["xbreak"]
+    # ybreak_up / ybreak_down are the SAME-service column-break pair for the
+    # verification seed-set e2e test: ybreak_up produces only `id` (SELECT 1 AS
+    # id) and ybreak_down still reads its dropped amount_eur column by raw
+    # schema-qualified name, so the break surfaces at validation. Both are
+    # models, which have no default schedule, so each needs a tag purely to
+    # exist in the topology — an untagged model is dropped by topology-controller
+    # and would never reach a candidate topology or the projected Neo4j graph.
+    # Their own tag keeps them off every shared schedule so only the verification
+    # test builds them.
+    ybreak_up:
+      +tags: ["ybreak"]
+    ybreak_down:
+      +tags: ["ybreak"]
     # The batched-remediation fixtures. A model with no tags is dropped by
     # topology-controller (an untagged model has no schedule, and only seeds
     # have a default one), so it never reaches a candidate topology and no
