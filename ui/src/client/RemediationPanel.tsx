@@ -238,13 +238,23 @@ function ProposalDetailCard({
           ))}
 
         {isOperator && isActionable(proposal) && (
-          <button
-            type="button"
-            className="btn btn--secondary"
-            onClick={onCreatePr}
-          >
-            Create PR
-          </button>
+          proposal.repo ? (
+            <button
+              type="button"
+              className="btn btn--secondary"
+              onClick={onCreatePr}
+            >
+              Create PR
+            </button>
+          ) : (
+            // Nowhere to open a pull request: agent-remediation refuses the
+            // claim for a proposal with no repository, so the button is not
+            // offered and the reason is shown in its place.
+            <div className="info-strip info-strip--warning detail-card__row">
+              <span className="info-strip__icon">⚠</span>
+              No repository recorded for this proposal; a pull request cannot be opened.
+            </div>
+          )
         )}
       </div>
     </div>
