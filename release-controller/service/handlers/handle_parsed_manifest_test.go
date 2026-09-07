@@ -1682,7 +1682,7 @@ func TestHandleParsedManifest_OK_VerificationBaselinesOnVerifiedCandidate(t *tes
 }
 
 // TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly pins that the
-// two-way intersection is confined to the verification-with-verifies path: a
+// seed-set exclusion is confined to the verification-with-verifies path: a
 // candidate release with the identical topology still diffs against
 // current_prod alone, so both nodes absent from production read as changed.
 func TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly(t *testing.T) {
@@ -1708,7 +1708,7 @@ func TestHandleParsedManifest_OK_CandidateDiffsAgainstProdOnly(t *testing.T) {
 
 // TestHandleParsedManifest_OK_VerificationWithoutVerifiesDiffsAgainstProdOnly
 // pins that a verification run that names no verified release keeps today's
-// behavior (diff against current_prod), so the two-way intersection is
+// behavior (diff against current_prod), so the seed-set derivation is
 // genuinely gated on VerifiesReleaseID.
 func TestHandleParsedManifest_OK_VerificationWithoutVerifiesDiffsAgainstProdOnly(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
@@ -1760,8 +1760,8 @@ func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedReleaseUnreada
 
 // TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedCandidateEmpty
 // pins the second fallback: a verified release that never parsed far enough
-// to hold a candidate topology yields nothing to intersect against, so the
-// verification run diffs against production alone.
+// to hold a candidate topology yields no rejected candidate to measure
+// against, so the verification run diffs against production alone.
 func TestHandleParsedManifest_OK_VerificationFallsBackWhenVerifiedCandidateEmpty(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
@@ -1834,9 +1834,9 @@ const verifyHID = "svc4.ftable_h"
 // verification run's parse (an unrelated service promoting in the
 // meantime). The verification run assembles that node at its live
 // production hash, so it matches current_prod and is absent from the
-// current_prod diff — the intersection excludes it even though it still
-// differs from the rejected candidate's stale copy. Without that, a live,
-// already-promoted node would be dragged into a fix-only verification run.
+// current_prod diff — never a seed even though it still differs from the
+// rejected candidate's stale copy. Without that, a live, already-promoted
+// node would be dragged into a fix-only verification run.
 func TestHandleParsedManifest_OK_VerificationBaselinePrefersNewerProdOverRejectedCandidate(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
@@ -1882,7 +1882,7 @@ func TestHandleParsedManifest_OK_VerificationBaselinePrefersNewerProdOverRejecte
 	assert.NotContains(t, validIDs, verifyGID,
 		"the sibling's still-broken node matches the rejected candidate -> NOT checked again")
 	assert.NotContains(t, validIDs, verifyHID,
-		"an unrelated node promoted to production since the rejection matches current_prod, so the intersection excludes it over the stale rejected candidate -> NOT checked again")
+		"an unrelated node promoted to production since the rejection matches current_prod, so it is absent from the changed-vs-prod set and never a seed, over the stale rejected candidate -> NOT checked again")
 }
 
 // verifySID is an ESTABLISHED sibling node: the sibling service's failing
@@ -1901,10 +1901,10 @@ const verifySID = "svc3.ftable_s"
 // rejected candidate (s_broken). The sibling differs from current_prod, so a
 // current_prod-only or current_prod-wins baseline would re-validate it and
 // re-fail the verification run on a node its fix was never about — sinking
-// the good fix. Diffing against BOTH current_prod and the rejected candidate
-// and keeping only the intersection excludes it: it matches the rejected
-// candidate, so it is absent from the second diff. The fix's own node, which
-// departs from both, is still checked.
+// the good fix. The sibling is in the rejected release's failing_nodes and the
+// fix did not touch it (it matches the rejected candidate), so VerificationSeedSet
+// leaves it out and clones it from production. The fix's own node, which the
+// fix touched, is still checked.
 func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModification(t *testing.T) {
 	deps, store := newDeps(time.Unix(100, 0).UTC())
 	deps.Bucket = "continuo"
@@ -1947,7 +1947,7 @@ func TestHandleParsedManifest_OK_VerificationExcludesEstablishedSiblingModificat
 	assert.Contains(t, validIDs, verifyEID,
 		"the fix's own edit departs from both current_prod and the rejected candidate -> checked")
 	assert.NotContains(t, validIDs, verifySID,
-		"the sibling's still-broken modification differs from current_prod (which holds it at its pre-rejection hash) but matches the rejected candidate, so the intersection excludes it -> NOT checked again")
+		"the sibling's still-broken modification differs from current_prod (which holds it at its pre-rejection hash) but matches the rejected candidate and is in its failing_nodes, so the seed set leaves it out and clones it from production -> NOT checked again")
 	assert.NotContains(t, validIDs, verifyUID,
 		"an unchanged upstream is neither changed nor pulled into the build set")
 }
