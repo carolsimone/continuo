@@ -868,6 +868,7 @@ type batchProposalRow struct {
 	Status          string `db:"status"`
 	Attempt         int    `db:"attempt"`
 	Repo            string `db:"repo"`
+	VerifyError     string `db:"verify_error"`
 	ResolvedNodeIDs []byte `db:"resolved_node_ids"`
 	NodeOutcomes    []byte `db:"node_outcomes"`
 	FileEdits       []byte `db:"file_edits"`
@@ -890,7 +891,7 @@ func waitForBatchProposal(
 	var last string
 	pollUntil(t, ctx, timeout, 2*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row, `
-			SELECT id, node_id, status, attempt, repo,
+			SELECT id, node_id, status, attempt, repo, verify_error,
 			       resolved_node_ids, node_outcomes, file_edits, verifications
 			  FROM proposal
 			 WHERE release_id = $1 AND attempt = $2`,
