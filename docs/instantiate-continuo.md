@@ -1,13 +1,13 @@
-# Instantiate the Continuo platform
+# Instantiate the continuo platform
 
-This guide gets Continuo itself running on your laptop — an empty control plane for your data pipelines,
+This guide gets continuo itself running on your laptop — an empty control plane for your data pipelines,
 in about ten minutes. The next guide,
-[Run dbt and Python projects in Continuo](run-projects-in-continuo.md), puts the
+[Run dbt and Python projects in continuo](run-projects-in-continuo.md), puts the
 real projects on it.
 
 > **Deploying to your own Kubernetes cluster?** This guide is the local
-> quickstart — a single-node cluster with Continuo's own bundled PostgreSQL,
-> Redis, Neo4j and MinIO, meant for evaluation. To install Continuo into a real
+> quickstart — a single-node cluster with continuo's own bundled PostgreSQL,
+> Redis, Neo4j and MinIO, meant for evaluation. To install continuo into a real
 > cluster, against your own datastores and with HA and backups, follow
 > [deploy/README.md](../deploy/README.md) instead.
 
@@ -26,11 +26,11 @@ then apply to the host itself.
 | Docker Desktop, or [colima](https://github.com/abiosoft/colima) | Runs the cluster and builds the service images | `brew install colima && colima start` |
 | [kind](https://kind.sigs.k8s.io/) | The local Kubernetes cluster | `brew install kind` |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | Talking to that cluster | `brew install kubectl` |
-| [Helm](https://helm.sh/) 3.14+ | Installing Continuo | `brew install helm` |
+| [Helm](https://helm.sh/) 3.14+ | Installing continuo | `brew install helm` |
 | `git`, `curl`, `jq` | Cloning, calling the release API, reading its answers | `brew install jq` |
 | [AWS CLI](https://docs.aws.amazon.com/cli/) | Uploading the python service's artifacts to the bundled MinIO (chapter 4 of the [next guide](run-projects-in-continuo.md)) | `brew install awscli` |
 
-**Room to run it.** Continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
+**Room to run it.** continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
 identity provider in this mode, plus ten of its own services, and then runs your
 nodes as Kubernetes Jobs alongside all of that. Give the container runtime
 **4 CPUs, 12 GiB of memory and a 60 GB disk** — 8 GiB of memory is the bare
@@ -48,7 +48,7 @@ runtime more memory (or stop other containers), then reinstall.
 
 **A GitHub account.** You will fork the example projects so that the code
 you release is yours — which matters in chapter 8 of the
-[next guide](run-projects-in-continuo.md), where Continuo reads
+[next guide](run-projects-in-continuo.md), where continuo reads
 your source to explain (and then propose a fix for) a failure.
 
 **Credentials: none, until chapter 8 of the next guide.** Every other chapter
@@ -69,7 +69,7 @@ image pulls on the first install.
 
 ---
 
-## 2. Install Continuo
+## 2. Install continuo
 
 Everything here pulls pre-built, multi-architecture images — nothing is compiled
 from source, and it works the same on Intel and Apple Silicon.
@@ -78,7 +78,7 @@ from source, and it works the same on Intel and Apple Silicon.
 # A local Kubernetes cluster
 kind create cluster --name continuo
 
-# Continuo itself, from the published chart
+# continuo itself, from the published chart
 helm install continuo oci://ghcr.io/carolsimone/charts/continuo \
   --version 0.4.1 -n continuo --create-namespace
 
@@ -87,7 +87,7 @@ kubectl -n continuo get pods -w
 ```
 
 That single `helm install` brings up PostgreSQL, Redis, Neo4j, MinIO, an
-identity provider, and Continuo's ten services. It is a quickstart layout meant
+identity provider, and continuo's ten services. It is a quickstart layout meant
 for evaluation — one static login, no backups, no high availability. Production
 installs bring their own datastores; see
 [deploy/README.md](../deploy/README.md).
@@ -118,7 +118,7 @@ resolve that name at all. One loopback line bridges the two. If you cannot use
 `sudo`, [the chart's README](../deploy/continuo/README.md) shows how to do it
 with a browser resolver rule instead.
 
-You are now looking at an empty Continuo. Everything that follows fills it.
+You are now looking at an empty continuo. Everything that follows fills it.
 
 ---
 
@@ -152,5 +152,5 @@ container runtime more memory (chapter 1) and close other large workloads.
 
 ## Next
 
-You now have an empty Continuo running. Fill it with real data projects:
-[Run dbt and Python projects in Continuo](run-projects-in-continuo.md).
+You now have an empty continuo running. Fill it with real data projects:
+[Run dbt and Python projects in continuo](run-projects-in-continuo.md).
