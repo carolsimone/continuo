@@ -155,7 +155,7 @@ request downstream. Release-level fields (`source`, `release_id`,
 `category`, `error_signature`, `reason`, `error_excerpt` (the classifier's key
 error line, capped at 4 KiB), `dbt_log_uri`, `candidate_artifact_uri`,
 `file_path`/`service`/`node_type`, the duplicate-relation fields, and
-`changed_ancestors` (each `{node_id, file_path, service}`). The payload stays pointer-first — the full log lives
+`changed_ancestors` (each `{node_id, file_path, service, depth}`, `depth` the ancestor's minimum upstream hop distance from the failing node). The payload stays pointer-first — the full log lives
 behind each node's `dbt_log_uri` and the failing code behind
 `code_bundle_uri` (threaded from `release.rejected:v1`'s top-level
 `code_bundle_uri`; empty for compile-stage rejections, which precede the parse
