@@ -145,20 +145,21 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	topo := r.CandidateTopology()
 	allIDs := r.ValidationNodeIDs()
 
-	// Recompute the changed-closure to identify the just-built seeds and exclude
-	// them from the validation leg (they are already in the candidate schema).
+	// Recompute the rebuilt-from-candidate set to identify the just-built seeds
+	// and exclude them from the validation leg (they are already in the candidate
+	// schema). This mirrors the parse leg exactly — the same scope/context split
+	// and the same rebuiltFromCandidateSet — so a verification run identifies the
+	// same built seeds and assigns the same per-node build strategy here as it did
+	// when it requested the seed build.
 	cp, err := u.CurrentProdRepo().Get(ctx)
 	if err != nil {
 		return fmt.Errorf("get current prod: %w", err)
 	}
-	changed := release.DerivedChangedNodeIDs(topo, cp.TopologySnapshot())
-	changedClosure := release.DescendantsClosure(topo, changed)
-	changedClosureSet := make(map[string]bool, len(changedClosure))
-	for _, id := range changedClosure {
-		changedClosureSet[id] = true
-	}
+	scope, contextRebuilds := changedNodeIDsFor(ctx, u, d, r, topo, cp)
+	changedClosure := release.DescendantsClosure(topo, scope)
+	rebuiltFromCandidate := rebuiltFromCandidateSet(changedClosure, contextRebuilds, allIDs)
 	builtSeeds := make(map[string]bool)
-	for _, id := range newChangedSeedIDs(topo, allIDs, changedClosureSet) {
+	for _, id := range newChangedSeedIDs(topo, allIDs, rebuiltFromCandidate) {
 		builtSeeds[id] = true
 	}
 
@@ -207,7 +208,7 @@ func handleSeedBuildOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	payload, err := json.Marshal(map[string]any{
 		"release_id":        in.ReleaseID,
 		"mode":              "validation",
-		"nodes":             validationNodesInOrder(topo, validationIDs, inSet, changedClosureSet),
+		"nodes":             validationNodesInOrder(topo, validationIDs, inSet, rebuiltFromCandidate),
 		"node_ids_in_order": validationIDs,
 		"image_tags":        r.ImageTags(),
 		"candidate_schema":  candidateSchema,

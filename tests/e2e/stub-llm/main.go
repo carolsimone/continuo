@@ -257,6 +257,18 @@ const upstreamFixContent = `{{ config(materialized='table') }}
 SELECT id, 0 AS amount FROM e2e_schema.ftable_c
 `
 
+// ybreakMarker names the same-service consumer fixture whose only changed
+// ancestor dropped the column it reads. The prompt for its fix shows
+// ybreak_up in the candidate SQL (step 1) and in the original source (step 2).
+const ybreakMarker = "ybreak_up"
+
+// ybreakConsumerFix is a consumer-side edit that still reads the column the
+// upstream dropped. A verification that rebuilds ybreak_up from the candidate
+// fails it; one that clones ybreak_up from production would pass it.
+const ybreakConsumerFix = `{{ config(materialized='table') }}
+SELECT amount_eur AS amount FROM e2e_schema.ybreak_up
+`
+
 // Relation names the python-node contract fixtures declare and the stub
 // rewrites between. Only bindingRead names a relation the e2e test actually
 // creates in the warehouse; a contract left pointing at any of the others
@@ -454,6 +466,11 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 			// the ancestor's source, whatever else a prompt happens to carry.
 			proposedSQL = upstreamFixContent
 			rationale = "restored the amount column the change dropped"
+		case strings.Contains(userContent, ybreakMarker):
+			// Same-service consumer of a changed upstream: an edit that keeps
+			// reading the dropped column, for both the step-1 and step-2 prompts.
+			proposedSQL = ybreakConsumerFix
+			rationale = "aliased amount_eur to amount"
 		case strings.Contains(userContent, step2Marker):
 			// Step-2: corrected real model source.
 			proposedSQL = step2SourceFix
