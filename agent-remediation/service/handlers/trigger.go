@@ -99,11 +99,14 @@ type TriggerNode struct {
 // ChangedAncestor is one changed upstream of a failing node. FilePath and
 // Service are the location the rejected release's candidate topology declares;
 // both are empty on a rejection that carries no per-node topology, and the
-// upstream fixer then falls back to the promoted graph.
+// upstream fixer then falls back to the promoted graph. Depth is the ancestor's
+// minimum upstream hop distance from the failing node (1 = direct upstream); 0
+// on a payload that carries none.
 type ChangedAncestor struct {
 	NodeID   string
 	FilePath string
 	Service  string
+	Depth    int
 }
 
 // NodeIDs returns the trigger's failing node ids, sorted. Every batched write
@@ -190,6 +193,7 @@ type ChangedAncestorWire struct {
 	NodeID   string `json:"node_id"`
 	FilePath string `json:"file_path,omitempty"`
 	Service  string `json:"service,omitempty"`
+	Depth    int    `json:"depth,omitempty"`
 }
 
 // TriggerFromWire builds a Trigger from a decoded v2 payload. The dedup

@@ -13,14 +13,14 @@ import (
 
 func TestTriggerFromPayload_DecodesBatch(t *testing.T) {
 	raw := []byte(`{"event_id":"e","source":"validation","release_id":"r","remediation_round":1,"repo":"o/r","commit_sha":"sha","code_bundle_uri":"s3://b/bundle.json",
-	  "nodes":[{"node_id":"s.a","error_signature":"sig","category":"logic","reason":"logic:missing_object","dbt_log_uri":"s3://l/a","candidate_artifact_uri":"s3://c/a","file_path":"models/a.sql","service":"svc","node_type":"dbt-model","changed_ancestors":[{"node_id":"s.u","file_path":"models/u.sql","service":"svc"}]},
+	  "nodes":[{"node_id":"s.a","error_signature":"sig","category":"logic","reason":"logic:missing_object","dbt_log_uri":"s3://l/a","candidate_artifact_uri":"s3://c/a","file_path":"models/a.sql","service":"svc","node_type":"dbt-model","changed_ancestors":[{"node_id":"s.u","file_path":"models/u.sql","service":"svc","depth":1}]},
 	           {"node_id":"s.b","error_signature":"sig","category":"logic","reason":"logic:missing_object","dbt_log_uri":"s3://l/b"}]}`)
 	tr, err := TriggerFromPayload(raw)
 	require.NoError(t, err)
 	assert.Equal(t, "r", tr.ReleaseID)
 	assert.Equal(t, "s3://b/bundle.json", tr.CodeBundleURI)
 	require.Len(t, tr.Nodes, 2)
-	assert.Equal(t, []handlers.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc"}},
+	assert.Equal(t, []handlers.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svc", Depth: 1}},
 		tr.Nodes[0].ChangedAncestors)
 	assert.Equal(t, "svc", tr.Nodes[0].Service)
 	assert.Equal(t, raw, tr.RawPayload)
