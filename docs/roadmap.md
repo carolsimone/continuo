@@ -1,16 +1,17 @@
 # Roadmap
 
-What Continuo does **today** is in the [README](../README.md#-what-it-delivers).
+What continuo does **today** is in the [README](../README.md#-what-it-delivers).
 This page is what comes **next**.
 
 Nothing here is a commitment to a date. Each item carries a **Target date** —
-our best current estimate of when it ships. A blank target date (`—`) means it
-is on the list but not yet scheduled.
+our best current estimate of when it ships. `TODO` means it is on the list but
+not yet scheduled. Where an item has a tracking issue, it is linked next to the
+date.
 
 ## Planned
 
 ### More warehouse engines for the Python runtime
-**Target date:** —
+**Target date:** TODO · **Tracking:** [#517](https://github.com/carolsimone/continuo/issues/517)
 
 `continuo-python-runtime` runs validation and Python nodes on **Postgres** and
 **Trino** today, both behind a single `WarehouseAdapter` port — one adapter per
@@ -21,7 +22,7 @@ The dbt materialization leg moves to the selected engine too, so a
 Spark/BigQuery/Snowflake install is a full deployment, not a half-Postgres one.
 
 ### Agentic remediation for production run failures
-**Target date:** —
+**Target date:** TODO
 
 The remediation agent already proposes a fix when a *release* is rejected at
 validation. The next step is the same path for a **scheduled run that fails in
@@ -30,7 +31,7 @@ LLM-proposed diff, and a human reviews and merges it. Merging stays a human
 decision by design.
 
 ### Standardize every node on the Open Data Contract Standard (ODCS)
-**Target date:** —
+**Target date:** TODO
 
 Every node — dbt models, Python nodes, seeds, and streaming producers — will
 carry a data contract in the Open Data Contract Standard (ODCS) format: schema,
@@ -40,7 +41,7 @@ metadata we derive today and gives the control plane and the remediation agents
 a single, portable contract to enforce and reason about.
 
 ### One control plane for streaming and batch
-**Target date:** —
+**Target date:** TODO
 
 A single view — with contract enforcement and lineage — for both streaming and
 batch. Contracts stay in sync by design, so a software engineer changing a
@@ -50,21 +51,33 @@ automatically, reusing the `agent-remediation` service and the diffs, data
 types, historical diffs, and documentation already stored in the graph database.
 
 ### Automatic detection of performance regressions
-**Target date:** —
+**Target date:** TODO
 
 The graph database already stores every diff and the code of each node, and the
 `state` database has the run history — each node's ancestry and history are
 queryable. The missing piece is using that to flag a node whose run time is
 getting worse and to point at the change that caused it.
 
-### Show who pushed a change in the UI
-**Target date:** —
-
-Each release will show the GitHub handle of the user who pushed it, next to the
-validation result.
 
 ### Test suite for circular dependencies
-**Target date:** —
+**Target date:** TODO
 
 Cycles across projects already fail at CD. The check needs its own test suite
 covering the cross-project and cross-runtime cases.
+
+### Every UI action available through the CLI
+**Target date:** TODO
+
+`agent-chat` builds its tool catalog from `continuo describe` at boot, so the
+CLI's command tree *is* the set of operations the chat agent can perform. Today
+the CLI covers schedules (list, status, graph, build, test, trigger, cancel),
+single nodes (build, test, trigger, diff, history, versions, upstream changes,
+code units), and failure precedents. The UI can do more: browse releases and
+their verification attempts, read the release log and the current production
+pointer, list and inspect remediation proposals, open a proposal's fix PR, retry
+remediation on a rejected release, rerun or rebase a run, and read a task's
+execution logs. The goal is one CLI command for every read and every action the
+UI offers, so the chat agent can do anything an operator can do from the
+dashboard. Mutating commands carry the `mutating` annotation in `describe`, so
+the chat's human-confirmation gate applies to each new action without changes
+to `agent-chat`.

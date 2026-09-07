@@ -1,6 +1,6 @@
 # Instantiate the Continuo platform
 
-This guide gets Continuo itself running on your laptop — an empty control plane,
+This guide gets Continuo itself running on your laptop — an empty control plane for your data pipelines,
 in about ten minutes. The next guide,
 [Run dbt and Python projects in Continuo](run-projects-in-continuo.md), puts the
 real projects on it.
@@ -15,9 +15,13 @@ real projects on it.
 
 ## 1. What you need before you start
 
-**A container runtime and a few CLI tools.**
+**A container runtime and a few CLI tools.** The install commands below are
+for macOS with [Homebrew](https://brew.sh/). On Linux, install the same tools
+from the linked pages; use Docker Engine in place of Docker Desktop or colima,
+and skip the colima sizing command further down — the memory and disk figures
+then apply to the host itself.
 
-| Tool | Why | Install |
+| Tool | Why | Install (macOS, Homebrew) |
 |---|---|---|
 | Docker Desktop, or [colima](https://github.com/abiosoft/colima) | Runs the cluster and builds the service images | `brew install colima && colima start` |
 | [kind](https://kind.sigs.k8s.io/) | The local Kubernetes cluster | `brew install kind` |
@@ -29,9 +33,9 @@ real projects on it.
 **Room to run it.** Continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
 identity provider in this mode, plus ten of its own services, and then runs your
 nodes as Kubernetes Jobs alongside all of that. Give the container runtime
-**4 CPUs, 12 GiB of memory and 20 GB of free disk** — 8 GiB is the bare floor,
-and only if nothing else large is running. Close other heavy containers, and a
-second local cluster especially, before you start. On colima that is:
+**4 CPUs, 12 GiB of memory and a 60 GB disk** — 8 GiB of memory is the bare
+floor, and only if nothing else large is running. Close other heavy containers,
+and a second local cluster especially, before you start. On colima that is:
 
 ```bash
 colima start --cpu 4 --memory 12 --disk 60
@@ -60,8 +64,8 @@ an LLM proposes a fix for the model you broke, is the exception:
 If you do not want to set those up, skip chapter 8 of the next guide. The rest
 is a complete story without it.
 
-**Time.** Budget about an hour end to end, most of it waiting for image pulls and
-for validation Jobs to run.
+**Time.** Budget ten to fifteen minutes end to end, nearly all of it waiting for
+image pulls on the first install.
 
 ---
 
