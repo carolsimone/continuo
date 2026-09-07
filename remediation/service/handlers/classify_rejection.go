@@ -135,7 +135,7 @@ func changedAncestorsOf(ev failure.FailureEvidence) []event.ChangedAncestor {
 	}
 	out := make([]event.ChangedAncestor, 0, len(ev.ChangedAncestors))
 	for _, a := range ev.ChangedAncestors {
-		out = append(out, event.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service})
+		out = append(out, event.ChangedAncestor{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth})
 	}
 	return out
 }

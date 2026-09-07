@@ -75,9 +75,12 @@ type FailureEvidence struct {
 // in the rejected release. The location travels with the id because an upstream
 // fix has to edit the file the candidate declares: an ancestor renamed or moved
 // in this release still sits at its old path in the promoted graph, so
-// resolving the id there would edit a file that no longer holds the node.
+// resolving the id there would edit a file that no longer holds the node. Depth
+// is the ancestor's minimum upstream hop distance from the failing node (1 = a
+// direct upstream), forwarded verbatim so a fixer can pick the nearest cause.
 type ChangedAncestor struct {
 	NodeID   string
 	FilePath string
 	Service  string
+	Depth    int
 }

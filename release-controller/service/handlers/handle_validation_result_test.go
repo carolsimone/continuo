@@ -1033,6 +1033,7 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 				NodeID   string `json:"node_id"`
 				FilePath string `json:"file_path"`
 				Service  string `json:"service"`
+				Depth    int    `json:"depth"`
 			} `json:"changed_ancestors"`
 		} `json:"per_node"`
 	}
@@ -1041,6 +1042,7 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 		NodeID   string `json:"node_id"`
 		FilePath string `json:"file_path"`
 		Service  string `json:"service"`
+		Depth    int    `json:"depth"`
 	}{}
 	for _, pn := range payload.PerNode {
 		byID[pn.NodeID] = pn.ChangedAncestors
@@ -1050,6 +1052,7 @@ func TestHandleValidationResult_Rejected_CarriesChangedAncestors(t *testing.T) {
 	assert.Equal(t, "models/a.sql", byID["b"][0].FilePath,
 		"the ancestor carries the path THIS candidate declares, which is the file a fix must edit")
 	assert.Equal(t, "svc-a", byID["b"][0].Service)
+	assert.Equal(t, 1, byID["b"][0].Depth, "a is b's direct upstream")
 	assert.Empty(t, byID["a"], "a has no changed ancestors")
 }
 

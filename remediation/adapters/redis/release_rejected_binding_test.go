@@ -334,8 +334,8 @@ func TestEvidenceFromRejected_CarriesChangedAncestorsWithTheirLocation(t *testin
 		"per_node":[
 			{"node_id":"s.a","status":"failed","dbt_log_uri":"s3://b/a.log",
 			 "changed_ancestors":[
-				{"node_id":"s.u","file_path":"models/marts/u_renamed.sql","service":"svc-b"},
-				{"node_id":"s.v","file_path":"models/v.sql","service":"svc-b"}]},
+				{"node_id":"s.u","file_path":"models/marts/u_renamed.sql","service":"svc-b","depth":1},
+				{"node_id":"s.v","file_path":"models/v.sql","service":"svc-b","depth":2}]},
 			{"node_id":"s.ok","status":"ok"}
 		]}`)
 
@@ -344,7 +344,7 @@ func TestEvidenceFromRejected_CarriesChangedAncestorsWithTheirLocation(t *testin
 
 	require.Len(t, got, 1)
 	assert.Equal(t, []failure.ChangedAncestor{
-		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Service: "svc-b"},
-		{NodeID: "s.v", FilePath: "models/v.sql", Service: "svc-b"},
+		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Service: "svc-b", Depth: 1},
+		{NodeID: "s.v", FilePath: "models/v.sql", Service: "svc-b", Depth: 2},
 	}, got[0].ChangedAncestors)
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
@@ -158,15 +159,20 @@ func (f *fakeVersions) CurrentVersion(_ context.Context, _ string) (ports.Curren
 
 // fakeCandidateSource returns a fixed bundle source, or an error, for
 // CandidateSourceReader.NodeSource. calls counts every invocation so a test
-// can assert a skip path never queries it.
+// can assert a skip path never queries it. byID, when set, answers per node id
+// (a miss falls through to src), for a test that reads several nodes' sources.
 type fakeCandidateSource struct {
 	src   ports.CandidateSource
+	byID  map[string]ports.CandidateSource
 	err   error
 	calls int
 }
 
-func (f *fakeCandidateSource) NodeSource(_ context.Context, _, _, _ string) (ports.CandidateSource, error) {
+func (f *fakeCandidateSource) NodeSource(_ context.Context, _, uniqueID, _ string) (ports.CandidateSource, error) {
 	f.calls++
+	if s, ok := f.byID[uniqueID]; ok {
+		return s, nil
+	}
 	return f.src, f.err
 }
 
@@ -1054,4 +1060,46 @@ func TestTruncateDiff_BacksUpOffMultibyteRune(t *testing.T) {
 	if !strings.Contains(got, "diff truncated") {
 		t.Fatalf("missing truncation marker: %q", got)
 	}
+}
+
+// The dbt validation lane shows what this release changed in the failing
+// node's nearest changed ancestors, read from the bundle against the promoted
+// version — not only the promoted graph's history, where a rejected release's
+// change does not exist.
+func TestValidation_ShowsWhatThisReleaseChangedUpstream(t *testing.T) {
+	svc := validationSvc()
+	llm := twoStepLLM()
+	svc.LLM = llm
+	svc.CandidateSource = &fakeCandidateSource{
+		src:  ports.CandidateSource{RawCode: "SELECT 0 -- bundle", Runtime: ports.RuntimeDbt},
+		byID: map[string]ports.CandidateSource{"s.orders": {RawCode: "select id, amount_eur from raw", Runtime: ports.RuntimeDbt}},
+	}
+	svc.Versions = &fakeVersions{v: ports.CurrentVersion{RawCode: "select id, amount from raw"}, ok: true}
+	in := validationInput()
+	in.ChangedAncestors = []ChangedAncestorRef{
+		{NodeID: "s.far", Service: "core", Depth: 2},
+		{NodeID: "s.orders", Service: "core", Depth: 1},
+	}
+
+	_, err := validationFixer{}.Propose(context.Background(), svc, in)
+	require.NoError(t, err)
+
+	user := llm.requests[0].User
+	assert.Contains(t, user, "What this release changed upstream of the failing model")
+	assert.Contains(t, user, "Upstream s.orders (service core, depth=1):")
+	assert.Contains(t, user, "+select id, amount_eur from raw")
+	assert.Less(t, strings.Index(user, "Upstream s.orders"), strings.Index(user, "Upstream s.far"), "nearest first")
+}
+
+func TestValidation_SaysNothingUpstreamChangedWhenTheTriggerListsNone(t *testing.T) {
+	svc := validationSvc()
+	llm := twoStepLLM()
+	svc.LLM = llm
+	in := validationInput()
+	in.ChangedAncestors = nil
+
+	_, err := validationFixer{}.Propose(context.Background(), svc, in)
+	require.NoError(t, err)
+
+	assert.Contains(t, llm.requests[0].User, "No upstream of "+in.NodeID+" changed in this release.")
 }

@@ -12,9 +12,9 @@ func TestSharedUpstream_SameSignatureSharedAncestor_OneCluster(t *testing.T) {
 		{NodeID: "analytics.a", ErrorSignature: "missing_col_x"},
 		{NodeID: "analytics.b", ErrorSignature: "missing_col_x"},
 	}
-	dag := DagView{ChangedAncestorsByNode: map[string][]string{
-		"analytics.a": {"analytics.u"},
-		"analytics.b": {"analytics.u"},
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.a": {{NodeID: "analytics.u"}},
+		"analytics.b": {{NodeID: "analytics.u"}},
 	}}
 
 	claimed, rest := SharedUpstreamCause{}.Claim(nodes, dag)
@@ -33,9 +33,9 @@ func TestSharedUpstream_DifferentSignatures_NotClaimed(t *testing.T) {
 		{NodeID: "analytics.a", ErrorSignature: "sig_a"},
 		{NodeID: "analytics.b", ErrorSignature: "sig_b"},
 	}
-	dag := DagView{ChangedAncestorsByNode: map[string][]string{
-		"analytics.a": {"analytics.u"},
-		"analytics.b": {"analytics.u"},
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.a": {{NodeID: "analytics.u"}},
+		"analytics.b": {{NodeID: "analytics.u"}},
 	}}
 
 	claimed, rest := SharedUpstreamCause{}.Claim(nodes, dag)
@@ -53,9 +53,9 @@ func TestSharedUpstream_SameSignatureNoCommonAncestor_NotClaimed(t *testing.T) {
 		{NodeID: "analytics.a", ErrorSignature: "missing_col_x"},
 		{NodeID: "analytics.b", ErrorSignature: "missing_col_x"},
 	}
-	dag := DagView{ChangedAncestorsByNode: map[string][]string{
-		"analytics.a": {"analytics.u"},
-		"analytics.b": {"analytics.v"},
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.a": {{NodeID: "analytics.u"}},
+		"analytics.b": {{NodeID: "analytics.v"}},
 	}}
 
 	claimed, rest := SharedUpstreamCause{}.Claim(nodes, dag)
@@ -74,10 +74,10 @@ func TestSharedUpstream_MixedViaGroup_TwoClusters(t *testing.T) {
 		{NodeID: "analytics.b", ErrorSignature: "missing_col_x"},
 		{NodeID: "analytics.c", ErrorSignature: "other"},
 	}
-	dag := DagView{ChangedAncestorsByNode: map[string][]string{
-		"analytics.a": {"analytics.u"},
-		"analytics.b": {"analytics.u"},
-		"analytics.c": {"analytics.u"},
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.a": {{NodeID: "analytics.u"}},
+		"analytics.b": {{NodeID: "analytics.u"}},
+		"analytics.c": {{NodeID: "analytics.u"}},
 	}}
 
 	got := Group(nodes, dag, SharedUpstreamCause{})
@@ -99,9 +99,9 @@ func TestSharedUpstream_MultipleCommonAncestors_PicksSmallestId(t *testing.T) {
 		{NodeID: "analytics.a", ErrorSignature: "missing_col_x"},
 		{NodeID: "analytics.b", ErrorSignature: "missing_col_x"},
 	}
-	dag := DagView{ChangedAncestorsByNode: map[string][]string{
-		"analytics.a": {"analytics.z", "analytics.m"},
-		"analytics.b": {"analytics.m", "analytics.z"},
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.a": {{NodeID: "analytics.z"}, {NodeID: "analytics.m"}},
+		"analytics.b": {{NodeID: "analytics.m"}, {NodeID: "analytics.z"}},
 	}}
 
 	claimed, _ := SharedUpstreamCause{}.Claim(nodes, dag)
@@ -120,11 +120,11 @@ func TestSharedUpstream_SameSignatureSplitAncestors_TwoClusters(t *testing.T) {
 		{NodeID: "analytics.c", ErrorSignature: "missing_col_x"},
 		{NodeID: "analytics.d", ErrorSignature: "missing_col_x"},
 	}
-	dag := DagView{ChangedAncestorsByNode: map[string][]string{
-		"analytics.a": {"analytics.u"},
-		"analytics.b": {"analytics.u"},
-		"analytics.c": {"analytics.v"},
-		"analytics.d": {"analytics.v"},
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.a": {{NodeID: "analytics.u"}},
+		"analytics.b": {{NodeID: "analytics.u"}},
+		"analytics.c": {{NodeID: "analytics.v"}},
+		"analytics.d": {{NodeID: "analytics.v"}},
 	}}
 
 	claimed, rest := SharedUpstreamCause{}.Claim(nodes, dag)
@@ -148,9 +148,9 @@ func TestSharedUpstream_EmptySignatureNeverGroups(t *testing.T) {
 		{NodeID: "analytics.a", ErrorSignature: ""},
 		{NodeID: "analytics.b", ErrorSignature: ""},
 	}
-	dag := DagView{ChangedAncestorsByNode: map[string][]string{
-		"analytics.a": {"analytics.u"},
-		"analytics.b": {"analytics.u"},
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.a": {{NodeID: "analytics.u"}},
+		"analytics.b": {{NodeID: "analytics.u"}},
 	}}
 
 	claimed, rest := SharedUpstreamCause{}.Claim(nodes, dag)
@@ -166,11 +166,11 @@ func TestSharedUpstream_EmptySignatureNeverGroups(t *testing.T) {
 func TestGroup_MultipleClustersStableAcrossInputOrder(t *testing.T) {
 	// Two signatures each forming a shared-upstream cluster: the emitted cluster
 	// order must not depend on which signature appears first in the input.
-	dag := DagView{ChangedAncestorsByNode: map[string][]string{
-		"analytics.a": {"analytics.u"},
-		"analytics.b": {"analytics.u"},
-		"analytics.c": {"analytics.v"},
-		"analytics.d": {"analytics.v"},
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.a": {{NodeID: "analytics.u"}},
+		"analytics.b": {{NodeID: "analytics.u"}},
+		"analytics.c": {{NodeID: "analytics.v"}},
+		"analytics.d": {{NodeID: "analytics.v"}},
 	}}
 	base := []FailingNode{
 		{NodeID: "analytics.a", ErrorSignature: "s1"},
@@ -192,9 +192,9 @@ func TestGroup_MultipleClustersStableAcrossInputOrder(t *testing.T) {
 }
 
 func TestGroup_StableAcrossInputOrder(t *testing.T) {
-	dag := DagView{ChangedAncestorsByNode: map[string][]string{
-		"analytics.a": {"analytics.u"},
-		"analytics.b": {"analytics.u"},
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.a": {{NodeID: "analytics.u"}},
+		"analytics.b": {{NodeID: "analytics.u"}},
 		"analytics.c": nil,
 	}}
 	base := []FailingNode{

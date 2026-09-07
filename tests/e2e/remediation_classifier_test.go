@@ -265,6 +265,7 @@ type remediationNodeEntry struct {
 	// themselves say only that they differ, the excerpts say why.
 	ErrorExcerpt     string                 `json:"error_excerpt"`
 	DBTLogURI        string                 `json:"dbt_log_uri"`
+	Service          string                 `json:"service"`
 	ChangedAncestors []changedAncestorEntry `json:"changed_ancestors"`
 }
 
@@ -274,6 +275,7 @@ type changedAncestorEntry struct {
 	NodeID   string `json:"node_id"`
 	FilePath string `json:"file_path"`
 	Service  string `json:"service"`
+	Depth    int    `json:"depth"`
 }
 
 // ancestorIDs is the entry's changed-ancestor ids, for assertions that only

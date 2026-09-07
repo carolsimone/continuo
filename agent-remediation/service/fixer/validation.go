@@ -124,14 +124,9 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	// runs now. Absent history (a new node) simply omits the section. Sanitized
 	// before truncation, like every other source string sent to the LLM, so a
 	// secret in a changed line is redacted rather than sent to the external LLM.
-	ownChangeDiff := ""
+	releaseOwnDiff := ""
 	if candidateSource != "" {
-		if cur, ok, verr := svc.Versions.CurrentVersion(ctx, in.NodeID); verr != nil {
-			svc.Logger.Warn("current version unavailable; omitting own-change diff", "node", in.NodeID, "error", verr)
-		} else if ok {
-			diff := proposal.ComputeUnifiedDiff(cur.RawCode, candidateSource, in.NodeID)
-			ownChangeDiff = truncateDiff(svc.Sanitizer.Sanitize(diff), maxUpstreamDiffBytes)
-		}
+		releaseOwnDiff = ownChangeDiff(ctx, svc, in.NodeID, candidateSource)
 	}
 
 	// Upstream ancestor diffs arrive already capped by the orchestrator, but not
@@ -149,16 +144,24 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 		}
 	}
 
+	// What THIS release changed in the node's nearest changed ancestors, read
+	// from the release's code bundle against each ancestor's promoted version.
+	// The promoted graph's history above cannot show it: a rejected release
+	// was never promoted. Capped to the three nearest ancestors.
+	releaseUpstream := releaseUpstreamChanges(ctx, svc, in)
+
 	precedents := loadPrecedents(ctx, svc, in)
 
 	res, err := svc.LLM.Propose(ctx, prompt.Assemble(prompt.Evidence{
-		NodeID:          in.NodeID,
-		ErrorSignature:  in.ErrorSignature,
-		CandidateSQL:    candidateSQL,
-		DBTLog:          dbtLog,
-		OwnChangeDiff:   ownChangeDiff,
-		UpstreamChanges: upstream,
-		Precedents:      precedents,
+		NodeID:                 in.NodeID,
+		ErrorSignature:         in.ErrorSignature,
+		CandidateSQL:           candidateSQL,
+		DBTLog:                 dbtLog,
+		OwnChangeDiff:          releaseOwnDiff,
+		UpstreamChanges:        upstream,
+		Precedents:             precedents,
+		ReleaseUpstreamChanges: releaseUpstream,
+		ReleaseAncestorsKnown:  in.Source == "validation",
 	}))
 	if err != nil {
 		// Transient LLM error: return so the driver redelivers.

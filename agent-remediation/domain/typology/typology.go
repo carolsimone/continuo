@@ -8,18 +8,29 @@ package typology
 import "sort"
 
 // FailingNode is one classified failure in the release under remediation.
+// Service is the node's owning service, as the trigger carries it.
 type FailingNode struct {
 	NodeID         string
 	ErrorSignature string
 	Category       string
 	Reason         string
+	Service        string
+}
+
+// ChangedAncestor is one upstream node of a failing node that changed in this
+// release: its id, its owning service, and its minimum upstream hop distance
+// from the failing node (1 = direct upstream; 0 when the trigger carried none).
+type ChangedAncestor struct {
+	NodeID  string
+	Service string
+	Depth   int
 }
 
 // DagView answers the graph questions grouping needs, precomputed by the driver
-// from orchestrator reads. ChangedAncestorsByNode maps a failing node's id to
-// the unique_ids of its ancestors that changed in this release, nearest-first.
+// from the trigger. ChangedAncestorsByNode maps a failing node's id to its
+// ancestors that changed in this release, in the trigger's order (sorted by id).
 type DagView struct {
-	ChangedAncestorsByNode map[string][]string
+	ChangedAncestorsByNode map[string][]ChangedAncestor
 }
 
 // Kind labels why a cluster was formed.
@@ -31,6 +42,11 @@ const (
 	// KindSharedUpstream is several same-signature failing nodes fixed by one
 	// edit to a common changed ancestor that may not itself have failed.
 	KindSharedUpstream Kind = "shared_upstream"
+	// KindCrossServiceUpstream is one or more failing nodes fixed by one edit to
+	// a changed ancestor that lives in ANOTHER service: under one service per
+	// release the failing nodes did not change, and a fix in their own service
+	// could never ship before the change that broke them.
+	KindCrossServiceUpstream Kind = "cross_service_upstream"
 )
 
 // Cluster is one fix target: the node to edit (TargetNodeID, which may be an

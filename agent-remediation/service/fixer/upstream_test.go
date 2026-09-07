@@ -183,3 +183,21 @@ func TestProposeUpstreamFix_FallsBackToTheLocatorWithoutACandidateLocation(t *te
 	require.Len(t, res.Proposal.Edits, 1)
 	assert.Equal(t, "services/svc/models/u.sql", res.Proposal.Edits[0].Path)
 }
+
+// A cross-service cluster reaches the model with the clause and the members'
+// services; the edit still targets the ancestor in the ancestor's service.
+func TestProposeUpstreamFix_CrossServiceIsToldToTheModel(t *testing.T) {
+	svc, llm := upstreamSvc()
+	in := upstreamInput()
+	in.CrossService = true
+	in.Members = []MemberFailure{{NodeID: "f.report", Service: "finance", ErrorExcerpt: "column u.amount does not exist"}}
+
+	res, err := ProposeUpstreamFix(context.Background(), svc, in)
+	require.NoError(t, err)
+
+	assert.Equal(t, proposal.StatusProposed, res.Proposal.Status)
+	assert.Contains(t, llm.lastRequest.System, "cannot change in this release")
+	assert.Contains(t, llm.lastRequest.User, "f.report (service finance)")
+	require.Len(t, res.Proposal.Edits, 1)
+	assert.Equal(t, "services/svc/models/u.sql", res.Proposal.Edits[0].Path)
+}

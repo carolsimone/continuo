@@ -66,8 +66,8 @@ func clusterByChangedAncestor(group []FailingNode, dag DagView) []Cluster {
 	for _, n := range group {
 		set := map[string]bool{}
 		for _, anc := range dag.ChangedAncestorsByNode[n.NodeID] {
-			set[anc] = true
-			candidateSet[anc] = true
+			set[anc.NodeID] = true
+			candidateSet[anc.NodeID] = true
 		}
 		ancestorsByNode[n.NodeID] = set
 	}

@@ -189,8 +189,8 @@ func TestChangedAncestors_FiltersTransitiveAncestorsToChangedOnes(t *testing.T) 
 
 	got := release.ChangedAncestors(topo, "s.x", changed)
 
-	want := []release.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svcU"}}
-	assert.Equal(t, want, got, "m unchanged, x is itself, other unrelated")
+	want := []release.ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "svcU", Depth: 2}}
+	assert.Equal(t, want, got, "m unchanged, x is itself, other unrelated; u is two hops up through m")
 	assert.Nil(t, release.ChangedAncestors(topo, "s.unknown", changed), "unknown node must yield nil")
 }
 
@@ -208,6 +208,26 @@ func TestChangedAncestors_CarriesTheLocationTheCandidateDeclares(t *testing.T) {
 	got := release.ChangedAncestors(topo, "s.x", map[string]bool{"s.u": true})
 
 	assert.Equal(t, []release.ChangedAncestor{
-		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Service: "svcB"},
+		{NodeID: "s.u", FilePath: "models/marts/u_renamed.sql", Service: "svcB", Depth: 1},
+	}, got)
+}
+
+// TestChangedAncestors_DepthIsTheMinimumHopCount pins depth on a diamond: u
+// is reachable from x in one hop (direct) and in two (through m), and depth
+// reports the shorter path; a farther changed ancestor reports its own hops.
+func TestChangedAncestors_DepthIsTheMinimumHopCount(t *testing.T) {
+	topo := release.Topology{
+		{UniqueID: "s.far", ServiceName: "svcB", OriginalFilePath: "models/far.sql"},
+		{UniqueID: "s.u", ServiceName: "svcB", OriginalFilePath: "models/u.sql", UpstreamUniqueIDs: []string{"s.far"}},
+		{UniqueID: "s.m", ServiceName: "svcA", UpstreamUniqueIDs: []string{"s.u"}},
+		{UniqueID: "s.x", ServiceName: "svcA", UpstreamUniqueIDs: []string{"s.u", "s.m"}},
+	}
+	changed := map[string]bool{"s.u": true, "s.far": true}
+
+	got := release.ChangedAncestors(topo, "s.x", changed)
+
+	assert.Equal(t, []release.ChangedAncestor{
+		{NodeID: "s.far", FilePath: "models/far.sql", Service: "svcB", Depth: 2},
+		{NodeID: "s.u", FilePath: "models/u.sql", Service: "svcB", Depth: 1},
 	}, got)
 }

@@ -168,8 +168,10 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
    finer-grained rule (e.g. logic:missing_object); with category it forms the
    fallback precedent-lookup key when error_signature has no recorded matches.
    changed_ancestors is what grouping (step 3) reads: each entry is
-   {node_id, file_path, service}, the id the grouping partitions on plus the
-   location the rejected release's candidate declares for that ancestor. The
+   {node_id, file_path, service, depth}, the id the grouping partitions on plus the
+   location the rejected release's candidate declares for that ancestor. depth
+   is the ancestor's minimum upstream hop distance from the failing node
+   (1 = direct upstream); the cross-service strategy picks the nearest. The
    upstream fixer edits the ancestor at that path, falling back to the promoted
    graph's GetNodeLocation only when the trigger carries no location — an
    ancestor this release renamed or moved is still at its OLD path in the
@@ -290,16 +292,20 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
 
 ### Grouping the failing set
 
-`domain/typology` partitions the trigger's nodes into fix targets before any port is touched. It is pure — it reads the failing set and a `DagView` built entirely from the ids in the trigger's own `changed_ancestors` — so the routing decision is testable without the LLM or any adapter.
+`domain/typology` partitions the trigger's nodes into fix targets before any port is touched. It is pure — it reads the failing set and a `DagView` built entirely from the trigger's own `changed_ancestors` (id, service, depth) and each node's service — so the routing decision is testable without the LLM or any adapter.
 
 `Group(nodes, dag, strategies...)` runs each strategy in order; every node no strategy claims becomes its own `KindIndependent` cluster targeting itself. Output is deterministic: claimed clusters in strategy order, then the independents sorted by node id.
 
-One strategy is wired today, `SharedUpstreamCause`:
+Two strategies are wired, in this order:
+
+`CrossServiceCause` runs first. A release changes one service, so a failing node whose `changed_ancestors` names an ancestor in ANOTHER service did not change itself, and a fix in its own service could never ship before the change that broke it (its release would be validated against the producer's production code). Every such node is claimed at that ancestor, whatever its error signature and with no minimum group size; nodes are grouped per target into one `KindCrossServiceUpstream` cluster each, members sorted, clusters ordered by their smallest member. A node with several cross-service changed ancestors takes the nearest (smallest `depth`), ties on the smallest id: the direct upstream is the contract it reads. A node or ancestor that names no service is left alone.
+
+`SharedUpstreamCause` runs on what is left:
 
 - Nodes are bucketed by `error_signature`. An empty signature never groups, and a bucket of one is left for the independent default — one node is not evidence of a shared cause.
 - Within a bucket, candidate changed ancestors are considered in ascending id order; for each, the still-unclaimed members that list it in `changed_ancestors` are gathered, and a candidate with **at least two** such members becomes one `KindSharedUpstream` cluster targeting it. Taking the smallest ancestor id first makes both the assignment and the target choice independent of map iteration and input order.
 - A bucket can therefore yield several clusters: the same failure reaching two unrelated changed ancestors gives `{a,b}→u` and `{c,d}→v` rather than falling through to four independent fixes. Members are disjoint across clusters, and clusters are emitted ordered by their smallest member.
-- Because bucketing is per signature, one ancestor that broke its descendants in two DIFFERENT ways yields one cluster per signature, both targeting it. The driver's `coalesceUpstream` (`service/handlers/propose_fix.go`) merges shared-upstream clusters naming the same target into one — members unioned and sorted, first occurrence keeping its position — before any fixing starts. Fixing them separately would call the model twice for one file and have both fixes write the target's single artifact key, so the attempt would record two edits for one path of which only the last written exists. An independent cluster cannot collide this way: its target is the failing node itself, and a node appears in the failing set once.
+- Because bucketing is per signature, one ancestor that broke its descendants in two DIFFERENT ways yields one cluster per signature, both targeting it. The driver's `coalesceUpstream` (`service/handlers/propose_fix.go`) merges upstream clusters of either kind naming the same target into one — members unioned and sorted, first occurrence keeping its position, and the merged cluster cross-service if any input was — before any fixing starts. Fixing them separately would call the model twice for one file and have both fixes write the target's single artifact key, so the attempt would record two edits for one path of which only the last written exists. An independent cluster cannot collide this way: its target is the failing node itself, and a node appears in the failing set once.
 
 Identical signatures are what make this safe, and they are only identical because the classifier strips the database's echoed `LINE n: <statement>` from the signature — that statement names the failing relation, so without the strip two siblings broken by one upstream change would never sign alike (see `services/remediation.md` § Error Signature Normalization).
 
@@ -546,6 +552,13 @@ When no claimant belongs to the changed service — a bootstrap release, or two 
    ~8 KiB — this becomes the own-change-diff section ("what this release
    changed in the failing model"). Best-effort: a lookup error or an absent
    current version (a new node) simply omits the section.
+   - What THIS release changed upstream: for the node's nearest changed
+     ancestors (from the trigger's changed_ancestors, up to three, nearest
+     first) the bundle source diffed against the promoted version, rendered
+     as "What this release changed upstream of the failing model"; when the
+     trigger lists none, the line "No upstream of <node> changed in this
+     release." The promoted graph's history (next item) cannot show this: a
+     rejected release was never promoted.
 6. Call the orchestrator's GetUpstreamChanges(node_id) for the failing node's
    most-recently-changed upstream ancestors, server-capped at 5 ancestors and
    8 KiB per diff. Best-effort: an error proceeds with no upstream section.
@@ -607,9 +620,9 @@ The degrade-don't-fail design means any failure in source resolution or Step 2 �
 
 One batched consequence: a validation proposal whose Step 2 did not resolve carries **no edits**, and the driver downgrades an edit-less "proposed" result to `failed` for that cluster's members. The Step-1 candidate fix is still written to S3 as an audit artifact, but it patches compiled SQL rather than version-controlled source, so there is nothing a fix-verification run could run and nothing a pull request could carry.
 
-### Upstream fixer — repair the shared cause once
+### Upstream fixer — repair the changed ancestor once
 
-`ProposeUpstreamFix` (`service/fixer/upstream.go`) is what a `KindSharedUpstream` cluster runs. Its target is the changed ancestor every member descends from, which may never have failed itself.
+`ProposeUpstreamFix` (`service/fixer/upstream.go`) is what a `KindSharedUpstream` or `KindCrossServiceUpstream` cluster runs. Its target is the changed ancestor every member descends from, which may never have failed itself.
 
 ```
 1. No members: skip (an upstream cluster needs at least one failing member).
@@ -626,8 +639,11 @@ One batched consequence: a validation proposal whose Step 2 did not resolve carr
 5. Precedent is loaded from the FIRST member's signature/category/reason —
    every member shares the signature by construction.
 6. One forced propose_fix call (AssembleUpstreamFix) showing the ancestor's
-   source, its own-change diff, each member's node id and error excerpt, and
-   precedent.
+   source, its own-change diff, each member's node id, service, and error
+   excerpt, and precedent. For a cross-service cluster the system prompt adds
+   that the downstream models live in other services and cannot change in
+   this release, so the fix must keep what the change produces AND the
+   column or relation they read — keep both, never revert, never edit them.
 7. An answer that returns nothing, returns the ancestor's source unchanged, or
    reports low confidence is a SKIP, not a failure — each member can still be
    fixed in its own source, and failing here would abandon every member on one
@@ -636,7 +652,7 @@ One batched consequence: a validation proposal whose Step 2 did not resolve carr
    attempt keys and return one edit whose target_node_id is the ANCESTOR.
 ```
 
-Every skip path returns `status=skipped`, which the driver reads as the signal to re-queue each member as an independent cluster. Only a genuinely transient error (the bundle fetch, the model call, an artifact write) is returned for redelivery.
+Every skip path returns `status=skipped`. For a shared-upstream cluster the driver reads that as the signal to re-queue each member as an independent cluster. For a cross-service cluster it does not: a consumer-side fix could never ship, so every member ends `skipped` with the reason "the change that broke this node lives in service `<service>`; a fix in this node's own service cannot ship before it: `<fixer reason>`". Only a genuinely transient error (the bundle fetch, the model call, an artifact write) is returned for redelivery.
 
 ### Python validation fixer — repair the contract, then run it
 
@@ -980,13 +996,13 @@ All code-change decisions — review, approval, and PR creation — are human ac
 |---|---|
 | Proposal entity + unified diff | `agent-remediation/domain/proposal/proposal.go` |
 | Prompt assembly (validation candidate + real-source, compile, seed, duplicate table) | `agent-remediation/domain/prompt/prompt.go` (`Assemble`, `AssembleSourceFix`, `AssembleCompileFix`, `AssembleSeedFix`, `AssembleDuplicateTableFix`) |
-| Prompt assembly (shared-upstream fix) | `agent-remediation/domain/prompt/upstream.go` (`AssembleUpstreamFix`) |
+| Prompt assembly (shared-upstream and cross-service upstream fix) | `agent-remediation/domain/prompt/upstream.go` (`AssembleUpstreamFix`) |
 | Prompt assembly (python-csv contract fix) | `agent-remediation/domain/prompt/csv.go` (`AssembleCsvContractFix`) |
 | Prompt assembly (python contract fix, incl. the prior-attempts section) | `agent-remediation/domain/prompt/python.go` (`AssemblePythonContractFix`) |
 | Event payloads + deterministic IDs | `agent-remediation/domain/event/` (proposed, pr_opened, pr_closed) |
 | Batched driver — attempt cap, dedup, cluster grouping, per-cluster dispatch, one proposal per (release, attempt); each Fixer fetches its own dbt log | `agent-remediation/service/handlers/propose_fix.go` |
 | Inbound trigger type, `NodeIDs`, and the `remediation.requested:v2` wire shape | `agent-remediation/service/handlers/trigger.go` |
-| Failing-set grouping — `Group`, the `Typology` strategy seam, and `SharedUpstreamCause` (same signature + shared changed ancestor) | `agent-remediation/domain/typology/` |
+| Failing-set grouping — `Group`, the `Typology` strategy seam, `CrossServiceCause` (changed ancestor in another service), and `SharedUpstreamCause` (same signature + shared changed ancestor) | `agent-remediation/domain/typology/` |
 | Verification-run submission — bucket edits by service, refuse unrunnable ones, build the overlay or upload the contract, submit one run per service | `agent-remediation/service/handlers/verify.go` |
 | Verification-run id minting, with the candidate-schema length cap | `agent-remediation/service/handlers/verification_id.go` |
 | Deterministic source-overlay tarball builder | `agent-remediation/service/overlay/overlay.go` |

@@ -579,7 +579,7 @@ sequenceDiagram
 
 One rejected release is one unit of remediation. However many nodes it failed on, the classifier emits **one** trigger, the agent produces **one** attempt, and a human reviews **one** pull request. And no fix is offered for review until a real run has proven it: every attempt ends by submitting a **fix-verification run** per edited service to `release-controller` — a run of `run_kind="verification"` that takes the identical pipeline legs a candidate release takes (compile → parse → seed_build → validate, sharing the same FIFO queue) but ends at the verification terminal `passed` or `failed` rather than the candidate terminal `promoted` or `rejected`, and never reads or writes `current_prod`.
 
-Two facts make the batching more than bookkeeping. `release.rejected:v1` stamps each failing node's `changed_ancestors` — the ancestors this release changed that the failure descends from, each with the file path and service this candidate declares — so the agent can see that several failures share one cause, and can edit that ancestor where THIS release holds it rather than where the promoted graph still places it. And the classifier's `error_signature` ignores the database's echoed `LINE n: <statement>`, so two siblings broken by the same upstream change sign identically instead of being keyed on the relation each of them happened to be building. Together they let one edit, to a node that may never have failed, resolve several failures.
+Two facts make the batching more than bookkeeping. `release.rejected:v1` stamps each failing node's `changed_ancestors` — the ancestors this release changed that the failure descends from, each with the file path and service this candidate declares — so the agent can see that several failures share one cause, and can edit that ancestor where THIS release holds it rather than where the promoted graph still places it. And the classifier's `error_signature` ignores the database's echoed `LINE n: <statement>`, so two siblings broken by the same upstream change sign identically instead of being keyed on the relation each of them happened to be building. Together they let one edit, to a node that may never have failed, resolve several failures. Each ancestor also carries `depth`, its minimum upstream hop distance, and each failing node its `service`: a node whose changed ancestor lives in ANOTHER service is fixed at that ancestor, never in its own service, because a release changes one service and a consumer-side fix could never ship before the change that broke it.
 
 ```mermaid
 sequenceDiagram
@@ -594,20 +594,20 @@ sequenceDiagram
   participant S3 as S3
 
   Note over RC: a release fails validation on several nodes (Flow 11)
-  RC->>RM: release.rejected:v1 { stage=validation,<br/>per_node[node_id, node_type, service, file_path,<br/>changed_ancestors{node_id,file_path,service}] }
+  RC->>RM: release.rejected:v1 { stage=validation,<br/>per_node[node_id, node_type, service, file_path,<br/>changed_ancestors{node_id,file_path,service,depth}] }
   Note over RM: classify EVERY failing node, record one classification_decision each,<br/>then emit ONE trigger for the whole healable set
   RM->>RA: remediation.requested:v2 { release_id, remediation_round, repo,<br/>commit_sha, code_bundle_uri, nodes[...] }
   RM->>OR: (same message, case-base group) one :Rejection per node in the batch
 
   Note over RA: attempt n — group the failing set (domain/typology)
-  Note over RA: same signature + shared changed ancestor → ONE cluster targeting<br/>that ancestor; everything else → one independent cluster each
+  Note over RA: changed ancestor in ANOTHER service → ONE cluster at that producer;<br/>then same signature + shared changed ancestor → ONE cluster targeting<br/>that ancestor; everything else → one independent cluster each
   RA->>RA: proposal(status=generating) over the whole failing set
 
   loop one per cluster
-    alt shared upstream
+    alt upstream (shared or cross-service)
       RA->>S3: GetObject code bundle (the changed ancestor's source)
-      RA->>LLM: propose_fix (ancestor source, own-change diff,<br/>every member's error excerpt, precedent)
-      Note over RA: a declined answer is a SKIP, not a failure —<br/>each member is re-queued as an independent cluster
+      RA->>LLM: propose_fix (ancestor source, own-change diff,<br/>every member's node id, service, error excerpt, precedent;<br/>cross-service adds the keep-both clause)
+      Note over RA: a declined answer is a SKIP, not a failure — a shared-upstream<br/>cluster re-queues each member as an independent cluster, but a<br/>cross-service cluster skips its members (a consumer-side fix could never ship)
     else independent
       RA->>GH: read the failing node's source (or the repo tarball, python lane)
       RA->>LLM: propose_fix / propose_python_fix / propose_csv_fix

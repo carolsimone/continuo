@@ -453,3 +453,35 @@ func TestAssembleDuplicateTableFix_RendersPrecedents(t *testing.T) {
 		}
 	}
 }
+
+func TestAssemble_RendersWhatThisReleaseChangedUpstream(t *testing.T) {
+	req := Assemble(Evidence{
+		NodeID: "analytics.report", CandidateSQL: "select amount from analytics.orders", DBTLog: "column amount does not exist",
+		ReleaseAncestorsKnown: true,
+		ReleaseUpstreamChanges: []ReleaseUpstreamChange{{NodeID: "analytics.orders", Service: "core", Depth: 1,
+			Diff: "-select id, amount from raw\n+select id, amount_eur from raw"}},
+	})
+	for _, want := range []string{
+		"What this release changed upstream of the failing model",
+		"Upstream analytics.orders (service core, depth=1):",
+		"+select id, amount_eur from raw",
+	} {
+		if !strings.Contains(req.User, want) {
+			t.Fatalf("prompt must contain %q:\n%s", want, req.User)
+		}
+	}
+}
+
+func TestAssemble_SaysWhenNothingUpstreamChangedInThisRelease(t *testing.T) {
+	req := Assemble(Evidence{NodeID: "analytics.report", CandidateSQL: "select 1", DBTLog: "err", ReleaseAncestorsKnown: true})
+	if !strings.Contains(req.User, "No upstream of analytics.report changed in this release.") {
+		t.Fatalf("prompt must state the absence of a release-side upstream change:\n%s", req.User)
+	}
+}
+
+func TestAssemble_OmitsTheReleaseUpstreamSectionWhenUnknown(t *testing.T) {
+	req := Assemble(Evidence{NodeID: "analytics.report", CandidateSQL: "select 1", DBTLog: "err"})
+	if strings.Contains(req.User, "changed in this release") {
+		t.Fatalf("a lane that cannot know must not claim nothing changed:\n%s", req.User)
+	}
+}
