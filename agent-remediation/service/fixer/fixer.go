@@ -80,6 +80,21 @@ type Input struct {
 	// post-parse rejection (duplicate_table included) carries it.
 	CodeBundleURI string
 	Attempt       int
+	// ChangedAncestors are the failing node's upstream nodes this release
+	// changed, with the location the candidate declares for each and its hop
+	// distance; the trigger carries them for every post-parse rejection. The
+	// dbt validation lane shows the model what this release changed in the
+	// nearest of them.
+	ChangedAncestors []ChangedAncestorRef
+}
+
+// ChangedAncestorRef is one changed upstream of a failing node as the trigger
+// carries it.
+type ChangedAncestorRef struct {
+	NodeID   string
+	FilePath string
+	Service  string
+	Depth    int
 }
 
 // Services bundles the ports a Fixer uses to produce a proposal.

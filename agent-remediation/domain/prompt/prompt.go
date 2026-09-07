@@ -19,6 +19,17 @@ type UpstreamChange struct {
 	Truncated  bool
 }
 
+// ReleaseUpstreamChange is what THIS release changed in one ancestor of the
+// failing node, read from the release's own candidate against the ancestor's
+// promoted version — the change that most likely broke the node. Depth is the
+// ancestor's minimum upstream hop distance from the failing node.
+type ReleaseUpstreamChange struct {
+	NodeID  string
+	Service string
+	Depth   int
+	Diff    string
+}
+
 // Precedent is one past rejection with the same error shape and, when
 // resolved, the change that fixed it.
 type Precedent struct {
@@ -63,6 +74,12 @@ type Evidence struct {
 	OwnChangeDiff   string
 	UpstreamChanges []UpstreamChange
 	Precedents      []Precedent
+	// ReleaseUpstreamChanges is what this release changed upstream of the
+	// failing node, nearest first. ReleaseAncestorsKnown reports that the
+	// release's changed-ancestor set was available at all, so an empty list
+	// renders as "nothing upstream changed" rather than being omitted.
+	ReleaseUpstreamChanges []ReleaseUpstreamChange
+	ReleaseAncestorsKnown  bool
 }
 
 // ToolParam is one parameter of the forced tool's JSON-Schema object.
@@ -363,6 +380,7 @@ func Assemble(ev Evidence) ProposeRequest {
 	if ev.OwnChangeDiff != "" {
 		fmt.Fprintf(&u, "What this release changed in the failing model (last promoted -> candidate):\n```diff\n%s\n```\n\n", ev.OwnChangeDiff)
 	}
+	renderReleaseUpstreamChanges(&u, ev.NodeID, ev.ReleaseUpstreamChanges, ev.ReleaseAncestorsKnown)
 	renderUpstreamChanges(&u, ev.UpstreamChanges)
 	renderPrecedents(&u, ev.Precedents)
 	u.WriteString("Propose a corrected version of the failed model's SQL.")

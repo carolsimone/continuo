@@ -137,6 +137,29 @@ func renderUpstreamChanges(b *strings.Builder, cs []UpstreamChange) {
 	b.WriteString("\n")
 }
 
+// renderReleaseUpstreamChanges writes what this release changed upstream of
+// the failing node, nearest first, or the one line stating that nothing did.
+// Nothing is written when the lane could not know (known is false).
+func renderReleaseUpstreamChanges(b *strings.Builder, nodeID string, cs []ReleaseUpstreamChange, known bool) {
+	if !known {
+		return
+	}
+	if len(cs) == 0 {
+		fmt.Fprintf(b, "No upstream of %s changed in this release.\n\n", nodeID)
+		return
+	}
+	b.WriteString("What this release changed upstream of the failing model (nearest first; last promoted -> candidate):\n")
+	for _, c := range cs {
+		fmt.Fprintf(b, "Upstream %s (service %s, depth=%d):\n", c.NodeID, c.Service, c.Depth)
+		if c.Diff == "" {
+			b.WriteString("(diff unavailable)\n")
+			continue
+		}
+		fmt.Fprintf(b, "```diff\n%s\n```\n", c.Diff)
+	}
+	b.WriteString("\n")
+}
+
 // renderPriorAttempts writes the earlier-attempts section: what each attempt
 // changed and why its verification run failed it. No attempts → no
 // section.

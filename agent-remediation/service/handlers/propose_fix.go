@@ -477,6 +477,10 @@ func outcomeFromResult(r fixer.Result) clusterOutcome {
 // inputFor projects the trigger's release-level facts and one failing node onto
 // the evidence a Fixer reads.
 func inputFor(t Trigger, n TriggerNode, attempt int) fixer.Input {
+	ancestors := make([]fixer.ChangedAncestorRef, 0, len(n.ChangedAncestors))
+	for _, a := range n.ChangedAncestors {
+		ancestors = append(ancestors, fixer.ChangedAncestorRef{NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth})
+	}
 	return fixer.Input{
 		Source:               t.Source,
 		ReleaseID:            t.ReleaseID,
@@ -497,6 +501,7 @@ func inputFor(t Trigger, n TriggerNode, attempt int) fixer.Input {
 		CandidateArtifactURI: n.CandidateArtifactURI,
 		CodeBundleURI:        t.CodeBundleURI,
 		Attempt:              attempt,
+		ChangedAncestors:     ancestors,
 	}
 }
 

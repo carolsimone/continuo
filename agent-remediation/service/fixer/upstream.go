@@ -79,12 +79,7 @@ func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Re
 	}
 	fullPath := path.Join(prefix, filePath)
 
-	ownChangeDiff := ""
-	if cur, ok, verr := svc.Versions.CurrentVersion(ctx, in.TargetNodeID); verr != nil {
-		svc.Logger.Warn("current version unavailable; omitting own-change diff", "node", in.TargetNodeID, "error", verr)
-	} else if ok {
-		ownChangeDiff = truncateDiff(svc.Sanitizer.Sanitize(proposal.ComputeUnifiedDiff(cur.RawCode, src.RawCode, in.TargetNodeID)), maxUpstreamDiffBytes)
-	}
+	targetChangeDiff := ownChangeDiff(ctx, svc, in.TargetNodeID, src.RawCode)
 
 	members := make([]prompt.MemberFailure, 0, len(in.Members))
 	for _, m := range in.Members {
@@ -96,7 +91,7 @@ func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Re
 
 	res, err := svc.LLM.Propose(ctx, prompt.AssembleUpstreamFix(prompt.UpstreamEvidence{
 		TargetNodeID: in.TargetNodeID, TargetSource: svc.Sanitizer.Sanitize(src.RawCode),
-		OwnChangeDiff: ownChangeDiff, Members: members, Precedents: precedents, CrossService: in.CrossService,
+		OwnChangeDiff: targetChangeDiff, Members: members, Precedents: precedents, CrossService: in.CrossService,
 	}))
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
