@@ -167,7 +167,8 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 
 	// A shared-upstream cluster whose ancestor cannot be targeted is replaced by
 	// one independent cluster per member, appended to the same queue so they run
-	// through the identical path.
+	// through the identical path. A cross-service cluster never falls back: its
+	// members are skipped (fixCluster).
 	queue := append([]typology.Cluster(nil), clusters...)
 	for i := 0; i < len(queue); i++ {
 		c := queue[i]
@@ -274,32 +275,34 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 	})
 }
 
-// groupClusters partitions the trigger's failing set into fix targets. Nodes
-// that fail the same way and share an ancestor this release changed become one
-// cluster targeting that ancestor; every other node is its own cluster. The
+// groupClusters partitions the trigger's failing set into fix targets. A node
+// broken by a change in ANOTHER service is fixed at that changed ancestor;
+// nodes that fail the same way below one ancestor their own service changed
+// are fixed at that ancestor once; every other node is its own cluster. The
 // grouping is pure — it reads only what the trigger already carries — so the
 // routing decision is decided before any port is touched.
 func groupClusters(t Trigger) []typology.Cluster {
 	nodes := make([]typology.FailingNode, 0, len(t.Nodes))
-	dag := typology.DagView{ChangedAncestorsByNode: make(map[string][]string, len(t.Nodes))}
+	dag := typology.DagView{ChangedAncestorsByNode: make(map[string][]typology.ChangedAncestor, len(t.Nodes))}
 	for _, n := range t.Nodes {
 		nodes = append(nodes, typology.FailingNode{
 			NodeID:         n.NodeID,
 			ErrorSignature: n.ErrorSignature,
 			Category:       n.Category,
 			Reason:         n.Reason,
+			Service:        n.Service,
 		})
-		ids := make([]string, 0, len(n.ChangedAncestors))
+		ancestors := make([]typology.ChangedAncestor, 0, len(n.ChangedAncestors))
 		for _, a := range n.ChangedAncestors {
-			ids = append(ids, a.NodeID)
+			ancestors = append(ancestors, typology.ChangedAncestor{NodeID: a.NodeID, Service: a.Service, Depth: a.Depth})
 		}
-		dag.ChangedAncestorsByNode[n.NodeID] = ids
+		dag.ChangedAncestorsByNode[n.NodeID] = ancestors
 	}
-	return coalesceUpstream(typology.Group(nodes, dag, typology.SharedUpstreamCause{}))
+	return coalesceUpstream(typology.Group(nodes, dag, typology.CrossServiceCause{}, typology.SharedUpstreamCause{}))
 }
 
-// coalesceUpstream merges shared-upstream clusters that name the same fix
-// target. Grouping partitions the failing set per error signature, so one
+// coalesceUpstream merges upstream clusters (shared or cross-service) that name
+// the same fix target. Grouping partitions the failing set per error signature, so one
 // changed ancestor that broke its descendants in two different ways yields one
 // cluster per signature — both targeting that ancestor. Fixing them separately
 // would call the model twice for one file and, worse, have both fixes write the
@@ -308,7 +311,7 @@ func groupClusters(t Trigger) []typology.Cluster {
 // members are unioned instead and the ancestor is repaired once, with every
 // failure it caused shown to the model in the same call.
 //
-// Only shared-upstream clusters can collide this way: an independent cluster's
+// Only upstream clusters can collide this way: an independent cluster's
 // target is the failing node itself, and a node appears in the failing set once.
 // Order is preserved (each merged cluster keeps the position of its first
 // occurrence) and members are sorted, so the result stays deterministic.
@@ -316,7 +319,7 @@ func coalesceUpstream(clusters []typology.Cluster) []typology.Cluster {
 	at := map[string]int{}
 	out := make([]typology.Cluster, 0, len(clusters))
 	for _, c := range clusters {
-		if c.Kind != typology.KindSharedUpstream {
+		if !isUpstreamKind(c.Kind) {
 			out = append(out, c)
 			continue
 		}
@@ -329,8 +332,19 @@ func coalesceUpstream(clusters []typology.Cluster) []typology.Cluster {
 		merged := append(append([]string(nil), out[i].Members...), c.Members...)
 		sort.Strings(merged)
 		out[i].Members = merged
+		// A target reached across a service boundary by any member keeps the
+		// cross-service kind: its skip must never fall back to consumer fixes.
+		if c.Kind == typology.KindCrossServiceUpstream {
+			out[i].Kind = typology.KindCrossServiceUpstream
+		}
 	}
 	return out
+}
+
+// isUpstreamKind reports whether a cluster repairs a changed ancestor rather
+// than the failing node itself.
+func isUpstreamKind(k typology.Kind) bool {
+	return k == typology.KindSharedUpstream || k == typology.KindCrossServiceUpstream
 }
 
 // clusterOutcome is what fixing one cluster produced, projected onto the fields
@@ -358,9 +372,10 @@ type clusterOutcome struct {
 // fixCluster produces one cluster's fix. A shared-upstream cluster is repaired
 // once in the changed ancestor every member descends from; an independent
 // cluster is repaired in the failing node's own source by the Fixer its error
-// class and node kind resolve to. An upstream target that cannot be located or
-// is not a dbt model ends as a fallback, and the caller re-runs the members
-// independently.
+// class and node kind resolve to. A shared-upstream target that cannot be
+// located or is not a dbt model ends as a fallback, and the caller re-runs the
+// members independently; a cross-service target that cannot be repaired skips
+// its members instead, because a consumer-side fix could never ship.
 func fixCluster(ctx context.Context, deps Deps, svc fixer.Services, t Trigger, c typology.Cluster, attempt int) (clusterOutcome, error) {
 	// Scope LLM response caching to this inbound trigger: a redelivery reuses
 	// the completions the first delivery paid for, while a new trigger (a later
@@ -377,12 +392,25 @@ func fixCluster(ctx context.Context, deps Deps, svc fixer.Services, t Trigger, c
 		Attempt:   attempt,
 	})
 
-	if c.Kind == typology.KindSharedUpstream {
-		r, err := fixer.ProposeUpstreamFix(llmCtx, svc, upstreamInputFor(t, c, attempt))
+	if isUpstreamKind(c.Kind) {
+		in := upstreamInputFor(t, c, attempt)
+		in.CrossService = c.Kind == typology.KindCrossServiceUpstream
+		r, err := fixer.ProposeUpstreamFix(llmCtx, svc, in)
 		if err != nil {
 			return clusterOutcome{}, err
 		}
 		if r.Proposal.Status == proposal.StatusSkipped {
+			if in.CrossService {
+				// The change that broke these nodes lives in another service.
+				// A fix in their own service can never ship before it, so an
+				// unfixable producer skips the members rather than falling
+				// back to consumer-side fixes.
+				reason := fmt.Sprintf("the change that broke this node lives in %s; a fix in this node's own service cannot ship before it: %s",
+					describeService(in.TargetService), r.Proposal.Rationale)
+				deps.Logger.Info("cross-service upstream fix unavailable; members are skipped, not fixed in their own service",
+					"release", t.ReleaseID, "target", c.TargetNodeID, "members", c.Members, "reason", r.Proposal.Rationale)
+				return clusterOutcome{status: proposal.StatusSkipped, reason: reason}, nil
+			}
 			deps.Logger.Info("shared-upstream fix unavailable; each member falls back to its own source",
 				"release", t.ReleaseID, "target", c.TargetNodeID,
 				"members", c.Members, "reason", r.Proposal.Rationale)
@@ -412,6 +440,15 @@ func fixCluster(ctx context.Context, deps Deps, svc fixer.Services, t Trigger, c
 		}
 	}
 	return out, nil
+}
+
+// describeService names a service for an operator-facing reason, or "another
+// service" when the trigger carried no service for the ancestor.
+func describeService(service string) string {
+	if service == "" {
+		return "another service"
+	}
+	return "service " + service
 }
 
 // outcomeFromResult projects a Fixer's Result onto a clusterOutcome. A result
@@ -463,9 +500,9 @@ func inputFor(t Trigger, n TriggerNode, attempt int) fixer.Input {
 	}
 }
 
-// upstreamInputFor projects a shared-upstream cluster onto the evidence the
-// upstream fixer reads: the changed ancestor to repair, and each failing
-// descendant that shares it as a cause.
+// upstreamInputFor projects an upstream cluster (shared or cross-service) onto
+// the evidence the upstream fixer reads: the changed ancestor to repair, and
+// each failing descendant that shares it as a cause.
 func upstreamInputFor(t Trigger, c typology.Cluster, attempt int) fixer.UpstreamInput {
 	members := make([]fixer.MemberFailure, 0, len(c.Members))
 	for _, id := range c.Members {
@@ -479,6 +516,7 @@ func upstreamInputFor(t Trigger, c typology.Cluster, attempt int) fixer.Upstream
 			Category:       n.Category,
 			Reason:         n.Reason,
 			ErrorExcerpt:   n.ErrorExcerpt,
+			Service:        n.Service,
 		})
 	}
 	filePath, service := ancestorLocation(t, c.TargetNodeID)

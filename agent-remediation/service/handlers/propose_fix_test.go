@@ -110,17 +110,19 @@ func (f fakeVersions) CurrentVersion(_ context.Context, _ string) (ports.Current
 // Propose call, letting a test observe repository state at the moment the model
 // is invoked (e.g. that the in-flight generating row was already committed).
 type fakeLLM struct {
-	queue []ports.ProposeResult
-	errs  []error
-	calls int
-	probe func()
+	queue    []ports.ProposeResult
+	errs     []error
+	calls    int
+	probe    func()
+	requests []ports.ProposeRequest
 }
 
 func newFakeLLM(res ports.ProposeResult, err error) fakeLLM {
 	return fakeLLM{queue: []ports.ProposeResult{res}, errs: []error{err}}
 }
 
-func (f *fakeLLM) Propose(_ context.Context, _ ports.ProposeRequest) (ports.ProposeResult, error) {
+func (f *fakeLLM) Propose(_ context.Context, req ports.ProposeRequest) (ports.ProposeResult, error) {
+	f.requests = append(f.requests, req)
 	if f.probe != nil {
 		f.probe()
 	}
@@ -2083,4 +2085,78 @@ func TestServiceForPath_PicksTheNearestConfiguredRoot(t *testing.T) {
 
 	_, _, ok = serviceForPath(map[string]string{"svc": "services/svc"}, "elsewhere/a.sql")
 	require.False(t, ok)
+}
+
+// crossServiceTrigger is one failing consumer in finance whose only changed
+// ancestor s.u lives in core.
+func crossServiceTrigger() Trigger {
+	tr := baseTrigger()
+	tr.Nodes = []TriggerNode{{
+		NodeID: "s.report", ErrorSignature: "sig", Category: "logic", Reason: "logic:missing_object",
+		ErrorExcerpt: "column u.amount does not exist",
+		DBTLogURI:    "s3://b/log", CandidateArtifactURI: "s3://b/sql-report",
+		FilePath: "models/report.sql", Service: "finance", NodeType: "dbt-model",
+		ChangedAncestors: []ChangedAncestor{{NodeID: "s.u", FilePath: "models/u.sql", Service: "core", Depth: 1}},
+	}}
+	return tr
+}
+
+// TestProposeFix_CrossService_FixesTheAncestorInTheOtherService: a single
+// failing node with a changed ancestor in another service is repaired at that
+// ancestor, in the ancestor's repository path, with one model call flagged
+// cross-service; the consumer is not edited.
+func TestProposeFix_CrossService_FixesTheAncestorInTheOtherService(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{"s3://b/log": "column u.amount does not exist",
+		"s3://art/proposed-fix/r1/s.u/attempt-1.source.sql": "select id, amount_eur, amount_eur as amount from s.base"}}
+	llm := newFakeLLM(ports.ProposeResult{ProposedSQL: "select id, amount_eur, amount_eur as amount from s.base", Rationale: "kept both", Confidence: "high", Model: "m"}, nil)
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "tag-1"}
+	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
+	d.Releases = gw
+	d.ServiceRepoPaths = map[string]string{"core": "services/core", "finance": "services/finance"}
+	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select id, amount_eur from s.base", Runtime: ports.RuntimeDbt}}
+	d.Versions = fakeVersions{v: ports.CurrentVersion{RawCode: "select id, amount from s.base"}, ok: true}
+
+	require.NoError(t, ProposeFix(context.Background(), d, crossServiceTrigger()))
+
+	p := u.pr.inserted[0]
+	assert.Equal(t, 1, llm.calls, "one call, to repair the producer")
+	require.Len(t, p.Edits, 1)
+	assert.Equal(t, "s.u", p.Edits[0].TargetNodeID)
+	assert.Equal(t, "services/core/models/u.sql", p.Edits[0].Path, "the edit lands in the producer's service")
+	assert.Equal(t, []string{"s.report"}, p.Edits[0].MemberNodeIDs)
+	assert.Equal(t, proposal.StatusVerifying, p.NodeOutcomes["s.report"].Status)
+	require.Len(t, gw.submitted, 1)
+	assert.Equal(t, "core", gw.submitted[0].Service, "verified as the producer's service")
+	assert.Contains(t, llm.requests[0].System, "cannot change in this release", "the model is told the consumers cannot change")
+}
+
+// TestProposeFix_CrossService_UnfixableAncestorSkipsTheMembers: when the
+// producer cannot be repaired (here: not a dbt model) the members are NOT
+// fixed in their own service — that fix could never ship — but skipped with a
+// reason naming where the change lives.
+func TestProposeFix_CrossService_UnfixableAncestorSkipsTheMembers(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{"s3://b/log": "column u.amount does not exist"}}
+	llm := newFakeLLM(ports.ProposeResult{ProposedSQL: "unused", Confidence: "high", Model: "m"}, nil)
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "tag-1"}
+	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
+	d.Releases = gw
+	d.ServiceRepoPaths = map[string]string{"core": "services/core", "finance": "services/finance"}
+	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "reads: []", Runtime: ports.RuntimePython}}
+
+	require.NoError(t, ProposeFix(context.Background(), d, crossServiceTrigger()))
+
+	p := u.pr.inserted[0]
+	assert.Equal(t, 0, llm.calls, "no consumer-side fix is attempted")
+	assert.Empty(t, p.Edits)
+	assert.Equal(t, proposal.StatusSkipped, p.Status)
+	assert.Equal(t, proposal.StatusSkipped, p.NodeOutcomes["s.report"].Status)
+	assert.Contains(t, p.NodeOutcomes["s.report"].Reason, "the change that broke this node lives in service core")
+	assert.Contains(t, p.NodeOutcomes["s.report"].Reason, "cannot ship before it")
+	assert.Empty(t, gw.submitted)
 }

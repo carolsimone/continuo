@@ -11,13 +11,16 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 )
 
-// MemberFailure is one failing descendant of a shared-upstream cluster.
+// MemberFailure is one failing descendant of an upstream cluster.
 type MemberFailure struct {
 	NodeID         string
 	ErrorSignature string
 	Category       string
 	Reason         string
 	ErrorExcerpt   string
+	// Service is the member's owning service, shown to the model when the
+	// cluster crosses a service boundary.
+	Service string
 }
 
 // UpstreamInput is the evidence for a shared-upstream cluster: the changed
@@ -37,6 +40,10 @@ type UpstreamInput struct {
 	TargetService  string
 	Attempt        int
 	Members        []MemberFailure
+	// CrossService reports that the members live in a service other than the
+	// target's: the fix must keep the contract they read, because their own
+	// service cannot change in this release.
+	CrossService bool
 }
 
 // ProposeUpstreamFix repairs the changed ancestor of a shared-upstream cluster
@@ -45,7 +52,8 @@ type UpstreamInput struct {
 // code bundle (it changed in this release, so the bundle holds it whether or
 // not it failed); its location comes from the promoted graph, so a brand-new
 // ancestor — which the promoted graph cannot place — ends the cluster as
-// skipped and the driver falls back to fixing the members independently. A
+// skipped and the driver falls back to fixing the members independently —
+// unless the cluster is cross-service, where the driver skips them instead. A
 // non-dbt ancestor is skipped the same way.
 func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Result, error) {
 	if len(in.Members) == 0 {
@@ -80,7 +88,7 @@ func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Re
 
 	members := make([]prompt.MemberFailure, 0, len(in.Members))
 	for _, m := range in.Members {
-		members = append(members, prompt.MemberFailure{NodeID: m.NodeID, ErrorExcerpt: svc.Sanitizer.Sanitize(m.ErrorExcerpt)})
+		members = append(members, prompt.MemberFailure{NodeID: m.NodeID, Service: m.Service, ErrorExcerpt: svc.Sanitizer.Sanitize(m.ErrorExcerpt)})
 	}
 	first := in.Members[0]
 	precedents := loadPrecedents(ctx, svc, Input{ReleaseID: in.ReleaseID, NodeID: first.NodeID,
@@ -88,7 +96,7 @@ func ProposeUpstreamFix(ctx context.Context, svc Services, in UpstreamInput) (Re
 
 	res, err := svc.LLM.Propose(ctx, prompt.AssembleUpstreamFix(prompt.UpstreamEvidence{
 		TargetNodeID: in.TargetNodeID, TargetSource: svc.Sanitizer.Sanitize(src.RawCode),
-		OwnChangeDiff: ownChangeDiff, Members: members, Precedents: precedents,
+		OwnChangeDiff: ownChangeDiff, Members: members, Precedents: precedents, CrossService: in.CrossService,
 	}))
 	if err != nil {
 		return Result{}, fmt.Errorf("llm propose: %w", err)
