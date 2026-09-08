@@ -234,12 +234,23 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
      replaced by one independent cluster per member, APPENDED to the same
      queue, so each member is then fixed in its own source through the
      identical path.
-   - KindIndependent -> fixer.For(source, node_type).Propose, exactly as
-     before: compileFixer, seedFixer, duplicateTableFixer, or — for a
-     validation trigger — validationFixer for a dbt node,
-     pythonValidationFixer for python-model, csvValidationFixer for
-     python-csv. An unrecognized source is a programming error and is returned
-     loudly, not swallowed.
+   - KindIndependent -> a dbt-test target's node is skipped before any fixer
+     is chosen: proposal(status=skipped, reason="dbt tests are not fix
+     targets; fix the model or edit the test by hand"). A test is validation
+     evidence, never a fix target — a model fix that makes it bind again
+     resolves it in verification, and a test that is itself wrong is a
+     human's edit. Every other node type reaches fixer.For(source,
+     node_type).Propose, exactly as before: compileFixer, seedFixer,
+     duplicateTableFixer, or — for a validation trigger — validationFixer for
+     a dbt node, pythonValidationFixer for python-model, csvValidationFixer
+     for python-csv. An unrecognized source is a programming error and is
+     returned loudly, not swallowed.
+   A dbt-test node hits this skip only when it IS a cluster's own target. As a
+   member of a KindSharedUpstream or KindCrossServiceUpstream cluster — whose
+   target is the ancestor model it tests, never the test itself — it rides
+   along unskipped: the cluster's one model call fixes the ancestor, and the
+   test's own bind failure is resolved when verification re-checks the
+   fix-touched model's descendant tests, not by any edit of the test's own.
    Each Fixer returns EDITS ONLY (plus, for a python contract fix, the
    packaged contract bytes); none of them submits a release. A proposed result
    that named no file is downgraded to failed — a fix with no edit changes

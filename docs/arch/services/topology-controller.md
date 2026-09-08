@@ -76,6 +76,15 @@ Pass 1 — Parse and validate against the declared service
       Malformed manifest — invalid JSON, a missing top-level `nodes` key, or an
         invalid node shape (missing `schema`/`fqn`, empty `fqn`) → publish
         status=failed (error_class=MalformedManifest), ACK
+      A second pass over the same manifest turns each `resource_type: test` node that
+        tests at least one tracked node into its own `dbt-test` ManifestNode: `table_name`
+        is the test's own dbt name, `schema_name` the manifest's test schema (a test claims
+        no warehouse schema of its own), `candidate_sql` and `dependency_sqls` both hold the
+        test's compiled assertion query, and `content_hash` folds the same three components
+        (source, shared-macro, config hashes) as a model's. It carries no owner or schedule
+        (both empty strings) and is never scheduled. A test whose only targets are untracked
+        nodes contributes nothing beyond its `test_count` attribution and is not added to
+        the node list at all.
     kind=python: parse_python_contract(path, version, image_tag) → (list[ManifestNode], {})
       Malformed contract — invalid yaml, an unknown/missing top-level or entry
         field, an invalid entry shape, or a content_hash that does not equal
@@ -138,7 +147,7 @@ Failure-handling distinction: a parse or resolve failure that re-delivery cannot
 
 ### Dependency resolution rules (sqlglot)
 
-These rules apply uniformly to both kinds' `dependency_sqls` — a dbt node's compiled SQL and a python node's declared reads are resolved by the same `resolve_upstream_deps`, so a malformed python read fails the release exactly like malformed dbt compiled SQL.
+These rules apply uniformly to both kinds' `dependency_sqls` — a dbt node's compiled SQL and a python node's declared reads are resolved by the same `resolve_upstream_deps`, so a malformed python read fails the release exactly like malformed dbt compiled SQL. A `dbt-test` node's compiled assertion query is a dbt node's compiled SQL like any other, so the same rules resolve its edges: the tracked node(s) its query references become its `upstream_unique_ids`, the same way a model's referenced tables become its own.
 
 | Case | Behavior |
 |---|---|
