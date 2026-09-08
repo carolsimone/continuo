@@ -328,6 +328,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('shows the diff view/hide toggle in the attempt card, open by default', async () => {
+    mockFetch(/\/api\/releases\/log/, '');
     const proposal = makeProposal({ status: 'skipped', diff_uri: 's3://bucket/my.patch' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
@@ -344,6 +345,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('renders one labelled diff view per edit when the proposal carries edits', async () => {
+    mockFetch(/\/api\/releases\/log/, '');
     const proposal = makeProposal({
       status: 'skipped',
       diff_uri: 's3://bucket/legacy.patch',
@@ -373,6 +375,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('falls back to the single unlabelled diff view when the proposal carries no edits', async () => {
+    mockFetch(/\/api\/releases\/log/, '');
     const proposal = makeProposal({ status: 'skipped', diff_uri: 's3://bucket/candidate.patch', edits: [] });
     mockFetchProposals.mockResolvedValue([proposal]);
 

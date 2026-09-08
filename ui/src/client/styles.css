@@ -1459,12 +1459,10 @@ a.release-author:hover { text-decoration: underline; }
 }
 
 .detail-card__rationale {
-  margin: 0 0 12px;
-  font-size: 13px;
-  color: #374151;
   white-space: pre-wrap;
   font: inherit;
-  margin: 0;
+  color: #374151;
+  margin: 0 0 12px;
 }
 
 .detail-card__row {
