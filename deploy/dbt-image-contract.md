@@ -67,8 +67,14 @@ is that the `compile` command writes the manifest to the path declared as
 
 ## The `generate_schema_name` macro (required)
 
-Your dbt project MUST route schema resolution through this macro (verbatim
-from `dbt/base/macros/generate_schema_name.sql`):
+Your dbt project MUST route schema resolution through a `generate_schema_name`
+that honours `DBT_TARGET_SCHEMA`. dbt has no `--target-schema` flag, so
+Continuo's blue/green release validation passes the candidate schema through
+that variable; the macro must materialize into it when it is set. Without this,
+validation runs would write into production schemas.
+
+A project with no schema customization can ship the reference macro verbatim
+from `dbt/base/macros/generate_schema_name.sql`:
 
 ```sql
 {% macro generate_schema_name(custom_schema_name, node) -%}
@@ -83,11 +89,28 @@ from `dbt/base/macros/generate_schema_name.sql`):
 {%- endmacro %}
 ```
 
-dbt has no `--target-schema` flag, so Continuo's blue/green release
-validation passes the candidate schema via `DBT_TARGET_SCHEMA`; with the
-macro in place every model materializes there during validation, and when
-the variable is unset behavior is byte-identical to a project without the
-macro. Without it, validation runs would write into production schemas.
+When `DBT_TARGET_SCHEMA` is unset, behavior is byte-identical to a project
+without the macro, so production runs are unaffected.
+
+A project that **already defines its own** `generate_schema_name` must not
+replace it — dbt prefers the project's macro over any packaged one anyway. Add
+the override as the first branch and keep the existing logic below it:
+
+```sql
+{% macro generate_schema_name(custom_schema_name, node) -%}
+    {%- set override = env_var('DBT_TARGET_SCHEMA', '') -%}
+    {%- if override | length > 0 -%}
+        {{ override }}
+    {%- else -%}
+        {# the project's existing schema logic, unchanged #}
+    {%- endif -%}
+{%- endmacro %}
+```
+
+The walkthrough in
+[docs/run-projects-in-continuo.md](../docs/run-projects-in-continuo.md) covers
+this case, including the caveat that a project already using a `DBT_TARGET_SCHEMA`
+env var for another purpose must rename one of the two.
 
 ## Base image
 

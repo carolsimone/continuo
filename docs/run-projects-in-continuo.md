@@ -101,6 +101,38 @@ The full contract, including the `generate_schema_name` macro each project
 carries, is in
 [deploy/dbt-image-contract.md](../deploy/dbt-image-contract.md).
 
+### If your project already has its own `generate_schema_name`
+
+The four demo projects each ship Continuo's `generate_schema_name` verbatim, so
+you never meet this problem here. A real project often already defines its own —
+a custom schema layout is one of the most common dbt overrides. dbt uses **the
+project's** macro over any packaged one, so dropping Continuo's file in next to
+yours does nothing: yours still wins, and validation would materialize into your
+production-computed schema instead of the isolated candidate schema.
+
+Do not replace your macro. Add Continuo's branch as the **first** check and
+leave your existing logic untouched below it:
+
+```jinja
+{% macro generate_schema_name(custom_schema_name, node) -%}
+    {%- set override = env_var('DBT_TARGET_SCHEMA', '') -%}
+    {%- if override | length > 0 -%}
+        {{ override }}
+    {%- else -%}
+        {# your existing schema logic, unchanged #}
+    {%- endif -%}
+{%- endmacro %}
+```
+
+`DBT_TARGET_SCHEMA` is set only on Continuo's validation leg. On your production
+runs it is unset, control falls straight through to your logic, and your output
+is byte-identical to today — you are only teaching the macro one new rule: *when
+this variable is set, honour it.*
+
+💡 The one thing to check: if you already use an env var named
+`DBT_TARGET_SCHEMA` for your own purposes, rename one of them so the two don't
+collide.
+
 ---
 
 ## 2. Build the images and load them into the cluster
