@@ -202,8 +202,12 @@ func promoteToProduction(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipe
 		Changed           bool     `json:"changed"`
 		OriginalFilePath  string   `json:"original_file_path"`
 	}
-	wireTopo := make([]promotedNodeWire, len(promotedTopo))
-	for i, n := range promotedTopo {
+	// Tests are validation-only: current_prod keeps them so an unchanged test
+	// is not re-checked next release, but the promoted topology the
+	// orchestrator draws and schedules never carries them.
+	publishedTopo := promotedTopo.WithoutTests()
+	wireTopo := make([]promotedNodeWire, len(publishedTopo))
+	for i, n := range publishedTopo {
 		wireTopo[i] = promotedNodeWire{
 			UniqueID:          n.UniqueID,
 			SchemaName:        n.SchemaName,

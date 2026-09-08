@@ -1057,6 +1057,53 @@ func indexNodesByUniqueID(t *testing.T, nodes []map[string]any) map[string]map[s
 	return out
 }
 
+// TestHandleParsedManifest_DbtTestGetsCheckBinds verifies a dbt-test node in
+// the changed closure gets validation_op check_binds with an empty
+// prod_schema — a test builds nothing, so it is neither build_from_sql/
+// build_from_columns nor clone_from_prod. "svc.m" is a changed model tested
+// by "test.p.not_null_m_id.1" (upstream svc.m alone); "test.p.rel.2" also
+// tests the relationship between svc.m and the UNCHANGED "svc.u" (upstreams
+// svc.m, svc.u), so both tests land in the changed closure as svc.m's
+// descendants while svc.u itself is pulled in only as an ancestor and stays
+// clone_from_prod.
+func TestHandleParsedManifest_DbtTestGetsCheckBinds(t *testing.T) {
+	deps, store := seedToParsing(t, "rel-test-op-1", map[string]string{"svc": "sha-svc"})
+
+	store.SeedCurrentProd(release.RehydrateCurrentProd("prev", release.Topology{
+		{UniqueID: "svc.u", ServiceName: "svc", NodeType: "dbt-model", SchemaName: "analytics", TableName: "u", ContentHash: "hash-u"},
+	}, time.Unix(50, 0).UTC()))
+
+	topo := release.Topology{
+		{UniqueID: "svc.m", ServiceName: "svc", NodeType: "dbt-model", SchemaName: "analytics", TableName: "m", ContentHash: "hash-m-NEW",
+			CandidateArtifactURI: "s3://c/m"},
+		{UniqueID: "svc.u", ServiceName: "svc", NodeType: "dbt-model", SchemaName: "analytics", TableName: "u", ContentHash: "hash-u"},
+		{UniqueID: "test.p.not_null_m_id.1", ServiceName: "svc", NodeType: "dbt-test",
+			UpstreamUniqueIDs: []string{"svc.m"}, CandidateArtifactURI: "s3://c/t1"},
+		{UniqueID: "test.p.rel.2", ServiceName: "svc", NodeType: "dbt-test",
+			UpstreamUniqueIDs: []string{"svc.m", "svc.u"}, CandidateArtifactURI: "s3://c/t2"},
+	}
+
+	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rel-test-op-1", Status: "ok", Topology: topo,
+	})
+	require.NoError(t, err)
+
+	nodes := decodeValidationRequestedNodes(t, store)
+	byID := indexNodesByUniqueID(t, nodes)
+
+	assert.Equal(t, "check_binds", byID["test.p.not_null_m_id.1"]["validation_op"])
+	assert.Equal(t, "", byID["test.p.not_null_m_id.1"]["prod_schema"])
+
+	assert.Equal(t, "check_binds", byID["test.p.rel.2"]["validation_op"])
+	assert.Equal(t, "", byID["test.p.rel.2"]["prod_schema"])
+
+	assert.Equal(t, "build_from_sql", byID["svc.m"]["validation_op"])
+	assert.Equal(t, "", byID["svc.m"]["prod_schema"])
+
+	assert.Equal(t, "clone_from_prod", byID["svc.u"]["validation_op"])
+	assert.Equal(t, "analytics", byID["svc.u"]["prod_schema"])
+}
+
 // TestHandleParsedManifest_NewSeedRoutesToSeedBuild verifies that when the
 // changed-closure contains at least one dbt-seed node, handleParseOK transitions
 // the release to SeedBuilding and emits seed.build.requested:v1 (seeds only),

@@ -1,5 +1,9 @@
 package release
 
+import (
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+)
+
 type Topology []Node
 
 type Node struct {
@@ -42,6 +46,21 @@ func (t Topology) WithoutCandidateArtifactURI() Topology {
 	for i, n := range t {
 		n.CandidateArtifactURI = ""
 		out[i] = n
+	}
+	return out
+}
+
+// WithoutTests returns a copy of the topology without dbt-test nodes. A test
+// is validation-only: it is bind-checked in the candidate schema and kept in
+// current_prod so an unchanged test is not re-checked next release, but it is
+// never published to the orchestrator, which schedules and draws relations.
+func (t Topology) WithoutTests() Topology {
+	out := make(Topology, 0, len(t))
+	for _, n := range t {
+		if n.NodeType == string(pkg_model.NodeTypeDbtTest) {
+			continue
+		}
+		out = append(out, n)
 	}
 	return out
 }

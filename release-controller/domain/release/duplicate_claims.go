@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // CollisionKind distinguishes what two or more claimants share.
@@ -119,6 +121,11 @@ func DuplicateClaims(candidate Topology) []DuplicateClaim {
 func relationCollisions(candidate Topology) []DuplicateClaim {
 	byRelation := make(map[string][]Claimant, len(candidate))
 	for _, n := range candidate {
+		// A test writes no relation to claim; its identity is still checked
+		// in identityCollisions.
+		if n.NodeType == string(pkg_model.NodeTypeDbtTest) {
+			continue
+		}
 		rel := effectiveRelation(n)
 		byRelation[rel] = append(byRelation[rel], claimantOf(n))
 	}
@@ -142,20 +149,37 @@ func relationCollisions(candidate Topology) []DuplicateClaim {
 // relation-homogeneous is exactly the case relationCollisions cannot see: the
 // same declared identity claimed under two different physical relations,
 // invisible to a check keyed on the relation alone.
+//
+// A dbt-test node is the one exception: relationCollisions never processes it
+// (a test writes no relation), so a group made of test claimants can never
+// have been "already reported" there, and the relation-homogeneity skip does
+// not apply to it — a shared test id is always reported here.
 func identityCollisions(candidate Topology) []DuplicateClaim {
 	byID := make(map[string][]Claimant, len(candidate))
 	relationsByID := make(map[string]map[string]bool, len(candidate))
+	// testByID marks a unique_id where at least one claimant is a dbt-test
+	// node. A test is skipped by relationCollisions (it writes no relation),
+	// so a shared test id can never already be reported there — the
+	// relation-homogeneity skip below, which exists only to avoid
+	// re-reporting what relationCollisions already caught, does not apply.
+	testByID := make(map[string]bool, len(candidate))
 	for _, n := range candidate {
 		byID[n.UniqueID] = append(byID[n.UniqueID], claimantOf(n))
 		if relationsByID[n.UniqueID] == nil {
 			relationsByID[n.UniqueID] = make(map[string]bool, 2)
 		}
 		relationsByID[n.UniqueID][effectiveRelation(n)] = true
+		if n.NodeType == string(pkg_model.NodeTypeDbtTest) {
+			testByID[n.UniqueID] = true
+		}
 	}
 
 	var out []DuplicateClaim
 	for id, claimants := range byID {
-		if len(claimants) < 2 || len(relationsByID[id]) < 2 {
+		if len(claimants) < 2 {
+			continue
+		}
+		if !testByID[id] && len(relationsByID[id]) < 2 {
 			continue
 		}
 		sortClaimants(claimants)

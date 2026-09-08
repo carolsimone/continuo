@@ -90,6 +90,10 @@ type NodeValidationResult struct {
 	// non-node legs (e.g. compile) where the failure maps to a file rather
 	// than a dbt node ID.
 	FilePath string `json:"file_path,omitempty"`
+	// NodeType is the node's kind as the candidate topology declares it, so a
+	// reader can tell a test's bind check from a model's build without the
+	// topology.
+	NodeType string `json:"node_type,omitempty"`
 }
 
 // Candidate holds the facts only a candidate release has: where its source
