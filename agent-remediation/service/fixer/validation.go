@@ -195,7 +195,11 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 	// Step 2 — real-source fix. Asks the LLM to apply the Step-1 diagnosis to
 	// the already-resolved candidate source. Degrades silently when the
 	// candidate source, the file path, the service mapping, or the LLM result
-	// is unavailable, or when the LLM did not improve the source.
+	// is unavailable, or when the LLM did not improve the source. Its note is
+	// what is stored as the rationale, because it describes the diff the
+	// reviewer sees; call 1's note describes the candidate diff and is stored
+	// only when call 2 did not resolve the source.
+	rationale := res.Rationale // call 1's note matches the candidate diff shown when call 2 does not resolve
 	if src, fullPath, ok := resolveValidationSource(ctx, svc, in, filePath, serviceName, candidateSource, res); ok {
 		edit, err := writeSourceArtifacts(ctx, svc, in, fullPath, src.original, src.corrected)
 		if err != nil {
@@ -204,12 +208,13 @@ func (validationFixer) Propose(ctx context.Context, svc Services, in Input) (Res
 		finalSQLURI, finalDiffURI, sourceResolved = edit.ContentURI, edit.DiffURI, true
 		resolvedFilePath = fullPath
 		edits = []proposal.FileEdit{edit}
+		rationale = src.note // the note of the call that produced the source diff
 	}
 
 	p := proposal.Proposal{
 		Status:              proposal.StatusProposed,
 		Confidence:          normalizeConfidence(res.Confidence),
-		Rationale:           res.Rationale,
+		Rationale:           rationale,
 		ProposedSQLURI:      finalSQLURI,
 		DiffURI:             finalDiffURI,
 		CandidateFixSQLURI:  candSQLURI,
@@ -301,9 +306,10 @@ func resolveCandidateSource(ctx context.Context, svc Services, in Input, filePat
 	return content, "github", nil
 }
 
-// resolvedValidationSource holds the original model source and the Step-2
-// corrected version produced by the LLM.
-type resolvedValidationSource struct{ original, corrected string }
+// resolvedValidationSource holds the original model source, the Step-2
+// corrected version produced by the LLM, and the note that same call gave
+// for its edit.
+type resolvedValidationSource struct{ original, corrected, note string }
 
 // resolveValidationSource performs Step 2: ask the LLM to apply the Step-1
 // diagnosis to candidateSource, the failing node's source already resolved by
@@ -349,5 +355,5 @@ func resolveValidationSource(ctx context.Context, svc Services, in Input, filePa
 			"node", in.NodeID)
 		return resolvedValidationSource{}, "", false
 	}
-	return resolvedValidationSource{original: candidateSource, corrected: out.ProposedSQL}, fullPath, true
+	return resolvedValidationSource{original: candidateSource, corrected: out.ProposedSQL, note: out.Rationale}, fullPath, true
 }

@@ -83,7 +83,7 @@ func AssembleUpstreamFix(ev UpstreamEvidence) ProposeRequest {
 		ToolDescription: "Return the corrected SQL of the changed upstream model.",
 		ToolParams: []ToolParam{
 			{Name: "proposed_sql", Type: "string", Description: "The complete corrected SQL for the upstream model.", Required: true},
-			{Name: "rationale", Type: "string", Description: "A short explanation of the fix. Do not include warehouse data values.", Required: true},
+			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 		},
 	}

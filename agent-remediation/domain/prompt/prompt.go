@@ -131,7 +131,7 @@ func AssembleSourceFix(originalSource, nodeID, diagnosis string) ProposeRequest 
 		ToolDescription: "Return the complete corrected source for the dbt model.",
 		ToolParams: []ToolParam{
 			{Name: "proposed_sql", Type: "string", Description: "The complete corrected model source.", Required: true},
-			{Name: "rationale", Type: "string", Description: "A short explanation of the change. No warehouse data values.", Required: true},
+			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 		},
 	}
@@ -272,7 +272,7 @@ func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []P
 		ToolParams: []ToolParam{
 			{Name: "target_file", Type: "string", Description: "The path of the file to change; must be one of the files shown.", Required: true},
 			{Name: "proposed_content", Type: "string", Description: "The complete corrected content of target_file.", Required: true},
-			{Name: "rationale", Type: "string", Description: "A short explanation of the change. No warehouse data values.", Required: true},
+			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 			{Name: "suspected_root_cause_node", Type: "string", Description: "Optional: the upstream node id you believe caused the failure, or empty.", Required: false},
 		},
@@ -304,7 +304,7 @@ func AssembleSeedFix(csvPath, csvContent, dbtLog, nodeID string, precedents []Pr
 		ToolDescription: "Return the complete corrected seed CSV.",
 		ToolParams: []ToolParam{
 			{Name: "proposed_content", Type: "string", Description: "The complete corrected CSV content.", Required: true},
-			{Name: "rationale", Type: "string", Description: "A short explanation. No warehouse data values.", Required: true},
+			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high. Use low when the bad value cannot be inferred.", Required: true},
 		},
 	}
@@ -349,7 +349,7 @@ func AssembleDuplicateTableFix(file NamedFile, relationID, otherService, otherFi
 		ToolParams: []ToolParam{
 			{Name: "target_file", Type: "string", Description: "The path of the file to change; must be the file shown.", Required: true},
 			{Name: "proposed_content", Type: "string", Description: "The complete corrected content of target_file.", Required: true},
-			{Name: "rationale", Type: "string", Description: "A short explanation of the change. No warehouse data values.", Required: true},
+			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 		},
 	}
@@ -392,7 +392,7 @@ func Assemble(ev Evidence) ProposeRequest {
 		ToolDescription: "Propose a corrected version of the failed dbt model's SQL.",
 		ToolParams: []ToolParam{
 			{Name: "proposed_sql", Type: "string", Description: "The complete corrected SQL for the failed model.", Required: true},
-			{Name: "rationale", Type: "string", Description: "A short explanation of the fix. Do not include warehouse data values.", Required: true},
+			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 			{Name: "suspected_root_cause_node", Type: "string", Description: "Optional: the upstream node id you believe caused the failure, or empty.", Required: false},
 		},

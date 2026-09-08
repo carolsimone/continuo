@@ -1103,3 +1103,39 @@ func TestValidation_SaysNothingUpstreamChangedWhenTheTriggerListsNone(t *testing
 
 	assert.Contains(t, llm.requests[0].User, "No upstream of "+in.NodeID+" changed in this release.")
 }
+
+// TestValidation_RationaleIsTheSourceFixCallsNote: the note stored beside the
+// source diff is what the call that PRODUCED that diff said (call 2), never
+// call 1's diagnosis of the compiled candidate SQL.
+func TestValidation_RationaleIsTheSourceFixCallsNote(t *testing.T) {
+	svc := validationSvc()
+	llm := &fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "SELECT 1 -- candidate", Rationale: "call 1 diagnosis", Confidence: "high"},
+		{ProposedSQL: "SELECT 1 -- source", Rationale: "call 2 note", Confidence: "high"},
+	}}
+	svc.LLM = llm
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	require.NoError(t, err)
+
+	require.True(t, r.Proposal.SourceResolved)
+	assert.Equal(t, "call 2 note", r.Proposal.Rationale)
+	assert.NotContains(t, r.Proposal.Rationale, "call 1")
+}
+
+// When call 2 does not resolve the source, the diff shown is call 1's
+// candidate diff, and call 1's note is the one that matches it.
+func TestValidation_RationaleFallsBackToCallOneWhenSourceUnresolved(t *testing.T) {
+	svc := validationSvc()
+	llm := &fakeLLM{queue: []ports.ProposeResult{
+		{ProposedSQL: "SELECT 1 -- candidate", Rationale: "call 1 diagnosis", Confidence: "high"},
+		{ProposedSQL: "SELECT 0 -- bundle", Rationale: "call 2 note", Confidence: "high"}, // unchanged source: call 2 declines
+	}}
+	svc.LLM = llm
+
+	r, err := validationFixer{}.Propose(context.Background(), svc, validationInput())
+	require.NoError(t, err)
+
+	require.False(t, r.Proposal.SourceResolved)
+	assert.Equal(t, "call 1 diagnosis", r.Proposal.Rationale)
+}
