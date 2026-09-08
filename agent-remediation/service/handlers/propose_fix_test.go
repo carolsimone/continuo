@@ -2186,3 +2186,34 @@ func TestProposeFix_CrossService_UnfixableAncestorSkipsTheMembers(t *testing.T) 
 	assert.Contains(t, p.NodeOutcomes["s.report"].Reason, "cannot ship before it")
 	assert.Empty(t, gw.submitted)
 }
+
+// TestProposeFix_RationaleIsComposedFromFacts: the stored rationale names the
+// failure, states that nothing upstream changed, names the edit, and carries
+// the model's line under its label — not the model's text alone.
+func TestProposeFix_RationaleIsComposedFromFacts(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{"s3://b/log": "relation public.wrong_name does not exist", "s3://b/sql": "select 1",
+		"s3://art/proposed-fix/r1/s.n/attempt-1.source.sql": "select 2"}}
+	llm := newFakeLLM(ports.ProposeResult{ProposedSQL: "select 2", Rationale: "upstream renamed amount to amount_eur", Confidence: "high", Model: "m"}, nil)
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "tag-1"}
+	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
+	d.Releases = gw
+	// A resolvable real source is required for the validation fixer's Step 2
+	// to produce a source edit rather than degrade to the candidate-only
+	// proposal (see TestProposeFix_HappyPath), which is what this test's
+	// rationale-from-facts assertions need on the wire.
+	d.CandidateSource = fakeCandidateSource{src: ports.CandidateSource{RawCode: "select 1", Runtime: ports.RuntimeDbt}}
+	tr := baseTrigger()
+	tr.Nodes[0].ErrorExcerpt = "relation public.wrong_name does not exist"
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+
+	p := u.pr.inserted[0]
+	assert.Contains(t, p.Rationale, "Failed: `s.n` (service svc): relation public.wrong_name does not exist\n")
+	assert.Contains(t, p.Rationale, "No upstream of `s.n` changed in this release.\n")
+	assert.Contains(t, p.Rationale, "Edited: `services/svc/models/n.sql` (repairs `s.n`)\n")
+	assert.Contains(t, p.Rationale, "Model's note: upstream renamed amount to amount_eur")
+	assert.NotEqual(t, "s.n: upstream renamed amount to amount_eur", p.Rationale)
+}
