@@ -17,20 +17,28 @@ def _model(name):
     }
 
 
+def _test(name, *, attached=None, targets, compiled="select 1"):
+    return {
+        "resource_type": "test", "name": name, "schema": "analytics_dbt_test__audit",
+        "fqn": ["svc_a", name], "attached_node": attached,
+        "depends_on": {"nodes": targets, "macros": []},
+        "original_file_path": "models/schema.yml", "config": {},
+        "checksum": {"checksum": ""}, "compiled_code": compiled,
+    }
+
+
 def test_test_count_counts_generic_and_singular(tmp_path):
     manifest = {"macros": {}, "nodes": {
         "model.svc_a.orders": _model("orders"),
         "model.svc_a.customers": _model("customers"),
         # generic test attached via attached_node
-        "test.svc_a.not_null_orders_id": {
-            "resource_type": "test", "attached_node": "model.svc_a.orders",
-            "depends_on": {"nodes": ["model.svc_a.orders"]},
-        },
+        "test.svc_a.not_null_orders_id": _test(
+            "not_null_orders_id", attached="model.svc_a.orders", targets=["model.svc_a.orders"],
+        ),
         # singular test attached via depends_on only
-        "test.svc_a.assert_orders_positive": {
-            "resource_type": "test",
-            "depends_on": {"nodes": ["model.svc_a.orders"]},
-        },
+        "test.svc_a.assert_orders_positive": _test(
+            "assert_orders_positive", targets=["model.svc_a.orders"],
+        ),
     }}
     parsed, _ = parse_manifest(_write(tmp_path, manifest), "v1")
     nodes = {n.table_name: n for n in parsed}
@@ -46,11 +54,10 @@ def test_relationships_test_counts_once_via_attached_node(tmp_path):
     manifest = {"macros": {}, "nodes": {
         "model.svc_a.orders": _model("orders"),
         "model.svc_a.customers": _model("customers"),
-        "test.svc_a.relationships_orders_customer_id": {
-            "resource_type": "test",
-            "attached_node": "model.svc_a.orders",
-            "depends_on": {"nodes": ["model.svc_a.orders", "model.svc_a.customers"]},
-        },
+        "test.svc_a.relationships_orders_customer_id": _test(
+            "relationships_orders_customer_id", attached="model.svc_a.orders",
+            targets=["model.svc_a.orders", "model.svc_a.customers"],
+        ),
     }}
     parsed, _ = parse_manifest(_write(tmp_path, manifest), "v1")
     nodes = {n.table_name: n for n in parsed}
