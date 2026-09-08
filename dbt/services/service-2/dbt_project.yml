@@ -60,3 +60,11 @@ models:
       +tags: ["e2e-remediation-batch"]
     ftable_w:
       +tags: ["e2e-remediation-batch"]
+    # tbind / tbind_ok exist for the dbt-test bind-check e2e. tbind's tests
+    # name amount_eur, a column the model does not emit, so the tests fail to
+    # bind while the model itself validates; tbind_ok's test binds. Their own
+    # tag keeps them off every shared schedule.
+    tbind:
+      +tags: ["e2e-tests-bind"]
+    tbind_ok:
+      +tags: ["e2e-tests-bind"]
