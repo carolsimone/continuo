@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -260,6 +261,47 @@ func TestBuildValidationPodSpec_BuildFromColumns_EmptyURIFailsPermanently(t *tes
 	require.Error(t, err)
 	assert.ErrorIs(t, err, events.ErrPermanent)
 	assert.Contains(t, err.Error(), "candidate_artifact_uri missing from build_from_columns")
+}
+
+// TestBuildValidationPodSpec_CheckBindsCarriesTheCandidateSQL verifies dbt-test
+// nodes (VALIDATION_OP=check_binds) get the same single-container, S3-fetch shape
+// as build_from_sql: CANDIDATE_SQL_URI + S3 credentials on the main container, no
+// CANDIDATE_SPEC_URI (that env belongs to build_from_columns).
+func TestBuildValidationPodSpec_CheckBindsCarriesTheCandidateSQL(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
+	p := validationParams()
+	p.ValidationOp = "check_binds"
+	p.NodeID = "test.service_2.not_null_tbind_amount_eur.a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"
+	p.CandidateArtifactURI = "s3://b/candidate-sql/rel/candidate_test.sql"
+
+	spec, err := buildValidationPodSpec(p)
+	require.NoError(t, err)
+
+	env := envMap(spec.Containers[0].Env)
+	assert.Equal(t, "check_binds", env["VALIDATION_OP"])
+	assert.Equal(t, "s3://b/candidate-sql/rel/candidate_test.sql", env["CANDIDATE_SQL_URI"])
+	assert.NotContains(t, env, "CANDIDATE_SPEC_URI")
+	assert.Len(t, spec.Containers, 1)
+}
+
+// TestBuildValidationPodSpec_CheckBindsRequiresTheArtifact mirrors the
+// build_from_sql empty-URI guard: a check_binds node with no CandidateArtifactURI
+// can never succeed (there is no SQL to EXPLAIN), so it fails permanently.
+func TestBuildValidationPodSpec_CheckBindsRequiresTheArtifact(t *testing.T) {
+	p := validationParams()
+	p.ValidationOp = "check_binds"
+	p.CandidateArtifactURI = ""
+
+	_, err := buildValidationPodSpec(p)
+	require.ErrorIs(t, err, events.ErrPermanent)
+}
+
+// TestSanitizeK8sLabel_DbtTestIDIsValid verifies that a dbt test's node id — long
+// and dotted — still sanitizes into a valid Kubernetes label value.
+func TestSanitizeK8sLabel_DbtTestIDIsValid(t *testing.T) {
+	id := "test.service_2.relationships_tbind_customer_id__id__ref_customers_.9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+	got := sanitizeK8sLabel(id)
+	assert.Empty(t, validation.IsValidLabelValue(got), "sanitized %q is not a valid label value", got)
 }
 
 func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {

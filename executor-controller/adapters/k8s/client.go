@@ -393,14 +393,16 @@ func buildValidationPodSpec(p ValidationJobParams) (corev1.PodSpec, error) {
 			Containers:      []corev1.Container{mainContainer},
 		}, nil
 
-	case "build_from_sql":
-		// The validation container fetches its own compiled SQL from S3 (boto3) and
-		// builds it WITH NO DATA — no sidecar, no shared emptyDir. CandidateArtifactURI must
-		// be set: changed models/snapshots always carry one; nodes without candidate SQL
-		// (unchanged upstreams, seeds) use clone_from_prod.
+	case "build_from_sql", "check_binds":
+		// The validation container fetches its own compiled SQL from S3 (boto3).
+		// build_from_sql builds it WITH NO DATA; check_binds — a dbt test's bind
+		// check — only EXPLAINs the SQL and creates nothing. Either way there is no
+		// sidecar and no shared emptyDir, and CandidateArtifactURI must be set:
+		// changed models, snapshots, and tests always carry one; nodes without
+		// candidate SQL (unchanged upstreams, seeds) use clone_from_prod.
 		if p.CandidateArtifactURI == "" {
-			return corev1.PodSpec{}, fmt.Errorf("%w: candidate_artifact_uri missing from build_from_sql validation job params for node %s",
-				events.ErrPermanent, p.NodeID)
+			return corev1.PodSpec{}, fmt.Errorf("%w: candidate_artifact_uri missing from %s validation job params for node %s",
+				events.ErrPermanent, op, p.NodeID)
 		}
 		mainContainer.Env = append(mainContainer.Env, corev1.EnvVar{Name: "CANDIDATE_SQL_URI", Value: p.CandidateArtifactURI})
 		mainContainer.Env = append(mainContainer.Env, s3CredEnvVars()...)
