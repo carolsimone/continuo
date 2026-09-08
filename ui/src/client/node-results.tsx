@@ -71,20 +71,29 @@ export function NodeResultsTable({ perNode, fixCell }: {
               <tr><th>Node</th><th>Status</th><th>Duration</th><th>Log</th>{fixCell && <th>Fix</th>}</tr>
             </thead>
             <tbody>
-              {nodes.map(n => (
-                <tr key={proposalKey(stage, n.node_id)}>
-                  <td>
-                    <div className="nodes-node-name">{n.node_id}</div>
-                    {n.file_path && <div className="nodes-node-subpath">{n.file_path}</div>}
-                  </td>
-                  <td>
-                    <span className={`pill-sm ${releasePillClass(n.status).replace('pill--', 'pill-sm--')}`}>{n.status}</span>
-                  </td>
-                  <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
-                  <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
-                  {fixCell && <td>{fixCell(stage, n)}</td>}
-                </tr>
-              ))}
+              {nodes.map(n => {
+                const isTest = n.node_type === 'dbt-test';
+                const statusWord = isTest
+                  ? (n.status === 'ok' ? 'binds' : n.status === 'failed' ? 'does not bind' : n.status)
+                  : n.status;
+                return (
+                  <tr key={proposalKey(stage, n.node_id)}>
+                    <td>
+                      <div className="nodes-node-name">
+                        {n.node_id}
+                        {isTest && <span className="pill-sm pill-sm--muted">test</span>}
+                      </div>
+                      {n.file_path && <div className="nodes-node-subpath">{n.file_path}</div>}
+                    </td>
+                    <td>
+                      <span className={`pill-sm ${releasePillClass(n.status).replace('pill--', 'pill-sm--')}`}>{statusWord}</span>
+                    </td>
+                    <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
+                    <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
+                    {fixCell && <td>{fixCell(stage, n)}</td>}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

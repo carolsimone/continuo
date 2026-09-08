@@ -43,4 +43,33 @@ describe('NodeResultsTable', () => {
     const dashes = screen.getAllByText('—');
     expect(dashes.length).toBe(2);
   });
+
+  it('labels a dbt-test row and words its failure as "does not bind", leaving a model row as ok', () => {
+    render(<NodeResultsTable perNode={[
+      node({
+        node_id: 'test.service_2.not_null_tbind_amount_eur.9f',
+        status: 'failed',
+        node_type: 'dbt-test',
+        stage: 'validation',
+      }),
+      node({ node_id: 'e2e_schema.tbind', status: 'ok', node_type: 'dbt-model', stage: 'validation' }),
+    ]} />);
+    expect(screen.getByText('test')).toBeInTheDocument();
+    expect(screen.getByText('does not bind')).toBeInTheDocument();
+    expect(screen.getByText('ok')).toBeInTheDocument();
+    expect(screen.queryByText('failed')).toBeNull();
+  });
+
+  it('words a passing dbt-test row as "binds"', () => {
+    render(<NodeResultsTable perNode={[
+      node({
+        node_id: 'test.service_2.not_null_tbind_amount_eur.9f',
+        status: 'ok',
+        node_type: 'dbt-test',
+        stage: 'validation',
+      }),
+    ]} />);
+    expect(screen.getByText('test')).toBeInTheDocument();
+    expect(screen.getByText('binds')).toBeInTheDocument();
+  });
 });
