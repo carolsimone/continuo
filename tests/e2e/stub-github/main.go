@@ -162,6 +162,7 @@ var (
 type stubPRState struct {
 	Number         int
 	Title          string
+	Body           string
 	Head           string
 	Base           string
 	CreatedAt      string
@@ -773,6 +774,7 @@ func handlePulls(w http.ResponseWriter, r *http.Request) {
 	case after == "" && r.Method == http.MethodPost:
 		var body struct {
 			Title string `json:"title"`
+			Body  string `json:"body"`
 			Head  string `json:"head"`
 			Base  string `json:"base"`
 		}
@@ -784,6 +786,7 @@ func handlePulls(w http.ResponseWriter, r *http.Request) {
 		st := &stubPRState{
 			Number:    n,
 			Title:     body.Title,
+			Body:      body.Body,
 			Head:      body.Head,
 			Base:      body.Base,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -908,6 +911,7 @@ func pullJSON(st *stubPRState) map[string]interface{} {
 	return map[string]interface{}{
 		"number":           st.Number,
 		"title":            st.Title,
+		"body":             st.Body,
 		"state":            state,
 		"merged":           st.Merged,
 		"merged_at":        mergedAt,

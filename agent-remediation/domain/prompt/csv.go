@@ -99,7 +99,7 @@ func AssembleCsvContractFix(ev CsvEvidence) ProposeRequest {
 					{Name: "content", Type: "string", Description: "The complete new content of that file."},
 				},
 			},
-			{Name: "rationale", Type: "string", Description: "A short explanation of the change. No warehouse data values.", Required: true},
+			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
 			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
 		},
 	}

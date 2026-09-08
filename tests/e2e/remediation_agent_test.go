@@ -181,6 +181,15 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	require.Equal(t, "validation", proposed.Source, "source must be 'validation'")
 	t.Logf("%s received: confidence=%s sql_uri=%s", streams.RemediationProposedV1, proposed.Confidence, proposed.ProposedSQLURI)
 
+	// The rationale is facts first: what failed, that nothing upstream of it
+	// changed, what was edited — and the model's claim about a rename that
+	// never happened sits last, under its own label.
+	require.Contains(t, proposed.Rationale, "Failed: `"+ftableEUniqueID+"`")
+	require.Contains(t, proposed.Rationale, "No upstream of `"+ftableEUniqueID+"` changed in this release.")
+	require.Contains(t, proposed.Rationale, "Edited: `services/service-2/models/ftable_e.sql`")
+	require.Contains(t, proposed.Rationale, "Model's note: upstream renamed amount to amount_eur")
+	require.Less(t, strings.Index(proposed.Rationale, "Failed:"), strings.Index(proposed.Rationale, "Model's note:"))
+
 	// (b) Assert a proposal row in continuo_agent_remediation.
 	var row proposalRow
 	pollUntil(t, ctx, 30*time.Second, 1*time.Second, func() (bool, error) {
@@ -283,6 +292,18 @@ func TestE2E_AgentRemediation_ProposesFixForRejection(t *testing.T) {
 	// guaranteed here, not a specific value.
 	require.Greater(t, pr.PRNumber, 0, "pr_number must be a positive stub-github PR number")
 	t.Logf("PR created: service=%s pr_url=%s pr_number=%d", pr.Service, pr.PRUrl, pr.PRNumber)
+
+	// (g2) The pull request body shows the diff before the prose: stub-github
+	//      keeps the body posted at creation, and buildPullRequestBody (ui)
+	//      renders "### Changes" ahead of "### Rationale".
+	var repoForProposal string
+	require.NoError(t, clients.agentRemediationDB.GetContext(ctx, &repoForProposal,
+		`SELECT repo FROM proposal WHERE id = $1`, proposalID))
+	stubPR := fetchStubPullRequest(t, ctx, repoForProposal, pr.PRNumber)
+	changesAt := strings.Index(stubPR.Body, "### Changes")
+	rationaleAt := strings.Index(stubPR.Body, "### Rationale")
+	require.Greater(t, changesAt, -1, "the PR body carries the diff; body=%q", stubPR.Body)
+	require.Greater(t, rationaleAt, changesAt, "the diff comes before the rationale; body=%q", stubPR.Body)
 
 	// (h) Idempotency: a second POST to the same endpoint must not create a
 	//     second PR. The service's claim is now 'open', so beginPullRequest CAS

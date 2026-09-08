@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestAssembleSourceFix_EmbedsSourceAndDiagnosis(t *testing.T) {
@@ -483,5 +485,30 @@ func TestAssemble_OmitsTheReleaseUpstreamSectionWhenUnknown(t *testing.T) {
 	req := Assemble(Evidence{NodeID: "analytics.report", CandidateSQL: "select 1", DBTLog: "err"})
 	if strings.Contains(req.User, "changed in this release") {
 		t.Fatalf("a lane that cannot know must not claim nothing changed:\n%s", req.User)
+	}
+}
+
+// Every lane asks the model for one sentence about its edit, not a cause: the
+// cause is composed by the service from facts it holds.
+func TestEveryLane_AsksForANoteNotACause(t *testing.T) {
+	reqs := []ProposeRequest{
+		Assemble(Evidence{NodeID: "n", CandidateSQL: "select 1", DBTLog: "e"}),
+		AssembleSourceFix("select 1", "n", "diag"),
+		AssembleCompileFix([]NamedFile{{Path: "models/a.sql", Content: "select 1"}}, "log", "svc", nil),
+		AssembleSeedFix("seeds/a.csv", "id\n1", "log", "svc", nil),
+		AssembleDuplicateTableFix(NamedFile{Path: "models/a.sql", Content: "select 1"}, "s.t", "other", "models/b.sql", nil),
+		AssembleUpstreamFix(UpstreamEvidence{TargetNodeID: "u", TargetSource: "select 1"}),
+		AssemblePythonContractFix(PythonEvidence{}),
+		AssembleCsvContractFix(CsvEvidence{}),
+	}
+	for _, req := range reqs {
+		var found bool
+		for _, p := range req.ToolParams {
+			if p.Name == "rationale" {
+				found = true
+				assert.Equal(t, "One sentence describing the change you made. No warehouse data values.", p.Description, req.ToolName)
+			}
+		}
+		assert.True(t, found, "every lane's tool carries a rationale parameter: %s", req.ToolDescription)
 	}
 }

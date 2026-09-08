@@ -225,9 +225,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 				contracts[service] = out.contract
 			}
 		}
-		if out.rationale != "" {
-			rationales = append(rationales, c.TargetNodeID+": "+out.rationale)
-		}
+		rationales = append(rationales, proposal.ComposeRationale(rationaleFactsFor(t, c, out)))
 		if confidence == "" || confidenceRank(out.confidence) < confidenceRank(confidence) {
 			confidence = out.confidence
 		}
@@ -250,7 +248,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 			Status:          settledStatus(outcomes),
 			ResolvedNodeIDs: nodeIDs,
 			NodeOutcomes:    outcomes,
-			Rationale:       strings.Join(rationales, "\n"),
+			Rationale:       strings.Join(rationales, "\n\n"),
 			Model:           model,
 		})
 	}
@@ -283,7 +281,7 @@ func ProposeFix(ctx context.Context, deps Deps, t Trigger) error {
 		Verifications:   verifications,
 		Edits:           edits,
 		Confidence:      confidence,
-		Rationale:       strings.Join(rationales, "\n"),
+		Rationale:       strings.Join(rationales, "\n\n"),
 		Model:           model,
 		SourceResolved:  sourceResolved,
 		Repo:            t.Repo,
@@ -374,7 +372,8 @@ type clusterOutcome struct {
 	contract []byte
 	status   proposal.Status
 	// reason explains a non-proposed status to the operator; rationale is the
-	// model's account of a proposed fix.
+	// model's one-line note about a proposed fix, composed into the attempt's
+	// rationale with the facts around it.
 	reason         string
 	rationale      string
 	model          string

@@ -76,6 +76,18 @@ const expandGroupByNodes = (nodesText: string) => fireEvent.click(screen.getByTe
 // an unambiguous handle for opening a single non-actionable attempt.
 const openAttemptByConfidence = (confidence = 'high') => fireEvent.click(screen.getByText(confidence));
 
+// mockFetch answers DiffView's GET against /api/releases/log?key=<uri> with
+// body whenever the requested url matches pattern, and an empty 200
+// otherwise; DiffView is the component's only caller of the global fetch.
+function mockFetch(pattern: RegExp, body: string) {
+  global.fetch = vi.fn((url: string) => {
+    if (pattern.test(String(url))) {
+      return Promise.resolve({ ok: true, text: () => Promise.resolve(body) });
+    }
+    return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+  }) as unknown as typeof fetch;
+}
+
 describe('RemediationPanel — group list', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -315,7 +327,8 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     expect(screen.getByText(/No real-source fix — a PR cannot be opened for this proposal/)).toBeInTheDocument();
   });
 
-  it('shows the diff view/hide toggle in the attempt card', async () => {
+  it('shows the diff view/hide toggle in the attempt card, open by default', async () => {
+    mockFetch(/\/api\/releases\/log/, '');
     const proposal = makeProposal({ status: 'skipped', diff_uri: 's3://bucket/my.patch' });
     mockFetchProposals.mockResolvedValue([proposal]);
 
@@ -324,11 +337,15 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     expandGroupByNodes('svc.schema.my_model');
     openAttemptByConfidence();
 
-    expect(screen.getByRole('button', { name: /^view$/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /open full ↗/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^hide$/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^hide$/i }));
+    expect(screen.getByRole('button', { name: /^view$/i })).toBeInTheDocument();
   });
 
   it('renders one labelled diff view per edit when the proposal carries edits', async () => {
+    mockFetch(/\/api\/releases\/log/, '');
     const proposal = makeProposal({
       status: 'skipped',
       diff_uri: 's3://bucket/legacy.patch',
@@ -346,7 +363,9 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
 
     expect(screen.getByText('contracts/a.yml')).toBeInTheDocument();
     expect(screen.getByText('scripts/a.py')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /^view$/i })).toHaveLength(2);
+    // The first edit's diff opens by default; the rest stay one click away.
+    expect(screen.getByRole('button', { name: /^hide$/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^view$/i })).toHaveLength(1);
 
     const links = screen.getAllByRole('link', { name: /open full ↗/i });
     expect(links).toHaveLength(2);
@@ -356,6 +375,7 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
   });
 
   it('falls back to the single unlabelled diff view when the proposal carries no edits', async () => {
+    mockFetch(/\/api\/releases\/log/, '');
     const proposal = makeProposal({ status: 'skipped', diff_uri: 's3://bucket/candidate.patch', edits: [] });
     mockFetchProposals.mockResolvedValue([proposal]);
 
@@ -367,6 +387,44 @@ describe('RemediationPanel — expanding a group and its attempts', () => {
     const links = screen.getAllByRole('link', { name: /open full ↗/i });
     expect(links).toHaveLength(1);
     expect(links[0].getAttribute('href')).toContain(encodeURIComponent('s3://bucket/candidate.patch'));
+  });
+
+  it('renders the first edit diff open and above the rationale', async () => {
+    mockFetch(/\/api\/releases\/log/, '--- a\n+++ b\n-select amount\n+select amount_eur');
+    const proposal = makeProposal({
+      status: 'skipped',
+      rationale: 'Failed: `svc.schema.my_model`\nModel\'s note: read amount_eur',
+      edits: [
+        { path: 'models/a.sql', content_uri: 's3://bucket/a.sql', diff_uri: 's3://bucket/a.diff' },
+        { path: 'models/b.sql', content_uri: 's3://bucket/b.sql', diff_uri: 's3://bucket/b.diff' },
+      ],
+    });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+    openAttemptByConfidence();
+
+    const firstDiff = await screen.findByText(/\+select amount_eur/);
+    const rationale = screen.getByText(/Model's note: read amount_eur/);
+    expect(firstDiff.compareDocumentPosition(rationale) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^hide$/i })).toBeInTheDocument();   // first edit open
+    expect(screen.getAllByRole('button', { name: /^view$/i })).toHaveLength(1);    // second edit collapsed
+  });
+
+  it('keeps the rationale line breaks', async () => {
+    const proposal = makeProposal({ status: 'skipped', rationale: 'Failed: `x`\nEdited: `p`' });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanel();
+    await waitFor(() => screen.getByText('svc.schema.my_model'));
+    expandGroupByNodes('svc.schema.my_model');
+    openAttemptByConfidence();
+
+    const el = screen.getByText(/Failed: `x`/);
+    expect(el.tagName).toBe('PRE');
+    expect(el.textContent).toContain('\nEdited: `p`');
   });
 
   it('the attempt row within an expanded group carries the button role, the group row above it too', async () => {
