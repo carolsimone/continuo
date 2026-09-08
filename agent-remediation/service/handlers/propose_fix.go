@@ -31,6 +31,7 @@ import (
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	"github.com/carolsimone/continuo/agent-remediation/service/promptlog"
 	"github.com/carolsimone/continuo/agent-remediation/service/uow"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/messageprocessing"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -437,6 +438,13 @@ func fixCluster(ctx context.Context, deps Deps, svc fixer.Services, t Trigger, c
 	node, ok := nodeByID(t, c.TargetNodeID)
 	if !ok {
 		return clusterOutcome{}, fmt.Errorf("cluster targets node %q, which the trigger does not carry", c.TargetNodeID)
+	}
+	if node.NodeType == string(pkg_model.NodeTypeDbtTest) {
+		// A test is validation evidence, never a fix target: a model fix that
+		// makes it bind again resolves it in verification, and a test that is
+		// itself wrong is a human's edit.
+		return clusterOutcome{status: proposal.StatusSkipped,
+			reason: "dbt tests are not fix targets; fix the model or edit the test by hand"}, nil
 	}
 	fx, err := fixer.For(t.Source, node.NodeType)
 	if err != nil {
