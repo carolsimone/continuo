@@ -1462,6 +1462,9 @@ a.release-author:hover { text-decoration: underline; }
   margin: 0 0 12px;
   font-size: 13px;
   color: #374151;
+  white-space: pre-wrap;
+  font: inherit;
+  margin: 0;
 }
 
 .detail-card__row {

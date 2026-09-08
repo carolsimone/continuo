@@ -12,22 +12,27 @@ import CreatePrModal from './CreatePrModal';
 
 // DiffView mirrors the LogView component in ReleaseDetailPage: toggle view/hide,
 // fetch content from /api/releases/log?key=<uri>, and link out to the full source.
-function DiffView({ uri }: { uri: string }) {
-  const [open, setOpen] = useState(false);
+// The first edit of a proposal opens by default — the diff is what a
+// reviewer judges first — and the rest stay one click away.
+function DiffView({ uri, defaultOpen = false }: { uri: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const [content, setContent] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const logUrl = `/api/releases/log?key=${encodeURIComponent(uri)}`;
 
+  const load = () => {
+    setErr(null);
+    fetch(logUrl)
+      .then(r => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(setContent)
+      .catch(e => setErr(e.message));
+  };
+  useEffect(() => { if (defaultOpen) load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const toggle = () => {
     if (open) { setOpen(false); return; }
     setOpen(true);
-    if (content === null) {
-      setErr(null);
-      fetch(logUrl)
-        .then(r => (r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`))))
-        .then(setContent)
-        .catch(e => setErr(e.message));
-    }
+    if (content === null) load();
   };
 
   return (
@@ -189,9 +194,20 @@ function ProposalDetailCard({
       </div>
 
       <div className="detail-card__body">
-        <p className="detail-card__rationale">
-          {proposal.rationale}
-        </p>
+        {/* The diff is what a reviewer judges first, so it leads the card;
+            the first edit opens by default and the rest stay one click away. */}
+        {proposal.edits && proposal.edits.length > 0
+          ? proposal.edits.map((edit, index) => (
+              <div className="detail-card__row" key={edit.path}>
+                <span className="detail-card__edit-path">{edit.path}</span>{' '}
+                {edit.diff_uri && <DiffView uri={edit.diff_uri} defaultOpen={index === 0} />}
+              </div>
+            ))
+          : proposal.diff_uri && (
+              <div className="detail-card__row">
+                <DiffView uri={proposal.diff_uri} defaultOpen />
+              </div>
+            )}
 
         {/* Why the release rejected this fix. It is the whole reason a fix
             put through a verification run reached 'failed', so a card that
@@ -203,18 +219,7 @@ function ProposalDetailCard({
           </div>
         )}
 
-        {proposal.edits && proposal.edits.length > 0
-          ? proposal.edits.map((edit) => (
-              <div className="detail-card__row" key={edit.path}>
-                <span className="detail-card__edit-path">{edit.path}</span>{' '}
-                {edit.diff_uri && <DiffView uri={edit.diff_uri} />}
-              </div>
-            ))
-          : proposal.diff_uri && (
-              <div className="detail-card__row">
-                <DiffView uri={proposal.diff_uri} />
-              </div>
-            )}
+        <pre className="detail-card__rationale">{proposal.rationale}</pre>
 
         {!proposal.source_resolved && (
           <div className="info-strip info-strip--warning detail-card__row">
