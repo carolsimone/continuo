@@ -60,6 +60,7 @@ func TestComposeRationale_CrossServiceNamesEveryConsumerAndItsFollowUp(t *testin
 		UpstreamKnown: true,
 		Edits:         []string{"services/core/models/orders.sql"},
 		TargetNodeID:  "analytics.orders",
+		TargetService: "core",
 		CrossService:  true,
 		ModelNote:     "kept amount alongside amount_eur",
 	})
@@ -69,6 +70,26 @@ func TestComposeRationale_CrossServiceNamesEveryConsumerAndItsFollowUp(t *testin
 	assert.Contains(t, got, "`analytics.report` lives in service finance and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for service finance.\n")
 	assert.Contains(t, got, "`analytics.spend` lives in service marketing and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for service marketing.\n")
 	assert.Contains(t, got, "Edited: `services/core/models/orders.sql` (repairs `analytics.orders`)\n")
+}
+
+// TestComposeRationale_CrossServiceSkipsSameServiceMembers verifies P2b: a
+// coalesced cross-service cluster can carry a member in the same service as
+// the target (a same-signature member merged in by coalesceUpstream); the
+// composer must not tell that member it "cannot change in this release" —
+// only members whose service differs from the target's get the follow-up line.
+func TestComposeRationale_CrossServiceSkipsSameServiceMembers(t *testing.T) {
+	got := proposal.ComposeRationale(proposal.RationaleFacts{
+		Members: []proposal.RationaleMember{
+			{NodeID: "analytics.local", Service: "core"},
+			{NodeID: "analytics.report", Service: "finance"},
+		},
+		TargetNodeID:  "analytics.orders",
+		TargetService: "core",
+		CrossService:  true,
+	})
+
+	assert.Contains(t, got, "`analytics.report` lives in service finance and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for service finance.")
+	assert.NotContains(t, got, "`analytics.local` lives in service core and cannot change")
 }
 
 func TestComposeRationale_NoNoteEndsOnTheLastFact(t *testing.T) {

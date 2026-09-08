@@ -30,24 +30,33 @@ type RationaleFacts struct {
 	Members []RationaleMember
 	// Upstream is what this release changed upstream of the members, nearest
 	// first. UpstreamKnown reports that the trigger carried the release's
-	// changed-ancestor facts at all — a compile-stage rejection carries
-	// none, so nothing can be claimed about it either way.
+	// changed-ancestor facts at all — the analysis is supplied only by a
+	// validation rejection; compile, seed_build, and duplicate_table carry
+	// none, so nothing can be claimed about it either way for them.
 	Upstream      []RationaleUpstream
 	UpstreamKnown bool
 	// Edits are the repository paths this cluster's fix changes; they all
 	// repair TargetNodeID, which for an upstream fix is not a member.
 	Edits        []string
 	TargetNodeID string
-	// CrossService marks the members as living in a service other than the
-	// target's, where they cannot change in this release.
+	// TargetService is the service that owns TargetNodeID — the cluster's
+	// edited node. A member living in this same service can still change in
+	// this release; only a member in a different service cannot.
+	TargetService string
+	// CrossService marks the cluster as reaching at least one member in a
+	// service other than the target's, where that member cannot change in
+	// this release. A coalesced cluster can still carry same-service members
+	// alongside them; ComposeRationale emits the follow-up line only for the
+	// members whose service actually differs from TargetService.
 	CrossService bool
 	ModelNote    string
 }
 
 // ComposeRationale renders one cluster's rationale, one fact per line, in a
 // fixed order: what failed, what this release changed upstream (or that
-// nothing did), what was edited, why the edit is where it is when the failure
-// crossed a service boundary, and last the model's own note under its label.
+// nothing did), what was edited, why the edit is where it is for each member
+// whose service differs from TargetService, and last the model's own note
+// under its label.
 func ComposeRationale(f RationaleFacts) string {
 	var b strings.Builder
 	for _, m := range f.Members {
@@ -73,6 +82,13 @@ func ComposeRationale(f RationaleFacts) string {
 	}
 	if f.CrossService {
 		for _, m := range f.Members {
+			// An unresolved TargetService ("") never equals a member's
+			// non-empty Service, so this guard degrades to the old
+			// per-cluster behavior — every member with a service gets the
+			// line — when the target's own service could not be determined.
+			if m.Service == "" || m.Service == f.TargetService {
+				continue
+			}
 			fmt.Fprintf(&b, "`%s` lives in service %s and cannot change in this release; this edit keeps the contract it reads. Moving it to the new shape is a follow-up for service %s.\n", m.NodeID, m.Service, m.Service)
 		}
 	}

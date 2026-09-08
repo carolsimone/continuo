@@ -31,6 +31,7 @@ func TestRationaleFactsFor_ProjectsTriggerClusterAndOutcome(t *testing.T) {
 		UpstreamKnown: true,
 		Edits:         []string{"services/core/models/orders.sql"},
 		TargetNodeID:  "s.orders",
+		TargetService: "core",
 		CrossService:  true,
 		ModelNote:     "kept both",
 	}, got)
@@ -45,4 +46,44 @@ func TestRationaleFactsFor_CompileTriggerKnowsNoUpstream(t *testing.T) {
 
 	assert.False(t, got.UpstreamKnown)
 	assert.Empty(t, got.Upstream)
+}
+
+// TestRationaleFactsFor_DuplicateTableTriggerKnowsNoUpstream verifies P2a: the
+// changed-ancestor analysis is supplied only by a validation rejection, so a
+// duplicate_table trigger reports UpstreamKnown false even when one of its
+// nodes carries a real ChangedAncestor — the composer must not render a "No
+// upstream changed" claim from it: absence of the facts is not an empty
+// analyzed set.
+func TestRationaleFactsFor_DuplicateTableTriggerKnowsNoUpstream(t *testing.T) {
+	tr := baseTrigger()
+	tr.Source = "duplicate_table"
+	tr.Nodes = []TriggerNode{
+		{NodeID: "s.n", Service: "svc", ChangedAncestors: []ChangedAncestor{{NodeID: "s.up", Service: "svc", Depth: 1}}},
+	}
+	c := typology.Cluster{TargetNodeID: "s.n", Members: []string{"s.n"}, Kind: typology.KindIndependent}
+
+	got := rationaleFactsFor(tr, c, clusterOutcome{})
+
+	assert.False(t, got.UpstreamKnown)
+	composed := proposal.ComposeRationale(got)
+	assert.NotContains(t, composed, "No upstream")
+	assert.NotContains(t, composed, "changed upstream")
+}
+
+// TestRationaleFactsFor_RedactsErrorLine verifies P1: a member's ErrorLine is
+// projected through proposal.RedactDataValues, so a warehouse data value
+// embedded in the trigger's ErrorExcerpt never reaches the persisted or
+// published rationale.
+func TestRationaleFactsFor_RedactsErrorLine(t *testing.T) {
+	tr := baseTrigger()
+	tr.Nodes = []TriggerNode{
+		{NodeID: "s.n", Service: "svc", ErrorExcerpt: `invalid input syntax for type integer: "a@b.test"`},
+	}
+	c := typology.Cluster{TargetNodeID: "s.n", Members: []string{"s.n"}, Kind: typology.KindIndependent}
+
+	got := rationaleFactsFor(tr, c, clusterOutcome{})
+
+	assert.Len(t, got.Members, 1)
+	assert.Equal(t, `invalid input syntax for type integer: "?"`, got.Members[0].ErrorLine)
+	assert.NotContains(t, got.Members[0].ErrorLine, "a@b.test")
 }
