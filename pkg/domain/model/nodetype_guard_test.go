@@ -37,15 +37,26 @@ func TestIsPython(t *testing.T) {
 // TestEveryNodeTypeIsClassified is the guard the spec requires: adding a
 // NodeType constant without deciding its family must fail here, so the four
 // call sites that branch on family cannot be silently wrong for a new kind.
+// Every NodeType falls into exactly one family: a relation-producing dbt kind
+// (model/seed/snapshot), a python kind (IsPython()), or a validation-only
+// test kind (dbt-test) that is neither.
 func TestEveryNodeTypeIsClassified(t *testing.T) {
 	for _, nt := range model.AllNodeTypes {
-		isDbt := nt == model.NodeTypeDbtModel || nt == model.NodeTypeDbtSeed ||
+		isDbtRelation := nt == model.NodeTypeDbtModel || nt == model.NodeTypeDbtSeed ||
 			nt == model.NodeTypeDbtSnapshot
-		if nt.IsPython() == isDbt {
-			t.Errorf("NodeType %q is in neither or both families", nt)
+		isTest := nt == model.NodeTypeDbtTest
+
+		families := 0
+		for _, in := range []bool{isDbtRelation, nt.IsPython(), isTest} {
+			if in {
+				families++
+			}
+		}
+		if families != 1 {
+			t.Errorf("NodeType %q is in %d families, want exactly 1", nt, families)
 		}
 	}
-	if len(model.AllNodeTypes) != 5 {
+	if len(model.AllNodeTypes) != 6 {
 		t.Errorf("AllNodeTypes has %d entries; update it AND the family "+
 			"classification when adding a NodeType", len(model.AllNodeTypes))
 	}

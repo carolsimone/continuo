@@ -1,4 +1,4 @@
-from domain.model import ManifestNode
+from domain.model import ManifestNode, NodeType
 
 
 def _node(schema: str, table: str) -> ManifestNode:
@@ -30,3 +30,17 @@ def test_declared_schema_and_table_are_not_normalized():
     node = _node("Analytics", "Orders")
     assert node.schema_name == "Analytics"
     assert node.table_name == "Orders"
+
+
+def test_dbt_test_identity_is_the_manifest_unique_id():
+    n = ManifestNode(table_name="not_null_tbind_amount_eur", schema_name="e2e_schema_dbt_test__audit",
+                     service_name="service-2", owner="", schedule_name="", criticality="SECONDARY",
+                     node_type=NodeType.DBT_TEST, identity="test.service_2.not_null_tbind_amount_eur.abc123")
+    assert n.unique_id == "test.service_2.not_null_tbind_amount_eur.abc123"
+    assert n.resolved_relation_id == ""
+
+
+def test_model_identity_is_schema_dot_table_when_no_identity_given():
+    n = ManifestNode(table_name="Orders", schema_name="Analytics", service_name="s", owner="o",
+                     schedule_name="daily", criticality="SECONDARY")
+    assert n.unique_id == "analytics.orders"

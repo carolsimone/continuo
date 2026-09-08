@@ -66,6 +66,11 @@ const (
 	// header check; the executor runs it like python-model plus S3
 	// credentials for the source fetch.
 	NodeTypePythonCsv NodeType = "python-csv"
+	// NodeTypeDbtTest is a dbt data test (generic or singular). It exists only
+	// in candidate and current_prod topologies, where validation bind-checks
+	// its compiled SQL; it is never promoted to the orchestrator's graph and
+	// never scheduled.
+	NodeTypeDbtTest NodeType = "dbt-test"
 )
 
 // AllNodeTypes enumerates every declared NodeType. The exhaustiveness guard
@@ -73,7 +78,7 @@ const (
 // direct equality against one python kind.
 var AllNodeTypes = []NodeType{
 	NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot,
-	NodeTypePythonModel, NodeTypePythonCsv,
+	NodeTypePythonModel, NodeTypePythonCsv, NodeTypeDbtTest,
 }
 
 // IsPython reports whether this node type runs on the python runtime image
@@ -87,7 +92,7 @@ func (t NodeType) IsPython() bool {
 // Returns an error for empty or unrecognised values.
 func ParseNodeType(s string) (NodeType, error) {
 	switch NodeType(s) {
-	case NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot, NodeTypePythonModel, NodeTypePythonCsv:
+	case NodeTypeDbtModel, NodeTypeDbtSeed, NodeTypeDbtSnapshot, NodeTypePythonModel, NodeTypePythonCsv, NodeTypeDbtTest:
 		return NodeType(s), nil
 	default:
 		return "", fmt.Errorf("unknown node_type %q", s)
