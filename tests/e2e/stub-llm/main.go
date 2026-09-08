@@ -487,9 +487,12 @@ func writeProposeFixResponse(w http.ResponseWriter, userContent string, params m
 			proposedSQL = ybreakConsumerFix
 			rationale = "aliased amount_eur to amount"
 		case strings.Contains(userContent, step2Marker):
-			// Step-2: corrected real model source.
+			// Step-2: corrected real model source. The rationale below is an
+			// invented cause (nothing upstream renamed anything) so the e2e
+			// can prove it lands under "Model's note:" beneath the driver's
+			// own facts rather than replacing them.
 			proposedSQL = step2SourceFix
-			rationale = "removed join to nonexistent relation public.wrong_name"
+			rationale = "upstream renamed amount to amount_eur"
 		}
 		toolArgs = map[string]string{
 			"proposed_sql": proposedSQL,
