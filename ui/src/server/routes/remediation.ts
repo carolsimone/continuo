@@ -2,6 +2,7 @@ import { Router } from 'express';
 import * as grpc from '@grpc/grpc-js';
 import type { RemediationClient } from '../remediation-client';
 import type { PullRequestCreator } from '../github/pull-request-creator';
+import { buildPullRequestBody } from './pr-body';
 
 // normalizeKey strips a leading s3://<bucket>/ so getObject receives a plain key.
 function normalizeKey(raw: string): string {
@@ -255,11 +256,10 @@ export function createRemediationRouter(
 
     // A single inline preview keeps the body readable on a multi-file proposal;
     // the rest of the diffs are one click away in the pull request itself.
-    let diffBlock = '';
+    let diff: string | undefined;
     if (edits[0].diff_uri) {
       try {
-        const diff = await getObject(normalizeKey(edits[0].diff_uri));
-        diffBlock = `\n\n### Proposed diff\n\`\`\`diff\n${diff}\n\`\`\``;
+        diff = await getObject(normalizeKey(edits[0].diff_uri));
       } catch (err) {
         // Diff is best-effort — omit on failure, but still log why so a
         // missing diff in a PR body is diagnosable without a repro.
@@ -272,29 +272,16 @@ export function createRemediationRouter(
       }
     }
 
-    const body = [
-      `## Automated remediation proposal`,
-      ``,
-      `**Nodes:** ${nodeIds.map((n) => `\`${n}\``).join(', ')}`,
-      `**Release:** \`${releaseId}\``,
-      claim.error_signature ? `**Error signature:** ${claim.error_signature}` : '',
-      claim.model ? `**Model:** ${claim.model}` : '',
-      claim.confidence !== undefined ? `**Confidence:** ${claim.confidence}` : '',
-      ``,
-      `### Files changed`,
-      ...files.map((file) => `- \`${file.path}\`${file.target_node_id ? ` (fixes \`${file.target_node_id}\`)` : ''}`),
-      ``,
-      claim.rationale ? `### Rationale\n${claim.rationale}` : '',
-      diffBlock,
-      ``,
-      `---`,
-      `*Proposed by the automated remediation agent — review before merge.*`,
-      ``,
-      `[View in Continuo UI](/?tab=remediation)`,
-    ]
-      .filter((line) => line !== null && line !== undefined)
-      .join('\n')
-      .trim();
+    const body = buildPullRequestBody({
+      nodeIds,
+      releaseId,
+      errorSignature: claim.error_signature,
+      model: claim.model,
+      confidence: claim.confidence,
+      files,
+      rationale: claim.rationale,
+      diff,
+    });
 
     const commitMessage = title;
 
