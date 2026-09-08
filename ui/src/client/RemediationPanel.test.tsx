@@ -424,6 +424,17 @@ describe('RemediationPanel — an actionable proposal', () => {
     }
   );
 
+  it('shows the no-repository banner instead of Create PR when the proposal records no repo', async () => {
+    const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '', repo: '', rationale: 'Adds the missing GROUP BY column.' });
+    mockFetchProposals.mockResolvedValue([proposal]);
+
+    renderPanelAsOperator();
+
+    expect(await screen.findByText(/Adds the missing GROUP BY column/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Create PR/i })).toBeNull();
+    expect(screen.getByText(/No repository recorded for this proposal; a pull request cannot be opened\./)).toBeInTheDocument();
+  });
+
   it('does not auto-expand the card and offers no Create PR when pr_state is opening', async () => {
     const proposal = makeProposal({ status: 'proposed', source_resolved: true, pr_url: '', pr_state: 'opening', rationale: 'Adds the missing GROUP BY column.' });
     mockFetchProposals.mockResolvedValue([proposal]);

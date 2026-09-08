@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +29,11 @@ import (
 // service its edits actually attribute members to, and a legacy (unsplit)
 // proposal only on the "" whole-proposal group.
 var ErrUnknownService = errors.New("no edits for that service")
+
+// ErrNoRepository is returned by Begin when the proposal records no
+// owner/name repository: there is nowhere to open a pull request, and a claim
+// would only park the row in 'opening' for the reconciler to fail again.
+var ErrNoRepository = errors.New("no repository recorded for this proposal")
 
 // RecordInput carries the data required to record a successfully opened PR.
 type RecordInput struct {
@@ -158,9 +164,11 @@ func resolvedNodesForService(serviceRepoPaths map[string]string, v proposal.View
 // Begin atomically claims a proposal's per-service pull request for creation and
 // returns the data needed to open the GitHub pull-request. service selects which
 // owning-service group to claim ("" is the legacy whole-proposal group); it must
-// be one of PRServices(v), else ErrUnknownService. It builds the deterministic
-// branch remediation/<release_id>/attempt<n>(/<service> when non-empty) before
-// delegating to repo.BeginPR. The returned PRClaim carries the computed Branch.
+// be one of PRServices(v), else ErrUnknownService. A proposal whose Repo is
+// not owner/name is refused with ErrNoRepository before any write. It builds
+// the deterministic branch remediation/<release_id>/attempt<n>(/<service>
+// when non-empty) before delegating to repo.BeginPR. The returned PRClaim
+// carries the computed Branch.
 func (s *Service) Begin(ctx context.Context, id, service string) (proposal.PRClaim, error) {
 	v, err := s.repo.Get(ctx, id)
 	if err != nil {
@@ -168,6 +176,9 @@ func (s *Service) Begin(ctx context.Context, id, service string) (proposal.PRCla
 	}
 	if !slices.Contains(s.PRServices(v), service) {
 		return proposal.PRClaim{}, fmt.Errorf("%w: %q", ErrUnknownService, service)
+	}
+	if !strings.Contains(v.Repo, "/") {
+		return proposal.PRClaim{}, fmt.Errorf("%w: %q", ErrNoRepository, v.Repo)
 	}
 	branch := BuildBranch(v.ReleaseID, v.Attempt, service)
 	claim, err := s.repo.BeginPR(ctx, id, service, branch, s.clock.Now())

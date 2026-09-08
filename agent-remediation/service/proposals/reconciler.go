@@ -300,8 +300,10 @@ func (r *Reconciler) reconcileOpen(ctx context.Context) (permissionDenied, clean
 // unmeasurable claim can never be mistaken for a stale one; each occurrence is
 // logged so a claim stuck this way is visible rather than silently retried
 // forever. Each row is handled best-effort: one failing row is logged and
-// skipped, and retried next pass. The return values feed the reconciler's
-// combined health signal — see ReconcileOnce.
+// skipped, and retried next pass. A row whose repo is not owner/name
+// (`ports.ErrInvalidRepo`) is the exception: no retry can ever resolve it, so
+// its claim is failed on the spot without the grace period. The return
+// values feed the reconciler's combined health signal — see ReconcileOnce.
 func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanRead bool) {
 	stuck, next, err := r.openingLister.ListStuckOpening(ctx, r.batchLimit, r.openingCursor)
 	if err != nil {
@@ -315,6 +317,13 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 		branch := BuildBranch(o.ReleaseID, o.Attempt, o.Service)
 		ref, found, err := r.branchFinder.FindByBranch(ctx, o.Repo, branch)
 		if err != nil {
+			if errors.Is(err, ports.ErrInvalidRepo) {
+				// The row's repo can never name a pull request, so no retry
+				// will ever find or open one. Fail the claim now, whatever
+				// its age; the claim guard refuses to re-open it (Begin).
+				r.failInvalidRepoClaim(ctx, o, branch)
+				continue
+			}
 			if errors.Is(err, ports.ErrPermissionDenied) {
 				permissionDenied = true
 			}
@@ -368,6 +377,31 @@ func (r *Reconciler) sweepOpening(ctx context.Context) (permissionDenied, cleanR
 			"proposal_id", o.ID, "repo", o.Repo, "branch", branch, "age", age.String())
 	}
 	return permissionDenied, cleanRead
+}
+
+// failInvalidRepoClaim releases an 'opening' claim whose repo is not
+// owner/name back to 'failed' at once. It needs the observed pr_claimed_at
+// for the compare-and-set, so an unmeasurable claim is logged and left, the
+// same as an aged one.
+func (r *Reconciler) failInvalidRepoClaim(ctx context.Context, o proposal.OpeningPR, branch string) {
+	if o.ClaimedAt == nil {
+		r.logger.Warn("pr reconciler: opening claim has no repository and no pr_claimed_at; leaving untouched",
+			"proposal_id", o.ID, "branch", branch)
+		return
+	}
+	hit, err := r.failer.FailStuckClaim(ctx, o.ID, o.Service, *o.ClaimedAt)
+	if err != nil {
+		r.logger.Warn("pr reconciler: fail opening claim without repository",
+			"proposal_id", o.ID, "service", o.Service, "branch", branch, "error", err)
+		return
+	}
+	if !hit {
+		r.logger.Info("pr reconciler: opening claim without repository was re-claimed before it could be failed; leaving the fresh claim untouched",
+			"proposal_id", o.ID, "service", o.Service, "branch", branch)
+		return
+	}
+	r.logger.Warn("pr reconciler: no repository recorded for this proposal's pull request; failed the claim",
+		"proposal_id", o.ID, "service", o.Service, "branch", branch)
 }
 
 // updateHealth reconciles the degraded flag from one pass. A permission error

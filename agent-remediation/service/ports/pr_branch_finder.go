@@ -2,8 +2,14 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrInvalidRepo reports a repository reference that is not owner/name. It is
+// a property of the row, not of GitHub: a lookup with it can never succeed on
+// a retry, so a caller treats it as permanent.
+var ErrInvalidRepo = errors.New("repository is not owner/name")
 
 // PullRequestRef identifies a pull request found on GitHub.
 type PullRequestRef struct {

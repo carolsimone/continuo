@@ -3,6 +3,7 @@ package proposals_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -602,6 +603,60 @@ func TestReconcileOnce_OpeningSweep_PRAbsentAgedFails(t *testing.T) {
 
 	require.Empty(t, recorder.calls)
 	require.Equal(t, []string{"p1"}, failer.calls, "a claim older than the grace period must be failed on a single pass")
+}
+
+// TestReconcileOnce_OpeningSweep_InvalidRepoFailsAtOnce: a claim whose repo
+// is not owner/name can never find or open a pull request, so the sweep
+// fails it on the first pass regardless of its age — a fresh claim included.
+func TestReconcileOnce_OpeningSweep_InvalidRepoFailsAtOnce(t *testing.T) {
+	now := fixedClock{}.Now()
+	claimedAt := now.Add(-10 * time.Second) // well inside the grace period
+	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
+		{ID: "p1", Repo: "", Service: "", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: timePtr(claimedAt)},
+	}}
+	branch := proposals.BuildBranch("rel-1", 1, "")
+	finder := &fakeBranchFinder{errs: map[string]error{branch: fmt.Errorf("find pr by branch: %w: %q", ports.ErrInvalidRepo, "")}}
+	recorder := &fakeOpeningRecorder{}
+	failer := &fakeFailer{}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister:             &fakeLister{},
+		Checker:            &fakeChecker{},
+		Recorder:           &fakeRecorder{},
+		OpeningLister:      opening,
+		BranchFinder:       finder,
+		OpeningRecorder:    recorder,
+		Failer:             failer,
+		Clock:              &settableClock{now: now},
+		Logger:             slog.Default(),
+		OpeningGracePeriod: 10 * time.Minute,
+	})
+	rec.ReconcileOnce(context.Background())
+
+	require.Equal(t, []string{"p1"}, failer.calls, "an invalid repo is permanent: the claim is failed without waiting out the grace period")
+	require.Equal(t, claimedAt, failer.observedClaim["p1"], "the CAS is on the exact claim time this pass observed")
+	require.Empty(t, recorder.calls)
+	require.False(t, rec.Degraded(), "an invalid repo is a row problem, not a GitHub permission problem")
+}
+
+// A claim with an invalid repo but no measurable claim time is still left
+// alone: the CAS needs the observed pr_claimed_at.
+func TestReconcileOnce_OpeningSweep_InvalidRepoWithoutClaimTimeIsLeftAlone(t *testing.T) {
+	opening := &fakeOpeningLister{opening: []proposal.OpeningPR{
+		{ID: "p1", Repo: "", ReleaseID: "rel-1", NodeID: "model.p.orders", Attempt: 1, ClaimedAt: nil},
+	}}
+	branch := proposals.BuildBranch("rel-1", 1, "")
+	finder := &fakeBranchFinder{errs: map[string]error{branch: ports.ErrInvalidRepo}}
+	failer := &fakeFailer{}
+
+	rec := proposals.NewReconciler(proposals.ReconcilerDeps{
+		Lister: &fakeLister{}, Checker: &fakeChecker{}, Recorder: &fakeRecorder{},
+		OpeningLister: opening, BranchFinder: finder, OpeningRecorder: &fakeOpeningRecorder{}, Failer: failer,
+		Clock: fixedClock{}, Logger: slog.Default(),
+	})
+	rec.ReconcileOnce(context.Background())
+
+	require.Empty(t, failer.calls)
 }
 
 // TestReconcileOnce_OpeningSweep_PRAbsentFreshLeftAlone proves the invariant

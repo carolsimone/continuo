@@ -1135,6 +1135,32 @@ func TestProposeFix_EscalateWritesNoGenerating(t *testing.T) {
 	require.Equal(t, proposal.StatusEscalated, u.pr.inserted[0].Status)
 }
 
+// TestProposeFix_NoRepositoryFailsClosed: a trigger that names no repository
+// can never end in a pull request. The attempt is recorded failed with the
+// reason before any model call or verification run is spent on it.
+func TestProposeFix_NoRepositoryFailsClosed(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{"s3://b/log": "boom", "s3://b/sql": "select 1"}}
+	llm := newFakeLLM(ports.ProposeResult{ProposedSQL: "select 2", Confidence: "high", Model: "m"}, nil)
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "tag-1"}
+	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
+	d.Releases = gw
+	tr := baseTrigger()
+	tr.Repo = ""
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+
+	p := u.pr.inserted[0]
+	assert.Equal(t, 0, llm.calls, "no model call for a fix that could never be offered")
+	assert.Equal(t, proposal.StatusFailed, p.Status)
+	assert.Equal(t, proposal.StatusFailed, p.NodeOutcomes["s.n"].Status)
+	assert.Equal(t, "the trigger carried no repository for r1", p.NodeOutcomes["s.n"].Reason)
+	assert.Equal(t, "the trigger carried no repository for r1", p.Rationale)
+	assert.Empty(t, gw.submitted, "no verification run is submitted")
+}
+
 // TestProposeFix_InternalSkipFinalizesGenerating documents the accepted
 // generating→blank flicker: a Fixer that skips internally (here, a validation
 // node with no candidate SQL) still marks the attempt generating in the driver,

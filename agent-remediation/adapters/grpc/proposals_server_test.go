@@ -483,6 +483,19 @@ func TestProposalsServer_BeginPullRequest_NotSourceResolved(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
+// TestProposalsServer_BeginPullRequest_NoRepositoryMapsToFailedPrecondition
+// verifies proposals.ErrNoRepository maps to FAILED_PRECONDITION, carrying
+// its message, rather than falling through to the generic Internal case.
+func TestProposalsServer_BeginPullRequest_NoRepositoryMapsToFailedPrecondition(t *testing.T) {
+	svc := &fakeSvc{beginErr: proposals.ErrNoRepository}
+	s := grpcadapter.NewProposalsServer(svc)
+
+	_, err := s.BeginPullRequest(context.Background(), &remediationv1.BeginPullRequestRequest{Id: "p2"})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "no repository recorded for this proposal")
+}
+
 func TestProposalsServer_BeginPullRequest_NotFound(t *testing.T) {
 	svc := &fakeSvc{beginErr: repository.ErrNotFound}
 	s := grpcadapter.NewProposalsServer(svc)
