@@ -258,6 +258,7 @@ type remediationRequestedPayload struct {
 // where THIS release holds it.
 type remediationNodeEntry struct {
 	NodeID         string `json:"node_id"`
+	NodeType       string `json:"node_type"`
 	Category       string `json:"category"`
 	ErrorSignature string `json:"error_signature"`
 	// ErrorExcerpt is the key error line the signature was folded from. It is

@@ -250,6 +250,54 @@ func TestContentHash_MatchesKnownVectors(t *testing.T) {
 			computeContentHash(n, map[string]interface{}{}))
 	})
 
+	t.Run("generic test node: empty dbt checksum falls back to compiled_code hash", func(t *testing.T) {
+		// dbt always leaves checksum.checksum empty for a generic test node
+		// (e.g. a not_null test on a column), so _node_source_hash falls back
+		// to hashing raw_code — empty here, as for a test compiled purely
+		// from its generic-test macro — or, failing that, compiled_code. This
+		// pins that parseManifestNodes (which now includes tracked dbt-test
+		// nodes in the e2e baseline) computes the identical content_hash
+		// topology-controller publishes for the node, so an unchanged test
+		// never reads as "new" in a release the suite posts.
+		//
+		// Generated with:
+		//	docker exec -w /app topology-controller uv run python -c "
+		//	import json
+		//	from service.parser import _node_source_hash, _shared_code_hash, _config_hash, _content_hash, _transitive_macro_ids
+		//	node = {
+		//	    'resource_type': 'test',
+		//	    'checksum': {'name': 'sha256', 'checksum': ''},
+		//	    'depends_on': {'macros': [], 'nodes': ['model.pkg.tbind']},
+		//	    'config': {'severity': 'error', 'meta': {}},
+		//	    'raw_code': '',
+		//	    'compiled_code': 'select amount_eur from e2e_schema.tbind where amount_eur is null',
+		//	}
+		//	trans = _transitive_macro_ids(node['depends_on']['macros'], {})
+		//	print(_node_source_hash(node))
+		//	print(_content_hash(_node_source_hash(node), _shared_code_hash(trans, {}), _config_hash(node)))
+		//	"
+		n := map[string]interface{}{
+			"resource_type": "test",
+			"checksum": map[string]interface{}{
+				"name": "sha256", "checksum": "",
+			},
+			"depends_on": map[string]interface{}{
+				"macros": []interface{}{},
+				"nodes":  []interface{}{"model.pkg.tbind"},
+			},
+			"config":        map[string]interface{}{"severity": "error", "meta": map[string]interface{}{}},
+			"raw_code":      "",
+			"compiled_code": "select amount_eur from e2e_schema.tbind where amount_eur is null",
+		}
+
+		require.Equal(t, "sha256:04dcecf52f3c2abfef798bd6fd8933f6bf7f9a0f999a59c344db3796db1d769a",
+			nodeSourceHash(n), "empty dbt checksum on a test node must fall back to hashing compiled_code")
+
+		require.Equal(t, "sha256:c28de5553aaa1f3be153ea1c23560fa47734c852c4b2319bb4afda22e971e561",
+			computeContentHash(n, map[string]interface{}{}),
+			"a test node folds through the same three-part formula as a model/seed/snapshot node")
+	})
+
 	t.Run("config_hash: DEL escaping and float re-serialization", func(t *testing.T) {
 		// Generated with:
 		//	docker exec -w /app topology-controller uv run python -c "

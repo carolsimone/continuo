@@ -157,3 +157,44 @@ func verificationPerNodeStatus(t *testing.T, ctx context.Context, clients *testC
 	}
 	return out
 }
+
+// releasePerNodeResult is one release detail's per-node result, keyed by node
+// id in releasePerNodeResults: its final status and the node kind the
+// candidate topology declared for it (dbt-model, dbt-test, ...).
+type releasePerNodeResult struct {
+	Status   string
+	NodeType string
+}
+
+// releasePerNodeResults reads a release's per-node validation results from
+// release-controller's GET /releases/{id}, keyed by node id. Modeled on
+// verificationPerNodeStatus, but reads a RELEASE's detail rather than a
+// verification run's, and keeps node_type alongside status — a bind-checked
+// dbt-test node and a built dbt-model node share the same per-node-results
+// list, and only node_type tells them apart.
+func releasePerNodeResults(t *testing.T, ctx context.Context, clients *testClients, releaseID string) map[string]releasePerNodeResult {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/releases/%s", clients.releaseBase, releaseID), nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body struct {
+		PerNodeResults []struct {
+			Stage    string `json:"stage"`
+			NodeID   string `json:"node_id"`
+			Status   string `json:"status"`
+			NodeType string `json:"node_type"`
+		} `json:"per_node_results"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	out := map[string]releasePerNodeResult{}
+	for _, n := range body.PerNodeResults {
+		if n.Stage == "validation" || n.Stage == "" {
+			out[n.NodeID] = releasePerNodeResult{Status: n.Status, NodeType: n.NodeType}
+		}
+	}
+	return out
+}
