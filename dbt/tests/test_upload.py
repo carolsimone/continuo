@@ -19,7 +19,7 @@ import sys
 import boto3
 import pytest
 
-from dbt_upload.upload import upload_manifest
+from dbt_upload.upload import filter_manifest, upload_manifest
 
 SERVICES_DIR = "/app/services"
 S3_ENDPOINT = os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
@@ -48,6 +48,41 @@ def s3():
 # ---------------------------------------------------------------------------
 # Unit tests (no minio required)
 # ---------------------------------------------------------------------------
+
+
+def test_filter_manifest_keeps_the_kinds_topology_controller_emits(tmp_path):
+    """filter_manifest keeps model/seed/snapshot/test and drops local_stub and
+    non-topology kinds. Tests must survive: topology-controller emits a
+    dbt-test node per test of a tracked model, so a test-less baseline would
+    make every test read as newly changed against the release candidate.
+    """
+    target = tmp_path / "target"
+    target.mkdir()
+    manifest = {
+        "nodes": {
+            "model.svc.m": {"resource_type": "model", "name": "m", "tags": []},
+            "seed.svc.s": {"resource_type": "seed", "name": "s", "tags": []},
+            "snapshot.svc.sn": {"resource_type": "snapshot", "name": "sn", "tags": []},
+            "test.svc.not_null_m_id.ab": {
+                "resource_type": "test", "name": "not_null_m_id", "tags": []
+            },
+            "model.svc.stub": {
+                "resource_type": "model", "name": "stub", "tags": ["local_stub"]
+            },
+            "operation.svc.op": {"resource_type": "operation", "name": "op", "tags": []},
+        }
+    }
+    (target / "manifest.json").write_text(json.dumps(manifest))
+
+    filter_manifest(str(tmp_path))
+
+    kept = set(json.loads((target / "manifest.json").read_text())["nodes"])
+    assert kept == {
+        "model.svc.m",
+        "seed.svc.s",
+        "snapshot.svc.sn",
+        "test.svc.not_null_m_id.ab",
+    }
 
 
 def test_upload_manifest_canonical_key(tmp_path):
