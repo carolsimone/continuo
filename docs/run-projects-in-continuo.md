@@ -722,6 +722,13 @@ reached production, in another team's model they had never heard of.
 
 *This chapter needs credentials the earlier chapters did not.*
 
+⚠️ **Prerequisite: your fork must be a real repository on github.com.** Chapters
+1–7 run fine against a purely local clone — a release only stores `repo` and
+`commit_sha` as strings, and nothing reads them until now. This chapter does not:
+`agent-remediation` reads the failing model's source through the GitHub API at
+`repo@commit_sha`, and the PR is opened as a GitHub object against your fork. If
+you only cloned locally, create the fork on GitHub and push to it before going on.
+
 A rejected release tells you something broke. continuo can also try to fix it.
 
 💡 `remediation` classifies the rejection, and for a fixable one `agent-remediation`
