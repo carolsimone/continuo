@@ -541,11 +541,20 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	changedImageTag := allServices[changedService].imageTag
 	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
 
-	// Collect the service-2 and service-3 node IDs we expect to survive.
+	// Collect the service-2 and service-3 node IDs we expect to survive in the
+	// Neo4j graph. dbt-test nodes are excluded: they are validation-only, are
+	// stripped from release.promoted:v1 (Topology.WithoutTests), and never
+	// become :Table nodes, so the graph-level anti-amputation check cannot look
+	// for them. current_prod retention of an unchanged test is covered by the
+	// bind-check e2e. A dbt-test's manifest id is "test.<project>.<name>[.<hash>]";
+	// a relation node's id is "<schema>.<table>".
 	survivingServices := []string{"service-2", "service-3"}
 	var expectedSurvivingNodes []string
 	for _, svc := range survivingServices {
 		for _, n := range allServices[svc].nodes {
+			if strings.HasPrefix(n.uniqueID, "test.") {
+				continue
+			}
 			expectedSurvivingNodes = append(expectedSurvivingNodes, n.uniqueID)
 		}
 	}
