@@ -22,9 +22,11 @@ there is no `:latest` fallback.
 ## What your container must do
 
 The Job runs a command resolved from the chart's `dbt-commands.yaml`
-(ConfigMap, see `deploy/continuo/files/dbt-commands.yaml`). The built-in
-default is plain dbt — e.g. `dbt run --select <node>` — and a per-service
-override block can map every operation to your own wrapper CLI instead.
+(ConfigMap, see `deploy/continuo/files/dbt-commands.yaml`). The built-in default
+is plain dbt — e.g. `dbt run --select <node>`. You can also override these
+commands with your own — say, a CLI that wraps dbt inside an internal tool — so a
+non-standard dbt container runs under continuo without change.
+
 The contract is **fail-closed**: an override block must define all seven
 operations (`run`, `seed`, `snapshot`, `seed_build`, `test`, `build`,
 `compile`) or executor-controller refuses to boot. `{{ node }}` and
@@ -65,7 +67,7 @@ the `manifest.json` your compile command produces and uploads it to
 is that the `compile` command writes the manifest to the path declared as
 `compile.manifest_path` in `dbt-commands.yaml`.
 
-## The `generate_schema_name` macro (required)
+## The `generate_schema_name` macro required for validation/releases
 
 Your dbt project MUST route schema resolution through a `generate_schema_name`
 that honours `DBT_TARGET_SCHEMA`. dbt has no `--target-schema` flag, so
