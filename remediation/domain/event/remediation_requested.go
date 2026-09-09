@@ -41,53 +41,53 @@ func AggregateIDForRelease(releaseID string) uuid.UUID {
 // stay behind each node's DBTLogURI and code behind CodeBundleURI; the only
 // inline error text is each node's ErrorExcerpt (capped at 4 KiB).
 type RemediationRequested struct {
-	EventID   string `json:"event_id"`
-	Source    string `json:"source"`
-	ReleaseID string `json:"release_id"`
+	EventID   string
+	Source    string
+	ReleaseID string
 	// RemediationRound is the release's remediation round this trigger belongs
 	// to: 1 for the rejection itself, +1 per human "try again" on the release.
-	RemediationRound int    `json:"remediation_round"`
-	Repo             string `json:"repo"`
-	CommitSHA        string `json:"commit_sha"`
+	RemediationRound int
+	Repo             string
+	CommitSHA        string
 	// CodeBundleURI locates the rejected release's code-bundle document; empty
 	// when parse never completed (compile-stage failures).
-	CodeBundleURI string        `json:"code_bundle_uri,omitempty"`
-	ClassifiedAt  string        `json:"classified_at"`
-	Nodes         []FailingNode `json:"nodes"`
+	CodeBundleURI string
+	ClassifiedAt  string
+	Nodes         []FailingNode
 }
 
 // FailingNode is one classified failure inside a batched trigger.
 type FailingNode struct {
-	NodeID string `json:"node_id"`
+	NodeID string
 	// RelationID is the contested physical relation for a duplicate_table
 	// failure, distinct from NodeID; empty for every other source.
-	RelationID           string `json:"relation_id,omitempty"`
-	Category             string `json:"category"`
-	ErrorSignature       string `json:"error_signature"`
-	Reason               string `json:"reason"`
-	ErrorExcerpt         string `json:"error_excerpt,omitempty"`
-	DBTLogURI            string `json:"dbt_log_uri"`
-	CandidateArtifactURI string `json:"candidate_artifact_uri,omitempty"`
-	FilePath             string `json:"file_path,omitempty"`
-	Service              string `json:"service,omitempty"`
-	NodeType             string `json:"node_type,omitempty"`
-	OtherService         string `json:"other_service,omitempty"`
-	OtherFilePath        string `json:"other_file_path,omitempty"`
+	RelationID           string
+	Category             string
+	ErrorSignature       string
+	Reason               string
+	ErrorExcerpt         string
+	DBTLogURI            string
+	CandidateArtifactURI string
+	FilePath             string
+	Service              string
+	NodeType             string
+	OtherService         string
+	OtherFilePath        string
 	// ChangedAncestors are the node's transitive upstream ancestors whose
 	// content changed in the rejected release, stamped by release-controller
 	// from the candidate topology. They let the agent group failures that share
 	// a changed ancestor and target that ancestor with one fix, and each carries
 	// the file path and service the candidate declares for it so the fix edits
 	// the ancestor where THIS release holds it.
-	ChangedAncestors []ChangedAncestor `json:"changed_ancestors,omitempty"`
+	ChangedAncestors []ChangedAncestor
 }
 
 // ChangedAncestor is one changed upstream of a failing node, with the location
 // the rejected release's candidate topology declares for it and its minimum
 // upstream hop distance from the failing node.
 type ChangedAncestor struct {
-	NodeID   string `json:"node_id"`
-	FilePath string `json:"file_path,omitempty"`
-	Service  string `json:"service,omitempty"`
-	Depth    int    `json:"depth"`
+	NodeID   string
+	FilePath string
+	Service  string
+	Depth    int
 }

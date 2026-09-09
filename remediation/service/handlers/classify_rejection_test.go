@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/event"
+	"github.com/carolsimone/continuo/remediation/serialization"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/domain/repository"
 	"github.com/carolsimone/continuo/remediation/service/ports"
@@ -128,7 +129,7 @@ func TestClassifyFailure_LogicEmitsTrigger(t *testing.T) {
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
 	}
-	var p event.RemediationRequested
+	var p serialization.RemediationRequestedDTO
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
 	if len(p.Nodes) != 1 {
 		t.Fatalf("expected 1 node in batched trigger, got %d", len(p.Nodes))
@@ -317,7 +318,7 @@ func TestClassifyFailure_DifferentRoundsBothInsertAndEmit(t *testing.T) {
 	if len(u.ob.entries) != 2 {
 		t.Fatalf("expected 2 outbox triggers (one per round), got %d", len(u.ob.entries))
 	}
-	var p1, p2 event.RemediationRequested
+	var p1, p2 serialization.RemediationRequestedDTO
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p1)
 	_ = json.Unmarshal(u.ob.entries[1].Payload, &p2)
 	if p1.RemediationRound != 1 {
@@ -362,7 +363,7 @@ func TestClassifyFailure_SeedSourceFilePathIsEmpty(t *testing.T) {
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
 	}
-	var p event.RemediationRequested
+	var p serialization.RemediationRequestedDTO
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
 	if len(p.Nodes) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(p.Nodes))
@@ -402,7 +403,7 @@ func TestClassifyFailure_CompileSourceThreadsFilePath(t *testing.T) {
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
 	}
-	var p event.RemediationRequested
+	var p serialization.RemediationRequestedDTO
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
 	if len(p.Nodes) != 1 {
 		t.Fatalf("expected 1 node, got %d", len(p.Nodes))
@@ -462,7 +463,7 @@ func TestClassifyFailure_DuplicateTableReadsNoLog(t *testing.T) {
 	if len(u.ob.entries) != 1 {
 		t.Fatalf("expected 1 outbox trigger, got %d", len(u.ob.entries))
 	}
-	var p event.RemediationRequested
+	var p serialization.RemediationRequestedDTO
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
 	if p.Source != "duplicate_table" {
 		t.Fatalf("trigger source = %q, want duplicate_table", p.Source)
@@ -518,7 +519,7 @@ func TestClassifyRejection_TwoNodesEmitOneBatchedTrigger(t *testing.T) {
 	if u.ob.entries[0].StreamName != streams.RemediationRequestedV2 {
 		t.Fatalf("stream = %q", u.ob.entries[0].StreamName)
 	}
-	var p event.RemediationRequested
+	var p serialization.RemediationRequestedDTO
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
 	if p.EventID != event.RemediationEventID("r1", 1).String() || p.ReleaseID != "r1" || p.Source != "validation" {
 		t.Fatalf("bad batch header: %+v", p)
@@ -546,7 +547,7 @@ func TestClassifyRejection_OnlyNewlyRecordedEmitNodesAreCarried(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var p event.RemediationRequested
+	var p serialization.RemediationRequestedDTO
 	_ = json.Unmarshal(u.ob.entries[0].Payload, &p)
 	if len(p.Nodes) != 1 || p.Nodes[0].NodeID != "s.b" {
 		t.Fatalf("a node already recorded must not be re-emitted: %+v", p.Nodes)
