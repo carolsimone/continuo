@@ -23,17 +23,17 @@ func PROpenedEventID(releaseID string, attempt int, service string) uuid.UUID {
 
 // PROpened is the event payload emitted when a remediation PR is successfully opened.
 type PROpened struct {
-	ProposalID string `json:"proposal_id"`
-	ReleaseID  string `json:"release_id"`
-	NodeID     string `json:"node_id"`
+	ProposalID string
+	ReleaseID  string
+	NodeID     string
 	// ResolvedNodeIDs is the failing nodes this PR fixes, sorted — the subset
 	// of the attempt's fixed nodes this owning service's edits address.
-	ResolvedNodeIDs []string `json:"resolved_node_ids"`
-	// Service is the owning-service group this PR covers; omitted for a legacy
-	// whole-proposal PR.
-	Service  string `json:"service,omitempty"`
-	PrURL    string `json:"pr_url"`
-	PrNumber int    `json:"pr_number"`
-	OpenedBy string `json:"opened_by"`
-	OpenedAt string `json:"opened_at"`
+	ResolvedNodeIDs []string
+	// Service is the owning-service group this PR covers; omitted (its DTO field
+	// is omitempty) for a legacy whole-proposal PR.
+	Service  string
+	PrURL    string
+	PrNumber int
+	OpenedBy string
+	OpenedAt string
 }

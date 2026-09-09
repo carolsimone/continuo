@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
@@ -318,7 +319,7 @@ func (s *Service) enqueuePRClosed(ctx context.Context, u uow.UnitOfWork, v propo
 		ClosedAt:        closedAt.Format(time.RFC3339),
 		Edits:           edits,
 	}
-	body, err := json.Marshal(payload)
+	body, err := json.Marshal(serialization.PRClosedFromDomain(payload))
 	if err != nil {
 		return fmt.Errorf("marshal pr_closed event: %w", err)
 	}
@@ -370,7 +371,7 @@ func (s *Service) enqueuePROpened(ctx context.Context, u uow.UnitOfWork, v propo
 		OpenedBy:        in.OpenedBy,
 		OpenedAt:        openedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
-	body, err := json.Marshal(payload)
+	body, err := json.Marshal(serialization.PROpenedFromDomain(payload))
 	if err != nil {
 		return fmt.Errorf("marshal pr_opened event: %w", err)
 	}

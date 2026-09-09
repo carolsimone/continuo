@@ -21,6 +21,7 @@ import (
 
 	"github.com/carolsimone/continuo/agent-remediation/adapters/repofs"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
@@ -2101,13 +2102,13 @@ func TestEnqueue_CarriesTheResolvedSetAndEveryEdit(t *testing.T) {
 	require.NoError(t, Enqueue(context.Background(), u, fakeClock{}, p, true, uuid.Nil))
 
 	require.Len(t, u.ob.entries, 1)
-	var got event.RemediationProposed
+	var got serialization.RemediationProposedDTO
 	require.NoError(t, json.Unmarshal(u.ob.entries[0].Payload, &got))
 	require.Equal(t, event.RemediationEventID("r1", 2).String(), got.EventID)
 	require.Equal(t, "s.a", got.NodeID)
 	require.Equal(t, []string{"s.a", "s.b"}, got.ResolvedNodeIDs)
 	require.True(t, got.SourceResolved)
-	require.Equal(t, []event.ProposedEdit{
+	require.Equal(t, []serialization.ProposedEditDTO{
 		{Path: "services/svc/models/a.sql", ContentURI: "s3://real/content", DiffURI: "s3://real/diff", TargetNodeID: "s.a"},
 		{Path: "services/svc/models/b.sql", ContentURI: "s3://b/content", DiffURI: "s3://b/diff", TargetNodeID: "s.b"},
 	}, got.Edits)
