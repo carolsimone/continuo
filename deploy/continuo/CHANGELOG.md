@@ -12,6 +12,8 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-09
+
 ### Added
 - `global.agentRemediationGrpcAddr` (default `agent-remediation:50054`) —
   release-controller reads remediation attempts before starting a retry
