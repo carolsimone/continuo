@@ -1,9 +1,20 @@
 # Instantiate the continuo platform
 
 This guide gets continuo itself running on your laptop — an empty control plane for your data pipelines,
-in about ten minutes. The next guide,
-[Run dbt and Python projects in continuo](run-projects-in-continuo.md), puts the
-real projects on it.
+in about ten minutes. The
+[Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide puts
+the real projects on it.
+
+## What continuo does today
+
+- **Onboard from an image + one API call** — no manifest, DAG, or model list; continuo derives them.
+- **Cross-project dependency graph from SQL** — resolved from the compiled SQL, across project and dbt↔python boundaries.
+- **Blue/green validation before promotion** — proves each change against production structure in an isolated schema; rejects one that breaks a downstream model.
+- **Per-service releases** — promote one service at a time; a rejected release never reaches production.
+- **Scheduled or on-demand runs as Kubernetes Jobs** — dbt, python, and python-csv nodes, in dependency order.
+- **Auto-remediation** — classify a failure, an LLM proposes a fix, a human approves it as a pull request (continuo only reads your repo).
+- **In-UI assistant chat** — LLM-backed questions and answers over your runs and topology.
+- **Postgres or Trino warehouses** — or bring your own engine adapter.
 
 > **Deploying to your own Kubernetes cluster?** This guide is the local
 > quickstart — a single-node cluster with continuo's own bundled PostgreSQL,
@@ -28,7 +39,7 @@ then apply to the host itself.
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | Talking to that cluster | `brew install kubectl` |
 | [Helm](https://helm.sh/) 3.14+ | Installing continuo | `brew install helm` |
 | `git`, `curl`, `jq` | Cloning, calling the release API, reading its answers | `brew install jq` |
-| [AWS CLI](https://docs.aws.amazon.com/cli/) | Uploading the python service's artifacts to the bundled MinIO (chapter 4 of the [next guide](run-projects-in-continuo.md)) | `brew install awscli` |
+| [AWS CLI](https://docs.aws.amazon.com/cli/) | Uploading the python service's artifacts to the bundled MinIO (chapter 4 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide) | `brew install awscli` |
 
 **Room to run it.** continuo brings its own PostgreSQL, Redis, Neo4j, MinIO and
 identity provider in this mode, plus ten of its own services, and then runs your
@@ -48,21 +59,34 @@ runtime more memory (or stop other containers), then reinstall.
 
 **A GitHub account.** You will fork the example projects so that the code
 you release is yours — which matters in chapter 8 of the
-[next guide](run-projects-in-continuo.md), where continuo reads
-your source to explain (and then propose a fix for) a failure.
+[Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide,
+where continuo reads your source to explain (and then propose a fix for) a
+failure.
 
-**Credentials: none, until chapter 8 of the next guide.** Every other chapter
-needs no API keys and no secrets of any kind. Chapter 8 of the next guide, where
-an LLM proposes a fix for the model you broke, is the exception:
+**Credentials: none to install.** The install itself needs no secrets, and so
+does every step of the walkthrough except the LLM-backed extras below. An LLM API
+key unlocks two optional things: the in-UI **assistant** (section 3) and
+**chapter 8 of the [Run dbt and Python projects in continuo](run-projects-in-continuo.md)
+guide**, where an LLM proposes a fix for a model you broke. That chapter 8
+additionally needs GitHub access.
 
-| For chapter 8 of the next guide only | What it is |
+| For the LLM extras | What it is |
 |---|---|
-| An LLM API key | Anthropic (the default) or OpenAI |
-| A GitHub personal access token | Read-only, fine-grained, `Contents: Read` on your fork — the agent reads the failing model's source through it |
-| *(optional)* A GitHub App | Only if you want the UI's "Create PR" button to actually open the pull request rather than just show you the proposed diff |
+| An LLM API key | Anthropic (the default) or OpenAI — powers the assistant (section 3) and chapter 8 |
+| A GitHub personal access token | *Chapter 8 only.* Read-only, fine-grained, `Contents: Read` on your fork — the agent reads the failing model's source through it |
+| *(optional)* A GitHub App | *Chapter 8 only.* Needed if you want the UI's "Create PR" button to actually open the pull request rather than just show you the proposed diff |
 
-If you do not want to set those up, skip chapter 8 of the next guide. The rest
-is a complete story without it.
+Where to get them: create an Anthropic key in the
+[Anthropic Console](https://console.anthropic.com/settings/keys) (Settings → API
+keys — see the [Anthropic API docs](https://docs.claude.com/en/api/overview) for
+details), or an OpenAI key at the
+[OpenAI platform](https://platform.openai.com/api-keys). The GitHub token and App
+are created in your own GitHub account settings (chapter 8 of the
+[Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide
+walks through the App).
+
+Set none of these and you still get the whole platform and the whole walkthrough
+bar the assistant and chapter 8 — a complete story without them.
 
 **Time.** Budget ten to fifteen minutes end to end, nearly all of it waiting for
 image pulls on the first install.
@@ -119,6 +143,32 @@ resolve that name at all. One loopback line bridges the two. If you cannot use
 with a browser resolver rule instead.
 
 You are now looking at an empty continuo. Everything that follows fills it.
+
+---
+
+## 3. Optional: enable the assistant
+
+The panel on the right of the UI is continuo's assistant — ask it about your
+platform in plain language (it has more to say once you load real projects with
+the [Run dbt and Python projects in continuo](run-projects-in-continuo.md)
+guide). It needs an LLM API key; until one is set the panel answers with a
+provider error (`x-api-key header is required`).
+
+Set the key and restart the chat service:
+
+```bash
+helm upgrade continuo oci://ghcr.io/carolsimone/charts/continuo \
+  --version 0.4.1 -n continuo --reuse-values \
+  --set llm.apiKey='<your-api-key>'
+
+kubectl -n continuo rollout restart deploy/agent-chat
+```
+
+`llm.provider` defaults to `anthropic` and `llm.model` to `claude-haiku-4-5`; for
+OpenAI add `--set llm.provider=openai --set llm.model=<model>`. Once the pod
+restarts, the assistant answers live. This is the same `llm.apiKey` chapter 8 of
+the [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide
+uses, so setting it here covers both.
 
 ---
 

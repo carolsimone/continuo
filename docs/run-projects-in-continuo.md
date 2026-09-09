@@ -533,8 +533,8 @@ in a different dbt project, built by a different image, released separately —
 reached by nothing more than `FROM analytics.fx_transactions_eur`.
 
 This run also unlocked validation. Every model in the graph now exists as a
-real production table — which is exactly what the next chapter's release will
-be proven against.
+real production table — which is exactly what chapter 6's release will be proven
+against.
 
 ---
 
@@ -630,8 +630,8 @@ against it. Nobody declared those relationships anywhere.
 
 Only because all of that passed did `marketing:v2` become marketing's
 production image. In the UI, the graph now shows `channel_roi` downstream of
-finance's `ltv_per_user` — a node that exists but has never run, which the last
-chapter fixes.
+finance's `ltv_per_user` — a node that exists but has never run, which chapter 9
+fixes.
 
 ---
 
@@ -720,7 +720,7 @@ reached production, in another team's model they had never heard of.
 
 ## 8. Let the agent propose a fix
 
-*This chapter needs credentials the earlier chapters did not.*
+*This chapter needs credentials chapters 1–7 did not.*
 
 ⚠️ **Prerequisite: your fork must be a real repository on github.com.** Chapters
 1–7 run fine against a purely local clone — a release only stores `repo` and
