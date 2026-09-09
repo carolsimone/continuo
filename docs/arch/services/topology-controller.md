@@ -42,7 +42,7 @@ None (no HTTP interface; runs as `tail -f /dev/null` in dev; started manually or
 A test that tests at least one tracked node — regardless of whether that node's own service is declared on this release — is itself published as a `dbt-test` topology entry: its `unique_id` is dbt's own manifest unique_id (a test writes no relation, so it has no `<schema>.<table>` identity of its own), `candidate_sql`/`dependency_sqls` hold its compiled SQL (the same assertion query dbt would run), and it carries no `owner` or `schedule_name` (empty strings) and is never scheduled. Its `resolved_relation_id` is always `""` — a test writes no physical relation, so it can never claim, or collide on, a table. A test whose `attached_node` (or, absent that, every `depends_on.nodes` entry) is not a tracked node is skipped entirely: neither counted nor published. `release-controller` carries `test_count` through unchanged onto `release.promoted:v1`, where `orchestrator` persists it as `:Table.test_count`.
 
 `content_hash` is `"sha256:" + sha256(source_hash|shared_code_hash|config_hash)` — a fold of three independently-computed components, so a change to any one of them flips the whole fingerprint:
-- `source_hash` is dbt's per-node source checksum (`checksum.checksum` from the manifest node); a node dbt did not checksum falls back to a sha256 of its `raw_code`/`compiled_code`, or failing that a stable JSON dump of the node, so it is never empty.
+- `source_hash` is dbt's per-node source checksum (`checksum.checksum` from the manifest node); a node dbt did not checksum falls back to a sha256 of its `raw_code`/`compiled_code`, or failing that a stable JSON dump of the node, so it is never empty. A `dbt-test` node is the exception: its `source_hash` fingerprints the test's **compiled** assertion (a sha256 of `compiled_code`, falling back to `raw_code` then a JSON dump) and never its checksum. A generic test's `raw_code` is only the macro call (e.g. `{{ test_not_null(**_dbt_generic_test_kwargs) }}`) and its dbt checksum is empty, so only the compiled SQL reflects the columns and relations the test binds to — an upstream macro or var change that rewrites the compiled assertion while leaving the macro call untouched still flips the hash, so the changed test is bind-checked rather than promoted unvalidated.
 - `shared_code_hash` is a fold of the source checksums of every macro the node transitively depends on (resolved from the manifest's `macros` map via `depends_on.macros`, following macro→macro edges); `""` for a node with no macro dependencies.
 - `config_hash` is a sha256 of the node's resolved `config`, minus the `meta`, `docs`, `description`, `grants`, and `tags` keys, so an out-of-file config change (a materialization or other setting from `dbt_project.yml` / `schema.yml`) flips the hash even when the node's own `.sql` file is untouched.
 
@@ -81,7 +81,10 @@ Pass 1 — Parse and validate against the declared service
         is the test's own dbt name, `schema_name` the manifest's test schema (a test claims
         no warehouse schema of its own), `candidate_sql` and `dependency_sqls` both hold the
         test's compiled assertion query, and `content_hash` folds the same three components
-        (source, shared-macro, config hashes) as a model's. It carries no owner or schedule
+        (source, shared-macro, config hashes) as a model's — except its source component
+        fingerprints that compiled assertion (a sha256 of `compiled_code`) rather than a
+        source-file checksum, so a change to what the test asserts flips the hash. It carries
+        no owner or schedule
         (both empty strings) and is never scheduled. A test whose only targets are untracked
         nodes contributes nothing beyond its `test_count` attribution and is not added to
         the node list at all.

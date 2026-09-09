@@ -73,11 +73,26 @@ func computeContentHash(n map[string]interface{}, macros map[string]interface{})
 	return "sha256:" + sha256Hex(sourceHash+"|"+sharedHash+"|"+configHash)
 }
 
-// nodeSourceHash mirrors parser.py's _node_source_hash: prefer dbt's own
-// checksum.checksum; if absent, fall back to a deterministic sha256 over the
-// node's raw_code/compiled_code, or, failing that, a stable canonical JSON
-// dump of the whole node — so the fingerprint is never empty.
+// nodeSourceHash mirrors parser.py's _node_source_hash. A dbt TEST is
+// fingerprinted by its COMPILED assertion (compiled_code, falling back to
+// raw_code, then a whole-node JSON dump) and never its checksum: a generic
+// test's raw_code is only the macro call and its dbt checksum is empty, so
+// only the compiled SQL reflects the columns and relations the test binds to.
+// Every other node prefers dbt's own checksum.checksum; if absent, it falls
+// back to a deterministic sha256 over raw_code/compiled_code, or, failing
+// that, a stable canonical JSON dump of the whole node — so the fingerprint is
+// never empty.
 func nodeSourceHash(n map[string]interface{}) string {
+	if rt, _ := n["resource_type"].(string); rt == "test" {
+		basis, _ := n["compiled_code"].(string)
+		if basis == "" {
+			basis, _ = n["raw_code"].(string)
+		}
+		if basis == "" {
+			basis = canonicalJSON(n)
+		}
+		return "sha256:" + sha256Hex(basis)
+	}
 	if cs, ok := n["checksum"].(map[string]interface{}); ok {
 		if v, ok := cs["checksum"].(string); ok && v != "" {
 			return v

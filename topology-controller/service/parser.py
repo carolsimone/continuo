@@ -12,13 +12,31 @@ SUPPORTED_RESOURCE_TYPES = {"model", "seed", "snapshot"}
 def _node_source_hash(node: dict) -> str:
     """Return a non-empty, change-sensitive fingerprint for a dbt node's own source.
 
-    Prefers dbt's own per-node `checksum.checksum` (a sha256 of the node's source
-    file). release-controller uses content_hash as the SOLE change detector, so an
-    empty value would make later edits to the node undetectable (empty == empty).
-    For any node dbt did not check-sum, fall back to a deterministic sha256 over the
-    node's source (`raw_code`/`compiled_code`) or, failing that, a stable JSON dump —
-    so the fingerprint is never empty and still changes when the node changes.
+    release-controller uses content_hash as the SOLE change detector, so an empty
+    value would make later edits to the node undetectable (empty == empty); the
+    result here is therefore always non-empty.
+
+    A dbt TEST is fingerprinted by its COMPILED assertion, never its raw source or
+    dbt checksum. A generic test's `raw_code` is only the macro call (e.g.
+    `{{ test_not_null(**_dbt_generic_test_kwargs) }}`) and its dbt checksum is
+    empty; only the compiled SQL reflects the columns and relations the test
+    actually asserts against and binds to. Hashing `raw_code` (or the empty
+    checksum) would miss an upstream macro/var change that rewrites the compiled
+    assertion while leaving the macro call untouched, so the changed test would
+    promote without ever being bind-checked. A test therefore hashes
+    `compiled_code` (falling back to `raw_code`, then a stable JSON dump).
+
+    Every other node prefers dbt's own per-node `checksum.checksum` (a sha256 of
+    the node's source file); for a node dbt did not check-sum it falls back to a
+    deterministic sha256 over the node's source (`raw_code`/`compiled_code`) or,
+    failing that, a stable JSON dump — so the fingerprint is never empty and still
+    changes when the node changes.
     """
+    if node.get("resource_type") == "test":
+        basis = node.get("compiled_code") or node.get("raw_code") or ""
+        if not basis:
+            basis = json.dumps(node, sort_keys=True, default=str)
+        return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
     checksum = node.get("checksum", {}).get("checksum", "")
     if checksum:
         return checksum
