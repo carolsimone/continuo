@@ -41,6 +41,16 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	}
 	defer u.Rollback() //nolint:errcheck
 
+	// Get, not Load (no FOR UPDATE): the parse leg has a single writer of this
+	// row. Only one run is active at a time — AdvanceQueue promotes the next
+	// queued run to a leg only when none is active — and manifest.loaded.candidate
+	// is that run's single terminal parse message, the same single-transition
+	// shape as the compile- and seed-build-result legs, which also Get. The only
+	// concurrent writers of a run row are the per-node validation upserts a later
+	// leg fans out; those handlers (HandleNodeValidationResult,
+	// HandleValidationResult) Load to serialize on the row. The parse leg has no
+	// such contention, so FOR UPDATE would only add lock cost without changing
+	// the outcome.
 	r, err := u.RunRepo().Get(ctx, in.ReleaseID)
 	if err != nil {
 		return fmt.Errorf("get release: %w", err)
