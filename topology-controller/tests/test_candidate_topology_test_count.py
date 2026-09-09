@@ -2,10 +2,10 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 
-from adapters.sources import ManifestSource
 from domain.model import ManifestFile, Runtime
 from service.candidate_artifacts import DbtSqlArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
+from service.ports import ManifestSourcePort
 
 
 def _write(tmp_path, manifest: dict) -> str:
@@ -41,7 +41,7 @@ def test_candidate_topology_carries_test_count(tmp_path):
         },
     }}
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=_write(tmp_path, manifest), version="v1", image_tag="")
     ]
