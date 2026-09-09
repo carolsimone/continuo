@@ -39,40 +39,40 @@ type Event interface {
 // writes it into the delay queue (HSET payload + ZADD check_after as the
 // score); check_after is the ZSET score / due time, not a consumer gate.
 type JobCheckRequest struct {
-	TaskID       string `json:"task_id"`
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	JobName      string `json:"job_name"`
-	CheckAfter   int64  `json:"check_after"` // Unix timestamp for delayed processing
-	NodeType     string `json:"node_type"`
-	ImageTag     string `json:"image_tag"`
+	TaskID       string
+	ScheduleID   string
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	JobName      string
+	CheckAfter   int64 // Unix timestamp for delayed processing
+	NodeType     string
+	ImageTag     string
 	// Operation is the dbt verb the Job runs (e.g. "test"); empty for a normal
 	// production `dbt run`. It travels in the durable payload (delay-queue
 	// ticket → promoted stream message) so a check that lands after the Job is
 	// TTL-reaped still carries the verb for retry.
-	Operation  string `json:"operation,omitempty"`
-	RetryCount int    `json:"retry_count"` // current task retry count
-	MaxRetries int    `json:"max_retries"` // maximum task retries allowed
+	Operation  string
+	RetryCount int // current task retry count
+	MaxRetries int // maximum task retries allowed
 	// RunningAnnounced is true once RUNNING has been announced for this attempt.
-	RunningAnnounced bool `json:"running_announced"`
+	RunningAnnounced bool
 }
 
 func (JobCheckRequest) isEvent() {}
 
 // TaskFailed represents an event that a task has permanently failed
 type TaskFailed struct {
-	TaskID       string `json:"task_id"`
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	JobName      string `json:"job_name"`
-	ErrorMessage string `json:"error_message"`
-	RetryCount   int    `json:"retry_count"`
+	TaskID       string
+	ScheduleID   string
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	JobName      string
+	ErrorMessage string
+	RetryCount   int
 }
 
 func (TaskFailed) isEvent() {}
@@ -94,24 +94,24 @@ func (e TaskFailed) ToMap() map[string]interface{} {
 
 // TaskRetry represents an event that a task should be retried
 type TaskRetry struct {
-	TaskID       string `json:"task_id"`
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	JobName      string `json:"job_name"`
-	ImageTag     string `json:"image_tag"`
-	RetryCount   int    `json:"retry_count"`
-	MaxRetries   int    `json:"max_retries"`
-	NodeType     string `json:"node_type"`
+	TaskID       string
+	ScheduleID   string
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	JobName      string
+	ImageTag     string
+	RetryCount   int
+	MaxRetries   int
+	NodeType     string
 	// Operation is the dbt verb the retried Job should run (e.g. "test").
 	// Empty for normal production `dbt run` retries — their wire format is
 	// unchanged. Sourced from the durable CheckJobStatus.Operation (which rides
 	// node.deployed:v1 / check.k8s:v1), never from the failed Job's labels: a
 	// TTL-reaped Job has no labels, so a retried `dbt test` Job stays `dbt test`
 	// instead of rebuilding as `dbt run`.
-	Operation string `json:"operation,omitempty"`
+	Operation string
 }
 
 func (TaskRetry) isEvent() {}
@@ -142,13 +142,13 @@ func (e TaskRetry) ToMap() map[string]interface{} {
 
 // NodeStatusUpdated represents an event that a node's status has changed
 type NodeStatusUpdated struct {
-	TaskID       string `json:"task_id"`
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	Status       string `json:"status"`
+	TaskID       string
+	ScheduleID   string
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	Status       string
 }
 
 func (NodeStatusUpdated) isEvent() {}

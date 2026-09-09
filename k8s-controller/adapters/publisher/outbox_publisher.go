@@ -8,6 +8,7 @@ import (
 
 	"github.com/carolsimone/continuo/k8s-controller/adapters/delayqueue"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
+	"github.com/carolsimone/continuo/k8s-controller/serialization"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -60,10 +61,11 @@ func (p *OutboxPublisher) Publish(ctx context.Context, entry *outbox.Entry) erro
 // scheduleDelayedCheck converts a check_delayed outbox row into the typed
 // CheckK8s payload and enqueues it in the delay queue keyed by JobName.
 func (p *OutboxPublisher) scheduleDelayedCheck(ctx context.Context, entry *outbox.Entry) error {
-	var e event.JobCheckRequest
-	if err := json.Unmarshal(entry.Payload, &e); err != nil {
+	var dto serialization.JobCheckRequestDTO
+	if err := json.Unmarshal(entry.Payload, &dto); err != nil {
 		return fmt.Errorf("%w: unmarshal check_delayed: %v", pkgevents.ErrPermanent, err)
 	}
+	e := dto.ToDomain()
 	retryCount, err := num.Int32(e.RetryCount, "retry_count")
 	if err != nil {
 		// An out-of-range numeric field on a known event type is a
@@ -145,25 +147,25 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return e.ToMap(), nil
 
 	case event.EventTypeTaskRetry:
-		var e event.TaskRetry
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
+		var dto serialization.TaskRetryDTO
+		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal task_retry: %v", pkgevents.ErrPermanent, err)
 		}
-		return e.ToMap(), nil
+		return dto.ToDomain().ToMap(), nil
 
 	case event.EventTypeTaskFailed:
-		var e event.TaskFailed
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
+		var dto serialization.TaskFailedDTO
+		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal task_failed: %v", pkgevents.ErrPermanent, err)
 		}
-		return e.ToMap(), nil
+		return dto.ToDomain().ToMap(), nil
 
 	case event.EventTypeNodeStatusUpdated:
-		var e event.NodeStatusUpdated
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
+		var dto serialization.NodeStatusUpdatedDTO
+		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal node_status_updated: %v", pkgevents.ErrPermanent, err)
 		}
-		return e.ToMap(), nil
+		return dto.ToDomain().ToMap(), nil
 
 	case event.EventTypeValidationNodeCompleted, event.EventTypeSeedBuildNodeCompleted, event.EventTypeCompileNodeCompleted:
 		// The three candidate-leg node-completed events

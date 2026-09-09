@@ -11,6 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
+	"github.com/carolsimone/continuo/k8s-controller/serialization"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -126,11 +127,11 @@ func TestPublisher_UnknownEventType_IsTransient(t *testing.T) {
 // classified as pkgevents.ErrPermanent.
 func TestPublisher_CheckDelayed_OutOfRangeMaxRetries_IsPermanent(t *testing.T) {
 	pub := publisher.NewOutboxPublisher(nil, newTestLogger())
-	payload := mustMarshalK8s(t, event.JobCheckRequest{
+	payload := mustMarshalK8s(t, serialization.JobCheckRequestFromDomain(event.JobCheckRequest{
 		TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc",
 		SchemaName: "pub", TableName: "tbl", JobName: "j1", NodeType: "dbt-model",
 		ImageTag: "sha", MaxRetries: 1 << 40, // exceeds int32 range
-	})
+	}))
 
 	err := pub.Publish(context.Background(), &outbox.Entry{
 		ID: uuid.New(), EventType: "check_delayed", StreamName: streams.CheckK8sV1, Payload: payload,
@@ -167,22 +168,22 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 		{
 			eventType:  "task_retry",
 			streamName: streams.RetryTaskV1,
-			payload:    mustMarshalK8s(t, event.TaskRetry{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", ImageTag: "sha", RetryCount: 1, MaxRetries: 3, NodeType: "dbt-model"}),
+			payload:    mustMarshalK8s(t, serialization.TaskRetryFromDomain(event.TaskRetry{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", ImageTag: "sha", RetryCount: 1, MaxRetries: 3, NodeType: "dbt-model"})),
 		},
 		{
 			eventType:  "task_failed",
 			streamName: streams.TaskFailedV1,
-			payload:    mustMarshalK8s(t, event.TaskFailed{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", ErrorMessage: "err", RetryCount: 0}),
+			payload:    mustMarshalK8s(t, serialization.TaskFailedFromDomain(event.TaskFailed{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", ErrorMessage: "err", RetryCount: 0})),
 		},
 		{
 			eventType:  "check_delayed",
 			streamName: streams.CheckK8sV1,
-			payload:    mustMarshalK8s(t, event.JobCheckRequest{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", CheckAfter: 1700000000, NodeType: "dbt-model", ImageTag: "sha", RetryCount: 0, MaxRetries: 3}),
+			payload:    mustMarshalK8s(t, serialization.JobCheckRequestFromDomain(event.JobCheckRequest{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", JobName: "j1", CheckAfter: 1700000000, NodeType: "dbt-model", ImageTag: "sha", RetryCount: 0, MaxRetries: 3})),
 		},
 		{
 			eventType:  "node_status_updated",
 			streamName: streams.NodeUpdatedV1,
-			payload:    mustMarshalK8s(t, event.NodeStatusUpdated{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", Status: "SUCCEEDED"}),
+			payload:    mustMarshalK8s(t, serialization.NodeStatusUpdatedFromDomain(event.NodeStatusUpdated{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "pub", TableName: "tbl", Status: "SUCCEEDED"})),
 		},
 		{
 			// Uses the shared constant — the single source of truth for this wire string.

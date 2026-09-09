@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
 	"github.com/carolsimone/continuo/k8s-controller/domain/model"
 	"github.com/carolsimone/continuo/k8s-controller/domain/repository"
+	"github.com/carolsimone/continuo/k8s-controller/serialization"
 	"github.com/carolsimone/continuo/k8s-controller/service/ports"
 	"github.com/carolsimone/continuo/k8s-controller/service/uow"
 	pkgmodel "github.com/carolsimone/continuo/pkg/domain/model"
@@ -627,7 +628,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 	}
 
 	// Row 3: task_retry → retry.task:v1
-	retryPayload, err := json.Marshal(event.TaskRetry{
+	retryPayload, err := json.Marshal(serialization.TaskRetryFromDomain(event.TaskRetry{
 		TaskID:       cmd.TaskID.String(),
 		ScheduleID:   cmd.ScheduleID.String(),
 		ScheduleName: cmd.ScheduleName,
@@ -640,7 +641,7 @@ func (h *CheckStatusHandler) handleFailedWithRetry(ctx context.Context, u uow.Un
 		MaxRetries:   int(maxRetries),
 		NodeType:     cmd.NodeType,
 		Operation:    cmd.Operation,
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("marshal task_retry: %w", err)
 	}
@@ -704,7 +705,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 	// so each check-delayed row has its own identity in the check.k8s:v1 stream.
 	outboxEntryID := uuid.New()
 
-	checkPayload, err := json.Marshal(event.JobCheckRequest{
+	checkPayload, err := json.Marshal(serialization.JobCheckRequestFromDomain(event.JobCheckRequest{
 		TaskID:           cmd.TaskID.String(),
 		ScheduleID:       cmd.ScheduleID.String(),
 		ScheduleName:     cmd.ScheduleName,
@@ -719,7 +720,7 @@ func (h *CheckStatusHandler) handleRunning(ctx context.Context, u uow.UnitOfWork
 		RetryCount:       int(cmd.RetryCount),
 		MaxRetries:       int(maxRetries),
 		RunningAnnounced: true,
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("marshal check_delayed: %w", err)
 	}
@@ -762,7 +763,7 @@ func (h *CheckStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork
 	}
 
 	// Row 2: task_failed → task.failed:v1
-	failedPayload, err := json.Marshal(event.TaskFailed{
+	failedPayload, err := json.Marshal(serialization.TaskFailedFromDomain(event.TaskFailed{
 		TaskID:       cmd.TaskID.String(),
 		ScheduleID:   cmd.ScheduleID.String(),
 		ScheduleName: cmd.ScheduleName,
@@ -772,7 +773,7 @@ func (h *CheckStatusHandler) handleUnknown(ctx context.Context, u uow.UnitOfWork
 		JobName:      cmd.JobName,
 		ErrorMessage: errorMsg,
 		RetryCount:   int(newRetryCount),
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("marshal task_failed: %w", err)
 	}
@@ -890,7 +891,7 @@ func (h *CheckStatusHandler) writeNodeStatusUpdated(
 	cmd command.CheckJobStatus,
 	status string,
 ) error {
-	payload, err := json.Marshal(event.NodeStatusUpdated{
+	payload, err := json.Marshal(serialization.NodeStatusUpdatedFromDomain(event.NodeStatusUpdated{
 		TaskID:       cmd.TaskID.String(),
 		ScheduleID:   cmd.ScheduleID.String(),
 		ScheduleName: cmd.ScheduleName,
@@ -898,7 +899,7 @@ func (h *CheckStatusHandler) writeNodeStatusUpdated(
 		SchemaName:   cmd.SchemaName,
 		TableName:    cmd.TableName,
 		Status:       status,
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}

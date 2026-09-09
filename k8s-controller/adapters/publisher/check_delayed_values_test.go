@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/k8s-controller/adapters/delayqueue"
 	"github.com/carolsimone/continuo/k8s-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/k8s-controller/domain/event"
+	"github.com/carolsimone/continuo/k8s-controller/serialization"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -42,7 +43,7 @@ func TestPublish_CheckDelayed_WritesDelayQueueNotStream(t *testing.T) {
 
 	taskID := uuid.New().String()
 	scheduleID := uuid.New().String()
-	raw, err := json.Marshal(event.JobCheckRequest{
+	raw, err := json.Marshal(serialization.JobCheckRequestFromDomain(event.JobCheckRequest{
 		TaskID:       taskID,
 		ScheduleID:   scheduleID,
 		ScheduleName: "daily",
@@ -55,7 +56,7 @@ func TestPublish_CheckDelayed_WritesDelayQueueNotStream(t *testing.T) {
 		ImageTag:     "sha-abc",
 		RetryCount:   2,
 		MaxRetries:   5,
-	})
+	}))
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -102,12 +103,12 @@ func TestPublish_CheckDelayed_CarriesRunningAnnounced(t *testing.T) {
 	r := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	pub := publisher.NewOutboxPublisher(r, newTestLogger())
 
-	raw, err := json.Marshal(event.JobCheckRequest{
+	raw, err := json.Marshal(serialization.JobCheckRequestFromDomain(event.JobCheckRequest{
 		TaskID:           uuid.New().String(),
 		ScheduleID:       uuid.New().String(),
 		JobName:          "job-1",
 		RunningAnnounced: true,
-	})
+	}))
 	require.NoError(t, err)
 
 	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
