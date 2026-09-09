@@ -80,20 +80,20 @@ type NodeValidationResult struct {
 	// Stage is "compile" | "seed_build" | "validation". The failed unit
 	// generalises across legs — a dbt node for validation/seed_build, a
 	// service compile unit for the compile leg.
-	Stage         string `json:"stage,omitempty"`
-	NodeID        string `json:"node_id"`
-	Status        string `json:"status"` // "ok" | "failed"
-	DBTLogURI     string `json:"dbt_log_uri,omitempty"`
-	RunResultsURI string `json:"run_results_uri,omitempty"`
-	DurationMS    int64  `json:"duration_ms,omitempty"`
+	Stage         string
+	NodeID        string
+	Status        string // "ok" | "failed"
+	DBTLogURI     string
+	RunResultsURI string
+	DurationMS    int64
 	// FilePath is the optional offending source file path; populated for
 	// non-node legs (e.g. compile) where the failure maps to a file rather
 	// than a dbt node ID.
-	FilePath string `json:"file_path,omitempty"`
+	FilePath string
 	// NodeType is the node's kind as the candidate topology declares it, so a
 	// reader can tell a test's bind check from a model's build without the
 	// topology.
-	NodeType string `json:"node_type,omitempty"`
+	NodeType string
 }
 
 // Candidate holds the facts only a candidate release has: where its source

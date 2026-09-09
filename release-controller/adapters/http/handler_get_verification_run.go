@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 )
 
@@ -37,7 +38,7 @@ func verificationRunResponse(r *pipeline.Run) map[string]any {
 		"failing_nodes":       r.FailingNodes(),
 		"fail_reason":         r.FailReason(),
 		"fail_detail":         r.FailDetail(),
-		"per_node_results":    r.PerNodeResults(),
+		"per_node_results":    serialization.NodeValidationResultsFromDomain(r.PerNodeResults()),
 		"image_tags":          r.ImageTags(),
 		"manifest_kind":       string(r.ManifestKind()),
 	}

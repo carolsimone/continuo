@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
@@ -141,7 +142,7 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	if err != nil {
 		return fmt.Errorf("marshal transitions: %w", err)
 	}
-	perNodeJSON, err := json.Marshal(run.PerNodeResults())
+	perNodeJSON, err := json.Marshal(serialization.NodeValidationResultsFromDomain(run.PerNodeResults()))
 	if err != nil {
 		return fmt.Errorf("marshal per_node_results: %w", err)
 	}
@@ -202,9 +203,11 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 	}
 	var perNode []pipeline.NodeValidationResult
 	if len(row.PerNodeResults) > 0 {
-		if err := json.Unmarshal(row.PerNodeResults, &perNode); err != nil {
+		var perNodeDTO []serialization.NodeValidationResultDTO
+		if err := json.Unmarshal(row.PerNodeResults, &perNodeDTO); err != nil {
 			return nil, fmt.Errorf("unmarshal per_node_results: %w", err)
 		}
+		perNode = serialization.NodeValidationResultsToDomain(perNodeDTO)
 	}
 	var transitions []pipeline.Transition
 	if len(row.TransitionsJSON) > 0 {
