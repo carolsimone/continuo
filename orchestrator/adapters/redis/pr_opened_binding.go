@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -22,11 +23,11 @@ func ParsePROpened(msg goredis.XMessage) (event.PROpened, error) {
 	if !ok || raw == "" {
 		return event.PROpened{}, fmt.Errorf("%w: missing or empty payload field in message %s", events.ErrPermanent, msg.ID)
 	}
-	var evt event.PROpened
-	if err := json.Unmarshal([]byte(raw), &evt); err != nil {
+	var dto serialization.PROpenedDTO
+	if err := json.Unmarshal([]byte(raw), &dto); err != nil {
 		return event.PROpened{}, fmt.Errorf("%w: unmarshal remediation.pr_opened payload (message %s): %v", events.ErrPermanent, msg.ID, err)
 	}
-	return evt, nil
+	return dto.ToDomain(), nil
 }
 
 // NewPrOpenedBinding wires ParsePROpened into the proposals handler,

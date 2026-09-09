@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
@@ -83,7 +83,7 @@ func TestHandlePromotedSeedsRun_AnnouncesTheRunThenDispatchesEveryNode(t *testin
 	seen := map[string]bool{}
 	for _, entry := range entries[1:] {
 		require.Equal(t, streams.QueryModelV1, entry.StreamName)
-		var q domain.NodeReadyForExecution
+		var q serialization.NodeReadyForExecutionDTO
 		require.NoError(t, json.Unmarshal(entry.Payload, &q))
 		assert.Equal(t, runID, q.ScheduleID)
 		assert.NotEmpty(t, q.JobName)

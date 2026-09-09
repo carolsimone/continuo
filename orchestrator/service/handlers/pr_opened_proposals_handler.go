@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -51,7 +52,7 @@ func (h *PrOpenedProposalsHandler) Handle(
 			pkgevents.ErrPermanent, messageID, in.OpenedAt, err)
 	}
 
-	payload, err := json.Marshal(in)
+	payload, err := json.Marshal(serialization.PROpenedFromDomain(in))
 	if err != nil {
 		return fmt.Errorf("marshal input: %w", err)
 	}

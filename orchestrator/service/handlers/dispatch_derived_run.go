@@ -15,6 +15,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
@@ -119,7 +120,7 @@ func DispatchDerivedRun(ctx context.Context, u uow.UnitOfWork, logger *slog.Logg
 			ImageTag:        t.ImageTag,
 			Operation:       d.Operation,
 		}
-		queryPayload, err := json.Marshal(queryEvt)
+		queryPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(queryEvt))
 		if err != nil {
 			return fmt.Errorf("marshal query.model: %w", err)
 		}

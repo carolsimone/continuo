@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -22,11 +23,11 @@ func ParseRemediationRequested(msg goredis.XMessage) (event.RemediationRequested
 	if !ok || raw == "" {
 		return event.RemediationRequested{}, fmt.Errorf("%w: missing or empty payload field in message %s", events.ErrPermanent, msg.ID)
 	}
-	var evt event.RemediationRequested
-	if err := json.Unmarshal([]byte(raw), &evt); err != nil {
+	var dto serialization.RemediationRequestedDTO
+	if err := json.Unmarshal([]byte(raw), &dto); err != nil {
 		return event.RemediationRequested{}, fmt.Errorf("%w: unmarshal remediation.requested payload (message %s): %v", events.ErrPermanent, msg.ID, err)
 	}
-	return evt, nil
+	return dto.ToDomain(), nil
 }
 
 // NewRemediationRequestedBinding wires ParseRemediationRequested into the

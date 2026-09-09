@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
@@ -192,7 +193,7 @@ func TestHandleSchedulerStarted_Operation_ThreadedToSnapshotAndDispatch(t *testi
 			continue
 		}
 		queryModelCount++
-		var payload domain.NodeReadyForExecution
+		var payload serialization.NodeReadyForExecutionDTO
 		require.NoError(t, json.Unmarshal(e.Payload, &payload))
 		assert.Equal(t, "test", payload.Operation, "every dispatched node.query.model payload must carry Operation")
 	}

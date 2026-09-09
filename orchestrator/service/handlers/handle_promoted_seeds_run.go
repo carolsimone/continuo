@@ -9,6 +9,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	pkgDomain "github.com/carolsimone/continuo/pkg/domain"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
@@ -159,7 +160,7 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 		if err != nil {
 			return fmt.Errorf("compute job name for %s.%s: %w", task.SchemaName, task.TableName, err)
 		}
-		queryPayload, err := json.Marshal(domain.NodeReadyForExecution{
+		queryPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(domain.NodeReadyForExecution{
 			ScheduleID:      cmd.RunID,
 			ScheduleName:    cmd.ScheduleName,
 			ServiceName:     task.ServiceName,
@@ -170,7 +171,7 @@ func (h *HandlePromotedSeedsRunHandler) Handle(ctx context.Context, cmd domainMo
 			NodeType:        task.NodeType,
 			ManifestVersion: task.ManifestVersion,
 			ImageTag:        task.ImageTag,
-		})
+		}))
 		if err != nil {
 			return fmt.Errorf("marshal query.model for %s.%s: %w", task.SchemaName, task.TableName, err)
 		}
