@@ -67,15 +67,18 @@ app.kubernetes.io/name: {{ .service }}
      below stays in sync with values.yaml's default — keep them equal.
 
      An explicit validation.imageTag override also gets a capability gate,
-     the same fail-closed treatment as validation.engine above: v0.1.x-v0.3.x
-     are known runner releases that predate python-csv support (added in
-     v0.4.0) — that runner ignores the "kind"/"csv_source" contract fields
-     topology-controller already emits for a python-csv node and reports
-     success without checking the file's header, so a csv node with a
-     mismatched header would promote unvalidated. A tag that isn't even
-     shaped like "vX.Y.Z" (optionally "@sha256:<digest>") can't be compared
-     against that known-bad range at all, so it fails closed the same way
-     rather than rendering a chart that may silently skip csv validation. */}}
+     the same fail-closed treatment as validation.engine above. Two known-bad
+     ranges are refused, each because the pinned runner cannot run a node kind
+     topology-controller already emits: v0.1.x-v0.3.x predate python-csv
+     support (added in v0.4.0) — that runner ignores the "kind"/"csv_source"
+     contract fields, so a csv node with a mismatched header would promote
+     unvalidated; v0.4.x predate check_binds (dbt-test bind checks, added in
+     v0.5.0) — that runner does not run the "kind: check_binds" nodes emitted
+     for a changed dbt test, so a release with a changed test would promote its
+     bind unvalidated. Together the two gates refuse every tag below v0.5.0. A
+     tag that isn't even shaped like "vX.Y.Z" (optionally "@sha256:<digest>")
+     can't be compared against those ranges at all, so it fails closed the same
+     way rather than rendering a chart that may silently skip validation. */}}
 {{- define "continuo.validation.image" -}}
 {{- $eng := .Values.validation.engine | default "postgres" -}}
 {{- $supported := list "postgres" "trino" -}}
@@ -94,6 +97,9 @@ app.kubernetes.io/name: {{ .service }}
 {{- end -}}
 {{- if regexMatch "^v0\\.[1-3]\\." $bareTag -}}
 {{- fail (printf "validation.imageTag=%q predates python-csv validation support (added in v0.4.0): topology-controller already accepts \"kind: python-csv\" nodes and emits csv_source, but this runner ignores that field and reports success without checking the file's header, so a csv node with a mismatched header would promote unvalidated. Re-pin validation.imageTag to \"v0.4.0\" or later, or drop the override to track the chart's default." $tag) -}}
+{{- end -}}
+{{- if regexMatch "^v0\\.4\\." $bareTag -}}
+{{- fail (printf "validation.imageTag=%q predates check_binds (dbt-test bind checks, added in v0.5.0): topology-controller already emits \"kind: check_binds\" nodes for a changed dbt test, but this runner does not run them and would report success without checking that the test binds, so a release with a changed test would promote its bind unvalidated. Re-pin validation.imageTag to \"v0.5.0\" or later, or drop the override to track the chart's default." $tag) -}}
 {{- end -}}
 {{- else -}}
 {{- $tag = "v0.5.0" -}}{{/* CONTINUO_VALIDATION_DEFAULT_TAG — must equal values.yaml's validation.imageTag default */}}
