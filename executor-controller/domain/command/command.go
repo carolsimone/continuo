@@ -13,24 +13,24 @@ type Command interface {
 // a queued deployment and carries everything needed both to perform the deploy
 // and to build the RUNNING / node_deployed / FAILED announcements afterwards.
 type DeployTask struct {
-	TaskID         string `json:"task_id"`
-	ScheduleID     string `json:"schedule_id"`
-	ScheduleName   string `json:"schedule_name"`
-	ServiceName    string `json:"service_name"`
-	SchemaName     string `json:"schema_name"`
-	TableName      string `json:"table_name"`
-	JobName        string `json:"job_name"`
-	NodeType       string `json:"node_type"`
-	ImageTag       string `json:"image_tag"`
-	TaskRetryCount int    `json:"task_retry_count"`
-	TaskMaxRetries int    `json:"task_max_retries"`
+	TaskID         string
+	ScheduleID     string
+	ScheduleName   string
+	ServiceName    string
+	SchemaName     string
+	TableName      string
+	JobName        string
+	NodeType       string
+	ImageTag       string
+	TaskRetryCount int
+	TaskMaxRetries int
 	// Operation selects the dbt verb the executor runs for this node. Empty
 	// (pkg_model.OperationRun) is the default: dbt run/seed/snapshot by
 	// NodeType. "test" runs `dbt test --select <node>`.
-	Operation string `json:"operation"`
+	Operation string
 	// Mode carries the legacy promote-seed dispatch mode for deployments queued
 	// by an older version. Empty for everything current. See events.ModePromoteSeed.
-	Mode string `json:"mode,omitempty"`
+	Mode string
 }
 
 func (DeployTask) isCommand() {}
@@ -45,37 +45,37 @@ func (DeployTask) isCommand() {}
 // dispatch of this node. It is persisted in job_params and read back by the
 // dispatcher to evaluate whether all upstreams have completed successfully.
 //
-// Every field carries a json tag because the whole struct is marshalled
-// verbatim into the executor_deployments.job_params JSONB column and
-// unmarshalled back on dispatch — this is the same repo-wide, recorded
-// domain/command serialization debt as DeployTask.Mode, not a new one.
+// The whole struct is stored in the executor_deployments.job_params JSONB
+// column and read back on dispatch; the JSON shape lives on
+// serialization.ValidationDeployTaskDTO, which the postgres repository maps to
+// and from this type.
 type ValidationDeployTask struct {
-	ReleaseID            string   `json:"release_id"`
-	NodeID               string   `json:"node_id"`
-	ServiceName          string   `json:"service_name"`
-	SchemaName           string   `json:"schema_name"`
-	TableName            string   `json:"table_name"`
-	NodeType             string   `json:"node_type"`
-	ImageTag             string   `json:"image_tag"`
-	JobName              string   `json:"job_name"`
-	CandidateSchema      string   `json:"candidate_schema"`
-	CandidateArtifactURI string   `json:"candidate_artifact_uri"`
-	ValidationOp         string   `json:"validation_op"`
-	ProdSchema           string   `json:"prod_schema"`
-	UpstreamNodeIDs      []string `json:"upstream_node_ids"`
-	ManifestS3URI        string   `json:"manifest_s3_uri"`
+	ReleaseID            string
+	NodeID               string
+	ServiceName          string
+	SchemaName           string
+	TableName            string
+	NodeType             string
+	ImageTag             string
+	JobName              string
+	CandidateSchema      string
+	CandidateArtifactURI string
+	ValidationOp         string
+	ProdSchema           string
+	UpstreamNodeIDs      []string
+	ManifestS3URI        string
 	// ParseProdS3URI / ParseCandidateS3URI are the S3 destinations for the
 	// compile Job's exported partial-parse artifacts. Empty (older
 	// compile.requested messages without candidate_schema) disables the
-	// parse-export leg for this release. omitempty keeps pre-feature
-	// job_params JSON byte-identical.
-	ParseProdS3URI      string `json:"parse_prod_s3_uri,omitempty"`
-	ParseCandidateS3URI string `json:"parse_candidate_s3_uri,omitempty"`
+	// parse-export leg for this release. Their DTO fields are omitempty so an
+	// absent value keeps the job_params JSON byte-identical.
+	ParseProdS3URI      string
+	ParseCandidateS3URI string
 	// SourceOverlayURI locates the source-overlay tarball a verification
 	// run's compile Job lays over the project before compiling; empty for
-	// every production release. omitempty keeps pre-feature job_params JSON
-	// byte-identical.
-	SourceOverlayURI string `json:"source_overlay_uri,omitempty"`
+	// every production release. Its DTO field is omitempty so an absent value
+	// keeps the job_params JSON byte-identical.
+	SourceOverlayURI string
 }
 
 func (ValidationDeployTask) isCommand() {}
