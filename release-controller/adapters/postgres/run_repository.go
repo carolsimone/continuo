@@ -138,7 +138,7 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	if err != nil {
 		return fmt.Errorf("marshal topology: %w", err)
 	}
-	transitionsJSON, err := json.Marshal(run.Transitions())
+	transitionsJSON, err := json.Marshal(serialization.TransitionsFromDomain(run.Transitions()))
 	if err != nil {
 		return fmt.Errorf("marshal transitions: %w", err)
 	}
@@ -211,9 +211,11 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 	}
 	var transitions []pipeline.Transition
 	if len(row.TransitionsJSON) > 0 {
-		if err := json.Unmarshal(row.TransitionsJSON, &transitions); err != nil {
+		var transitionsDTO []serialization.TransitionDTO
+		if err := json.Unmarshal(row.TransitionsJSON, &transitionsDTO); err != nil {
 			return nil, fmt.Errorf("unmarshal transitions: %w", err)
 		}
+		transitions = serialization.TransitionsToDomain(transitionsDTO)
 	}
 	return pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:                row.RunID,

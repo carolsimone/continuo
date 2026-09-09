@@ -15,7 +15,7 @@ func getReleaseResponse(rel *pipeline.Run) map[string]any {
 		"status":              string(rel.Status()),
 		"changed_service":     rel.ChangedService(),
 		"manifest_kind":       string(rel.ManifestKind()),
-		"transitions":         rel.Transitions(),
+		"transitions":         serialization.TransitionsFromDomain(rel.Transitions()),
 		"validation_node_ids": rel.ValidationNodeIDs(),
 		"reject_reason":       rel.FailReason(),
 		"reject_detail":       rel.FailDetail(),

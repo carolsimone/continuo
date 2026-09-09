@@ -68,8 +68,8 @@ var (
 
 // Transition is one entry of a run's status history.
 type Transition struct {
-	To Status    `json:"to"`
-	At time.Time `json:"at"`
+	To Status
+	At time.Time
 }
 
 // NodeValidationResult is the persisted per-node outcome of a pipeline stage.

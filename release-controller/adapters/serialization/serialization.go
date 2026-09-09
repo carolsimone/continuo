@@ -7,6 +7,8 @@
 package serialization
 
 import (
+	"time"
+
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 )
 
@@ -66,6 +68,41 @@ func NodeValidationResultsToDomain(in []NodeValidationResultDTO) []pipeline.Node
 			FilePath:      d.FilePath,
 			NodeType:      d.NodeType,
 		}
+	}
+	return out
+}
+
+// TransitionDTO is the JSON shape of one pipeline.Transition as it is stored in
+// the release_pipeline_runs.transitions JSONB column and returned in the
+// transitions field of the GET /releases and GET /verification-runs responses.
+// To is a plain string: pipeline.Status marshals identically, and the DTO keeps
+// the domain type out of the wire contract.
+type TransitionDTO struct {
+	To string    `json:"to"`
+	At time.Time `json:"at"`
+}
+
+// TransitionsFromDomain maps domain transitions to DTOs, preserving the nil vs
+// non-nil-empty distinction so the marshalled bytes are unchanged.
+func TransitionsFromDomain(in []pipeline.Transition) []TransitionDTO {
+	if in == nil {
+		return nil
+	}
+	out := make([]TransitionDTO, len(in))
+	for i, t := range in {
+		out[i] = TransitionDTO{To: string(t.To), At: t.At}
+	}
+	return out
+}
+
+// TransitionsToDomain maps decoded DTOs back to domain transitions.
+func TransitionsToDomain(in []TransitionDTO) []pipeline.Transition {
+	if in == nil {
+		return nil
+	}
+	out := make([]pipeline.Transition, len(in))
+	for i, d := range in {
+		out[i] = pipeline.Transition{To: pipeline.Status(d.To), At: d.At}
 	}
 	return out
 }
