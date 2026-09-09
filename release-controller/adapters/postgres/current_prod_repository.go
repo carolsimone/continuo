@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 )
@@ -42,9 +43,11 @@ func (c *CurrentProdRepository) Get(ctx context.Context) (*release.CurrentProd, 
 	}
 	var topo release.Topology
 	if len(row.Topology) > 0 {
-		if err := json.Unmarshal(row.Topology, &topo); err != nil {
+		var topoDTO serialization.TopologyDTO
+		if err := json.Unmarshal(row.Topology, &topoDTO); err != nil {
 			return nil, fmt.Errorf("unmarshal topology: %w", err)
 		}
+		topo = topoDTO.ToDomain()
 	}
 	return release.RehydrateCurrentProd(row.ReleaseID, topo, row.UpdatedAt.Time), nil
 }
@@ -52,7 +55,7 @@ func (c *CurrentProdRepository) Get(ctx context.Context) (*release.CurrentProd, 
 // Upsert writes the current production state. The singleton id=1 row is
 // inserted on first promotion and updated on every subsequent one.
 func (c *CurrentProdRepository) Upsert(ctx context.Context, cp *release.CurrentProd) error {
-	topoJSON, err := json.Marshal(cp.TopologySnapshot())
+	topoJSON, err := json.Marshal(serialization.TopologyFromDomain(cp.TopologySnapshot()))
 	if err != nil {
 		return fmt.Errorf("marshal topology: %w", err)
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
 // NodeValidationResultDTO is the JSON shape of one pipeline.NodeValidationResult
@@ -103,6 +104,82 @@ func TransitionsToDomain(in []TransitionDTO) []pipeline.Transition {
 	out := make([]pipeline.Transition, len(in))
 	for i, d := range in {
 		out[i] = pipeline.Transition{To: pipeline.Status(d.To), At: d.At}
+	}
+	return out
+}
+
+// NodeDTO is the JSON shape of one release.Node. A topology of these is stored
+// in the release_pipeline_runs.candidate_topology and current_prod.topology_snapshot
+// JSONB columns and carried in the topology field of the manifest.loaded.candidate:v1
+// message release-controller consumes.
+type NodeDTO struct {
+	UniqueID             string   `json:"unique_id"`
+	SchemaName           string   `json:"schema_name"`
+	TableName            string   `json:"table_name"`
+	ResolvedRelationID   string   `json:"resolved_relation_id"`
+	ServiceName          string   `json:"service_name"`
+	NodeType             string   `json:"node_type"`
+	ContentHash          string   `json:"content_hash"`
+	TestCount            int      `json:"test_count"`
+	ImageTag             string   `json:"image_tag"`
+	UpstreamUniqueIDs    []string `json:"upstream_unique_ids"`
+	Schedule             string   `json:"schedule"`
+	OriginalFilePath     string   `json:"original_file_path"`
+	CandidateArtifactURI string   `json:"candidate_artifact_uri,omitempty"`
+}
+
+// TopologyDTO is the JSON shape of a release.Topology.
+type TopologyDTO []NodeDTO
+
+// TopologyFromDomain maps a domain topology to its DTO, preserving the nil vs
+// non-nil-empty distinction so the marshalled bytes are unchanged.
+func TopologyFromDomain(in release.Topology) TopologyDTO {
+	if in == nil {
+		return nil
+	}
+	out := make(TopologyDTO, len(in))
+	for i, n := range in {
+		out[i] = NodeDTO{
+			UniqueID:             n.UniqueID,
+			SchemaName:           n.SchemaName,
+			TableName:            n.TableName,
+			ResolvedRelationID:   n.ResolvedRelationID,
+			ServiceName:          n.ServiceName,
+			NodeType:             n.NodeType,
+			ContentHash:          n.ContentHash,
+			TestCount:            n.TestCount,
+			ImageTag:             n.ImageTag,
+			UpstreamUniqueIDs:    n.UpstreamUniqueIDs,
+			Schedule:             n.Schedule,
+			OriginalFilePath:     n.OriginalFilePath,
+			CandidateArtifactURI: n.CandidateArtifactURI,
+		}
+	}
+	return out
+}
+
+// ToDomain maps a decoded topology DTO back to the domain topology.
+func (t TopologyDTO) ToDomain() release.Topology {
+	if t == nil {
+		return nil
+	}
+	out := make(release.Topology, len(t))
+	for i, d := range t {
+		out[i] = release.Node{
+			UniqueID:             d.UniqueID,
+			SchemaName:           d.SchemaName,
+			TableName:            d.TableName,
+			ResolvedRelationID:   d.ResolvedRelationID,
+			ServiceName:          d.ServiceName,
+			NodeType:             d.NodeType,
+			ContentHash:          d.ContentHash,
+			TestCount:            d.TestCount,
+			ImageTag:             d.ImageTag,
+			UpstreamUniqueIDs:    d.UpstreamUniqueIDs,
+			Schedule:             d.Schedule,
+			OriginalFilePath:     d.OriginalFilePath,
+			CandidateArtifactURI: d.CandidateArtifactURI,
+		}
 	}
 	return out
 }

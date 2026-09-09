@@ -8,6 +8,7 @@ import (
 
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -764,23 +765,23 @@ func TestHandleParseOK_EmitsCandidateArtifactURIPerNode(t *testing.T) {
 }
 
 // TestHandleParsedManifest_OK_TestCountSurvivesToCandidateTopology verifies
-// that test_count on the manifest.loaded.candidate:v1 payload survives
-// unmarshalling into HandleParsedManifestInput (the same JSON decode the
-// real Redis binding performs) and persists on the release's candidate
-// topology.
+// that test_count on the manifest.loaded.candidate:v1 payload survives the
+// topology DTO decode (the same serialization.TopologyDTO the real Redis
+// binding decodes into) and persists on the release's candidate topology.
 func TestHandleParsedManifest_OK_TestCountSurvivesToCandidateTopology(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
-	rawPayload := []byte(`{
-		"release_id": "rA",
-		"status": "ok",
-		"topology": [
-			{"unique_id": "a", "service_name": "svc-a", "test_count": 3},
-			{"unique_id": "b", "service_name": "svc-a", "upstream_unique_ids": ["a"], "test_count": 0}
-		]
-	}`)
-	var in handlers.HandleParsedManifestInput
-	require.NoError(t, json.Unmarshal(rawPayload, &in))
+	rawTopology := []byte(`[
+		{"unique_id": "a", "service_name": "svc-a", "test_count": 3},
+		{"unique_id": "b", "service_name": "svc-a", "upstream_unique_ids": ["a"], "test_count": 0}
+	]`)
+	var topoDTO serialization.TopologyDTO
+	require.NoError(t, json.Unmarshal(rawTopology, &topoDTO))
+	in := handlers.HandleParsedManifestInput{
+		ReleaseID: "rA",
+		Status:    "ok",
+		Topology:  topoDTO.ToDomain(),
+	}
 
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, in))
 

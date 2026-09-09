@@ -1,7 +1,6 @@
 package pipeline_test
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -162,51 +161,6 @@ func TestRun_RehydrateRoundTripsCodeBundleURI(t *testing.T) {
 		CodeBundleURI: "s3://b/code-bundles/r/bundle.json",
 	})
 	assert.Equal(t, "s3://b/code-bundles/r/bundle.json", r.CodeBundleURI())
-}
-
-func TestNode_CandidateArtifactURIRoundTrips(t *testing.T) {
-	// Node.CandidateArtifactURI must round-trip via JSON under the key "candidate_artifact_uri".
-	n := release.Node{
-		UniqueID:             "a",
-		CandidateArtifactURI: "s3://continuo/svc-a/rA/candidate_a.sql",
-	}
-	b, err := json.Marshal(n)
-	require.NoError(t, err)
-
-	var m map[string]any
-	require.NoError(t, json.Unmarshal(b, &m))
-	assert.Equal(t, "s3://continuo/svc-a/rA/candidate_a.sql", m["candidate_artifact_uri"],
-		"JSON key must be candidate_artifact_uri")
-	_, hasCandidateSQL := m["candidate_sql"]
-	assert.False(t, hasCandidateSQL, "old candidate_sql key must not appear")
-
-	var n2 release.Node
-	require.NoError(t, json.Unmarshal(b, &n2))
-	assert.Equal(t, n.CandidateArtifactURI, n2.CandidateArtifactURI, "round-trip preserves value")
-}
-
-func TestNodeMarshalsCandidateArtifactURI(t *testing.T) {
-	n := release.Node{UniqueID: "analytics.orders", CandidateArtifactURI: "s3://b/candidate-sql/rel-1/candidate_analytics.orders.sql"}
-	b, err := json.Marshal(n)
-	require.NoError(t, err)
-	assert.Contains(t, string(b), `"candidate_artifact_uri":"s3://b/candidate-sql/rel-1/candidate_analytics.orders.sql"`)
-	assert.NotContains(t, string(b), "candidate_sql_uri",
-		"the legacy key must not be emitted — no compatibility alias is written")
-}
-
-func TestNode_TestCountRoundTrips(t *testing.T) {
-	in := release.Node{UniqueID: "model.svc_a.orders", NodeType: "dbt-model", TestCount: 3}
-	b, err := json.Marshal(in)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var out release.Node
-	if err := json.Unmarshal(b, &out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if out.TestCount != 3 {
-		t.Fatalf("TestCount = %d, want 3", out.TestCount)
-	}
 }
 
 func TestTopology_WithoutCandidateArtifactURI_ClearsField(t *testing.T) {

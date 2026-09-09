@@ -19,14 +19,16 @@ import (
 )
 
 // HandleParsedManifestInput carries the result of the topology-controller
-// parsing a candidate release. Status must be "ok" or "failed".
+// parsing a candidate release. Status must be "ok" or "failed". The Redis
+// binding decodes the wire payload and builds this domain-typed input, so it
+// carries no serialization tags.
 type HandleParsedManifestInput struct {
-	ReleaseID     string           `json:"release_id"`
-	Status        string           `json:"status"` // "ok" or "failed"
-	Topology      release.Topology `json:"topology,omitempty"`
-	CodeBundleURI string           `json:"code_bundle_uri,omitempty"`
-	ErrorClass    string           `json:"error_class,omitempty"`
-	ErrorDetail   string           `json:"error_detail,omitempty"`
+	ReleaseID     string
+	Status        string // "ok" or "failed"
+	Topology      release.Topology
+	CodeBundleURI string
+	ErrorClass    string
+	ErrorDetail   string
 }
 
 // HandleParsedManifest handles the manifest parse result from topology-controller.

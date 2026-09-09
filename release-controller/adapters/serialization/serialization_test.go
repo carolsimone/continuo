@@ -3,10 +3,12 @@ package serialization
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 )
 
 // goldenPerNode is the exact JSON a fully-populated []NodeValidationResult is
@@ -86,6 +88,83 @@ func TestTransitionsNilRoundTripsAsNull(t *testing.T) {
 	}
 	if TransitionsToDomain(nil) != nil {
 		t.Fatal("nil DTO slice must map to nil domain slice")
+	}
+}
+
+// goldenTopology is the exact JSON a release.Topology is stored and carried as.
+// Only candidate_artifact_uri is omitempty; upstream_unique_ids has no omitempty
+// so a nil slice serialises as null.
+const goldenTopology = `[{"unique_id":"svc.model","schema_name":"sch","table_name":"tbl","resolved_relation_id":"sch.tbl","service_name":"svc","node_type":"dbt-model","content_hash":"abc","test_count":2,"image_tag":"v1","upstream_unique_ids":["svc.up"],"schedule":"daily","original_file_path":"models/m.sql","candidate_artifact_uri":"s3://c"}]`
+
+func TestTopologyDTORoundTrip(t *testing.T) {
+	var dto TopologyDTO
+	if err := json.Unmarshal([]byte(goldenTopology), &dto); err != nil {
+		t.Fatalf("unmarshal golden: %v", err)
+	}
+	got := dto.ToDomain()
+	want := release.Topology{{
+		UniqueID: "svc.model", SchemaName: "sch", TableName: "tbl",
+		ResolvedRelationID: "sch.tbl", ServiceName: "svc", NodeType: "dbt-model",
+		ContentHash: "abc", TestCount: 2, ImageTag: "v1",
+		UpstreamUniqueIDs: []string{"svc.up"}, Schedule: "daily",
+		OriginalFilePath: "models/m.sql", CandidateArtifactURI: "s3://c",
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
+	}
+	out, err := json.Marshal(TopologyFromDomain(got))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != goldenTopology {
+		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenTopology)
+	}
+}
+
+// TestTopologyZeroNodeOmitemptyShape pins that candidate_artifact_uri is the
+// only omitted key and that a nil upstream slice serialises as null.
+func TestTopologyZeroNodeOmitemptyShape(t *testing.T) {
+	out, err := json.Marshal(TopologyFromDomain(release.Topology{{}}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	const want = `[{"unique_id":"","schema_name":"","table_name":"","resolved_relation_id":"","service_name":"","node_type":"","content_hash":"","test_count":0,"image_tag":"","upstream_unique_ids":null,"schedule":"","original_file_path":""}]`
+	if string(out) != want {
+		t.Fatalf("zero-node shape changed:\n got %s\nwant %s", out, want)
+	}
+}
+
+// TestNodeCandidateArtifactURIKey pins the candidate-artifact URI to the
+// candidate_artifact_uri key and guards against re-emitting the legacy
+// candidate_sql / candidate_sql_uri keys — no compatibility alias is written.
+func TestNodeCandidateArtifactURIKey(t *testing.T) {
+	out, err := json.Marshal(TopologyFromDomain(release.Topology{{
+		UniqueID: "analytics.orders", CandidateArtifactURI: "s3://b/candidate_analytics.orders.sql",
+	}}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, `"candidate_artifact_uri":"s3://b/candidate_analytics.orders.sql"`) {
+		t.Fatalf("candidate_artifact_uri key missing: %s", s)
+	}
+	for _, legacy := range []string{"candidate_sql_uri", `"candidate_sql"`} {
+		if strings.Contains(s, legacy) {
+			t.Fatalf("legacy key %s must not be emitted: %s", legacy, s)
+		}
+	}
+}
+
+func TestTopologyNilRoundTripsAsNull(t *testing.T) {
+	out, err := json.Marshal(TopologyFromDomain(nil))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != "null" {
+		t.Fatalf("nil topology must marshal as null, got %s", out)
+	}
+	if TopologyDTO(nil).ToDomain() != nil {
+		t.Fatal("nil DTO must map to nil domain topology")
 	}
 }
 

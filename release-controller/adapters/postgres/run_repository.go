@@ -134,7 +134,7 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	if err != nil {
 		return fmt.Errorf("marshal image_tags: %w", err)
 	}
-	topoJSON, err := json.Marshal(run.CandidateTopology())
+	topoJSON, err := json.Marshal(serialization.TopologyFromDomain(run.CandidateTopology()))
 	if err != nil {
 		return fmt.Errorf("marshal topology: %w", err)
 	}
@@ -197,9 +197,11 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 	}
 	var topo release.Topology
 	if len(row.CandidateTopology) > 0 {
-		if err := json.Unmarshal(row.CandidateTopology, &topo); err != nil {
+		var topoDTO serialization.TopologyDTO
+		if err := json.Unmarshal(row.CandidateTopology, &topoDTO); err != nil {
 			return nil, fmt.Errorf("unmarshal candidate_topology: %w", err)
 		}
+		topo = topoDTO.ToDomain()
 	}
 	var perNode []pipeline.NodeValidationResult
 	if len(row.PerNodeResults) > 0 {
