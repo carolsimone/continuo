@@ -15,9 +15,9 @@ const (
 
 // FQN represents a Fully Qualified Name (service.schema.table)
 type FQN struct {
-	ServiceName string `json:"service_name"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
+	ServiceName string
+	SchemaName  string
+	TableName   string
 }
 
 // ToString converts FQN to string format: service.schema.table
