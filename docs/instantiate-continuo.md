@@ -5,16 +5,10 @@ in about ten minutes. The
 [Run dbt and Python projects in continuo](run-projects-in-continuo.md) guide puts
 the real projects on it.
 
-## What continuo does today
+## What continuo does
 
-- **Onboard from an image + one API call** — no manifest, DAG, or model list; continuo derives them.
-- **Cross-project dependency graph from SQL** — resolved from the compiled SQL, across project and dbt↔python boundaries.
-- **Blue/green validation before promotion** — proves each change against production structure in an isolated schema; rejects one that breaks a downstream model.
-- **Per-service releases** — promote one service at a time; a rejected release never reaches production.
-- **Scheduled or on-demand runs as Kubernetes Jobs** — dbt, python, and python-csv nodes, in dependency order.
-- **Auto-remediation** — classify a failure, an LLM proposes a fix, a human approves it as a pull request (continuo only reads your repo).
-- **In-UI assistant chat** — LLM-backed questions and answers over your runs and topology.
-- **Postgres or Trino warehouses** — or bring your own engine adapter.
+What continuo is and why it exists is on the
+[continuo homepage](https://continuo-data.com). This guide just gets it running.
 
 > **Deploying to your own Kubernetes cluster?** This guide is the local
 > quickstart — a single-node cluster with continuo's own bundled PostgreSQL,
