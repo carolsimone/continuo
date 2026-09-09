@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
+	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/domain/repository"
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 	"github.com/google/uuid"
@@ -218,10 +219,10 @@ func seedDanglingConfirm(t *testing.T, repo *fakeRepo) (threadID uuid.UUID, acti
 	ctx := context.Background()
 	thread, err := repo.CreateThread(ctx, "alice")
 	require.NoError(t, err)
-	uc, _ := json.Marshal(domain.TextContent{Text: "trigger daily"})
+	uc, _ := json.Marshal(serialization.TextContentFromDomain(domain.TextContent{Text: "trigger daily"}))
 	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleUser, uc)
 	require.NoError(t, err)
-	cc, _ := json.Marshal(domain.ToolCallContent{CallID: "c1", Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}})
+	cc, _ := json.Marshal(serialization.ToolCallContentFromDomain(domain.ToolCallContent{CallID: "c1", Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}}))
 	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleToolCall, cc)
 	require.NoError(t, err)
 	action := &domain.PendingAction{
@@ -533,7 +534,7 @@ func TestSession_ResumeApprovalRunsToolAndContinues(t *testing.T) {
 		if m.Role != domain.RoleToolResult {
 			continue
 		}
-		var rc domain.ToolResultContent
+		var rc serialization.ToolResultContentDTO
 		require.NoError(t, json.Unmarshal(m.Content, &rc))
 		if rc.CallID == "c1" {
 			sawResult = true

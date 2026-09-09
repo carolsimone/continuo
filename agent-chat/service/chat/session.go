@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
+	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/domain/repository"
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 	"github.com/google/uuid"
@@ -266,7 +267,7 @@ func (s *Session) Run(ctx context.Context) {
 // runTurn persists the user message, then drives the provider→tool loop.
 func (s *Session) runTurn(text string) {
 	// Persist user message.
-	userContent, _ := json.Marshal(domain.TextContent{Text: text})
+	userContent, _ := json.Marshal(serialization.TextContentFromDomain(domain.TextContent{Text: text}))
 	if _, err := s.deps.Repo.AppendMessage(s.ctx, s.threadID, domain.RoleUser, userContent); err != nil {
 		s.sink.Error("internal", fmt.Sprintf("persist user message: %v", err))
 		return
@@ -364,7 +365,7 @@ func (s *Session) driveTurn() {
 
 		// Persist assistant text when the model produced any.
 		if result.Text != "" {
-			assistantContent, _ := json.Marshal(domain.TextContent{Text: result.Text})
+			assistantContent, _ := json.Marshal(serialization.TextContentFromDomain(domain.TextContent{Text: result.Text}))
 			if _, err := s.deps.Repo.AppendMessage(ctx, s.threadID, domain.RoleAssistant, assistantContent); err != nil {
 				s.sink.Error("internal", fmt.Sprintf("persist assistant message: %v", err))
 				return
@@ -380,11 +381,11 @@ func (s *Session) driveTurn() {
 		// Execute each tool call and persist call+result.
 		for _, call := range result.ToolCalls {
 			// Persist the tool call.
-			callContent, _ := json.Marshal(domain.ToolCallContent{
+			callContent, _ := json.Marshal(serialization.ToolCallContentFromDomain(domain.ToolCallContent{
 				CallID: call.ID,
 				Tool:   call.Name,
 				Args:   call.Args,
-			})
+			}))
 			if _, err := s.deps.Repo.AppendMessage(ctx, s.threadID, domain.RoleToolCall, callContent); err != nil {
 				s.sink.Error("internal", fmt.Sprintf("persist tool call: %v", err))
 				return
@@ -401,11 +402,11 @@ func (s *Session) driveTurn() {
 			}
 
 			// Persist the tool result.
-			resultContent, _ := json.Marshal(domain.ToolResultContent{
+			resultContent, _ := json.Marshal(serialization.ToolResultContentFromDomain(domain.ToolResultContent{
 				CallID:  call.ID,
 				Output:  toolResult.Output,
 				IsError: toolResult.IsError,
-			})
+			}))
 			if _, err := s.deps.Repo.AppendMessage(ctx, s.threadID, domain.RoleToolResult, resultContent); err != nil {
 				s.sink.Error("internal", fmt.Sprintf("persist tool result: %v", err))
 				return
@@ -564,11 +565,11 @@ func (s *Session) handleResumedConfirm(reply confirmReply) {
 		}
 	}
 
-	resultContent, _ := json.Marshal(domain.ToolResultContent{
+	resultContent, _ := json.Marshal(serialization.ToolResultContentFromDomain(domain.ToolResultContent{
 		CallID:  call.ID,
 		Output:  toolResult.Output,
 		IsError: toolResult.IsError,
-	})
+	}))
 	if _, err := s.deps.Repo.AppendMessage(s.ctx, s.threadID, domain.RoleToolResult, resultContent); err != nil {
 		s.sink.Error("internal", fmt.Sprintf("persist tool result: %v", err))
 		return
@@ -589,7 +590,7 @@ func (s *Session) danglingToolCall() (ports.ToolCall, bool) {
 	resolved := map[string]bool{}
 	for _, m := range msgs {
 		if m.Role == domain.RoleToolResult {
-			var rc domain.ToolResultContent
+			var rc serialization.ToolResultContentDTO
 			if json.Unmarshal(m.Content, &rc) == nil {
 				resolved[rc.CallID] = true
 			}
@@ -599,7 +600,7 @@ func (s *Session) danglingToolCall() (ports.ToolCall, bool) {
 		if msgs[i].Role != domain.RoleToolCall {
 			continue
 		}
-		var cc domain.ToolCallContent
+		var cc serialization.ToolCallContentDTO
 		if json.Unmarshal(msgs[i].Content, &cc) != nil {
 			continue
 		}

@@ -37,19 +37,19 @@ type Message struct {
 
 // TextContent is the payload for user and assistant messages.
 type TextContent struct {
-	Text string `json:"text"`
+	Text string
 }
 
 // ToolCallContent is the payload for a tool invocation initiated by the assistant.
 type ToolCallContent struct {
-	CallID string            `json:"call_id"`
-	Tool   string            `json:"tool"`
-	Args   map[string]string `json:"args"`
+	CallID string
+	Tool   string
+	Args   map[string]string
 }
 
 // ToolResultContent is the payload returned by a tool after execution.
 type ToolResultContent struct {
-	CallID  string `json:"call_id"`
-	Output  string `json:"output"`
-	IsError bool   `json:"is_error"`
+	CallID  string
+	Output  string
+	IsError bool
 }
