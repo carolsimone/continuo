@@ -175,7 +175,7 @@ func (c *K8sClient) CreateQueryJob(ctx context.Context, params JobParams) error 
 		"task-id":      params.TaskID,
 		"schedule-id":  params.ScheduleID,
 		"schedule":     params.ScheduleName,
-		"table_name":   params.TableName,
+		"table_name":   sanitizeK8sLabel(params.TableName),
 		"schema_name":  params.SchemaName,
 		"service_name": params.ServiceName,
 	}
@@ -288,7 +288,7 @@ func (c *K8sClient) CreateValidationJob(ctx context.Context, params ValidationJo
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
 		"schema_name":  params.SchemaName,
-		"table_name":   params.TableName,
+		"table_name":   sanitizeK8sLabel(params.TableName),
 	}
 	annotations := map[string]string{
 		pkg_model.AnnotationReleaseID: params.ReleaseID,
@@ -989,7 +989,7 @@ func (c *K8sClient) CreateSeedBuildJob(ctx context.Context, params ValidationJob
 		"node-id":      sanitizeK8sLabel(params.NodeID),
 		"service_name": params.ServiceName,
 		"schema_name":  params.SchemaName,
-		"table_name":   params.TableName,
+		"table_name":   sanitizeK8sLabel(params.TableName),
 	}
 	annotations := map[string]string{
 		pkg_model.AnnotationReleaseID: params.ReleaseID,

@@ -304,6 +304,39 @@ func TestSanitizeK8sLabel_DbtTestIDIsValid(t *testing.T) {
 	assert.Empty(t, validation.IsValidLabelValue(got), "sanitized %q is not a valid label value", got)
 }
 
+// TestCreateValidationJob_LongDbtTestTableNameLabelIsValid verifies that a dbt
+// test's TableName — the test's manifest `name`, which dbt does not shorten and
+// which for an accepted_values test grows long and carries dots and commas —
+// is sanitized into a valid Kubernetes label value on the emitted Job. An
+// unsanitized value would exceed 63 chars or carry out-of-charset characters,
+// and the API server would reject the whole validation Job before any bind
+// check ran. The raw identity is preserved elsewhere (the TABLE_NAME env var
+// and the node-id annotation), so sanitizing the label is safe.
+func TestCreateValidationJob_LongDbtTestTableNameLabelIsValid(t *testing.T) {
+	c := newValidationTestClient()
+	p := validationParams()
+	p.ValidationOp = "check_binds"
+	p.NodeType = pkg_model.NodeTypeDbtTest
+	// A dbt accepted_values test name: dotted, comma-bearing, and well over 63
+	// chars — exactly the shape that breaks a raw label value.
+	p.TableName = "accepted_values_orders_status__placed__shipped__delivered__cancelled__returned__" +
+		"refunded__on_hold__backordered__partially_shipped"
+	require.Greater(t, len(p.TableName), 63, "fixture must exceed the 63-char label cap")
+
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+
+	labelValue := job.Labels["table_name"]
+	assert.Empty(t, validation.IsValidLabelValue(labelValue),
+		"table_name label %q is not a valid Kubernetes label value", labelValue)
+	assert.Empty(t, validation.IsValidLabelValue(job.Spec.Template.Labels["table_name"]),
+		"pod-template table_name label %q is not a valid Kubernetes label value",
+		job.Spec.Template.Labels["table_name"])
+	// The raw name is preserved verbatim in the TABLE_NAME env var, so
+	// sanitizing the label loses no identity the runner depends on.
+	assert.Equal(t, p.TableName, envByName(job.Spec.Template.Spec, "TABLE_NAME"))
+}
+
 func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
 	c := newValidationTestClient()
