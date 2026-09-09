@@ -9,7 +9,18 @@ logger = logging.getLogger(__name__)
 
 
 def filter_manifest(service_dir: str) -> None:
-    """Remove non-model/seed nodes and local_stub-tagged nodes from manifest.json."""
+    """Keep only the node kinds topology-controller turns into topology nodes.
+
+    Retains model, seed, snapshot, and test nodes and drops local_stub-tagged
+    ones; every other manifest entry (sources, analyses, operations) never
+    becomes a topology node. Tests are kept because topology-controller emits a
+    dbt-test node for each test of a tracked model, and the seeded baseline must
+    carry the same nodes the release candidate does — otherwise every test node
+    reads as newly changed against a test-less baseline. The fine-grained
+    tracking (a test only counts when its model is tracked, a node needs an
+    owner and a schedule tag) still happens downstream in the parser; this is
+    only the coarse resource-type gate.
+    """
     manifest_path = os.path.join(service_dir, "target", "manifest.json")
     with open(manifest_path) as f:
         manifest = json.load(f)
@@ -17,7 +28,7 @@ def filter_manifest(service_dir: str) -> None:
     manifest["nodes"] = {
         k: v
         for k, v in manifest["nodes"].items()
-        if v.get("resource_type") in ("model", "seed")
+        if v.get("resource_type") in ("model", "seed", "snapshot", "test")
         and "local_stub" not in v.get("tags", [])
     }
 

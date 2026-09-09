@@ -12,13 +12,31 @@ SUPPORTED_RESOURCE_TYPES = {"model", "seed", "snapshot"}
 def _node_source_hash(node: dict) -> str:
     """Return a non-empty, change-sensitive fingerprint for a dbt node's own source.
 
-    Prefers dbt's own per-node `checksum.checksum` (a sha256 of the node's source
-    file). release-controller uses content_hash as the SOLE change detector, so an
-    empty value would make later edits to the node undetectable (empty == empty).
-    For any node dbt did not check-sum, fall back to a deterministic sha256 over the
-    node's source (`raw_code`/`compiled_code`) or, failing that, a stable JSON dump —
-    so the fingerprint is never empty and still changes when the node changes.
+    release-controller uses content_hash as the SOLE change detector, so an empty
+    value would make later edits to the node undetectable (empty == empty); the
+    result here is therefore always non-empty.
+
+    A dbt TEST is fingerprinted by its COMPILED assertion, never its raw source or
+    dbt checksum. A generic test's `raw_code` is only the macro call (e.g.
+    `{{ test_not_null(**_dbt_generic_test_kwargs) }}`) and its dbt checksum is
+    empty; only the compiled SQL reflects the columns and relations the test
+    actually asserts against and binds to. Hashing `raw_code` (or the empty
+    checksum) would miss an upstream macro/var change that rewrites the compiled
+    assertion while leaving the macro call untouched, so the changed test would
+    promote without ever being bind-checked. A test therefore hashes
+    `compiled_code` (falling back to `raw_code`, then a stable JSON dump).
+
+    Every other node prefers dbt's own per-node `checksum.checksum` (a sha256 of
+    the node's source file); for a node dbt did not check-sum it falls back to a
+    deterministic sha256 over the node's source (`raw_code`/`compiled_code`) or,
+    failing that, a stable JSON dump — so the fingerprint is never empty and still
+    changes when the node changes.
     """
+    if node.get("resource_type") == "test":
+        basis = node.get("compiled_code") or node.get("raw_code") or ""
+        if not basis:
+            basis = json.dumps(node, sort_keys=True, default=str)
+        return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
     checksum = node.get("checksum", {}).get("checksum", "")
     if checksum:
         return checksum
@@ -162,21 +180,59 @@ def parse_manifest(
         nodes.append(manifest_node)
         node_by_id[node_id] = manifest_node
 
-    # Second pass: count tests attached to each tracked node. Generic tests
-    # carry attached_node; singular tests carry only depends_on.nodes. A test
-    # attributes once, to attached_node when present else to each tracked
-    # depends_on target.
+    # Second pass: tests. Each attaches its count to the tracked node(s) it
+    # tests, and — when it tests at least one tracked node — becomes a
+    # validation-only node of its own: its compiled SQL is bind-checked in
+    # the candidate schema like a model is built there, so a test that names
+    # a column the release dropped rejects the release at its source. A test
+    # carries no owner or schedule of its own and is never scheduled, so
+    # neither is required of it.
+    test_nodes: list[ManifestNode] = []
     for node_id, node in manifest["nodes"].items():
         if node.get("resource_type") != "test":
             continue
         attached = node.get("attached_node")
         targets = [attached] if attached else node.get("depends_on", {}).get("nodes", [])
         counted = set()
+        tracked = False
         for t in targets:
             tgt = node_by_id.get(t)
             if tgt is not None and id(tgt) not in counted:
                 tgt.test_count += 1
                 counted.add(id(tgt))
+                tracked = True
+        if not tracked:
+            continue
+        compiled = node.get("compiled_code", "")
+        direct_unit_ids = list(node.get("depends_on", {}).get("macros", []))
+        transitive_ids = _transitive_macro_ids(direct_unit_ids, macros)
+        used_unit_ids |= transitive_ids
+        source_hash = _node_source_hash(node)
+        shared_hash = _shared_code_hash(transitive_ids, macros)
+        config_hash = _config_hash(node)
+        test_nodes.append(ManifestNode(
+            table_name=node["name"],
+            schema_name=node["schema"],
+            service_name=node["fqn"][0].replace("_", "-"),
+            owner="",
+            schedule_name="",
+            criticality="SECONDARY",
+            dependency_sqls=[compiled] if compiled else [],
+            candidate_sql=compiled,
+            node_type=NodeType.DBT_TEST,
+            content_hash=content_hash_fold(source_hash, shared_hash, config_hash),
+            manifest_version=manifest_version,
+            image_tag=image_tag,
+            original_file_path=node.get("original_file_path", ""),
+            raw_code=node.get("raw_code", ""),
+            config=node.get("config") or {},
+            source_hash=source_hash,
+            shared_code_hash=shared_hash,
+            config_hash=config_hash,
+            code_unit_ids=direct_unit_ids,
+            identity=node_id,
+        ))
+    nodes.extend(test_nodes)
 
     shared_code = {
         mid: {

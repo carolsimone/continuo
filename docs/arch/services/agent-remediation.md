@@ -234,12 +234,28 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
      replaced by one independent cluster per member, APPENDED to the same
      queue, so each member is then fixed in its own source through the
      identical path.
-   - KindIndependent -> fixer.For(source, node_type).Propose, exactly as
-     before: compileFixer, seedFixer, duplicateTableFixer, or — for a
-     validation trigger — validationFixer for a dbt node,
-     pythonValidationFixer for python-model, csvValidationFixer for
-     python-csv. An unrecognized source is a programming error and is returned
-     loudly, not swallowed.
+   - KindIndependent -> a dbt-test target's node is skipped before any fixer
+     is chosen: proposal(status=skipped, reason="dbt tests are not fix
+     targets; fix the model or edit the test by hand"). A test is validation
+     evidence, never a fix target — a model fix that makes it bind again
+     resolves it in verification, and a test that is itself wrong is a
+     human's edit. Every other node type reaches fixer.For(source,
+     node_type).Propose, exactly as before: compileFixer, seedFixer,
+     duplicateTableFixer, or — for a validation trigger — validationFixer for
+     a dbt node, pythonValidationFixer for python-model, csvValidationFixer
+     for python-csv. An unrecognized source is a programming error and is
+     returned loudly, not swallowed.
+   A dbt-test node reaches this skip whenever it is a cluster's own target, and
+   a tests-only failing set always lands here: grouping never forms an upstream
+   cluster whose members are all dbt-test nodes (see "Grouping the failing
+   set"), so a set whose only failures are tests falls to the independent
+   default and every node is skipped — a release whose only failures are tests
+   ends as a dead end. A test rides along unskipped only as a member of a MIXED
+   upstream cluster, one holding at least one model/seed/snapshot member: whose
+   target is the ancestor model it tests, never the test itself. That cluster's
+   one model call fixes the ancestor, and the test's own bind failure is
+   resolved when verification re-checks the fix-touched model's descendant
+   tests, not by any edit of the test's own.
    Each Fixer returns EDITS ONLY (plus, for a python contract fix, the
    packaged contract bytes); none of them submits a release. A proposed result
    that named no file is downgraded to failed — a fix with no edit changes
@@ -306,12 +322,12 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
 
 Two strategies are wired, in this order:
 
-`CrossServiceCause` runs first. A release changes one service, so a failing node whose `changed_ancestors` names an ancestor in ANOTHER service did not change itself, and a fix in its own service could never ship before the change that broke it (its release would be validated against the producer's production code). Every such node is claimed at that ancestor, whatever its error signature and with no minimum group size; nodes are grouped per target into one `KindCrossServiceUpstream` cluster each, members sorted, clusters ordered by their smallest member. A node with several cross-service changed ancestors takes the nearest (smallest `depth`), ties on the smallest id: the direct upstream is the contract it reads. A node or ancestor that names no service is left alone.
+`CrossServiceCause` runs first. A release changes one service, so a failing node whose `changed_ancestors` names an ancestor in ANOTHER service did not change itself, and a fix in its own service could never ship before the change that broke it (its release would be validated against the producer's production code). Every such node is claimed at that ancestor, whatever its error signature and with no minimum group size; nodes are grouped per target into one `KindCrossServiceUpstream` cluster each, members sorted, clusters ordered by their smallest member. A node with several cross-service changed ancestors takes the nearest (smallest `depth`), ties on the smallest id: the direct upstream is the contract it reads. A node or ancestor that names no service is left alone. A prospective cluster whose members are ALL dbt-test nodes is not emitted: a test is validation evidence, never a fix target, so its members are handed back unclaimed to the next strategy and, failing that, the independent default where they are skipped. A mixed cluster (holding at least one model/seed/snapshot member) still forms, so the producer is fixed and its tests ride along.
 
 `SharedUpstreamCause` runs on what is left:
 
 - Nodes are bucketed by `error_signature`. An empty signature never groups, and a bucket of one is left for the independent default — one node is not evidence of a shared cause.
-- Within a bucket, candidate changed ancestors are considered in ascending id order; for each, the still-unclaimed members that list it in `changed_ancestors` are gathered, and a candidate with **at least two** such members becomes one `KindSharedUpstream` cluster targeting it. Taking the smallest ancestor id first makes both the assignment and the target choice independent of map iteration and input order.
+- Within a bucket, candidate changed ancestors are considered in ascending id order; for each, the still-unclaimed members that list it in `changed_ancestors` are gathered, and a candidate with **at least two** such members becomes one `KindSharedUpstream` cluster targeting it. Taking the smallest ancestor id first makes both the assignment and the target choice independent of map iteration and input order. A candidate whose gathered members are ALL dbt-test nodes forms no cluster: a test is validation evidence, never a fix target, so those members are left unclaimed for the independent default (where they are skipped) rather than re-adding a column to the model they guard. A mixed candidate (at least one model/seed/snapshot member) still forms its cluster, so the model is fixed and its tests ride along.
 - A bucket can therefore yield several clusters: the same failure reaching two unrelated changed ancestors gives `{a,b}→u` and `{c,d}→v` rather than falling through to four independent fixes. Members are disjoint across clusters, and clusters are emitted ordered by their smallest member.
 - Because bucketing is per signature, one ancestor that broke its descendants in two DIFFERENT ways yields one cluster per signature, both targeting it. The driver's `coalesceUpstream` (`service/handlers/propose_fix.go`) merges upstream clusters of either kind naming the same target into one — members unioned and sorted, first occurrence keeping its position, and the merged cluster cross-service if any input was — before any fixing starts. Fixing them separately would call the model twice for one file and have both fixes write the target's single artifact key, so the attempt would record two edits for one path of which only the last written exists. An independent cluster cannot collide this way: its target is the failing node itself, and a node appears in the failing set once.
 

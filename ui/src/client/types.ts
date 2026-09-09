@@ -165,6 +165,10 @@ export interface NodeValidationResult {
   file_path?: string;     // offending source path; present for compile/seed
   dbt_log_uri?: string;
   duration_ms?: number;
+  // node_type distinguishes a dbt test row ("dbt-test") from a model/seed/
+  // snapshot row; a test row's status is worded as whether it binds, not
+  // ok/failed. Absent on results predating the field, which read as a model.
+  node_type?: string;
 }
 
 export interface ReleaseTransition {

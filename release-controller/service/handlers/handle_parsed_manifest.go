@@ -524,13 +524,21 @@ func validationNodesInOrder(topo release.Topology, validationIDs []string, inSet
 // validation node. A changed-closure dbt node has compiled SQL rewritten to
 // the candidate schema (build_from_sql); a changed-closure python node has a
 // JSON validation spec of declared reads + output columns
-// (build_from_columns). Every other node in the validation set is an
-// unchanged upstream — there is no candidate artifact for it — so it is
-// cloned empty from its production schema regardless of kind.
+// (build_from_columns); a changed-closure dbt-test has its compiled SQL
+// EXPLAINed against the candidate schema (check_binds) — it never builds
+// anything. Every other node in the validation set is an unchanged
+// upstream — there is no candidate artifact for it — so it is cloned empty
+// from its production schema regardless of kind.
 func validationOpFor(n release.Node, rebuiltFromCandidate map[string]bool) (op, prodSchema string) {
 	if rebuiltFromCandidate[n.UniqueID] {
-		if pkg_model.NodeType(n.NodeType).IsPython() {
+		switch {
+		case pkg_model.NodeType(n.NodeType).IsPython():
 			return "build_from_columns", ""
+		case n.NodeType == string(pkg_model.NodeTypeDbtTest):
+			// A test's compiled SQL is EXPLAINed against the candidate schema;
+			// nothing is created. A test is a leaf, so it is never here as an
+			// unchanged upstream.
+			return "check_binds", ""
 		}
 		return "build_from_sql", ""
 	}

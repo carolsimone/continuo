@@ -868,6 +868,54 @@ func TestHandleValidationResult_Promote_StampsChangedAndProvenance(t *testing.T)
 	assert.Equal(t, "h", contentHashByID["a"], "a's content_hash must match candidate")
 }
 
+// TestHandleValidationResult_Promote_StripsTestsFromWireButKeepsInCurrentProd
+// verifies that a dbt-test node in the candidate topology is absent from the
+// release.promoted:v1 event's topology — the orchestrator only ever draws
+// and schedules relations, never a test — while current_prod's own snapshot
+// still holds it, so an unchanged test is not re-checked by a future
+// release.
+func TestHandleValidationResult_Promote_StripsTestsFromWireButKeepsInCurrentProd(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA", Status: "ok",
+		Topology: release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
+			{UniqueID: "test.p.not_null_a_id.1", ServiceName: "svc-a", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
+		},
+	}))
+	seedValidationNodes(t, deps, "rA", []handlers.NodeResult{
+		{NodeID: "a", Status: "ok"},
+		{NodeID: "test.p.not_null_a_id.1", Status: "ok"},
+	})
+	require.NoError(t, handlers.HandleValidationResult(context.Background(), deps, handlers.HandleValidationResultInput{
+		ReleaseID: "rA", AggregateStatus: "ok",
+	}))
+
+	last := findEntry(t, store, streams.ReleasePromotedV1)
+	var p promotedPayload
+	require.NoError(t, json.Unmarshal(last.Payload, &p))
+	require.Len(t, p.Topology, 1, "only the model is published; the test is stripped")
+	assert.Equal(t, "a", p.Topology[0].UniqueID)
+
+	cp := store.GetCurrentProd()
+	keptIDs := map[string]bool{}
+	for _, n := range cp.TopologySnapshot() {
+		keptIDs[n.UniqueID] = true
+	}
+	assert.True(t, keptIDs["test.p.not_null_a_id.1"],
+		"current_prod keeps the test so an unchanged test is not re-checked next release")
+	assert.True(t, keptIDs["a"])
+}
+
 // TestHandleValidationResult_Promote_CarriesCandidateSchema verifies that the
 // release.promoted:v1 payload includes candidate_schema so the executor-controller's
 // release.promoted teardown consumer can drop the schema when present (idempotent

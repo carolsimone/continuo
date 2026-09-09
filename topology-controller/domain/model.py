@@ -9,6 +9,7 @@ class NodeType(StrEnum):
     DBT_SNAPSHOT = "dbt-snapshot"
     PYTHON_MODEL = "python-model"
     PYTHON_CSV = "python-csv"
+    DBT_TEST = "dbt-test"
 
 
 class Runtime(StrEnum):
@@ -102,6 +103,9 @@ class ManifestNode:
     # its parser sets this to its declared table_name directly.
     csv_source: str = ""  # the csv uri for python-csv nodes; empty otherwise —
     # NOT schema-rewritten, it is a file location, not a warehouse reference.
+    identity: str = ""  # explicit unique_id for a node that is not a relation
+    # (a dbt test): dbt's own manifest unique_id. Empty for every relation
+    # node, whose identity is "<schema>.<table>".
 
     @property
     def unique_id(self) -> str:
@@ -116,7 +120,13 @@ class ManifestNode:
         one relation and must not produce two identities. The declared
         schema_name and table_name are left untouched — they render into SQL
         and DDL, where the declared spelling is what addresses the relation.
+
+        A dbt test is not a relation: it writes no table and dbt already
+        gives it a globally unique manifest id, so that id is its identity
+        (identity), never "<schema>.<name>".
         """
+        if self.identity:
+            return self.identity
         return f"{self.schema_name.lower()}.{self.table_name.lower()}"
 
     @property
@@ -135,7 +145,12 @@ class ManifestNode:
         table_name here — not only in the dbt parser — so any node built
         without going through that parser (a python node, or a node built
         directly in a test) still resolves correctly.
+
+        A dbt test writes no relation and resolves to "" so it can never
+        claim, or collide on, a table.
         """
+        if self.node_type == NodeType.DBT_TEST:
+            return ""
         resolved = self.resolved_relation or self.table_name
         return f"{self.schema_name.lower()}.{resolved.lower()}"
 

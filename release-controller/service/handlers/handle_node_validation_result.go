@@ -42,11 +42,24 @@ func HandleNodeValidationResult(ctx context.Context, d *Deps, in NodeValidationR
 		return nil
 	}
 
+	// NodeType is stamped from the candidate topology (absent from it, e.g. a
+	// non-node compile-leg failure, leaves it empty) so a reader can tell a
+	// test's bind check from a model's build without a separate topology
+	// lookup.
+	var nodeType string
+	for _, n := range r.CandidateTopology() {
+		if n.UniqueID == in.NodeID {
+			nodeType = n.NodeType
+			break
+		}
+	}
+
 	r.UpsertStageResult(in.Stage, pipeline.NodeValidationResult{
 		NodeID:        in.NodeID,
 		Status:        in.Status,
 		DBTLogURI:     in.DBTLogURI,
 		RunResultsURI: in.RunResultsURI,
+		NodeType:      nodeType,
 	})
 	if err := u.RunRepo().Save(ctx, r); err != nil {
 		return fmt.Errorf("save release: %w", err)

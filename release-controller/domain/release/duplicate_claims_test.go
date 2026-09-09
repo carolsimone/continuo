@@ -203,6 +203,40 @@ func TestDuplicateClaims_FallsBackToUniqueIDWhenResolvedRelationEmpty(t *testing
 	assert.Equal(t, "analytics.orders", claims[0].RelationID)
 }
 
+// TestDuplicateClaims_IgnoresDbtTests verifies that two dbt-test nodes with
+// DISTINCT unique_ids and no relation to claim never collide — tests write
+// no relation, and dbt mints their unique_id to be globally unique by
+// construction, so two genuinely distinct tests are never mistaken for a
+// claim on the same thing.
+func TestDuplicateClaims_IgnoresDbtTests(t *testing.T) {
+	topo := Topology{
+		{UniqueID: "test.p.t.1", NodeType: "dbt-test", ResolvedRelationID: "", SchemaName: "s", TableName: "t"},
+		{UniqueID: "test.p.t.2", NodeType: "dbt-test", ResolvedRelationID: "", SchemaName: "s", TableName: "t"},
+		{UniqueID: "s.m", NodeType: "dbt-model", ResolvedRelationID: "s.m"},
+	}
+	assert.Empty(t, DuplicateClaims(topo), "tests write no relation and carry unique ids by construction")
+}
+
+// TestDuplicateClaims_DuplicateDbtTestID_IdentityCollision verifies that two
+// nodes sharing the SAME dbt-test unique_id ARE reported — as an identity
+// collision. A test carries no relation to claim, so relationCollisions
+// never sees it, but its unique_id is still the identity key every
+// downstream lookup keyed on it uses; a duplicate there is exactly the
+// erasure identityCollisions exists to catch, test or not.
+func TestDuplicateClaims_DuplicateDbtTestID_IdentityCollision(t *testing.T) {
+	topo := Topology{
+		nodeOfType("test.p.not_null_m_id.1", "finance", "models/schema.yml", "dbt-test"),
+		nodeOfType("test.p.not_null_m_id.1", "marketing", "models/schema.yml", "dbt-test"),
+	}
+
+	claims := DuplicateClaims(topo)
+
+	require.Len(t, claims, 1)
+	assert.Equal(t, CollisionIdentity, claims[0].Kind)
+	assert.Equal(t, "test.p.not_null_m_id.1", claims[0].UniqueID)
+	require.Len(t, claims[0].Claimants, 2)
+}
+
 func TestDuplicateClaim_TargetPrefersChangedService(t *testing.T) {
 	c := DuplicateClaim{
 		RelationID: "analytics.orders",

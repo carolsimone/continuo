@@ -1,0 +1,30 @@
+{
+  "nodes": {
+    "model.service-1.users": {
+      "unique_id": "model.service-1.users",
+      "name": "users",
+      "schema": "test_schema",
+      "fqn": ["service-1", "users"],
+      "tags": ["daily"],
+      "resource_type": "model",
+      "config": {
+        "meta": { "owner": "team-a", "criticality": "CORE" }
+      },
+      "compiled_code": "SELECT 1 AS id",
+      "checksum": { "name": "sha256", "checksum": "a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00" }
+    },
+    "test.service-1.not_null_users_id.9f3a1b2c": {
+      "unique_id": "test.service-1.not_null_users_id.9f3a1b2c",
+      "name": "not_null_users_id",
+      "schema": "test_schema_dbt_test__audit",
+      "fqn": ["service-1", "not_null_users_id"],
+      "resource_type": "test",
+      "attached_node": "model.service-1.users",
+      "depends_on": { "nodes": ["model.service-1.users"], "macros": [] },
+      "original_file_path": "models/schema.yml",
+      "config": { "severity": "ERROR" },
+      "checksum": { "name": "none", "checksum": "" },
+      "compiled_code": "select id from test_schema.users where id is null"
+    }
+  }
+}

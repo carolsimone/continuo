@@ -250,6 +250,64 @@ func TestContentHash_MatchesKnownVectors(t *testing.T) {
 			computeContentHash(n, map[string]interface{}{}))
 	})
 
+	t.Run("dbt test node: source_hash is its COMPILED assertion, not raw_code", func(t *testing.T) {
+		// A dbt test is fingerprinted by its compiled SQL, never its raw_code
+		// or dbt checksum. A generic test's raw_code is only the macro call
+		// (`{{ test_not_null(...) }}`) and its dbt checksum is empty; only the
+		// compiled assertion reflects the columns and relations the test binds
+		// to. This fixture carries a NON-EMPTY raw_code distinct from
+		// compiled_code to prove nodeSourceHash derives from compiled_code
+		// (equal to sha256(compiled_code)) and ignores raw_code (differs from
+		// sha256(raw_code)) — so an upstream macro/var change that rewrites the
+		// compiled assertion while leaving the macro call untouched still flips
+		// the content_hash and gets bind-checked. It also pins that the e2e
+		// baseline computes the identical content_hash topology-controller
+		// publishes, so an unchanged test never reads as "new" in a posted release.
+		//
+		// Generated with:
+		//	docker run --rm -v $PWD/topology-controller/service:/app/service -w /app -e PYTHONPATH=/app/proto <topology-controller image> uv run --no-sync python -c "
+		//	import hashlib
+		//	from service.parser import _node_source_hash, _shared_code_hash, _config_hash, _transitive_macro_ids
+		//	from service.content_hash import content_hash_fold
+		//	node = {
+		//	    'resource_type': 'test',
+		//	    'checksum': {'name': 'sha256', 'checksum': ''},
+		//	    'depends_on': {'macros': [], 'nodes': ['model.pkg.tbind']},
+		//	    'config': {'severity': 'error', 'meta': {}},
+		//	    'raw_code': '{{ test_not_null(**_dbt_generic_test_kwargs) }}',
+		//	    'compiled_code': 'select amount_eur from e2e_schema.tbind where amount_eur is null',
+		//	}
+		//	trans = _transitive_macro_ids(node['depends_on']['macros'], {})
+		//	print(_node_source_hash(node))
+		//	print(content_hash_fold(_node_source_hash(node), _shared_code_hash(trans, {}), _config_hash(node)))
+		//	"
+		n := map[string]interface{}{
+			"resource_type": "test",
+			"checksum": map[string]interface{}{
+				"name": "sha256", "checksum": "",
+			},
+			"depends_on": map[string]interface{}{
+				"macros": []interface{}{},
+				"nodes":  []interface{}{"model.pkg.tbind"},
+			},
+			"config":        map[string]interface{}{"severity": "error", "meta": map[string]interface{}{}},
+			"raw_code":      "{{ test_not_null(**_dbt_generic_test_kwargs) }}",
+			"compiled_code": "select amount_eur from e2e_schema.tbind where amount_eur is null",
+		}
+
+		require.Equal(t, "sha256:04dcecf52f3c2abfef798bd6fd8933f6bf7f9a0f999a59c344db3796db1d769a",
+			nodeSourceHash(n), "a test node hashes its compiled assertion")
+		// Derived from compiled_code, NOT raw_code.
+		require.Equal(t, "sha256:"+sha256Hex(n["compiled_code"].(string)), nodeSourceHash(n),
+			"test source_hash must equal sha256(compiled_code)")
+		require.NotEqual(t, "sha256:"+sha256Hex(n["raw_code"].(string)), nodeSourceHash(n),
+			"test source_hash must NOT be derived from raw_code (the macro call)")
+
+		require.Equal(t, "sha256:c28de5553aaa1f3be153ea1c23560fa47734c852c4b2319bb4afda22e971e561",
+			computeContentHash(n, map[string]interface{}{}),
+			"a test node folds through the same three-part formula as a model/seed/snapshot node")
+	})
+
 	t.Run("config_hash: DEL escaping and float re-serialization", func(t *testing.T) {
 		// Generated with:
 		//	docker exec -w /app topology-controller uv run python -c "

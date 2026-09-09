@@ -1,6 +1,10 @@
 package typology
 
-import "sort"
+import (
+	"sort"
+
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+)
 
 // SharedUpstreamCause groups failing nodes that fail the same way (identical
 // error signature) and descend from a common node that changed this release.
@@ -62,8 +66,10 @@ func (SharedUpstreamCause) Claim(remaining []FailingNode, dag DagView) ([]Cluste
 // matching no shared ancestor are left for the independent default strategy.
 func clusterByChangedAncestor(group []FailingNode, dag DagView) []Cluster {
 	ancestorsByNode := make(map[string]map[string]bool, len(group))
+	nodeTypeByID := make(map[string]string, len(group))
 	candidateSet := map[string]bool{}
 	for _, n := range group {
+		nodeTypeByID[n.NodeID] = n.NodeType
 		set := map[string]bool{}
 		for _, anc := range dag.ChangedAncestorsByNode[n.NodeID] {
 			set[anc.NodeID] = true
@@ -93,10 +99,33 @@ func clusterByChangedAncestor(group []FailingNode, dag DagView) []Cluster {
 			continue
 		}
 		sort.Strings(members)
+		// A prospective cluster whose members are ALL dbt-test nodes is not a fix
+		// target: a test binds again when the model it guards is fixed, and a test
+		// that is itself wrong is a human's edit. Leave those members unclaimed so
+		// they fall through to the independent default, where the driver skips a
+		// dbt-test target. A mixed cluster (at least one model/seed/snapshot) still
+		// forms, so the model is fixed and its tests ride along.
+		if allDbtTest(members, nodeTypeByID) {
+			continue
+		}
 		for _, m := range members {
 			claimed[m] = true
 		}
 		clusters = append(clusters, Cluster{TargetNodeID: anc, Members: members, Kind: KindSharedUpstream})
 	}
 	return clusters
+}
+
+// allDbtTest reports whether every listed node id is a dbt-test node, per the
+// node kinds the trigger carried. An empty list is not "all tests".
+func allDbtTest(ids []string, nodeTypeByID map[string]string) bool {
+	if len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		if nodeTypeByID[id] != string(pkg_model.NodeTypeDbtTest) {
+			return false
+		}
+	}
+	return true
 }

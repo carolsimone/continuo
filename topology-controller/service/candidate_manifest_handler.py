@@ -1,6 +1,6 @@
 import logging
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from domain.model import NodeRegistry, NodeRegistryEntry
+from domain.model import NodeRegistry, NodeRegistryEntry, NodeType
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
 from service.manifest_parsers import parser_for
@@ -181,6 +181,7 @@ class CandidateManifestHandler:
                 owner=n.owner,
             )
             for n in all_nodes
+            if n.node_type != NodeType.DBT_TEST  # a test writes no relation: nothing can reference it
         ])
         lookup = registry.to_lookup()
         candidate_schema = candidate_schema_name(release_id)
@@ -255,7 +256,11 @@ class CandidateManifestHandler:
                 **artifact_keys,
             })
 
-        bundle = build_code_bundle(release_id, all_nodes, shared_code)
+        bundle = build_code_bundle(
+            release_id,
+            [n for n in all_nodes if n.node_type != NodeType.DBT_TEST],  # tests are never fix targets nor source the agent reads
+            shared_code,
+        )
         try:
             code_bundle_uri = self._bundle_uploader.upload(release_id, bundle)
         except Exception as exc:

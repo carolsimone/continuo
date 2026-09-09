@@ -163,6 +163,61 @@ func TestSharedUpstream_EmptySignatureNeverGroups(t *testing.T) {
 	}
 }
 
+func TestSharedUpstream_AllTestMembersUnderOneModel_NotClaimed(t *testing.T) {
+	// Two same-signature dbt-test nodes whose shared changed ancestor is the model
+	// they guard (which bound OK and is not in the failing set) must NOT form an
+	// upstream cluster: a tests-only failure is a dead end, not a model fix. They
+	// stay unclaimed so the driver skips each one.
+	nodes := []FailingNode{
+		{NodeID: "analytics.tbind.not_null_amount_eur", ErrorSignature: "missing_col_x", NodeType: "dbt-test"},
+		{NodeID: "analytics.assert_tbind_amount_positive", ErrorSignature: "missing_col_x", NodeType: "dbt-test"},
+	}
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.tbind.not_null_amount_eur":    {{NodeID: "analytics.tbind"}},
+		"analytics.assert_tbind_amount_positive": {{NodeID: "analytics.tbind"}},
+	}}
+
+	claimed, rest := SharedUpstreamCause{}.Claim(nodes, dag)
+
+	if len(claimed) != 0 {
+		t.Fatalf("a tests-only cluster must not be claimed, got %+v", claimed)
+	}
+	if len(rest) != 2 {
+		t.Fatalf("both tests must be left unclaimed for the independent default, got %+v", rest)
+	}
+}
+
+func TestSharedUpstream_ModelPlusTestsUnderOneModel_RidesAlong(t *testing.T) {
+	// A model that failed alongside two of its tests under the same changed
+	// ancestor forms one cluster: the model is the fix target and the tests ride
+	// along. A mixed cluster (any non-test member) is unaffected by the tests-only
+	// guard.
+	nodes := []FailingNode{
+		{NodeID: "analytics.child", ErrorSignature: "missing_col_x", NodeType: "dbt-model"},
+		{NodeID: "analytics.tbind.not_null_amount_eur", ErrorSignature: "missing_col_x", NodeType: "dbt-test"},
+		{NodeID: "analytics.assert_tbind_amount_positive", ErrorSignature: "missing_col_x", NodeType: "dbt-test"},
+	}
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.child":                        {{NodeID: "analytics.tbind"}},
+		"analytics.tbind.not_null_amount_eur":    {{NodeID: "analytics.tbind"}},
+		"analytics.assert_tbind_amount_positive": {{NodeID: "analytics.tbind"}},
+	}}
+
+	claimed, rest := SharedUpstreamCause{}.Claim(nodes, dag)
+
+	if len(rest) != 0 {
+		t.Fatalf("a mixed cluster must claim every member, got rest=%+v", rest)
+	}
+	want := []Cluster{{
+		TargetNodeID: "analytics.tbind",
+		Members:      []string{"analytics.assert_tbind_amount_positive", "analytics.child", "analytics.tbind.not_null_amount_eur"},
+		Kind:         KindSharedUpstream,
+	}}
+	if !reflect.DeepEqual(claimed, want) {
+		t.Fatalf("model + tests must form one shared-upstream cluster, want %+v got %+v", want, claimed)
+	}
+}
+
 func TestGroup_MultipleClustersStableAcrossInputOrder(t *testing.T) {
 	// Two signatures each forming a shared-upstream cluster: the emitted cluster
 	// order must not depend on which signature appears first in the input.

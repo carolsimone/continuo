@@ -814,6 +814,43 @@ def test_a_python_kind_entry_is_published_as_a_python_model(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# dbt tests: published as validation-only nodes, excluded from registry+bundle
+# ---------------------------------------------------------------------------
+
+def test_dbt_test_is_published_but_not_registered_or_bundled():
+    """A dbt test that tests a tracked node becomes its own dbt-test topology
+    entry — bind-checked against the candidate schema like a model — but
+    writes no relation (empty resolved_relation_id) and is excluded from both
+    the node registry (nothing can reference it) and the code bundle (it is
+    never a fix target and never read as source)."""
+    source = _make_source(("manifest_with_test.json", "v1"))
+    publisher = MagicMock()
+    uploader = _make_uploader("s3://c/candidate.sql")
+    bundle_uploader = FakeBundleUploader()
+
+    _handler(source, publisher, uploader, bundle_uploader=bundle_uploader).handle(release_id="rel-1")
+
+    publisher.publish_ok.assert_called_once()
+    topology = publisher.publish_ok.call_args.kwargs["topology"]
+    tests = [n for n in topology if n["node_type"] == "dbt-test"]
+    assert len(tests) == 1
+    t = tests[0]
+    assert t["unique_id"].startswith("test.")
+    assert t["resolved_relation_id"] == ""
+    assert t["candidate_artifact_uri"] == "s3://c/candidate.sql"
+    assert t["upstream_unique_ids"] == ["test_schema.users"]  # resolved from the compiled SQL
+    assert "test_schema.users" in {n["unique_id"] for n in topology}
+
+    _, bundle = bundle_uploader.uploads[0]
+    assert all(not uid.startswith("test.") for uid in bundle["nodes"]), \
+        "tests are never fix targets and never read as source"
+
+    # the test's SQL was rewritten: the model ref points at the candidate schema
+    rewritten = uploader.upload.call_args_list
+    assert any('"_candidate_' in call.kwargs["sql"] for call in rewritten)
+
+
+# ---------------------------------------------------------------------------
 # wire-shape pin and mixed-DAG resolution
 # ---------------------------------------------------------------------------
 

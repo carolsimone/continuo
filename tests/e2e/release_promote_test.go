@@ -541,11 +541,20 @@ func TestE2E_ReleasePromote_PerServiceLeavesOthersIntact(t *testing.T) {
 	changedImageTag := allServices[changedService].imageTag
 	require.NotEmpty(t, changedImageTag, "image_tag missing for %s", changedService)
 
-	// Collect the service-2 and service-3 node IDs we expect to survive.
+	// Collect the service-2 and service-3 node IDs we expect to survive in the
+	// Neo4j graph. dbt-test nodes are excluded: they are validation-only, are
+	// stripped from release.promoted:v1 (Topology.WithoutTests), and never
+	// become :Table nodes, so the graph-level anti-amputation check cannot look
+	// for them. current_prod retention of an unchanged test is covered by the
+	// bind-check e2e. A dbt-test's manifest id is "test.<project>.<name>[.<hash>]";
+	// a relation node's id is "<schema>.<table>".
 	survivingServices := []string{"service-2", "service-3"}
 	var expectedSurvivingNodes []string
 	for _, svc := range survivingServices {
 		for _, n := range allServices[svc].nodes {
+			if strings.HasPrefix(n.uniqueID, "test.") {
+				continue
+			}
 			expectedSurvivingNodes = append(expectedSurvivingNodes, n.uniqueID)
 		}
 	}
@@ -700,14 +709,16 @@ func getS3Object(t *testing.T, ctx context.Context, clients *testClients, key st
 	return body
 }
 
-// parseManifestNodes extracts the model/seed/snapshot nodes from a dbt
-// manifest.json, mirroring topology-controller's identity derivation
-// (unique_id = "<schema>.<name>") and RECOMPUTING content_hash with the same
-// three-part formula the live topology-controller uses (see content_hash.go
-// / topology-controller/service/parser.py: _content_hash). Seeding
-// current_prod from dbt's raw per-node checksum alone (the old, two-part-era
-// behavior) would never match the live formula's output, making every
-// candidate node look "changed" regardless of whether it actually changed.
+// parseManifestNodes extracts the model/seed/snapshot nodes plus every
+// tracked dbt-test node from a dbt manifest.json, mirroring
+// topology-controller's identity derivation (unique_id = "<schema>.<name>"
+// for a model/seed/snapshot, dbt's own manifest id for a test) and
+// RECOMPUTING content_hash with the same three-part formula the live
+// topology-controller uses (see content_hash.go / topology-controller's
+// parser: _content_hash). Seeding current_prod from dbt's raw per-node
+// checksum alone (the old, two-part-era behavior) would never match the live
+// formula's output, making every candidate node look "changed" regardless of
+// whether it actually changed.
 func parseManifestNodes(t *testing.T, body []byte) []manifestNode {
 	t.Helper()
 	doc, err := decodeJSONDoc(body)
@@ -717,23 +728,97 @@ func parseManifestNodes(t *testing.T, body []byte) []manifestNode {
 
 	supported := map[string]bool{"model": true, "seed": true, "snapshot": true}
 	var nodes []manifestNode
-	for _, nv := range rawNodes {
+	for key, nv := range rawNodes {
 		n, ok := nv.(map[string]interface{})
 		if !ok {
 			continue
 		}
 		resourceType, _ := n["resource_type"].(string)
-		if !supported[resourceType] {
+		if supported[resourceType] {
+			schema, _ := n["schema"].(string)
+			name, _ := n["name"].(string)
+			nodes = append(nodes, manifestNode{
+				uniqueID:    schema + "." + name,
+				contentHash: computeContentHash(n, macros),
+			})
 			continue
 		}
-		schema, _ := n["schema"].(string)
-		name, _ := n["name"].(string)
-		nodes = append(nodes, manifestNode{
-			uniqueID:    schema + "." + name,
-			contentHash: computeContentHash(n, macros),
-		})
+		if resourceType == "test" {
+			// A test is a node too, identified by dbt's own manifest id and
+			// hashed with the same formula (dbt's checksum is empty for a
+			// generic test, so the fallback hashes its compiled SQL). Seeding
+			// production with them keeps an unchanged test from reading as
+			// new in every release the suite posts.
+			if !testIsTracked(n, rawNodes) {
+				continue
+			}
+			nodes = append(nodes, manifestNode{uniqueID: key, contentHash: computeContentHash(n, macros)})
+			continue
+		}
 	}
 	return nodes
+}
+
+// testIsTracked reports whether a dbt test node counts toward the
+// change-detector baseline: whether its attached_node (or, absent that, any
+// depends_on.nodes entry) names a node present in rawNodes that
+// topology-controller's parser would itself track as a manifest node — its
+// full first-pass rule, not owner alone: resource_type is one of
+// model/seed/snapshot, config.meta.owner is present and non-empty,
+// "local_stub" is not among its tags, and it carries at least one tag unless
+// its resource_type has a default schedule (only "seed" does — a model or
+// snapshot with no tags is dropped for lacking a schedule). A test attached
+// only to a node the parser would itself drop is not a node in the topology
+// either.
+func testIsTracked(n map[string]interface{}, rawNodes map[string]interface{}) bool {
+	var targets []string
+	if attached, ok := n["attached_node"].(string); ok && attached != "" {
+		targets = []string{attached}
+	} else {
+		dependsOn := asObjectMap(n["depends_on"])
+		if arr, ok := dependsOn["nodes"].([]interface{}); ok {
+			for _, v := range arr {
+				if s, ok := v.(string); ok {
+					targets = append(targets, s)
+				}
+			}
+		}
+	}
+	for _, id := range targets {
+		target := asObjectMap(rawNodes[id])
+		rt, _ := target["resource_type"].(string)
+		if rt != "model" && rt != "seed" && rt != "snapshot" {
+			continue
+		}
+		meta := asObjectMap(asObjectMap(target["config"])["meta"])
+		owner, _ := meta["owner"].(string)
+		if owner == "" {
+			continue
+		}
+		var tags []string
+		if arr, ok := target["tags"].([]interface{}); ok {
+			for _, v := range arr {
+				if s, ok := v.(string); ok {
+					tags = append(tags, s)
+				}
+			}
+		}
+		isLocalStub := false
+		for _, tag := range tags {
+			if tag == "local_stub" {
+				isLocalStub = true
+				break
+			}
+		}
+		if isLocalStub {
+			continue
+		}
+		if len(tags) == 0 && rt != "seed" { // only seed has a default schedule
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // resetReleaseControllerQueue clears any release left mid-flight by a prior run
@@ -1057,6 +1142,20 @@ func neo4jScalarString(ctx context.Context, clients *testClients, cypher string,
 	v, _ := res.Record().Get("v")
 	s, _ := v.(string)
 	return s
+}
+
+// neo4jScalarInt runs a query expected to return a single integer column `v`
+// and returns it (0 if no row) — the int twin of neo4jScalarString.
+func neo4jScalarInt(ctx context.Context, clients *testClients, cypher string, params map[string]any) int64 {
+	session := clients.neo4jDriver.NewSession(ctx, neo4jdriver.SessionConfig{AccessMode: neo4jdriver.AccessModeRead})
+	defer session.Close(ctx)
+	res, err := session.Run(ctx, cypher, params)
+	if err != nil || !res.Next(ctx) {
+		return 0
+	}
+	v, _ := res.Record().Get("v")
+	n, _ := v.(int64)
+	return n
 }
 
 // waitForNodeVersion polls Neo4j until the version-ingestion consumer has

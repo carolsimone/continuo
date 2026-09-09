@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -24,7 +25,7 @@ import (
 // individually. Tests exercising the missing-image / missing-secret paths override
 // them with t.Setenv.
 func TestMain(m *testing.M) {
-	os.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.4.1")
+	os.Setenv("VALIDATION_IMAGE", "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.5.0")
 	os.Setenv("VALIDATION_WAREHOUSE_SECRET", "continuo-warehouse-validation")
 	os.Exit(m.Run())
 }
@@ -97,7 +98,7 @@ func TestCreateValidationJob_BuildFromSql_SingleContainerFetchesOwnSQL(t *testin
 
 	main := spec.Containers[0]
 	assert.Equal(t, "dbt-job", main.Name)
-	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.4.1", main.Image)
+	assert.Equal(t, "ghcr.io/carolsimone/continuo-python-runtime-postgres:v0.5.0", main.Image)
 	assert.Equal(t, []string{"continuo-runtime", "validation-op"}, main.Command)
 	// The main container fetches its own SQL: it carries the URI + S3 creds.
 	assert.Equal(t, p.CandidateArtifactURI, envByName(spec, "CANDIDATE_SQL_URI"))
@@ -260,6 +261,80 @@ func TestBuildValidationPodSpec_BuildFromColumns_EmptyURIFailsPermanently(t *tes
 	require.Error(t, err)
 	assert.ErrorIs(t, err, events.ErrPermanent)
 	assert.Contains(t, err.Error(), "candidate_artifact_uri missing from build_from_columns")
+}
+
+// TestBuildValidationPodSpec_CheckBindsCarriesTheCandidateSQL verifies dbt-test
+// nodes (VALIDATION_OP=check_binds) get the same single-container, S3-fetch shape
+// as build_from_sql: CANDIDATE_SQL_URI + S3 credentials on the main container, no
+// CANDIDATE_SPEC_URI (that env belongs to build_from_columns).
+func TestBuildValidationPodSpec_CheckBindsCarriesTheCandidateSQL(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
+	p := validationParams()
+	p.ValidationOp = "check_binds"
+	p.NodeID = "test.service_2.not_null_tbind_amount_eur.a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"
+	p.CandidateArtifactURI = "s3://b/candidate-sql/rel/candidate_test.sql"
+
+	spec, err := buildValidationPodSpec(p)
+	require.NoError(t, err)
+
+	env := envMap(spec.Containers[0].Env)
+	assert.Equal(t, "check_binds", env["VALIDATION_OP"])
+	assert.Equal(t, "s3://b/candidate-sql/rel/candidate_test.sql", env["CANDIDATE_SQL_URI"])
+	assert.NotContains(t, env, "CANDIDATE_SPEC_URI")
+	assert.Len(t, spec.Containers, 1)
+}
+
+// TestBuildValidationPodSpec_CheckBindsRequiresTheArtifact mirrors the
+// build_from_sql empty-URI guard: a check_binds node with no CandidateArtifactURI
+// can never succeed (there is no SQL to EXPLAIN), so it fails permanently.
+func TestBuildValidationPodSpec_CheckBindsRequiresTheArtifact(t *testing.T) {
+	p := validationParams()
+	p.ValidationOp = "check_binds"
+	p.CandidateArtifactURI = ""
+
+	_, err := buildValidationPodSpec(p)
+	require.ErrorIs(t, err, events.ErrPermanent)
+}
+
+// TestSanitizeK8sLabel_DbtTestIDIsValid verifies that a dbt test's node id — long
+// and dotted — still sanitizes into a valid Kubernetes label value.
+func TestSanitizeK8sLabel_DbtTestIDIsValid(t *testing.T) {
+	id := "test.service_2.relationships_tbind_customer_id__id__ref_customers_.9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+	got := sanitizeK8sLabel(id)
+	assert.Empty(t, validation.IsValidLabelValue(got), "sanitized %q is not a valid label value", got)
+}
+
+// TestCreateValidationJob_LongDbtTestTableNameLabelIsValid verifies that a dbt
+// test's TableName — the test's manifest `name`, which dbt does not shorten and
+// which for an accepted_values test grows long and carries dots and commas —
+// is sanitized into a valid Kubernetes label value on the emitted Job. An
+// unsanitized value would exceed 63 chars or carry out-of-charset characters,
+// and the API server would reject the whole validation Job before any bind
+// check ran. The raw identity is preserved elsewhere (the TABLE_NAME env var
+// and the node-id annotation), so sanitizing the label is safe.
+func TestCreateValidationJob_LongDbtTestTableNameLabelIsValid(t *testing.T) {
+	c := newValidationTestClient()
+	p := validationParams()
+	p.ValidationOp = "check_binds"
+	p.NodeType = pkg_model.NodeTypeDbtTest
+	// A dbt accepted_values test name: dotted, comma-bearing, and well over 63
+	// chars — exactly the shape that breaks a raw label value.
+	p.TableName = "accepted_values_orders_status__placed__shipped__delivered__cancelled__returned__" +
+		"refunded__on_hold__backordered__partially_shipped"
+	require.Greater(t, len(p.TableName), 63, "fixture must exceed the 63-char label cap")
+
+	require.NoError(t, c.CreateValidationJob(context.Background(), p))
+	job := fetchJob(t, c, p.Namespace, p.JobName)
+
+	labelValue := job.Labels["table_name"]
+	assert.Empty(t, validation.IsValidLabelValue(labelValue),
+		"table_name label %q is not a valid Kubernetes label value", labelValue)
+	assert.Empty(t, validation.IsValidLabelValue(job.Spec.Template.Labels["table_name"]),
+		"pod-template table_name label %q is not a valid Kubernetes label value",
+		job.Spec.Template.Labels["table_name"])
+	// The raw name is preserved verbatim in the TABLE_NAME env var, so
+	// sanitizing the label loses no identity the runner depends on.
+	assert.Equal(t, p.TableName, envByName(job.Spec.Template.Spec, "TABLE_NAME"))
 }
 
 func TestCreateValidationJob_CloneFromProd_SingleContainerNoS3(t *testing.T) {

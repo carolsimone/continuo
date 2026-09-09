@@ -14,6 +14,7 @@ func TestParseNodeType_ValidTypes(t *testing.T) {
 		{"dbt-model", model.NodeTypeDbtModel},
 		{"dbt-seed", model.NodeTypeDbtSeed},
 		{"dbt-snapshot", model.NodeTypeDbtSnapshot},
+		{"dbt-test", model.NodeTypeDbtTest},
 	}
 	for _, tt := range tests {
 		got, err := model.ParseNodeType(tt.input)

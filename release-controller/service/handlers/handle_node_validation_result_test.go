@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,6 +37,46 @@ func TestHandleNodeValidationResult_UpsertsOneNode(t *testing.T) {
 	assert.Equal(t, "ok", got[0].Status)
 	assert.Equal(t, "validation", got[0].Stage)
 	assert.Equal(t, "s3://a", got[0].DBTLogURI)
+}
+
+// TestHandleNodeValidationResult_StampsNodeTypeFromCandidateTopology verifies
+// that a projected per-node result carries the node's NodeType as the
+// candidate topology declares it, so a reader can tell a test's bind check
+// from a model's build without a separate topology lookup.
+func TestHandleNodeValidationResult_StampsNodeTypeFromCandidateTopology(t *testing.T) {
+	deps, store := newDeps(time.Unix(100, 0).UTC())
+	deps.Bucket = "continuo"
+
+	require.NoError(t, handlers.ReceiveCandidate(context.Background(), deps, handlers.ReceiveCandidateInput{
+		Service: "svc-a", ReleaseID: "rA", ImageTag: "sha-a", Repo: "acme/demo", CommitSHA: "deadbeef",
+	}))
+	require.NoError(t, handlers.AdvanceQueue(context.Background(), deps))
+	require.NoError(t, handlers.HandleCompileResult(context.Background(), deps, handlers.HandleCompileResultInput{
+		ReleaseID: "rA", Status: "ok",
+	}))
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rA", Status: "ok",
+		Topology: release.Topology{
+			{UniqueID: "a", ServiceName: "svc-a", NodeType: "dbt-model", UpstreamUniqueIDs: []string{}},
+			{UniqueID: "test.p.not_null_a_id.1", ServiceName: "svc-a", NodeType: "dbt-test", UpstreamUniqueIDs: []string{"a"}},
+		},
+	}))
+
+	err := handlers.HandleNodeValidationResult(context.Background(), deps, handlers.NodeValidationResultInput{
+		ReleaseID: "rA",
+		Stage:     "validation",
+		NodeID:    "test.p.not_null_a_id.1",
+		Status:    "ok",
+	})
+	require.NoError(t, err)
+
+	r, err := store.GetRelease("rA")
+	require.NoError(t, err)
+
+	got := r.PerNodeResults()
+	require.Len(t, got, 1)
+	assert.Equal(t, "test.p.not_null_a_id.1", got[0].NodeID)
+	assert.Equal(t, "dbt-test", got[0].NodeType)
 }
 
 // TestHandleNodeValidationResult_UnknownReleaseDropsCleanly guards against a

@@ -1776,6 +1776,32 @@ func TestProposeFix_AllSkipped_RecordsSkippedWithoutVerification(t *testing.T) {
 	assert.Zero(t, llm.calls)
 }
 
+// TestProposeFix_DbtTestNodeIsSkippedNotFixed: a failing dbt test rides
+// along as evidence; it is never a fix target, and its skip names why.
+func TestProposeFix_DbtTestNodeIsSkippedNotFixed(t *testing.T) {
+	u := newFakeUoW()
+	ev := fakeEvidence{vals: map[string]string{"s3://b/log": `column "amount_eur" does not exist`}}
+	llm := newFakeLLM(ports.ProposeResult{ProposedSQL: "unused", Confidence: "high", Model: "m"}, nil)
+	art := &fakeArtifacts{}
+	gw := &fakeGateway{imageTag: "tag-1"}
+	d := deps(u, ev, &llm, art)
+	d.Pipeline = gw
+	d.Releases = gw
+	tr := baseTrigger()
+	tr.Nodes = []TriggerNode{{NodeID: "test.service_2.not_null_tbind_amount_eur.9f", ErrorSignature: "sig", Category: "logic",
+		ErrorExcerpt: `column "amount_eur" does not exist`, DBTLogURI: "s3://b/log", FilePath: "models/tbind.yml",
+		Service: "svc", NodeType: "dbt-test"}}
+
+	require.NoError(t, ProposeFix(context.Background(), d, tr))
+
+	p := u.pr.inserted[0]
+	assert.Equal(t, 0, llm.calls)
+	assert.Equal(t, proposal.StatusSkipped, p.Status)
+	assert.Equal(t, proposal.StatusSkipped, p.NodeOutcomes["test.service_2.not_null_tbind_amount_eur.9f"].Status)
+	assert.Equal(t, "dbt tests are not fix targets; fix the model or edit the test by hand", p.NodeOutcomes["test.service_2.not_null_tbind_amount_eur.9f"].Reason)
+	assert.Empty(t, gw.submitted)
+}
+
 // TestProposeFix_TwoServices_OneVerificationRunEach: a release's failing set
 // can span services, and a verification run verifies exactly one service, so
 // each edited service gets its own.

@@ -12,13 +12,28 @@ shipped in those.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-09
+
 ### Added
 - `global.agentRemediationGrpcAddr` (default `agent-remediation:50054`) —
   release-controller reads remediation attempts before starting a retry
   round. New key with a safe default; an unmodified existing values file
   keeps working unmodified. MINOR.
+- Validation bind-checks every dbt test of a changed model (`check_binds`): a
+  test whose compiled SQL names a column or relation the release removed
+  rejects the release. Tests are validation-only nodes; they are not
+  promoted, scheduled, or drawn.
 
 ### Changed
+- `validation.imageTag` default is `v0.5.0` (continuo-python-runtime with the
+  `check_binds` op). An existing install's first release per service after
+  upgrading bind-checks all of that service's tests once.
+- The chart refuses a `validation.imageTag` below `v0.5.0`: dbt-test bind
+  checks (`check_binds`) require it, and a v0.4.x runner would report success
+  without running the `check_binds` nodes topology-controller emits, promoting
+  a changed test's bind unvalidated. Only explicit v0.4.x pins are affected —
+  a default install (default is `v0.5.0`) renders unchanged; re-pin to
+  `v0.5.0`+ or drop the override to track the chart default. PATCH.
 - The shipped `files/service_repos.yaml` (the `-service-repos` ConfigMap
   agent-remediation reads) now maps the `service-py` python service to
   `services/service-py`. Without it a python node's proposed contract fix

@@ -18,9 +18,13 @@ import "sort"
 type CrossServiceCause struct{}
 
 func (CrossServiceCause) Claim(remaining []FailingNode, dag DagView) ([]Cluster, []FailingNode) {
+	byID := make(map[string]FailingNode, len(remaining))
+	nodeTypeByID := make(map[string]string, len(remaining))
 	byTarget := map[string][]string{}
 	var rest []FailingNode
 	for _, n := range remaining {
+		byID[n.NodeID] = n
+		nodeTypeByID[n.NodeID] = n.NodeType
 		target, ok := nearestCrossServiceAncestor(n, dag)
 		if !ok {
 			rest = append(rest, n)
@@ -28,9 +32,30 @@ func (CrossServiceCause) Claim(remaining []FailingNode, dag DagView) ([]Cluster,
 		}
 		byTarget[target] = append(byTarget[target], n.NodeID)
 	}
+	// Consider targets in id order so both the emitted clusters and the members
+	// handed back unclaimed stay deterministic regardless of map iteration.
+	targets := make([]string, 0, len(byTarget))
+	for target := range byTarget {
+		targets = append(targets, target)
+	}
+	sort.Strings(targets)
 	clusters := make([]Cluster, 0, len(byTarget))
-	for target, members := range byTarget {
+	for _, target := range targets {
+		members := byTarget[target]
 		sort.Strings(members)
+		// A prospective cluster whose members are ALL dbt-test nodes is not a fix
+		// target: a test binds again when the model it guards is fixed, and a test
+		// that is itself wrong is a human's edit. Do not emit that cluster; hand
+		// its members back unclaimed so they flow to the next cause and, failing
+		// that, the independent default where the driver skips a dbt-test target. A
+		// mixed cluster (at least one model/seed/snapshot member) still forms, so
+		// the producer is fixed and its tests ride along.
+		if allDbtTest(members, nodeTypeByID) {
+			for _, m := range members {
+				rest = append(rest, byID[m])
+			}
+			continue
+		}
 		clusters = append(clusters, Cluster{TargetNodeID: target, Members: members, Kind: KindCrossServiceUpstream})
 	}
 	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Members[0] < clusters[j].Members[0] })
