@@ -306,6 +306,7 @@ func groupClusters(t Trigger) []typology.Cluster {
 			Category:       n.Category,
 			Reason:         n.Reason,
 			Service:        n.Service,
+			NodeType:       n.NodeType,
 		})
 		ancestors := make([]typology.ChangedAncestor, 0, len(n.ChangedAncestors))
 		for _, a := range n.ChangedAncestors {

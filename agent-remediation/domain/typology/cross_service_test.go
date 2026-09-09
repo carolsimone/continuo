@@ -96,6 +96,56 @@ func TestCrossService_NoAncestorOrUnknownService_NotClaimed(t *testing.T) {
 	}
 }
 
+// A cross-service target reached only by dbt-test nodes is not a fix target: a
+// consumer-side test binds again when the producer it reads is fixed. The tests
+// are handed back unclaimed rather than forming a producer fix.
+func TestCrossService_AllTestMembers_NotClaimed(t *testing.T) {
+	nodes := []FailingNode{
+		{NodeID: "analytics.report.not_null_total", ErrorSignature: "sig_a", Service: "finance", NodeType: "dbt-test"},
+		{NodeID: "analytics.assert_report_positive", ErrorSignature: "sig_b", Service: "finance", NodeType: "dbt-test"},
+	}
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.report.not_null_total":  {{NodeID: "analytics.orders", Service: "core", Depth: 1}},
+		"analytics.assert_report_positive": {{NodeID: "analytics.orders", Service: "core", Depth: 1}},
+	}}
+
+	claimed, rest := CrossServiceCause{}.Claim(nodes, dag)
+
+	if len(claimed) != 0 {
+		t.Fatalf("a tests-only cross-service cluster must not be claimed, got %+v", claimed)
+	}
+	if len(rest) != 2 {
+		t.Fatalf("both tests must be handed back unclaimed, got %+v", rest)
+	}
+}
+
+// A cross-service cluster that mixes a consumer model with its tests still forms
+// at the producer: the consumer model is fixed and its tests ride along.
+func TestCrossService_ModelPlusTestMembers_RidesAlong(t *testing.T) {
+	nodes := []FailingNode{
+		{NodeID: "analytics.report", ErrorSignature: "sig_a", Service: "finance", NodeType: "dbt-model"},
+		{NodeID: "analytics.report.not_null_total", ErrorSignature: "sig_a", Service: "finance", NodeType: "dbt-test"},
+	}
+	dag := DagView{ChangedAncestorsByNode: map[string][]ChangedAncestor{
+		"analytics.report":                {{NodeID: "analytics.orders", Service: "core", Depth: 1}},
+		"analytics.report.not_null_total": {{NodeID: "analytics.orders", Service: "core", Depth: 1}},
+	}}
+
+	claimed, rest := CrossServiceCause{}.Claim(nodes, dag)
+
+	if len(rest) != 0 {
+		t.Fatalf("a mixed cross-service cluster must claim every member, got rest=%+v", rest)
+	}
+	want := []Cluster{{
+		TargetNodeID: "analytics.orders",
+		Members:      []string{"analytics.report", "analytics.report.not_null_total"},
+		Kind:         KindCrossServiceUpstream,
+	}}
+	if !reflect.DeepEqual(claimed, want) {
+		t.Fatalf("model + test must form one cross-service cluster at the producer, want %+v got %+v", want, claimed)
+	}
+}
+
 // Group runs the strategies in order: cross-service first, shared-upstream on
 // the rest, independents last — mixed input yields all three deterministically.
 func TestGroup_CrossServiceThenSharedUpstreamThenIndependent(t *testing.T) {

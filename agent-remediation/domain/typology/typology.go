@@ -15,6 +15,9 @@ type FailingNode struct {
 	Category       string
 	Reason         string
 	Service        string
+	// NodeType is the node's kind, so clustering can tell a test's dead-end from
+	// a model's ride-along: a cluster of only dbt-test nodes is never a fix target.
+	NodeType string
 }
 
 // ChangedAncestor is one upstream node of a failing node that changed in this
