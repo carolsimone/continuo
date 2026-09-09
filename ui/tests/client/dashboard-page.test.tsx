@@ -130,14 +130,23 @@ describe('DashboardPage — tabs', () => {
     });
   });
 
+  it('renders the tabs in the order Runs, Nodes, Topology, Releases, Remediation', async () => {
+    renderAt(['/']);
+    await waitFor(() => {
+      const labels = Array.from(document.querySelectorAll('[role="tab"]'))
+        .map(t => t.textContent?.replace(/\d+$/, '').trim());
+      expect(labels).toEqual(['Runs', 'Nodes', 'Topology', 'Releases', 'Remediation']);
+    });
+  });
+
   it('count pills reflect the loaded data on both tabs', async () => {
     renderAt(['/']);
     await waitFor(() => {
       const counts = document.querySelectorAll('.tabs__count');
       expect(counts).toHaveLength(3);
       expect(counts[0].textContent).toBe('2');  // Runs
-      expect(counts[1].textContent).toBe('1');  // Topology
-      expect(counts[2].textContent).toBe('3');  // Nodes
+      expect(counts[1].textContent).toBe('3');  // Nodes
+      expect(counts[2].textContent).toBe('1');  // Topology
     });
   });
 
