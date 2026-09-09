@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -146,6 +147,10 @@ func TestE2E_ReleaseValidation_TestsBindAndArePromotedInvisibly(t *testing.T) {
 	postRelease(t, clients, changedService, releaseID, changedImageTag, false)
 	assertValidationRequestedNodes(t, ctx, clients, releaseID, []string{tbindOkUniqueID, tbindOkNotNullTestID})
 	waitForReleasePromoted(t, ctx, clients, releaseID, batchRejectBudget)
+	// The orchestrator swaps the Neo4j topology asynchronously after the release
+	// reports promoted; wait for tbind_ok to be current for this release before
+	// reading its :Table properties (test_count), or the read races the swap.
+	waitForTopologySwap(t, ctx, clients, releaseID, tbindOkUniqueID, 2*time.Minute)
 
 	perNode := releasePerNodeResults(t, ctx, clients, releaseID)
 	require.Equal(t, "ok", perNode[tbindOkNotNullTestID].Status, "the test binds")
