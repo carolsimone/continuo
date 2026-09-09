@@ -51,9 +51,9 @@ export default function DashboardPage() {
 
   const tabSpecs = [
     { slug: 'runs', label: 'Runs', count: schedules.length },
+    { slug: 'nodes', label: 'Nodes', count: nodeTotal },
     { slug: 'topology', label: 'Topology', count: topologies.length },
     { slug: 'releases', label: 'Releases' },
-    { slug: 'nodes', label: 'Nodes', count: nodeTotal },
     { slug: 'remediation', label: 'Remediation', count: openPrCount > 0 ? openPrCount : undefined },
   ];
   const activeTab = useActiveTab('tab', 'runs', tabSpecs.map(t => t.slug));
