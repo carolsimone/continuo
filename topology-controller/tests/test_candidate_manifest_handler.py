@@ -5,19 +5,19 @@ from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
 import yaml
-from adapters.sources import ManifestSource
 from domain.model import ManifestFile, ManifestKind, Runtime
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.content_hash import content_hash_fold
+from service.ports import ManifestSourcePort
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _make_source(*entries):
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(FIXTURES / name), version=version, image_tag="")
         for name, version in entries
@@ -153,7 +153,7 @@ def test_handle_publishes_ok_with_well_formed_content_hash(resolved_topology):
 
 
 def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = []
     publisher = MagicMock()
 
@@ -208,7 +208,7 @@ def test_handle_publishes_failed_on_malformed_manifest(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text("not json {{{")
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(bad), version="v1", image_tag="")
     ]
@@ -228,7 +228,7 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
     bad = tmp_path / "no_nodes.json"
     bad.write_text('{"metadata": {}}')
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(bad), version="v1", image_tag="")
     ]
@@ -260,7 +260,7 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
         }
     }))
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(bad), version="v1", image_tag="")
     ]
@@ -316,11 +316,11 @@ def test_handle_calls_source_cleanup_even_on_publish_failed(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _make_source_with_declared(entries):
-    """Build a fake ManifestSource returning ManifestFiles with declared_service set.
+    """Build a fake manifest source returning ManifestFiles with declared_service set.
 
     entries is a list of (fixture_name, version, declared_service) triples.
     """
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(FIXTURES / name), version=version, image_tag="", declared_service=declared)
         for name, version, declared in entries
@@ -334,7 +334,7 @@ def test_handle_publishes_failed_empty_manifest_for_declared_service(tmp_path):
     empty = tmp_path / "empty_nodes.json"
     empty.write_text('{"nodes": {}}')
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(empty), version="v1", image_tag="", declared_service="service-1")
     ]
@@ -370,7 +370,7 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
         }
     }))
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(mismatch), version="v1", image_tag="", declared_service="service-1")
     ]
@@ -413,7 +413,7 @@ def test_handle_skips_declared_service_checks_when_declared_service_empty(tmp_pa
     empty = tmp_path / "empty_nodes.json"
     empty.write_text('{"nodes": {}}')
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     # declared_service="" — same file that triggers EmptyManifest when non-empty
     source.list_manifests.return_value = [
         ManifestFile(path=str(empty), version="v1", image_tag="", declared_service="")
@@ -559,7 +559,7 @@ def test_bundle_upload_failure_publishes_failed():
 def test_empty_manifests_publish_empty_bundle_uri():
     """The early no-manifests path publishes code_bundle_uri="" and never
     touches the bundle uploader."""
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = []
     publisher = MagicMock()
     bundle_uploader = FakeBundleUploader()
@@ -609,7 +609,7 @@ def test_shared_code_namespaced_by_service_for_colliding_unit_ids(tmp_path, capl
     second = tmp_path / "second.json"
     second.write_text(json.dumps(_manifest_with_single_macro("SELECT 'v2'", "node_b", "service-b")))
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(first), version="v1", image_tag="", declared_service="service-a"),
         ManifestFile(path=str(second), version="v1", image_tag="", declared_service="service-b"),
@@ -656,7 +656,7 @@ def test_shared_code_depends_on_entries_namespaced_consistently_with_keys(tmp_pa
         _manifest_with_single_macro("SELECT 1", "node_b", "service-b", macro_depends_on=[])
     ))
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(first), version="v1", image_tag=""),
         ManifestFile(path=str(second), version="v1", image_tag=""),
@@ -713,7 +713,7 @@ def _python_contract(tmp_path, *entries, service="service-py", name="contract.ya
 
 
 def _source_of(*files):
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = list(files)
     return source
 
@@ -964,7 +964,7 @@ def test_upstream_unique_ids_match_node_unique_id_exactly_with_mixed_case(tmp_pa
         }
     }))
 
-    source = create_autospec(ManifestSource)
+    source = create_autospec(ManifestSourcePort)
     source.list_manifests.return_value = [
         ManifestFile(path=str(manifest_mixed_case), version="v1", image_tag="")
     ]

@@ -1,11 +1,6 @@
-from abc import ABC, abstractmethod
-from domain.model import ManifestFile
+"""Manifest-source adapters.
 
-
-class ManifestSource(ABC):
-    @abstractmethod
-    def list_manifests(self) -> list[ManifestFile]: ...
-
-    def cleanup(self) -> None:
-        """No-op by default. S3Source overrides to clean up temp files."""
-        pass
+Concrete sources (S3Source) implement service.ports.ManifestSourcePort; the
+port lives in the application layer, not here, so the parse handler depends on
+the abstraction while this package only provides implementations of it.
+"""

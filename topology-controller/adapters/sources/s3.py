@@ -1,13 +1,12 @@
 import logging
 import os
 import tempfile
-from adapters.sources import ManifestSource
 from domain.model import ManifestFile, ManifestRequest
 
 logger = logging.getLogger(__name__)
 
 
-class S3Source(ManifestSource):
+class S3Source:
     """Downloads manifests from S3 to a local temp dir, returns ManifestFile objects.
 
     Accepts an explicit list of ManifestRequest within the bucket. Each request

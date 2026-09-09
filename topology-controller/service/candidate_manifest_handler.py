@@ -1,12 +1,14 @@
 import logging
-from adapters.code_bundle_uploader import CodeBundleUploader
-from adapters.redis.candidate_publisher import CandidateManifestPublisher
-from adapters.sources import ManifestSource
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from domain.model import NodeRegistry, NodeRegistryEntry
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
 from service.manifest_parsers import parser_for
+from service.ports import (
+    CandidatePublisherPort,
+    CodeBundleUploaderPort,
+    ManifestSourcePort,
+)
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name
 
@@ -46,9 +48,9 @@ class CandidateManifestHandler:
 
     def __init__(
         self,
-        source: ManifestSource,
-        publisher: CandidateManifestPublisher,
-        bundle_uploader: CodeBundleUploader,
+        source: ManifestSourcePort,
+        publisher: CandidatePublisherPort,
+        bundle_uploader: CodeBundleUploaderPort,
         artifact_builders: dict[str, CandidateArtifactBuilder],
         dialect: str,
     ) -> None:
