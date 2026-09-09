@@ -11,6 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/carolsimone/continuo/executor-controller/adapters/publisher"
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
+	"github.com/carolsimone/continuo/executor-controller/serialization"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -63,10 +64,10 @@ func TestPublisher_NodeDeployed(t *testing.T) {
 	r := newRedis(t)
 	pub := publisher.NewOutboxPublisher(r, logger)
 
-	payload, err := json.Marshal(event.JobDeployed{
+	payload, err := json.Marshal(serialization.JobDeployedFromDomain(event.JobDeployed{
 		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
 		ImageTag: "sha-abc", Operation: "test", TaskRetryCount: 2, MaxRetries: 5,
-	})
+	}))
 	require.NoError(t, err)
 
 	id := uuid.New()
@@ -95,10 +96,10 @@ func TestPublisher_NodeUpdatedFailed(t *testing.T) {
 	r := newRedis(t)
 	pub := publisher.NewOutboxPublisher(r, logger)
 
-	payload, err := json.Marshal(event.NodeUpdated{
+	payload, err := json.Marshal(serialization.NodeUpdatedFromDomain(event.NodeUpdated{
 		TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "dbt",
 		SchemaName: "public", TableName: "orders", Status: "FAILED",
-	})
+	}))
 	require.NoError(t, err)
 
 	require.NoError(t, pub.Publish(context.Background(), &outbox.Entry{
@@ -208,10 +209,10 @@ func TestPublisher_NodeDeployed_OutOfRangeMaxRetries_IsPermanent(t *testing.T) {
 	r := newRedis(t)
 	pub := publisher.NewOutboxPublisher(r, logger)
 
-	payload, err := json.Marshal(event.JobDeployed{
+	payload, err := json.Marshal(serialization.JobDeployedFromDomain(event.JobDeployed{
 		TaskID: "t1", ScheduleID: "s1", JobName: "j", NodeType: "dbt-model",
 		ImageTag: "sha-abc", MaxRetries: 1 << 40, // exceeds int32 range
-	})
+	}))
 	require.NoError(t, err)
 
 	pubErr := pub.Publish(context.Background(), &outbox.Entry{
@@ -247,12 +248,12 @@ func TestPublisher_ContractAllHandledEventTypes(t *testing.T) {
 		{
 			eventType:  "node_deployed",
 			streamName: streams.NodeDeployedV1,
-			payload:    mustMarshal(t, event.JobDeployed{TaskID: "t1", ScheduleID: "s1", JobName: "j1", NodeType: "dbt-model", ImageTag: "sha-abc"}),
+			payload:    mustMarshal(t, serialization.JobDeployedFromDomain(event.JobDeployed{TaskID: "t1", ScheduleID: "s1", JobName: "j1", NodeType: "dbt-model", ImageTag: "sha-abc"})),
 		},
 		{
 			eventType:  "node_updated",
 			streamName: streams.NodeUpdatedV1,
-			payload:    mustMarshal(t, event.NodeUpdated{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "public", TableName: "tbl", Status: "SUCCEEDED"}),
+			payload:    mustMarshal(t, serialization.NodeUpdatedFromDomain(event.NodeUpdated{TaskID: "t1", ScheduleID: "s1", ScheduleName: "daily", ServiceName: "svc", SchemaName: "public", TableName: "tbl", Status: "SUCCEEDED"})),
 		},
 		{
 			// Uses the shared constant — the single source of truth for this wire string.

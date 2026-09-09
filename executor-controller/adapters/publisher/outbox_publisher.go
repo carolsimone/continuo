@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
+	"github.com/carolsimone/continuo/executor-controller/serialization"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
@@ -72,10 +73,11 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return e.ToMap(), nil
 
 	case event.EventTypeNodeDeployed:
-		var e event.JobDeployed
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
+		var dto serialization.JobDeployedDTO
+		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal node_deployed: %v", pkgevents.ErrPermanent, err)
 		}
+		e := dto.ToDomain()
 		// node.deployed:v1 carries a typed JSON payload (pkg/events.NodeDeployed);
 		// outbox_entry_id is added as a flat sibling by Publish for dedup.
 		taskRetryCount, err := num.Int32(e.TaskRetryCount, "task_retry_count")
@@ -108,11 +110,11 @@ func (p *OutboxPublisher) toValues(entry *outbox.Entry) (map[string]interface{},
 		return map[string]interface{}{"payload": string(payload)}, nil
 
 	case event.EventTypeNodeUpdated:
-		var e event.NodeUpdated
-		if err := json.Unmarshal(entry.Payload, &e); err != nil {
+		var dto serialization.NodeUpdatedDTO
+		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal node_updated: %v", pkgevents.ErrPermanent, err)
 		}
-		return e.ToMap(), nil
+		return dto.ToDomain().ToMap(), nil
 
 	case validation.EventTypeValidationCompleted, validation.EventTypeSeedBuildCompleted, validation.EventTypeCompileCompleted:
 		// The three candidate-leg aggregate-completion events

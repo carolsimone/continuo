@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
+	"github.com/carolsimone/continuo/executor-controller/domain/event"
 )
 
 // goldenDeployTask is the exact JSON a fully-populated command.DeployTask is
@@ -85,5 +86,69 @@ func TestValidationDeployTaskOmitemptyShape(t *testing.T) {
 	const want = `{"release_id":"r","node_id":"","service_name":"","schema_name":"","table_name":"","node_type":"","image_tag":"","job_name":"","candidate_schema":"","candidate_artifact_uri":"","validation_op":"","prod_schema":"","upstream_node_ids":null,"manifest_s3_uri":""}`
 	if string(out) != want {
 		t.Fatalf("omitempty shape changed:\n got %s\nwant %s", out, want)
+	}
+}
+
+// goldenJobDeployed is the exact JSON an event.JobDeployed is stored as in the
+// node_deployed outbox payload. operation is omitempty; every other field is present.
+const goldenJobDeployed = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","job_name":"j","node_type":"dbt-model","image_tag":"v1","operation":"test","task_retry_count":1,"max_retries":3}`
+
+func TestJobDeployedDTORoundTrip(t *testing.T) {
+	var dto JobDeployedDTO
+	if err := json.Unmarshal([]byte(goldenJobDeployed), &dto); err != nil {
+		t.Fatalf("unmarshal golden: %v", err)
+	}
+	got := dto.ToDomain()
+	want := event.JobDeployed{
+		TaskID: "t", ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc",
+		SchemaName: "sch", TableName: "tbl", JobName: "j", NodeType: "dbt-model",
+		ImageTag: "v1", Operation: "test", TaskRetryCount: 1, MaxRetries: 3,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
+	}
+	out, err := json.Marshal(JobDeployedFromDomain(got))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != goldenJobDeployed {
+		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenJobDeployed)
+	}
+}
+
+func TestJobDeployedOperationOmitempty(t *testing.T) {
+	out, err := json.Marshal(JobDeployedFromDomain(event.JobDeployed{TaskID: "t"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	const want = `{"task_id":"t","schedule_id":"","schedule_name":"","service_name":"","schema_name":"","table_name":"","job_name":"","node_type":"","image_tag":"","task_retry_count":0,"max_retries":0}`
+	if string(out) != want {
+		t.Fatalf("operation omitempty not preserved:\n got %s\nwant %s", out, want)
+	}
+}
+
+// goldenNodeUpdated is the exact JSON an event.NodeUpdated is stored as in the
+// node_updated outbox payload. No field is omitempty.
+const goldenNodeUpdated = `{"task_id":"t","schedule_id":"s","schedule_name":"sn","service_name":"svc","schema_name":"sch","table_name":"tbl","status":"FAILED"}`
+
+func TestNodeUpdatedDTORoundTrip(t *testing.T) {
+	var dto NodeUpdatedDTO
+	if err := json.Unmarshal([]byte(goldenNodeUpdated), &dto); err != nil {
+		t.Fatalf("unmarshal golden: %v", err)
+	}
+	got := dto.ToDomain()
+	want := event.NodeUpdated{
+		TaskID: "t", ScheduleID: "s", ScheduleName: "sn", ServiceName: "svc",
+		SchemaName: "sch", TableName: "tbl", Status: "FAILED",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)
+	}
+	out, err := json.Marshal(NodeUpdatedFromDomain(got))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != goldenNodeUpdated {
+		t.Fatalf("bytes changed:\n got %s\nwant %s", out, goldenNodeUpdated)
 	}
 }

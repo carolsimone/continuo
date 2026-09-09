@@ -10,6 +10,7 @@ package serialization
 
 import (
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
+	"github.com/carolsimone/continuo/executor-controller/domain/event"
 )
 
 // DeployTaskDTO is the JSON shape of command.DeployTask as stored in the
@@ -134,5 +135,98 @@ func (d ValidationDeployTaskDTO) ToDomain() command.ValidationDeployTask {
 		ParseProdS3URI:       d.ParseProdS3URI,
 		ParseCandidateS3URI:  d.ParseCandidateS3URI,
 		SourceOverlayURI:     d.SourceOverlayURI,
+	}
+}
+
+// JobDeployedDTO is the JSON shape of event.JobDeployed as stored in an
+// executor_outbox row's payload (event_type node_deployed) and read back by the
+// publisher to build the node.deployed:v1 wire event.
+type JobDeployedDTO struct {
+	TaskID         string `json:"task_id"`
+	ScheduleID     string `json:"schedule_id"`
+	ScheduleName   string `json:"schedule_name"`
+	ServiceName    string `json:"service_name"`
+	SchemaName     string `json:"schema_name"`
+	TableName      string `json:"table_name"`
+	JobName        string `json:"job_name"`
+	NodeType       string `json:"node_type"`
+	ImageTag       string `json:"image_tag"`
+	Operation      string `json:"operation,omitempty"`
+	TaskRetryCount int    `json:"task_retry_count"`
+	MaxRetries     int    `json:"max_retries"`
+}
+
+// JobDeployedFromDomain maps a domain event to its DTO.
+func JobDeployedFromDomain(e event.JobDeployed) JobDeployedDTO {
+	return JobDeployedDTO{
+		TaskID:         e.TaskID,
+		ScheduleID:     e.ScheduleID,
+		ScheduleName:   e.ScheduleName,
+		ServiceName:    e.ServiceName,
+		SchemaName:     e.SchemaName,
+		TableName:      e.TableName,
+		JobName:        e.JobName,
+		NodeType:       e.NodeType,
+		ImageTag:       e.ImageTag,
+		Operation:      e.Operation,
+		TaskRetryCount: e.TaskRetryCount,
+		MaxRetries:     e.MaxRetries,
+	}
+}
+
+// ToDomain maps a decoded DTO back to the domain event.
+func (d JobDeployedDTO) ToDomain() event.JobDeployed {
+	return event.JobDeployed{
+		TaskID:         d.TaskID,
+		ScheduleID:     d.ScheduleID,
+		ScheduleName:   d.ScheduleName,
+		ServiceName:    d.ServiceName,
+		SchemaName:     d.SchemaName,
+		TableName:      d.TableName,
+		JobName:        d.JobName,
+		NodeType:       d.NodeType,
+		ImageTag:       d.ImageTag,
+		Operation:      d.Operation,
+		TaskRetryCount: d.TaskRetryCount,
+		MaxRetries:     d.MaxRetries,
+	}
+}
+
+// NodeUpdatedDTO is the JSON shape of event.NodeUpdated as stored in an
+// executor_outbox row's payload (event_type node_updated) and read back by the
+// publisher to build the node.updated:v1 wire event.
+type NodeUpdatedDTO struct {
+	TaskID       string `json:"task_id"`
+	ScheduleID   string `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+	ServiceName  string `json:"service_name"`
+	SchemaName   string `json:"schema_name"`
+	TableName    string `json:"table_name"`
+	Status       string `json:"status"`
+}
+
+// NodeUpdatedFromDomain maps a domain event to its DTO.
+func NodeUpdatedFromDomain(e event.NodeUpdated) NodeUpdatedDTO {
+	return NodeUpdatedDTO{
+		TaskID:       e.TaskID,
+		ScheduleID:   e.ScheduleID,
+		ScheduleName: e.ScheduleName,
+		ServiceName:  e.ServiceName,
+		SchemaName:   e.SchemaName,
+		TableName:    e.TableName,
+		Status:       e.Status,
+	}
+}
+
+// ToDomain maps a decoded DTO back to the domain event.
+func (d NodeUpdatedDTO) ToDomain() event.NodeUpdated {
+	return event.NodeUpdated{
+		TaskID:       d.TaskID,
+		ScheduleID:   d.ScheduleID,
+		ScheduleName: d.ScheduleName,
+		ServiceName:  d.ServiceName,
+		SchemaName:   d.SchemaName,
+		TableName:    d.TableName,
+		Status:       d.Status,
 	}
 }

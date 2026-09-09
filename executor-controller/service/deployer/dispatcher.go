@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/event"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
+	"github.com/carolsimone/continuo/executor-controller/serialization"
 	"github.com/carolsimone/continuo/executor-controller/service/validation"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/num"
@@ -462,7 +463,7 @@ func (d *Dispatcher) writeDeployedAnnouncements(ctx context.Context, outboxRepo 
 		Operation:      cmd.Operation,
 		TaskRetryCount: cmd.TaskRetryCount, MaxRetries: cmd.TaskMaxRetries,
 	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeNodeDeployed, streams.NodeDeployedV1, deployed); err != nil {
+	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeNodeDeployed, streams.NodeDeployedV1, serialization.JobDeployedFromDomain(deployed)); err != nil {
 		return fmt.Errorf("write node_deployed announcement: %w", err)
 	}
 	return nil
@@ -500,7 +501,7 @@ func (d *Dispatcher) writeValidationDeployedTrigger(ctx context.Context, outboxR
 		TaskRetryCount: 0,
 		MaxRetries:     0,
 	}
-	body, err := json.Marshal(deployed)
+	body, err := json.Marshal(serialization.JobDeployedFromDomain(deployed))
 	if err != nil {
 		return fmt.Errorf("marshal validation node_deployed payload: %w", err)
 	}
@@ -532,7 +533,7 @@ func (d *Dispatcher) writeFailedAnnouncements(ctx context.Context, outboxRepo ou
 		TaskID: cmd.TaskID, ScheduleID: cmd.ScheduleID, ScheduleName: cmd.ScheduleName,
 		ServiceName: cmd.ServiceName, SchemaName: cmd.SchemaName, TableName: cmd.TableName, Status: "FAILED",
 	}
-	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeNodeUpdated, streams.NodeUpdatedV1, nodeFailed); err != nil {
+	if err := d.createOutbox(ctx, outboxRepo, dep, event.EventTypeNodeUpdated, streams.NodeUpdatedV1, serialization.NodeUpdatedFromDomain(nodeFailed)); err != nil {
 		return fmt.Errorf("write FAILED node_updated announcement: %w", err)
 	}
 	return nil
