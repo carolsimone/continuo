@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`agent-remediation` acts on healable failures surfaced by the `remediation` classifier, across all four failure sources: `validation`, `compile`, `seed_build`, and `duplicate_table`. **The rejected release, not the failing node, is its unit of work.** It consumes `remediation.requested:v2` — one trigger per (release, remediation round), carrying that rejection's whole healable failing set — and answers it with **one fix attempt, one proposal row, and one pull request**, however many nodes failed.
+`agent-remediation` acts on healable failures surfaced by the `remediation` classifier, across all five failure sources: `parse`, `validation`, `compile`, `seed_build`, and `duplicate_table`. **The rejected release, not the failing node, is its unit of work.** It consumes `remediation.requested:v2` — one trigger per (release, remediation round), carrying that rejection's whole healable failing set — and answers it with **one fix attempt, one proposal row, and one pull request**, however many nodes failed.
 
 A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, grouping, verification, and persistence. It first partitions the failing set into **clusters** (`domain/typology`): nodes that fail with an identical error signature *and* share an ancestor this release changed become one cluster targeting that ancestor — so a single upstream break is repaired once, at its source, rather than once in each victim — and every other node becomes its own independent cluster. Each cluster is then dispatched to a `Fixer` chosen by the trigger's error class and, for a validation failure, the failing node's kind; a shared-upstream cluster goes to the upstream fixer instead. Each `Fixer` decides which source files to read, whether it needs the dbt log (each class fetches and sanitizes it itself, only when needed), which prompt to send, and how to interpret the model's answer — and returns **edits only**. It submits nothing.
 
@@ -240,11 +240,11 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
      evidence, never a fix target — a model fix that makes it bind again
      resolves it in verification, and a test that is itself wrong is a
      human's edit. Every other node type reaches fixer.For(source,
-     node_type).Propose, exactly as before: compileFixer, seedFixer,
-     duplicateTableFixer, or — for a validation trigger — validationFixer for
-     a dbt node, pythonValidationFixer for python-model, csvValidationFixer
-     for python-csv. An unrecognized source is a programming error and is
-     returned loudly, not swallowed.
+     node_type).Propose, exactly as before: parseFixer, compileFixer,
+     seedFixer, duplicateTableFixer, or — for a validation trigger —
+     validationFixer for a dbt node, pythonValidationFixer for python-model,
+     csvValidationFixer for python-csv. An unrecognized source is a
+     programming error and is returned loudly, not swallowed.
    A dbt-test node reaches this skip whenever it is a cluster's own target, and
    a tests-only failing set always lands here: grouping never forms an upstream
    cluster whose members are all dbt-test nodes (see "Grouping the failing
@@ -373,6 +373,46 @@ The target of a shared-upstream cluster is a node that **may never have failed a
 `overlay.Build` is pure and deterministic: members are written sorted by path with a fixed mode, zero timestamp, and zero ownership, so the same set of files always produces the same bytes and a redelivery overwrites the object it wrote before rather than leaving two archives to choose between. An empty, absolute, or upward-traversing member path is refused rather than written, since the archive is unpacked over a real project.
 
 `VerificationRunID(release, service, attempt)` (`service/handlers/verification_id.go`) mints `verify-<release>-<service>-a<n>`, with every character outside `[A-Za-z0-9._-]` replaced by a dash. It is unique per (service, attempt), legible in every log line and on the verification-run page, and stable across a redelivery — release-controller's submission is idempotent on it. The id is capped at 52 bytes (`63 - len("_candidate_")`): release-controller derives the run's candidate schema as `"_candidate_"` plus the id, and PostgreSQL truncates an identifier past 63 bytes rather than rejecting it, cutting the attempt suffix and then the service name — two attempts would then share one schema and each validate against the other's leftovers. Past the cap the release-and-service middle is shortened and given an 8-hex digest of what it held, so the prefix and attempt number stay whole and two services whose names diverge only past the cut still get separate schemas.
+
+### Parse fixer
+
+`parseFixer` (`service/fixer/parse.go`) fixes a node whose compiled SQL topology-controller's parser rejected — invalid SQL, or a relation referenced without its schema qualifier — with exactly one LLM call. It shares `gatherSourceFile` with the compile fixer below, so the repo read, the co-located-yml/`dbt_project.yml` best-effort context, and the single-file interpretation are identical; only the repo-prefix lookup key and the prompt differ.
+
+```
+1. Empty file_path or empty service on the trigger: proposal(status=skipped), done.
+2. gatherSourceFile(svc, in, in.Service, "parse fix") — the same read
+   compileFixer uses below, but keyed on the trigger's `service` field rather
+   than `node_id`: a parse failure's node_id is a real dbt (or python) node
+   id, not compile's synthetic service id, so it cannot itself resolve a repo
+   prefix.
+   - Unmapped repo prefix: proposal(status=skipped), done.
+   - Read the offending file at <repo_path>/<file_path>.
+     - 404: proposal(status=skipped), done (definitive; not retried).
+     - Any other error: return it (transient; message redelivered).
+   - When the offending file's name ends in .sql, best-effort-gather the same
+     extra context compileFixer does: co-located .yml/.yaml siblings and the
+     service's dbt_project.yml.
+3. No dbt log is fetched: the rejection happens before any Job runs, so the
+   trigger's error_excerpt (the parser's own detail text) is the only error
+   the model needs and the only one that exists. Fetch precedent
+   (loadPrecedents: by error_signature, falling back to (category, reason);
+   best-effort). Make a single forced propose_fix LLM tool call via
+   AssembleParseFix, showing every gathered file and the trigger's
+   error_excerpt under the heading "SQL parse error:" in place of a dbt
+   compile error. The model returns target_file and proposed_content with
+   the identical propose_fix tool schema compileFixer's prompt uses.
+   - LLM transient error → retry.
+4. Interpret the result via singleFileInterpret — the same interpreter
+   compileFixer uses (see step 6 below): resolve target_file to exactly one
+   shown file, skip on no safe resolution, fail on a no-op or low-confidence
+   answer, otherwise proposed.
+5. On a proposed outcome, diff the corrected content against the resolved
+   file's original content and write the same
+   proposed-fix/<release_id>/<node_id>/attempt-<n>.source.sql/.source.diff
+   artifacts compileFixer writes; the attempt is verified by a
+   fix-verification run for the edited service like any other single-file
+   fix.
+```
 
 ### Compile fixer
 
@@ -929,13 +969,13 @@ One event per verified attempt — never per node. It is pointer-only: it carrie
 | Field | Description |
 |---|---|
 | `event_id` | Deterministic SHA1 UUID keyed on `release_id\|attempt` — the attempt's own identity, since one attempt covers a whole failing set. Stable on redelivery. |
-| `source` | Origin pipeline: `validation`, `compile`, `seed_build`, or `duplicate_table`. |
+| `source` | Origin pipeline: `parse`, `validation`, `compile`, `seed_build`, or `duplicate_table`. |
 | `release_id` | The release identifier from the inbound trigger. |
 | `remediation_round` | The release's remediation round this attempt belongs to; `1` for the rejection itself, incremented by each human "try again". |
 | `node_id` | The representative failing node — the first of `resolved_node_ids`. Kept so a single-node consumer reads the same shape it always did. |
 | `resolved_node_ids` | Every failing node this attempt addresses, sorted. A node an edit *targets* but that never failed — the changed ancestor of a shared-upstream fix — is **not** here; it appears only as an edit's `target_node_id`. |
 | `error_signature` | Release-stable normalized dedup key from the classifier (SHA-256 hex), the representative node's. |
-| `proposed_sql_uri` | S3 URI of the best available proposed fix content — the first edit's content artifact. For compile, seed_build, duplicate_table, and the upstream fixer, the source artifact (`attempt-<n>.source.sql`, containing the corrected file's content whether it is SQL, YAML, or CSV). For a python contract fix, `attempt-<n>/edit-0.content`. |
+| `proposed_sql_uri` | S3 URI of the best available proposed fix content — the first edit's content artifact. For parse, compile, seed_build, duplicate_table, and the upstream fixer, the source artifact (`attempt-<n>.source.sql`, containing the corrected file's content whether it is SQL, YAML, or CSV). For a python contract fix, `attempt-<n>/edit-0.content`. |
 | `diff_uri` | S3 URI of the unified diff corresponding to `proposed_sql_uri`. |
 | `edits` | The full multi-file description of the change: one `{path, content_uri, diff_uri, target_node_id}` per changed file. `target_node_id` is what says which failure each file repairs, and for a shared-upstream fix it names an ancestor absent from `resolved_node_ids`. A batched attempt is only readable through this list — no single node stands for the cause of all of them. |
 | `source_resolved` | `true` when the URIs above point at real version-controlled source. Every fixer that produces an edit reports it, and an edit-less result is downgraded to `failed` before it could ever be verified, so in practice every emitted event carries `true`. |
@@ -1023,7 +1063,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Concern | Path |
 |---|---|
 | Proposal entity + unified diff | `agent-remediation/domain/proposal/proposal.go` |
-| Prompt assembly (validation candidate + real-source, compile, seed, duplicate table) | `agent-remediation/domain/prompt/prompt.go` (`Assemble`, `AssembleSourceFix`, `AssembleCompileFix`, `AssembleSeedFix`, `AssembleDuplicateTableFix`) |
+| Prompt assembly (validation candidate + real-source, parse, compile, seed, duplicate table) | `agent-remediation/domain/prompt/prompt.go` (`Assemble`, `AssembleSourceFix`, `AssembleParseFix`, `AssembleCompileFix`, `AssembleSeedFix`, `AssembleDuplicateTableFix`) |
 | Prompt assembly (shared-upstream and cross-service upstream fix) | `agent-remediation/domain/prompt/upstream.go` (`AssembleUpstreamFix`) |
 | Prompt assembly (python-csv contract fix) | `agent-remediation/domain/prompt/csv.go` (`AssembleCsvContractFix`) |
 | Prompt assembly (python contract fix, incl. the prior-attempts section) | `agent-remediation/domain/prompt/python.go` (`AssemblePythonContractFix`) |
@@ -1035,6 +1075,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Verification-run id minting, with the candidate-schema length cap | `agent-remediation/service/handlers/verification_id.go` |
 | Deterministic source-overlay tarball builder | `agent-remediation/service/overlay/overlay.go` |
 | Per-error-class fixers — `Fixer` interface, `For` factory, shared single-shot pipeline | `agent-remediation/service/fixer/fixer.go` |
+| Parse fixer (offending file + co-located YAML/`dbt_project.yml` context via the shared `gatherSourceFile`, no dbt log, one LLM call) | `agent-remediation/service/fixer/parse.go` |
 | Compile fixer (offending file + co-located YAML/`dbt_project.yml` context, one LLM call) | `agent-remediation/service/fixer/compile.go` |
 | Seed fixer (CSV read, one LLM call) | `agent-remediation/service/fixer/seed.go` |
 | Duplicate-table fixer (single-file rename, no dbt log, shares `singleFileInterpret` with compile) | `agent-remediation/service/fixer/duplicate_table.go` |

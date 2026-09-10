@@ -89,19 +89,46 @@ future or third-party producer that omits the field still parses. See
 `docs/arch/services/topology-controller.md` for the per-kind parse and
 failure behavior.
 
+**`manifest.loaded.candidate:v1`** — emitted by topology-controller once it has
+resolved (or failed to resolve) a candidate release's manifests into a
+topology; consumed by release-controller (group
+`release-controller-manifest-loaded-candidate`). On success the payload is
+`{release_id, status: "ok", topology, code_bundle_uri}`. On failure it is
+`{release_id, status: "failed", failure_kind, detail, failed_nodes[]}`.
+`failure_kind` is one of the `parse_failure_kind` vocabulary values declared in
+`pkg/streams/contract.yaml` — `invalid_sql`, `unqualified_reference`,
+`invalid_artifact`, `internal` — whose declaration order is also its
+precedence order. topology-controller resolves every node before publishing
+a failure: a node whose compiled SQL sqlglot rejects, or that references a
+relation without a schema qualifier, is collected into `failed_nodes` rather
+than failing the release on the first one found, so one message carries every
+broken node at once; `failure_kind` is then the highest-precedence kind across
+that collected set. An unreadable/empty/wrong-service manifest or contract
+(`invalid_artifact`) or continuo's own wiring/S3 failure (`internal`) is fatal
+on first sight instead, and both publish `failed_nodes: []`. Each
+`failed_nodes` entry is `{node_id, kind, service, file_path, node_type,
+detail}`. Every `detail` — the release-level one and each node's own — has
+sqlglot's terminal escape sequences stripped before it is published, so it is
+safe to store and render as plain text. See
+`docs/arch/services/topology-controller.md` and
+`docs/arch/services/release-controller.md` for the full behavior.
+
 **`release.rejected:v1`** — **candidate-only**: emitted by release-controller for every
 terminal rejection of a candidate release, regardless of which leg failed. A
 fix-verification run's failure never rides this stream, whatever caused it —
 its only announcement is `pipeline.run.finished:v1` (below). The payload always includes:
-`release_id`, `stage` (`compile` | `seed_build` | `validation`; absent for parse-phase rejections), `reason`,
+`release_id`, `stage` (`parse` | `compile` | `seed_build` | `validation`; absent only for `duplicate_table`), `reason`,
 `repo`, `commit_sha`, `code_bundle_uri`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
-`status`, `dbt_log_uri`, optional `run_results_uri`). Validation entries
+`status`, `dbt_log_uri`, optional `run_results_uri`). Parse entries carry
+`kind`, `detail`, `file_path`, `service`, and `node_type` in place of
+`dbt_log_uri`/`run_results_uri` — the parser's own detail is inline on the
+entry, so there is no log to point at. Validation entries
 additionally carry `candidate_artifact_uri` plus the candidate topology's
 `node_type`, `file_path`, and `service` for that node; seed_build entries carry
 `file_path`/`service` from the same source, and the payload carries
 `candidate_schema`.
 Consumers must not assume `stage` is always `validation`
-— all three legs reuse this single stream. The remediation classifier
+— every leg reuses this single stream. The remediation classifier
 (group `remediation-release-rejected`) triages the failing set;
 executor-controller (group `executor-release-rejected`) consumes it too, as an
 idempotent candidate-schema teardown backstop, dropping `candidate_schema` when
@@ -136,9 +163,14 @@ emitted at the healable rejection on the `releases.rejection_payload` column
 re-runs the identical per-node triage one round later. The request that
 produces this event is refused before it is ever published unless the
 release is `rejected`, its stored reason is healable (`compile_failed`,
-`seed_build_failed`, `validation_failed`, or `duplicate_table`), it has a
-stored rejection payload at all (a release rejected before this column
-existed, or rejected for the non-healable reason `parse_failed`, has none), its round is below the cap
+`seed_build_failed`, `validation_failed`, `duplicate_table`, or a parse reason
+whose contract kind is healable — `invalid_sql` or `unqualified_reference` —
+every other reason, including `invalid_artifact`, `internal_error`,
+`parse_rehearsal_failed`, `artifact_upload_failed`, and
+`unbuildable_cross_service_upstream`, is refused here as not healable), it has
+a stored rejection payload at all (a release rejected before this column
+existed has none; every current reason's rejection handler stores one
+regardless of whether that reason later turns out to be healable), its round is below the cap
 (`MaxRemediationRounds = 3`), and agent-remediation's `ListProposals` reports
 no attempt still in flight, proposed, or already carrying an
 opening/open/merged PR for the release. See

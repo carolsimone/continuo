@@ -152,7 +152,7 @@ Provisioning databases inside the job — rather than relying solely on the Post
 | gRPC server methods owned | none |
 | Redis consumes | `release.requested:v1` (per-entry `kind` selects the parser — dbt manifest or python contract — for that `manifest_keys` entry; absent defaults to dbt) |
 | Redis produces | `manifest.loaded.candidate:v1` (per-node `candidate_artifact_uri` — `s3://` reference to the object the node's validation Job fetches: rewritten SQL for a dbt node, a validation spec (reads + output_columns + config) for a python node, empty string for dbt seeds; top-level `code_bundle_uri` — `s3://` reference to the release's code-bundle contract document, empty string for an empty-manifest release) |
-| S3 writes | `PutObject` to `candidate-sql/<release_id>/candidate_<unique_id>.sql` per non-seed dbt node; `PutObject` to `candidate-sql/<release_id>/candidate_<unique_id>.json` per python node; `PutObject` to `code-bundles/<release_id>/bundle.json` once per release; any of these failing is fatal and causes `status=failed` on `manifest.loaded.candidate:v1` |
+| S3 writes | `PutObject` to `candidate-sql/<release_id>/candidate_<unique_id>.sql` per non-seed dbt node; `PutObject` to `candidate-sql/<release_id>/candidate_<unique_id>.json` per python node; `PutObject` to `code-bundles/<release_id>/bundle.json` once per release; any of these failing is fatal and publishes `status=failed, failure_kind=internal` on `manifest.loaded.candidate:v1` |
 | Outbound gRPC calls | none |
 
 ## `release-controller`
