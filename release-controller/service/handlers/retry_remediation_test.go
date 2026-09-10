@@ -12,6 +12,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,10 +96,16 @@ func TestRetryRemediation_Refusals(t *testing.T) {
 		{"not healable", func() *pipeline.Run {
 			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
 			require.NoError(t, r.TransitionToParsing(now))
-			require.NoError(t, r.Fail("parse_failed", "", nil, now))
+			require.NoError(t, r.Fail("invalid_artifact", "", nil, now))
 			r.SetRejectionPayload([]byte(`{}`))
 			return r
 		}, handlers.ErrNotHealable},
+		{"parse invalid_sql is healable (fails later on no payload)", func() *pipeline.Run {
+			r := pipeline.NewCandidate("rel-1", "finance", "abc", false, "o/r", "sha", release.ManifestKindDbt, now)
+			require.NoError(t, r.TransitionToParsing(now))
+			require.NoError(t, r.Fail("invalid_sql", "", []string{"a.b"}, now))
+			return r
+		}, handlers.ErrNotRetryable},
 		{"no stored payload", func() *pipeline.Run { return rejectedRelease(t, "rel-1", "") }, handlers.ErrNotRetryable},
 		{"rounds exhausted", func() *pipeline.Run {
 			r := rejectedRelease(t, "rel-1", `{}`)
@@ -418,4 +425,13 @@ func TestRetryRemediation_LegacyProposalWithoutPerServicePRs(t *testing.T) {
 		require.Equal(t, "p1", open.ProposalID)
 		require.Equal(t, "https://x/pr/legacy", open.PRURL)
 	})
+}
+
+func TestIsHealableReason(t *testing.T) {
+	for _, reason := range []string{"compile_failed", "seed_build_failed", "validation_failed", "duplicate_table", "invalid_sql", "unqualified_reference"} {
+		assert.True(t, handlers.IsHealableReason(reason), reason)
+	}
+	for _, reason := range []string{"invalid_artifact", "internal_error", "parse_rehearsal_failed", "artifact_upload_failed", "unbuildable_cross_service_upstream", "nothing_to_validate", ""} {
+		assert.False(t, handlers.IsHealableReason(reason), reason)
+	}
 }

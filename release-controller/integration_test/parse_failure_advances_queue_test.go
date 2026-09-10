@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
@@ -43,7 +44,7 @@ func TestIntegration_ParseRejection_AdvancesQueuedRelease(t *testing.T) {
 
 	// Simulate a failed parse for rA.
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rA", Status: "failed", ErrorClass: "ParseError", ErrorDetail: "bad SQL",
+		ReleaseID: "rA", Status: "failed", FailureKind: streams.ParseFailureKindInvalidSQL, Detail: "bad SQL",
 	}))
 
 	// The Redis binding calls AdvanceQueue after each parse result; simulate the same.

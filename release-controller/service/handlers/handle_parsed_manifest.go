@@ -18,22 +18,39 @@ import (
 	"github.com/google/uuid"
 )
 
+// ParsedFailedNode is one node topology-controller could not resolve, with
+// the source location the candidate declares for it. It carries the location
+// because the topology is never published for a failed parse.
+type ParsedFailedNode struct {
+	NodeID   string
+	Kind     streams.ParseFailureKind
+	Service  string
+	FilePath string
+	NodeType string
+	Detail   string
+}
+
 // HandleParsedManifestInput carries the result of the topology-controller
-// parsing a candidate release. Status must be "ok" or "failed". The Redis
-// binding decodes the wire payload and builds this domain-typed input, so it
-// carries no serialization tags.
+// parsing a candidate release. Status must be "ok" or "failed". On "failed",
+// FailureKind says why (a contract value), Detail is the operator-facing
+// summary, and FailedNodes lists every node the parse rejected (empty for an
+// artifact or internal failure). The Redis binding decodes the wire payload
+// and builds this domain-typed input, so it carries no serialization tags.
 type HandleParsedManifestInput struct {
 	ReleaseID     string
 	Status        string // "ok" or "failed"
 	Topology      release.Topology
 	CodeBundleURI string
-	ErrorClass    string
-	ErrorDetail   string
+	FailureKind   streams.ParseFailureKind
+	Detail        string
+	FailedNodes   []ParsedFailedNode
 }
 
 // HandleParsedManifest handles the manifest parse result from topology-controller.
 //
-// On failure: transitions the release to Rejected and emits release.rejected:v1.
+// On failure: records one `parse` stage result per failed node, transitions the
+// release to Rejected under the reason ParseReason maps from the failure kind,
+// and emits release.rejected:v1 with stage `parse`.
 // On success: joins image tags into the topology, computes the validation closure,
 // transitions to Validating, and emits validation.requested:v1.
 func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestInput) error {
@@ -74,16 +91,75 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	return handleParseOK(ctx, d, u, r, in, now)
 }
 
+// parseReasons maps each parse failure kind to the reject reason stored on the
+// run and emitted on release.rejected:v1. Every contract kind has an entry
+// (pinned by TestHandleParsedManifest_Failed_ReasonPerKind).
+var parseReasons = map[streams.ParseFailureKind]string{
+	streams.ParseFailureKindInvalidSQL:           "invalid_sql",
+	streams.ParseFailureKindUnqualifiedReference: "unqualified_reference",
+	streams.ParseFailureKindInvalidArtifact:      "invalid_artifact",
+	streams.ParseFailureKindInternal:             "internal_error",
+}
+
+// ParseReason resolves a parse failure kind to its reject reason. A kind this
+// build does not know is reported as internal_error: the release still
+// rejects and the queue still advances, and the detail names the value.
+func ParseReason(kind streams.ParseFailureKind) string {
+	if r, ok := parseReasons[kind]; ok {
+		return r
+	}
+	return parseReasons[streams.ParseFailureKindInternal]
+}
+
 func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleParsedManifestInput, now time.Time) error {
-	if err := r.Fail("parse_failed", in.ErrorDetail, nil, now); err != nil {
+	reason := ParseReason(in.FailureKind)
+	detail := in.Detail
+	if !in.FailureKind.IsValid() {
+		detail = fmt.Sprintf("unknown failure_kind %q: %s", in.FailureKind, in.Detail)
+	}
+
+	// parsePerNodeEntry is the outbox wire shape for one failed parse node: the
+	// same fields the compile leg emits, plus the kind and the parser's own
+	// detail, since there is no log to fetch.
+	type parsePerNodeEntry struct {
+		NodeID   string `json:"node_id"`
+		Status   string `json:"status"`
+		Kind     string `json:"kind"`
+		Detail   string `json:"detail"`
+		FilePath string `json:"file_path"`
+		Service  string `json:"service"`
+		NodeType string `json:"node_type"`
+	}
+	results := make([]pipeline.NodeValidationResult, 0, len(in.FailedNodes))
+	failing := make([]string, 0, len(in.FailedNodes))
+	perNode := make([]parsePerNodeEntry, 0, len(in.FailedNodes))
+	for _, n := range in.FailedNodes {
+		results = append(results, pipeline.NodeValidationResult{
+			NodeID: n.NodeID, Status: "failed", FilePath: n.FilePath, NodeType: n.NodeType,
+		})
+		failing = append(failing, n.NodeID)
+		perNode = append(perNode, parsePerNodeEntry{
+			NodeID: n.NodeID, Status: "failed", Kind: string(n.Kind), Detail: n.Detail,
+			FilePath: n.FilePath, Service: n.Service, NodeType: n.NodeType,
+		})
+	}
+	if len(results) > 0 {
+		r.RecordStageResults("parse", results)
+	}
+	if err := r.Fail(reason, detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
 	payload, err := json.Marshal(map[string]any{
-		"release_id":   in.ReleaseID,
-		"reason":       "parse_failed",
-		"error_class":  in.ErrorClass,
-		"error_detail": in.ErrorDetail,
+		"release_id":      in.ReleaseID,
+		"stage":           "parse",
+		"reason":          reason,
+		"error_detail":    detail,
+		"failing_nodes":   failing,
+		"per_node":        perNode,
+		"repo":            r.Repo(),
+		"commit_sha":      r.CommitSHA(),
+		"code_bundle_uri": r.CodeBundleURI(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)

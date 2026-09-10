@@ -170,27 +170,79 @@ func TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI(t *testing.T) {
 	assert.Equal(t, "s3://continuo/code-bundles/rBoot/bundle.json", r.CodeBundleURI())
 }
 
-func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
+func TestHandleParsedManifest_Failed_InvalidSQL_RejectsWithParseStage(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rA",
 		Status:      "failed",
-		ErrorClass:  "UnresolvedReference",
-		ErrorDetail: "ref('missing') unresolved in service_1.table_a",
+		FailureKind: streams.ParseFailureKindInvalidSQL,
+		Detail:      "1 node failed to parse: analytics.fx",
+		FailedNodes: []handlers.ParsedFailedNode{{
+			NodeID: "analytics.fx", Kind: streams.ParseFailureKindInvalidSQL, Service: "svc-a",
+			FilePath: "models/fx.sql", NodeType: "dbt-model", Detail: "Expecting ). Line 3, Col: 12.",
+		}},
 	})
 	require.NoError(t, err)
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 	assert.Equal(t, pipeline.StatusRejected, r.Status())
-	assert.Equal(t, "parse_failed", r.FailReason())
+	assert.Equal(t, "invalid_sql", r.FailReason())
+	assert.Equal(t, "1 node failed to parse: analytics.fx", r.FailDetail())
+	assert.Equal(t, []string{"analytics.fx"}, r.FailingNodes())
+	require.Len(t, r.PerNodeResults(), 1)
+	assert.Equal(t, pipeline.NodeValidationResult{
+		Stage: "parse", NodeID: "analytics.fx", Status: "failed", FilePath: "models/fx.sql", NodeType: "dbt-model",
+	}, r.PerNodeResults()[0])
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ReleaseRejected + PipelineRunFinished
-
 	assert.Equal(t, streams.ReleaseRejectedV1, entries[2].StreamName)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
+	assert.Equal(t, "parse", payload["stage"])
+	assert.Equal(t, "invalid_sql", payload["reason"])
+	assert.Equal(t, "acme/demo", payload["repo"]) // seedToParsing receives the candidate with this repo
+	assert.Equal(t, "deadbeef", payload["commit_sha"])
+	_, hasErrorClass := payload["error_class"]
+	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
+	perNode := payload["per_node"].([]any)
+	require.Len(t, perNode, 1)
+	assert.Equal(t, map[string]any{
+		"node_id": "analytics.fx", "status": "failed", "kind": "invalid_sql",
+		"detail": "Expecting ). Line 3, Col: 12.", "file_path": "models/fx.sql",
+		"service": "svc-a", "node_type": "dbt-model",
+	}, perNode[0])
+	assert.JSONEq(t, string(entries[2].Payload), string(r.RejectionPayload()), "the stored rejection must be the emitted payload")
 	assert.Equal(t, "rejected", outcomeOf(t, entries[3]))
+}
+
+func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
+	cases := map[streams.ParseFailureKind]string{
+		streams.ParseFailureKindInvalidSQL:           "invalid_sql",
+		streams.ParseFailureKindUnqualifiedReference: "unqualified_reference",
+		streams.ParseFailureKindInvalidArtifact:      "invalid_artifact",
+		streams.ParseFailureKindInternal:             "internal_error",
+	}
+	require.Len(t, cases, len(streams.ParseFailureKinds()), "every contract kind needs a reason")
+	for kind, want := range cases {
+		deps, store := seedToParsing(t, "r-"+string(kind), map[string]string{"svc-a": "sha-a"})
+		err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "r-" + string(kind), Status: "failed", FailureKind: kind, Detail: "d",
+		})
+		require.NoError(t, err)
+		r, err := store.GetRelease("r-" + string(kind))
+		require.NoError(t, err)
+		assert.Equal(t, want, r.FailReason(), "kind %s", kind)
+		assert.Empty(t, r.PerNodeResults(), "no failed nodes → no stage results")
+		rejected := findEntry(t, store, streams.ReleaseRejectedV1)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(rejected.Payload, &payload))
+		assert.Equal(t, "parse", payload["stage"])
+		assert.Equal(t, want, payload["reason"])
+		assert.Equal(t, []any{}, payload["per_node"])
+	}
 }
 
 // seedToParsingVerification mirrors seedToParsing but seeds a verification
@@ -238,8 +290,8 @@ func TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmit
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rVerify",
 		Status:      "failed",
-		ErrorClass:  "UnresolvedReference",
-		ErrorDetail: "ref('missing') unresolved in service_1.table_a",
+		FailureKind: streams.ParseFailureKindInvalidSQL,
+		Detail:      "ref('missing') unresolved in service_1.table_a",
 	})
 	require.NoError(t, err)
 
@@ -2121,8 +2173,8 @@ func TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNod
 // build_from_sql and re-fail this run on C's unfixed fault.
 func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContextRebuild(t *testing.T) {
 	const (
-		verifyAncID = "svc2.shared_ancestor" // A: changed by the rejected release, validated ok
-		verifyFixID = "svc3.fixed_consumer"  // B: this run's fix, downstream of A
+		verifyAncID = "svc2.shared_ancestor"  // A: changed by the rejected release, validated ok
+		verifyFixID = "svc3.fixed_consumer"   // B: this run's fix, downstream of A
 		verifySibID = "svc4.sibling_consumer" // C: still-broken sibling, downstream of A, separate run
 	)
 	deps, store := newDeps(time.Unix(100, 0).UTC())

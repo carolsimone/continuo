@@ -50,6 +50,21 @@ var healableRejectReasons = map[string]bool{
 	"duplicate_table":   true,
 }
 
+// IsHealableReason reports whether a reject reason is one the classifier turns
+// into a heal trigger: a listed leg reason, or a parse reason whose contract
+// kind is marked healable.
+func IsHealableReason(reason string) bool {
+	if healableRejectReasons[reason] {
+		return true
+	}
+	for kind, r := range parseReasons {
+		if r == reason {
+			return kind.Healable()
+		}
+	}
+	return false
+}
+
 // RetryRemediationResult is the round the retry started.
 type RetryRemediationResult struct {
 	ReleaseID        string
@@ -86,7 +101,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 	if r.Kind() != pipeline.KindCandidate {
 		return RetryRemediationResult{}, ErrReleaseNotFound
 	}
-	if !healableRejectReasons[r.FailReason()] {
+	if !IsHealableReason(r.FailReason()) {
 		return RetryRemediationResult{}, ErrNotHealable
 	}
 	if len(r.RejectionPayload()) == 0 {

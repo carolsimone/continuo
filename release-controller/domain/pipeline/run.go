@@ -77,9 +77,9 @@ type Transition struct {
 // "validation". A run accumulates results across all legs so failure
 // diagnostics are always available regardless of which stage ended it.
 type NodeValidationResult struct {
-	// Stage is "compile" | "seed_build" | "validation". The failed unit
-	// generalises across legs — a dbt node for validation/seed_build, a
-	// service compile unit for the compile leg.
+	// Stage is "parse" | "compile" | "seed_build" | "validation". The failed
+	// unit generalises across legs — a dbt node for parse/validation/seed_build,
+	// a service compile unit for the compile leg.
 	Stage         string
 	NodeID        string
 	Status        string // "ok" | "failed"
