@@ -388,3 +388,28 @@ streams:
       - service: orchestrator
         group: orchestrator-remediation-pr-closed-provenance
         const: OrchestratorRemediationPrClosedProvenance
+
+# Closed value sets shared across services. Each becomes a typed string in Go
+# (pkg/streams) and a StrEnum in Python (topology-controller/streams_contract.py).
+# Declaration order within a vocabulary is precedence.
+vocabularies:
+  - name: parse_failure_kind
+    const: ParseFailureKind
+    description: Why topology-controller could not resolve a candidate release. Declaration order is precedence.
+    values:
+      - value: invalid_sql
+        const: InvalidSQL
+        healable: true
+        description: sqlglot cannot parse a node's compiled SQL under the configured dialect.
+      - value: unqualified_reference
+        const: UnqualifiedReference
+        healable: true
+        description: a node references a relation without a schema qualifier.
+      - value: invalid_artifact
+        const: InvalidArtifact
+        healable: false
+        description: the uploaded manifest or contract is unreadable, empty, of unknown kind, or names another service.
+      - value: internal
+        const: Internal
+        healable: false
+        description: continuo's own wiring or an S3 write failed; no change to the user's source will fix it.

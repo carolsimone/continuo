@@ -65,3 +65,71 @@ func TestGeneratedFileHeader(t *testing.T) {
 		t.Fatal("streams.gen.go missing generated header")
 	}
 }
+
+type yamlVocabularies struct {
+	Vocabularies []struct {
+		Const  string `yaml:"const"`
+		Values []struct {
+			Value    string `yaml:"value"`
+			Healable bool   `yaml:"healable"`
+		} `yaml:"values"`
+	} `yaml:"vocabularies"`
+}
+
+func TestGeneratedVocabulariesMatchContract(t *testing.T) {
+	data, err := os.ReadFile("contract.yaml")
+	if err != nil {
+		t.Fatalf("read contract.yaml: %v", err)
+	}
+	var c yamlVocabularies
+	if err := yaml.Unmarshal(data, &c); err != nil {
+		t.Fatalf("parse contract.yaml: %v", err)
+	}
+	gen := streams.VocabularyValuesForTest()
+	for _, v := range c.Vocabularies {
+		got, ok := gen[v.Const]
+		if !ok {
+			t.Errorf("vocabulary %s missing from generated package", v.Const)
+			continue
+		}
+		if len(got) != len(v.Values) {
+			t.Errorf("vocabulary %s: yaml has %d values, generated has %d", v.Const, len(v.Values), len(got))
+			continue
+		}
+		for i, val := range v.Values {
+			if got[i] != val.Value {
+				t.Errorf("vocabulary %s[%d]: yaml=%q generated=%q", v.Const, i, val.Value, got[i])
+			}
+		}
+	}
+}
+
+func TestParseFailureKind_ContractOrderAndHealable(t *testing.T) {
+	kinds := streams.ParseFailureKinds()
+	want := []streams.ParseFailureKind{
+		streams.ParseFailureKindInvalidSQL,
+		streams.ParseFailureKindUnqualifiedReference,
+		streams.ParseFailureKindInvalidArtifact,
+		streams.ParseFailureKindInternal,
+	}
+	if len(kinds) != len(want) {
+		t.Fatalf("ParseFailureKinds() = %v, want %v", kinds, want)
+	}
+	for i := range want {
+		if kinds[i] != want[i] {
+			t.Errorf("index %d: %q, want %q", i, kinds[i], want[i])
+		}
+		if !kinds[i].IsValid() {
+			t.Errorf("%q must be valid", kinds[i])
+		}
+	}
+	if !streams.ParseFailureKindInvalidSQL.Healable() || !streams.ParseFailureKindUnqualifiedReference.Healable() {
+		t.Error("both SQL kinds must be healable")
+	}
+	if streams.ParseFailureKindInvalidArtifact.Healable() || streams.ParseFailureKindInternal.Healable() {
+		t.Error("artifact and internal kinds must not be healable")
+	}
+	if streams.ParseFailureKind("nonsense").IsValid() {
+		t.Error("an undeclared value must not be valid")
+	}
+}

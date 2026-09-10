@@ -248,3 +248,134 @@ func TestEmitPython(t *testing.T) {
 		t.Fatalf("emitPython mismatch.\n--- got ---\n%s\n--- want ---\n%s", got, goldenPy)
 	}
 }
+
+const vocabYAML = `
+streams:
+  - name: node.updated:v1
+    const: NodeUpdatedV1
+    description: Node state transitions.
+    producers: [state]
+    consumers: []
+vocabularies:
+  - name: parse_failure_kind
+    const: ParseFailureKind
+    description: Why topology-controller could not resolve a candidate release. Declaration order is precedence.
+    values:
+      - value: invalid_sql
+        const: InvalidSQL
+        healable: true
+        description: sqlglot cannot parse a node's compiled SQL.
+      - value: internal
+        const: Internal
+        healable: false
+        description: continuo's own wiring or an S3 write failed.
+`
+
+func TestParseContract_Vocabularies(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(vocabYAML))
+	if err != nil {
+		t.Fatalf("loadAndValidate: %v", err)
+	}
+	if len(c.Vocabularies) != 1 || c.Vocabularies[0].Const != "ParseFailureKind" {
+		t.Fatalf("vocabularies: %+v", c.Vocabularies)
+	}
+	if got := c.Vocabularies[0].Values[0]; got.Value != "invalid_sql" || got.Const != "InvalidSQL" || !got.Healable {
+		t.Fatalf("first value: %+v", got)
+	}
+}
+
+func TestValidate_VocabularyRejectsBadValueAndDuplicates(t *testing.T) {
+	cases := map[string]string{
+		"bad value": `
+streams: []
+vocabularies:
+  - name: k
+    const: K
+    values:
+      - {value: Invalid-SQL, const: A}
+`,
+		"duplicate value": `
+streams: []
+vocabularies:
+  - name: k
+    const: K
+    values:
+      - {value: a, const: A}
+      - {value: a, const: B}
+`,
+		"duplicate const": `
+streams: []
+vocabularies:
+  - name: k
+    const: K
+    values:
+      - {value: a, const: A}
+      - {value: b, const: A}
+`,
+		"empty": `
+streams: []
+vocabularies:
+  - name: k
+    const: K
+    values: []
+`,
+	}
+	for name, y := range cases {
+		if _, err := loadAndValidate(strings.NewReader(y)); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+func TestEmitGo_Vocabulary(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(vocabYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitGo(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"type ParseFailureKind string",
+		`ParseFailureKindInvalidSQL ParseFailureKind = "invalid_sql"`,
+		`ParseFailureKindInternal ParseFailureKind = "internal"`,
+		"func ParseFailureKinds() []ParseFailureKind",
+		"func (k ParseFailureKind) IsValid() bool",
+		"func (k ParseFailureKind) Healable() bool",
+		"case ParseFailureKindInvalidSQL:\n\t\treturn true",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("emitGo missing %q\n%s", want, src)
+		}
+	}
+	access, err := emitGoTestAccess(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(access, `"ParseFailureKind": {"invalid_sql", "internal"}`) {
+		t.Errorf("emitGoTestAccess missing vocabulary map\n%s", access)
+	}
+}
+
+func TestEmitPython_Vocabulary(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(vocabYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitPython(c, "state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"from enum import StrEnum",
+		"class ParseFailureKind(StrEnum):",
+		`    INVALID_SQL = "invalid_sql"`,
+		`    INTERNAL = "internal"`,
+		"PARSE_FAILURE_KIND_HEALABLE = frozenset({ParseFailureKind.INVALID_SQL})",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("emitPython missing %q\n%s", want, src)
+		}
+	}
+}
