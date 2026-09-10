@@ -143,6 +143,15 @@ type NamedFile struct {
 	Content string
 }
 
+// writeFiles renders each of files as a fenced "File <path>:" block, in
+// order. It is the shared file-listing step for every multi-file prompt that
+// shows the model a set of candidate files to choose from (compile, parse).
+func writeFiles(u *strings.Builder, files []NamedFile) {
+	for _, f := range files {
+		fmt.Fprintf(u, "File %s:\n```\n%s\n```\n\n", f.Path, f.Content)
+	}
+}
+
 // maxPrecedentDiffRender bounds how many precedents are shown with their full
 // resolution diff; the rest appear as one-line mentions so breadth survives
 // without unbounded prompt growth.
@@ -257,9 +266,7 @@ Rules:
 func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []Precedent) ProposeRequest {
 	var u strings.Builder
 	fmt.Fprintf(&u, "Service: %s\n\n", nodeID)
-	for _, f := range files {
-		fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", f.Path, f.Content)
-	}
+	writeFiles(&u, files)
 	fmt.Fprintf(&u, "dbt compile error:\n```\n%s\n```\n\n", dbtLog)
 	renderPrecedents(&u, precedents)
 	u.WriteString("Return the complete corrected content of the ONE file that must change.")
@@ -297,9 +304,7 @@ Rules:
 func AssembleParseFix(files []NamedFile, parseError, service, nodeID string, precedents []Precedent) ProposeRequest {
 	var u strings.Builder
 	fmt.Fprintf(&u, "Service: %s\nNode: %s\n\n", service, nodeID)
-	for _, f := range files {
-		fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", f.Path, f.Content)
-	}
+	writeFiles(&u, files)
 	fmt.Fprintf(&u, "SQL parse error:\n```\n%s\n```\n\n", parseError)
 	renderPrecedents(&u, precedents)
 	u.WriteString("Return the complete corrected content of the ONE file that must change.")
