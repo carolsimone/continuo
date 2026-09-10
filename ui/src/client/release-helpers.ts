@@ -46,14 +46,19 @@ export function proposalPillClass(status: string): string {
 }
 
 // Fixed display order of release failure stages. Matches the pipeline order the
-// release-controller runs them in (compile → seed_build → validation).
-export const STAGE_ORDER = ['compile', 'seed_build', 'validation'] as const;
+// release-controller runs them in (parse → compile → seed_build → validation).
+export const STAGE_ORDER = ['parse', 'compile', 'seed_build', 'validation'] as const;
 
 const STAGE_LABELS: Record<string, string> = {
+  parse: 'Parse',
   compile: 'Compilation',
   seed_build: 'Seed build',
   validation: 'Validation',
   duplicate_table: 'Duplicate table',
+  invalid_sql: 'Invalid SQL',
+  unqualified_reference: 'Unqualified reference',
+  invalid_artifact: 'Invalid artifact',
+  internal_error: 'Internal error',
 };
 
 // stageLabel maps a raw stage literal to its section display label, falling back
@@ -62,10 +67,10 @@ export function stageLabel(stage: string): string {
   return STAGE_LABELS[stage] ?? stage;
 }
 
-// reasonLabel humanizes a release reject_reason token (e.g. "compile_failed")
-// by dropping the "_failed" suffix and reusing the stage-label vocabulary, so
-// the Releases list and the release detail page speak the same words. An
-// unrecognized token falls through to its raw value.
+// reasonLabel humanizes a release reject_reason token: a leg reason (e.g.
+// "compile_failed") drops its "_failed" suffix and reuses the stage label; a
+// parse reason has its own entry. An unrecognized token falls through to its
+// raw value.
 export function reasonLabel(reason: string): string {
   return stageLabel(reason.replace(/_failed$/, ''));
 }

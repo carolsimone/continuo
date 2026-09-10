@@ -10,8 +10,8 @@ import "time"
 type Rejection struct {
 	ReleaseID string
 	NodeID    string
-	// Stage is the classifier source: "validation" | "seed_build" | "compile"
-	// | "duplicate_table".
+	// Stage is the classifier source: "parse" | "validation" | "seed_build" |
+	// "compile" | "duplicate_table".
 	Stage        string
 	Category     string
 	Reason       string

@@ -13,12 +13,12 @@ const n = (stage: string, node_id: string): NodeValidationResult => ({
 });
 
 describe('groupByStage', () => {
-  it('orders compile → seed_build → validation and preserves node order within a stage', () => {
+  it('orders parse → compile → seed_build → validation and preserves node order within a stage', () => {
     const groups = groupByStage([
-      n('validation', 'v1'), n('compile', 'c1'), n('validation', 'v2'), n('seed_build', 's1'),
+      n('validation', 'v1'), n('compile', 'c1'), n('validation', 'v2'), n('seed_build', 's1'), n('parse', 'p1'),
     ]);
-    expect(groups.map(g => g.stage)).toEqual(['compile', 'seed_build', 'validation']);
-    expect(groups[2].nodes.map(x => x.node_id)).toEqual(['v1', 'v2']);
+    expect(groups.map(g => g.stage)).toEqual(['parse', 'compile', 'seed_build', 'validation']);
+    expect(groups[3].nodes.map(x => x.node_id)).toEqual(['v1', 'v2']);
   });
 
   it('emits a section only for stages that have results', () => {
@@ -54,6 +54,17 @@ describe('reasonLabel', () => {
 
   it('falls back to the raw token for an unrecognized reason', () => {
     expect(reasonLabel('mystery_failed')).toBe('mystery');
+  });
+});
+
+describe('parse stage vocabulary', () => {
+  it('labels the parse stage and its reasons', () => {
+    expect(stageLabel('parse')).toBe('Parse');
+    expect(reasonLabel('invalid_sql')).toBe('Invalid SQL');
+    expect(reasonLabel('unqualified_reference')).toBe('Unqualified reference');
+    expect(reasonLabel('invalid_artifact')).toBe('Invalid artifact');
+    expect(reasonLabel('internal_error')).toBe('Internal error');
+    expect(reasonLabel('compile_failed')).toBe('Compilation');
   });
 });
 
