@@ -12,12 +12,11 @@ type HandleCompileResultInput struct {
 	ReleaseID   string       `json:"release_id"`
 	Status      string       `json:"status"` // "ok" | "failed"
 	PerNode     []NodeResult `json:"per_node"`
-	ErrorClass  string       `json:"error_class,omitempty"`
 	ErrorDetail string       `json:"error_detail,omitempty"`
 }
 
-// compileRejection maps the compile Job's failed container to the reject
-// reason and the operator/remediation-facing detail. The parse and upload
+// compileRejection derives the reject reason and the operator/remediation-facing
+// detail from the per-node failed_container attribution. The parse and upload
 // containers are continuo's parse-export leg — their failures must never be
 // presented as dbt SQL errors, or the remediation agent is misled into
 // proposing a model fix for a problem no model change can solve.
@@ -30,18 +29,18 @@ type HandleCompileResultInput struct {
 // this loop returning on the first match is not order-dependent in practice.
 // The iteration remains defensive for malformed or future multi-entry
 // payloads.
-func compileRejection(perNode []NodeResult) (reason, errorClass, errorDetail string) {
+func compileRejection(perNode []NodeResult) (reason, detail string) {
 	for _, n := range perNode {
 		switch n.FailedContainer {
 		case "parse-prod", "parse-candidate":
-			return "parse_rehearsal_failed", "parse_rehearsal_failed",
+			return "parse_rehearsal_failed",
 				"the project re-parses under run-pod conditions — typically an env_var() read at parse time whose value differs between compile and run pods, or partial parse disabled in the project (flags: partial_parse: false / --no-partial-parse); this is not a SQL error"
 		case "upload":
-			return "artifact_upload_failed", "artifact_upload_failed",
+			return "artifact_upload_failed",
 				"internal artifact publication failed; no change to the dbt project will fix this"
 		}
 	}
-	return "compile_failed", "", ""
+	return "compile_failed", ""
 }
 
 // HandleCompileResult advances a Compiling release once the dbt compile job
@@ -87,9 +86,9 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			d.Logger.Warn("compile failed with no per-node results; release rejected without a remediation trigger",
 				"release_id", in.ReleaseID)
 		}
-		reason, errorClass, errorDetail := compileRejection(in.PerNode)
-		if errorClass == "" {
-			errorClass, errorDetail = in.ErrorClass, in.ErrorDetail
+		reason, errorDetail := compileRejection(in.PerNode)
+		if errorDetail == "" {
+			errorDetail = in.ErrorDetail
 		}
 
 		r.RecordStageResults("compile", results)
@@ -120,7 +119,6 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			"release_id":      in.ReleaseID,
 			"stage":           "compile",
 			"reason":          reason,
-			"error_class":     errorClass,
 			"error_detail":    errorDetail,
 			"failing_nodes":   failing,
 			"per_node":        perNode,

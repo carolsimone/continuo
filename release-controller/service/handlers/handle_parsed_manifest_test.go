@@ -245,6 +245,25 @@ func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
 	}
 }
 
+// TestReleaseRejected_NeverCarriesErrorClass covers every rejection site: the
+// parse leg, duplicate_table, and unbuildable_cross_service_upstream here, and
+// the compile and seed-build legs through their own handlers.
+func TestReleaseRejected_NeverCarriesErrorClass(t *testing.T) {
+	deps, store := seedToParsing(t, "rX", map[string]string{"svc-a": "sha-a"})
+	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+		ReleaseID: "rX", Status: "failed", FailureKind: streams.ParseFailureKindInternal, Detail: "boom",
+	}))
+	for _, e := range outboxEntries(store) {
+		if e.StreamName != streams.ReleaseRejectedV1 {
+			continue
+		}
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(e.Payload, &payload))
+		_, has := payload["error_class"]
+		assert.False(t, has, "error_class must not be emitted")
+	}
+}
+
 // seedToParsingVerification mirrors seedToParsing but seeds a verification
 // run, so a rejection emitted from the parsing leg can be asserted to carry
 // the wire flag true — the signal remediation uses to avoid re-triggering
@@ -279,7 +298,7 @@ func seedToParsingVerificationWithOverlay(t *testing.T, releaseID string, imageT
 }
 
 // TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmitted
-// verifies that a verification run's parse_failed ends the run at Failed and
+// verifies that a verification run's parse failure ends the run at Failed and
 // emits no release.rejected:v1 at all (a verification failure is never a
 // release rejection — Global Constraint), so remediation cannot mistake it
 // for a rejected candidate and re-trigger itself; the failure travels on
@@ -671,6 +690,8 @@ func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rejectedEntry.Payload, &payload))
 	assert.Equal(t, "unbuildable_cross_service_upstream", payload["reason"])
 	assert.Equal(t, "rA", payload["release_id"])
+	_, hasErrorClass := payload["error_class"]
+	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
@@ -1305,7 +1326,8 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, "duplicate_table", payload["reason"])
-	assert.Equal(t, "DuplicatedTable", payload["error_class"])
+	_, hasErrorClass := payload["error_class"]
+	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
 	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", payload["code_bundle_uri"],
 		"top-level code_bundle_uri must come from the release aggregate, set at parse time")
 	assert.JSONEq(t, string(entry.Payload), string(r.RejectionPayload()),

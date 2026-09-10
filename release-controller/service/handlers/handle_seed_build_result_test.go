@@ -193,7 +193,7 @@ func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedPlusModel())
 
 	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
-		ReleaseID: releaseID, Status: "failed", ErrorClass: "seed_error", ErrorDetail: "csv parse",
+		ReleaseID: releaseID, Status: "failed", ErrorDetail: "csv parse",
 	}))
 
 	r := mustGetRelease(t, store, releaseID)
@@ -202,6 +202,10 @@ func TestHandleSeedBuildResult_FailedRejects(t *testing.T) {
 	e := findEntry(t, store, streams.ReleaseRejectedV1)
 	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
 		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(e.Payload, &payload))
+	_, hasErrorClass := payload["error_class"]
+	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
@@ -211,7 +215,7 @@ func TestHandleSeedBuildResult_FailedPayloadCarriesCandidateSchema(t *testing.T)
 	putSeedBuildingRelease(t, store, deps, releaseID, topoSeedPlusModel())
 
 	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
-		ReleaseID: releaseID, Status: "failed", ErrorClass: "seed_error", ErrorDetail: "csv parse",
+		ReleaseID: releaseID, Status: "failed", ErrorDetail: "csv parse",
 	}))
 
 	entry := findEntry(t, store, streams.ReleaseRejectedV1)
@@ -253,7 +257,6 @@ func TestHandleSeedBuildResult_Failed_EmitsUniformRejected(t *testing.T) {
 			{NodeID: "analytics.seed_fx_rates_eur", Status: "failed", DBTLogURI: "s3://logs/seed_eur.log"},
 			{NodeID: "analytics.seed_equities", Status: "ok", DBTLogURI: "s3://logs/seed_eq.log"},
 		},
-		ErrorClass:  "seed_error",
 		ErrorDetail: "csv parse failure",
 	}))
 
@@ -446,7 +449,6 @@ func TestHandleSeedBuildResult_Failed_PerNodeCarriesFilePathAndService(t *testin
 		PerNode: []handlers.NodeResult{
 			{NodeID: "analytics.seed_fx_rates_eur", Status: "failed", DBTLogURI: "s3://logs/seed_eur.log"},
 		},
-		ErrorClass:  "seed_error",
 		ErrorDetail: "csv parse failure",
 	}))
 
@@ -495,7 +497,7 @@ func TestHandleSeedBuildResult_Verification_Failed_NoReleaseRejected_FinishedEmi
 	deps, store := putSeedBuildingVerification(t, releaseID, "svc-fin", topoSeedPlusModel())
 
 	require.NoError(t, handlers.HandleSeedBuildResult(ctx(t), deps, handlers.HandleSeedBuildResultInput{
-		ReleaseID: releaseID, Status: "failed", ErrorClass: "seed_error", ErrorDetail: "csv parse",
+		ReleaseID: releaseID, Status: "failed", ErrorDetail: "csv parse",
 	}))
 
 	r := mustGetRelease(t, store, releaseID)

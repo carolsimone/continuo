@@ -322,7 +322,7 @@ func TestRunRepository_RoundTripsRemediationRoundAndPayload(t *testing.T) {
 	noPayload := pipeline.NewCandidate("rel-no-payload", "finance", "tag", false, "owner/repo", "abc123",
 		release.ManifestKindDbt, time.Unix(310, 0).UTC())
 	require.NoError(t, noPayload.TransitionToParsing(time.Unix(311, 0).UTC()))
-	require.NoError(t, noPayload.Fail("parse_failed", "",
+	require.NoError(t, noPayload.Fail("invalid_artifact", "",
 		nil, time.Unix(312, 0).UTC()))
 	require.NoError(t, repo.Save(ctx, noPayload))
 

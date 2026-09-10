@@ -20,7 +20,6 @@ type HandleSeedBuildResultInput struct {
 	ReleaseID   string       `json:"release_id"`
 	Status      string       `json:"status"` // "ok" | "failed"
 	PerNode     []NodeResult `json:"per_node"`
-	ErrorClass  string       `json:"error_class,omitempty"`
 	ErrorDetail string       `json:"error_detail,omitempty"`
 }
 
@@ -106,7 +105,6 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 		"release_id":       in.ReleaseID,
 		"stage":            "seed_build",
 		"reason":           "seed_build_failed",
-		"error_class":      in.ErrorClass,
 		"error_detail":     in.ErrorDetail,
 		"failing_nodes":    failing,
 		"per_node":         perNode,

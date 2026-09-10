@@ -705,7 +705,6 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 	payload, err := json.Marshal(map[string]any{
 		"release_id":   releaseID,
 		"reason":       "unbuildable_cross_service_upstream",
-		"error_class":  "validation_unsupported",
 		"error_detail": detail,
 	})
 	if err != nil {
@@ -833,7 +832,6 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 	payload, err := json.Marshal(map[string]any{
 		"release_id":      releaseID,
 		"reason":          "duplicate_table",
-		"error_class":     "DuplicatedTable",
 		"error_detail":    detail,
 		"failing_nodes":   failing,
 		"per_node":        perNode,
