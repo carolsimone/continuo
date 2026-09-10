@@ -116,10 +116,13 @@ safe to store and render as plain text. See
 **`release.rejected:v1`** — **candidate-only**: emitted by release-controller for every
 terminal rejection of a candidate release, regardless of which leg failed. A
 fix-verification run's failure never rides this stream, whatever caused it —
-its only announcement is `pipeline.run.finished:v1` (below). The payload always includes:
-`release_id`, `stage` (`parse` | `compile` | `seed_build` | `validation`; absent only for `duplicate_table`), `reason`,
-`repo`, `commit_sha`, `code_bundle_uri`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
-`status`, `dbt_log_uri`, optional `run_results_uri`). Parse entries carry
+its only announcement is `pipeline.run.finished:v1` (below). The payload always carries
+`release_id`, `reason`, and `error_detail`. Every reason but `unbuildable_cross_service_upstream`
+additionally carries `repo`, `commit_sha`, `code_bundle_uri`, `failing_nodes`, and `per_node[]`
+(each entry: `node_id`, `status`, `dbt_log_uri`, optional `run_results_uri`);
+`unbuildable_cross_service_upstream`'s payload is the narrower `{release_id, reason, error_detail}`
+alone. `stage` (`parse` | `compile` | `seed_build` | `validation`) travels on every one of those
+but `duplicate_table`, which is otherwise full-shaped. Parse entries carry
 `kind`, `detail`, `file_path`, `service`, and `node_type` in place of
 `dbt_log_uri`/`run_results_uri` — the parser's own detail is inline on the
 entry, so there is no log to point at. Validation entries
