@@ -27,16 +27,26 @@ func compileGather(ctx context.Context, svc Services, in Input) (Gathered, bool,
 		return Gathered{}, true, nil
 	}
 	// For compile the NodeID IS the service discriminator (a synthetic id).
-	prefix, ok := svc.ServiceRepoPaths[in.NodeID]
+	return gatherSourceFile(ctx, svc, in, in.NodeID, "compile fix")
+}
+
+// gatherSourceFile reads the offending file named by in.FilePath under the
+// repo prefix of service and, when it is a .sql, its co-located yml siblings
+// and the service's dbt_project.yml as best-effort context. It serves every
+// lane whose fix is one source file the model picks from what it is shown.
+// A missing prefix or a 404 on the offending file is a skip; any other read
+// error is transient and returned so the driver redelivers.
+func gatherSourceFile(ctx context.Context, svc Services, in Input, service, lane string) (Gathered, bool, error) {
+	prefix, ok := svc.ServiceRepoPaths[service]
 	if !ok {
-		svc.Logger.Warn("compile fix: no repo path mapping for service; skipping", "service", in.NodeID)
+		svc.Logger.Warn(lane+": no repo path mapping for service; skipping", "service", service)
 		return Gathered{}, true, nil
 	}
 	offending := path.Join(prefix, in.FilePath)
 	content, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, offending)
 	if err != nil {
 		if errors.Is(err, ports.ErrSourceNotFound) {
-			svc.Logger.Warn("compile fix: offending file not found; skipping", "path", offending)
+			svc.Logger.Warn(lane+": offending file not found; skipping", "path", offending)
 			return Gathered{}, true, nil
 		}
 		return Gathered{}, false, err // transient: redeliver

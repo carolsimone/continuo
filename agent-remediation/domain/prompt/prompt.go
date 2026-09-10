@@ -279,6 +279,38 @@ func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []P
 	}
 }
 
+const parseFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt model whose compiled SQL a SQL parser rejected before any dbt run.
+You are given the offending model file, its co-located schema.yml, the project's dbt_project.yml, and the parser's error, which names the line and column where parsing stopped. The dbt projects are independent and reference upstream tables by their physical schema-qualified name (e.g. analytics.table_a), NEVER with {{ ref(...) }} / {{ source(...) }}. An "unqualified table reference" error means a table is named without its schema and must be qualified.
+
+Rules:
+- Decide which ONE file must change so the SQL parses, and return its path in target_file. It must be one of the files shown to you.
+- Return the COMPLETE corrected content of that file in proposed_content, preserving formatting and unrelated content.
+- Never introduce {{ ref(...) }} or {{ source(...) }}.
+- If you cannot determine a safe fix, return the offending file unchanged with low confidence and an explanation.
+- When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the code you are shown.
+- Always respond by calling the propose_fix tool.`
+
+// AssembleParseFix builds a multi-file fix request for a node whose SQL the
+// parse leg rejected. It has the compile-fix shape (the model picks one shown
+// file and returns its corrected content) but shows the parser's error text
+// in place of a dbt log, since no dbt run happened.
+func AssembleParseFix(files []NamedFile, parseError, service, nodeID string, precedents []Precedent) ProposeRequest {
+	var u strings.Builder
+	fmt.Fprintf(&u, "Service: %s\nNode: %s\n\n", service, nodeID)
+	for _, f := range files {
+		fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", f.Path, f.Content)
+	}
+	fmt.Fprintf(&u, "SQL parse error:\n```\n%s\n```\n\n", parseError)
+	renderPrecedents(&u, precedents)
+	u.WriteString("Return the complete corrected content of the ONE file that must change.")
+
+	req := AssembleCompileFix(nil, "", "", nil)
+	req.System = parseFixSystemPrompt
+	req.User = u.String()
+	req.ToolDescription = "Return the corrected content of the one file that makes the SQL parse."
+	return req
+}
+
 const seedFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt seed CSV that failed to load.
 You are given the seed CSV file and the dbt seed error. dbt seed loads a comma-separated file into a table; loads fail on quoting problems (a stray comma inside an unquoted text field), a malformed row (wrong column count), or a value that does not match its column type.
 

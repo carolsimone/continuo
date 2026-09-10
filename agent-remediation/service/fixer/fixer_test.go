@@ -10,10 +10,20 @@ import (
 )
 
 func TestFor_KnownSources(t *testing.T) {
-	for _, src := range []string{"compile", "seed_build", "validation"} {
+	for _, src := range []string{"compile", "seed_build", "validation", "duplicate_table", "parse"} {
 		if _, err := For(src, ""); err != nil {
 			t.Fatalf("For(%q): unexpected error %v", src, err)
 		}
+	}
+}
+
+func TestFor_ParseIsItsOwnLane(t *testing.T) {
+	fx, err := For("parse", "dbt-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fx.(parseFixer); !ok {
+		t.Fatalf("For(parse) = %T, want parseFixer", fx)
 	}
 }
 
