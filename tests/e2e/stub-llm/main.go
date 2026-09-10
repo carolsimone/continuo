@@ -11,7 +11,9 @@
 //     what the agent-remediation's openai adapter expects. The agent-remediation
 //     sends three propose_fix variants that share the tool name but differ in
 //     their parameter schema, so the stub routes on the declared parameters:
-//     compile (target_file) → target_file + corrected proposed_content; seed
+//     compile (target_file) → target_file + corrected proposed_content, and
+//     parse, which declares the same two parameters and is told apart by the
+//     "SQL parse error:" heading its prompt renders; seed
 //     (proposed_content, no target_file) → corrected CSV proposed_content;
 //     validation (proposed_sql) → the candidate/source/upstream SQL fix, which
 //     further branches on the heading the prompt assembler rendered:
@@ -219,6 +221,25 @@ func firstShownFile(userContent string) string {
 // out) with the config() call closed correctly so dbt can parse it.
 const compileFixContent = `{{ config(materialized='table', tags=['daily']) }}
 select 1 as id
+`
+
+// parseFixMarker is the string present in the user message when the
+// agent-remediation sends a parse-fix request. It is produced by
+// prompt.AssembleParseFix, which renders the parser's own message under an
+// "SQL parse error:" heading in place of the dbt log a compile fix carries.
+const parseFixMarker = "SQL parse error:"
+
+// parseFixContent is the corrected ftable_e source the stub returns for a
+// parse fix: the model with the unparseable clause removed, reading the one
+// relation that exists.
+//
+// It names a physical schema.table rather than a {{ ref(...) }} macro for the
+// same reason step2SourceFix does: the fix is verified by a verification run
+// that lays this exact text over service-2's dbt project and compiles it, and
+// a ref() to another service's project would abort that compile.
+const parseFixContent = `{{ config(materialized='table') }}
+SELECT c.id
+FROM e2e_schema.ftable_c c
 `
 
 // seedFixContent is the corrected CSV the stub returns for a seed fix: a row
@@ -440,6 +461,9 @@ func lastUserContent(messages []message) string {
 // response fields are chosen from the tool's parameter set so each fix variant
 // gets a valid answer:
 //
+//   - parse (target_file present and the prompt carries the parse heading):
+//     the corrected offending file in proposed_content, targeting the first
+//     file shown in the prompt.
 //   - compile (target_file present): the corrected offending file in
 //     proposed_content, targeting the first file shown in the prompt.
 //   - seed (proposed_content, no target_file): the corrected CSV in
@@ -449,6 +473,16 @@ func lastUserContent(messages []message) string {
 func writeProposeFixResponse(w http.ResponseWriter, userContent string, params map[string]bool) {
 	var toolArgs map[string]string
 	switch {
+	case params["target_file"] && strings.Contains(userContent, parseFixMarker):
+		// Parse fix: the parse lane declares the same tool as a compile fix, so
+		// the prompt heading is the only thing that tells the two apart — hence
+		// this case sits above the compile one.
+		toolArgs = map[string]string{
+			"target_file":      firstShownFile(userContent),
+			"proposed_content": parseFixContent,
+			"rationale":        "removed the dangling clause the SQL parser rejected",
+			"confidence":       "high",
+		}
 	case params["target_file"]:
 		// Compile fix: return which shown file to change and its corrected content.
 		toolArgs = map[string]string{
