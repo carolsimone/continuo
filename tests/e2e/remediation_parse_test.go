@@ -79,6 +79,15 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	clients := setupClients(t, ctx)
 	defer clients.close(ctx)
 
+	// The fix-verification run's validation Job clones e2e_schema.ftable_c and
+	// e2e_schema.ftable_d from production instead of building them (only
+	// ftable_e differs from current_prod in that run, see
+	// ensureParseFixClonedProdRelations), so both must already exist in the
+	// warehouse before the release is posted. Deferred after
+	// clients.close(ctx) above, so LIFO runs it while the pool is open.
+	dropParseFixClonedProdRelations := ensureParseFixClonedProdRelations(t, ctx, clients)
+	defer dropParseFixClonedProdRelations()
+
 	verifyServicesHealthy(t)
 	verifyK8sAvailable(t, ctx)
 	requireReleaseControllerHealthy(t, clients)
@@ -207,23 +216,30 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 
 	// 4. A proposal is produced, verified by a real fix-verification run, and
 	//    announced for human review.
-	var row compileProposalRow
+	var row parseProposalRow
 	var last string
 	pollUntil(t, ctx, 20*time.Minute, 3*time.Second, func() (bool, error) {
+		// ORDER BY attempt DESC: a failed attempt is retried under a higher
+		// attempt number in the same row set, so reading without an explicit
+		// order risks returning an earlier, already-superseded attempt while a
+		// later one is still running.
 		err := clients.agentRemediationDB.GetContext(ctx, &row,
-			`SELECT source, release_id, node_id, status, file_path, source_resolved
-			   FROM proposal WHERE release_id = $1 AND node_id = $2 LIMIT 1`, releaseID, ftableEUniqueID)
+			`SELECT source, release_id, node_id, status, file_path, source_resolved, attempt, verify_error, verifications
+			   FROM proposal WHERE release_id = $1 AND node_id = $2
+			  ORDER BY attempt DESC LIMIT 1`, releaseID, ftableEUniqueID)
 		if err != nil {
 			return false, nil
 		}
 		if row.Status != last {
-			t.Logf("proposal %s/%s: status=%s", releaseID, ftableEUniqueID, row.Status)
+			t.Logf("proposal %s/%s: attempt=%d status=%s", releaseID, ftableEUniqueID, row.Attempt, row.Status)
 			last = row.Status
 		}
 		return row.Status == "proposed" || row.Status == "failed" || row.Status == "skipped" || row.Status == "escalated", nil
 	}, fmt.Sprintf("timeout waiting for a parse proposal for release %s", releaseID))
 	require.Equal(t, "parse", row.Source)
-	require.Equal(t, "proposed", row.Status, "the verified fix must be offered")
+	require.Equal(t, "proposed", row.Status,
+		"the verified fix must be offered (latest attempt=%d, verify_error=%q, verifications=%s)",
+		row.Attempt, row.VerifyError, row.Verifications)
 	require.True(t, strings.HasSuffix(row.FilePath, filePath), "proposal file_path %q must end with %q", row.FilePath, filePath)
 	require.True(t, row.SourceResolved)
 	waitForRemediationProposed(t, ctx, clients, releaseID, ftableEUniqueID, 2*time.Minute)
@@ -239,6 +255,88 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&refusal)
 	assert.NotEqual(t, "not_healable", refusal.Error, "invalid_sql must be a healable reason (status %d)", resp.StatusCode)
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusConflict}, resp.StatusCode)
+}
+
+// parseFixClonedProdRelations are the production relations this scenario's
+// fix-verification run clones rather than rebuilds. Only ftable_e differs from
+// current_prod in that run (every other node's manifest content is untouched),
+// so DescendantsClosure(topo, {ftable_e}) yields {ftable_e, ftable_f} as the
+// changed closure, and FullAncestorsClosure of that closure adds {ftable_c,
+// ftable_d} as buildable upstreams — release-controller's
+// rebuiltFromCandidateSet (handle_parsed_manifest.go) puts only the changed
+// closure itself, {ftable_e, ftable_f}, into the build-from-candidate-SQL set.
+// ftable_c (service-3) and ftable_d (service-2) are validated but not rebuilt,
+// so the validation Job clones each straight from production instead
+// (VALIDATION_OP=clone_from_prod: "CREATE TABLE <candidate>.<table> AS SELECT
+// * FROM <prod_schema>.<table> WHERE 1=0" — see
+// docs/arch/services/executor-controller.md). A cold stack has never promoted
+// a release, so the warehouse holds none of production's relations and the
+// clone fails with "relation ... does not exist".
+//
+// Both are declared with a single `id integer` column because that is the
+// only column either model's own defining SQL selects
+// (dbt/services/service-3/models/ftable_c.sql: "SELECT a.id FROM
+// e2e_schema.ftable_a a LEFT JOIN e2e_schema.ftable_b b ON a.id = b.id";
+// dbt/services/service-2/models/ftable_d.sql: "SELECT id FROM
+// e2e_schema.ftable_c"), and it satisfies every reader of the cloned copy in
+// the candidate schema: the verified fix (stub-llm's parseFixContent, "SELECT
+// c.id FROM e2e_schema.ftable_c c") and ftable_f (
+// dbt/services/service-3/models/ftable_f.sql: "SELECT d.id FROM
+// e2e_schema.ftable_d d LEFT JOIN e2e_schema.ftable_e e ON d.id = e.id") both
+// read only `.id` from either relation.
+var parseFixClonedProdRelations = []string{"e2e_schema.ftable_c", "e2e_schema.ftable_d"}
+
+// ensureParseFixClonedProdRelations creates parseFixClonedProdRelations in the
+// warehouse when they are not already there, and returns a cleanup that drops
+// only the ones this call created. A warm stack already has both from an
+// earlier promoted release, and the full suite's happy-path tests own that
+// production data — this must not drop a table it did not create.
+func ensureParseFixClonedProdRelations(t *testing.T, ctx context.Context, clients *testClients) func() {
+	t.Helper()
+	_, err := clients.dbtDB.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS e2e_schema`)
+	require.NoError(t, err, "create e2e_schema")
+
+	var created []string
+	for _, rel := range parseFixClonedProdRelations {
+		var exists bool
+		err := clients.dbtDB.GetContext(ctx, &exists, `SELECT to_regclass($1) IS NOT NULL`, rel)
+		require.NoError(t, err, "check existence of %s", rel)
+		if exists {
+			continue
+		}
+		_, err = clients.dbtDB.ExecContext(ctx, fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id integer)`, rel))
+		require.NoError(t, err, "create %s in the warehouse", rel)
+		created = append(created, rel)
+	}
+
+	return func() {
+		if len(created) == 0 {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		for _, rel := range created {
+			if _, err := clients.dbtDB.ExecContext(cleanupCtx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, rel)); err != nil {
+				t.Errorf("cleanup: drop %s: %v", rel, err)
+			}
+		}
+	}
+}
+
+// parseProposalRow captures the proposal fields asserted for a parse-stage
+// fix, plus the verification diagnostics (attempt, verify_error,
+// verifications) needed to explain a non-"proposed" terminal status from the
+// test log alone.
+type parseProposalRow struct {
+	Source         string `db:"source"`
+	ReleaseID      string `db:"release_id"`
+	NodeID         string `db:"node_id"`
+	Status         string `db:"status"`
+	FilePath       string `db:"file_path"`
+	SourceResolved bool   `db:"source_resolved"`
+	Attempt        int    `db:"attempt"`
+	VerifyError    string `db:"verify_error"`
+	Verifications  []byte `db:"verifications"`
 }
 
 // pinServiceProd points a service's production manifest pointer at one release
