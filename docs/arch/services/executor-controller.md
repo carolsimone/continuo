@@ -26,8 +26,6 @@ It is responsible for:
 
 `executor_outbox` rows conform to the canonical schema: `id`, `message_processing_id` (nullable), `aggregate_type`, `aggregate_id`, `event_type`, `payload` (JSONB), `stream_name`, `status`, `retry_count`, `max_retries`, `created_at`, `processed_at`, `error_message`, `next_attempt_at` (nullable; `NULL` means due now — see `docs/arch/05-error-classification.md` §Outbox processor resilience).
 
-Deployment commands cross the `job_params` JSONB boundary through `executor-controller/serialization`: production commands use `DeployTaskDTO`, while validation, seed-build, and compile commands use `ValidationDeployTaskDTO`. The repository maps between DTOs and domain commands, whose structs carry no JSON tags. The stored production fields include `task_id`, `schedule_id`, `task_retry_count`, and `task_max_retries`. Integration fixtures that write or read `job_params` use these same DTOs.
-
 ## Inbound Interfaces
 
 ### Redis consumers

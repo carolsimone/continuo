@@ -1,7 +1,8 @@
 // Package serialization holds the wire-facing DTOs for state's json-tagged
-// domain events, keeping the domain events package free of struct tags. It sits
-// outside adapters/ and domain/; the redis parser maps decoded payloads through
-// it, fixing the release.seeds.pending:v1 byte shape here.
+// domain events, keeping the domain events package free of struct tags. Only the
+// redis parser serializes these types, so it lives in the adapters tree; the
+// parser maps decoded payloads through it, fixing the release.seeds.pending:v1
+// byte shape here.
 package serialization
 
 import (

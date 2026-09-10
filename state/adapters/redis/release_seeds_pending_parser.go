@@ -6,7 +6,7 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/events"
-	"github.com/carolsimone/continuo/state/serialization"
+	"github.com/carolsimone/continuo/state/adapters/serialization"
 	goredis "github.com/redis/go-redis/v9"
 )
 
