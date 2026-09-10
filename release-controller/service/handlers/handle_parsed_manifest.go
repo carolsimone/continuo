@@ -146,6 +146,13 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	if len(results) > 0 {
 		r.RecordStageResults("parse", results)
 	}
+	if in.FailureKind.Healable() && len(in.FailedNodes) == 0 {
+		// A healable kind is one the remediation classifier can act on, but it
+		// can only act per node: with no failed nodes the release rejects and
+		// nothing downstream has a fix target.
+		d.Logger.Warn("parse failed with a healable kind but no failed nodes; release rejected without a remediation trigger",
+			"release_id", in.ReleaseID, "failure_kind", string(in.FailureKind))
+	}
 	if err := r.Fail(reason, detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}

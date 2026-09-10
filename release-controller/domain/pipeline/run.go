@@ -86,9 +86,10 @@ type NodeValidationResult struct {
 	DBTLogURI     string
 	RunResultsURI string
 	DurationMS    int64
-	// FilePath is the optional offending source file path; populated for
-	// non-node legs (e.g. compile) where the failure maps to a file rather
-	// than a dbt node ID.
+	// FilePath is the optional offending source file path. The parse leg
+	// carries the candidate's declared path for the failing node; the compile
+	// leg carries the path the dbt log names, since its failed unit is a
+	// service rather than a node.
 	FilePath string
 	// NodeType is the node's kind as the candidate topology declares it, so a
 	// reader can tell a test's bind check from a model's build without the

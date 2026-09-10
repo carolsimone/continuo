@@ -1,8 +1,10 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -242,6 +244,44 @@ func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
 		assert.Equal(t, "parse", payload["stage"])
 		assert.Equal(t, want, payload["reason"])
 		assert.Equal(t, []any{}, payload["per_node"])
+	}
+}
+
+// A healable parse kind that names no failed node rejects the release and
+// warns: the remediation classifier works per node, so with no failed nodes
+// nothing downstream has a fix target and the operator gets no proposal for a
+// reason that otherwise offers one. The unhealable kinds carry no nodes by
+// design and must stay silent.
+func TestHandleParsedManifest_Failed_HealableKindWithoutNodesWarns(t *testing.T) {
+	for kind, wantWarn := range map[streams.ParseFailureKind]bool{
+		streams.ParseFailureKindInvalidSQL:           true,
+		streams.ParseFailureKindUnqualifiedReference: true,
+		streams.ParseFailureKindInvalidArtifact:      false,
+		streams.ParseFailureKindInternal:             false,
+	} {
+		releaseID := "r-nonodes-" + string(kind)
+		deps, store := seedToParsing(t, releaseID, map[string]string{"svc-a": "sha-a"})
+		var logBuf bytes.Buffer
+		deps.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: releaseID, Status: "failed", FailureKind: kind, Detail: "d",
+		}))
+
+		r, err := store.GetRelease(releaseID)
+		require.NoError(t, err)
+		require.Equal(t, pipeline.StatusRejected, r.Status(), "kind %s still rejects the release", kind)
+
+		const warn = "release rejected without a remediation trigger"
+		if wantWarn {
+			assert.Contains(t, logBuf.String(), warn,
+				"a healable kind with no failed nodes must warn; kind %s", kind)
+			assert.Contains(t, logBuf.String(), string(kind),
+				"the warning must name the kind it fired for; kind %s", kind)
+			continue
+		}
+		assert.NotContains(t, logBuf.String(), warn,
+			"an unhealable kind carries no nodes by design; kind %s must not warn", kind)
 	}
 }
 
@@ -681,12 +721,6 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 	})
 }
 
-// TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream verifies that a
-// candidate where a changed node references an upstream that is absent from the
-// candidate topology entirely is rejected early with reason
-// "unbuildable_cross_service_upstream" and no validation.requested:v1 event is
-// emitted. A cross-service upstream that IS present in the candidate topology
-// is buildable and must NOT trigger rejection.
 // unbuildableUpstreamTopology returns a single-node candidate topology whose
 // node references an upstream, "ghost_upstream", that does not appear
 // anywhere in the candidate topology — a dangling reference that cannot be
@@ -697,6 +731,12 @@ func unbuildableUpstreamTopology() release.Topology {
 	}
 }
 
+// TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream verifies that a
+// candidate where a changed node references an upstream that is absent from the
+// candidate topology entirely is rejected early with reason
+// "unbuildable_cross_service_upstream" and no validation.requested:v1 event is
+// emitted. A cross-service upstream that IS present in the candidate topology
+// is buildable and must NOT trigger rejection.
 func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
@@ -1327,8 +1367,6 @@ func TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation(t *testing.T) {
 	assert.True(t, found, "no new/changed seeds → validation.requested must be emitted directly")
 }
 
-// A candidate topology where two services claim analytics.orders is rejected
-// before promotion, with both claimants named and no validation requested.
 // duplicateOrdersTopology returns a two-node candidate topology where "finance"
 // and "marketing" both produce the relation analytics.orders — a two-claimant
 // relation collision (release.DuplicateClaims).
@@ -1341,6 +1379,8 @@ func duplicateOrdersTopology() release.Topology {
 	}
 }
 
+// A candidate topology where two services claim analytics.orders is rejected
+// before promotion, with both claimants named and no validation requested.
 func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
 
