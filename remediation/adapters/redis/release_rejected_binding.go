@@ -18,8 +18,8 @@ import (
 // release-controller. Only the fields the classifier needs are decoded.
 type rejectedPayload struct {
 	ReleaseID string `json:"release_id"`
-	Stage     string `json:"stage"`  // "compile" | "seed_build" | "validation"; absent in older payloads and in the stage-less duplicate_table rejection
-	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed" | "duplicate_table"
+	Stage     string `json:"stage"`  // "parse" | "compile" | "seed_build" | "validation"; absent in the stage-less duplicate_table rejection
+	Reason    string `json:"reason"` // "invalid_sql" | "unqualified_reference" | "invalid_artifact" | "internal_error" | "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed" | "duplicate_table"
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
 	// RemediationRound is set by release-controller on a
@@ -72,6 +72,11 @@ type rejectedPayload struct {
 		// nothing.
 		OtherService  string `json:"other_service"`
 		OtherFilePath string `json:"other_file_path"`
+		// Kind and Detail are set on a parse-stage rejection: the contract kind
+		// topology-controller assigned the node and its parser's own error text,
+		// carried inline because no Job ran and so no log exists.
+		Kind   string `json:"kind"`
+		Detail string `json:"detail"`
 		// ChangedAncestors are the node's changed transitive ancestors, stamped
 		// by release-controller from the candidate topology, each with the file
 		// path and service THAT topology declares for it — the location an
@@ -108,12 +113,15 @@ func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
 
 // sourceFromPayload resolves the remediation Source from a release.rejected
 // payload. It prefers the explicit stage field and falls back to the reason
-// field, which covers older payloads with no stage and the stage-less
-// duplicate_table rejection. The bool is false when the rejection is not
-// remediable — parse_failed, unbuildable_cross_service_upstream, or an unknown
-// future stage; the caller then produces no evidence rather than misrouting it.
+// field, which covers the stage-less duplicate_table rejection. The bool is
+// false when the rejection is not remediable — invalid_artifact/internal_error
+// parse rejections are handled by the classifier's own drop,
+// unbuildable_cross_service_upstream, or an unknown future stage; the caller
+// then produces no evidence rather than misrouting it.
 func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 	switch stage {
+	case "parse":
+		return failure.SourceParse, true
 	case "compile":
 		return failure.SourceCompile, true
 	case "seed_build":
@@ -140,9 +148,9 @@ func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 // The Source field is derived from the payload's stage field; when stage is
 // absent, the reason field is used as a fallback. FilePath and Service carry
 // whatever the rejection payload set directly (populated by release-controller
-// for validation, seed_build, and duplicate_table); for compile failures,
-// which have none, the handler extracts FilePath from the dbt log after the
-// log is fetched.
+// for validation, seed_build, duplicate_table, and parse); for compile
+// failures, which have none, the handler extracts FilePath from the dbt log
+// after the log is fetched.
 func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	var p rejectedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -196,6 +204,8 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			Repo:                 p.Repo,
 			CommitSHA:            p.CommitSHA,
 			CodeBundleURI:        p.CodeBundleURI,
+			ParseKind:            streams.ParseFailureKind(n.Kind),
+			Detail:               n.Detail,
 			ChangedAncestors:     changedAncestors(n.ChangedAncestors),
 		})
 	}

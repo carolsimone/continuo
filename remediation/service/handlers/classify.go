@@ -25,11 +25,16 @@ type Deps struct {
 // classify produces the classification for one piece of evidence, fetching only
 // what the source actually needs. A duplicate-relation rejection is classified
 // from the evidence alone: it happens at parse time, before any Job runs, so
-// there is no dbt log to read. ev is a pointer because the compile path fills
-// in FilePath from the log text.
+// there is no dbt log to read. A parse rejection is likewise classified from
+// the evidence alone: its kind and the parser's detail travel on the
+// rejection. ev is a pointer because the compile path fills in FilePath from
+// the log text.
 func classify(ctx context.Context, deps Deps, ev *failure.FailureEvidence) (failure.Classification, error) {
 	if ev.Source == failure.SourceDuplicateTable {
 		return failure.ClassifyDuplicateTable(*ev), nil
+	}
+	if ev.Source == failure.SourceParse {
+		return failure.ClassifyParse(*ev), nil
 	}
 
 	logText, err := deps.LogReader.Fetch(ctx, ev.DBTLogURI)

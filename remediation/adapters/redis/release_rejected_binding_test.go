@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 )
 
@@ -115,21 +116,35 @@ func TestEvidenceFromRejected_Compile(t *testing.T) {
 		}
 	})
 
-	t.Run("parse-phase rejection yields no evidence (not misrouted to validation)", func(t *testing.T) {
-		// A parse_failed rejection is not a remediable pipeline leg. Even when it
-		// carries per_node entries, it must NOT be classified as a validation
-		// source-fix — evidenceFromRejected produces nothing.
-		raw := []byte(`{"release_id":"rel-9","reason":"parse_failed",
-		  "repo":"o/r","commit_sha":"sha","failing_nodes":["x"],
-		  "per_node":[{"node_id":"x","status":"failed","dbt_log_uri":"s3://x.log"}]}`)
-		evs, err := evidenceFromRejected(raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(evs) != 0 {
-			t.Fatalf("want 0 evidence for parse-phase rejection, got %d", len(evs))
-		}
-	})
+}
+
+// TestEvidenceFromRejected_ParseStage verifies that a parse-stage rejection —
+// topology-controller's own gate, before any Job runs — is routed to
+// SourceParse and carries each node's contract kind and parser detail text
+// alongside the location fields threaded from the candidate topology.
+func TestEvidenceFromRejected_ParseStage(t *testing.T) {
+	raw := []byte(`{"release_id":"rel-9","stage":"parse","reason":"invalid_sql",
+	  "repo":"o/r","commit_sha":"sha","failing_nodes":["a.b","a.c"],
+	  "per_node":[
+	    {"node_id":"a.b","status":"failed","kind":"invalid_sql","detail":"Expecting )","file_path":"models/b.sql","service":"s","node_type":"dbt-model"},
+	    {"node_id":"a.c","status":"failed","kind":"unqualified_reference","detail":"Unqualified table reference 'orders'","file_path":"models/c.sql","service":"s","node_type":"dbt-model"}
+	  ]}`)
+	evs, err := evidenceFromRejected(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 {
+		t.Fatalf("want 2 evidence, got %d", len(evs))
+	}
+	if evs[0].Source != failure.SourceParse || evs[0].ParseKind != streams.ParseFailureKindInvalidSQL || evs[0].Detail != "Expecting )" {
+		t.Errorf("first evidence: %+v", evs[0])
+	}
+	if evs[0].FilePath != "models/b.sql" || evs[0].Service != "s" || evs[0].NodeType != "dbt-model" || evs[0].Repo != "o/r" {
+		t.Errorf("location not threaded: %+v", evs[0])
+	}
+	if evs[1].ParseKind != streams.ParseFailureKindUnqualifiedReference {
+		t.Errorf("second evidence kind: %q", evs[1].ParseKind)
+	}
 }
 
 // TestEvidenceFromRejected_ParseExportLegRejections verifies that the two
@@ -224,7 +239,6 @@ func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 	raw := []byte(`{
 	  "release_id": "rel-1",
 	  "reason": "duplicate_table",
-	  "error_class": "DuplicatedTable",
 	  "repo": "owner/repo",
 	  "commit_sha": "abc123",
 	  "per_node": [{
@@ -269,11 +283,11 @@ func TestEvidenceFromRejected_DuplicateTable(t *testing.T) {
 }
 
 // TestEvidenceFromRejected_ParsePhaseReasonsStillDropped verifies that
-// parse_failed and unbuildable_cross_service_upstream — parse-phase reasons
-// that are not fixable by a model rename — still yield no evidence now that
-// the stage-less branch of sourceFromPayload also matches duplicate_table.
+// unbuildable_cross_service_upstream — a parse-phase reason that is not
+// fixable by a model rename — still yields no evidence now that the
+// stage-less branch of sourceFromPayload also matches duplicate_table.
 func TestEvidenceFromRejected_ParsePhaseReasonsStillDropped(t *testing.T) {
-	for _, reason := range []string{"parse_failed", "unbuildable_cross_service_upstream"} {
+	for _, reason := range []string{"unbuildable_cross_service_upstream"} {
 		raw := []byte(`{"release_id":"rel-1","reason":"` + reason +
 			`","per_node":[{"node_id":"n1","status":"failed"}]}`)
 

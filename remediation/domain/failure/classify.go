@@ -180,6 +180,32 @@ func ClassifyDuplicateTable(ev FailureEvidence) Classification {
 	}
 }
 
+// ClassifyParse classifies a parse-leg rejection from the evidence alone. The
+// kind topology-controller assigned already says whether a source change can
+// fix it, so no text rule runs: a healable kind is a logic failure keyed on
+// (kind, node), any other kind — or one this build does not declare — is
+// dropped. The excerpt is the parser's detail, which is what the fixer shows
+// the model in place of a dbt log.
+func ClassifyParse(ev FailureEvidence) Classification {
+	kind := ev.ParseKind
+	if !kind.IsValid() || !kind.Healable() {
+		return Classification{
+			Category:  CategoryUnknown,
+			Signature: NormalizeSignature(CategoryUnknown, "parse "+string(kind)),
+			Decision:  DecisionDrop,
+			Reason:    "parse:not_healable",
+			Excerpt:   excerptOf(ev.Detail),
+		}
+	}
+	return Classification{
+		Category:  CategoryLogic,
+		Signature: NormalizeSignature(CategoryLogic, string(kind)+" "+ev.NodeID),
+		Decision:  DecisionEmit,
+		Reason:    "logic:" + string(kind),
+		Excerpt:   excerptOf(ev.Detail),
+	}
+}
+
 func firstMatch(lower string, rules []rule) (rule, bool) {
 	for _, r := range rules {
 		if strings.Contains(lower, r.needle) {
