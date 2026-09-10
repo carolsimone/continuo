@@ -13,6 +13,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/adapters/postgres"
 	executorredis "github.com/carolsimone/continuo/executor-controller/adapters/redis"
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
+	"github.com/carolsimone/continuo/executor-controller/serialization"
 	"github.com/carolsimone/continuo/executor-controller/service/handlers"
 	"github.com/carolsimone/continuo/executor-controller/service/uow"
 	"github.com/carolsimone/continuo/pkg/streams"
@@ -55,15 +56,15 @@ func buildRetryBinding(db *sqlx.DB) (func(ctx context.Context, msg goredis.XMess
 }
 
 // readDeployCommand scans the JSONB job_params from the single executor_deployments
-// row and unmarshals it into a DeployTask command for field assertions.
+// row and maps its DTO to a DeployTask command for field assertions.
 func readDeployCommand(t *testing.T, db *sqlx.DB) command.DeployTask {
 	t.Helper()
 	var raw []byte
 	require.NoError(t, db.QueryRowContext(context.Background(),
 		`SELECT job_params FROM executor_deployments LIMIT 1`).Scan(&raw))
-	var c command.DeployTask
+	var c serialization.DeployTaskDTO
 	require.NoError(t, json.Unmarshal(raw, &c))
-	return c
+	return c.ToDomain()
 }
 
 func TestRetryTaskBinding_SingleMessageHappyPath(t *testing.T) {

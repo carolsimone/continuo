@@ -48,6 +48,8 @@ Postgres database `continuo_agent_chat`:
 | `messages` | Full turn history: `id` (UUID PK), `thread_id` FK, `seq`, role (`user` / `assistant` / `tool_call` / `tool_result`), `content` (JSONB), `created_at` |
 | `pending_actions` | Tool calls awaiting human confirmation: `id` (UUID PK), `thread_id` FK, `tool`, `args` (JSONB), `summary`, `status` (`pending` / `approved` / `denied` / `expired`), `created_at`, `expires_at` |
 
+Message content is encoded and decoded through `agent-chat/serialization` DTOs; domain content structs carry no JSON tags. Tool-call and tool-result content stores the correlation ID as `call_id`, and tool results store the error flag as `is_error`. The Anthropic mapper carries that ID into `tool_use.id` and the matching `tool_result.tool_use_id`; a no-argument tool call carries an empty `input` object. Message-history fixtures use the same DTOs as the chat session.
+
 The retention job runs on a configurable interval and deletes threads whose `updated_at` is older than `RETENTION_DAYS`. When `RETENTION_ARCHIVE_S3=true`, each thread is written to S3 at `chat-archive/<user_id>/<thread_id>.json` before deletion.
 
 ## Inbound Interfaces

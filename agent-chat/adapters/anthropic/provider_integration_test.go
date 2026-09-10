@@ -9,15 +9,14 @@ import (
 	"time"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
+	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 )
 
-// TestStreamTurn_EmptyToolArgsRoundTrip reproduces the live failure: a follow-up
-// turn whose history contains a no-argument tool_use block (e.g.
-// "continuo schedule list") plus its tool_result. Before the empty-input fix the
-// Anthropic API rejected this with HTTP 400
-// "messages.N.content.M.tool_use.input: Field required". It hits the real API and
-// is skipped unless ANTHROPIC_API_KEY is set.
+// TestStreamTurn_EmptyToolArgsRoundTrip verifies that the Anthropic API accepts
+// a follow-up turn whose history contains a no-argument tool_use block (e.g.
+// "continuo schedule list") and its matching tool_result. It hits the real API
+// and is skipped unless ANTHROPIC_API_KEY is set.
 func TestStreamTurn_EmptyToolArgsRoundTrip(t *testing.T) {
 	key := os.Getenv("ANTHROPIC_API_KEY")
 	if key == "" {
@@ -36,7 +35,7 @@ func TestStreamTurn_EmptyToolArgsRoundTrip(t *testing.T) {
 		return b
 	}
 
-	// History ending in a no-arg tool_use + its result — the exact shape that 400'd.
+	// History ends in a no-argument tool_use block and its matching result.
 	req := ports.TurnRequest{
 		System:    "You are a schedule assistant. Answer briefly.",
 		MaxTokens: 64,
@@ -45,13 +44,13 @@ func TestStreamTurn_EmptyToolArgsRoundTrip(t *testing.T) {
 			Description: "List all schedules in the system. Takes no arguments.",
 		}},
 		Messages: []domain.Message{
-			{Role: domain.RoleUser, Content: mustRaw(domain.TextContent{Text: "List the schedules."})},
-			{Role: domain.RoleToolCall, Content: mustRaw(domain.ToolCallContent{
+			{Role: domain.RoleUser, Content: mustRaw(serialization.TextContentDTO{Text: "List the schedules."})},
+			{Role: domain.RoleToolCall, Content: mustRaw(serialization.ToolCallContentDTO{
 				CallID: "toolu_test_1",
 				Tool:   "schedule_list",
 				Args:   map[string]string{}, // no arguments — the regression case
 			})},
-			{Role: domain.RoleToolResult, Content: mustRaw(domain.ToolResultContent{
+			{Role: domain.RoleToolResult, Content: mustRaw(serialization.ToolResultContentDTO{
 				CallID: "toolu_test_1",
 				Output: "No schedules found.",
 			})},

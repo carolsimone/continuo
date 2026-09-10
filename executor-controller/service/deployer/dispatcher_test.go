@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/deploy"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
+	"github.com/carolsimone/continuo/executor-controller/serialization"
 	"github.com/carolsimone/continuo/executor-controller/service/deployer"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
@@ -69,12 +70,12 @@ func newTestDispatcher(db *sqlx.DB, fk *fakeDeployer, maxConcurrent int) *deploy
 func seedJob(t *testing.T, db *sqlx.DB, maxRetries, retryCount int) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	payload, err := json.Marshal(command.DeployTask{
+	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
 		ImageTag: "sha-abc", TaskRetryCount: 0, TaskMaxRetries: 2,
-	})
+	}))
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
@@ -242,12 +243,12 @@ func mustDeploymentID(t *testing.T, db *sqlx.DB, taskID uuid.UUID) uuid.UUID {
 func seedDeployableAt(t *testing.T, db *sqlx.DB, nextAttempt time.Time) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
-	payload, err := json.Marshal(command.DeployTask{
+	payload, err := json.Marshal(serialization.DeployTaskFromDomain(command.DeployTask{
 		TaskID: uuid.New().String(), ScheduleID: uuid.New().String(),
 		ScheduleName: "daily", ServiceName: "dbt", SchemaName: "public",
 		TableName: "orders", JobName: "dbt-public-orders", NodeType: "dbt-model",
 		ImageTag: "sha-abc", TaskMaxRetries: 2,
-	})
+	}))
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO executor_deployments (id, task_id, schedule_id, job_params, max_retries, retry_count, next_attempt_at)
