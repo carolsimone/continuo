@@ -22,12 +22,11 @@ class ManifestParser:
     """A kind's parser plus everything the handler needs to report its failures.
 
     permanent_errors are the exceptions a re-delivery cannot fix, so the handler
-    publishes status=failed and the consumer ACKs. Anything else (a download or
-    IO error) escapes, leaving the message pending for retry.
+    publishes status=failed and the consumer ACKs. Every permanent parse error
+    is an invalid artifact: the handler reports it under that kind.
     """
     parse: ParseFn
     permanent_errors: tuple[type[Exception], ...]
-    error_class: str
     empty_detail: str
 
 
@@ -35,13 +34,11 @@ _PARSERS: dict[str, ManifestParser] = {
     ManifestKind.DBT: ManifestParser(
         parse=parse_manifest,
         permanent_errors=(json.JSONDecodeError, KeyError, IndexError),
-        error_class="MalformedManifest",
         empty_detail="manifest contains no model/seed nodes",
     ),
     ManifestKind.PYTHON: ManifestParser(
         parse=parse_python_contract,
         permanent_errors=(MalformedContractError,),
-        error_class="MalformedContract",
         empty_detail="contract declares no nodes",
     ),
 }

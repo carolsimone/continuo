@@ -5,9 +5,11 @@ depends on the protocol, never on the concrete class, so the dependency arrow
 runs adapter -> port. Ports the conformance test checks (test_adapters_conform
 _to_ports.py) are runtime_checkable so a renamed adapter method is caught.
 """
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from domain.model import ManifestFile
+from domain.model import FailedNode, ManifestFile
+from streams_contract import ParseFailureKind
 
 
 class CandidateSqlUploaderPort(Protocol):
@@ -33,7 +35,8 @@ class CodeBundleUploaderPort(Protocol):
 class CandidatePublisherPort(Protocol):
     """Publishes the outcome of a candidate-parse attempt back to
     release-controller: publish_ok carries the resolved topology, publish_failed
-    an error class and detail."""
+    a typed failure kind, a summary detail, and one FailedNode per node the
+    parse could not resolve (empty for artifact and internal failures)."""
 
     def publish_ok(
         self, release_id: str, topology: list[dict], code_bundle_uri: str = ""
@@ -41,7 +44,11 @@ class CandidatePublisherPort(Protocol):
         ...
 
     def publish_failed(
-        self, release_id: str, error_class: str, error_detail: str
+        self,
+        release_id: str,
+        failure_kind: ParseFailureKind,
+        detail: str,
+        failed_nodes: Sequence[FailedNode] = (),
     ) -> None:
         ...
 
