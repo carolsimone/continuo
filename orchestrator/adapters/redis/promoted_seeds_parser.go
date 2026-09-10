@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/model"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/pkg/events"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -36,10 +37,11 @@ func ParsePromotedSeedsRun(msg goredis.XMessage) (model.PromotedSeedsRunInput, e
 	if !ok || rawNodes == "" {
 		return model.PromotedSeedsRunInput{}, fmt.Errorf("%w: message %s has missing or empty nodes field", events.ErrPermanent, msg.ID)
 	}
-	var nodes []model.PromotedSeedsNode
-	if err := json.Unmarshal([]byte(rawNodes), &nodes); err != nil {
+	var nodeDTOs []serialization.PromotedSeedsNodeDTO
+	if err := json.Unmarshal([]byte(rawNodes), &nodeDTOs); err != nil {
 		return model.PromotedSeedsRunInput{}, fmt.Errorf("%w: message %s has malformed nodes field: %v", events.ErrPermanent, msg.ID, err)
 	}
+	nodes := serialization.PromotedSeedsNodesToDomain(nodeDTOs)
 	// An empty set would snapshot to an empty projection and finalise a run that
 	// built nothing. state does not emit one, so an empty set here means a
 	// malformed message rather than a promotion with no seeds.

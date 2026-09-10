@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/proposals"
@@ -380,7 +381,7 @@ func TestService_Record_EmitsPROpenedAtomically(t *testing.T) {
 	require.Equal(t, fixedClock{}.Now(), repo.lastRecordPR.openedAt,
 		"an unset OpenedAt must fall back to the service clock, as the normal client-side flow relies on")
 
-	var payload event.PROpened
+	var payload serialization.PROpenedDTO
 	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
 	require.Equal(t, repo.view.ResolvedNodeIDs, payload.ResolvedNodeIDs,
 		"the pr_opened payload must carry the view's ResolvedNodeIDs")
@@ -426,7 +427,7 @@ func TestService_Record_PROpenedPerServiceResolvedSet(t *testing.T) {
 	require.NotNil(t, repo.lastOutbox)
 	require.Equal(t, streams.RemediationPrOpenedV1, repo.lastOutbox.StreamName)
 
-	var payload event.PROpened
+	var payload serialization.PROpenedDTO
 	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
 	require.Equal(t, "core", payload.Service)
 	require.Equal(t, []string{"model.core.a"}, payload.ResolvedNodeIDs,
@@ -463,7 +464,7 @@ func TestService_Record_PROpenedNamesOnlyTheFixedNodes(t *testing.T) {
 		ProposalID: "p1", PrURL: "u", PrNumber: 7, OpenedBy: "dev|local",
 	}))
 
-	var payload event.PROpened
+	var payload serialization.PROpenedDTO
 	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
 	require.Equal(t, []string{"model.p.orders_d"}, payload.ResolvedNodeIDs,
 		"the skipped node's rejection has no fix, so the PR must not be attached to it")
@@ -492,7 +493,7 @@ func TestService_RecordOutcome_PRClosedNamesOnlyTheFixedNodes(t *testing.T) {
 	closedAt, _ := time.Parse(time.RFC3339, "2026-07-03T10:00:00Z")
 	require.NoError(t, svc.RecordOutcome(context.Background(), "p1", "", proposal.PROutcomeMerged, closedAt, nil, nil))
 
-	var payload event.PRClosed
+	var payload serialization.PRClosedDTO
 	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
 	require.Equal(t, []string{"model.p.orders_d"}, payload.ResolvedNodeIDs)
 }
@@ -530,13 +531,13 @@ func TestService_RecordOutcome_PRClosedCarriesServiceAndEdits(t *testing.T) {
 	require.Equal(t, "core", repo.lastOutcomeService, "RecordOutcome must thread the service to RecordPROutcome")
 	require.Equal(t, streams.RemediationPrClosedV1, repo.lastOutbox.StreamName)
 
-	var payload event.PRClosed
+	var payload serialization.PRClosedDTO
 	require.NoError(t, json.Unmarshal(repo.lastOutbox.Payload, &payload))
 	require.Equal(t, "core", payload.Service)
 	require.Equal(t, "merged", payload.Outcome)
 	require.Equal(t, resolved, payload.ResolvedNodeIDs, "a caller-supplied resolved subset is carried verbatim")
 	require.Len(t, payload.Edits, 1)
-	require.Equal(t, edits[0], payload.Edits[0])
+	require.Equal(t, serialization.ClosedEditDTO(edits[0]), payload.Edits[0])
 
 	wantID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(event.PRClosedEventID("r-1", 1, "core").String()))
 	require.Equal(t, wantID, repo.lastOutbox.ID,

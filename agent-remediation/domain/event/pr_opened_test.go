@@ -1,7 +1,6 @@
 package event
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -47,35 +46,3 @@ func TestPROpenedEventID_PerServiceDistinct(t *testing.T) {
 		"the legacy \"\" id must not collide with a per-service id")
 }
 
-func TestPROpenedJSON(t *testing.T) {
-	b, _ := json.Marshal(PROpened{
-		ProposalID:      "p1",
-		ReleaseID:       "r-1",
-		NodeID:          "n",
-		ResolvedNodeIDs: []string{"n"},
-		PrURL:           "u",
-		PrNumber:        7,
-		OpenedBy:        "dev|local",
-		OpenedAt:        "2026-06-24T00:00:00Z",
-	})
-	require.JSONEq(t, `{"proposal_id":"p1","release_id":"r-1","node_id":"n","resolved_node_ids":["n"],"pr_url":"u","pr_number":7,"opened_by":"dev|local","opened_at":"2026-06-24T00:00:00Z"}`, string(b))
-}
-
-// TestPROpenedJSON_ServicePresent verifies the additive service field is
-// carried on the wire when set, and omitted when empty (the legacy shape above).
-func TestPROpenedJSON_ServicePresent(t *testing.T) {
-	b, _ := json.Marshal(PROpened{
-		ProposalID:      "p1",
-		ReleaseID:       "r-1",
-		NodeID:          "n",
-		ResolvedNodeIDs: []string{"n"},
-		Service:         "core",
-		PrURL:           "u",
-		PrNumber:        7,
-		OpenedBy:        "dev|local",
-		OpenedAt:        "2026-06-24T00:00:00Z",
-	})
-	var m map[string]any
-	require.NoError(t, json.Unmarshal(b, &m))
-	require.Equal(t, "core", m["service"])
-}

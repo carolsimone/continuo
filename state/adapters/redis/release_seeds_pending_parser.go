@@ -6,6 +6,7 @@ import (
 
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/state/domain/events"
+	"github.com/carolsimone/continuo/state/adapters/serialization"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -22,10 +23,11 @@ func ParseReleaseSeedsPending(msg goredis.XMessage) (events.ReleaseSeedsPending,
 	if !ok || raw == "" {
 		return events.ReleaseSeedsPending{}, fmt.Errorf("%w: missing or empty payload field in message %s", pkgevents.ErrPermanent, msg.ID)
 	}
-	var evt events.ReleaseSeedsPending
-	if err := json.Unmarshal([]byte(raw), &evt); err != nil {
+	var dto serialization.ReleaseSeedsPendingDTO
+	if err := json.Unmarshal([]byte(raw), &dto); err != nil {
 		return events.ReleaseSeedsPending{}, fmt.Errorf("%w: unmarshal release.seeds.pending payload (message %s): %v", pkgevents.ErrPermanent, msg.ID, err)
 	}
+	evt := dto.ToDomain()
 	if evt.ReleaseID == "" {
 		return events.ReleaseSeedsPending{}, fmt.Errorf("%w: release.seeds.pending payload (message %s) has empty release_id", pkgevents.ErrPermanent, msg.ID)
 	}

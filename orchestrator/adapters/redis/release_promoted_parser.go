@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/pkg/events"
 	goredis "github.com/redis/go-redis/v9"
 )
@@ -18,10 +19,11 @@ func ParseReleasePromoted(msg goredis.XMessage) (event.ReleasePromoted, error) {
 	if !ok || raw == "" {
 		return event.ReleasePromoted{}, fmt.Errorf("%w: missing or empty payload field in message %s", events.ErrPermanent, msg.ID)
 	}
-	var evt event.ReleasePromoted
-	if err := json.Unmarshal([]byte(raw), &evt); err != nil {
+	var dto serialization.ReleasePromotedDTO
+	if err := json.Unmarshal([]byte(raw), &dto); err != nil {
 		return event.ReleasePromoted{}, fmt.Errorf("%w: unmarshal release.promoted payload (message %s): %v", events.ErrPermanent, msg.ID, err)
 	}
+	evt := dto.ToDomain()
 	if evt.ReleaseID == "" {
 		return event.ReleasePromoted{}, fmt.Errorf("%w: release.promoted payload (message %s) has empty release_id", events.ErrPermanent, msg.ID)
 	}

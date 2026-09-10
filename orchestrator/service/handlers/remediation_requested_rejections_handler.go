@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain/casebase"
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/ports"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/carolsimone/continuo/pkg/codebundle"
@@ -72,7 +73,7 @@ func (h *RemediationRequestedRejectionsHandler) Handle(
 			pkgevents.ErrPermanent, messageID, in.ClassifiedAt, err)
 	}
 
-	payload, err := json.Marshal(in)
+	payload, err := json.Marshal(serialization.RemediationRequestedFromDomain(in))
 	if err != nil {
 		return fmt.Errorf("marshal input: %w", err)
 	}

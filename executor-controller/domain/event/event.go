@@ -21,21 +21,21 @@ const (
 // publisher reads it to build the node.deployed:v1 typed wire event
 // (pkg/events.NodeDeployed). Stream: node.deployed:v1.
 type JobDeployed struct {
-	TaskID       string `json:"task_id"`
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	JobName      string `json:"job_name"`
-	NodeType     string `json:"node_type"`
-	ImageTag     string `json:"image_tag"`
+	TaskID       string
+	ScheduleID   string
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	JobName      string
+	NodeType     string
+	ImageTag     string
 	// Operation is the dbt verb this Job runs (e.g. "test"); empty for a normal
 	// production `dbt run`. It flows onto node.deployed:v1 so k8s-controller
 	// carries it through the durable check/retry chain.
-	Operation      string `json:"operation,omitempty"`
-	TaskRetryCount int    `json:"task_retry_count"` // task-level retry count (not outbox delivery retries)
-	MaxRetries     int    `json:"max_retries"`      // maximum task retries allowed
+	Operation      string
+	TaskRetryCount int // task-level retry count (not outbox delivery retries)
+	MaxRetries     int // maximum task retries allowed
 }
 
 func (JobDeployed) isEvent() {}
@@ -45,13 +45,13 @@ func (JobDeployed) isEvent() {}
 // exhausts its retry budget, so orchestrator's HandleNodeCompleted advances
 // the schedule. Stream: node.updated:v1.
 type NodeUpdated struct {
-	TaskID       string `json:"task_id"`
-	ScheduleID   string `json:"schedule_id"`
-	ScheduleName string `json:"schedule_name"`
-	ServiceName  string `json:"service_name"`
-	SchemaName   string `json:"schema_name"`
-	TableName    string `json:"table_name"`
-	Status       string `json:"status"`
+	TaskID       string
+	ScheduleID   string
+	ScheduleName string
+	ServiceName  string
+	SchemaName   string
+	TableName    string
+	Status       string
 }
 
 func (NodeUpdated) isEvent() {}

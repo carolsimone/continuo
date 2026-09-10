@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/domain/typology"
@@ -853,7 +854,7 @@ func Enqueue(ctx context.Context, u uow.UnitOfWork, clock ports.Clock, p proposa
 		SourceResolved:   sourceResolved,
 		ProposedAt:       clock.Now().Format(time.RFC3339),
 	}
-	body, err := json.Marshal(payload)
+	body, err := json.Marshal(serialization.RemediationProposedFromDomain(payload))
 	if err != nil {
 		return fmt.Errorf("marshal proposed event: %w", err)
 	}

@@ -2,15 +2,15 @@ package model
 
 // PromotedSeedsNode identifies one node of a promoted-seeds run.
 type PromotedSeedsNode struct {
-	ServiceName string `json:"service_name"`
-	SchemaName  string `json:"schema_name"`
-	TableName   string `json:"table_name"`
+	ServiceName string
+	SchemaName  string
+	TableName   string
 	// NodeType and ImageTag are the values the triggering release pinned to this
 	// node. They are used in place of whatever the topology currently holds, so a
 	// promotion overtaken by a later one still builds its seeds with its own
 	// image rather than the newer release's.
-	NodeType string `json:"node_type"`
-	ImageTag string `json:"image_tag"`
+	NodeType string
+	ImageTag string
 }
 
 // PromotedSeedsRunInput is the parsed trigger.promoted_seeds:v1 message: the run

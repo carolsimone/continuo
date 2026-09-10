@@ -37,35 +37,35 @@ func itoa(n int) string {
 // repository-relative path, the S3 pointers to the proposed content and
 // unified diff, and the node whose source it changes.
 type ProposedEdit struct {
-	Path         string `json:"path"`
-	ContentURI   string `json:"content_uri"`
-	DiffURI      string `json:"diff_uri"`
-	TargetNodeID string `json:"target_node_id"`
+	Path         string
+	ContentURI   string
+	DiffURI      string
+	TargetNodeID string
 }
 
 // RemediationProposed is the pointer-only trigger output: it carries S3 pointers
 // to the proposed SQL + diff and the model's short rationale (no warehouse data).
 type RemediationProposed struct {
-	EventID   string `json:"event_id"`
-	Source    string `json:"source"`
-	ReleaseID string `json:"release_id"`
+	EventID   string
+	Source    string
+	ReleaseID string
 	// RemediationRound is the release's remediation round this attempt belongs to.
-	RemediationRound int    `json:"remediation_round"`
-	NodeID           string `json:"node_id"`
+	RemediationRound int
+	NodeID           string
 	// ResolvedNodeIDs is the failing nodes this attempt addresses, sorted.
-	ResolvedNodeIDs []string `json:"resolved_node_ids"`
-	ErrorSignature  string   `json:"error_signature"`
-	ProposedSQLURI  string   `json:"proposed_sql_uri"`
-	DiffURI         string   `json:"diff_uri"`
+	ResolvedNodeIDs []string
+	ErrorSignature  string
+	ProposedSQLURI  string
+	DiffURI         string
 	// Edits is the full multi-file description of this attempt's proposed
 	// changes. Each edit names the node whose source it changes, which is what
 	// tells a reader where the fix was made — one attempt repairs a whole
 	// failing set, so no single node can stand for the cause of all of them.
-	Edits          []ProposedEdit `json:"edits"`
-	Rationale      string         `json:"rationale"`
-	Confidence     string         `json:"confidence"`
-	Model          string         `json:"model"`
-	Attempt        int            `json:"attempt"`
-	SourceResolved bool           `json:"source_resolved"`
-	ProposedAt     string         `json:"proposed_at"`
+	Edits          []ProposedEdit
+	Rationale      string
+	Confidence     string
+	Model          string
+	Attempt        int
+	SourceResolved bool
+	ProposedAt     string
 }

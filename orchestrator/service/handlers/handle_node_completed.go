@@ -18,6 +18,7 @@ import (
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/repository"
 	"github.com/carolsimone/continuo/orchestrator/domain/run"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
@@ -232,7 +233,7 @@ func (h *HandleNodeCompletedHandler) writeNodeUnblockedEntry(
 		ImageTag:        e.ImageTag,
 		Operation:       e.Operation,
 	}
-	evtPayload, err := json.Marshal(evt)
+	evtPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(evt))
 	if err != nil {
 		return fmt.Errorf("marshal NodeReadyForExecution: %w", err)
 	}

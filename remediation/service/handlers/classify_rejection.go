@@ -10,6 +10,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/event"
+	"github.com/carolsimone/continuo/remediation/serialization"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/domain/repository"
 )
@@ -98,7 +99,7 @@ func ClassifyRejection(ctx context.Context, deps Deps, evs []failure.FailureEvid
 				ChangedAncestors: changedAncestorsOf(it.ev),
 			})
 		}
-		body, err := json.Marshal(payload)
+		body, err := json.Marshal(serialization.RemediationRequestedFromDomain(payload))
 		if err != nil {
 			return fmt.Errorf("marshal trigger: %w", err)
 		}

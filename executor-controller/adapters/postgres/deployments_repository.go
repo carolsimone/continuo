@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/executor-controller/domain/command"
 	"github.com/carolsimone/continuo/executor-controller/domain/model"
 	"github.com/carolsimone/continuo/executor-controller/domain/repository"
+	"github.com/carolsimone/continuo/executor-controller/serialization"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
 )
@@ -65,7 +66,7 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 	)
 	if d.Mode() == model.ModeValidation || d.Mode() == model.ModeSeedBuild || d.Mode() == model.ModeCompile {
 		vcmd := d.ValidationCommand()
-		if jobParams, err = json.Marshal(vcmd); err != nil {
+		if jobParams, err = json.Marshal(serialization.ValidationDeployTaskFromDomain(vcmd)); err != nil {
 			return fmt.Errorf("marshal validation deploy command: %w", err)
 		}
 		// task_id/schedule_id are NOT NULL but validation rows have no real
@@ -76,7 +77,7 @@ func (r *deploymentsRepository) Add(ctx context.Context, d *model.Deployment) er
 		releaseID, nodeID = &rid, &nid
 	} else {
 		cmd := d.Command()
-		if jobParams, err = json.Marshal(cmd); err != nil {
+		if jobParams, err = json.Marshal(serialization.DeployTaskFromDomain(cmd)); err != nil {
 			return fmt.Errorf("marshal deploy command: %w", err)
 		}
 		if taskID, scheduleID, err = commandIDs(cmd); err != nil {
@@ -226,13 +227,16 @@ func (r *deploymentsRepository) ListValidationByRelease(ctx context.Context, rel
 func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deployment {
 	if row.Mode == string(model.ModeValidation) {
 		var vcmd command.ValidationDeployTask
-		if err := json.Unmarshal(row.JobParams, &vcmd); err != nil {
+		var vcmdDTO serialization.ValidationDeployTaskDTO
+		if err := json.Unmarshal(row.JobParams, &vcmdDTO); err != nil {
 			r.logger.Error("validation deployment job_params unparseable — recovering identity from columns",
 				"deployment_id", row.ID, "error", err)
 			vcmd = command.ValidationDeployTask{
 				ReleaseID: derefStr(row.ReleaseID),
 				NodeID:    derefStr(row.NodeID),
 			}
+		} else {
+			vcmd = vcmdDTO.ToDomain()
 		}
 		return model.ReconstituteValidation(
 			row.ID, row.MessageProcessingID, vcmd, model.Status(row.Status),
@@ -244,13 +248,16 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 
 	if row.Mode == string(model.ModeSeedBuild) {
 		var vcmd command.ValidationDeployTask
-		if err := json.Unmarshal(row.JobParams, &vcmd); err != nil {
+		var vcmdDTO serialization.ValidationDeployTaskDTO
+		if err := json.Unmarshal(row.JobParams, &vcmdDTO); err != nil {
 			r.logger.Error("seed_build deployment job_params unparseable — recovering identity from columns",
 				"deployment_id", row.ID, "error", err)
 			vcmd = command.ValidationDeployTask{
 				ReleaseID: derefStr(row.ReleaseID),
 				NodeID:    derefStr(row.NodeID),
 			}
+		} else {
+			vcmd = vcmdDTO.ToDomain()
 		}
 		return model.ReconstituteSeedBuild(
 			row.ID, row.MessageProcessingID, vcmd, model.Status(row.Status),
@@ -262,13 +269,16 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 
 	if row.Mode == string(model.ModeCompile) {
 		var vcmd command.ValidationDeployTask
-		if err := json.Unmarshal(row.JobParams, &vcmd); err != nil {
+		var vcmdDTO serialization.ValidationDeployTaskDTO
+		if err := json.Unmarshal(row.JobParams, &vcmdDTO); err != nil {
 			r.logger.Error("compile deployment job_params unparseable — recovering identity from columns",
 				"deployment_id", row.ID, "error", err)
 			vcmd = command.ValidationDeployTask{
 				ReleaseID: derefStr(row.ReleaseID),
 				NodeID:    derefStr(row.NodeID),
 			}
+		} else {
+			vcmd = vcmdDTO.ToDomain()
 		}
 		return model.ReconstituteCompile(
 			row.ID, row.MessageProcessingID, vcmd, model.Status(row.Status),
@@ -279,10 +289,13 @@ func (r *deploymentsRepository) toAggregate(row *deploymentRow) *model.Deploymen
 	}
 
 	var cmd command.DeployTask
-	if err := json.Unmarshal(row.JobParams, &cmd); err != nil {
+	var cmdDTO serialization.DeployTaskDTO
+	if err := json.Unmarshal(row.JobParams, &cmdDTO); err != nil {
 		r.logger.Error("deployment job_params unparseable — recovering identity from columns",
 			"deployment_id", row.ID, "error", err)
 		cmd = command.DeployTask{TaskID: row.TaskID.String(), ScheduleID: row.ScheduleID.String()}
+	} else {
+		cmd = cmdDTO.ToDomain()
 	}
 	return model.Reconstitute(
 		row.ID, row.MessageProcessingID, cmd, model.Status(row.Status),

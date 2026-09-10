@@ -16,6 +16,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
@@ -189,7 +190,7 @@ func (h *HandleSchedulerStartedHandler) Handle(ctx context.Context, evt domain.S
 			Operation:       evt.Operation,
 		}
 
-		evtPayload, err := json.Marshal(nodeEvt)
+		evtPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(nodeEvt))
 		if err != nil {
 			return fmt.Errorf("failed to marshal NodeReadyForExecution for %s.%s: %w", task.SchemaName, task.TableName, err)
 		}

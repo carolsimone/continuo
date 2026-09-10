@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
+	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 )
 
@@ -82,21 +83,21 @@ func toWireMessages(msgs []domain.Message) ([]wireMessage, error) {
 func toWireBlock(msg domain.Message) (wireBlock, string, error) {
 	switch msg.Role {
 	case domain.RoleUser:
-		var c domain.TextContent
+		var c serialization.TextContentDTO
 		if err := json.Unmarshal(msg.Content, &c); err != nil {
 			return wireBlock{}, "", fmt.Errorf("unmarshal user content: %w", err)
 		}
 		return wireBlock{Type: "text", Text: c.Text}, "user", nil
 
 	case domain.RoleAssistant:
-		var c domain.TextContent
+		var c serialization.TextContentDTO
 		if err := json.Unmarshal(msg.Content, &c); err != nil {
 			return wireBlock{}, "", fmt.Errorf("unmarshal assistant content: %w", err)
 		}
 		return wireBlock{Type: "text", Text: c.Text}, "assistant", nil
 
 	case domain.RoleToolCall:
-		var c domain.ToolCallContent
+		var c serialization.ToolCallContentDTO
 		if err := json.Unmarshal(msg.Content, &c); err != nil {
 			return wireBlock{}, "", fmt.Errorf("unmarshal tool_call content: %w", err)
 		}
@@ -112,7 +113,7 @@ func toWireBlock(msg domain.Message) (wireBlock, string, error) {
 		}, "assistant", nil
 
 	case domain.RoleToolResult:
-		var c domain.ToolResultContent
+		var c serialization.ToolResultContentDTO
 		if err := json.Unmarshal(msg.Content, &c); err != nil {
 			return wireBlock{}, "", fmt.Errorf("unmarshal tool_result content: %w", err)
 		}

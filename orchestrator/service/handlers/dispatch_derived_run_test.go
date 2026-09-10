@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	pkgEvents "github.com/carolsimone/continuo/pkg/events"
@@ -66,7 +66,7 @@ func TestDispatchDerivedRun_EmitsDispatchedAndQueryModel(t *testing.T) {
 	assert.Equal(t, inheritedRoot.String(), byTable["ok"].InheritedFromTaskID)
 
 	require.Equal(t, streams.QueryModelV1, entries[1].StreamName)
-	var qevt domain.NodeReadyForExecution
+	var qevt serialization.NodeReadyForExecutionDTO
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
 	assert.Equal(t, "tgt", qevt.TableName)
 	assert.Equal(t, "build", qevt.Operation, "frontier query.model carries the derived run's operation")
@@ -150,7 +150,7 @@ func TestDispatchDerivedRun_OnlyDispatchesReadyFrontier(t *testing.T) {
 	require.Equal(t, int32(2), dispatched.TotalTaskCount)
 
 	require.Equal(t, streams.QueryModelV1, entries[1].StreamName)
-	var qevt domain.NodeReadyForExecution
+	var qevt serialization.NodeReadyForExecutionDTO
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
 	assert.Equal(t, "e", qevt.TableName, "only the frontier node dispatches; f waits")
 }

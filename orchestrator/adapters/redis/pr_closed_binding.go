@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain/event"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
 	"github.com/carolsimone/continuo/pkg/events"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
@@ -22,11 +23,11 @@ func ParsePRClosed(msg goredis.XMessage) (event.PRClosed, error) {
 	if !ok || raw == "" {
 		return event.PRClosed{}, fmt.Errorf("%w: missing or empty payload field in message %s", events.ErrPermanent, msg.ID)
 	}
-	var evt event.PRClosed
-	if err := json.Unmarshal([]byte(raw), &evt); err != nil {
+	var dto serialization.PRClosedDTO
+	if err := json.Unmarshal([]byte(raw), &dto); err != nil {
 		return event.PRClosed{}, fmt.Errorf("%w: unmarshal remediation.pr_closed payload (message %s): %v", events.ErrPermanent, msg.ID, err)
 	}
-	return evt, nil
+	return dto.ToDomain(), nil
 }
 
 // NewPrClosedBinding wires ParsePRClosed into the provenance handler, threading

@@ -85,18 +85,19 @@ type CascadeTaskSkipped struct {
 
 // NodeReadyForExecution is the event payload written to query.model:v1 outbox entries
 type NodeReadyForExecution struct {
-	ScheduleID      string `json:"schedule_id"`
-	ScheduleName    string `json:"schedule_name"`
-	ServiceName     string `json:"service_name"`
-	SchemaName      string `json:"schema_name"`
-	TableName       string `json:"table_name"`
-	TaskID          string `json:"task_id"`
-	JobName         string `json:"job_name"`
-	NodeType        string `json:"node_type"`
-	ManifestVersion string `json:"manifest_version"`
-	ImageTag        string `json:"image_tag"`
-	// Operation is omitempty so normal (dbt run/seed/snapshot) messages are
-	// wire-identical. Set to "test" for single-node TEST runs so the executor
-	// runs `dbt test` instead of the default verb for the node's NodeType.
-	Operation string `json:"operation,omitempty"`
+	ScheduleID      string
+	ScheduleName    string
+	ServiceName     string
+	SchemaName      string
+	TableName       string
+	TaskID          string
+	JobName         string
+	NodeType        string
+	ManifestVersion string
+	ImageTag        string
+	// Operation selects the dbt verb. Its DTO field is omitempty so normal
+	// (dbt run/seed/snapshot) messages are wire-identical; set to "test" for
+	// single-node TEST runs so the executor runs `dbt test` instead of the
+	// default verb for the node's NodeType.
+	Operation string
 }

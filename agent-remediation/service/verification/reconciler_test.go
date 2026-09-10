@@ -16,6 +16,7 @@ import (
 
 	rredis "github.com/carolsimone/continuo/agent-remediation/adapters/redis"
 	"github.com/carolsimone/continuo/agent-remediation/domain/event"
+	"github.com/carolsimone/continuo/agent-remediation/serialization"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/handlers"
@@ -489,7 +490,7 @@ func TestReconcileOnce_PassedVerificationProposesTheFix(t *testing.T) {
 	entry := h.uow.ob.entries[0]
 	assert.Equal(t, streams.RemediationProposedV1, entry.StreamName)
 	assert.Equal(t, event.EventType, entry.EventType)
-	var payload event.RemediationProposed
+	var payload serialization.RemediationProposedDTO
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, "rel-1", payload.ReleaseID)
 	assert.Equal(t, "analytics.orders", payload.NodeID)
@@ -518,7 +519,7 @@ func TestReconcileOnce_PassedVerificationCarriesTheRemediationRound(t *testing.T
 	h.reconciler.ReconcileOnce(context.Background())
 
 	require.Len(t, h.uow.ob.entries, 1)
-	var payload event.RemediationProposed
+	var payload serialization.RemediationProposedDTO
 	require.NoError(t, json.Unmarshal(h.uow.ob.entries[0].Payload, &payload))
 	assert.Equal(t, 2, payload.RemediationRound)
 }
@@ -564,7 +565,7 @@ func TestReconcileOnce_TwoVerificationsProposesOnlyWhenBothPassed(t *testing.T) 
 
 	assert.Equal(t, proposal.StatusProposed, h.repo.row("p1").Status)
 	require.Len(t, h.uow.ob.entries, 1)
-	var payload event.RemediationProposed
+	var payload serialization.RemediationProposedDTO
 	require.NoError(t, json.Unmarshal(h.uow.ob.entries[0].Payload, &payload))
 	assert.Equal(t, []string{"analytics.orders"}, payload.ResolvedNodeIDs)
 }

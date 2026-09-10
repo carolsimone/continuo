@@ -7,6 +7,7 @@ import (
 
 	"github.com/carolsimone/continuo/orchestrator/adapters/publisher"
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/google/uuid"
@@ -61,7 +62,7 @@ func TestOutboxPublisher_NodeReadyForExecution(t *testing.T) {
 		ImageTag:        "v1",
 		ManifestVersion: "m1",
 	}
-	entry := makeEntry("node_ready_for_execution", mustMarshal(t, evt))
+	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
 	vals := payloadToValuesFor(t, entry)
 
 	assert.Equal(t, entry.ID.String(), vals["outbox_entry_id"])
@@ -91,7 +92,7 @@ func TestOutboxPublisher_NodeReadyForExecution_CarriesTestOperation(t *testing.T
 		SchemaName: "public", TableName: "orders", TaskID: "task-1", JobName: "job-1",
 		NodeType: "dbt-model", ImageTag: "v1", Operation: "test",
 	}
-	entry := makeEntry("node_ready_for_execution", mustMarshal(t, evt))
+	entry := makeEntry("node_ready_for_execution", mustMarshal(t, serialization.NodeReadyForExecutionFromDomain(evt)))
 	vals := payloadToValuesFor(t, entry)
 	assert.Equal(t, "test", vals["operation"])
 }

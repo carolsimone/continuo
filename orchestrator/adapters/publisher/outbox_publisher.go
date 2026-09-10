@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	pkgevents "github.com/carolsimone/continuo/pkg/events"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	goredis "github.com/redis/go-redis/v9"
@@ -113,10 +114,11 @@ func (p *OutboxPublisher) payloadToValues(entry *outbox.Entry) (map[string]inter
 		return values, nil
 
 	case domain.EventTypeNodeReadyForExecution:
-		var evt domain.NodeReadyForExecution
-		if err := json.Unmarshal(entry.Payload, &evt); err != nil {
+		var dto serialization.NodeReadyForExecutionDTO
+		if err := json.Unmarshal(entry.Payload, &dto); err != nil {
 			return nil, fmt.Errorf("%w: unmarshal node_ready_for_execution: %v", pkgevents.ErrPermanent, err)
 		}
+		evt := dto.ToDomain()
 		values := map[string]interface{}{
 			"outbox_entry_id":  entry.ID.String(),
 			"schedule_id":      evt.ScheduleID,

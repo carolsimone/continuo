@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
@@ -133,15 +134,15 @@ func (r *RunRepository) Save(ctx context.Context, run *pipeline.Run) error {
 	if err != nil {
 		return fmt.Errorf("marshal image_tags: %w", err)
 	}
-	topoJSON, err := json.Marshal(run.CandidateTopology())
+	topoJSON, err := json.Marshal(serialization.TopologyFromDomain(run.CandidateTopology()))
 	if err != nil {
 		return fmt.Errorf("marshal topology: %w", err)
 	}
-	transitionsJSON, err := json.Marshal(run.Transitions())
+	transitionsJSON, err := json.Marshal(serialization.TransitionsFromDomain(run.Transitions()))
 	if err != nil {
 		return fmt.Errorf("marshal transitions: %w", err)
 	}
-	perNodeJSON, err := json.Marshal(run.PerNodeResults())
+	perNodeJSON, err := json.Marshal(serialization.NodeValidationResultsFromDomain(run.PerNodeResults()))
 	if err != nil {
 		return fmt.Errorf("marshal per_node_results: %w", err)
 	}
@@ -196,21 +197,27 @@ func rowToRun(row runRow) (*pipeline.Run, error) {
 	}
 	var topo release.Topology
 	if len(row.CandidateTopology) > 0 {
-		if err := json.Unmarshal(row.CandidateTopology, &topo); err != nil {
+		var topoDTO serialization.TopologyDTO
+		if err := json.Unmarshal(row.CandidateTopology, &topoDTO); err != nil {
 			return nil, fmt.Errorf("unmarshal candidate_topology: %w", err)
 		}
+		topo = topoDTO.ToDomain()
 	}
 	var perNode []pipeline.NodeValidationResult
 	if len(row.PerNodeResults) > 0 {
-		if err := json.Unmarshal(row.PerNodeResults, &perNode); err != nil {
+		var perNodeDTO []serialization.NodeValidationResultDTO
+		if err := json.Unmarshal(row.PerNodeResults, &perNodeDTO); err != nil {
 			return nil, fmt.Errorf("unmarshal per_node_results: %w", err)
 		}
+		perNode = serialization.NodeValidationResultsToDomain(perNodeDTO)
 	}
 	var transitions []pipeline.Transition
 	if len(row.TransitionsJSON) > 0 {
-		if err := json.Unmarshal(row.TransitionsJSON, &transitions); err != nil {
+		var transitionsDTO []serialization.TransitionDTO
+		if err := json.Unmarshal(row.TransitionsJSON, &transitionsDTO); err != nil {
 			return nil, fmt.Errorf("unmarshal transitions: %w", err)
 		}
+		transitions = serialization.TransitionsToDomain(transitionsDTO)
 	}
 	return pipeline.Rehydrate(pipeline.RehydrateInput{
 		ID:                row.RunID,

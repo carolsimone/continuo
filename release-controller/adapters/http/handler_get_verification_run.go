@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 )
 
@@ -32,12 +33,12 @@ func verificationRunResponse(r *pipeline.Run) map[string]any {
 		"created_at":          r.CreatedAt().UTC().Format(time.RFC3339),
 		"activated_at":        rfc3339OrEmpty(activated, aok),
 		"finished_at":         rfc3339OrEmpty(finished, fok),
-		"transitions":         r.Transitions(),
+		"transitions":         serialization.TransitionsFromDomain(r.Transitions()),
 		"validation_node_ids": r.ValidationNodeIDs(),
 		"failing_nodes":       r.FailingNodes(),
 		"fail_reason":         r.FailReason(),
 		"fail_detail":         r.FailDetail(),
-		"per_node_results":    r.PerNodeResults(),
+		"per_node_results":    serialization.NodeValidationResultsFromDomain(r.PerNodeResults()),
 		"image_tags":          r.ImageTags(),
 		"manifest_kind":       string(r.ManifestKind()),
 	}

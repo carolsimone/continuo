@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/carolsimone/continuo/orchestrator/domain"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
 	"github.com/carolsimone/continuo/orchestrator/service/handlers"
@@ -98,7 +98,7 @@ func TestHandleSingleNodeRun_TestOperation_StampsOperationOnQueryModel(t *testin
 	require.Len(t, entries, 2, "1 dispatched + 1 query.model")
 	require.Equal(t, streams.QueryModelV1, entries[1].StreamName)
 
-	var qevt domain.NodeReadyForExecution
+	var qevt serialization.NodeReadyForExecutionDTO
 	require.NoError(t, json.Unmarshal(entries[1].Payload, &qevt))
 	assert.Equal(t, "test", qevt.Operation)
 	assert.Equal(t, "t", qevt.TableName)

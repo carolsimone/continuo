@@ -15,6 +15,7 @@ import (
 	"github.com/carolsimone/continuo/orchestrator/domain"
 	domainModel "github.com/carolsimone/continuo/orchestrator/domain/model"
 	"github.com/carolsimone/continuo/orchestrator/domain/snapshot"
+	"github.com/carolsimone/continuo/orchestrator/serialization"
 	"github.com/carolsimone/continuo/orchestrator/service/uow"
 	"github.com/google/uuid"
 )
@@ -186,7 +187,7 @@ func (h *HandleSingleNodeRunHandler) Handle(ctx context.Context, cmd domainModel
 		ImageTag:        imageTag,
 		Operation:       cmd.Operation,
 	}
-	queryPayload, err := json.Marshal(queryEvt)
+	queryPayload, err := json.Marshal(serialization.NodeReadyForExecutionFromDomain(queryEvt))
 	if err != nil {
 		return fmt.Errorf("marshal query.model: %w", err)
 	}

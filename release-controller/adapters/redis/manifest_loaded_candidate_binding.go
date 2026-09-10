@@ -8,9 +8,34 @@ import (
 
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	goredis "github.com/redis/go-redis/v9"
 )
+
+// parsedManifestDTO is the JSON shape of a manifest.loaded.candidate:v1 payload.
+// It carries the json tags for the parse result so the handler input stays a
+// domain-typed struct; the topology decodes through the shared Node DTO.
+type parsedManifestDTO struct {
+	ReleaseID     string                    `json:"release_id"`
+	Status        string                    `json:"status"`
+	Topology      serialization.TopologyDTO `json:"topology,omitempty"`
+	CodeBundleURI string                    `json:"code_bundle_uri,omitempty"`
+	ErrorClass    string                    `json:"error_class,omitempty"`
+	ErrorDetail   string                    `json:"error_detail,omitempty"`
+}
+
+// toInput maps the decoded wire DTO to the handler's domain-typed input.
+func (d parsedManifestDTO) toInput() handlers.HandleParsedManifestInput {
+	return handlers.HandleParsedManifestInput{
+		ReleaseID:     d.ReleaseID,
+		Status:        d.Status,
+		Topology:      d.Topology.ToDomain(),
+		CodeBundleURI: d.CodeBundleURI,
+		ErrorClass:    d.ErrorClass,
+		ErrorDetail:   d.ErrorDetail,
+	}
+}
 
 // NewManifestLoadedCandidateConsumer constructs a StreamConsumer that reads
 // manifest.loaded.candidate:v1 and dispatches each message to
@@ -40,13 +65,13 @@ func NewManifestLoadedCandidateConsumer(
 // indefinitely.
 func newManifestLoadedCandidateHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		var in handlers.HandleParsedManifestInput
-		if err := decodePayload(msg, &in); err != nil {
+		var dto parsedManifestDTO
+		if err := decodePayload(msg, &dto); err != nil {
 			logger.Error("manifest.loaded.candidate:v1 decode failure — discarding",
 				"message_id", msg.ID, "error", err)
 			return nil // permanent: ACK by returning nil so it is not left in the PEL
 		}
-		if err := handlers.HandleParsedManifest(ctx, deps, in); err != nil {
+		if err := handlers.HandleParsedManifest(ctx, deps, dto.toInput()); err != nil {
 			return err
 		}
 		// Advance the queue after every parse result. On the success path the

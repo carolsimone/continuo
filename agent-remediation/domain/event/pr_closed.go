@@ -28,29 +28,30 @@ func PRClosedEventID(releaseID string, attempt int, service string) uuid.UUID {
 // same source regardless of Amended — the precedent read renders the
 // merged-truth diff instead when the edit was amended.
 type ClosedEdit struct {
-	Path         string `json:"path"`
-	TargetNodeID string `json:"target_node_id"`
-	Amended      bool   `json:"amended"`
-	Diff         string `json:"diff,omitempty"`
+	Path         string
+	TargetNodeID string
+	Amended      bool
+	Diff         string
 }
 
 // PRClosed is the event payload emitted when a remediation PR reaches a
 // terminal outcome on GitHub. Outcome is "merged" or "rejected".
 type PRClosed struct {
-	ProposalID string `json:"proposal_id"`
-	ReleaseID  string `json:"release_id"`
-	NodeID     string `json:"node_id"`
+	ProposalID string
+	ReleaseID  string
+	NodeID     string
 	// ResolvedNodeIDs is the failing nodes this PR fixes, sorted — the subset
 	// of the attempt's fixed nodes this owning service's edits address.
-	ResolvedNodeIDs []string `json:"resolved_node_ids"`
-	// Service is the owning-service group this PR covers; omitted for a legacy
-	// whole-proposal PR.
-	Service  string `json:"service,omitempty"`
-	PrURL    string `json:"pr_url"`
-	PrNumber int    `json:"pr_number"`
-	Outcome  string `json:"outcome"`
-	ClosedAt string `json:"closed_at"`
+	ResolvedNodeIDs []string
+	// Service is the owning-service group this PR covers; omitted (its DTO field
+	// is omitempty) for a legacy whole-proposal PR.
+	Service  string
+	PrURL    string
+	PrNumber int
+	Outcome  string
+	ClosedAt string
 	// Edits is this PR's per-file close detail, including which edits a human
-	// amended before merge; omitted when the close loop carries none.
-	Edits []ClosedEdit `json:"edits,omitempty"`
+	// amended before merge; omitted (its DTO field is omitempty) when the close
+	// loop carries none.
+	Edits []ClosedEdit
 }
