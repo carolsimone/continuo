@@ -673,10 +673,14 @@ curl -s -X POST http://localhost:8088/releases \
        "commit_sha":"'"$(git rev-parse HEAD)"'"}' | jq
 ```
 
-This time it ends differently:
+This time it ends differently. `failing_nodes` lists every node that failed —
+the broken models **and** the dbt tests (`test.*`) that guard them. Filter to the
+models to see the shape of the damage:
 
 ```bash
-curl -s http://localhost:8088/releases/rel-finance-v2 | jq '{status, reject_reason, failing_nodes}'
+curl -s http://localhost:8088/releases/rel-finance-v2 \
+  | jq '{status, reject_reason,
+         failing_nodes: [.failing_nodes[] | select(startswith("analytics."))]}'
 ```
 
 ```json
@@ -693,6 +697,10 @@ curl -s http://localhost:8088/releases/rel-finance-v2 | jq '{status, reject_reas
   ]
 }
 ```
+
+Drop the `select(...)` filter and the list is longer still — it also carries the
+`test.core.*` and `test.finance.*` nodes (the `not_null`, `unique`, and `assert`
+tests) on every one of those models. Same story, more detail.
 
 💡 The release was rejected, and look at where the damage landed: models in
 **core**, the `channel_roi` you added to **marketing** in the previous
