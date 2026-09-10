@@ -73,9 +73,9 @@ type Transition struct {
 }
 
 // NodeValidationResult is the persisted per-node outcome of a pipeline stage.
-// Stage identifies which leg produced it: "compile", "seed_build", or
-// "validation". A run accumulates results across all legs so failure
-// diagnostics are always available regardless of which stage ended it.
+// Stage identifies which leg produced it (see the Stage field comment below).
+// A run accumulates results across all legs so failure diagnostics are always
+// available regardless of which stage ended it.
 type NodeValidationResult struct {
 	// Stage is "parse" | "compile" | "seed_build" | "validation". The failed
 	// unit generalises across legs — a dbt node for parse/validation/seed_build,

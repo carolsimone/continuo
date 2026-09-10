@@ -245,22 +245,54 @@ func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
 	}
 }
 
-// TestReleaseRejected_NeverCarriesErrorClass covers every rejection site: the
-// parse leg, duplicate_table, and unbuildable_cross_service_upstream here, and
-// the compile and seed-build legs through their own handlers.
+// TestReleaseRejected_NeverCarriesErrorClass covers every rejection site this
+// file can reach — the parse leg, duplicate_table, and
+// unbuildable_cross_service_upstream — table-driven over one release.rejected:v1
+// scenario per site, reusing the same seeding helper and topologies the
+// site's own dedicated test uses. The compile and seed-build legs are
+// asserted the same way in handle_compile_result_test.go and
+// handle_seed_build_result_test.go.
 func TestReleaseRejected_NeverCarriesErrorClass(t *testing.T) {
-	deps, store := seedToParsing(t, "rX", map[string]string{"svc-a": "sha-a"})
-	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-		ReleaseID: "rX", Status: "failed", FailureKind: streams.ParseFailureKindInternal, Detail: "boom",
-	}))
-	for _, e := range outboxEntries(store) {
-		if e.StreamName != streams.ReleaseRejectedV1 {
-			continue
-		}
-		var payload map[string]any
-		require.NoError(t, json.Unmarshal(e.Payload, &payload))
-		_, has := payload["error_class"]
-		assert.False(t, has, "error_class must not be emitted")
+	cases := []struct {
+		name string
+		seed func(t *testing.T) *fakeStore
+	}{
+		{"parse failure", func(t *testing.T) *fakeStore {
+			deps, store := seedToParsing(t, "rX", map[string]string{"svc-a": "sha-a"})
+			require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+				ReleaseID: "rX", Status: "failed", FailureKind: streams.ParseFailureKindInternal, Detail: "boom",
+			}))
+			return store
+		}},
+		{"duplicate_table", func(t *testing.T) *fakeStore {
+			deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+			require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+				ReleaseID:     "rA",
+				Status:        "ok",
+				CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
+				Topology:      duplicateOrdersTopology(),
+			}))
+			return store
+		}},
+		{"unbuildable_cross_service_upstream", func(t *testing.T) *fakeStore {
+			deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+			require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+				ReleaseID: "rA",
+				Status:    "ok",
+				Topology:  unbuildableUpstreamTopology(),
+			}))
+			return store
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := tc.seed(t)
+			entry := findEntry(t, store, streams.ReleaseRejectedV1)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+			_, has := payload["error_class"]
+			assert.False(t, has, "error_class must not be emitted")
+		})
 	}
 }
 
@@ -655,19 +687,23 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 // "unbuildable_cross_service_upstream" and no validation.requested:v1 event is
 // emitted. A cross-service upstream that IS present in the candidate topology
 // is buildable and must NOT trigger rejection.
+// unbuildableUpstreamTopology returns a single-node candidate topology whose
+// node references an upstream, "ghost_upstream", that does not appear
+// anywhere in the candidate topology — a dangling reference that cannot be
+// built into the candidate schema.
+func unbuildableUpstreamTopology() release.Topology {
+	return release.Topology{
+		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"ghost_upstream"}},
+	}
+}
+
 func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
-	// Candidate: a2 (svc-a) is a new node with an upstream "ghost_upstream" that
-	// does not appear anywhere in the candidate topology — a dangling reference
-	// that cannot be built into the candidate schema.
-	topo := release.Topology{
-		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"ghost_upstream"}},
-	}
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology:  topo,
+		Topology:  unbuildableUpstreamTopology(),
 	})
 	require.NoError(t, err, "handler must return nil (graceful rejection, not an infrastructure error)")
 
@@ -1293,6 +1329,18 @@ func TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation(t *testing.T) {
 
 // A candidate topology where two services claim analytics.orders is rejected
 // before promotion, with both claimants named and no validation requested.
+// duplicateOrdersTopology returns a two-node candidate topology where "finance"
+// and "marketing" both produce the relation analytics.orders — a two-claimant
+// relation collision (release.DuplicateClaims).
+func duplicateOrdersTopology() release.Topology {
+	return release.Topology{
+		{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+			ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+		{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+			ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
+	}
+}
+
 func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
 
@@ -1300,12 +1348,7 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 		ReleaseID:     "rA",
 		Status:        "ok",
 		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
-		Topology: release.Topology{
-			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
-			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
-		},
+		Topology:      duplicateOrdersTopology(),
 	})
 	require.NoError(t, err)
 
@@ -1346,12 +1389,7 @@ func TestHandleParsedManifest_DuplicateTable_Verification_NoReleaseRejected_Fini
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rVerify",
 		Status:    "ok",
-		Topology: release.Topology{
-			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
-			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
-		},
+		Topology:  duplicateOrdersTopology(),
 	}))
 
 	r, err := store.GetRelease("rVerify")
