@@ -171,9 +171,8 @@ whose contract kind is healable — `invalid_sql` or `unqualified_reference` —
 every other reason, including `invalid_artifact`, `internal_error`,
 `parse_rehearsal_failed`, `artifact_upload_failed`, and
 `unbuildable_cross_service_upstream`, is refused here as not healable), it has
-a stored rejection payload at all (a release rejected before this column
-existed has none; every current reason's rejection handler stores one
-regardless of whether that reason later turns out to be healable), its round is below the cap
+a stored rejection payload at all (every reason's rejection handler stores
+one regardless of whether that reason later turns out to be healable), its round is below the cap
 (`MaxRemediationRounds = 3`), and agent-remediation's `ListProposals` reports
 no attempt still in flight, proposed, or already carrying an
 opening/open/merged PR for the release. See

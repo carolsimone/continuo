@@ -74,6 +74,7 @@ class CandidateManifestPublisher:
             extra={
                 "release_id": release_id,
                 "failure_kind": failure_kind.value,
+                "detail": body["detail"],
                 "failed_nodes": len(body["failed_nodes"]),
             },
         )

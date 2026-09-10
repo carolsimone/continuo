@@ -654,11 +654,11 @@ not deleting a line:
 ```
 
 ⚠️ The comma matters. Drop it — or comment the old line out and add a new one
-without it — and the SELECT becomes invalid SQL. That fails at the *parse* stage
-with a syntax error (`reject_reason: parse_failed`), a duller failure than the
-one this chapter is about. With the comma kept, the model still compiles: it is
-valid SQL, finance's own tests pass, and the damage lands entirely in another
-team's project.
+without it — and the SELECT becomes invalid SQL. That is caught at the *parse*
+stage instead (`reject_reason: invalid_sql`), which is healable too — continuo
+proposes a fix for it — but it is a duller failure than the one this chapter is
+about. With the comma kept, the model still compiles: it is valid SQL, finance's
+own tests pass, and the damage lands entirely in another team's project.
 
 Build and release it:
 
@@ -780,10 +780,11 @@ kubectl -n continuo rollout restart deploy/agent-remediation
 ```
 
 Re-release the broken finance with a new `release_id` and the pushed `commit_sha`.
-The release must fail on **valid** SQL for the classifier to have something to fix
-— a syntax error rejects as `parse_failed` and no proposal is produced (this is
-the comma trap from chapter 7). When it is rejected this time, the proposed fix
-appears in the UI against the failed release.
+The release must fail on **valid** SQL to exercise the *validation* classifier —
+the one this chapter is about. Invalid SQL never reaches validation: it is
+rejected earlier, at the parse stage as `invalid_sql`, and healed by the parse
+lane instead (this is the comma trap from chapter 7). When it is rejected this
+time, the proposed fix appears in the UI against the failed release.
 
 ### Open the PR (GitHub App)
 
