@@ -65,13 +65,15 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 		t.Skip("Skipping E2E test in short mode")
 	}
 
-	// 32 minutes: strictly greater than the 28 this test's stage budgets sum to
-	// (rejection 10 + rejected event 2 + trigger 4 + proposal 10 + proposed
+	// 40 minutes: strictly greater than the 38 this test's stage budgets sum to
+	// (rejection 10 + rejected event 2 + trigger 4 + proposal 20 + proposed
 	// event 2). The rejection budget covers service-1's compile Job and the
 	// parse leg; the proposal budget covers the fix-verification run, which is
-	// a whole second pipeline: compile service-2 with the overlay, build the
-	// candidate schema, validate ftable_e.
-	ctx, cancel := context.WithTimeout(context.Background(), 32*time.Minute)
+	// a whole second pipeline in kind — compile service-2 with the overlay,
+	// build the candidate schema, run the validation Jobs — and matches what
+	// the validation lane's own trigger-to-terminal-proposal wait budgets for
+	// the same span (see remediation_agent_test.go).
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
 
 	clients := setupClients(t, ctx)
@@ -94,8 +96,17 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	require.True(t, ok, "%s has no baseline manifest", parseFixBrokenService)
 
 	// Seed production as every node except ftable_e, exactly as the validation
-	// scenario does, so ftable_e is the one changed node the fix-verification
-	// run has to build — its verdict is about this fix and nothing else.
+	// scenario does, so ftable_e is the fix-verification run's only changed
+	// node and that run's verdict is about this fix and nothing else.
+	//
+	// A parse-rejected release records no candidate topology, so the
+	// fix-verification run assembles from production alone (assemble_release.go
+	// and changedNodeIDsFor both take their no-candidate fallback) — service-1,
+	// whose service_prod row seedServiceProdExcept clears below, is simply
+	// absent from that topology. Nothing in ftable_e's changed closure needs
+	// it: resolve_upstream_deps drops a schema-qualified relation that is not
+	// in the registry, so the closure stops at service-3's ftable_c rather than
+	// reaching service-1's ftable_a/ftable_b.
 	var prodNodes []map[string]string
 	for _, si := range allServices {
 		for _, n := range si.nodes {
@@ -198,7 +209,7 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	//    announced for human review.
 	var row compileProposalRow
 	var last string
-	pollUntil(t, ctx, 10*time.Minute, 3*time.Second, func() (bool, error) {
+	pollUntil(t, ctx, 20*time.Minute, 3*time.Second, func() (bool, error) {
 		err := clients.agentRemediationDB.GetContext(ctx, &row,
 			`SELECT source, release_id, node_id, status, file_path, source_resolved
 			   FROM proposal WHERE release_id = $1 AND node_id = $2 LIMIT 1`, releaseID, ftableEUniqueID)

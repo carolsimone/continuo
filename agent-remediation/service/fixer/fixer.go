@@ -194,8 +194,12 @@ type Fixer interface {
 // corrects the contract to match the csv file that is its source of truth —
 // a narrower set of rules and a narrower post-apply guard than a
 // python-model node's, hence its own lane rather than a shared one. Every
-// other source ignores nodeType — those sources have no python fix to
-// offer, and each already refuses a python node in its own way.
+// other source ignores nodeType. The seed, duplicate-relation and compile
+// lanes each refuse a python node in their own way, having no python fix to
+// offer. The parse lane accepts any node kind and offers the file the trigger
+// names as the fix target, which for a python node is the script declared
+// beside it in its contract rather than the contract itself; such a fix
+// packages no contract, so the driver verifies it as a dbt run.
 func For(source, nodeType string) (Fixer, error) {
 	switch source {
 	case sourceParse:

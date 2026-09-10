@@ -192,8 +192,8 @@ error line, capped at 4 KiB), `dbt_log_uri`, `candidate_artifact_uri`,
 `changed_ancestors` (each `{node_id, file_path, service, depth}`, `depth` the ancestor's minimum upstream hop distance from the failing node). The payload stays pointer-first — the full log lives
 behind each node's `dbt_log_uri` and the failing code behind
 `code_bundle_uri` (threaded from `release.rejected:v1`'s top-level
-`code_bundle_uri`; empty for compile-stage rejections, which precede the parse
-that produces the bundle) — so the orchestrator's failure-precedent case base
+`code_bundle_uri`; empty for parse- and compile-stage rejections, both of which
+precede the parse that produces the bundle) — so the orchestrator's failure-precedent case base
 can record every rejection in the batch without pulling the full log or code
 inline. `agent-remediation` decodes all of it: `reason`, together with
 `category`, is its fallback precedent-lookup key (`GetPrecedents`) when the
