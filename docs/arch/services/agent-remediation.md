@@ -403,8 +403,9 @@ It repairs dbt nodes only. A python node's parse failure is classified and trigg
    best-effort). Make a single forced propose_fix LLM tool call via
    AssembleParseFix, showing every gathered file and the trigger's
    error_excerpt under the heading "SQL parse error:" in place of a dbt
-   compile error. The model returns target_file and proposed_content with
-   the identical propose_fix tool schema compileFixer's prompt uses.
+   compile error. The model returns target_file and proposed_content under
+   the shared single-file propose_fix tool schema (singleFileProposeRequest),
+   the same one compileFixer's prompt uses.
    - LLM transient error → retry.
 5. Interpret the result via singleFileInterpret — the same interpreter
    compileFixer uses: resolve target_file to exactly one

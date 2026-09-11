@@ -261,6 +261,27 @@ Rules:
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the code you are shown.
 - Always respond by calling the propose_fix tool.`
 
+// singleFileProposeRequest is the propose_fix tool scaffold shared by every
+// lane that shows the model several files and asks it to correct exactly one:
+// the model names the file in target_file and returns its complete corrected
+// content. The caller supplies the system prompt, the rendered user message
+// and the one-line description of what the fix must achieve.
+func singleFileProposeRequest(system, user, toolDescription string) ProposeRequest {
+	return ProposeRequest{
+		System:          system,
+		User:            user,
+		ToolName:        "propose_fix",
+		ToolDescription: toolDescription,
+		ToolParams: []ToolParam{
+			{Name: "target_file", Type: "string", Description: "The path of the file to change; must be one of the files shown.", Required: true},
+			{Name: "proposed_content", Type: "string", Description: "The complete corrected content of target_file.", Required: true},
+			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
+			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
+			{Name: "suspected_root_cause_node", Type: "string", Description: "Optional: the upstream node id you believe caused the failure, or empty.", Required: false},
+		},
+	}
+}
+
 // AssembleCompileFix builds a multi-file compile-fix request. The model chooses
 // which shown file to change (target_file) and returns its corrected content.
 func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []Precedent) ProposeRequest {
@@ -271,19 +292,8 @@ func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []P
 	renderPrecedents(&u, precedents)
 	u.WriteString("Return the complete corrected content of the ONE file that must change.")
 
-	return ProposeRequest{
-		System:          compileFixSystemPrompt,
-		User:            u.String(),
-		ToolName:        "propose_fix",
-		ToolDescription: "Return the corrected content of the one file that fixes dbt compile.",
-		ToolParams: []ToolParam{
-			{Name: "target_file", Type: "string", Description: "The path of the file to change; must be one of the files shown.", Required: true},
-			{Name: "proposed_content", Type: "string", Description: "The complete corrected content of target_file.", Required: true},
-			{Name: "rationale", Type: "string", Description: "One sentence describing the change you made. No warehouse data values.", Required: true},
-			{Name: "confidence", Type: "string", Description: "Your confidence: low, medium, or high.", Required: true},
-			{Name: "suspected_root_cause_node", Type: "string", Description: "Optional: the upstream node id you believe caused the failure, or empty.", Required: false},
-		},
-	}
+	return singleFileProposeRequest(compileFixSystemPrompt, u.String(),
+		"Return the corrected content of the one file that fixes dbt compile.")
 }
 
 const parseFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt model whose compiled SQL a SQL parser rejected before any dbt run.
@@ -309,11 +319,8 @@ func AssembleParseFix(files []NamedFile, parseError, service, nodeID string, pre
 	renderPrecedents(&u, precedents)
 	u.WriteString("Return the complete corrected content of the ONE file that must change.")
 
-	req := AssembleCompileFix(nil, "", "", nil)
-	req.System = parseFixSystemPrompt
-	req.User = u.String()
-	req.ToolDescription = "Return the corrected content of the one file that makes the SQL parse."
-	return req
+	return singleFileProposeRequest(parseFixSystemPrompt, u.String(),
+		"Return the corrected content of the one file that makes the SQL parse.")
 }
 
 const seedFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt seed CSV that failed to load.
