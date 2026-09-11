@@ -2,10 +2,31 @@ package chat
 
 import "github.com/carolsimone/continuo/agent-chat/domain"
 
-// estimateTokens approximates token count as bytes/4 — close enough for a
-// trimming heuristic (the providers enforce the real limit).
+// estimateTokens approximates token count as content-bytes/4 — close enough for
+// a trimming heuristic (the providers enforce the real limit).
 func estimateTokens(m domain.Message) int {
-	return len(m.Content)/4 + 4
+	return contentSize(m.Content)/4 + 4
+}
+
+// contentSize approximates the byte size of a message payload from its domain
+// value, without re-serializing it. It counts the variable-length text the
+// payload carries; fixed JSON punctuation is ignored since the result only feeds
+// a proportional trimming heuristic.
+func contentSize(c domain.Content) int {
+	switch v := c.(type) {
+	case domain.TextContent:
+		return len(v.Text)
+	case domain.ToolCallContent:
+		n := len(v.CallID) + len(v.Tool)
+		for k, val := range v.Args {
+			n += len(k) + len(val)
+		}
+		return n
+	case domain.ToolResultContent:
+		return len(v.CallID) + len(v.Output)
+	default:
+		return 0
+	}
 }
 
 // window returns the most recent messages whose estimated tokens fit budget.

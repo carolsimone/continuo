@@ -2,14 +2,12 @@ package anthropic
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
-	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 )
 
@@ -27,14 +25,6 @@ func TestStreamTurn_EmptyToolArgsRoundTrip(t *testing.T) {
 		model = "claude-sonnet-4-6"
 	}
 
-	mustRaw := func(v any) json.RawMessage {
-		b, err := json.Marshal(v)
-		if err != nil {
-			t.Fatalf("marshal: %v", err)
-		}
-		return b
-	}
-
 	// History ends in a no-argument tool_use block and its matching result.
 	req := ports.TurnRequest{
 		System:    "You are a schedule assistant. Answer briefly.",
@@ -44,16 +34,16 @@ func TestStreamTurn_EmptyToolArgsRoundTrip(t *testing.T) {
 			Description: "List all schedules in the system. Takes no arguments.",
 		}},
 		Messages: []domain.Message{
-			{Role: domain.RoleUser, Content: mustRaw(serialization.TextContentDTO{Text: "List the schedules."})},
-			{Role: domain.RoleToolCall, Content: mustRaw(serialization.ToolCallContentDTO{
+			{Role: domain.RoleUser, Content: domain.TextContent{Text: "List the schedules."}},
+			{Role: domain.RoleToolCall, Content: domain.ToolCallContent{
 				CallID: "toolu_test_1",
 				Tool:   "schedule_list",
 				Args:   map[string]string{}, // no arguments — the regression case
-			})},
-			{Role: domain.RoleToolResult, Content: mustRaw(serialization.ToolResultContentDTO{
+			}},
+			{Role: domain.RoleToolResult, Content: domain.ToolResultContent{
 				CallID: "toolu_test_1",
 				Output: "No schedules found.",
-			})},
+			}},
 		},
 	}
 

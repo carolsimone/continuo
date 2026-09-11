@@ -4,7 +4,6 @@ package postgres_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -113,9 +112,9 @@ func TestThreadRepository_RoundTrip(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, repository.ErrNotFound), "expected ErrNotFound, got: %v", err)
 
-	m1, err := repo.AppendMessage(ctx, th.ID, domain.RoleUser, json.RawMessage(`{"text":"hi"}`))
+	m1, err := repo.AppendMessage(ctx, th.ID, domain.RoleUser, domain.TextContent{Text: "hi"})
 	require.NoError(t, err)
-	m2, err := repo.AppendMessage(ctx, th.ID, domain.RoleAssistant, json.RawMessage(`{"text":"hello"}`))
+	m2, err := repo.AppendMessage(ctx, th.ID, domain.RoleAssistant, domain.TextContent{Text: "hello"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, m1.Seq)
 	assert.Equal(t, 2, m2.Seq)
@@ -124,6 +123,9 @@ func TestThreadRepository_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, msgs, 2)
 	assert.Equal(t, domain.RoleUser, msgs[0].Role)
+	// Content decodes back to the domain variant the role selects.
+	assert.Equal(t, domain.TextContent{Text: "hi"}, msgs[0].Content)
+	assert.Equal(t, domain.TextContent{Text: "hello"}, msgs[1].Content)
 
 	// ListMessages on an empty thread must return an empty (non-nil) slice.
 	th2, err := repo.CreateThread(ctx, "carol")
@@ -136,6 +138,39 @@ func TestThreadRepository_RoundTrip(t *testing.T) {
 	got, err := repo.GetThread(ctx, th.ID, "alice")
 	require.NoError(t, err)
 	assert.True(t, got.UpdatedAt.After(got.CreatedAt) || got.UpdatedAt.Equal(got.CreatedAt))
+}
+
+// TestThreadRepository_ContentRoundTripAllVariants stores each content variant
+// through AppendMessage and reads it back, asserting the persisted value decodes
+// to the exact domain content. This guards the messages.content JSONB persistence
+// against a lossy encode/decode; the exact stored byte shape of each variant is
+// pinned separately by the serialization package's golden tests.
+func TestThreadRepository_ContentRoundTripAllVariants(t *testing.T) {
+	truncateTables(t)
+	repo := postgres.NewThreadRepository(sharedDB)
+	ctx := context.Background()
+
+	th, err := repo.CreateThread(ctx, "alice")
+	require.NoError(t, err)
+
+	want := []domain.Content{
+		domain.TextContent{Text: "hi"},
+		domain.ToolCallContent{CallID: "c1", Tool: "run_sql", Args: map[string]string{"query": "select 1"}},
+		domain.ToolResultContent{CallID: "c1", Output: "ok", IsError: true},
+	}
+	roles := []domain.Role{domain.RoleUser, domain.RoleToolCall, domain.RoleToolResult}
+	for i, c := range want {
+		_, err := repo.AppendMessage(ctx, th.ID, roles[i], c)
+		require.NoError(t, err)
+	}
+
+	got, err := repo.ListMessages(ctx, th.ID)
+	require.NoError(t, err)
+	require.Len(t, got, len(want))
+	for i := range want {
+		assert.Equal(t, roles[i], got[i].Role)
+		assert.Equal(t, want[i], got[i].Content)
+	}
 }
 
 func TestThreadRepository_PendingActionsAndRetention(t *testing.T) {

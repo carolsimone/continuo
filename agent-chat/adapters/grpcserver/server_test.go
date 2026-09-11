@@ -2,7 +2,6 @@ package grpcserver_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"sync"
@@ -51,7 +50,7 @@ func (f *fakeRepo) GetThread(_ context.Context, id uuid.UUID, userID string) (*d
 	}
 	return t, nil
 }
-func (f *fakeRepo) AppendMessage(_ context.Context, threadID uuid.UUID, role domain.Role, content json.RawMessage) (*domain.Message, error) {
+func (f *fakeRepo) AppendMessage(_ context.Context, threadID uuid.UUID, role domain.Role, content domain.Content) (*domain.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m := domain.Message{ID: uuid.New(), ThreadID: threadID, Seq: len(f.msgs[threadID]) + 1, Role: role, Content: content}

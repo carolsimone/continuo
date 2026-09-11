@@ -38,7 +38,7 @@ func TestStreamTurn_TextAndToolCall(t *testing.T) {
 	res, err := p.StreamTurn(context.Background(), ports.TurnRequest{
 		System: "sys",
 		Messages: []domain.Message{
-			{Role: domain.RoleUser, Content: json.RawMessage(`{"text":"how is daily?"}`)},
+			{Role: domain.RoleUser, Content: domain.TextContent{Text: "how is daily?"}},
 		},
 		Tools: []ports.ToolDef{{
 			Name: "schedule_status", Description: "d",
@@ -79,9 +79,9 @@ func TestStreamTurn_MapsToolHistory(t *testing.T) {
 	p := NewProvider(srv.URL, "k", "m", srv.Client())
 	_, err := p.StreamTurn(context.Background(), ports.TurnRequest{
 		Messages: []domain.Message{
-			{Role: domain.RoleUser, Content: json.RawMessage(`{"text":"q"}`)},
-			{Role: domain.RoleToolCall, Content: json.RawMessage(`{"call_id":"call_1","tool":"schedule_status","args":{"schedule-name":"daily"}}`)},
-			{Role: domain.RoleToolResult, Content: json.RawMessage(`{"call_id":"call_1","output":"{\"ok\":1}","is_error":false}`)},
+			{Role: domain.RoleUser, Content: domain.TextContent{Text: "q"}},
+			{Role: domain.RoleToolCall, Content: domain.ToolCallContent{CallID: "call_1", Tool: "schedule_status", Args: map[string]string{"schedule-name": "daily"}}},
+			{Role: domain.RoleToolResult, Content: domain.ToolResultContent{CallID: "call_1", Output: `{"ok":1}`, IsError: false}},
 		},
 		MaxTokens: 10,
 	}, func(string) {})

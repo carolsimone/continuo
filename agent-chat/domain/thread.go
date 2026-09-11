@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,14 +24,24 @@ type Thread struct {
 	UpdatedAt time.Time
 }
 
-// Message is one entry in a thread; Content is a role-specific JSON payload.
+// Message is one entry in a thread. Content is the role-specific payload: one
+// of TextContent (RoleUser / RoleAssistant), ToolCallContent (RoleToolCall), or
+// ToolResultContent (RoleToolResult).
 type Message struct {
 	ID        uuid.UUID
 	ThreadID  uuid.UUID
 	Seq       int
 	Role      Role
-	Content   json.RawMessage
+	Content   Content
 	CreatedAt time.Time
+}
+
+// Content is the typed payload of a Message. Exactly one of the value objects
+// below satisfies it; the message's Role selects which. The interface is sealed
+// (its marker method is unexported), so no type outside this package can be a
+// Content — keeping message payloads a closed, exhaustively switchable set.
+type Content interface {
+	isContent()
 }
 
 // TextContent is the payload for user and assistant messages.
@@ -53,3 +62,7 @@ type ToolResultContent struct {
 	Output  string
 	IsError bool
 }
+
+func (TextContent) isContent()       {}
+func (ToolCallContent) isContent()   {}
+func (ToolResultContent) isContent() {}
