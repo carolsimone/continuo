@@ -173,6 +173,25 @@ func TestThreadRepository_ContentRoundTripAllVariants(t *testing.T) {
 	}
 }
 
+// TestThreadRepository_AppendMessage_RejectsRoleContentMismatch verifies the
+// write path refuses a role/content pairing that would round-trip as the wrong
+// variant, and persists nothing when it does.
+func TestThreadRepository_AppendMessage_RejectsRoleContentMismatch(t *testing.T) {
+	truncateTables(t)
+	repo := postgres.NewThreadRepository(sharedDB)
+	ctx := context.Background()
+
+	th, err := repo.CreateThread(ctx, "alice")
+	require.NoError(t, err)
+
+	_, err = repo.AppendMessage(ctx, th.ID, domain.RoleUser, domain.ToolCallContent{CallID: "c1", Tool: "t"})
+	require.Error(t, err, "a user message carrying tool-call content must be rejected")
+
+	msgs, err := repo.ListMessages(ctx, th.ID)
+	require.NoError(t, err)
+	assert.Empty(t, msgs, "the rejected message must not be persisted")
+}
+
 func TestThreadRepository_PendingActionsAndRetention(t *testing.T) {
 	truncateTables(t)
 	repo := postgres.NewThreadRepository(sharedDB)

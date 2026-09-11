@@ -62,6 +62,12 @@ func (r *ThreadRepository) GetThread(ctx context.Context, id uuid.UUID, userID s
 // AppendMessage assigns the next sequential seq within the thread, inserts the
 // message, and bumps the thread's updated_at — all inside a single transaction.
 func (r *ThreadRepository) AppendMessage(ctx context.Context, threadID uuid.UUID, role domain.Role, content domain.Content) (*domain.Message, error) {
+	// Reject a role/content mismatch before touching the DB: it would persist as
+	// one variant and decode back as another (the read path keys on role).
+	if !domain.ValidContentForRole(role, content) {
+		return nil, fmt.Errorf("append message to thread %s: %T is not valid content for role %q", threadID, content, role)
+	}
+
 	contentJSON, err := serialization.Encode(content)
 	if err != nil {
 		return nil, fmt.Errorf("encode message content for thread %s: %w", threadID, err)
@@ -86,13 +92,9 @@ func (r *ThreadRepository) AppendMessage(ctx context.Context, threadID uuid.UUID
 		return nil, fmt.Errorf("compute next seq for thread %s: %w", threadID, err)
 	}
 
-	msg := &domain.Message{
-		ID:        uuid.New(),
-		ThreadID:  threadID,
-		Seq:       seq,
-		Role:      role,
-		Content:   content,
-		CreatedAt: time.Now().UTC(),
+	msg, err := domain.NewMessage(uuid.New(), threadID, seq, role, content, time.Now().UTC())
+	if err != nil {
+		return nil, fmt.Errorf("build message for thread %s: %w", threadID, err)
 	}
 
 	const insertQ = `INSERT INTO messages (id, thread_id, seq, role, content, created_at) VALUES ($1, $2, $3, $4, $5, $6)`

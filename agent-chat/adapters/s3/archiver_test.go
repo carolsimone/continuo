@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,35 @@ import (
 	"github.com/carolsimone/continuo/agent-chat/domain"
 	"github.com/google/uuid"
 )
+
+// TestArchivedMessage_MirrorsDomainMessageFields fails if domain.Message gains a
+// field that archivedMessage does not carry. archivedMessage is a hand-written
+// mirror so the archive keeps Message's default JSON layout while swapping the
+// Content type for its stored bytes; a new domain field would otherwise be
+// silently dropped from every archive.
+func TestArchivedMessage_MirrorsDomainMessageFields(t *testing.T) {
+	fieldNames := func(v any) map[string]bool {
+		typ := reflect.TypeOf(v)
+		out := make(map[string]bool, typ.NumField())
+		for i := 0; i < typ.NumField(); i++ {
+			out[typ.Field(i).Name] = true
+		}
+		return out
+	}
+	domainFields := fieldNames(domain.Message{})
+	archiveFields := fieldNames(archivedMessage{})
+
+	for name := range domainFields {
+		if !archiveFields[name] {
+			t.Errorf("archivedMessage is missing domain.Message field %q — add it (and its json tag) so the archive keeps every field", name)
+		}
+	}
+	for name := range archiveFields {
+		if !domainFields[name] {
+			t.Errorf("archivedMessage carries field %q that domain.Message no longer has — remove it", name)
+		}
+	}
+}
 
 // TestEncodeArchive_ContentStaysRoleTagged proves the archive body carries each
 // message's content in its role-tagged JSON shape (via serialization.Encode),

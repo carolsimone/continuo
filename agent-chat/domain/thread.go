@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,3 +67,43 @@ type ToolResultContent struct {
 func (TextContent) isContent()       {}
 func (ToolCallContent) isContent()   {}
 func (ToolResultContent) isContent() {}
+
+// ValidContentForRole reports whether content is the variant a message with the
+// given role must carry: TextContent for user and assistant, ToolCallContent for
+// tool_call, ToolResultContent for tool_result. It exists because Role and
+// Content carry overlapping information — persistence writes Content and reads it
+// back keyed on Role — so a message whose pair disagrees would round-trip as the
+// wrong (empty) variant. NewMessage enforces this; the persistence layer relies
+// on it holding.
+func ValidContentForRole(role Role, content Content) bool {
+	switch role {
+	case RoleUser, RoleAssistant:
+		_, ok := content.(TextContent)
+		return ok
+	case RoleToolCall:
+		_, ok := content.(ToolCallContent)
+		return ok
+	case RoleToolResult:
+		_, ok := content.(ToolResultContent)
+		return ok
+	default:
+		return false
+	}
+}
+
+// NewMessage assembles a Message, rejecting a role/content pairing that would
+// persist as one variant and decode back as another. It is the constructor the
+// write path uses so an illegal pairing cannot reach storage.
+func NewMessage(id, threadID uuid.UUID, seq int, role Role, content Content, createdAt time.Time) (*Message, error) {
+	if !ValidContentForRole(role, content) {
+		return nil, fmt.Errorf("domain: %T is not valid content for role %q", content, role)
+	}
+	return &Message{
+		ID:        id,
+		ThreadID:  threadID,
+		Seq:       seq,
+		Role:      role,
+		Content:   content,
+		CreatedAt: createdAt,
+	}, nil
+}
