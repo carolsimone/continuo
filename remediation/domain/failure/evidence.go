@@ -3,6 +3,8 @@
 // sorted into, and the decision (emit a remediation trigger, or drop).
 package failure
 
+import "github.com/carolsimone/continuo/pkg/domain/model"
+
 // Source identifies which pipeline produced the failure. Validation-time
 // (blue/green) failures are classified; production-run failures enter through
 // a separate ingress adapter.
@@ -16,6 +18,10 @@ const (
 	// topology claim the same relation. It runs before any Job, so evidence for
 	// it carries no dbt log.
 	SourceDuplicateTable Source = "duplicate_table"
+	// SourceParse is topology-controller's own rejection of a node whose SQL
+	// its parser could not resolve. It precedes every Job, so evidence for it
+	// carries the parser's detail text inline instead of a log.
+	SourceParse Source = "parse"
 )
 
 // Category is the deterministic classification of a failed node.
@@ -63,6 +69,12 @@ type FailureEvidence struct {
 	// empty when parse never completed. Forwarded onto the trigger event for
 	// the orchestrator's case base.
 	CodeBundleURI string
+	// ParseKind is the contract kind of a parse failure (invalid_sql or
+	// unqualified_reference for a healable one); empty for every other source.
+	ParseKind model.ParseFailureKind
+	// Detail is the parser's own error text for a parse failure, carried on
+	// the rejection because no log exists; empty for every other source.
+	Detail string
 	// ChangedAncestors are the node's changed transitive ancestors in the
 	// rejected release, as release-controller stamped them, each with the
 	// location THIS release's candidate topology declares for it; forwarded onto

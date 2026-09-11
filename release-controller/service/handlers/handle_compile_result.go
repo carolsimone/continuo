@@ -2,22 +2,23 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 )
 
 // HandleCompileResultInput carries the aggregated compile outcome from
 // executor-controller (compile.completed:v1).
 type HandleCompileResultInput struct {
-	ReleaseID   string       `json:"release_id"`
-	Status      string       `json:"status"` // "ok" | "failed"
-	PerNode     []NodeResult `json:"per_node"`
-	ErrorClass  string       `json:"error_class,omitempty"`
-	ErrorDetail string       `json:"error_detail,omitempty"`
+	ReleaseID   string
+	Status      string // "ok" | "failed"
+	PerNode     []NodeResult
+	ErrorDetail string
 }
 
-// compileRejection maps the compile Job's failed container to the reject
-// reason and the operator/remediation-facing detail. The parse and upload
+// compileRejection derives the reject reason and the operator/remediation-facing
+// detail from the per-node failed_container attribution. The parse and upload
 // containers are continuo's parse-export leg — their failures must never be
 // presented as dbt SQL errors, or the remediation agent is misled into
 // proposing a model fix for a problem no model change can solve.
@@ -30,18 +31,18 @@ type HandleCompileResultInput struct {
 // this loop returning on the first match is not order-dependent in practice.
 // The iteration remains defensive for malformed or future multi-entry
 // payloads.
-func compileRejection(perNode []NodeResult) (reason, errorClass, errorDetail string) {
+func compileRejection(perNode []NodeResult) (reason pkg_model.RejectReason, detail string) {
 	for _, n := range perNode {
 		switch n.FailedContainer {
 		case "parse-prod", "parse-candidate":
-			return "parse_rehearsal_failed", "parse_rehearsal_failed",
+			return pkg_model.RejectReasonParseRehearsalFailed,
 				"the project re-parses under run-pod conditions — typically an env_var() read at parse time whose value differs between compile and run pods, or partial parse disabled in the project (flags: partial_parse: false / --no-partial-parse); this is not a SQL error"
 		case "upload":
-			return "artifact_upload_failed", "artifact_upload_failed",
+			return pkg_model.RejectReasonArtifactUploadFailed,
 				"internal artifact publication failed; no change to the dbt project will fix this"
 		}
 	}
-	return "compile_failed", "", ""
+	return pkg_model.RejectReasonCompileFailed, ""
 }
 
 // HandleCompileResult advances a Compiling release once the dbt compile job
@@ -49,8 +50,7 @@ func compileRejection(perNode []NodeResult) (reason, errorClass, errorDetail str
 //
 // ok path: TransitionFromCompiling (Compiling→Parsing), re-assembles the
 // manifest-key set from live service_prod, emits release.requested:v1 with
-// manifest_keys — payload shape identical to the pre-compile-leg behaviour so
-// topology-controller requires no change.
+// manifest_keys.
 //
 // failed path: Fail with a reason derived from the per-node failed_container
 // attribution (compile_failed, parse_rehearsal_failed, or
@@ -87,28 +87,19 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			d.Logger.Warn("compile failed with no per-node results; release rejected without a remediation trigger",
 				"release_id", in.ReleaseID)
 		}
-		reason, errorClass, errorDetail := compileRejection(in.PerNode)
-		if errorClass == "" {
-			errorClass, errorDetail = in.ErrorClass, in.ErrorDetail
+		reason, errorDetail := compileRejection(in.PerNode)
+		if errorDetail == "" {
+			errorDetail = in.ErrorDetail
 		}
 
 		r.RecordStageResults("compile", results)
-		if err := r.Fail(reason, errorDetail, failing, now); err != nil {
+		if err := r.Fail(string(reason), errorDetail, failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
 
-		// perNodeEntry is the outbox wire shape for a single compile-leg result.
-		// Intentionally omits duration_ms (irrelevant for compile) and file_path
-		// (populated by the remediation service when it reads S3 logs).
-		type perNodeEntry struct {
-			NodeID        string `json:"node_id"`
-			Status        string `json:"status"`
-			DBTLogURI     string `json:"dbt_log_uri,omitempty"`
-			RunResultsURI string `json:"run_results_uri,omitempty"`
-		}
-		perNode := make([]perNodeEntry, len(in.PerNode))
+		perNode := make([]ports.RejectedNode, len(in.PerNode))
 		for i, n := range in.PerNode {
-			perNode[i] = perNodeEntry{
+			perNode[i] = ports.RejectedNode{
 				NodeID:        n.NodeID,
 				Status:        n.Status,
 				DBTLogURI:     n.DBTLogURI,
@@ -116,20 +107,19 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			}
 		}
 
-		payload, err := json.Marshal(map[string]any{
-			"release_id":      in.ReleaseID,
-			"stage":           "compile",
-			"reason":          reason,
-			"error_class":     errorClass,
-			"error_detail":    errorDetail,
-			"failing_nodes":   failing,
-			"per_node":        perNode,
-			"repo":            r.Repo(),
-			"commit_sha":      r.CommitSHA(),
-			"code_bundle_uri": r.CodeBundleURI(),
+		payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+			Shape:         ports.RejectionShapeCompile,
+			ReleaseID:     in.ReleaseID,
+			Reason:        reason,
+			ErrorDetail:   errorDetail,
+			FailingNodes:  failing,
+			PerNode:       perNode,
+			Repo:          r.Repo(),
+			CommitSHA:     r.CommitSHA(),
+			CodeBundleURI: r.CodeBundleURI(),
 		})
 		if err != nil {
-			return fmt.Errorf("marshal payload: %w", err)
+			return fmt.Errorf("encode rejection: %w", err)
 		}
 
 		if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {

@@ -2,6 +2,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from domain.contract_vocabulary import ParseFailureKind
+
 
 class NodeType(StrEnum):
     DBT_MODEL = "dbt-model"
@@ -25,6 +27,22 @@ class ManifestKind(StrEnum):
     """
     DBT = "dbt"
     PYTHON = "python"
+
+
+@dataclass(frozen=True)
+class FailedNode:
+    """One node the parse leg could not resolve, with where its source lives.
+
+    The topology is never published for a release with a broken node, so the
+    location travels here: it is what lets release-controller record a
+    per-node result and the remediation agent open the right file.
+    """
+    node_id: str
+    kind: ParseFailureKind
+    service: str
+    file_path: str
+    node_type: str
+    detail: str
 
 
 @dataclass(frozen=True)

@@ -388,3 +388,89 @@ streams:
       - service: orchestrator
         group: orchestrator-remediation-pr-closed-provenance
         const: OrchestratorRemediationPrClosedProvenance
+
+# Closed value sets shared across services. Each becomes a typed string in Go
+# (pkg/domain/model/vocabulary.gen.go) and a StrEnum in Python
+# (topology-controller/domain/contract_vocabulary.py). They land in the domain
+# layer, not alongside the stream names above, because domain code names these
+# values and must not import the transport contract.
+# Declaration order within a vocabulary is precedence.
+vocabularies:
+  - name: parse_failure_kind
+    const: ParseFailureKind
+    description: Why topology-controller could not resolve a candidate release. Declaration order is precedence.
+    values:
+      - value: invalid_sql
+        const: InvalidSQL
+        healable: true
+        description: sqlglot cannot parse a node's compiled SQL under the configured dialect.
+      - value: unqualified_reference
+        const: UnqualifiedReference
+        healable: true
+        description: a node references a relation without a schema qualifier.
+      - value: invalid_artifact
+        const: InvalidArtifact
+        healable: false
+        description: the uploaded manifest or contract is unreadable, empty, of unknown kind, or names another service.
+      - value: internal
+        const: Internal
+        healable: false
+        description: continuo's own wiring or an S3 write failed; no change to the user's source will fix it.
+
+  - name: reject_reason
+    const: RejectReason
+    description: >-
+      Why release-controller ended a candidate or fix-verification run short of
+      promotion. Travels as `reason` on release.rejected:v1 and as the run's
+      stored fail reason. `healable` marks the reasons the remediation
+      classifier turns into a heal trigger; every other reason it drops, so a
+      retry of one would spend a remediation round for nothing.
+    values:
+      - value: compile_failed
+        const: CompileFailed
+        healable: true
+        description: the release's dbt compile job failed on the project's own SQL.
+      - value: parse_rehearsal_failed
+        const: ParseRehearsalFailed
+        healable: false
+        description: the compile pod's parse or parse-candidate container failed, so the project does not re-parse under run-pod conditions; not a SQL error.
+      - value: artifact_upload_failed
+        const: ArtifactUploadFailed
+        healable: false
+        description: the compile pod could not publish its artifacts; continuo's own failure, which no change to the dbt project fixes.
+      - value: invalid_sql
+        const: InvalidSQL
+        healable: true
+        description: topology-controller's parser could not read a node's compiled SQL.
+      - value: unqualified_reference
+        const: UnqualifiedReference
+        healable: true
+        description: a node references a relation without a schema qualifier.
+      - value: invalid_artifact
+        const: InvalidArtifact
+        healable: false
+        description: a manifest or python contract in the release is unreadable, empty, of unknown kind, or names another service.
+      - value: internal_error
+        const: InternalError
+        healable: false
+        description: continuo's own wiring or an S3 access failed while resolving the release.
+      - value: duplicate_table
+        const: DuplicateTable
+        healable: true
+        description: two nodes in the candidate topology claim the same warehouse relation.
+      - value: unbuildable_cross_service_upstream
+        const: UnbuildableCrossServiceUpstream
+        healable: false
+        description: a changed node reads an upstream that is absent from the candidate topology, so the candidate schema cannot build it.
+      - value: nothing_to_validate
+        const: NothingToValidate
+        healable: false
+        description: a fix-verification run's candidate declares no node, so the fix it proposes is unproven.
+      - value: seed_build_failed
+        const: SeedBuildFailed
+        healable: true
+        description: building the release's candidate seeds failed.
+      - value: validation_failed
+        const: ValidationFailed
+        healable: true
+        description: at least one node failed the candidate's dbt --empty validation run.

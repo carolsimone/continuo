@@ -2,24 +2,24 @@ package handlers
 
 import "github.com/carolsimone/continuo/release-controller/domain/pipeline"
 
-// NodeResult is the inbound wire shape of one per-node result carried by the
-// compile and seed-build aggregate events (the validation leg instead streams
-// per-node content as kind:"node" messages on the unified validation.result:v1
-// stream). It is kept separate from the domain value object
-// pipeline.NodeValidationResult so the transport shape stays decoupled from the
-// domain; the handlers map NodeResult → pipeline.NodeValidationResult before
-// recording it.
+// NodeResult is one per-node result carried by the compile and seed-build
+// aggregate events (the validation leg instead streams per-node content as
+// kind:"node" messages on the unified validation.result:v1 stream). The Redis
+// adapter decodes the wire entries into it; it is kept separate from the
+// domain value object pipeline.NodeValidationResult so the transport shape
+// stays decoupled from the domain, and the handlers map NodeResult →
+// pipeline.NodeValidationResult before recording it.
 type NodeResult struct {
-	NodeID        string `json:"node_id"`
-	Status        string `json:"status"` // "ok" or "failed"
-	DBTLogURI     string `json:"dbt_log_uri,omitempty"`
-	RunResultsURI string `json:"run_results_uri,omitempty"`
-	DurationMS    int64  `json:"duration_ms,omitempty"`
+	NodeID        string
+	Status        string // "ok" or "failed"
+	DBTLogURI     string
+	RunResultsURI string
+	DurationMS    int64
 
 	// FailedContainer attributes a compile-leg failure to the pod container
 	// that failed (compile | parse-prod | parse-candidate | upload). Empty
-	// for successes, non-compile legs, and pre-attribution producers.
-	FailedContainer string `json:"failed_container,omitempty"`
+	// for successes and for non-compile legs.
+	FailedContainer string
 }
 
 // stageResults converts the inbound per-node wire results of a compile or

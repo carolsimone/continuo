@@ -6,6 +6,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 func TestClassifyBuckets(t *testing.T) {
@@ -162,6 +164,49 @@ func TestClassify_ExcerptIsCappedOnARuneBoundary(t *testing.T) {
 	c := Classify(long)
 	assert.LessOrEqual(t, len(c.Excerpt), 4096)
 	assert.True(t, utf8.ValidString(c.Excerpt))
+}
+
+func TestClassifyParse_HealableKindIsLogicAndEmits(t *testing.T) {
+	for _, kind := range []model.ParseFailureKind{model.ParseFailureKindInvalidSQL, model.ParseFailureKindUnqualifiedReference} {
+		c := ClassifyParse(FailureEvidence{
+			Source: SourceParse, ReleaseID: "rel-1", NodeID: "analytics.fx",
+			ParseKind: kind, Detail: "Expecting ). Line 3, Col: 12.\n  select a b",
+		})
+		if c.Category != CategoryLogic {
+			t.Errorf("%s: category = %q, want %q", kind, c.Category, CategoryLogic)
+		}
+		if c.Decision != DecisionEmit {
+			t.Errorf("%s: decision = %q, want emit", kind, c.Decision)
+		}
+		if c.Reason != "logic:"+string(kind) {
+			t.Errorf("%s: reason = %q", kind, c.Reason)
+		}
+		if c.Excerpt == "" || !strings.Contains(c.Excerpt, "Expecting )") {
+			t.Errorf("%s: excerpt = %q, want the parser detail", kind, c.Excerpt)
+		}
+	}
+}
+
+func TestClassifyParse_SignatureKeysOnKindAndNode(t *testing.T) {
+	a := ClassifyParse(FailureEvidence{ReleaseID: "rel-1", NodeID: "a.b", ParseKind: model.ParseFailureKindInvalidSQL, Detail: "x"})
+	b := ClassifyParse(FailureEvidence{ReleaseID: "rel-9", NodeID: "a.b", ParseKind: model.ParseFailureKindInvalidSQL, Detail: "y"})
+	c := ClassifyParse(FailureEvidence{ReleaseID: "rel-1", NodeID: "a.c", ParseKind: model.ParseFailureKindInvalidSQL, Detail: "x"})
+	d := ClassifyParse(FailureEvidence{ReleaseID: "rel-1", NodeID: "a.b", ParseKind: model.ParseFailureKindUnqualifiedReference, Detail: "x"})
+	if a.Signature != b.Signature {
+		t.Errorf("same node and kind across releases must share a signature")
+	}
+	if a.Signature == c.Signature || a.Signature == d.Signature {
+		t.Errorf("a different node or kind must be a different signature")
+	}
+}
+
+func TestClassifyParse_NonHealableKindDrops(t *testing.T) {
+	for _, kind := range []model.ParseFailureKind{model.ParseFailureKindInvalidArtifact, model.ParseFailureKindInternal, "nonsense", ""} {
+		c := ClassifyParse(FailureEvidence{NodeID: "a.b", ParseKind: kind, Detail: "x"})
+		if c.Decision != DecisionDrop || c.Reason != "parse:not_healable" {
+			t.Errorf("%q: got %+v, want drop/parse:not_healable", kind, c)
+		}
+	}
 }
 
 func contains(s, sub string) bool {

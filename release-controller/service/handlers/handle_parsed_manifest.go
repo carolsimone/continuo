@@ -14,26 +14,44 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
 )
 
+// ParsedFailedNode is one node topology-controller could not resolve, with
+// the source location the candidate declares for it. It carries the location
+// because the topology is never published for a failed parse.
+type ParsedFailedNode struct {
+	NodeID   string
+	Kind     pkg_model.ParseFailureKind
+	Service  string
+	FilePath string
+	NodeType string
+	Detail   string
+}
+
 // HandleParsedManifestInput carries the result of the topology-controller
-// parsing a candidate release. Status must be "ok" or "failed". The Redis
-// binding decodes the wire payload and builds this domain-typed input, so it
-// carries no serialization tags.
+// parsing a candidate release. Status must be "ok" or "failed". On "failed",
+// FailureKind says why (a contract value), Detail is the operator-facing
+// summary, and FailedNodes lists every node the parse rejected (empty for an
+// artifact or internal failure). The Redis binding decodes the wire payload
+// and builds this domain-typed input, so it carries no serialization tags.
 type HandleParsedManifestInput struct {
 	ReleaseID     string
 	Status        string // "ok" or "failed"
 	Topology      release.Topology
 	CodeBundleURI string
-	ErrorClass    string
-	ErrorDetail   string
+	FailureKind   pkg_model.ParseFailureKind
+	Detail        string
+	FailedNodes   []ParsedFailedNode
 }
 
 // HandleParsedManifest handles the manifest parse result from topology-controller.
 //
-// On failure: transitions the release to Rejected and emits release.rejected:v1.
+// On failure: records one `parse` stage result per failed node, transitions the
+// release to Rejected under the reason ParseReason maps from the failure kind,
+// and emits release.rejected:v1 with stage `parse`.
 // On success: joins image tags into the topology, computes the validation closure,
 // transitions to Validating, and emits validation.requested:v1.
 func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestInput) error {
@@ -74,19 +92,75 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 	return handleParseOK(ctx, d, u, r, in, now)
 }
 
+// parseReasons maps each parse failure kind to the reject reason stored on the
+// run and emitted on release.rejected:v1. Every contract kind has an entry
+// (pinned by TestHandleParsedManifest_Failed_ReasonPerKind), and every value is
+// a declared reject_reason (pinned by TestParseReasonsAreDeclaredRejectReasons).
+var parseReasons = map[pkg_model.ParseFailureKind]pkg_model.RejectReason{
+	pkg_model.ParseFailureKindInvalidSQL:           pkg_model.RejectReasonInvalidSQL,
+	pkg_model.ParseFailureKindUnqualifiedReference: pkg_model.RejectReasonUnqualifiedReference,
+	pkg_model.ParseFailureKindInvalidArtifact:      pkg_model.RejectReasonInvalidArtifact,
+	pkg_model.ParseFailureKindInternal:             pkg_model.RejectReasonInternalError,
+}
+
+// ParseReason resolves a parse failure kind to its reject reason. A kind this
+// build does not know is reported as internal_error: the release still
+// rejects and the queue still advances, and the detail names the value.
+func ParseReason(kind pkg_model.ParseFailureKind) pkg_model.RejectReason {
+	if r, ok := parseReasons[kind]; ok {
+		return r
+	}
+	return pkg_model.RejectReasonInternalError
+}
+
 func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleParsedManifestInput, now time.Time) error {
-	if err := r.Fail("parse_failed", in.ErrorDetail, nil, now); err != nil {
+	reason := ParseReason(in.FailureKind)
+	detail := in.Detail
+	if !in.FailureKind.IsValid() {
+		detail = fmt.Sprintf("unknown failure_kind %q: %s", in.FailureKind, in.Detail)
+	}
+
+	results := make([]pipeline.NodeValidationResult, 0, len(in.FailedNodes))
+	failing := make([]string, 0, len(in.FailedNodes))
+	perNode := make([]ports.RejectedNode, 0, len(in.FailedNodes))
+	for _, n := range in.FailedNodes {
+		results = append(results, pipeline.NodeValidationResult{
+			NodeID: n.NodeID, Status: "failed", FilePath: n.FilePath, NodeType: n.NodeType,
+			Detail: n.Detail,
+		})
+		failing = append(failing, n.NodeID)
+		perNode = append(perNode, ports.RejectedNode{
+			NodeID: n.NodeID, Status: "failed", Kind: string(n.Kind), Detail: n.Detail,
+			FilePath: n.FilePath, Service: n.Service, NodeType: n.NodeType,
+		})
+	}
+	if len(results) > 0 {
+		r.RecordStageResults("parse", results)
+	}
+	if in.FailureKind.Healable() && len(in.FailedNodes) == 0 {
+		// A healable kind is one the remediation classifier can act on, but it
+		// can only act per node: with no failed nodes the release rejects and
+		// nothing downstream has a fix target.
+		d.Logger.Warn("parse failed with a healable kind but no failed nodes; release rejected without a remediation trigger",
+			"release_id", in.ReleaseID, "failure_kind", string(in.FailureKind))
+	}
+	if err := r.Fail(string(reason), detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"release_id":   in.ReleaseID,
-		"reason":       "parse_failed",
-		"error_class":  in.ErrorClass,
-		"error_detail": in.ErrorDetail,
+	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+		Shape:         ports.RejectionShapeParse,
+		ReleaseID:     in.ReleaseID,
+		Reason:        reason,
+		ErrorDetail:   detail,
+		FailingNodes:  failing,
+		PerNode:       perNode,
+		Repo:          r.Repo(),
+		CommitSHA:     r.CommitSHA(),
+		CodeBundleURI: r.CodeBundleURI(),
 	})
 	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
+		return fmt.Errorf("encode rejection: %w", err)
 	}
 	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
 		return err
@@ -598,7 +672,7 @@ func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitO
 	const detail = "a verification run verifies a fix by running it through the pipeline, and its candidate " +
 		"declares no node at all, so nothing was built or checked and the fix is unproven"
 
-	if err := r.Fail("nothing_to_validate", detail, nil, now); err != nil {
+	if err := r.Fail(string(pkg_model.RejectReasonNothingToValidate), detail, nil, now); err != nil {
 		return fmt.Errorf("transition to failed: %w", err)
 	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {
@@ -623,17 +697,17 @@ func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitO
 // therefore cannot be built into the candidate schema.
 func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
 	detail := formatCrossServiceEdges(edges)
-	if err := r.Fail("unbuildable_cross_service_upstream", detail, nil, now); err != nil {
+	if err := r.Fail(string(pkg_model.RejectReasonUnbuildableCrossServiceUpstream), detail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
-	payload, err := json.Marshal(map[string]any{
-		"release_id":   releaseID,
-		"reason":       "unbuildable_cross_service_upstream",
-		"error_class":  "validation_unsupported",
-		"error_detail": detail,
+	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+		Shape:       ports.RejectionShapeUnbuildableUpstream,
+		ReleaseID:   releaseID,
+		Reason:      pkg_model.RejectReasonUnbuildableCrossServiceUpstream,
+		ErrorDetail: detail,
 	})
 	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
+		return fmt.Errorf("encode rejection: %w", err)
 	}
 	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
 		return err
@@ -720,7 +794,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 
 	seen := make(map[string]bool, len(claims))
 	failing := make([]string, 0, len(claims))
-	perNode := make([]map[string]any, 0, len(claims))
+	perNode := make([]ports.RejectedNode, 0, len(claims))
 	for _, c := range claims {
 		for _, cl := range c.Claimants {
 			if !seen[cl.UniqueID] {
@@ -738,35 +812,35 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 			continue
 		}
 		target, other := c.Target(r.ChangedService())
-		perNode = append(perNode, map[string]any{
-			"node_id":         target.UniqueID,
-			"status":          "failed",
-			"service":         target.ServiceName,
-			"file_path":       target.OriginalFilePath,
-			"node_type":       target.NodeType,
-			"relation_id":     c.RelationID,
-			"other_service":   other.ServiceName,
-			"other_file_path": other.OriginalFilePath,
+		perNode = append(perNode, ports.RejectedNode{
+			NodeID:        target.UniqueID,
+			Status:        "failed",
+			Service:       target.ServiceName,
+			FilePath:      target.OriginalFilePath,
+			NodeType:      target.NodeType,
+			RelationID:    c.RelationID,
+			OtherService:  other.ServiceName,
+			OtherFilePath: other.OriginalFilePath,
 		})
 	}
 
-	if err := r.Fail("duplicate_table", detail, failing, now); err != nil {
+	if err := r.Fail(string(pkg_model.RejectReasonDuplicateTable), detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"release_id":      releaseID,
-		"reason":          "duplicate_table",
-		"error_class":     "DuplicatedTable",
-		"error_detail":    detail,
-		"failing_nodes":   failing,
-		"per_node":        perNode,
-		"repo":            r.Repo(),
-		"commit_sha":      r.CommitSHA(),
-		"code_bundle_uri": r.CodeBundleURI(),
+	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+		Shape:         ports.RejectionShapeDuplicateTable,
+		ReleaseID:     releaseID,
+		Reason:        pkg_model.RejectReasonDuplicateTable,
+		ErrorDetail:   detail,
+		FailingNodes:  failing,
+		PerNode:       perNode,
+		Repo:          r.Repo(),
+		CommitSHA:     r.CommitSHA(),
+		CodeBundleURI: r.CodeBundleURI(),
 	})
 	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
+		return fmt.Errorf("encode rejection: %w", err)
 	}
 
 	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {

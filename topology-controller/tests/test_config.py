@@ -113,3 +113,17 @@ def test_release_requested_stream_constant_sourced_from_contract():
     assert RELEASE_REQUESTED_STREAM == RELEASE_REQUESTED_V1
     assert RELEASE_REQUESTED_GROUP == TOPOLOGY_CONTROLLER_RELEASE_REQUESTED
     assert MANIFEST_LOADED_CANDIDATE_STREAM == MANIFEST_LOADED_CANDIDATE_V1
+
+
+def test_every_failure_kind_the_handler_can_publish_is_in_the_contract():
+    """The handler names kinds by enum member, so an undeclared kind cannot
+    compile; this pins the members it relies on to the generated contract so
+    a regenerated vocabulary that drops one fails here, not in production."""
+    import re
+    from pathlib import Path
+    from domain.contract_vocabulary import ParseFailureKind
+
+    src = (Path(__file__).parent.parent / "service" / "candidate_manifest_handler.py").read_text()
+    used = set(re.findall(r"ParseFailureKind\.([A-Z_]+)", src))
+    assert used <= {m.name for m in ParseFailureKind}
+    assert {"INVALID_ARTIFACT", "INTERNAL"} <= used

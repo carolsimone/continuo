@@ -73,27 +73,33 @@ type Transition struct {
 }
 
 // NodeValidationResult is the persisted per-node outcome of a pipeline stage.
-// Stage identifies which leg produced it: "compile", "seed_build", or
-// "validation". A run accumulates results across all legs so failure
-// diagnostics are always available regardless of which stage ended it.
+// Stage identifies which leg produced it (see the Stage field comment below).
+// A run accumulates results across all legs so failure diagnostics are always
+// available regardless of which stage ended it.
 type NodeValidationResult struct {
-	// Stage is "compile" | "seed_build" | "validation". The failed unit
-	// generalises across legs — a dbt node for validation/seed_build, a
-	// service compile unit for the compile leg.
+	// Stage is "parse" | "compile" | "seed_build" | "validation". The failed
+	// unit generalises across legs — a dbt node for parse/validation/seed_build,
+	// a service compile unit for the compile leg.
 	Stage         string
 	NodeID        string
 	Status        string // "ok" | "failed"
 	DBTLogURI     string
 	RunResultsURI string
 	DurationMS    int64
-	// FilePath is the optional offending source file path; populated for
-	// non-node legs (e.g. compile) where the failure maps to a file rather
-	// than a dbt node ID.
+	// FilePath is the optional offending source file path. The parse leg
+	// carries the candidate's declared path for the failing node; the compile
+	// leg carries the path the dbt log names, since its failed unit is a
+	// service rather than a node.
 	FilePath string
 	// NodeType is the node's kind as the candidate topology declares it, so a
 	// reader can tell a test's bind check from a model's build without the
 	// topology.
 	NodeType string
+	// Detail is this leg's own diagnostic for this node. The parse leg carries
+	// the parser's error text, with the line and column it rejected, since no
+	// Job ran and so no log exists to point a reader at. Empty when the leg
+	// reports through a log instead.
+	Detail string
 }
 
 // Candidate holds the facts only a candidate release has: where its source

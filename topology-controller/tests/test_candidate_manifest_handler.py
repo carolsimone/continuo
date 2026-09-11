@@ -5,13 +5,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, create_autospec
 import pytest
 import yaml
-from domain.model import ManifestFile, ManifestKind, Runtime
+from domain.model import FailedNode, ManifestFile, ManifestKind, Runtime
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
 from service import candidate_artifacts, candidate_manifest_handler
 from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifactBuilder
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.content_hash import content_hash_fold
 from service.ports import ManifestSourcePort
+from domain.contract_vocabulary import ParseFailureKind
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -164,44 +165,121 @@ def test_handle_publishes_ok_with_empty_topology_when_no_manifests():
     publisher.publish_failed.assert_not_called()
 
 
-def test_handle_publishes_failed_on_unqualified_reference(monkeypatch):
+def _failed_kwargs(publisher):
+    publisher.publish_failed.assert_called_once()
+    return publisher.publish_failed.call_args.kwargs
+
+
+def _dbt_node(name, *, original_file_path=""):
+    """A minimal valid dbt model node, for manifests built inline where a test
+    needs more than one node or a node with a source file_path — neither of
+    which manifest_service1.json's single, path-less fixture node has."""
+    node = {
+        "unique_id": f"model.service-1.{name}",
+        "name": name,
+        "schema": "test_schema",
+        "fqn": ["service-1", name],
+        "tags": ["daily"],
+        "resource_type": "model",
+        "config": {"meta": {"owner": "team-a", "criticality": "CORE"}},
+        "compiled_code": "SELECT 1 AS id",
+        "checksum": {"name": "sha256", "checksum": f"hash-{name}"},
+    }
+    if original_file_path:
+        node["original_file_path"] = original_file_path
+    return node
+
+
+def _source_with_nodes(tmp_path, *nodes):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"nodes": {n["unique_id"]: n for n in nodes}}))
+    source = create_autospec(ManifestSourcePort)
+    source.list_manifests.return_value = [
+        ManifestFile(path=str(manifest), version="v1", image_tag="")
+    ]
+    return source
+
+
+def test_unqualified_reference_publishes_one_failed_node(monkeypatch, tmp_path):
     def _raise(node, lookup, *, dialect):
-        raise UnqualifiedTableReferenceError(table_name="orders", node_table_name="fact")
+        raise UnqualifiedTableReferenceError(table_name="orders", node_table_name=node.table_name)
 
-    monkeypatch.setattr(
-        "service.candidate_manifest_handler.resolve_upstream_deps", _raise
-    )
+    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise)
+    source = _source_with_nodes(tmp_path, _dbt_node("users", original_file_path="models/users.sql"))
+    publisher = MagicMock()
+    uploader = _make_uploader()
 
+    _handler(source, publisher, uploader).handle(release_id="rel-fail")
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.UNQUALIFIED_REFERENCE
+    assert all(n.kind == ParseFailureKind.UNQUALIFIED_REFERENCE for n in kw["failed_nodes"])
+    first = kw["failed_nodes"][0]
+    assert first.node_id and first.service and first.file_path and first.node_type
+    assert "orders" in first.detail
+    publisher.publish_ok.assert_not_called()
+    uploader.upload.assert_not_called()
+
+
+def test_invalid_sql_publishes_every_broken_node_not_just_the_first(monkeypatch, tmp_path):
+    def _raise(node, lookup, *, dialect):
+        raise InvalidCompiledSqlError(node_table_name=node.table_name, detail=f"broken {node.table_name}")
+
+    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise)
+    source = _source_with_nodes(tmp_path, _dbt_node("node_a"), _dbt_node("node_b"))
+    publisher = MagicMock()
+
+    _handler(source, publisher, _make_uploader()).handle(release_id="rel-fail")
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_SQL
+    assert len(kw["failed_nodes"]) > 1, "every node raised, every node must be reported"
+    assert {n.kind for n in kw["failed_nodes"]} == {ParseFailureKind.INVALID_SQL}
+    assert kw["detail"].startswith(f"{len(kw['failed_nodes'])} nodes failed to parse")
+
+
+def test_mixed_kinds_take_invalid_sql_by_precedence(monkeypatch, tmp_path):
+    calls = {"n": 0}
+
+    def _raise(node, lookup, *, dialect):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise UnqualifiedTableReferenceError(table_name="x", node_table_name=node.table_name)
+        raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="bad")
+
+    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise)
+    source = _source_with_nodes(tmp_path, _dbt_node("node_a"), _dbt_node("node_b"))
+    publisher = MagicMock()
+
+    _handler(source, publisher, _make_uploader()).handle(release_id="rel-fail")
+
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_SQL
+    kinds = {n.kind for n in kw["failed_nodes"]}
+    assert kinds == {ParseFailureKind.INVALID_SQL, ParseFailureKind.UNQUALIFIED_REFERENCE}
+
+
+def test_one_broken_node_still_reports_the_healthy_ones_as_fine(monkeypatch):
+    """A single broken node fails the release; the others are resolved and are
+    not reported as failed."""
+    real = candidate_manifest_handler.resolve_upstream_deps
+    calls = {"n": 0}
+
+    def _raise_once(node, lookup, *, dialect):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise InvalidCompiledSqlError(node_table_name=node.table_name, detail="bad")
+        return real(node, lookup, dialect=dialect)
+
+    monkeypatch.setattr("service.candidate_manifest_handler.resolve_upstream_deps", _raise_once)
     source = _make_source(("manifest_service1.json", "v1"))
     publisher = MagicMock()
 
-    handler = _handler(source, publisher, _make_uploader())
-    handler.handle(release_id="rel-fail")  # must NOT raise
+    _handler(source, publisher, _make_uploader()).handle(release_id="rel-fail")
 
-    publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "UnqualifiedTableReference"
-    assert "orders" in publisher.publish_failed.call_args.kwargs["error_detail"]
-    publisher.publish_ok.assert_not_called()
-
-
-def test_handle_publishes_failed_on_invalid_compiled_sql(monkeypatch):
-    def _raise(node, lookup, *, dialect):
-        raise InvalidCompiledSqlError(node_table_name="table_gg", detail="Invalid expression / Unexpected token.")
-
-    monkeypatch.setattr(
-        "service.candidate_manifest_handler.resolve_upstream_deps", _raise
-    )
-
-    source = _make_source(("manifest_service1.json", "v1"))
-    publisher = MagicMock()
-
-    handler = _handler(source, publisher, _make_uploader())
-    handler.handle(release_id="rel-fail")  # must NOT raise
-
-    publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "InvalidCompiledSql"
-    assert "table_gg" in publisher.publish_failed.call_args.kwargs["error_detail"]
-    publisher.publish_ok.assert_not_called()
+    kw = _failed_kwargs(publisher)
+    assert len(kw["failed_nodes"]) == 1
+    assert kw["detail"].startswith("1 node failed to parse")
 
 
 def test_handle_publishes_failed_on_malformed_manifest(tmp_path):
@@ -217,8 +295,9 @@ def test_handle_publishes_failed_on_malformed_manifest(tmp_path):
     handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-malformed")  # must NOT raise
 
-    publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedManifest"
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert kw["failed_nodes"] == []
     publisher.publish_ok.assert_not_called()
 
 
@@ -237,8 +316,8 @@ def test_handle_publishes_failed_on_missing_nodes_key(tmp_path):
     handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-no-nodes")  # must NOT raise
 
-    publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedManifest"
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     publisher.publish_ok.assert_not_called()
 
 
@@ -269,8 +348,8 @@ def test_handle_publishes_failed_on_node_with_empty_fqn(tmp_path):
     handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-empty-fqn")  # must NOT raise
 
-    publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedManifest"
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
     publisher.publish_ok.assert_not_called()
 
 
@@ -343,9 +422,9 @@ def test_handle_publishes_failed_empty_manifest_for_declared_service(tmp_path):
     handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-empty-svc")  # must NOT raise
 
-    publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "EmptyManifest"
-    assert "service-1" in publisher.publish_failed.call_args.kwargs["error_detail"]
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "service-1" in kw["detail"]
     publisher.publish_ok.assert_not_called()
 
 
@@ -379,9 +458,9 @@ def test_handle_publishes_failed_service_mismatch(tmp_path):
     handler = _handler(source, publisher, _make_uploader())
     handler.handle(release_id="rel-mismatch")  # must NOT raise
 
-    publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "ServiceMismatch"
-    detail = publisher.publish_failed.call_args.kwargs["error_detail"]
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    detail = kw["detail"]
     assert "service-1" in detail
     assert "service-2" in detail
     publisher.publish_ok.assert_not_called()
@@ -498,8 +577,9 @@ def test_upload_failure_is_fatal(handler_with_mocks):
     handler.handle(release_id="rel-1")
 
     publisher.publish_ok.assert_not_called()
-    publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "CandidateArtifactUploadFailed"
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INTERNAL
+    assert kw["failed_nodes"] == []
 
 
 def test_handle_calls_source_cleanup_even_on_upload_failure():
@@ -552,8 +632,8 @@ def test_bundle_upload_failure_publishes_failed():
     handler.handle(release_id="rel-1")  # must NOT raise
 
     publisher.publish_ok.assert_not_called()
-    publisher.publish_failed.assert_called_once()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "CodeBundleUploadFailed"
+    kw = _failed_kwargs(publisher)
+    assert kw["failure_kind"] == ParseFailureKind.INTERNAL
 
 
 def test_empty_manifests_publish_empty_bundle_uri():
@@ -731,13 +811,13 @@ def test_a_malformed_python_contract_fails_the_whole_release(tmp_path):
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_not_called()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "MalformedContract"
+    assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
 
 def test_an_empty_python_contract_fails_the_release(tmp_path):
     """An artifact declaring no nodes would silently retire every node of that
     service on promote — the same hazard as an empty dbt manifest, so the same
-    guard and the same error class."""
+    guard and the same failure_kind."""
     publisher = MagicMock()
     source = _source_of(ManifestFile(
         path=_python_contract(tmp_path), version="v1",
@@ -747,8 +827,8 @@ def test_an_empty_python_contract_fails_the_release(tmp_path):
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     kwargs = publisher.publish_failed.call_args.kwargs
-    assert kwargs["error_class"] == "EmptyManifest"
-    assert "contract declares no nodes" in kwargs["error_detail"]
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "contract declares no nodes" in kwargs["detail"]
 
 
 def test_a_python_contract_for_another_service_fails_the_release(tmp_path):
@@ -760,7 +840,7 @@ def test_a_python_contract_for_another_service_fails_the_release(tmp_path):
 
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
 
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "ServiceMismatch"
+    assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
 
 def test_an_unknown_kind_fails_the_release_permanently():
@@ -775,16 +855,16 @@ def test_an_unknown_kind_fails_the_release_permanently():
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     kwargs = publisher.publish_failed.call_args.kwargs
-    assert kwargs["error_class"] == "UnknownManifestKind"
-    assert "spark" in kwargs["error_detail"]
+    assert kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
+    assert "spark" in kwargs["detail"]
 
 
 def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
     """An explicitly empty kind is not a kind this build can parse, so it takes
     the same permanent-failure path as any other unrecognized value. Silently
     reading it as dbt would parse a python contract with the dbt parser and
-    surface MalformedManifest — an error class that sends the operator looking
-    at the wrong artifact entirely."""
+    surface a detail about a broken dbt manifest, sending the operator
+    looking at the wrong artifact entirely."""
     publisher = MagicMock()
     source = _source_of(ManifestFile(
         path="/nonexistent", version="v1",
@@ -794,7 +874,7 @@ def test_an_empty_kind_fails_the_release_rather_than_parsing_as_dbt():
     _dispatch_handler(source, publisher).handle(release_id="rel-1")
 
     publisher.publish_ok.assert_not_called()
-    assert publisher.publish_failed.call_args.kwargs["error_class"] == "UnknownManifestKind"
+    assert publisher.publish_failed.call_args.kwargs["failure_kind"] == ParseFailureKind.INVALID_ARTIFACT
 
 
 def test_a_python_kind_entry_is_published_as_a_python_model(tmp_path):

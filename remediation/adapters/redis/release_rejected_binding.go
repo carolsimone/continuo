@@ -8,6 +8,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
@@ -18,8 +19,8 @@ import (
 // release-controller. Only the fields the classifier needs are decoded.
 type rejectedPayload struct {
 	ReleaseID string `json:"release_id"`
-	Stage     string `json:"stage"`  // "compile" | "seed_build" | "validation"; absent in older payloads and in the stage-less duplicate_table rejection
-	Reason    string `json:"reason"` // "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed" | "duplicate_table"
+	Stage     string `json:"stage"`  // "parse" | "compile" | "seed_build" | "validation"; absent in the stage-less duplicate_table rejection
+	Reason    string `json:"reason"` // one of the reject_reason vocabulary values (pkg/domain/model.RejectReason)
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
 	// RemediationRound is set by release-controller on a
@@ -28,13 +29,14 @@ type rejectedPayload struct {
 	// release.rejected:v1 rejection, which is round 1.
 	RemediationRound int `json:"remediation_round"`
 	// CodeBundleURI locates the rejected release's code-bundle document,
-	// stamped by release-controller. Absent (and thus empty) for a payload
-	// from before the field existed or for a rejection with no bundle.
+	// stamped by release-controller. Empty when the rejection carries no
+	// bundle: a compile- or parse-stage rejection precedes the parse that
+	// produces one.
 	CodeBundleURI string `json:"code_bundle_uri"`
-	// Shadow marks a pre-cutover fix-verification rejection. Current
+	// Shadow marks a rejection emitted for a fix-verification run.
 	// release-controller never sets it — a verification run's failure emits no
-	// release event at all — so it can only appear on a legacy message left in
-	// the backlog across an upgrade. It exists solely so those messages can be
+	// release event at all — so it appears only on a message another producer
+	// left in the backlog. The field exists solely so such a message is
 	// dropped (see evidenceFromRejected) rather than misclassified.
 	Shadow  bool `json:"shadow"`
 	PerNode []struct {
@@ -72,6 +74,11 @@ type rejectedPayload struct {
 		// nothing.
 		OtherService  string `json:"other_service"`
 		OtherFilePath string `json:"other_file_path"`
+		// Kind and Detail are set on a parse-stage rejection: the contract kind
+		// topology-controller assigned the node and its parser's own error text,
+		// carried inline because no Job ran and so no log exists.
+		Kind   string `json:"kind"`
+		Detail string `json:"detail"`
 		// ChangedAncestors are the node's changed transitive ancestors, stamped
 		// by release-controller from the candidate topology, each with the file
 		// path and service THAT topology declares for it — the location an
@@ -108,12 +115,15 @@ func changedAncestors(in []changedAncestorPayload) []failure.ChangedAncestor {
 
 // sourceFromPayload resolves the remediation Source from a release.rejected
 // payload. It prefers the explicit stage field and falls back to the reason
-// field, which covers older payloads with no stage and the stage-less
-// duplicate_table rejection. The bool is false when the rejection is not
-// remediable — parse_failed, unbuildable_cross_service_upstream, or an unknown
-// future stage; the caller then produces no evidence rather than misrouting it.
+// field, which covers the stage-less duplicate_table rejection. The bool is
+// false when the rejection is not remediable — invalid_artifact/internal_error
+// parse rejections are handled by the classifier's own drop,
+// unbuildable_cross_service_upstream, or an unknown future stage; the caller
+// then produces no evidence rather than misrouting it.
 func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 	switch stage {
+	case "parse":
+		return failure.SourceParse, true
 	case "compile":
 		return failure.SourceCompile, true
 	case "seed_build":
@@ -140,21 +150,21 @@ func sourceFromPayload(stage, reason string) (failure.Source, bool) {
 // The Source field is derived from the payload's stage field; when stage is
 // absent, the reason field is used as a fallback. FilePath and Service carry
 // whatever the rejection payload set directly (populated by release-controller
-// for validation, seed_build, and duplicate_table); for compile failures,
-// which have none, the handler extracts FilePath from the dbt log after the
-// log is fetched.
+// for validation, seed_build, duplicate_table, and parse); for compile
+// failures, which have none, the handler extracts FilePath from the dbt log
+// after the log is fetched.
 func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 	var p rejectedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, fmt.Errorf("unmarshal release.rejected payload: %w", err)
 	}
 
-	// A pre-cutover fix-verification rejection may still sit in the backlog
-	// during an upgrade. Classifying it would mint a remediation trigger for a
-	// run V21 has converted to a verification id — which agent-remediation
-	// cannot resolve for an image tag through /releases/{id}, leaving a bogus
-	// attempt that retries forever. Current release-controller never flags a
-	// payload shadow, so dropping these costs nothing but the legacy case.
+	// A rejection flagged shadow is one emitted for a fix-verification run.
+	// Classifying it would mint a remediation trigger keyed on a verification
+	// id — which agent-remediation cannot resolve for an image tag through
+	// /releases/{id}, leaving a bogus attempt that retries forever.
+	// release-controller never flags a payload shadow, so dropping these
+	// costs nothing.
 	if p.Shadow {
 		return nil, nil
 	}
@@ -196,6 +206,8 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			Repo:                 p.Repo,
 			CommitSHA:            p.CommitSHA,
 			CodeBundleURI:        p.CodeBundleURI,
+			ParseKind:            pkg_model.ParseFailureKind(n.Kind),
+			Detail:               n.Detail,
 			ChangedAncestors:     changedAncestors(n.ChangedAncestors),
 		})
 	}

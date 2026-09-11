@@ -44,6 +44,30 @@ describe('NodeResultsTable', () => {
     expect(dashes.length).toBe(2);
   });
 
+  it('shows a parse row\'s own diagnostic in the Log column when it carries no log', () => {
+    render(<NodeResultsTable perNode={[node({
+      stage: 'parse',
+      node_id: 'analytics.fx',
+      status: 'failed',
+      file_path: 'models/fx.sql',
+      detail: 'Expecting ). Line 3, Col: 12.\n  select a b',
+    })]} />);
+    expect(screen.getByText(/Expecting \)\. Line 3, Col: 12\./)).toBeInTheDocument();
+    // The diagnostic replaces the log cell's viewer, not the em dash placeholder
+    // of a row that has neither.
+    expect(screen.queryByText('view')).toBeNull();
+    expect(screen.getAllByText('—').length).toBe(1); // duration only
+  });
+
+  it('prefers the log viewer over the diagnostic when a row carries both', () => {
+    render(<NodeResultsTable perNode={[node({
+      dbt_log_uri: 's3://b/x.log',
+      detail: 'Expecting ). Line 3, Col: 12.',
+    })]} />);
+    expect(screen.getByText('view')).toBeInTheDocument();
+    expect(screen.queryByText(/Expecting/)).toBeNull();
+  });
+
   it('labels a dbt-test row and words its failure as "does not bind", leaving a model row as ok', () => {
     render(<NodeResultsTable perNode={[
       node({

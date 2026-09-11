@@ -143,6 +143,15 @@ type NamedFile struct {
 	Content string
 }
 
+// writeFiles renders each of files as a fenced "File <path>:" block, in
+// order. It is the shared file-listing step for every multi-file prompt that
+// shows the model a set of candidate files to choose from (compile, parse).
+func writeFiles(u *strings.Builder, files []NamedFile) {
+	for _, f := range files {
+		fmt.Fprintf(u, "File %s:\n```\n%s\n```\n\n", f.Path, f.Content)
+	}
+}
+
 // maxPrecedentDiffRender bounds how many precedents are shown with their full
 // resolution diff; the rest appear as one-line mentions so breadth survives
 // without unbounded prompt growth.
@@ -252,23 +261,17 @@ Rules:
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the code you are shown.
 - Always respond by calling the propose_fix tool.`
 
-// AssembleCompileFix builds a multi-file compile-fix request. The model chooses
-// which shown file to change (target_file) and returns its corrected content.
-func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []Precedent) ProposeRequest {
-	var u strings.Builder
-	fmt.Fprintf(&u, "Service: %s\n\n", nodeID)
-	for _, f := range files {
-		fmt.Fprintf(&u, "File %s:\n```\n%s\n```\n\n", f.Path, f.Content)
-	}
-	fmt.Fprintf(&u, "dbt compile error:\n```\n%s\n```\n\n", dbtLog)
-	renderPrecedents(&u, precedents)
-	u.WriteString("Return the complete corrected content of the ONE file that must change.")
-
+// singleFileProposeRequest is the propose_fix tool scaffold shared by every
+// lane that shows the model several files and asks it to correct exactly one:
+// the model names the file in target_file and returns its complete corrected
+// content. The caller supplies the system prompt, the rendered user message
+// and the one-line description of what the fix must achieve.
+func singleFileProposeRequest(system, user, toolDescription string) ProposeRequest {
 	return ProposeRequest{
-		System:          compileFixSystemPrompt,
-		User:            u.String(),
+		System:          system,
+		User:            user,
 		ToolName:        "propose_fix",
-		ToolDescription: "Return the corrected content of the one file that fixes dbt compile.",
+		ToolDescription: toolDescription,
 		ToolParams: []ToolParam{
 			{Name: "target_file", Type: "string", Description: "The path of the file to change; must be one of the files shown.", Required: true},
 			{Name: "proposed_content", Type: "string", Description: "The complete corrected content of target_file.", Required: true},
@@ -277,6 +280,47 @@ func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []P
 			{Name: "suspected_root_cause_node", Type: "string", Description: "Optional: the upstream node id you believe caused the failure, or empty.", Required: false},
 		},
 	}
+}
+
+// AssembleCompileFix builds a multi-file compile-fix request. The model chooses
+// which shown file to change (target_file) and returns its corrected content.
+func AssembleCompileFix(files []NamedFile, dbtLog, nodeID string, precedents []Precedent) ProposeRequest {
+	var u strings.Builder
+	fmt.Fprintf(&u, "Service: %s\n\n", nodeID)
+	writeFiles(&u, files)
+	fmt.Fprintf(&u, "dbt compile error:\n```\n%s\n```\n\n", dbtLog)
+	renderPrecedents(&u, precedents)
+	u.WriteString("Return the complete corrected content of the ONE file that must change.")
+
+	return singleFileProposeRequest(compileFixSystemPrompt, u.String(),
+		"Return the corrected content of the one file that fixes dbt compile.")
+}
+
+const parseFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt model whose compiled SQL a SQL parser rejected before any dbt run.
+You are given the offending model file, its co-located schema.yml, the project's dbt_project.yml, and the parser's error, which names the line and column where parsing stopped. The dbt projects are independent and reference upstream tables by their physical schema-qualified name (e.g. analytics.table_a), NEVER with {{ ref(...) }} / {{ source(...) }}. An "unqualified table reference" error means a table is named without its schema and must be qualified.
+
+Rules:
+- Decide which ONE file must change so the SQL parses, and return its path in target_file. It must be one of the files shown to you.
+- Return the COMPLETE corrected content of that file in proposed_content, preserving formatting and unrelated content.
+- Never introduce {{ ref(...) }} or {{ source(...) }}.
+- If you cannot determine a safe fix, return the offending file unchanged with low confidence and an explanation.
+- When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the code you are shown.
+- Always respond by calling the propose_fix tool.`
+
+// AssembleParseFix builds a multi-file fix request for a node whose SQL the
+// parse leg rejected. It has the compile-fix shape (the model picks one shown
+// file and returns its corrected content) but shows the parser's error text
+// in place of a dbt log, since no dbt run happened.
+func AssembleParseFix(files []NamedFile, parseError, service, nodeID string, precedents []Precedent) ProposeRequest {
+	var u strings.Builder
+	fmt.Fprintf(&u, "Service: %s\nNode: %s\n\n", service, nodeID)
+	writeFiles(&u, files)
+	fmt.Fprintf(&u, "SQL parse error:\n```\n%s\n```\n\n", parseError)
+	renderPrecedents(&u, precedents)
+	u.WriteString("Return the complete corrected content of the ONE file that must change.")
+
+	return singleFileProposeRequest(parseFixSystemPrompt, u.String(),
+		"Return the corrected content of the one file that makes the SQL parse.")
 }
 
 const seedFixSystemPrompt = `You are a data-engineering assistant that fixes a dbt seed CSV that failed to load.

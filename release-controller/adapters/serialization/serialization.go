@@ -25,6 +25,7 @@ type NodeValidationResultDTO struct {
 	DurationMS    int64  `json:"duration_ms,omitempty"`
 	FilePath      string `json:"file_path,omitempty"`
 	NodeType      string `json:"node_type,omitempty"`
+	Detail        string `json:"detail,omitempty"`
 }
 
 // NodeValidationResultsFromDomain maps a slice of domain results to DTOs. A nil
@@ -46,6 +47,7 @@ func NodeValidationResultsFromDomain(in []pipeline.NodeValidationResult) []NodeV
 			DurationMS:    n.DurationMS,
 			FilePath:      n.FilePath,
 			NodeType:      n.NodeType,
+			Detail:        n.Detail,
 		}
 	}
 	return out
@@ -68,6 +70,7 @@ func NodeValidationResultsToDomain(in []NodeValidationResultDTO) []pipeline.Node
 			DurationMS:    d.DurationMS,
 			FilePath:      d.FilePath,
 			NodeType:      d.NodeType,
+			Detail:        d.Detail,
 		}
 	}
 	return out

@@ -10,6 +10,26 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+// compileResultDTO is the JSON shape of a compile.completed:v1 payload. It
+// carries the json tags for the aggregated compile outcome so the handler
+// input stays tag-free.
+type compileResultDTO struct {
+	ReleaseID   string               `json:"release_id"`
+	Status      string               `json:"status"` // "ok" | "failed"
+	PerNode     []stageNodeResultDTO `json:"per_node"`
+	ErrorDetail string               `json:"error_detail,omitempty"`
+}
+
+// toInput maps the decoded wire DTO to the handler's input.
+func (d compileResultDTO) toInput() handlers.HandleCompileResultInput {
+	return handlers.HandleCompileResultInput{
+		ReleaseID:   d.ReleaseID,
+		Status:      d.Status,
+		PerNode:     stageNodeResultsToInput(d.PerNode),
+		ErrorDetail: d.ErrorDetail,
+	}
+}
+
 // NewCompileCompletedConsumer consumes compile.completed:v1 and dispatches to
 // handlers.HandleCompileResult (advancing to release.requested or rejecting).
 func NewCompileCompletedConsumer(rc *goredis.Client, deps *handlers.Deps, logger *slog.Logger) *pkgredis.StreamConsumer {
@@ -19,12 +39,12 @@ func NewCompileCompletedConsumer(rc *goredis.Client, deps *handlers.Deps, logger
 
 func newCompileCompletedHandler(deps *handlers.Deps, logger *slog.Logger) pkgredis.MessageHandler {
 	return func(ctx context.Context, msg goredis.XMessage) error {
-		var in handlers.HandleCompileResultInput
-		if err := decodePayload(msg, &in); err != nil {
+		var dto compileResultDTO
+		if err := decodePayload(msg, &dto); err != nil {
 			logger.Error("compile.completed:v1 decode failure — discarding", "message_id", msg.ID, "error", err)
 			return nil
 		}
-		if err := handlers.HandleCompileResult(ctx, deps, in); err != nil {
+		if err := handlers.HandleCompileResult(ctx, deps, dto.toInput()); err != nil {
 			return err
 		}
 		// Advance the queue after every compile result. On the success path the

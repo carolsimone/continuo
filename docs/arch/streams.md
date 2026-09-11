@@ -1,15 +1,31 @@
 # Streams Contract
 
-The Redis Stream names and consumer-group names used across continuo services
-are declared in a single YAML file: `pkg/streams/contract.yaml`.
+The Redis Stream names and consumer-group names used across continuo services,
+and the closed value sets those services agree on, are declared in a single
+YAML file: `pkg/streams/contract.yaml` — `streams:` for the transport names,
+`vocabularies:` for the value sets.
 
-A Go generator at `pkg/streams/cmd/gen-streams/` reads this file and produces:
+A Go generator at `pkg/streams/cmd/gen-streams/` reads this file and produces
+six files, split so that transport names and domain vocabulary land in
+different packages:
 
 - `pkg/streams/streams.gen.go` — Go constants for every stream and group.
 - `pkg/streams/streams_test_access.gen.go` — Test-only accessor used by the
   contract integrity test.
+- `pkg/domain/model/vocabulary.gen.go` — Go types for every vocabulary.
+- `pkg/domain/model/vocabulary_test_access.gen.go` — Test-only accessor used by
+  the vocabulary integrity test.
 - `topology-controller/streams_contract.py` — Python constants for the
   topology-controller service (filtered to streams it produces or consumes).
+- `topology-controller/domain/contract_vocabulary.py` — Python `StrEnum`s for
+  every vocabulary.
+
+`pkg/streams` and `streams_contract` hold transport names only, and no domain
+package imports either: the AST guard `TestDomainPackagesDoNotImportStreams`
+(`pkg/streams/domain_imports_test.go`) walks every module's `domain/` tree, and
+`test_domain_imports_no_streams_contract.py` does the same under
+`topology-controller/domain`. Domain code that needs a contract value names it
+from `pkg/domain/model` (Go) or `domain/contract_vocabulary` (Python) instead.
 
 ## Naming policy
 
@@ -33,12 +49,53 @@ A Go generator at `pkg/streams/cmd/gen-streams/` reads this file and produces:
 
 CI fails if `go generate` would produce a diff that isn't committed.
 
+## Vocabularies
+
+A `vocabularies:` entry is a closed set of string values two or more services
+agree on, travelling as a field on a stream payload. Each value carries a
+`healable` flag saying whether a remediation attempt can fix the condition it
+names by changing the user's source. Declaration order is significant: a
+consumer that must pick one value out of several applies it as precedence.
+
+Two vocabularies are declared:
+
+- **`parse_failure_kind`** (`model.ParseFailureKind`) — why topology-controller
+  could not resolve a candidate release. `invalid_sql` and
+  `unqualified_reference` are healable; `invalid_artifact` and `internal` are
+  not. It travels as `failure_kind` on `manifest.loaded.candidate:v1` and as
+  each `failed_nodes[]` entry's `kind`.
+- **`reject_reason`** (`model.RejectReason`) — why release-controller ended a
+  candidate or fix-verification run short of promotion. It travels as `reason`
+  on `release.rejected:v1` and as the run's stored fail reason. Six values are
+  healable — `compile_failed`, `seed_build_failed`, `validation_failed`,
+  `duplicate_table`, `invalid_sql`, `unqualified_reference` — and those are
+  exactly the rejections the remediation classifier turns into a heal trigger
+  and that release-controller's retry endpoint accepts. The other six —
+  `parse_rehearsal_failed`, `artifact_upload_failed`, `invalid_artifact`,
+  `internal_error`, `unbuildable_cross_service_upstream`,
+  `nothing_to_validate` — are refused as not healable, since a retry of one
+  would spend a remediation round for nothing.
+
+`release-controller/service/handlers.IsHealableReason` reads the flag directly,
+so the retry gate and the contract cannot diverge. An AST test in that package
+fails any `Fail(...)` call that passes a bare string literal as the reason, and
+the UI pins a prose label for every value (`ui/src/client/release-helpers.ts`).
+
+Adding a value means editing `contract.yaml`, regenerating, and committing the
+regenerated files, exactly as for a stream.
+
 ## Service usage
 
 - **Go**: `import streams "github.com/carolsimone/continuo/pkg/streams"`, then
   reference constants directly: `streams.NodeUpdatedV1`,
   `streams.OrchestratorNodeUpdated`.
 - **Python (topology-controller)**: `from streams_contract import UPDATE_GRAPH_V1, MANIFEST_UPDATE_GRAPH`.
+- **Vocabularies, Go**: `import "github.com/carolsimone/continuo/pkg/domain/model"`,
+  then `model.ParseFailureKind`, `model.RejectReason` and their values. Each
+  type carries `IsValid()` and `Healable()`, and a `<Type>s()` function
+  returning every value in contract order.
+- **Vocabularies, Python**: `from domain.contract_vocabulary import ParseFailureKind`,
+  plus the `<VOCABULARY>_HEALABLE` frozenset for the healable subset.
 - Service `Config` structs do not carry stream or group fields. Stream and
   group names are passed to `pkg/redis.NewStreamConsumer` at the wiring site in
   `main.go`, so the constant only appears there.
@@ -49,8 +106,8 @@ CI fails if `go generate` would produce a diff that isn't committed.
 (`<group>-<hostname>`, falling back to a time-seeded name only when the
 hostname is unavailable). Because the name is stable across restarts, a
 restarted process re-attaches to its own pending-entry list (PEL) instead of
-minting a fresh consumer every boot — the consumer-group registry no longer
-grows an orphaned entry per restart. A dead pod's PEL is still recovered by the
+minting a fresh consumer every boot, so the consumer-group registry holds one
+entry per process rather than one per boot. A dead pod's PEL is still recovered by the
 `XAUTOCLAIM` reclaim sweep (see `docs/arch/05-error-classification.md`).
 
 Throughput within a single consumer is tuned by `WithWorkerPool(n,
@@ -89,19 +146,51 @@ future or third-party producer that omits the field still parses. See
 `docs/arch/services/topology-controller.md` for the per-kind parse and
 failure behavior.
 
+**`manifest.loaded.candidate:v1`** — emitted by topology-controller once it has
+resolved (or failed to resolve) a candidate release's manifests into a
+topology; consumed by release-controller (group
+`release-controller-manifest-loaded-candidate`). On success the payload is
+`{release_id, status: "ok", topology, code_bundle_uri}`. On failure it is
+`{release_id, status: "failed", failure_kind, detail, failed_nodes[]}`.
+`failure_kind` is one of the `parse_failure_kind` vocabulary values (declared in
+`pkg/streams/contract.yaml`, generated into `pkg/domain/model` and
+`topology-controller/domain/contract_vocabulary.py`) — `invalid_sql`, `unqualified_reference`,
+`invalid_artifact`, `internal` — whose declaration order is also its
+precedence order. topology-controller resolves every node before publishing
+a failure: a node whose compiled SQL sqlglot rejects, or that references a
+relation without a schema qualifier, is collected into `failed_nodes` rather
+than failing the release on the first one found, so one message carries every
+broken node at once; `failure_kind` is then the highest-precedence kind across
+that collected set. An unreadable/empty/wrong-service manifest or contract
+(`invalid_artifact`) or continuo's own wiring/S3 failure (`internal`) is fatal
+on first sight instead, and both publish `failed_nodes: []`. Each
+`failed_nodes` entry is `{node_id, kind, service, file_path, node_type,
+detail}`. Every `detail` — the release-level one and each node's own — has
+sqlglot's terminal escape sequences stripped before it is published, so it is
+safe to store and render as plain text. See
+`docs/arch/services/topology-controller.md` and
+`docs/arch/services/release-controller.md` for the full behavior.
+
 **`release.rejected:v1`** — **candidate-only**: emitted by release-controller for every
 terminal rejection of a candidate release, regardless of which leg failed. A
 fix-verification run's failure never rides this stream, whatever caused it —
-its only announcement is `pipeline.run.finished:v1` (below). The payload always includes:
-`release_id`, `stage` (`compile` | `seed_build` | `validation`; absent for parse-phase rejections), `reason`,
-`repo`, `commit_sha`, `code_bundle_uri`, `failing_nodes`, and `per_node[]` (each entry: `node_id`,
-`status`, `dbt_log_uri`, optional `run_results_uri`). Validation entries
+its only announcement is `pipeline.run.finished:v1` (below). The payload always carries
+`release_id` and `reason`; every shape but `validation` also carries `error_detail`.
+Every reason but `unbuildable_cross_service_upstream`
+additionally carries `repo`, `commit_sha`, `code_bundle_uri`, `failing_nodes`, and `per_node[]`
+(each entry: `node_id`, `status`, `dbt_log_uri`, optional `run_results_uri`);
+`unbuildable_cross_service_upstream`'s payload is the narrower `{release_id, reason, error_detail}`
+alone. `stage` (`parse` | `compile` | `seed_build` | `validation`) travels on every one of those
+but `duplicate_table`, which is otherwise full-shaped. Parse entries carry
+`kind`, `detail`, `file_path`, `service`, and `node_type` in place of
+`dbt_log_uri`/`run_results_uri` — the parser's own detail is inline on the
+entry, so there is no log to point at. Validation entries
 additionally carry `candidate_artifact_uri` plus the candidate topology's
 `node_type`, `file_path`, and `service` for that node; seed_build entries carry
 `file_path`/`service` from the same source, and the payload carries
 `candidate_schema`.
 Consumers must not assume `stage` is always `validation`
-— all three legs reuse this single stream. The remediation classifier
+— every leg reuses this single stream. The remediation classifier
 (group `remediation-release-rejected`) triages the failing set;
 executor-controller (group `executor-release-rejected`) consumes it too, as an
 idempotent candidate-schema teardown backstop, dropping `candidate_schema` when
@@ -135,10 +224,15 @@ emitted at the healable rejection on the `releases.rejection_payload` column
 `release.rejected:v1`, since the two payloads share one shape; classifying it
 re-runs the identical per-node triage one round later. The request that
 produces this event is refused before it is ever published unless the
-release is `rejected`, its stored reason is healable (`compile_failed`,
-`seed_build_failed`, `validation_failed`, or `duplicate_table`), it has a
-stored rejection payload at all (a release rejected before this column
-existed, or rejected for the non-healable reason `parse_failed`, has none), its round is below the cap
+release is `rejected`, its stored reason carries the `reject_reason`
+vocabulary's `healable` flag (`compile_failed`, `seed_build_failed`,
+`validation_failed`, `duplicate_table`, `invalid_sql`, `unqualified_reference`
+— every other reason, including `invalid_artifact`, `internal_error`,
+`parse_rehearsal_failed`, `artifact_upload_failed`,
+`unbuildable_cross_service_upstream`, and `nothing_to_validate`, is refused
+here as not healable), it has
+a stored rejection payload at all (every reason's rejection handler stores
+one regardless of whether that reason later turns out to be healable), its round is below the cap
 (`MaxRemediationRounds = 3`), and agent-remediation's `ListProposals` reports
 no attempt still in flight, proposed, or already carrying an
 opening/open/merged PR for the release. See
@@ -158,8 +252,8 @@ error line, capped at 4 KiB), `dbt_log_uri`, `candidate_artifact_uri`,
 `changed_ancestors` (each `{node_id, file_path, service, depth}`, `depth` the ancestor's minimum upstream hop distance from the failing node). The payload stays pointer-first — the full log lives
 behind each node's `dbt_log_uri` and the failing code behind
 `code_bundle_uri` (threaded from `release.rejected:v1`'s top-level
-`code_bundle_uri`; empty for compile-stage rejections, which precede the parse
-that produces the bundle) — so the orchestrator's failure-precedent case base
+`code_bundle_uri`; empty for parse- and compile-stage rejections, both of which
+precede the parse that produces the bundle) — so the orchestrator's failure-precedent case base
 can record every rejection in the batch without pulling the full log or code
 inline. `agent-remediation` decodes all of it: `reason`, together with
 `category`, is its fallback precedent-lookup key (`GetPrecedents`) when the
@@ -199,8 +293,8 @@ that set's representative), `service`, `pr_url`, `pr_number`, `outcome`
 (each `{path, target_node_id, amended, diff}` — whether a human amended that
 edit before merge, and the amendment diff). `event_id` is a deterministic SHA1
 UUID derived from `(release_id, attempt, service)` — one owning-service PR of a
-split proposal per id, with the legacy service `""` reproducing the pre-split
-`(release_id, attempt)` id byte-for-byte — under a namespace distinct from the
+split proposal per id, and the unsplit group's empty `service` keying its id
+on `(release_id, attempt)` alone — under a namespace distinct from the
 `remediation.pr_opened:v1` id, so the two events never collide. Orchestrator's
 case-base provenance consumer (group
 `orchestrator-remediation-pr-closed-provenance`) records the resolution: it

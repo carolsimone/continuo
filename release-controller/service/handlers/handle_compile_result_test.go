@@ -96,7 +96,7 @@ func TestHandleCompileResult_FailedRejects(t *testing.T) {
 	putCompilingRelease(t, fakes, d, releaseID)
 
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
-		ReleaseID: releaseID, Status: "failed", ErrorClass: "compile_error", ErrorDetail: "ref not found",
+		ReleaseID: releaseID, Status: "failed", ErrorDetail: "ref not found",
 	}))
 
 	r := mustGetRelease(t, fakes, releaseID)
@@ -105,6 +105,9 @@ func TestHandleCompileResult_FailedRejects(t *testing.T) {
 	e := findEntry(t, fakes, streams.ReleaseRejectedV1)
 	assert.JSONEq(t, string(e.Payload), string(r.RejectionPayload()),
 		"the rejection payload stored on the release must match the one emitted on release.rejected:v1")
+	p := decodeJSON(t, e.Payload)
+	_, hasErrorClass := p["error_class"]
+	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, fakes, streams.PipelineRunFinishedV1)))
 }
 
@@ -124,7 +127,6 @@ func TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
 				ReleaseID:   releaseID,
 				Status:      "failed",
 				PerNode:     []handlers.NodeResult{{NodeID: "core", Status: "failed", FailedContainer: container}},
-				ErrorClass:  "compilation_error",
 				ErrorDetail: "some dbt compile detail that should be overridden",
 			}
 			require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
@@ -137,7 +139,6 @@ func TestHandleCompileResult_ParseContainerFailure_RejectsAsParseRehearsalFailed
 			p := decodeJSON(t, e.Payload)
 			assert.Equal(t, "compile", p["stage"])
 			assert.Equal(t, "parse_rehearsal_failed", p["reason"])
-			assert.Equal(t, "parse_rehearsal_failed", p["error_class"])
 			detail, _ := p["error_detail"].(string)
 			assert.Contains(t, detail, "not a SQL error")
 			assert.Contains(t, detail, "env_var()")
@@ -158,7 +159,6 @@ func TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFaile
 		ReleaseID:   releaseID,
 		Status:      "failed",
 		PerNode:     []handlers.NodeResult{{NodeID: "core", Status: "failed", FailedContainer: "upload"}},
-		ErrorClass:  "compilation_error",
 		ErrorDetail: "some dbt compile detail that should be overridden",
 	}
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
@@ -171,7 +171,6 @@ func TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFaile
 	p := decodeJSON(t, e.Payload)
 	assert.Equal(t, "compile", p["stage"])
 	assert.Equal(t, "artifact_upload_failed", p["reason"])
-	assert.Equal(t, "artifact_upload_failed", p["error_class"])
 	detail, _ := p["error_detail"].(string)
 	assert.Contains(t, detail, "no change to the dbt project will fix this")
 }
@@ -179,7 +178,7 @@ func TestHandleCompileResult_UploadContainerFailure_RejectsAsArtifactUploadFaile
 // TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged
 // verifies that a compile failure with no failed_container (or "compile")
 // keeps the plain compile_failed reason and passes through the producer's
-// error_class/error_detail unchanged.
+// error_detail unchanged.
 func TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged(t *testing.T) {
 	for _, container := range []string{"", "compile"} {
 		t.Run("failed_container="+container, func(t *testing.T) {
@@ -194,7 +193,6 @@ func TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged(t
 				ReleaseID:   releaseID,
 				Status:      "failed",
 				PerNode:     []handlers.NodeResult{{NodeID: "core", Status: "failed", FailedContainer: container}},
-				ErrorClass:  "compilation_error",
 				ErrorDetail: "Compilation Error in model daily_transactions",
 			}
 			require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
@@ -207,7 +205,6 @@ func TestHandleCompileResult_NoFailedContainer_RejectsAsCompileFailedUnchanged(t
 			p := decodeJSON(t, e.Payload)
 			assert.Equal(t, "compile", p["stage"])
 			assert.Equal(t, "compile_failed", p["reason"])
-			assert.Equal(t, "compilation_error", p["error_class"])
 			assert.Equal(t, "Compilation Error in model daily_transactions", p["error_detail"])
 		})
 	}
@@ -233,7 +230,6 @@ func TestHandleCompileResult_MixedPerNode_PinsFirstMatchDeterminism(t *testing.T
 			{NodeID: "core", Status: "failed", FailedContainer: "parse-candidate"},
 			{NodeID: "core", Status: "failed", FailedContainer: "upload"},
 		},
-		ErrorClass:  "compilation_error",
 		ErrorDetail: "some dbt compile detail that should be overridden",
 	}
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, in))
@@ -245,7 +241,6 @@ func TestHandleCompileResult_MixedPerNode_PinsFirstMatchDeterminism(t *testing.T
 	e := findEntry(t, fakes, streams.ReleaseRejectedV1)
 	p := decodeJSON(t, e.Payload)
 	assert.Equal(t, "parse_rehearsal_failed", p["reason"])
-	assert.Equal(t, "parse_rehearsal_failed", p["error_class"])
 }
 
 func TestHandleCompileResult_UnknownReleaseDropped(t *testing.T) {
@@ -273,7 +268,6 @@ func TestHandleCompileResult_Failed_EmitsUniformRejected(t *testing.T) {
 		ReleaseID:   releaseID,
 		Status:      "failed",
 		PerNode:     []handlers.NodeResult{{NodeID: "core", Status: "failed", DBTLogURI: "s3://c.log"}},
-		ErrorClass:  "compilation_error",
 		ErrorDetail: "Compilation Error in model daily_transactions",
 	}
 	err := handlers.HandleCompileResult(ctx(t), d, in)
@@ -356,7 +350,7 @@ func TestHandleCompileResult_Verification_Failed_NoReleaseRejected_FinishedEmitt
 	putCompilingVerification(t, fakes, d, releaseID)
 
 	require.NoError(t, handlers.HandleCompileResult(ctx(t), d, handlers.HandleCompileResultInput{
-		ReleaseID: releaseID, Status: "failed", ErrorClass: "compile_error", ErrorDetail: "ref not found",
+		ReleaseID: releaseID, Status: "failed", ErrorDetail: "ref not found",
 	}))
 
 	r := mustGetRelease(t, fakes, releaseID)

@@ -163,9 +163,9 @@ func classifyStructured(structured *StructuredResult, logText string) Classifica
 // node id: the target flips between releases (Target prefers whichever
 // service the release actually changed), so keying on node id would fork one
 // physical collision into two signatures the moment the changed service
-// alternates. RelationID falls back to NodeID when empty (a trigger from
-// before the field existed), which keeps this degenerate-but-safe for the
-// duration of a rollout.
+// alternates. RelationID falls back to NodeID when a trigger names no
+// relation, which keys the signature on something stable rather than on
+// nothing.
 func ClassifyDuplicateTable(ev FailureEvidence) Classification {
 	relationID := ev.RelationID
 	if relationID == "" {
@@ -177,6 +177,32 @@ func ClassifyDuplicateTable(ev FailureEvidence) Classification {
 		Decision:  DecisionEmit,
 		Reason:    "logic:duplicate_table",
 		Excerpt:   excerptOf("multiple nodes produce the relation " + relationID),
+	}
+}
+
+// ClassifyParse classifies a parse-leg rejection from the evidence alone. The
+// kind topology-controller assigned already says whether a source change can
+// fix it, so no text rule runs: a healable kind is a logic failure keyed on
+// (kind, node), any other kind — or one this build does not declare — is
+// dropped. The excerpt is the parser's detail, which is what the fixer shows
+// the model in place of a dbt log.
+func ClassifyParse(ev FailureEvidence) Classification {
+	kind := ev.ParseKind
+	if !kind.IsValid() || !kind.Healable() {
+		return Classification{
+			Category:  CategoryUnknown,
+			Signature: NormalizeSignature(CategoryUnknown, "parse "+string(kind)),
+			Decision:  DecisionDrop,
+			Reason:    "parse:not_healable",
+			Excerpt:   excerptOf(ev.Detail),
+		}
+	}
+	return Classification{
+		Category:  CategoryLogic,
+		Signature: NormalizeSignature(CategoryLogic, string(kind)+" "+ev.NodeID),
+		Decision:  DecisionEmit,
+		Reason:    "logic:" + string(kind),
+		Excerpt:   excerptOf(ev.Detail),
 	}
 }
 

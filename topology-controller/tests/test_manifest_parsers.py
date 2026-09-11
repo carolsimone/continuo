@@ -12,11 +12,9 @@ def test_each_kind_resolves_to_its_own_parser_and_failure_vocabulary():
     python = parser_for(ManifestKind.PYTHON)
 
     assert dbt.parse is parse_manifest
-    assert dbt.error_class == "MalformedManifest"
     assert json.JSONDecodeError in dbt.permanent_errors
 
     assert python.parse is parse_python_contract
-    assert python.error_class == "MalformedContract"
     assert python.permanent_errors == (MalformedContractError,)
 
 

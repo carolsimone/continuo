@@ -1,6 +1,6 @@
 import logging
 from domain.exceptions import InvalidCompiledSqlError, UnqualifiedTableReferenceError
-from domain.model import NodeRegistry, NodeRegistryEntry, NodeType
+from domain.model import FailedNode, NodeRegistry, NodeRegistryEntry, NodeType
 from service.candidate_artifacts import CandidateArtifactBuilder, RewriteContext
 from service.code_bundle import build_code_bundle
 from service.manifest_parsers import parser_for
@@ -11,8 +11,21 @@ from service.ports import (
 )
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name
+from domain.contract_vocabulary import ParseFailureKind
 
 logger = logging.getLogger(__name__)
+
+
+def _highest_precedence(kinds: list[ParseFailureKind]) -> ParseFailureKind:
+    """The release-level kind for a set of per-node kinds: the first in contract
+    declaration order, which is the precedence the contract defines."""
+    order = list(ParseFailureKind)
+    return min(kinds, key=order.index)
+
+
+def _summary(failed: list[FailedNode]) -> str:
+    noun = "node" if len(failed) == 1 else "nodes"
+    return f"{len(failed)} {noun} failed to parse: " + ", ".join(sorted(n.node_id for n in failed))
 
 
 class CandidateManifestHandler:
@@ -37,8 +50,14 @@ class CandidateManifestHandler:
     published as code_bundle_uri. A bundle-upload failure is fatal for the
     same reason as a candidate-SQL upload failure.
 
-    On parse/resolve failures that re-delivery cannot fix, publishes
-    status=failed and returns normally so the consumer ACKs.
+    Failures publish status=failed with a typed failure_kind and return
+    normally so the consumer ACKs. A node whose SQL sqlglot cannot parse, or
+    that references a relation without a schema, is collected rather than
+    fatal on first sight: every node is resolved, then one publish_failed
+    carries the whole failed set (failure_kind by contract precedence) so the
+    operator sees every broken node at once. An unreadable, empty, or
+    wrong-service artifact is invalid_artifact; a missing builder or a failed
+    S3 write is internal. Neither carries failed nodes.
 
     dialect is the sqlglot dialect of the warehouse the install targets,
     supplied by the composition root from the configured engine. It governs
@@ -91,11 +110,12 @@ class CandidateManifestHandler:
                 # release rather than a message retrying forever.
                 self._publisher.publish_failed(
                     release_id=release_id,
-                    error_class="UnknownManifestKind",
-                    error_detail=(
+                    failure_kind=ParseFailureKind.INVALID_ARTIFACT,
+                    detail=(
                         f"{mf.declared_service or mf.path}: unknown manifest "
                         f"kind {mf.kind!r}"
                     ),
+                    failed_nodes=[],
                 )
                 return
 
@@ -109,8 +129,9 @@ class CandidateManifestHandler:
                 # so they stay pending.
                 self._publisher.publish_failed(
                     release_id=release_id,
-                    error_class=parser.error_class,
-                    error_detail=f"{mf.path}: {exc!r}",
+                    failure_kind=ParseFailureKind.INVALID_ARTIFACT,
+                    detail=f"{mf.path}: {exc!r}",
+                    failed_nodes=[],
                 )
                 return
 
@@ -154,8 +175,9 @@ class CandidateManifestHandler:
                 if not nodes:
                     self._publisher.publish_failed(
                         release_id=release_id,
-                        error_class="EmptyManifest",
-                        error_detail=f"{mf.declared_service}: {parser.empty_detail}",
+                        failure_kind=ParseFailureKind.INVALID_ARTIFACT,
+                        detail=f"{mf.declared_service}: {parser.empty_detail}",
+                        failed_nodes=[],
                     )
                     return
 
@@ -163,11 +185,12 @@ class CandidateManifestHandler:
                 if offending:
                     self._publisher.publish_failed(
                         release_id=release_id,
-                        error_class="ServiceMismatch",
-                        error_detail=(
+                        failure_kind=ParseFailureKind.INVALID_ARTIFACT,
+                        detail=(
                             f"{mf.declared_service}: manifest contains nodes for "
                             f"{sorted(offending)}"
                         ),
+                        failed_nodes=[],
                     )
                     return
 
@@ -192,36 +215,45 @@ class CandidateManifestHandler:
             dialect=self._dialect,
         )
 
-        topology: list[dict] = []
+        # Resolve every node before building anything: a release with one broken
+        # node is rejected whole, and reporting every broken node at once spares
+        # the operator a fix-push-reject loop per node.
+        failed: list[FailedNode] = []
         for node in all_nodes:
             try:
                 node.upstream_deps = resolve_upstream_deps(node, lookup, dialect=self._dialect)
-            except UnqualifiedTableReferenceError as exc:
-                self._publisher.publish_failed(
-                    release_id=release_id,
-                    error_class="UnqualifiedTableReference",
-                    error_detail=str(exc),
-                )
-                return
-            except InvalidCompiledSqlError as exc:
-                self._publisher.publish_failed(
-                    release_id=release_id,
-                    error_class="InvalidCompiledSql",
-                    error_detail=str(exc),
-                )
-                return
+            except (UnqualifiedTableReferenceError, InvalidCompiledSqlError) as exc:
+                failed.append(FailedNode(
+                    node_id=node.unique_id,
+                    kind=exc.kind,
+                    service=node.service_name,
+                    file_path=node.original_file_path,
+                    node_type=node.node_type,
+                    detail=str(exc),
+                ))
+        if failed:
+            self._publisher.publish_failed(
+                release_id=release_id,
+                failure_kind=_highest_precedence([n.kind for n in failed]),
+                detail=_summary(failed),
+                failed_nodes=failed,
+            )
+            return
 
+        topology: list[dict] = []
+        for node in all_nodes:
             builder = self._artifact_builders.get(node.runtime)
             if builder is None:
                 # Unreachable with a correctly wired composition root; failing
                 # closed here beats publishing a node with no validation input.
                 self._publisher.publish_failed(
                     release_id=release_id,
-                    error_class="UnsupportedRuntime",
-                    error_detail=(
+                    failure_kind=ParseFailureKind.INTERNAL,
+                    detail=(
                         f"{node.unique_id}: no candidate-artifact builder for "
                         f"runtime {node.runtime!r}"
                     ),
+                    failed_nodes=[],
                 )
                 return
 
@@ -233,8 +265,9 @@ class CandidateManifestHandler:
             except Exception as exc:
                 self._publisher.publish_failed(
                     release_id=release_id,
-                    error_class="CandidateArtifactUploadFailed",
-                    error_detail=str(exc),
+                    failure_kind=ParseFailureKind.INTERNAL,
+                    detail=str(exc),
+                    failed_nodes=[],
                 )
                 return
 
@@ -268,8 +301,9 @@ class CandidateManifestHandler:
             # topology that references a bundle that failed to land.
             self._publisher.publish_failed(
                 release_id=release_id,
-                error_class="CodeBundleUploadFailed",
-                error_detail=str(exc),
+                failure_kind=ParseFailureKind.INTERNAL,
+                detail=str(exc),
+                failed_nodes=[],
             )
             return
 

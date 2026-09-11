@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
@@ -40,14 +41,13 @@ type ErrProposalOpen struct {
 
 func (e ErrProposalOpen) Error() string { return "a proposal is already open for this release" }
 
-// healableRejectReasons are the rejections the classifier turns into heal
-// triggers. Every other reason is dropped on the normal path too, so a retry
-// of it would only spend a round for nothing.
-var healableRejectReasons = map[string]bool{
-	"compile_failed":    true,
-	"seed_build_failed": true,
-	"validation_failed": true,
-	"duplicate_table":   true,
+// IsHealableReason reports whether a reject reason is one the classifier turns
+// into a heal trigger, which is the `healable` flag the reject_reason
+// vocabulary carries in pkg/streams/contract.yaml. Every other reason — and
+// any token this build does not declare — is dropped on the normal path too,
+// so a retry of it would only spend a remediation round for nothing.
+func IsHealableReason(reason string) bool {
+	return pkg_model.RejectReason(reason).Healable()
 }
 
 // RetryRemediationResult is the round the retry started.
@@ -86,7 +86,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 	if r.Kind() != pipeline.KindCandidate {
 		return RetryRemediationResult{}, ErrReleaseNotFound
 	}
-	if !healableRejectReasons[r.FailReason()] {
+	if !IsHealableReason(r.FailReason()) {
 		return RetryRemediationResult{}, ErrNotHealable
 	}
 	if len(r.RejectionPayload()) == 0 {
@@ -147,8 +147,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 }
 
 // effectiveRound is the remediation round a proposal belongs to: its own
-// RemediationRound field, or 1 for a proposal recorded before that field
-// existed.
+// RemediationRound field, or 1 for a proposal that names no round.
 func effectiveRound(p ports.ProposalSummary) int {
 	if p.RemediationRound == 0 {
 		return 1
@@ -254,7 +253,8 @@ func isDeadEnd(p ports.ProposalSummary) bool {
 
 // owningServices names the services whose fixes an attempt must land before it
 // is exhausted: PRServices when the attempt carries them, otherwise the
-// services named by its effective pull requests (the legacy single-group case).
+// services named by its effective pull requests (the unsplit single-group
+// case, whose one group is named by the empty string).
 func owningServices(p ports.ProposalSummary) []string {
 	if len(p.PRServices) > 0 {
 		return p.PRServices
@@ -281,8 +281,8 @@ func hasOutstandingPR(p ports.ProposalSummary) bool {
 
 // representativePRURL is the pull request URL to name when an attempt blocks a
 // retry: the first non-rejected pull request's URL in service order, so a human
-// is pointed at a PR that could still land rather than a closed one; the legacy
-// singular URL when the attempt carries no per-service pull requests.
+// is pointed at a PR that could still land rather than a closed one; the
+// attempt's singular URL when it carries no per-service pull requests.
 func representativePRURL(p ports.ProposalSummary) string {
 	prs := append([]ports.ProposalPR(nil), p.EffectivePRs()...)
 	sort.Slice(prs, func(i, j int) bool { return prs[i].Service < prs[j].Service })

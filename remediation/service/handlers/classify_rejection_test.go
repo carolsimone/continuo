@@ -9,13 +9,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/event"
-	"github.com/carolsimone/continuo/remediation/serialization"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 	"github.com/carolsimone/continuo/remediation/domain/repository"
+	"github.com/carolsimone/continuo/remediation/serialization"
 	"github.com/carolsimone/continuo/remediation/service/ports"
 	"github.com/carolsimone/continuo/remediation/service/uow"
 )
@@ -566,4 +569,40 @@ func TestClassifyRejection_NoEmitDecisionsWritesNoTrigger(t *testing.T) {
 	if !u.committed {
 		t.Fatal("decisions are still committed")
 	}
+}
+
+func TestClassifyRejection_ParseEvidenceReadsNoLog(t *testing.T) {
+	u := &fakeUoW{dec: &fakeDecisionRepo{inserted: true}, ob: &fakeOutbox{}}
+	var fetches int
+	deps := Deps{
+		NewUoW:    func() uow.UnitOfWork { return u },
+		LogReader: fakeLogReader{err: errors.New("log reader must not be called"), calls: &fetches},
+		Clock:     fakeClock{},
+		Logger:    slog.Default(),
+	}
+	ev := failure.FailureEvidence{
+		Source: failure.SourceParse, ReleaseID: "rel-1", NodeID: "a.b",
+		ParseKind: pkg_model.ParseFailureKindInvalidSQL, Detail: "Expecting )",
+		FilePath: "models/b.sql", Service: "s", Repo: "o/r", CommitSHA: "sha",
+	}
+	require.NoError(t, ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}))
+	require.Equal(t, 0, fetches, "a parse failure has no log to fetch")
+	require.Len(t, u.ob.entries, 1, "one trigger must be emitted")
+	require.Equal(t, failure.SourceParse, u.dec.saved[0].Source)
+	var w struct {
+		Source string `json:"source"`
+		Nodes  []struct {
+			NodeID       string `json:"node_id"`
+			Reason       string `json:"reason"`
+			ErrorExcerpt string `json:"error_excerpt"`
+			FilePath     string `json:"file_path"`
+			Service      string `json:"service"`
+		} `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal(u.ob.entries[0].Payload, &w))
+	assert.Equal(t, "parse", w.Source)
+	require.Len(t, w.Nodes, 1)
+	assert.Equal(t, "logic:invalid_sql", w.Nodes[0].Reason)
+	assert.Equal(t, "Expecting )", w.Nodes[0].ErrorExcerpt)
+	assert.Equal(t, "models/b.sql", w.Nodes[0].FilePath)
 }

@@ -1,11 +1,14 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
@@ -170,27 +173,172 @@ func TestHandleParsedManifest_Bootstrap_StoresCodeBundleURI(t *testing.T) {
 	assert.Equal(t, "s3://continuo/code-bundles/rBoot/bundle.json", r.CodeBundleURI())
 }
 
-func TestHandleParsedManifest_Failed_TransitionsToRejected(t *testing.T) {
+func TestHandleParsedManifest_Failed_InvalidSQL_RejectsWithParseStage(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rA",
 		Status:      "failed",
-		ErrorClass:  "UnresolvedReference",
-		ErrorDetail: "ref('missing') unresolved in service_1.table_a",
+		FailureKind: pkg_model.ParseFailureKindInvalidSQL,
+		Detail:      "1 node failed to parse: analytics.fx",
+		FailedNodes: []handlers.ParsedFailedNode{{
+			NodeID: "analytics.fx", Kind: pkg_model.ParseFailureKindInvalidSQL, Service: "svc-a",
+			FilePath: "models/fx.sql", NodeType: "dbt-model", Detail: "Expecting ). Line 3, Col: 12.",
+		}},
 	})
 	require.NoError(t, err)
 
 	r, err := store.GetRelease("rA")
 	require.NoError(t, err)
 	assert.Equal(t, pipeline.StatusRejected, r.Status())
-	assert.Equal(t, "parse_failed", r.FailReason())
+	assert.Equal(t, "invalid_sql", r.FailReason())
+	assert.Equal(t, "1 node failed to parse: analytics.fx", r.FailDetail())
+	assert.Equal(t, []string{"analytics.fx"}, r.FailingNodes())
+	require.Len(t, r.PerNodeResults(), 1)
+	// The parse leg has no log to point a reader at, so the parser's own
+	// diagnostic — line and column included — is persisted on the per-node
+	// result, which is what GET /releases/{id} exposes.
+	assert.Equal(t, pipeline.NodeValidationResult{
+		Stage: "parse", NodeID: "analytics.fx", Status: "failed", FilePath: "models/fx.sql", NodeType: "dbt-model",
+		Detail: "Expecting ). Line 3, Col: 12.",
+	}, r.PerNodeResults()[0])
 
 	entries := outboxEntries(store)
 	require.Len(t, entries, 4) // CompileRequested + ReleaseRequested + ReleaseRejected + PipelineRunFinished
-
 	assert.Equal(t, streams.ReleaseRejectedV1, entries[2].StreamName)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(entries[2].Payload, &payload))
+	assert.Equal(t, "parse", payload["stage"])
+	assert.Equal(t, "invalid_sql", payload["reason"])
+	assert.Equal(t, "acme/demo", payload["repo"]) // seedToParsing receives the candidate with this repo
+	assert.Equal(t, "deadbeef", payload["commit_sha"])
+	_, hasErrorClass := payload["error_class"]
+	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
+	perNode := payload["per_node"].([]any)
+	require.Len(t, perNode, 1)
+	assert.Equal(t, map[string]any{
+		"node_id": "analytics.fx", "status": "failed", "kind": "invalid_sql",
+		"detail": "Expecting ). Line 3, Col: 12.", "file_path": "models/fx.sql",
+		"service": "svc-a", "node_type": "dbt-model",
+	}, perNode[0])
+	assert.JSONEq(t, string(entries[2].Payload), string(r.RejectionPayload()), "the stored rejection must be the emitted payload")
 	assert.Equal(t, "rejected", outcomeOf(t, entries[3]))
+}
+
+func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
+	cases := map[pkg_model.ParseFailureKind]string{
+		pkg_model.ParseFailureKindInvalidSQL:           "invalid_sql",
+		pkg_model.ParseFailureKindUnqualifiedReference: "unqualified_reference",
+		pkg_model.ParseFailureKindInvalidArtifact:      "invalid_artifact",
+		pkg_model.ParseFailureKindInternal:             "internal_error",
+	}
+	require.Len(t, cases, len(pkg_model.ParseFailureKinds()), "every contract kind needs a reason")
+	for kind, want := range cases {
+		deps, store := seedToParsing(t, "r-"+string(kind), map[string]string{"svc-a": "sha-a"})
+		err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: "r-" + string(kind), Status: "failed", FailureKind: kind, Detail: "d",
+		})
+		require.NoError(t, err)
+		r, err := store.GetRelease("r-" + string(kind))
+		require.NoError(t, err)
+		assert.Equal(t, want, r.FailReason(), "kind %s", kind)
+		assert.Empty(t, r.PerNodeResults(), "no failed nodes → no stage results")
+		rejected := findEntry(t, store, streams.ReleaseRejectedV1)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(rejected.Payload, &payload))
+		assert.Equal(t, "parse", payload["stage"])
+		assert.Equal(t, want, payload["reason"])
+		assert.Equal(t, []any{}, payload["per_node"])
+	}
+}
+
+// A healable parse kind that names no failed node rejects the release and
+// warns: the remediation classifier works per node, so with no failed nodes
+// nothing downstream has a fix target and the operator gets no proposal for a
+// reason that otherwise offers one. The unhealable kinds carry no nodes by
+// design and must stay silent.
+func TestHandleParsedManifest_Failed_HealableKindWithoutNodesWarns(t *testing.T) {
+	for kind, wantWarn := range map[pkg_model.ParseFailureKind]bool{
+		pkg_model.ParseFailureKindInvalidSQL:           true,
+		pkg_model.ParseFailureKindUnqualifiedReference: true,
+		pkg_model.ParseFailureKindInvalidArtifact:      false,
+		pkg_model.ParseFailureKindInternal:             false,
+	} {
+		releaseID := "r-nonodes-" + string(kind)
+		deps, store := seedToParsing(t, releaseID, map[string]string{"svc-a": "sha-a"})
+		var logBuf bytes.Buffer
+		deps.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+
+		require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+			ReleaseID: releaseID, Status: "failed", FailureKind: kind, Detail: "d",
+		}))
+
+		r, err := store.GetRelease(releaseID)
+		require.NoError(t, err)
+		require.Equal(t, pipeline.StatusRejected, r.Status(), "kind %s still rejects the release", kind)
+
+		const warn = "release rejected without a remediation trigger"
+		if wantWarn {
+			assert.Contains(t, logBuf.String(), warn,
+				"a healable kind with no failed nodes must warn; kind %s", kind)
+			assert.Contains(t, logBuf.String(), string(kind),
+				"the warning must name the kind it fired for; kind %s", kind)
+			continue
+		}
+		assert.NotContains(t, logBuf.String(), warn,
+			"an unhealable kind carries no nodes by design; kind %s must not warn", kind)
+	}
+}
+
+// TestReleaseRejected_NeverCarriesErrorClass covers every rejection site this
+// file can reach — the parse leg, duplicate_table, and
+// unbuildable_cross_service_upstream — table-driven over one release.rejected:v1
+// scenario per site, reusing the same seeding helper and topologies the
+// site's own dedicated test uses. The compile and seed-build legs are
+// asserted the same way in handle_compile_result_test.go and
+// handle_seed_build_result_test.go.
+func TestReleaseRejected_NeverCarriesErrorClass(t *testing.T) {
+	cases := []struct {
+		name string
+		seed func(t *testing.T) *fakeStore
+	}{
+		{"parse failure", func(t *testing.T) *fakeStore {
+			deps, store := seedToParsing(t, "rX", map[string]string{"svc-a": "sha-a"})
+			require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+				ReleaseID: "rX", Status: "failed", FailureKind: pkg_model.ParseFailureKindInternal, Detail: "boom",
+			}))
+			return store
+		}},
+		{"duplicate_table", func(t *testing.T) *fakeStore {
+			deps, store := seedToParsing(t, "rA", map[string]string{"marketing": "sha-m"})
+			require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+				ReleaseID:     "rA",
+				Status:        "ok",
+				CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
+				Topology:      duplicateOrdersTopology(),
+			}))
+			return store
+		}},
+		{"unbuildable_cross_service_upstream", func(t *testing.T) *fakeStore {
+			deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
+			require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
+				ReleaseID: "rA",
+				Status:    "ok",
+				Topology:  unbuildableUpstreamTopology(),
+			}))
+			return store
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := tc.seed(t)
+			entry := findEntry(t, store, streams.ReleaseRejectedV1)
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(entry.Payload, &payload))
+			_, has := payload["error_class"]
+			assert.False(t, has, "error_class must not be emitted")
+		})
+	}
 }
 
 // seedToParsingVerification mirrors seedToParsing but seeds a verification
@@ -227,7 +375,7 @@ func seedToParsingVerificationWithOverlay(t *testing.T, releaseID string, imageT
 }
 
 // TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmitted
-// verifies that a verification run's parse_failed ends the run at Failed and
+// verifies that a verification run's parse failure ends the run at Failed and
 // emits no release.rejected:v1 at all (a verification failure is never a
 // release rejection — Global Constraint), so remediation cannot mistake it
 // for a rejected candidate and re-trigger itself; the failure travels on
@@ -238,8 +386,8 @@ func TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmit
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rVerify",
 		Status:      "failed",
-		ErrorClass:  "UnresolvedReference",
-		ErrorDetail: "ref('missing') unresolved in service_1.table_a",
+		FailureKind: pkg_model.ParseFailureKindInvalidSQL,
+		Detail:      "ref('missing') unresolved in service_1.table_a",
 	})
 	require.NoError(t, err)
 
@@ -578,6 +726,16 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 	})
 }
 
+// unbuildableUpstreamTopology returns a single-node candidate topology whose
+// node references an upstream, "ghost_upstream", that does not appear
+// anywhere in the candidate topology — a dangling reference that cannot be
+// built into the candidate schema.
+func unbuildableUpstreamTopology() release.Topology {
+	return release.Topology{
+		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"ghost_upstream"}},
+	}
+}
+
 // TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream verifies that a
 // candidate where a changed node references an upstream that is absent from the
 // candidate topology entirely is rejected early with reason
@@ -587,16 +745,10 @@ func TestHandleParsedManifest_OK_NothingToValidate_Verification(t *testing.T) {
 func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 	deps, store := seedToParsing(t, "rA", map[string]string{"svc-a": "sha-a"})
 
-	// Candidate: a2 (svc-a) is a new node with an upstream "ghost_upstream" that
-	// does not appear anywhere in the candidate topology — a dangling reference
-	// that cannot be built into the candidate schema.
-	topo := release.Topology{
-		{UniqueID: "a2", ServiceName: "svc-a", ContentHash: "h_a2", UpstreamUniqueIDs: []string{"ghost_upstream"}},
-	}
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rA",
 		Status:    "ok",
-		Topology:  topo,
+		Topology:  unbuildableUpstreamTopology(),
 	})
 	require.NoError(t, err, "handler must return nil (graceful rejection, not an infrastructure error)")
 
@@ -619,6 +771,8 @@ func TestHandleParseOK_RejectsUnbuildableCrossServiceUpstream(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rejectedEntry.Payload, &payload))
 	assert.Equal(t, "unbuildable_cross_service_upstream", payload["reason"])
 	assert.Equal(t, "rA", payload["release_id"])
+	_, hasErrorClass := payload["error_class"]
+	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
 	assert.Equal(t, "rejected", outcomeOf(t, findEntry(t, store, streams.PipelineRunFinishedV1)))
 }
 
@@ -1218,6 +1372,18 @@ func TestHandleParsedManifest_NoNewSeedsGoesStraightToValidation(t *testing.T) {
 	assert.True(t, found, "no new/changed seeds → validation.requested must be emitted directly")
 }
 
+// duplicateOrdersTopology returns a two-node candidate topology where "finance"
+// and "marketing" both produce the relation analytics.orders — a two-claimant
+// relation collision (release.DuplicateClaims).
+func duplicateOrdersTopology() release.Topology {
+	return release.Topology{
+		{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+			ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
+		{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
+			ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
+	}
+}
+
 // A candidate topology where two services claim analytics.orders is rejected
 // before promotion, with both claimants named and no validation requested.
 func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
@@ -1227,12 +1393,7 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 		ReleaseID:     "rA",
 		Status:        "ok",
 		CodeBundleURI: "s3://continuo/code-bundles/rA/bundle.json",
-		Topology: release.Topology{
-			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
-			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
-		},
+		Topology:      duplicateOrdersTopology(),
 	})
 	require.NoError(t, err)
 
@@ -1253,7 +1414,8 @@ func TestHandleParsedManifest_DuplicateTableRejects(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(entry.Payload, &payload))
 	assert.Equal(t, "duplicate_table", payload["reason"])
-	assert.Equal(t, "DuplicatedTable", payload["error_class"])
+	_, hasErrorClass := payload["error_class"]
+	assert.False(t, hasErrorClass, "error_class has no reader and must not be emitted")
 	assert.Equal(t, "s3://continuo/code-bundles/rA/bundle.json", payload["code_bundle_uri"],
 		"top-level code_bundle_uri must come from the release aggregate, set at parse time")
 	assert.JSONEq(t, string(entry.Payload), string(r.RejectionPayload()),
@@ -1272,12 +1434,7 @@ func TestHandleParsedManifest_DuplicateTable_Verification_NoReleaseRejected_Fini
 	require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID: "rVerify",
 		Status:    "ok",
-		Topology: release.Topology{
-			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-				ServiceName: "finance", OriginalFilePath: "models/orders.sql", ContentHash: "h1"},
-			{UniqueID: "analytics.orders", SchemaName: "analytics", TableName: "orders",
-				ServiceName: "marketing", OriginalFilePath: "models/orders.sql", ContentHash: "h2"},
-		},
+		Topology:  duplicateOrdersTopology(),
 	}))
 
 	r, err := store.GetRelease("rVerify")
@@ -2121,8 +2278,8 @@ func TestHandleParsedManifest_OK_VerificationLeavesTheRejectedReleasesSkippedNod
 // build_from_sql and re-fail this run on C's unfixed fault.
 func TestHandleParsedManifest_OK_VerificationDoesNotDragASiblingInThroughAContextRebuild(t *testing.T) {
 	const (
-		verifyAncID = "svc2.shared_ancestor" // A: changed by the rejected release, validated ok
-		verifyFixID = "svc3.fixed_consumer"  // B: this run's fix, downstream of A
+		verifyAncID = "svc2.shared_ancestor"  // A: changed by the rejected release, validated ok
+		verifyFixID = "svc3.fixed_consumer"   // B: this run's fix, downstream of A
 		verifySibID = "svc4.sibling_consumer" // C: still-broken sibling, downstream of A, separate run
 	)
 	deps, store := newDeps(time.Unix(100, 0).UTC())

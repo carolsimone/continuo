@@ -132,7 +132,9 @@ func (h *RemediationRequestedRejectionsHandler) releaseBundle(
 	ctx context.Context, in event.RemediationRequested,
 ) (*codebundle.Bundle, error) {
 	if in.CodeBundleURI == "" {
-		return nil, nil // compile-stage failure: no bundle ever existed
+		// A parse- or compile-stage failure: both precede the parse that
+		// builds the bundle, so no bundle ever existed for this release.
+		return nil, nil
 	}
 	bundle, err := h.bundles.Fetch(ctx, in.CodeBundleURI)
 	if err != nil {

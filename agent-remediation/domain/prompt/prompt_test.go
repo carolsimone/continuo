@@ -84,6 +84,34 @@ func TestAssembleCompileFix_ToolSchemaAndFiles(t *testing.T) {
 	}
 }
 
+func TestAssembleParseFix_ToolSchemaAndFiles(t *testing.T) {
+	req := AssembleParseFix([]NamedFile{
+		{Path: "models/x.sql", Content: "select a b, c from t"},
+		{Path: "models/schema.yml", Content: "version: 2"},
+	}, "Expecting ). Line 3, Col: 12.", "svc", "analytics.fx", nil)
+	names := map[string]bool{}
+	for _, p := range req.ToolParams {
+		names[p.Name] = true
+	}
+	for _, want := range []string{"target_file", "proposed_content", "rationale", "confidence"} {
+		if !names[want] {
+			t.Fatalf("missing tool param %q", want)
+		}
+	}
+	if !strings.Contains(req.User, "models/schema.yml") || !strings.Contains(req.User, "models/x.sql") {
+		t.Fatal("both gathered files must appear in the prompt")
+	}
+	if !strings.Contains(req.User, "SQL parse error:") {
+		t.Errorf("user content must label the parser's error, not a dbt log:\n%s", req.User)
+	}
+	if !strings.Contains(req.User, "Node: analytics.fx") {
+		t.Errorf("user content must name the failing node:\n%s", req.User)
+	}
+	if strings.Contains(req.User, "dbt compile error") {
+		t.Errorf("user content must not carry compile-lane wording:\n%s", req.User)
+	}
+}
+
 func TestAssembleSeedFix_CSVVocabularyAndSchema(t *testing.T) {
 	req := AssembleSeedFix("seeds/ref.csv", "id,name\n1,\"a,b\"", "Error loading seed", "svc", nil)
 	names := map[string]bool{}

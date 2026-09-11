@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from domain.contract_vocabulary import ParseFailureKind
+
 
 class UnqualifiedTableReferenceError(ValueError):
+    kind = ParseFailureKind.UNQUALIFIED_REFERENCE
+
     def __init__(self, table_name: str, node_table_name: str) -> None:
         self.table_name = table_name
         self.node_table_name = node_table_name
@@ -12,6 +16,8 @@ class UnqualifiedTableReferenceError(ValueError):
 
 
 class InvalidCompiledSqlError(ValueError):
+    kind = ParseFailureKind.INVALID_SQL
+
     def __init__(self, node_table_name: str, detail: str) -> None:
         self.node_table_name = node_table_name
         self.detail = detail

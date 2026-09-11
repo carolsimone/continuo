@@ -169,6 +169,10 @@ export interface NodeValidationResult {
   // snapshot row; a test row's status is worded as whether it binds, not
   // ok/failed. Absent on results predating the field, which read as a model.
   node_type?: string;
+  // detail is the leg's own diagnostic for this node, shown in the Log column
+  // when there is no log to fetch. The parse leg fills it with the parser's
+  // error text, line and column included, since no Job ran.
+  detail?: string;
 }
 
 export interface ReleaseTransition {

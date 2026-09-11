@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
@@ -21,19 +22,46 @@ type parsedManifestDTO struct {
 	Status        string                    `json:"status"`
 	Topology      serialization.TopologyDTO `json:"topology,omitempty"`
 	CodeBundleURI string                    `json:"code_bundle_uri,omitempty"`
-	ErrorClass    string                    `json:"error_class,omitempty"`
-	ErrorDetail   string                    `json:"error_detail,omitempty"`
+	FailureKind   string                    `json:"failure_kind,omitempty"`
+	Detail        string                    `json:"detail,omitempty"`
+	FailedNodes   []parsedFailedNodeDTO     `json:"failed_nodes,omitempty"`
 }
 
-// toInput maps the decoded wire DTO to the handler's domain-typed input.
-func (d parsedManifestDTO) toInput() handlers.HandleParsedManifestInput {
+// parsedFailedNodeDTO is one failed_nodes entry of a failed parse.
+type parsedFailedNodeDTO struct {
+	NodeID   string `json:"node_id"`
+	Kind     string `json:"kind"`
+	Service  string `json:"service"`
+	FilePath string `json:"file_path"`
+	NodeType string `json:"node_type"`
+	Detail   string `json:"detail"`
+}
+
+// toInput maps the decoded wire DTO to the handler's domain-typed input. A
+// failure_kind this build does not declare is passed through as is; the
+// handler maps it to internal_error and names it in the detail, so a release
+// from a newer producer still rejects and the queue still advances.
+func (d parsedManifestDTO) toInput(logger *slog.Logger) handlers.HandleParsedManifestInput {
+	kind := pkg_model.ParseFailureKind(d.FailureKind)
+	if d.Status == "failed" && !kind.IsValid() {
+		logger.Error("manifest.loaded.candidate:v1 carries an undeclared failure_kind; rejecting as internal_error",
+			"release_id", d.ReleaseID, "failure_kind", d.FailureKind)
+	}
+	failed := make([]handlers.ParsedFailedNode, 0, len(d.FailedNodes))
+	for _, n := range d.FailedNodes {
+		failed = append(failed, handlers.ParsedFailedNode{
+			NodeID: n.NodeID, Kind: pkg_model.ParseFailureKind(n.Kind), Service: n.Service,
+			FilePath: n.FilePath, NodeType: n.NodeType, Detail: n.Detail,
+		})
+	}
 	return handlers.HandleParsedManifestInput{
 		ReleaseID:     d.ReleaseID,
 		Status:        d.Status,
 		Topology:      d.Topology.ToDomain(),
 		CodeBundleURI: d.CodeBundleURI,
-		ErrorClass:    d.ErrorClass,
-		ErrorDetail:   d.ErrorDetail,
+		FailureKind:   kind,
+		Detail:        d.Detail,
+		FailedNodes:   failed,
 	}
 }
 
@@ -71,7 +99,7 @@ func newManifestLoadedCandidateHandler(deps *handlers.Deps, logger *slog.Logger)
 				"message_id", msg.ID, "error", err)
 			return nil // permanent: ACK by returning nil so it is not left in the PEL
 		}
-		if err := handlers.HandleParsedManifest(ctx, deps, dto.toInput()); err != nil {
+		if err := handlers.HandleParsedManifest(ctx, deps, dto.toInput(logger)); err != nil {
 			return err
 		}
 		// Advance the queue after every parse result. On the success path the

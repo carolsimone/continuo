@@ -2,8 +2,6 @@ package fixer
 
 import (
 	"context"
-	"errors"
-	"path"
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
@@ -27,51 +25,7 @@ func compileGather(ctx context.Context, svc Services, in Input) (Gathered, bool,
 		return Gathered{}, true, nil
 	}
 	// For compile the NodeID IS the service discriminator (a synthetic id).
-	prefix, ok := svc.ServiceRepoPaths[in.NodeID]
-	if !ok {
-		svc.Logger.Warn("compile fix: no repo path mapping for service; skipping", "service", in.NodeID)
-		return Gathered{}, true, nil
-	}
-	offending := path.Join(prefix, in.FilePath)
-	content, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, offending)
-	if err != nil {
-		if errors.Is(err, ports.ErrSourceNotFound) {
-			svc.Logger.Warn("compile fix: offending file not found; skipping", "path", offending)
-			return Gathered{}, true, nil
-		}
-		return Gathered{}, false, err // transient: redeliver
-	}
-	g := Gathered{Files: map[string]string{offending: content}, Order: []string{offending}, Primary: offending}
-
-	// Best-effort extra context, only when the offending file is a .sql.
-	if strings.HasSuffix(offending, ".sql") {
-		dir := path.Dir(offending)
-		if paths, derr := svc.Source.ListDir(ctx, in.Repo, in.CommitSHA, dir); derr == nil {
-			for _, p := range paths {
-				if p == offending {
-					continue
-				}
-				if strings.HasSuffix(p, ".yml") || strings.HasSuffix(p, ".yaml") {
-					addFile(ctx, svc, in, &g, p)
-				}
-			}
-		}
-		addFile(ctx, svc, in, &g, path.Join(prefix, "dbt_project.yml"))
-	}
-	return g, false, nil
-}
-
-// addFile reads one best-effort context file, ignoring a not-found result.
-func addFile(ctx context.Context, svc Services, in Input, g *Gathered, p string) {
-	if _, seen := g.Files[p]; seen {
-		return
-	}
-	c, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, p)
-	if err != nil {
-		return // context is optional; skip on any error
-	}
-	g.Files[p] = c
-	g.Order = append(g.Order, p)
+	return gatherSourceFile(ctx, svc, in, in.NodeID, "compile fix")
 }
 
 func compileBuild(svc Services, g Gathered, in Input, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {

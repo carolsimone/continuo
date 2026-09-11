@@ -10,6 +10,7 @@ import (
 
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -26,8 +27,9 @@ func newValidationResultDeps() (*handlers.Deps, *fakeReleaseRepo) {
 	repo := &fakeReleaseRepo{}
 	u := &fakeUoW{releaseRepo: repo}
 	deps := &handlers.Deps{
-		NewUoW: func() uow.UnitOfWork { return u },
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		NewUoW:     func() uow.UnitOfWork { return u },
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Rejections: serialization.ReleaseRejectedJSON{},
 	}
 	return deps, repo
 }

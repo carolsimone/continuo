@@ -1,5 +1,5 @@
-// Package fixer holds the per-error-class fix strategies for the
-// agent-remediation. Each error class (compile, seed_build, validation) is a
+// Package fixer holds the per-source fix strategies for the agent-remediation.
+// Each source (parse, compile, seed_build, validation, duplicate_table) is a
 // Fixer that decides which source files to read, which prompt to send, and how
 // to read the model's answer. A Fixer only produces the proposal — its edits
 // and, for a python contract fix, the packaged contract bytes — and never
@@ -29,7 +29,7 @@ import (
 // Input is the failure evidence a Fixer needs, projected from the inbound
 // remediation.requested trigger. DBTLogURI is the raw object-storage URI of the
 // dbt log; each Fixer fetches and sanitizes it (via loadDBTLog) only when its
-// error class actually needs it, so a class that can skip early does not depend
+// source actually needs it, so a source that can skip early does not depend
 // on the log being readable.
 type Input struct {
 	Source    string
@@ -177,14 +177,14 @@ type Outcome struct {
 	SuspectedRoot    string
 }
 
-// Fixer produces a fix proposal from failure evidence for one error class.
+// Fixer produces a fix proposal from failure evidence for one source.
 type Fixer interface {
 	Propose(ctx context.Context, svc Services, in Input) (Result, error)
 }
 
-// For resolves the Fixer for a trigger's error class and failing node kind. An
-// unknown source is a programming error (the classifier produces only the four
-// known values).
+// For resolves the Fixer for a trigger's source and failing node kind. An
+// unknown source is a programming error (the classifier produces only the
+// five known values).
 //
 // nodeType selects a lane only for validation failures, where the three node
 // kinds need entirely different fixes: a dbt model is corrected in its SQL
@@ -194,10 +194,13 @@ type Fixer interface {
 // corrects the contract to match the csv file that is its source of truth —
 // a narrower set of rules and a narrower post-apply guard than a
 // python-model node's, hence its own lane rather than a shared one. Every
-// other error class ignores nodeType — those classes have no python fix to
-// offer, and each already refuses a python node in its own way.
+// other source ignores nodeType. The seed, duplicate-relation, compile and
+// parse lanes each refuse a python node in their own way, having no python fix
+// to offer.
 func For(source, nodeType string) (Fixer, error) {
 	switch source {
+	case sourceParse:
+		return parseFixer{}, nil
 	case sourceCompile:
 		return compileFixer{}, nil
 	case sourceSeed:
@@ -214,12 +217,13 @@ func For(source, nodeType string) (Fixer, error) {
 	case sourceDuplicateTable:
 		return duplicateTableFixer{}, nil
 	default:
-		return nil, fmt.Errorf("fixer: unknown error class %q", source)
+		return nil, fmt.Errorf("fixer: unknown source %q", source)
 	}
 }
 
-// Error-class discriminators carried on remediation.requested:v1.
+// Source discriminators carried on remediation.requested:v2.
 const (
+	sourceParse          = "parse"
 	sourceCompile        = "compile"
 	sourceSeed           = "seed_build"
 	sourceValidation     = "validation"
@@ -227,13 +231,13 @@ const (
 )
 
 // loadDBTLog fetches and sanitizes the dbt log a Fixer needs for its prompt. An
-// empty uri means this failure class has no log at all (e.g. a duplicate-table
-// rejection, which happens at parse time before any dbt Job runs), so it
-// returns an empty string without touching the evidence reader. A missing log
+// empty uri means this source has no log at all (e.g. a duplicate-table or
+// parse rejection, which happens before any dbt Job runs), so it returns an
+// empty string without touching the evidence reader. A missing log
 // (ErrNotFound) is likewise not fatal — a fix can still be proposed from the
 // other evidence — so it also yields an empty string; any other fetch error is
 // transient and returned so the driver redelivers. Each Fixer calls this only
-// when its error class actually needs the log, keeping the read off the paths
+// when its source actually needs the log, keeping the read off the paths
 // (e.g. an empty validation candidate) that skip before proposing anything.
 func loadDBTLog(ctx context.Context, svc Services, uri string) (string, error) {
 	if uri == "" {
