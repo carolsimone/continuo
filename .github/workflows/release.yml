@@ -212,7 +212,7 @@ jobs:
         uses: ./.github/actions/isolate-docker-state
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.14.0
+        uses: helm/kind-action@v1.15.0
         with:
           cluster_name: smoke-published
 
