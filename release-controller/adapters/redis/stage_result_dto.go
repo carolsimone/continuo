@@ -20,8 +20,9 @@ type stageNodeResultDTO struct {
 }
 
 // stageNodeResultsToInput maps the decoded per-node wire entries to the
-// handler's input values, preserving the nil vs non-nil-empty distinction: the
-// rejection body a leg emits repeats it as null vs [].
+// handler's input values, preserving the nil vs non-nil-empty distinction: an
+// absent per_node key decodes to a nil slice, and an explicit empty array
+// decodes to a non-nil empty slice.
 func stageNodeResultsToInput(in []stageNodeResultDTO) []handlers.NodeResult {
 	if in == nil {
 		return nil

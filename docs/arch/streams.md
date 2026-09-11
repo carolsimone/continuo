@@ -175,7 +175,8 @@ safe to store and render as plain text. See
 terminal rejection of a candidate release, regardless of which leg failed. A
 fix-verification run's failure never rides this stream, whatever caused it —
 its only announcement is `pipeline.run.finished:v1` (below). The payload always carries
-`release_id`, `reason`, and `error_detail`. Every reason but `unbuildable_cross_service_upstream`
+`release_id` and `reason`; every shape but `validation` also carries `error_detail`.
+Every reason but `unbuildable_cross_service_upstream`
 additionally carries `repo`, `commit_sha`, `code_bundle_uri`, `failing_nodes`, and `per_node[]`
 (each entry: `node_id`, `status`, `dbt_log_uri`, optional `run_results_uri`);
 `unbuildable_cross_service_upstream`'s payload is the narrower `{release_id, reason, error_detail}`

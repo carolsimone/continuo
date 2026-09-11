@@ -321,8 +321,9 @@ func duplicateNode(n ports.RejectedNode) duplicateNodeDTO {
 	}
 }
 
-// mapAncestors preserves the nil vs non-nil-empty distinction so a node with
-// no changed ancestor omits the key rather than emitting an empty array.
+// mapAncestors maps each ports.ChangedAncestor into the wire DTO. The
+// changed_ancestors field is omitempty, so a node with no changed ancestor
+// omits the key rather than emitting an empty array.
 func mapAncestors(in []ports.ChangedAncestor) []changedAncestorDTO {
 	if in == nil {
 		return nil
