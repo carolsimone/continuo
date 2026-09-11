@@ -98,7 +98,7 @@ describe('NodeDetailPage', () => {
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: /pick-me/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /v1 snapshot/i })).toBeInTheDocument();
   });
 
   it('picking a source run POSTs with source_run_id', async () => {
@@ -111,7 +111,7 @@ describe('NodeDetailPage', () => {
     });
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /pick-me/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
     await waitFor(() => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const postCall = calls.find(c => String(c[0]).includes('/api/nodes/svc/schema/tbl/run') && c[1]?.method === 'POST');
@@ -176,7 +176,7 @@ describe('NodeDetailPage', () => {
     const oldSnap = await screen.findByRole('button', { name: /run with old snapshot/i });
     expect(oldSnap).not.toBeDisabled();
     fireEvent.click(oldSnap);
-    fireEvent.click(await screen.findByRole('button', { name: /pick-me/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
     await waitFor(() => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');
@@ -239,7 +239,7 @@ describe('NodeDetailPage', () => {
     renderPage();
     fireEvent.change(await screen.findByLabelText(/operation/i), { target: { value: 'test' } });
     fireEvent.click(await screen.findByRole('button', { name: /run with old snapshot/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /pick-me/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /v1 snapshot/i }));
     await waitFor(() => {
       const calls = mockFetch.mock.calls as unknown as [string, RequestInit?][];
       const post = calls.find(c => String(c[0]).endsWith('/run') && c[1]?.method === 'POST');

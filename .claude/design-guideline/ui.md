@@ -250,6 +250,77 @@ Row 2: actions                                        [Action]  [Action]  [Actio
     verb (`.btn--primary`) on the right.
 - The confirming verb is the action the modal performs (`Rerun`,
   `Cancel run`, `Trigger`). Not "OK" or "Submit".
+- The `.dialog` is 360px by default. A picker/list dialog that needs more
+  room uses the `.dialog--wide` modifier (480px); it still caps at
+  `calc(100vw - 32px)` so it never overflows a narrow viewport. Do not
+  hand a dialog a bespoke width.
+- A muted one-line explanation directly under the `.dialog-title` uses
+  `.dialog-subtitle` (12px gray). One line; longer guidance is an
+  `.info-strip` instead.
+
+### Snapshot pick list
+
+A **select-to-act** list inside a modal: each row is the action (clicking
+it commits the choice and closes), so the footer carries only `Cancel` —
+there is no confirming verb. The snapshot picker (`RunSourcePickerDialog`,
+opened by `Run with old snapshot`) is the reference: it collapses a node's
+runs into the distinct snapshots it can be re-run against — one row per
+`(image_tag, manifest_version)` pair — and picking one runs the node
+against that snapshot's most-recent terminal run.
+
+```jsx
+<div className="section-header">
+  <div className="section-header__main">
+    <span className="section-header__title">Snapshots</span>
+    <span className="section-header__count">8</span>
+  </div>
+  <div className="section-header__sub">35 runs total</div>
+</div>
+<ul className="pick-list">
+  <li>
+    <button type="button" className="pick-row" onClick={() => onPick(id)}>
+      <span className="pick-row__main">
+        <span className="pick-row__id">dfee104</span>
+        <span className="pill-sm pill-sm--succeeded">succeeded</span>
+      </span>
+      <span className="pick-row__meta">
+        <span>manifest v14</span><span className="pick-row__sep">·</span>
+        <span>2 runs</span><span className="pick-row__sep">·</span>
+        <span>last 11 Sep 2026</span>
+      </span>
+    </button>
+  </li>
+</ul>
+```
+
+```css
+.pick-list { list-style: none; margin: 0; padding: 0; display: flex;
+             flex-direction: column; gap: 4px;
+             max-height: min(52vh, 420px); overflow-y: auto; }
+.pick-row  { width: 100%; display: flex; flex-direction: column; gap: 4px;
+             padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 6px;
+             background: #fff; text-align: left; cursor: pointer; font: inherit; }
+.pick-row:hover { background: #f8f9fa; border-color: #c7d2fe; }
+.pick-row__id   { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 12.5px;
+                  font-weight: 600; color: #111827; }
+.pick-row__meta { font-size: 11.5px; color: #6b7280; font-variant-numeric: tabular-nums; }
+```
+
+Rules:
+
+- The list scrolls inside its own `max-height` region so a long history
+  stays inside the dialog instead of pushing the title and `Cancel` off
+  the viewport. This bounded scroll is the whole point of the pattern.
+- Precede the list with a `.section-header` whose count is the number of
+  rows and whose sub-line counts what they roll up (e.g. `35 runs total`).
+- Each row is a `.pick-row` button — the whole row is the click target,
+  keyboard-operable for free. The primary line pairs a monospace
+  identifier (`.pick-row__id`) with the rolled-up status `pill-sm`; a
+  muted `.pick-row__meta` line follows, its facts separated by
+  `.pick-row__sep` (`·`), never punctuation inside the text. A meta fact
+  that is only sometimes known (a blank `manifest_version`) is simply
+  absent, never an empty label.
+- Empty state is an `.info-strip--neutral`, not a bare paragraph.
 
 ## Section headers
 

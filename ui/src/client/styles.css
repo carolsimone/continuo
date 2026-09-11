@@ -777,6 +777,76 @@ a.release-author:hover { text-decoration: underline; }
   background: #f8fafc;
 }
 
+/* A picker/list dialog wider than the 360px default (e.g. the snapshot picker),
+   matching the .rerun-confirm-dialog precedent. */
+.dialog--wide { width: 480px; }
+
+/* Muted one-line explanation directly under a .dialog-title. */
+.dialog-subtitle {
+  margin: -8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b7280;
+}
+
+/* Snapshot pick list: a scrollable, select-to-act list of rows inside a modal.
+   The bounded height is what keeps a long history inside the viewport instead of
+   growing the dialog past its title and Cancel button. */
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+}
+
+.pick-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.pick-row:hover  { background: #f8f9fa; border-color: #c7d2fe; }
+.pick-row:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 1px; }
+
+.pick-row__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pick-row__id {
+  flex: 1;
+  min-width: 0;
+  font-family: 'SF Mono', 'Fira Mono', monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pick-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
+.pick-row__sep { color: #cbd5e1; }
+
 /* ===================== FOUNDATIONS ===================== */
 .page {
   min-height: 100vh;

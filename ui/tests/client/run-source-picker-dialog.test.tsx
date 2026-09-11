@@ -12,34 +12,62 @@ const mkRun = (over: Partial<NodeRun>): NodeRun => ({
   created_at: '2026-05-10T10:00:00Z',
   started_at: '2026-05-10T10:00:05Z',
   completed_at: '2026-05-10T10:01:00Z',
-  error_message: null, log_s3_key: null,
+  error_message: null, log_s3_key: null, run_results_uri: null,
   ...over,
 });
 
 describe('RunSourcePickerDialog', () => {
-  it('lists runs whose source scheduler is terminal, regardless of this node\'s task_status', () => {
+  it('collapses runs sharing a snapshot into one selectable row', () => {
     const runs: NodeRun[] = [
-      // Source run succeeded; this node also succeeded — eligible.
-      mkRun({ run_id: 'r1', terminal_status: 'succeeded', task_status: 'succeeded' }),
-      // Source run FAILED but this node stayed PENDING — STILL eligible because the
-      // state handler validates source-run-level terminal status, not per-task.
-      mkRun({ run_id: 'r2', terminal_status: 'failed', task_status: 'pending' }),
-      // Source run still RUNNING (in-flight) — ineligible even though the node
-      // already succeeded; state would reject with FAILED_PRECONDITION.
-      mkRun({ run_id: 'r3', terminal_status: '', task_status: 'succeeded' }),
+      mkRun({ run_id: 'a1', image_tag: 'img-a', manifest_version: 'm1', created_at: '2026-05-10T10:00:00Z' }),
+      mkRun({ run_id: 'a2', image_tag: 'img-a', manifest_version: 'm1', created_at: '2026-05-09T10:00:00Z' }),
+      mkRun({ run_id: 'b1', image_tag: 'img-b', manifest_version: 'm1', created_at: '2026-05-08T10:00:00Z' }),
     ];
     render(<RunSourcePickerDialog runs={runs} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
-    expect(screen.getByRole('button', { name: /r1/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /r2/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /r3/ })).toBeNull();
+    expect(document.querySelectorAll('.pick-row')).toHaveLength(2);
+    expect(screen.getByText('img-a')).toBeInTheDocument();
+    expect(screen.getByText('img-b')).toBeInTheDocument();
   });
 
-  it('calls onPick with the selected run_id', () => {
+  it('excludes an in-flight source run whose scheduler is not terminal', () => {
+    const runs: NodeRun[] = [
+      mkRun({ run_id: 'done', terminal_status: 'succeeded', image_tag: 'img-done' }),
+      mkRun({ run_id: 'inflight', terminal_status: '', image_tag: 'img-inflight' }),
+    ];
+    render(<RunSourcePickerDialog runs={runs} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByText('img-done')).toBeInTheDocument();
+    expect(screen.queryByText('img-inflight')).toBeNull();
+  });
+
+  it('picks the snapshot\'s most-recent terminal run', () => {
     const onPick = vi.fn();
-    const runs: NodeRun[] = [mkRun({ run_id: 'pick-me' })];
+    const runs: NodeRun[] = [
+      mkRun({ run_id: 'older', image_tag: 'img', manifest_version: 'm', created_at: '2026-05-09T10:00:00Z' }),
+      mkRun({ run_id: 'newest', image_tag: 'img', manifest_version: 'm', created_at: '2026-05-10T10:00:00Z' }),
+    ];
     render(<RunSourcePickerDialog runs={runs} operation="run" onPick={onPick} onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /pick-me/ }));
-    expect(onPick).toHaveBeenCalledWith('pick-me');
+    fireEvent.click(screen.getByRole('button', { name: /img/ }));
+    expect(onPick).toHaveBeenCalledWith('newest');
+  });
+
+  it('shows the representative run\'s status as a pill', () => {
+    const runs: NodeRun[] = [
+      mkRun({ run_id: 'failed-latest', image_tag: 'img', task_status: 'failed',
+              created_at: '2026-05-10T10:00:00Z' }),
+    ];
+    render(<RunSourcePickerDialog runs={runs} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
+    expect(document.querySelector('.pick-row .pill-sm--failed')).toBeTruthy();
+  });
+
+  it('shows manifest_version in the row meta when present', () => {
+    const runs: NodeRun[] = [mkRun({ image_tag: 'img', manifest_version: 'mani-42' })];
+    render(<RunSourcePickerDialog runs={runs} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByText(/mani-42/)).toBeInTheDocument();
+  });
+
+  it('scrolls the list inside a bounded region rather than growing the dialog', () => {
+    render(<RunSourcePickerDialog runs={[mkRun({})]} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
+    expect(document.querySelector('.pick-list')).toBeTruthy();
   });
 
   it('calls onClose when the backdrop is clicked', () => {
@@ -51,14 +79,17 @@ describe('RunSourcePickerDialog', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('renders empty-state message when no eligible runs', () => {
+  it('renders a neutral info-strip empty state when no eligible runs', () => {
     render(<RunSourcePickerDialog runs={[]} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
-    expect(screen.getByText(/no past runs available/i)).toBeInTheDocument();
+    const empty = screen.getByText(/no past snapshots available/i);
+    expect(empty).toBeInTheDocument();
+    expect(empty.closest('.info-strip--neutral')).toBeTruthy();
+    expect(document.querySelectorAll('.pick-row')).toHaveLength(0);
   });
 
-  it('subtitle reflects the operation prop', () => {
+  it('reflects the operation verb in the dialog copy', () => {
     render(<RunSourcePickerDialog runs={[]} operation="test" onPick={vi.fn()} onClose={vi.fn()} />);
-    expect(document.querySelector('.dialog-subtitle')?.textContent).toMatch(/test this node/i);
+    expect(screen.getByText(/test this node/i)).toBeInTheDocument();
   });
 });
 

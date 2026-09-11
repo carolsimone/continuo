@@ -70,6 +70,57 @@ export function computeNodeStats(runs: NodeRun[]): NodeStats {
   };
 }
 
+// One distinct past snapshot the node can be re-run against — an
+// (image_tag, manifest_version) pair, plus the runs that used it.
+export interface SnapshotGroup {
+  imageTag: string;
+  manifestVersion: string;
+  runCount: number;             // eligible runs sharing this snapshot
+  representativeRunId: string;  // the run the trigger executes against
+  status: string;               // task_status of the representative run
+  lastRunAt: string | null;     // created_at of the representative run
+}
+
+// Stale-mode (snapshot_of_run) eligibility mirrors state.TriggerSingleNodeRun's
+// validation: the source RUN must be terminal (scheduler-level status), not the
+// per-task status on this node. A FAILED run where this node stayed PENDING is a
+// valid source; an in-flight run where this node already succeeded is NOT.
+export function isSnapshotSourceEligible(r: NodeRun): boolean {
+  const s = r.terminal_status;
+  return s === 'succeeded' || s === 'failed' || s === 'cancelled';
+}
+
+// Collapse a node's runs into the distinct snapshots it can be re-run against.
+// Runs that share an (image_tag, manifest_version) pair are one snapshot; the
+// snapshot's representative is its most-recent terminal run, which is the run the
+// stale-mode trigger executes against. Groups come back newest-snapshot-first.
+export function groupRunsBySnapshot(runs: NodeRun[]): SnapshotGroup[] {
+  const eligible = runs.filter(isSnapshotSourceEligible);
+  const byRecent = [...eligible].sort(
+    (a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+
+  const groups = new Map<string, SnapshotGroup>();
+  for (const r of byRecent) {
+    // A JSON tuple keys the map so distinct (tag, version) pairs never collide.
+    const key = JSON.stringify([r.image_tag, r.manifest_version]);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.runCount += 1;
+      continue;
+    }
+    // byRecent is newest-first, so the first run seen for a key is its representative.
+    groups.set(key, {
+      imageTag: r.image_tag,
+      manifestVersion: r.manifest_version,
+      runCount: 1,
+      representativeRunId: r.run_id,
+      status: r.task_status,
+      lastRunAt: r.created_at,
+    });
+  }
+  return [...groups.values()];
+}
+
 export function formatRelative(iso: string | null, now: Date = new Date()): string {
   if (!iso) return '—';
   const t = new Date(iso).getTime();
