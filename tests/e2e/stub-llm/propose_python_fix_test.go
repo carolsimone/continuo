@@ -203,3 +203,40 @@ func TestProposePythonFix_NoContractFileYieldsNoFiles(t *testing.T) {
 		t.Errorf("a prompt with no contract file must yield no updated files; got %s", rec.Body.String())
 	}
 }
+
+// pythonParseFixPrompt renders the shape prompt.AssemblePythonParseFix produces
+// for the parse fixture: the parser's error under the "SQL parse error:"
+// heading in place of a validation error, then the declaring contract.
+func pythonParseFixPrompt(contract string) string {
+	var b strings.Builder
+	b.WriteString("Failed python node: e2e_schema.py_unqualified_read\n\n")
+	b.WriteString("SQL parse error:\n```\nunqualified table reference `right_name` in node `py_unqualified_read`\n```\n\n")
+	b.WriteString("Contract file services/svc-py-e2e-parse/contracts/py_unqualified_read.yml that declares it:\n```yaml\n" + contract + "\n```\n\n")
+	b.WriteString("Return the complete new content of every file you change.")
+	return b.String()
+}
+
+// TestProposePythonFix_ParseFixtureQualifiesTheRead pins the parse repair: a
+// prompt carrying the parser's error gets the fixture's read back with its
+// relation schema-qualified, and nothing else about the contract changed.
+func TestProposePythonFix_ParseFixtureQualifiesTheRead(t *testing.T) {
+	raw, err := os.ReadFile("../fixtures/py-remediation-repo/services/svc-py-e2e-parse/contracts/py_unqualified_read.yml")
+	if err != nil {
+		t.Fatalf("read the parse contract fixture: %v", err)
+	}
+
+	path, content := proposedFile(t, pythonParseFixPrompt(string(raw)))
+
+	if path != "services/svc-py-e2e-parse/contracts/py_unqualified_read.yml" {
+		t.Errorf("the answer must name the declaring contract file; got %q", path)
+	}
+	if !strings.Contains(content, "select id from "+bindingRead) {
+		t.Errorf("the parse fixture's read must come back schema-qualified; got:\n%s", content)
+	}
+	if strings.Contains(content, "select id from "+unqualifiedRead+"\n") {
+		t.Errorf("the unqualified read must not survive the repair; got:\n%s", content)
+	}
+	if !strings.Contains(content, "table: py_unqualified_read") {
+		t.Errorf("the repair must keep declaring the same node; got:\n%s", content)
+	}
+}

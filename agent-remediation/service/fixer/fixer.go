@@ -19,11 +19,11 @@ import (
 	"log/slog"
 	"strings"
 
-	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
 	"github.com/carolsimone/continuo/agent-remediation/domain/repository"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // Input is the failure evidence a Fixer needs, projected from the inbound
@@ -157,7 +157,7 @@ type Result struct {
 	VerificationContract []byte
 }
 
-// Gathered holds every source file a single-shot Fixer read, keyed by
+// Gathered holds every source file a source-file Fixer read, keyed by
 // repo-relative path, in a deterministic Order for prompt rendering. Primary
 // is the offending file (the compile .sql or the seed .csv).
 type Gathered struct {
@@ -166,7 +166,7 @@ type Gathered struct {
 	Primary string
 }
 
-// Outcome is the interpreted LLM answer for a single-shot Fixer.
+// Outcome is the interpreted LLM answer for a source-file Fixer.
 type Outcome struct {
 	Status           proposal.Status
 	TargetFile       string
@@ -186,20 +186,31 @@ type Fixer interface {
 // unknown source is a programming error (the classifier produces only the
 // five known values).
 //
-// nodeType selects a lane only for validation failures, where the three node
-// kinds need entirely different fixes: a dbt model is corrected in its SQL
-// file; a python-model node is corrected in the contract yaml that declares
-// it, preserving whatever reads its script performs, and verified by a
-// verification run; a python-csv node has no script at all, so its fix
-// corrects the contract to match the csv file that is its source of truth —
-// a narrower set of rules and a narrower post-apply guard than a
-// python-model node's, hence its own lane rather than a shared one. Every
-// other source ignores nodeType. The seed, duplicate-relation, compile and
-// parse lanes each refuse a python node in their own way, having no python fix
-// to offer.
+// nodeType selects a lane for the two sources where a python node's fix lives
+// somewhere other than the file the trigger names — its contract yaml — and
+// is proven by a verification run rather than read back:
+//
+//   - validation: a dbt model is corrected in its SQL file; a python-model
+//     node is corrected in the contract yaml that declares it, preserving
+//     whatever reads its script performs; a python-csv node has no script at
+//     all, so its fix corrects the contract to match the csv file that is its
+//     source of truth — a narrower set of rules and a narrower post-apply
+//     guard than a python-model node's, hence its own lane.
+//   - parse: a dbt model is corrected in its SQL file; a python-model node's
+//     rejected SQL is one of its reads in the contract yaml, so it takes the
+//     contract-fix lane. A python-csv node's only read is an S3 URI, never
+//     SQL, so the parser has nothing to reject in it; it keeps the
+//     source-file lane, which records why it cannot help.
+//
+// Every other source ignores nodeType: the seed, duplicate-relation and
+// compile lanes each refuse a python node with a recorded reason, having no
+// python fix to offer.
 func For(source, nodeType string) (Fixer, error) {
 	switch source {
 	case sourceParse:
+		if nodeType == string(pkg_model.NodeTypePythonModel) {
+			return pythonParseFixer{}, nil
+		}
 		return parseFixer{}, nil
 	case sourceCompile:
 		return compileFixer{}, nil
@@ -330,9 +341,10 @@ func isLowConfidence(c string) bool {
 
 // writeSourceArtifacts writes the corrected source and its unified diff
 // (against the original) as the attempt's source artifacts and returns them as
-// a complete FileEdit naming filePath and both URIs. Both singleShot
-// (compile/seed) and the validation fixer's real-source step use it, so the
-// artifact key layout and content type live in one place.
+// a complete FileEdit naming filePath and both URIs. Both sourceFileFix
+// (compile/parse/seed/duplicate-relation) and the validation fixer's
+// real-source step use it, so the artifact key layout and content type live in
+// one place.
 func writeSourceArtifacts(ctx context.Context, svc Services, in Input, filePath, original, corrected string) (proposal.FileEdit, error) {
 	diff := proposal.ComputeUnifiedDiff(original, corrected, filePath)
 	sqlURI, err := svc.Artifacts.Write(ctx,
@@ -370,23 +382,32 @@ func writeEditArtifacts(ctx context.Context, svc Services, in Input, attempt, in
 	return proposal.FileEdit{Path: filePath, ContentURI: contentURI, DiffURI: diffURI}, nil
 }
 
-// singleShot builds a Fixer whose flow is: gather source files → build one
-// prompt → one LLM call → interpret → (on a proposed outcome) diff the chosen
-// file against its original content and write the source + diff artifacts.
-// compileFixer and seedFixer embed it.
-type singleShot struct {
-	gather    func(ctx context.Context, svc Services, in Input) (Gathered, bool, error)
+// sourceFileFix is the shared skeleton of every lane whose fix is one edited
+// repository file, proven later by a dbt run that lays the edit over the
+// project: gather source files → build one prompt → one LLM call → interpret
+// → (on a proposed outcome) diff the chosen file against its original content
+// and write the source + diff artifacts. The compile, parse, seed and
+// duplicate-relation lanes compose it; its counterpart for a fix made in a
+// python contract yaml is contractFix.
+//
+// gather returns a non-empty skip reason when the lane cannot help with this
+// trigger; the reason is recorded as the proposal's rationale, so the operator
+// reading the release sees why no fix was attempted rather than an unexplained
+// skipped row.
+type sourceFileFix struct {
+	gather    func(ctx context.Context, svc Services, in Input) (g Gathered, skipReason string, err error)
 	build     func(svc Services, g Gathered, in Input, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest
 	interpret func(res ports.ProposeResult, g Gathered, in Input) Outcome
 }
 
-func (s singleShot) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
-	g, skip, err := s.gather(ctx, svc, in)
+func (s sourceFileFix) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
+	g, skipReason, err := s.gather(ctx, svc, in)
 	if err != nil {
 		return Result{}, err // transient (non-404) read error: driver redelivers
 	}
-	if skip {
-		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped}}, nil
+	if skipReason != "" {
+		svc.Logger.Info("source-file fix skipped", "node", in.NodeID, "node_type", in.NodeType, "source", in.Source, "reason", skipReason)
+		return Result{Proposal: proposal.Proposal{Status: proposal.StatusSkipped, Rationale: skipReason}}, nil
 	}
 	// The log is fetched only after gather commits to producing a fix, so a
 	// skipped class never depends on the log being readable.

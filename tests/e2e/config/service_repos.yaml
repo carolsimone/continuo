@@ -21,6 +21,8 @@ services:
   service-1: services/service-1
   service-2: services/service-2
   service-3: services/service-3
-  # python-node fixture services; svc-py-e2e-loop drives the retry-round test.
+  # python-node fixture services; svc-py-e2e-loop drives the retry-round test,
+  # svc-py-e2e-parse the parse-stage (unqualified read) repair.
   svc-py-e2e: services/svc-py-e2e
   svc-py-e2e-loop: services/svc-py-e2e-loop
+  svc-py-e2e-parse: services/svc-py-e2e-parse

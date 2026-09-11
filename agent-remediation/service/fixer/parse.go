@@ -2,52 +2,43 @@ package fixer
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
-// parseFixer fixes a node whose compiled SQL topology-controller's parser
+// parseFixer fixes a dbt node whose compiled SQL topology-controller's parser
 // rejected: invalid SQL, or a relation referenced without its schema. It reads
 // the same files as the compile lane (the offending model, co-located yml,
 // dbt_project.yml) but resolves the service from the trigger's Service field
 // rather than the node id, and shows the model the parser's error text in
 // place of a dbt log, since no Job ran.
 //
-// A python target is skipped outright, before any read is attempted. A python
-// node's SQL is not in the file FilePath names — that path is the contract's
-// script entry, a program the parser never reads. The SQL the parser rejected
-// is one of the node's `reads` entries in its service's contract.yaml, and
-// this system carries no repository path for contract.yaml at all, so editing
-// the script would leave the rejected SQL untouched and the release would be
-// rejected again on the next parse. Skipping also keeps the driver from
-// verifying such a fix as a dbt run: a parse fix packages no
-// VerificationContract, so a proposal here would submit a dbt verification
-// run for a python service.
+// A python-model node never reaches this type: For routes it to
+// pythonParseFixer, because its rejected SQL is a read in its contract yaml.
+// A python-csv node does reach it and is refused with a recorded reason: its
+// only read is an S3 URI, never SQL, so the parser has nothing to reject in
+// it, and a rejection naming one is not something this system can repair.
 type parseFixer struct{}
 
 func (parseFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
-	return singleShot{gather: parseGather, build: parseBuild, interpret: singleFileInterpret}.Propose(ctx, svc, in)
+	return sourceFileFix{gather: parseGather, build: parseBuild, interpret: singleFileInterpret}.Propose(ctx, svc, in)
 }
 
-func parseGather(ctx context.Context, svc Services, in Input) (Gathered, bool, error) {
+func parseGather(ctx context.Context, svc Services, in Input) (Gathered, string, error) {
 	if pkg_model.NodeType(in.NodeType).IsPython() {
-		svc.Logger.Info("parse fix: target is a python node; skipping — "+
-			"the SQL the parser rejected lives in the node's reads in its service's "+
-			"contract.yaml, whose repository path this system does not carry, so editing "+
-			"the script the trigger names cannot repair the contract",
-			"node", in.NodeID, "node_type", in.NodeType)
-		return Gathered{}, true, nil
+		return Gathered{}, fmt.Sprintf("%s is a %s node: its reads are declared in its service's contract.yaml, "+
+			"not in SQL the parser can reject, so remediation has no fix to offer; correct the contract by hand",
+			in.NodeID, in.NodeType), nil
 	}
 	if in.FilePath == "" {
-		svc.Logger.Info("parse fix: trigger carries no file path; skipping", "node", in.NodeID)
-		return Gathered{}, true, nil
+		return Gathered{}, "the parse rejection names no source file, so there is no file to fix", nil
 	}
 	if in.Service == "" {
-		svc.Logger.Info("parse fix: trigger carries no service; skipping", "node", in.NodeID)
-		return Gathered{}, true, nil
+		return Gathered{}, "the parse rejection names no service, so the source cannot be located", nil
 	}
-	return gatherSourceFile(ctx, svc, in, in.Service, "parse fix")
+	return gatherSourceFile(ctx, svc, in, in.Service)
 }
 
 // parseBuild ignores the dbt log argument: a parse failure has none, and the

@@ -65,16 +65,48 @@ Rules:
 - When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the contract you are shown.
 - Always respond by calling the propose_python_fix tool.`
 
+const pythonParseFixSystemPrompt = `You are a data-engineering assistant that fixes a Continuo python node one of whose declared reads has SQL that the release's SQL parser rejected before any run.
+
+A python node is declared in a contract yaml file: an entry under "nodes:" naming its schema and table, the script that produces it, the upstream relations it reads (each with the SQL that selects them), and the output_columns it promises to produce. Before a release runs anything, every read's SQL is parsed and every relation it names must be schema-qualified so the release can resolve it to an upstream node. The parser rejected one of this node's reads, and its error names the line and column where parsing stopped. The script's python source is not parsed, is not shown to you, and cannot be changed.
+
+Rules:
+- Change ONLY the SQL of the node's declared reads, so that every read parses and every relation it references is schema-qualified. Never touch the node's schema, table, script path, owner, schedule, criticality, or output_columns — those identify the node or are checked later by validation, not by the parser.
+- Keep every read the node declares. Correcting a read's SQL is the fix; deleting a read or renaming its key is not: the script still performs that read, and you cannot change the script. A contract that no longer declares it parses while the node stays broken.
+- Qualify a relation with the schema the evidence shows it lives in; do not invent a schema, and do not rewrite what the read selects beyond what parsing requires.
+- A contract file may declare several nodes. Leave every node other than the failing one byte-for-byte unchanged.
+- Return the COMPLETE new content of every file you change, never a diff and never a fragment. A file you do not change must not appear in your answer at all.
+- When earlier attempts are shown, read what each one changed and why its verification failed, and do not repeat a change that has already been rejected.
+- When past precedents are shown, weigh how the same error was resolved before; follow a precedent's approach only where it fits the contract you are shown.
+- Always respond by calling the propose_python_fix tool.`
+
 // AssemblePythonContractFix builds the request that asks the model to correct
-// the contract yaml declaring a failed python node. The answer is a list of
-// complete files rather than one file's content, because a fix can legitimately
-// span the declaring file and a sibling it shares definitions with.
+// the contract yaml declaring a python node that failed validation. The answer
+// is a list of complete files rather than one file's content, because a fix
+// can legitimately span the declaring file and a sibling it shares definitions
+// with.
 func AssemblePythonContractFix(ev PythonEvidence) ProposeRequest {
+	return pythonContractRequest(pythonContractFixSystemPrompt, "Validation error", ev)
+}
+
+// AssemblePythonParseFix builds the request that asks the model to correct a
+// read's SQL in the contract yaml declaring a python node the release's SQL
+// parser rejected. It has the validation fix's answer shape — the same tool
+// and the same complete-files contract — so one adapter parses both; the
+// evidence differs in that the error is the parser's own text and there is no
+// runner log, since no Job ran.
+func AssemblePythonParseFix(ev PythonEvidence) ProposeRequest {
+	return pythonContractRequest(pythonParseFixSystemPrompt, "SQL parse error", ev)
+}
+
+// pythonContractRequest renders the one request shape every python contract
+// fix uses: the failure under errorLabel, then each evidence section that has
+// something to say, then the tool that returns complete files.
+func pythonContractRequest(system, errorLabel string, ev PythonEvidence) ProposeRequest {
 	var u strings.Builder
 	fmt.Fprintf(&u, "Failed python node: %s\n\n", ev.NodeID)
 
 	if ev.ErrorExcerpt != "" {
-		fmt.Fprintf(&u, "Validation error:\n```\n%s\n```\n\n", ev.ErrorExcerpt)
+		fmt.Fprintf(&u, "%s:\n```\n%s\n```\n\n", errorLabel, ev.ErrorExcerpt)
 	}
 	if ev.RunnerLog != "" {
 		fmt.Fprintf(&u, "Full runner log:\n```\n%s\n```\n\n", ev.RunnerLog)
@@ -93,7 +125,7 @@ func AssemblePythonContractFix(ev PythonEvidence) ProposeRequest {
 	u.WriteString("Return the complete new content of every file you change.")
 
 	return ProposeRequest{
-		System:          pythonContractFixSystemPrompt,
+		System:          system,
 		User:            u.String(),
 		ToolName:        "propose_python_fix",
 		ToolDescription: "Return the complete new content of every contract file that must change.",

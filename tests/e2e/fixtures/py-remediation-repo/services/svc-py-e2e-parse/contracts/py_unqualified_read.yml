@@ -1,0 +1,21 @@
+nodes:
+  # Node whose declared read names its relation without a schema. The release's
+  # SQL parser requires every relation a read references to be schema-qualified
+  # so it can resolve it to an upstream node, so it rejects this node before
+  # any Job runs (unqualified_reference), and the release is rejected at the
+  # parse stage.
+  #
+  # The fix a remediation attempt has to find is in this file and nowhere else:
+  # the read must qualify the relation (public.right_name, which the test
+  # creates in the warehouse so the fix's verification run can bind it).
+  - schema: e2e_schema
+    table: py_unqualified_read
+    owner: e2e
+    schedule: daily
+    criticality: SECONDARY
+    script: scripts/py_unqualified_read.py
+    description: "python node whose declared read is not schema-qualified"
+    reads:
+      orders: select id from right_name
+    output_columns:
+      - {name: id, type: INTEGER, nullable: false}

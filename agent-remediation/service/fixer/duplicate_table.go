@@ -3,11 +3,12 @@ package fixer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 
-	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/service/ports"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // duplicateTableFixer resolves a naming collision: two models in the release
@@ -46,54 +47,43 @@ import (
 type duplicateTableFixer struct{}
 
 func (duplicateTableFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
-	return singleShot{
+	return sourceFileFix{
 		gather:    duplicateTableGather,
 		build:     duplicateTableBuild,
 		interpret: singleFileInterpret,
 	}.Propose(ctx, svc, in)
 }
 
-func duplicateTableGather(ctx context.Context, svc Services, in Input) (Gathered, bool, error) {
+func duplicateTableGather(ctx context.Context, svc Services, in Input) (Gathered, string, error) {
 	if pkg_model.NodeType(in.NodeType).IsPython() {
-		svc.Logger.Info("duplicate-table fix: target claimant is a python node; skipping — "+
-			"its relation is declared in the service's contract.yaml, whose repository path this "+
-			"system does not carry, so the named file cannot contain the fix",
-			"node", in.NodeID)
-		return Gathered{}, true, nil
+		return Gathered{}, "the claimant is a python node, whose relation is declared in its service's " +
+			"contract.yaml rather than in the file the trigger names; rename it in the contract by hand", nil
 	}
 	if in.NodeType == string(pkg_model.NodeTypeDbtSeed) {
-		svc.Logger.Info("duplicate-table fix: target claimant is a dbt seed; skipping — "+
-			"its relation name comes from the CSV filename or project config, never from the "+
-			"CSV's own contents, so the named file cannot contain the fix, and any edited CSV "+
-			"would look like a valid rename proposal while actually altering the seed's data",
-			"node", in.NodeID)
-		return Gathered{}, true, nil
+		return Gathered{}, "the claimant is a dbt seed, whose relation name comes from the csv filename or " +
+			"project config, never from the csv's contents; an edited csv would alter the seed's data, " +
+			"not its name, so rename the seed by hand", nil
 	}
 	if in.FilePath == "" || in.Service == "" {
-		svc.Logger.Info("duplicate-table fix: trigger carries no source location; skipping",
-			"node", in.NodeID)
-		return Gathered{}, true, nil
+		return Gathered{}, "the trigger names no source file or service for the claimant, so there is no file to fix", nil
 	}
 	prefix, ok := svc.ServiceRepoPaths[in.Service]
 	if !ok {
-		svc.Logger.Warn("duplicate-table fix: no repo path mapping for service; skipping",
-			"node", in.NodeID, "service", in.Service)
-		return Gathered{}, true, nil
+		return Gathered{}, fmt.Sprintf("service %q has no repository path mapping, so its source cannot be read", in.Service), nil
 	}
 	offending := path.Join(prefix, in.FilePath)
 	content, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, offending)
 	if err != nil {
 		if errors.Is(err, ports.ErrSourceNotFound) {
-			svc.Logger.Warn("duplicate-table fix: offending file not found; skipping", "path", offending)
-			return Gathered{}, true, nil
+			return Gathered{}, fmt.Sprintf("the offending file %s does not exist at commit %s", offending, in.CommitSHA), nil
 		}
-		return Gathered{}, false, err // transient: redeliver
+		return Gathered{}, "", err // transient: redeliver
 	}
 	return Gathered{
 		Files:   map[string]string{offending: content},
 		Order:   []string{offending},
 		Primary: offending,
-	}, false, nil
+	}, "", nil
 }
 
 // duplicateTableBuild ignores the dbt log: a duplicate-relation rejection

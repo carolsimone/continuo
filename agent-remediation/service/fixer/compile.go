@@ -16,16 +16,15 @@ import (
 type compileFixer struct{}
 
 func (compileFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
-	return singleShot{gather: compileGather, build: compileBuild, interpret: singleFileInterpret}.Propose(ctx, svc, in)
+	return sourceFileFix{gather: compileGather, build: compileBuild, interpret: singleFileInterpret}.Propose(ctx, svc, in)
 }
 
-func compileGather(ctx context.Context, svc Services, in Input) (Gathered, bool, error) {
+func compileGather(ctx context.Context, svc Services, in Input) (Gathered, string, error) {
 	if in.FilePath == "" { // project-level error: no models/ path in the log
-		svc.Logger.Info("compile fix: no file path in log; skipping", "node", in.NodeID)
-		return Gathered{}, true, nil
+		return Gathered{}, "the compile error names no source file, so there is no file to fix", nil
 	}
 	// For compile the NodeID IS the service discriminator (a synthetic id).
-	return gatherSourceFile(ctx, svc, in, in.NodeID, "compile fix")
+	return gatherSourceFile(ctx, svc, in, in.NodeID)
 }
 
 func compileBuild(svc Services, g Gathered, in Input, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {
