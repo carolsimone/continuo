@@ -56,15 +56,16 @@ type Input struct {
 	FilePath     string
 	Service      string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed, dbt-snapshot,
-	// python-model, or python-csv), set on validation and duplicate-relation
-	// failures. It selects which Fixer runs for a validation failure (see
-	// For), and every Fixer that can be reached by a python node also checks
-	// it before reading anything: the duplicate-table Fixer's target relation
-	// is declared in the service's contract.yaml, whose repository path this
-	// system does not carry, so the file named by FilePath cannot contain the
-	// fix, and the dbt validation Fixer's candidate artifact is a JSON
-	// validation spec rather than SQL, so no source fix can be built from
-	// what it carries.
+	// python-model, or python-csv), set on validation, duplicate-relation and
+	// parse failures. It selects which Fixer runs for a validation or parse
+	// failure (see For): a python-model node's fix is made in the contract
+	// yaml declaring it, not in the file FilePath names. Every Fixer a python
+	// node can still reach checks it before reading anything and records why
+	// it cannot help: the duplicate-table Fixer's target relation is declared
+	// in the contract yaml rather than in FilePath, a python-csv node's only
+	// read is an S3 URI the parser has nothing to reject in, and the dbt
+	// validation Fixer's candidate artifact is a JSON validation spec rather
+	// than SQL, so no source fix can be built from what it carries.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID). Set on a duplicate-relation
@@ -75,9 +76,10 @@ type Input struct {
 	DBTLogURI            string
 	CandidateArtifactURI string
 	// CodeBundleURI locates the release's code-bundle document, which carries
-	// every parsed node's raw source. Empty only for a compile-stage
-	// rejection, which precedes the parse that produces the bundle; every
-	// post-parse rejection (duplicate_table included) carries it.
+	// every parsed node's raw source. Empty for a compile-stage and a
+	// parse-stage rejection, both of which precede the successful parse that
+	// produces the bundle; every later rejection (duplicate_table included)
+	// carries it.
 	CodeBundleURI string
 	Attempt       int
 	// ChangedAncestors are the failing node's upstream nodes this release
@@ -422,7 +424,7 @@ func (s sourceFileFix) Propose(ctx context.Context, svc Services, in Input) (Res
 	}
 	out := s.interpret(res, g, in)
 	if out.Status != proposal.StatusProposed {
-		return Result{Proposal: proposal.Proposal{Status: out.Status}}, nil
+		return Result{Proposal: proposal.Proposal{Status: out.Status, Rationale: out.Rationale}}, nil
 	}
 	// Diff and artifacts are computed against the raw original (g.Files), not the
 	// sanitized copy sent to the LLM, because the fix is applied to the real file.

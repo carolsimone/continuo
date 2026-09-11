@@ -2,12 +2,8 @@ package fixer
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"path"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
-	"github.com/carolsimone/continuo/agent-remediation/service/ports"
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
@@ -67,23 +63,9 @@ func duplicateTableGather(ctx context.Context, svc Services, in Input) (Gathered
 	if in.FilePath == "" || in.Service == "" {
 		return Gathered{}, "the trigger names no source file or service for the claimant, so there is no file to fix", nil
 	}
-	prefix, ok := svc.ServiceRepoPaths[in.Service]
-	if !ok {
-		return Gathered{}, fmt.Sprintf("service %q has no repository path mapping, so its source cannot be read", in.Service), nil
-	}
-	offending := path.Join(prefix, in.FilePath)
-	content, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, offending)
-	if err != nil {
-		if errors.Is(err, ports.ErrSourceNotFound) {
-			return Gathered{}, fmt.Sprintf("the offending file %s does not exist at commit %s", offending, in.CommitSHA), nil
-		}
-		return Gathered{}, "", err // transient: redeliver
-	}
-	return Gathered{
-		Files:   map[string]string{offending: content},
-		Order:   []string{offending},
-		Primary: offending,
-	}, "", nil
+	// The competing claimant's source is never read: the trigger's
+	// OtherService/OtherFilePath are all the prompt needs to name it.
+	return readOffendingFile(ctx, svc, in, in.Service, in.FilePath)
 }
 
 // duplicateTableBuild ignores the dbt log: a duplicate-relation rejection

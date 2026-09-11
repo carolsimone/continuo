@@ -2,6 +2,7 @@ package fixer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
@@ -45,13 +46,14 @@ func compileBuild(svc Services, g Gathered, in Input, dbtLog string, precedents 
 func singleFileInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {
 	target, ok := resolveTarget(res.TargetFile, g)
 	if !ok {
-		return Outcome{Status: proposal.StatusSkipped} // no shown file to safely apply the fix to
+		return Outcome{Status: proposal.StatusSkipped,
+			Rationale: fmt.Sprintf("the model named %q as the file to change, which is not one of the files it was shown", res.TargetFile)}
 	}
 	if res.ProposedContent == "" || res.ProposedContent == g.Files[target] {
-		return Outcome{Status: proposal.StatusFailed} // no-op
+		return Outcome{Status: proposal.StatusFailed, Rationale: "the model returned the file unchanged, which is not a fix"}
 	}
 	if isLowConfidence(res.Confidence) {
-		return Outcome{Status: proposal.StatusFailed} // model could not determine a safe fix
+		return Outcome{Status: proposal.StatusFailed, Rationale: "the model could not determine a safe fix with confidence"}
 	}
 	return Outcome{
 		Status:           proposal.StatusProposed,

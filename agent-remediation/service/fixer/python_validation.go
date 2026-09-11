@@ -740,8 +740,13 @@ func pythonEvidence(ctx context.Context, svc Services, in Input, located ports.L
 // what is expected, and any other runtime means the trigger and the bundle
 // disagree about what this node is, so the entry is left out rather than shown
 // as something it is not. A permanent miss also degrades to no section; only a
-// transient fetch error is returned.
+// transient fetch error is returned. An empty bundle URI means the rejection
+// preceded the parse that produces the bundle (a parse-stage rejection), so
+// there is no entry to look for and the reader is not consulted.
 func pythonContractEntry(ctx context.Context, svc Services, in Input) (string, error) {
+	if in.CodeBundleURI == "" {
+		return "", nil
+	}
 	src, err := svc.CandidateSource.NodeSource(ctx, in.CodeBundleURI, in.NodeID, in.ReleaseID)
 	switch {
 	case err == nil && src.Runtime == ports.RuntimePython:

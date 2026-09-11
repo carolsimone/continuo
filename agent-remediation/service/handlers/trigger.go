@@ -21,9 +21,10 @@ type Trigger struct {
 	Repo             string
 	CommitSHA        string
 	// CodeBundleURI locates the release's code-bundle document, which carries
-	// every parsed node's raw source. Empty only for a compile-stage
-	// rejection, which precedes the parse that produces the bundle; every
-	// post-parse rejection (duplicate_table included) carries it.
+	// every parsed node's raw source. Empty for a compile-stage and a
+	// parse-stage rejection, both of which precede the successful parse that
+	// produces the bundle; every later rejection (duplicate_table included)
+	// carries it.
 	CodeBundleURI string
 	// Nodes is the release's healable failing set, one entry per node.
 	Nodes []TriggerNode
@@ -75,12 +76,13 @@ type TriggerNode struct {
 	// discriminator.
 	Service string
 	// NodeType is the failing node's kind (dbt-model, dbt-seed,
-	// dbt-snapshot, python-model, or python-csv), set on validation and
-	// duplicate-relation failures. It selects the Fixer for a validation
-	// failure — a python node, whose source is not a single readable file,
-	// is fixed in the contract yaml declaring it — and lets the
-	// duplicate-table Fixer skip a python node without a topology lookup of
-	// its own.
+	// dbt-snapshot, python-model, or python-csv), set on validation,
+	// duplicate-relation and parse failures. It selects the Fixer for a
+	// validation or parse failure — a python-model node, whose source is not
+	// a single readable file, is fixed in the contract yaml declaring it —
+	// and lets the duplicate-table Fixer, and the parse Fixer for a
+	// python-csv node, refuse a python node with a recorded reason and no
+	// topology lookup of their own.
 	NodeType string
 	// OtherService and OtherFilePath locate the competing node that also
 	// produces the contested relation (RelationID), set on a duplicate-relation
@@ -159,7 +161,7 @@ type TriggerWire struct {
 	Repo             string `json:"repo"`
 	CommitSHA        string `json:"commit_sha"`
 	// CodeBundleURI locates the release's code-bundle document; empty when
-	// parse never completed (compile-stage failures).
+	// parse never completed (compile-stage and parse-stage failures).
 	CodeBundleURI string            `json:"code_bundle_uri,omitempty"`
 	ClassifiedAt  string            `json:"classified_at,omitempty"`
 	Nodes         []TriggerNodeWire `json:"nodes"`

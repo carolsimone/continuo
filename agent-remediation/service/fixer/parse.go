@@ -27,10 +27,13 @@ func (parseFixer) Propose(ctx context.Context, svc Services, in Input) (Result, 
 }
 
 func parseGather(ctx context.Context, svc Services, in Input) (Gathered, string, error) {
+	if in.NodeType == string(pkg_model.NodeTypePythonCsv) {
+		return Gathered{}, fmt.Sprintf("%s is a python-csv node: its only read is an S3 URI, not SQL the parser can reject, "+
+			"so remediation has no fix to offer; correct the contract by hand", in.NodeID), nil
+	}
 	if pkg_model.NodeType(in.NodeType).IsPython() {
 		return Gathered{}, fmt.Sprintf("%s is a %s node: its reads are declared in its service's contract.yaml, "+
-			"not in SQL the parser can reject, so remediation has no fix to offer; correct the contract by hand",
-			in.NodeID, in.NodeType), nil
+			"which this lane does not edit; correct the contract by hand", in.NodeID, in.NodeType), nil
 	}
 	if in.FilePath == "" {
 		return Gathered{}, "the parse rejection names no source file, so there is no file to fix", nil

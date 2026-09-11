@@ -2,9 +2,7 @@ package fixer
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"path"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
@@ -38,19 +36,7 @@ func seedGather(ctx context.Context, svc Services, in Input) (Gathered, string, 
 	if filePath == "" || service == "" {
 		return Gathered{}, "neither the trigger nor the graph names the seed's csv file and service, so there is no file to fix", nil
 	}
-	prefix, ok := svc.ServiceRepoPaths[service]
-	if !ok {
-		return Gathered{}, fmt.Sprintf("service %q has no repository path mapping, so its csv cannot be read", service), nil
-	}
-	full := path.Join(prefix, filePath)
-	content, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, full)
-	if err != nil {
-		if errors.Is(err, ports.ErrSourceNotFound) {
-			return Gathered{}, fmt.Sprintf("the seed csv %s does not exist at commit %s", full, in.CommitSHA), nil
-		}
-		return Gathered{}, "", err // transient: redeliver
-	}
-	return Gathered{Files: map[string]string{full: content}, Order: []string{full}, Primary: full}, "", nil
+	return readOffendingFile(ctx, svc, in, service, filePath)
 }
 
 func seedBuild(svc Services, g Gathered, in Input, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {
@@ -61,11 +47,11 @@ func seedBuild(svc Services, g Gathered, in Input, dbtLog string, precedents []p
 
 func seedInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {
 	if res.ProposedContent == "" || res.ProposedContent == g.Files[g.Primary] {
-		return Outcome{Status: proposal.StatusFailed} // unchanged / no-op → not a fix
+		return Outcome{Status: proposal.StatusFailed, Rationale: "the model returned the csv unchanged, which is not a fix"}
 	}
 	if isLowConfidence(res.Confidence) {
 		// The model could not infer the bad value; do not propose a guessed CSV.
-		return Outcome{Status: proposal.StatusFailed}
+		return Outcome{Status: proposal.StatusFailed, Rationale: "the model could not infer the bad value with confidence, so no guessed csv is proposed"}
 	}
 	return Outcome{
 		Status:           proposal.StatusProposed,

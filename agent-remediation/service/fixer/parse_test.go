@@ -140,3 +140,31 @@ func TestParse_DbtModelTarget_StillGathers(t *testing.T) {
 	require.Contains(t, fs.readPaths(), "services/svc/models/fx.sql")
 	require.Len(t, llm.requests, 1)
 }
+
+// TestParse_InterpretFailureRecordsReason pins that a failure decided after
+// the model answered — an unchanged file, a low-confidence answer, a target
+// that was never shown — carries its reason on the proposal the same way a
+// gather-stage skip does.
+func TestParse_InterpretFailureRecordsReason(t *testing.T) {
+	for name, res := range map[string]ports.ProposeResult{
+		"unchanged":      {TargetFile: "services/svc/models/fx.sql", ProposedContent: "select a b, c from t", Confidence: "high"},
+		"low confidence": {TargetFile: "services/svc/models/fx.sql", ProposedContent: "select a, b, c from t", Confidence: "low"},
+		"unknown target": {TargetFile: "services/svc/models/other.sql", ProposedContent: "select 1", Confidence: "high"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fs := &fakeSourceMap{
+				files: map[string]string{"services/svc/models/fx.sql": "select a b, c from t"},
+				dir:   map[string][]string{"services/svc/models": {"services/svc/models/fx.sql"}},
+			}
+			svc := Services{
+				Source: fs, LLM: &fakeLLM{queue: []ports.ProposeResult{res}}, Evidence: fakeEvidence{},
+				Sanitizer: fakeSanitizer{}, Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+				ServiceRepoPaths: map[string]string{"svc": "services/svc"}, Precedents: &fakePrecedents{},
+			}
+			r, err := parseFixer{}.Propose(context.Background(), svc, parseInput())
+			require.NoError(t, err)
+			require.NotEqual(t, proposal.StatusProposed, r.Proposal.Status)
+			require.NotEmpty(t, r.Proposal.Rationale, "a decided-after-answer outcome must say why")
+		})
+	}
+}

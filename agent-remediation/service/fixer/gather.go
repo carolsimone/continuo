@@ -18,19 +18,12 @@ import (
 // reason; any other read error is transient and returned so the driver
 // redelivers.
 func gatherSourceFile(ctx context.Context, svc Services, in Input, service string) (Gathered, string, error) {
-	prefix, ok := svc.ServiceRepoPaths[service]
-	if !ok {
-		return Gathered{}, fmt.Sprintf("service %q has no repository path mapping, so its source cannot be read", service), nil
+	g, skipReason, err := readOffendingFile(ctx, svc, in, service, in.FilePath)
+	if err != nil || skipReason != "" {
+		return Gathered{}, skipReason, err
 	}
-	offending := path.Join(prefix, in.FilePath)
-	content, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, offending)
-	if err != nil {
-		if errors.Is(err, ports.ErrSourceNotFound) {
-			return Gathered{}, fmt.Sprintf("the offending file %s does not exist at commit %s", offending, in.CommitSHA), nil
-		}
-		return Gathered{}, "", err // transient: redeliver
-	}
-	g := Gathered{Files: map[string]string{offending: content}, Order: []string{offending}, Primary: offending}
+	offending := g.Primary
+	prefix := svc.ServiceRepoPaths[service]
 
 	// Best-effort extra context, only when the offending file is a .sql.
 	if strings.HasSuffix(offending, ".sql") {
@@ -48,6 +41,28 @@ func gatherSourceFile(ctx context.Context, svc Services, in Input, service strin
 		addFile(ctx, svc, in, &g, path.Join(prefix, "dbt_project.yml"))
 	}
 	return g, "", nil
+}
+
+// readOffendingFile resolves filePath under service's repository prefix and
+// reads it at the trigger's commit, returning it as a one-file Gathered. It is
+// the read every source-file lane starts from; the compile and parse lanes
+// add best-effort context on top of it. A missing prefix or a 404 is a skip,
+// returned as its reason; any other read error is transient and returned so
+// the driver redelivers.
+func readOffendingFile(ctx context.Context, svc Services, in Input, service, filePath string) (Gathered, string, error) {
+	prefix, ok := svc.ServiceRepoPaths[service]
+	if !ok {
+		return Gathered{}, fmt.Sprintf("service %q has no repository path mapping, so its source cannot be read", service), nil
+	}
+	offending := path.Join(prefix, filePath)
+	content, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, offending)
+	if err != nil {
+		if errors.Is(err, ports.ErrSourceNotFound) {
+			return Gathered{}, fmt.Sprintf("the offending file %s does not exist at commit %s", offending, in.CommitSHA), nil
+		}
+		return Gathered{}, "", err // transient: redeliver
+	}
+	return Gathered{Files: map[string]string{offending: content}, Order: []string{offending}, Primary: offending}, "", nil
 }
 
 // addFile reads one best-effort context file, ignoring a not-found result.

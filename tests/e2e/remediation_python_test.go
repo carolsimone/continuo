@@ -861,12 +861,13 @@ func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, clients *
 		for _, msg := range msgs {
 			raw, _ := msg.Values["payload"].(string)
 			var p struct {
-				ReleaseID string `json:"release_id"`
-				Stage     string `json:"stage"`
-				Reason    string `json:"reason"`
-				Repo      string `json:"repo"`
-				CommitSHA string `json:"commit_sha"`
-				PerNode   []struct {
+				ReleaseID     string `json:"release_id"`
+				Stage         string `json:"stage"`
+				Reason        string `json:"reason"`
+				Repo          string `json:"repo"`
+				CommitSHA     string `json:"commit_sha"`
+				CodeBundleURI string `json:"code_bundle_uri"`
+				PerNode       []struct {
 					NodeID   string `json:"node_id"`
 					Kind     string `json:"kind"`
 					Detail   string `json:"detail"`
@@ -882,6 +883,8 @@ func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, clients *
 			require.Equal(t, "unqualified_reference", p.Reason)
 			require.NotEmpty(t, p.Repo)
 			require.Equal(t, releaseID, p.CommitSHA, "the python fixture posts its release id as the commit sha")
+			require.Empty(t, p.CodeBundleURI,
+				"a parse rejection precedes the parse that produces the code bundle, so the fixer must work without one")
 			require.Len(t, p.PerNode, 1)
 			require.Equal(t, pyParseUniqueID, p.PerNode[0].NodeID)
 			require.Equal(t, "unqualified_reference", p.PerNode[0].Kind)

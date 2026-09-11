@@ -84,13 +84,18 @@ func TestPythonParse_HappyPath(t *testing.T) {
 		Rationale: "qualified the orders read with its schema", Confidence: "high", Model: "test-model",
 	}}}
 	svc.LLM = llm
-	// A parse rejection precedes every Job and the code bundle: no log, no
-	// bundle. The lane must not need either.
-	svc.Evidence = fakeEvidence{}
-	svc.CandidateSource = &fakeCandidateSource{err: ports.ErrNotFound}
+	// A parse rejection precedes every Job and the code bundle: the trigger
+	// carries no log URI and no bundle URI, and the lane must consult neither
+	// reader — a bundle miss it went looking for would be logged as one.
+	evidence := &countingEvidence{}
+	bundle := &fakeCandidateSource{err: ports.ErrNotFound}
+	svc.Evidence = evidence
+	svc.CandidateSource = bundle
 
 	r, err := pythonParseFixer{}.Propose(context.Background(), svc, pythonParseInput())
 	require.NoError(t, err)
+	require.Zero(t, evidence.calls, "no log exists for a parse rejection, so none may be fetched")
+	require.Zero(t, bundle.calls, "no code bundle exists for a parse rejection, so none may be read")
 
 	require.Equal(t, 1, arch.calls)
 	require.Equal(t, "o/demo", arch.gotRepo)
