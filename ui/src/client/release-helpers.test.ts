@@ -57,6 +57,35 @@ describe('reasonLabel', () => {
   });
 });
 
+// Every value of the `reject_reason` vocabulary declared in
+// pkg/streams/contract.yaml, in declaration order. The list is duplicated here
+// rather than read from the YAML because the UI has no YAML parser among its
+// dependencies; contract.yaml stays the source of truth, and a reason added
+// there without a label here shows the operator a raw token.
+const REJECT_REASONS = [
+  'compile_failed',
+  'parse_rehearsal_failed',
+  'artifact_upload_failed',
+  'invalid_sql',
+  'unqualified_reference',
+  'invalid_artifact',
+  'internal_error',
+  'duplicate_table',
+  'unbuildable_cross_service_upstream',
+  'nothing_to_validate',
+  'seed_build_failed',
+  'validation_failed',
+];
+
+describe('reject_reason vocabulary coverage', () => {
+  it.each(REJECT_REASONS)('labels %s as prose, not as a raw token', (reason) => {
+    const label = reasonLabel(reason);
+    expect(label).not.toBe(reason);
+    expect(label).not.toContain('_');
+    expect(label[0]).toBe(label[0].toUpperCase());
+  });
+});
+
 describe('parse stage vocabulary', () => {
   it('labels the parse stage and its reasons', () => {
     expect(stageLabel('parse')).toBe('Parse');

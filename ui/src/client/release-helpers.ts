@@ -59,6 +59,10 @@ const STAGE_LABELS: Record<string, string> = {
   unqualified_reference: 'Unqualified reference',
   invalid_artifact: 'Invalid artifact',
   internal_error: 'Internal error',
+  parse_rehearsal: 'Parse rehearsal',
+  artifact_upload: 'Artifact upload',
+  nothing_to_validate: 'Nothing to validate',
+  unbuildable_cross_service_upstream: 'Unbuildable cross-service upstream',
 };
 
 // stageLabel maps a raw stage literal to its section display label, falling back
@@ -69,8 +73,10 @@ export function stageLabel(stage: string): string {
 
 // reasonLabel humanizes a release reject_reason token: a leg reason (e.g.
 // "compile_failed") drops its "_failed" suffix and reuses the stage label; a
-// parse reason has its own entry. An unrecognized token falls through to its
-// raw value.
+// parse reason has its own entry. Every value of the `reject_reason` vocabulary
+// in pkg/streams/contract.yaml resolves to prose, pinned by
+// release-helpers.test.ts. An unrecognized token falls through to its raw
+// value.
 export function reasonLabel(reason: string): string {
   return stageLabel(reason.replace(/_failed$/, ''));
 }
