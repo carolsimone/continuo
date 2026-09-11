@@ -645,7 +645,7 @@ sequenceDiagram
     Note over RA: CAS verifying → proposed + enqueue remediation.proposed:v1<br/>in one transaction; each waiting node's outcome becomes proposed
     RA->>RA: remediation.proposed:v1 → the human review surface (Flow 12)
   else any run's phase is failed
-    Note over RA: CAS verifying → failed, verify_error = the failed run(s)' per-node<br/>errors (read via the same S3 evidence reader the fixers use, falling back to<br/>the run's fail_reason/fail_detail)<br/>commit, THEN start attempt n+1 from the stored trigger,<br/>replayed in full (the failed attempt's edits are all discarded)
+    Note over RA: CAS verifying → failed, verify_error = the failed run(s)' per-node<br/>errors (a validation node from its S3 result, a parse node from its inline<br/>detail, each falling back to the run's fail_reason/fail_detail)<br/>commit, THEN start attempt n+1 from the stored trigger,<br/>replayed in full (the failed attempt's edits are all discarded)
     RA->>RA: attempt n+1 (re-grouped over the same failing set)
   else a run has been RUNNING longer than VERIFICATION_TIMEOUT, measured from<br/>ITS OWN activated_at
     Note over RA: verifying → failed, verify_error = "verification timed out"<br/>(the budget belongs to each run individually — a run still queued, with no<br/>activated_at yet, is never charged however old the attempt is)
