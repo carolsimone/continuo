@@ -60,13 +60,23 @@ export default function RunSourcePickerDialog({ runs, operation, onPick, onClose
               </div>
             </div>
             <ul className="pick-list">
-              {snapshots.map(s => (
+              {snapshots.map(s => {
+                // The accessible name carries the full (image_tag, manifest_version)
+                // identity: two snapshots sharing an image tag but differing only in
+                // manifest must not be announced identically to a screen reader.
+                const ariaLabel = [
+                  `${s.imageTag || 'unknown image'} snapshot`,
+                  s.manifestVersion ? `manifest ${s.manifestVersion}` : null,
+                  `${s.runCount} run${s.runCount === 1 ? '' : 's'}`,
+                  `last run ${s.status}`,
+                ].filter(Boolean).join(', ');
+                return (
                 <li key={s.representativeRunId}>
                   <button
                     type="button"
                     className="pick-row"
                     onClick={() => onPick(s.representativeRunId)}
-                    aria-label={`${s.imageTag || 'unknown image'} snapshot, ${s.runCount} run${s.runCount === 1 ? '' : 's'}, last run ${s.status}`}
+                    aria-label={ariaLabel}
                   >
                     <span className="pick-row__main">
                       <span className="pick-row__id">{s.imageTag || '—'}</span>
@@ -85,7 +95,8 @@ export default function RunSourcePickerDialog({ runs, operation, onPick, onClose
                     </span>
                   </button>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </>
         )}

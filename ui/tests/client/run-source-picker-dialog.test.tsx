@@ -65,6 +65,18 @@ describe('RunSourcePickerDialog', () => {
     expect(screen.getByText(/mani-42/)).toBeInTheDocument();
   });
 
+  it('distinguishes same-image snapshots by manifest in the accessible name', () => {
+    // Same image tag, same run count, same status — only the manifest differs.
+    // The manifest must reach the accessible name or the two are announced alike.
+    const runs: NodeRun[] = [
+      mkRun({ run_id: 'r14', image_tag: 'img', manifest_version: 'm14', created_at: '2026-05-10T10:00:00Z' }),
+      mkRun({ run_id: 'r13', image_tag: 'img', manifest_version: 'm13', created_at: '2026-05-09T10:00:00Z' }),
+    ];
+    render(<RunSourcePickerDialog runs={runs} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /img snapshot, manifest m14/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /img snapshot, manifest m13/i })).toBeInTheDocument();
+  });
+
   it('scrolls the list inside a bounded region rather than growing the dialog', () => {
     render(<RunSourcePickerDialog runs={[mkRun({})]} operation="run" onPick={vi.fn()} onClose={vi.fn()} />);
     expect(document.querySelector('.pick-list')).toBeTruthy();
