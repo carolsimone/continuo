@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { kindLabel, computeNodeStats, formatDuration, formatRelative } from '../../src/client/node-helpers';
+import { kindLabel, computeNodeStats, formatDuration, formatRelative, groupRunsBySnapshot } from '../../src/client/node-helpers';
 import type { NodeRun } from '../../src/client/types';
 
 const mkRun = (over: Partial<NodeRun>): NodeRun => ({
@@ -10,7 +10,7 @@ const mkRun = (over: Partial<NodeRun>): NodeRun => ({
   created_at: '2026-05-10T10:00:00Z',
   started_at: '2026-05-10T10:00:05Z',
   completed_at: '2026-05-10T10:01:00Z',
-  error_message: null, log_s3_key: null,
+  error_message: null, log_s3_key: null, run_results_uri: null,
   ...over,
 });
 
@@ -130,5 +130,66 @@ describe('computeNodeStats — extended fields', () => {
     ];
     const s = computeNodeStats(runs);
     expect(s.successRatePct).toBe(50); // 1 succeeded of 2 terminal (skipped counts)
+  });
+});
+
+describe('groupRunsBySnapshot', () => {
+  it('collapses runs sharing an (image_tag, manifest_version) pair into one group', () => {
+    const runs = [
+      mkRun({ run_id: 'a1', image_tag: 'img-a', manifest_version: 'm1', created_at: '2026-05-10T10:00:00Z' }),
+      mkRun({ run_id: 'a2', image_tag: 'img-a', manifest_version: 'm1', created_at: '2026-05-09T10:00:00Z' }),
+      mkRun({ run_id: 'b1', image_tag: 'img-b', manifest_version: 'm1', created_at: '2026-05-08T10:00:00Z' }),
+    ];
+    const groups = groupRunsBySnapshot(runs);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({ imageTag: 'img-a', manifestVersion: 'm1', runCount: 2 });
+    expect(groups[1]).toMatchObject({ imageTag: 'img-b', manifestVersion: 'm1', runCount: 1 });
+  });
+
+  it('represents each group by its most recent terminal run', () => {
+    const runs = [
+      mkRun({ run_id: 'older', image_tag: 'img', manifest_version: 'm',
+              created_at: '2026-05-09T10:00:00Z', task_status: 'failed' }),
+      mkRun({ run_id: 'newest', image_tag: 'img', manifest_version: 'm',
+              created_at: '2026-05-10T10:00:00Z', task_status: 'succeeded' }),
+    ];
+    const [g] = groupRunsBySnapshot(runs);
+    expect(g.representativeRunId).toBe('newest');
+    expect(g.status).toBe('succeeded');
+    expect(g.lastRunAt).toBe('2026-05-10T10:00:00Z');
+  });
+
+  it('excludes runs whose source scheduler is not terminal', () => {
+    const runs = [
+      mkRun({ run_id: 'inflight', terminal_status: '', image_tag: 'img', manifest_version: 'm' }),
+    ];
+    expect(groupRunsBySnapshot(runs)).toEqual([]);
+  });
+
+  it('includes a run whose source scheduler failed even if this node stayed pending', () => {
+    const runs = [
+      mkRun({ run_id: 'src-failed', terminal_status: 'failed', task_status: 'pending',
+              image_tag: 'img', manifest_version: 'm' }),
+    ];
+    const groups = groupRunsBySnapshot(runs);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].representativeRunId).toBe('src-failed');
+    expect(groups[0].status).toBe('pending');
+  });
+
+  it('groups a blank manifest_version distinctly from a set one', () => {
+    const runs = [
+      mkRun({ run_id: 'blank', image_tag: 'img', manifest_version: '', created_at: '2026-05-10T10:00:00Z' }),
+      mkRun({ run_id: 'set', image_tag: 'img', manifest_version: 'm', created_at: '2026-05-09T10:00:00Z' }),
+    ];
+    expect(groupRunsBySnapshot(runs)).toHaveLength(2);
+  });
+
+  it('orders groups by most recent run first', () => {
+    const runs = [
+      mkRun({ run_id: 'old', image_tag: 'old-img', manifest_version: 'm', created_at: '2026-01-01T00:00:00Z' }),
+      mkRun({ run_id: 'new', image_tag: 'new-img', manifest_version: 'm', created_at: '2026-09-01T00:00:00Z' }),
+    ];
+    expect(groupRunsBySnapshot(runs).map(g => g.imageTag)).toEqual(['new-img', 'old-img']);
   });
 });

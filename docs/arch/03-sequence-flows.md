@@ -352,7 +352,7 @@ sequenceDiagram
 
 ### ListNodeRuns read path
 
-Before triggering a single-node run the UI fetches the node's run history: `GET /api/nodes/:service/:schema/:table/runs` → `state.ListNodeRuns(service_name, schema_name, table_name, limit=50)`. This is a pure read with no side effects. `state` executes one SQL query (`NodeRunRepository.List`) that joins `task_tracker × scheduler_tracker × task_execution` via a `target_tasks → latest_exec` CTE chain and returns the most recent rows ordered by `scheduler_tracker.created_at DESC`. The result drives the node detail page and populates the source-run picker used by the `metadata_source=snapshot_of_run` branch of Flow 9.
+Before triggering a single-node run the UI fetches the node's run history: `GET /api/nodes/:service/:schema/:table/runs` → `state.ListNodeRuns(service_name, schema_name, table_name, limit=50)`. This is a pure read with no side effects. `state` executes one SQL query (`NodeRunRepository.List`) that joins `task_tracker × scheduler_tracker × task_execution` via a `target_tasks → latest_exec` CTE chain and returns the most recent rows ordered by `scheduler_tracker.created_at DESC`. The result drives the node detail page and populates the snapshot picker used by the `metadata_source=snapshot_of_run` branch of Flow 9. The picker groups these runs client-side into the distinct snapshots the node can be re-run against — one entry per `(image_tag, manifest_version)` pair — and resolves the operator's pick to that snapshot's most-recent terminal run, whose `run_id` becomes the `source_run_id` sent to `TriggerSingleNodeRun`.
 
 ### GetNode read path
 
