@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -19,8 +18,10 @@ type ThreadRepository interface {
 	CreateThread(ctx context.Context, userID string) (*domain.Thread, error)
 	// GetThread returns the thread only if it belongs to userID (ownership check).
 	GetThread(ctx context.Context, id uuid.UUID, userID string) (*domain.Thread, error)
-	// AppendMessage assigns the next seq and bumps the thread's updated_at.
-	AppendMessage(ctx context.Context, threadID uuid.UUID, role domain.Role, content json.RawMessage) (*domain.Message, error)
+	// AppendMessage assigns the next seq and bumps the thread's updated_at. The
+	// content variant must match role (TextContent for user/assistant,
+	// ToolCallContent for tool_call, ToolResultContent for tool_result).
+	AppendMessage(ctx context.Context, threadID uuid.UUID, role domain.Role, content domain.Content) (*domain.Message, error)
 	ListMessages(ctx context.Context, threadID uuid.UUID) ([]domain.Message, error)
 	CreatePendingAction(ctx context.Context, a *domain.PendingAction) error
 	ResolvePendingAction(ctx context.Context, id uuid.UUID, status domain.ActionStatus) error

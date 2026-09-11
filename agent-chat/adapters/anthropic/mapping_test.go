@@ -6,17 +6,11 @@ import (
 	"testing"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
-	"github.com/carolsimone/continuo/agent-chat/serialization"
 )
 
-// mustMessage builds a domain.Message with a JSON-encoded role payload.
-func mustMessage(t *testing.T, role domain.Role, payload any) domain.Message {
-	t.Helper()
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
-	}
-	return domain.Message{Role: role, Content: raw}
+// msg builds a domain.Message pairing a role with its typed content.
+func msg(role domain.Role, content domain.Content) domain.Message {
+	return domain.Message{Role: role, Content: content}
 }
 
 // A no-argument tool call (e.g. "continuo schedule list") must still serialize
@@ -25,7 +19,7 @@ func mustMessage(t *testing.T, role domain.Role, payload any) domain.Message {
 // "messages.N.content.M.tool_use.input: Field required".
 func TestToWireMessages_EmptyToolArgsEmitsInputObject(t *testing.T) {
 	wire, err := toWireMessages([]domain.Message{
-		mustMessage(t, domain.RoleToolCall, serialization.ToolCallContentDTO{
+		msg(domain.RoleToolCall, domain.ToolCallContent{
 			CallID: "call_1",
 			Tool:   "schedule_list",
 			Args:   map[string]string{}, // no arguments
@@ -47,7 +41,7 @@ func TestToWireMessages_EmptyToolArgsEmitsInputObject(t *testing.T) {
 // A tool call with arguments serializes them inside input.
 func TestToWireMessages_ToolArgsPreserved(t *testing.T) {
 	wire, err := toWireMessages([]domain.Message{
-		mustMessage(t, domain.RoleToolCall, serialization.ToolCallContentDTO{
+		msg(domain.RoleToolCall, domain.ToolCallContent{
 			CallID: "call_2",
 			Tool:   "schedule_status",
 			Args:   map[string]string{"name": "daily"},
@@ -69,7 +63,7 @@ func TestToWireMessages_ToolArgsPreserved(t *testing.T) {
 // A text block must never carry an input field.
 func TestToWireMessages_TextBlockHasNoInput(t *testing.T) {
 	wire, err := toWireMessages([]domain.Message{
-		mustMessage(t, domain.RoleAssistant, serialization.TextContentDTO{Text: "hello"}),
+		msg(domain.RoleAssistant, domain.TextContent{Text: "hello"}),
 	})
 	if err != nil {
 		t.Fatalf("toWireMessages: %v", err)
@@ -83,7 +77,7 @@ func TestToWireMessages_TextBlockHasNoInput(t *testing.T) {
 // A tool_result block must never carry an input field.
 func TestToWireMessages_ToolResultHasNoInput(t *testing.T) {
 	wire, err := toWireMessages([]domain.Message{
-		mustMessage(t, domain.RoleToolResult, serialization.ToolResultContentDTO{
+		msg(domain.RoleToolResult, domain.ToolResultContent{
 			CallID: "call_1",
 			Output: "ok",
 		}),

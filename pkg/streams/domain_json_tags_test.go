@@ -74,3 +74,75 @@ func TestNoJSONTagsInDomainPackages(t *testing.T) {
 		}
 	}
 }
+
+// forbiddenDomainImportPrefixes lists the serialization-framework import paths a
+// domain package must not depend on. A type-level dependency on one of these
+// (e.g. a json.RawMessage field, a proto message embedded in an aggregate)
+// couples the domain to a wire/persistence format just as a json struct tag
+// does, but the tag guard above — which inspects struct tags only — cannot see
+// it. An entry ending in "/" matches that path and anything under it; an entry
+// without a trailing slash matches exactly.
+var forbiddenDomainImportPrefixes = []string{
+	"encoding/json",
+	"encoding/xml",
+	"google.golang.org/protobuf/",
+	"github.com/golang/protobuf/",
+}
+
+// TestNoSerializationImportsInDomainPackages fails on any import of a
+// serialization framework under a service's domain/ tree (or pkg/domain).
+// Serialization is an adapter concern: move the marshal/unmarshal to a DTO in
+// the owning adapter (or a top-level serialization package) with to/from-domain
+// mappers, and keep the domain type free of the format. This complements the
+// struct-tag guard above by catching type-level leaks it cannot see.
+func TestNoSerializationImportsInDomainPackages(t *testing.T) {
+	root := repoRootFromTest(t)
+	fset := token.NewFileSet()
+
+	for _, m := range domainModules {
+		domainDir := filepath.Join(root, m, "domain")
+		if _, err := os.Stat(domainDir); err != nil {
+			continue // a module without a domain/ tree
+		}
+		err := filepath.WalkDir(domainDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go") {
+				return nil
+			}
+			f, perr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+			if perr != nil {
+				t.Fatalf("parse %s: %v", path, perr)
+			}
+			for _, imp := range f.Imports {
+				p := strings.Trim(imp.Path.Value, `"`)
+				if forbiddenDomainImport(p) {
+					rel, _ := filepath.Rel(root, path)
+					t.Errorf("%s:%d: domain package imports serialization framework %q — move marshal/unmarshal to an adapter/serialization DTO with to/from-domain mappers",
+						rel, fset.Position(imp.Pos()).Line, p)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", domainDir, err)
+		}
+	}
+}
+
+// forbiddenDomainImport reports whether importPath matches any entry in
+// forbiddenDomainImportPrefixes (exact match, or prefix match for entries ending
+// in "/").
+func forbiddenDomainImport(importPath string) bool {
+	for _, pfx := range forbiddenDomainImportPrefixes {
+		if strings.HasSuffix(pfx, "/") {
+			if strings.HasPrefix(importPath, pfx) {
+				return true
+			}
+		} else if importPath == pfx {
+			return true
+		}
+	}
+	return false
+}

@@ -2,14 +2,12 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
-	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/domain/repository"
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 	"github.com/google/uuid"
@@ -49,7 +47,7 @@ func (f *fakeRepo) GetThread(_ context.Context, id uuid.UUID, userID string) (*d
 	}
 	return t, nil
 }
-func (f *fakeRepo) AppendMessage(_ context.Context, threadID uuid.UUID, role domain.Role, content json.RawMessage) (*domain.Message, error) {
+func (f *fakeRepo) AppendMessage(_ context.Context, threadID uuid.UUID, role domain.Role, content domain.Content) (*domain.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m := domain.Message{ID: uuid.New(), ThreadID: threadID, Seq: len(f.msgs[threadID]) + 1, Role: role, Content: content}
@@ -219,11 +217,9 @@ func seedDanglingConfirm(t *testing.T, repo *fakeRepo) (threadID uuid.UUID, acti
 	ctx := context.Background()
 	thread, err := repo.CreateThread(ctx, "alice")
 	require.NoError(t, err)
-	uc, _ := json.Marshal(serialization.TextContentFromDomain(domain.TextContent{Text: "trigger daily"}))
-	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleUser, uc)
+	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleUser, domain.TextContent{Text: "trigger daily"})
 	require.NoError(t, err)
-	cc, _ := json.Marshal(serialization.ToolCallContentFromDomain(domain.ToolCallContent{CallID: "c1", Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}}))
-	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleToolCall, cc)
+	_, err = repo.AppendMessage(ctx, thread.ID, domain.RoleToolCall, domain.ToolCallContent{CallID: "c1", Tool: "schedule_trigger", Args: map[string]string{"schedule-name": "daily"}})
 	require.NoError(t, err)
 	action := &domain.PendingAction{
 		ID: uuid.New(), ThreadID: thread.ID, Tool: "schedule_trigger",
@@ -534,8 +530,8 @@ func TestSession_ResumeApprovalRunsToolAndContinues(t *testing.T) {
 		if m.Role != domain.RoleToolResult {
 			continue
 		}
-		var rc serialization.ToolResultContentDTO
-		require.NoError(t, json.Unmarshal(m.Content, &rc))
+		rc, ok := m.Content.(domain.ToolResultContent)
+		require.True(t, ok, "tool_result content must be a domain.ToolResultContent")
 		if rc.CallID == "c1" {
 			sawResult = true
 		}

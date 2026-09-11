@@ -1,11 +1,9 @@
 package anthropic
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
-	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 )
 
@@ -83,23 +81,23 @@ func toWireMessages(msgs []domain.Message) ([]wireMessage, error) {
 func toWireBlock(msg domain.Message) (wireBlock, string, error) {
 	switch msg.Role {
 	case domain.RoleUser:
-		var c serialization.TextContentDTO
-		if err := json.Unmarshal(msg.Content, &c); err != nil {
-			return wireBlock{}, "", fmt.Errorf("unmarshal user content: %w", err)
+		c, ok := msg.Content.(domain.TextContent)
+		if !ok {
+			return wireBlock{}, "", fmt.Errorf("user message content is %T, want TextContent", msg.Content)
 		}
 		return wireBlock{Type: "text", Text: c.Text}, "user", nil
 
 	case domain.RoleAssistant:
-		var c serialization.TextContentDTO
-		if err := json.Unmarshal(msg.Content, &c); err != nil {
-			return wireBlock{}, "", fmt.Errorf("unmarshal assistant content: %w", err)
+		c, ok := msg.Content.(domain.TextContent)
+		if !ok {
+			return wireBlock{}, "", fmt.Errorf("assistant message content is %T, want TextContent", msg.Content)
 		}
 		return wireBlock{Type: "text", Text: c.Text}, "assistant", nil
 
 	case domain.RoleToolCall:
-		var c serialization.ToolCallContentDTO
-		if err := json.Unmarshal(msg.Content, &c); err != nil {
-			return wireBlock{}, "", fmt.Errorf("unmarshal tool_call content: %w", err)
+		c, ok := msg.Content.(domain.ToolCallContent)
+		if !ok {
+			return wireBlock{}, "", fmt.Errorf("tool_call message content is %T, want ToolCallContent", msg.Content)
 		}
 		input := make(map[string]any, len(c.Args))
 		for k, v := range c.Args {
@@ -113,9 +111,9 @@ func toWireBlock(msg domain.Message) (wireBlock, string, error) {
 		}, "assistant", nil
 
 	case domain.RoleToolResult:
-		var c serialization.ToolResultContentDTO
-		if err := json.Unmarshal(msg.Content, &c); err != nil {
-			return wireBlock{}, "", fmt.Errorf("unmarshal tool_result content: %w", err)
+		c, ok := msg.Content.(domain.ToolResultContent)
+		if !ok {
+			return wireBlock{}, "", fmt.Errorf("tool_result message content is %T, want ToolResultContent", msg.Content)
 		}
 		return wireBlock{
 			Type:      "tool_result",

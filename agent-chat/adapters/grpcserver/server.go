@@ -1,14 +1,12 @@
 package grpcserver
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
-	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/domain/repository"
 	agentchatv1 "github.com/carolsimone/continuo/agent-chat/proto/agentchat/v1"
 	"github.com/carolsimone/continuo/agent-chat/service/chat"
@@ -135,14 +133,14 @@ func (s *streamSink) Error(code, message string) {
 func toHistoryMessage(m domain.Message) *agentchatv1.HistoryMessage {
 	switch m.Role {
 	case domain.RoleUser, domain.RoleAssistant:
-		var tc serialization.TextContentDTO
-		if err := json.Unmarshal(m.Content, &tc); err != nil {
+		tc, ok := m.Content.(domain.TextContent)
+		if !ok {
 			return nil
 		}
 		return &agentchatv1.HistoryMessage{Role: string(m.Role), Text: tc.Text}
 	case domain.RoleToolCall:
-		var cc serialization.ToolCallContentDTO
-		if err := json.Unmarshal(m.Content, &cc); err != nil {
+		cc, ok := m.Content.(domain.ToolCallContent)
+		if !ok {
 			return nil
 		}
 		return &agentchatv1.HistoryMessage{Role: "tool", Command: cc.Tool}

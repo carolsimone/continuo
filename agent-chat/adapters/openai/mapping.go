@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/carolsimone/continuo/agent-chat/domain"
-	"github.com/carolsimone/continuo/agent-chat/serialization"
 	"github.com/carolsimone/continuo/agent-chat/service/ports"
 )
 
@@ -72,23 +71,23 @@ func toWireMessages(system string, msgs []domain.Message) ([]wireMessage, error)
 	for _, msg := range msgs {
 		switch msg.Role {
 		case domain.RoleUser:
-			var c serialization.TextContentDTO
-			if err := json.Unmarshal(msg.Content, &c); err != nil {
-				return nil, fmt.Errorf("unmarshal user content: %w", err)
+			c, ok := msg.Content.(domain.TextContent)
+			if !ok {
+				return nil, fmt.Errorf("user message content is %T, want TextContent", msg.Content)
 			}
 			result = append(result, wireMessage{Role: "user", Content: c.Text})
 
 		case domain.RoleAssistant:
-			var c serialization.TextContentDTO
-			if err := json.Unmarshal(msg.Content, &c); err != nil {
-				return nil, fmt.Errorf("unmarshal assistant content: %w", err)
+			c, ok := msg.Content.(domain.TextContent)
+			if !ok {
+				return nil, fmt.Errorf("assistant message content is %T, want TextContent", msg.Content)
 			}
 			result = append(result, wireMessage{Role: "assistant", Content: c.Text})
 
 		case domain.RoleToolCall:
-			var c serialization.ToolCallContentDTO
-			if err := json.Unmarshal(msg.Content, &c); err != nil {
-				return nil, fmt.Errorf("unmarshal tool_call content: %w", err)
+			c, ok := msg.Content.(domain.ToolCallContent)
+			if !ok {
+				return nil, fmt.Errorf("tool_call message content is %T, want ToolCallContent", msg.Content)
 			}
 			argsJSON, err := json.Marshal(c.Args)
 			if err != nil {
@@ -114,9 +113,9 @@ func toWireMessages(system string, msgs []domain.Message) ([]wireMessage, error)
 			}
 
 		case domain.RoleToolResult:
-			var c serialization.ToolResultContentDTO
-			if err := json.Unmarshal(msg.Content, &c); err != nil {
-				return nil, fmt.Errorf("unmarshal tool_result content: %w", err)
+			c, ok := msg.Content.(domain.ToolResultContent)
+			if !ok {
+				return nil, fmt.Errorf("tool_result message content is %T, want ToolResultContent", msg.Content)
 			}
 			result = append(result, wireMessage{
 				Role:       "tool",
