@@ -93,22 +93,23 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 
 // parseReasons maps each parse failure kind to the reject reason stored on the
 // run and emitted on release.rejected:v1. Every contract kind has an entry
-// (pinned by TestHandleParsedManifest_Failed_ReasonPerKind).
-var parseReasons = map[pkg_model.ParseFailureKind]string{
-	pkg_model.ParseFailureKindInvalidSQL:           "invalid_sql",
-	pkg_model.ParseFailureKindUnqualifiedReference: "unqualified_reference",
-	pkg_model.ParseFailureKindInvalidArtifact:      "invalid_artifact",
-	pkg_model.ParseFailureKindInternal:             "internal_error",
+// (pinned by TestHandleParsedManifest_Failed_ReasonPerKind), and every value is
+// a declared reject_reason (pinned by TestParseReasonsAreDeclaredRejectReasons).
+var parseReasons = map[pkg_model.ParseFailureKind]pkg_model.RejectReason{
+	pkg_model.ParseFailureKindInvalidSQL:           pkg_model.RejectReasonInvalidSQL,
+	pkg_model.ParseFailureKindUnqualifiedReference: pkg_model.RejectReasonUnqualifiedReference,
+	pkg_model.ParseFailureKindInvalidArtifact:      pkg_model.RejectReasonInvalidArtifact,
+	pkg_model.ParseFailureKindInternal:             pkg_model.RejectReasonInternalError,
 }
 
 // ParseReason resolves a parse failure kind to its reject reason. A kind this
 // build does not know is reported as internal_error: the release still
 // rejects and the queue still advances, and the detail names the value.
-func ParseReason(kind pkg_model.ParseFailureKind) string {
+func ParseReason(kind pkg_model.ParseFailureKind) pkg_model.RejectReason {
 	if r, ok := parseReasons[kind]; ok {
 		return r
 	}
-	return parseReasons[pkg_model.ParseFailureKindInternal]
+	return pkg_model.RejectReasonInternalError
 }
 
 func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleParsedManifestInput, now time.Time) error {
@@ -154,7 +155,7 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 		d.Logger.Warn("parse failed with a healable kind but no failed nodes; release rejected without a remediation trigger",
 			"release_id", in.ReleaseID, "failure_kind", string(in.FailureKind))
 	}
-	if err := r.Fail(reason, detail, failing, now); err != nil {
+	if err := r.Fail(string(reason), detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
@@ -682,7 +683,7 @@ func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitO
 	const detail = "a verification run verifies a fix by running it through the pipeline, and its candidate " +
 		"declares no node at all, so nothing was built or checked and the fix is unproven"
 
-	if err := r.Fail("nothing_to_validate", detail, nil, now); err != nil {
+	if err := r.Fail(string(pkg_model.RejectReasonNothingToValidate), detail, nil, now); err != nil {
 		return fmt.Errorf("transition to failed: %w", err)
 	}
 	if err := u.RunRepo().Save(ctx, r); err != nil {
@@ -707,12 +708,12 @@ func failVerificationNothingToValidate(ctx context.Context, d *Deps, u uow.UnitO
 // therefore cannot be built into the candidate schema.
 func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, releaseID string, edges []release.CrossServiceEdge, now time.Time) error {
 	detail := formatCrossServiceEdges(edges)
-	if err := r.Fail("unbuildable_cross_service_upstream", detail, nil, now); err != nil {
+	if err := r.Fail(string(pkg_model.RejectReasonUnbuildableCrossServiceUpstream), detail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"release_id":   releaseID,
-		"reason":       "unbuildable_cross_service_upstream",
+		"reason":       pkg_model.RejectReasonUnbuildableCrossServiceUpstream,
 		"error_detail": detail,
 	})
 	if err != nil {
@@ -833,13 +834,13 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 		})
 	}
 
-	if err := r.Fail("duplicate_table", detail, failing, now); err != nil {
+	if err := r.Fail(string(pkg_model.RejectReasonDuplicateTable), detail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
 	payload, err := json.Marshal(map[string]any{
 		"release_id":      releaseID,
-		"reason":          "duplicate_table",
+		"reason":          pkg_model.RejectReasonDuplicateTable,
 		"error_detail":    detail,
 		"failing_nodes":   failing,
 		"per_node":        perNode,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
@@ -62,7 +63,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	}
 
 	r.RecordStageResults("seed_build", results)
-	if err := r.Fail("seed_build_failed", in.ErrorDetail, failing, now); err != nil {
+	if err := r.Fail(string(pkg_model.RejectReasonSeedBuildFailed), in.ErrorDetail, failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
@@ -104,7 +105,7 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 	payload, err := json.Marshal(map[string]any{
 		"release_id":       in.ReleaseID,
 		"stage":            "seed_build",
-		"reason":           "seed_build_failed",
+		"reason":           pkg_model.RejectReasonSeedBuildFailed,
 		"error_detail":     in.ErrorDetail,
 		"failing_nodes":    failing,
 		"per_node":         perNode,

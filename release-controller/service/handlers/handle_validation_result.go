@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
@@ -276,7 +277,7 @@ func handleValidationOK(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipel
 // projection write was permanently dropped may be absent from the read model, in
 // which case only present, non-ok nodes appear in failing.
 func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleValidationResultInput, failing []string, now time.Time) error {
-	if err := r.Fail("validation_failed", "", failing, now); err != nil {
+	if err := r.Fail(string(pkg_model.RejectReasonValidationFailed), "", failing, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
@@ -368,7 +369,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 	payload, err := json.Marshal(map[string]any{
 		"release_id":       in.ReleaseID,
 		"stage":            "validation",
-		"reason":           "validation_failed",
+		"reason":           pkg_model.RejectReasonValidationFailed,
 		"failing_nodes":    failing,
 		"missing_nodes":    []string{}, // dropped-projection nodes are logged, not carried here; kept for payload shape stability
 		"aggregate_status": in.AggregateStatus,

@@ -58,3 +58,104 @@ func (v ParseFailureKind) Healable() bool {
 	}
 	return false
 }
+
+// RejectReason — Why release-controller ended a candidate or fix-verification run short of promotion. Travels as `reason` on release.rejected:v1 and as the run's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a remediation round for nothing.
+// Values come from the vocabulary "reject_reason" in contract.yaml, in
+// declaration order.
+type RejectReason string
+
+const (
+	// RejectReasonCompileFailed — the release's dbt compile job failed on the project's own SQL.
+	RejectReasonCompileFailed RejectReason = "compile_failed"
+	// RejectReasonParseRehearsalFailed — the compile pod's parse or parse-candidate container failed, so the project does not re-parse under run-pod conditions; not a SQL error.
+	RejectReasonParseRehearsalFailed RejectReason = "parse_rehearsal_failed"
+	// RejectReasonArtifactUploadFailed — the compile pod could not publish its artifacts; continuo's own failure, which no change to the dbt project fixes.
+	RejectReasonArtifactUploadFailed RejectReason = "artifact_upload_failed"
+	// RejectReasonInvalidSQL — topology-controller's parser could not read a node's compiled SQL.
+	RejectReasonInvalidSQL RejectReason = "invalid_sql"
+	// RejectReasonUnqualifiedReference — a node references a relation without a schema qualifier.
+	RejectReasonUnqualifiedReference RejectReason = "unqualified_reference"
+	// RejectReasonInvalidArtifact — a manifest or python contract in the release is unreadable, empty, of unknown kind, or names another service.
+	RejectReasonInvalidArtifact RejectReason = "invalid_artifact"
+	// RejectReasonInternalError — continuo's own wiring or an S3 access failed while resolving the release.
+	RejectReasonInternalError RejectReason = "internal_error"
+	// RejectReasonDuplicateTable — two nodes in the candidate topology claim the same warehouse relation.
+	RejectReasonDuplicateTable RejectReason = "duplicate_table"
+	// RejectReasonUnbuildableCrossServiceUpstream — a changed node reads an upstream that is absent from the candidate topology, so the candidate schema cannot build it.
+	RejectReasonUnbuildableCrossServiceUpstream RejectReason = "unbuildable_cross_service_upstream"
+	// RejectReasonNothingToValidate — a fix-verification run's candidate declares no node, so the fix it proposes is unproven.
+	RejectReasonNothingToValidate RejectReason = "nothing_to_validate"
+	// RejectReasonSeedBuildFailed — building the release's candidate seeds failed.
+	RejectReasonSeedBuildFailed RejectReason = "seed_build_failed"
+	// RejectReasonValidationFailed — at least one node failed the candidate's dbt --empty validation run.
+	RejectReasonValidationFailed RejectReason = "validation_failed"
+)
+
+// RejectReasons returns every value in contract.yaml declaration order.
+func RejectReasons() []RejectReason {
+	return []RejectReason{
+		RejectReasonCompileFailed,
+		RejectReasonParseRehearsalFailed,
+		RejectReasonArtifactUploadFailed,
+		RejectReasonInvalidSQL,
+		RejectReasonUnqualifiedReference,
+		RejectReasonInvalidArtifact,
+		RejectReasonInternalError,
+		RejectReasonDuplicateTable,
+		RejectReasonUnbuildableCrossServiceUpstream,
+		RejectReasonNothingToValidate,
+		RejectReasonSeedBuildFailed,
+		RejectReasonValidationFailed,
+	}
+}
+
+// IsValid reports whether v is a value declared in contract.yaml.
+func (v RejectReason) IsValid() bool {
+	switch v {
+	case RejectReasonCompileFailed:
+		return true
+	case RejectReasonParseRehearsalFailed:
+		return true
+	case RejectReasonArtifactUploadFailed:
+		return true
+	case RejectReasonInvalidSQL:
+		return true
+	case RejectReasonUnqualifiedReference:
+		return true
+	case RejectReasonInvalidArtifact:
+		return true
+	case RejectReasonInternalError:
+		return true
+	case RejectReasonDuplicateTable:
+		return true
+	case RejectReasonUnbuildableCrossServiceUpstream:
+		return true
+	case RejectReasonNothingToValidate:
+		return true
+	case RejectReasonSeedBuildFailed:
+		return true
+	case RejectReasonValidationFailed:
+		return true
+	}
+	return false
+}
+
+// Healable reports whether the contract marks v as fixable by a change to the
+// user's source, and therefore worth a remediation attempt.
+func (v RejectReason) Healable() bool {
+	switch v {
+	case RejectReasonCompileFailed:
+		return true
+	case RejectReasonInvalidSQL:
+		return true
+	case RejectReasonUnqualifiedReference:
+		return true
+	case RejectReasonDuplicateTable:
+		return true
+	case RejectReasonSeedBuildFailed:
+		return true
+	case RejectReasonValidationFailed:
+		return true
+	}
+	return false
+}

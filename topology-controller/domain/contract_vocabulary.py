@@ -18,3 +18,23 @@ class ParseFailureKind(StrEnum):
 
 PARSE_FAILURE_KIND_HEALABLE = frozenset({ParseFailureKind.INVALID_SQL, ParseFailureKind.UNQUALIFIED_REFERENCE})
 """Values of ParseFailureKind a remediation attempt can fix by changing the user's source."""
+
+
+class RejectReason(StrEnum):
+    """Why release-controller ended a candidate or fix-verification run short of promotion. Travels as `reason` on release.rejected:v1 and as the run's stored fail reason. `healable` marks the reasons the remediation classifier turns into a heal trigger; every other reason it drops, so a retry of one would spend a remediation round for nothing."""
+    COMPILE_FAILED = "compile_failed"
+    PARSE_REHEARSAL_FAILED = "parse_rehearsal_failed"
+    ARTIFACT_UPLOAD_FAILED = "artifact_upload_failed"
+    INVALID_SQL = "invalid_sql"
+    UNQUALIFIED_REFERENCE = "unqualified_reference"
+    INVALID_ARTIFACT = "invalid_artifact"
+    INTERNAL_ERROR = "internal_error"
+    DUPLICATE_TABLE = "duplicate_table"
+    UNBUILDABLE_CROSS_SERVICE_UPSTREAM = "unbuildable_cross_service_upstream"
+    NOTHING_TO_VALIDATE = "nothing_to_validate"
+    SEED_BUILD_FAILED = "seed_build_failed"
+    VALIDATION_FAILED = "validation_failed"
+
+
+REJECT_REASON_HEALABLE = frozenset({RejectReason.COMPILE_FAILED, RejectReason.INVALID_SQL, RejectReason.UNQUALIFIED_REFERENCE, RejectReason.DUPLICATE_TABLE, RejectReason.SEED_BUILD_FAILED, RejectReason.VALIDATION_FAILED})
+"""Values of RejectReason a remediation attempt can fix by changing the user's source."""

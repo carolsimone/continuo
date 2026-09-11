@@ -20,7 +20,7 @@ import (
 type rejectedPayload struct {
 	ReleaseID string `json:"release_id"`
 	Stage     string `json:"stage"`  // "parse" | "compile" | "seed_build" | "validation"; absent in the stage-less duplicate_table rejection
-	Reason    string `json:"reason"` // "invalid_sql" | "unqualified_reference" | "invalid_artifact" | "internal_error" | "compile_failed" | "seed_build_failed" | "validation_failed" | "parse_rehearsal_failed" | "artifact_upload_failed" | "duplicate_table"
+	Reason    string `json:"reason"` // one of the reject_reason vocabulary values (pkg/domain/model.RejectReason)
 	Repo      string `json:"repo"`
 	CommitSHA string `json:"commit_sha"`
 	// RemediationRound is set by release-controller on a

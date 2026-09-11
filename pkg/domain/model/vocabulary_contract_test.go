@@ -115,6 +115,7 @@ func TestVocabularyHealableFlagsMatchContract(t *testing.T) {
 	c := loadVocabularies(t)
 	healableByType := map[string]func(string) bool{
 		"ParseFailureKind": func(v string) bool { return model.ParseFailureKind(v).Healable() },
+		"RejectReason":     func(v string) bool { return model.RejectReason(v).Healable() },
 	}
 	for _, v := range c.Vocabularies {
 		healable, ok := healableByType[v.Const]
@@ -127,5 +128,39 @@ func TestVocabularyHealableFlagsMatchContract(t *testing.T) {
 				t.Errorf("%s(%q).Healable() = %v, yaml says %v", v.Const, val.Value, got, val.Healable)
 			}
 		}
+	}
+}
+
+// TestRejectReason_HealableSet pins the reasons release-controller's retry path
+// and the remediation classifier act on: the four leg failures plus the two
+// parse failures a source change can fix. Every other reason is dropped.
+func TestRejectReason_HealableSet(t *testing.T) {
+	healable := map[model.RejectReason]bool{}
+	for _, r := range model.RejectReasons() {
+		if !r.IsValid() {
+			t.Errorf("%q is returned by RejectReasons() but is not valid", r)
+		}
+		if r.Healable() {
+			healable[r] = true
+		}
+	}
+	want := map[model.RejectReason]bool{
+		model.RejectReasonCompileFailed:        true,
+		model.RejectReasonSeedBuildFailed:      true,
+		model.RejectReasonValidationFailed:     true,
+		model.RejectReasonDuplicateTable:       true,
+		model.RejectReasonInvalidSQL:           true,
+		model.RejectReasonUnqualifiedReference: true,
+	}
+	if len(healable) != len(want) {
+		t.Fatalf("healable reasons = %v, want %v", healable, want)
+	}
+	for r := range want {
+		if !healable[r] {
+			t.Errorf("%q must be healable", r)
+		}
+	}
+	if model.RejectReason("nonsense").IsValid() || model.RejectReason("").Healable() {
+		t.Error("an undeclared reason is neither valid nor healable")
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
@@ -40,29 +41,13 @@ type ErrProposalOpen struct {
 
 func (e ErrProposalOpen) Error() string { return "a proposal is already open for this release" }
 
-// healableRejectReasons are the rejections the classifier turns into heal
-// triggers. Every other reason is dropped on the normal path too, so a retry
-// of it would only spend a round for nothing.
-var healableRejectReasons = map[string]bool{
-	"compile_failed":    true,
-	"seed_build_failed": true,
-	"validation_failed": true,
-	"duplicate_table":   true,
-}
-
 // IsHealableReason reports whether a reject reason is one the classifier turns
-// into a heal trigger: a listed leg reason, or a parse reason whose contract
-// kind is marked healable.
+// into a heal trigger, which is the `healable` flag the reject_reason
+// vocabulary carries in pkg/streams/contract.yaml. Every other reason — and
+// any token this build does not declare — is dropped on the normal path too,
+// so a retry of it would only spend a remediation round for nothing.
 func IsHealableReason(reason string) bool {
-	if healableRejectReasons[reason] {
-		return true
-	}
-	for kind, r := range parseReasons {
-		if r == reason {
-			return kind.Healable()
-		}
-	}
-	return false
+	return pkg_model.RejectReason(reason).Healable()
 }
 
 // RetryRemediationResult is the round the retry started.

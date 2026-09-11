@@ -29,5 +29,5 @@ func TestParsedManifestDTO_ToInput_UnknownKindPassesThrough(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"release_id":"r1","status":"failed","failure_kind":"from_the_future","detail":"x"}`), &dto))
 	in := dto.toInput(slog.Default())
 	assert.False(t, in.FailureKind.IsValid())
-	assert.Equal(t, "internal_error", handlers.ParseReason(in.FailureKind))
+	assert.Equal(t, pkg_model.RejectReasonInternalError, handlers.ParseReason(in.FailureKind))
 }

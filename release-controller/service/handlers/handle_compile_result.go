@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 // HandleCompileResultInput carries the aggregated compile outcome from
@@ -29,18 +31,18 @@ type HandleCompileResultInput struct {
 // this loop returning on the first match is not order-dependent in practice.
 // The iteration remains defensive for malformed or future multi-entry
 // payloads.
-func compileRejection(perNode []NodeResult) (reason, detail string) {
+func compileRejection(perNode []NodeResult) (reason pkg_model.RejectReason, detail string) {
 	for _, n := range perNode {
 		switch n.FailedContainer {
 		case "parse-prod", "parse-candidate":
-			return "parse_rehearsal_failed",
+			return pkg_model.RejectReasonParseRehearsalFailed,
 				"the project re-parses under run-pod conditions — typically an env_var() read at parse time whose value differs between compile and run pods, or partial parse disabled in the project (flags: partial_parse: false / --no-partial-parse); this is not a SQL error"
 		case "upload":
-			return "artifact_upload_failed",
+			return pkg_model.RejectReasonArtifactUploadFailed,
 				"internal artifact publication failed; no change to the dbt project will fix this"
 		}
 	}
-	return "compile_failed", ""
+	return pkg_model.RejectReasonCompileFailed, ""
 }
 
 // HandleCompileResult advances a Compiling release once the dbt compile job
@@ -92,7 +94,7 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 		}
 
 		r.RecordStageResults("compile", results)
-		if err := r.Fail(reason, errorDetail, failing, now); err != nil {
+		if err := r.Fail(string(reason), errorDetail, failing, now); err != nil {
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
 
