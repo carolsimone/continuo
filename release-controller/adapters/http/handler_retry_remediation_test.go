@@ -18,6 +18,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/liveness"
 	messageprocessing "github.com/carolsimone/continuo/pkg/messageprocessing"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/domain/repository"
@@ -166,6 +167,8 @@ func newRetryRemediationDeps(now time.Time) (*handlers.Deps, *fakeReleaseRepo) {
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Proposals: &fakeProposalReader{},
+
+		Rejections: serialization.ReleaseRejectedJSON{},
 	}
 	return deps, releases
 }
@@ -302,6 +305,8 @@ func TestRetryRemediationHandler_GenericErrorIsInternal(t *testing.T) {
 		Clock:     fakeClock{t: now},
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Proposals: &fakeProposalReader{},
+
+		Rejections: serialization.ReleaseRejectedJSON{},
 	}
 
 	rec := postRetryRemediation(newTestServer(deps), "rel-1")

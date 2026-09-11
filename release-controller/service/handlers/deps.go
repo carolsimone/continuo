@@ -19,4 +19,8 @@ type Deps struct {
 	Logger    *slog.Logger
 	Bucket    string
 	Proposals ports.ProposalReader // lists a release's remediation attempts for the retry decision
+
+	// Rejections renders the release.rejected:v1 body of whichever leg ended
+	// the candidate, so the handlers pass values and never wire keys.
+	Rejections ports.ReleaseRejectedEncoder
 }

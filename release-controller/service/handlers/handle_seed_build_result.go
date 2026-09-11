@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
 )
@@ -67,32 +68,19 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
-	// perNodeEntry is the outbox wire shape for a single seed-build-leg result.
-	// FilePath and Service carry the source location from the candidate topology
-	// so the remediation agent can locate the seed source file without querying
-	// GetNodeLocation, which only holds promoted topology and cannot find
-	// newly-added seeds.
-	type perNodeEntry struct {
-		NodeID        string `json:"node_id"`
-		Status        string `json:"status"`
-		DBTLogURI     string `json:"dbt_log_uri,omitempty"`
-		RunResultsURI string `json:"run_results_uri,omitempty"`
-		FilePath      string `json:"file_path,omitempty"`
-		Service       string `json:"service,omitempty"`
-	}
-
 	// Build a single lookup from the candidate topology so per-node rejection
-	// entries carry the source location needed by the remediation agent.
+	// entries carry the source location the remediation agent needs: the
+	// promoted topology GetNodeLocation serves cannot find newly-added seeds.
 	type sourceLoc struct{ filePath, service string }
 	locByNodeID := make(map[string]sourceLoc, len(r.CandidateTopology()))
 	for _, n := range r.CandidateTopology() {
 		locByNodeID[n.UniqueID] = sourceLoc{filePath: n.OriginalFilePath, service: n.ServiceName}
 	}
 
-	perNode := make([]perNodeEntry, len(in.PerNode))
+	perNode := make([]ports.RejectedNode, len(in.PerNode))
 	for i, n := range in.PerNode {
 		loc := locByNodeID[n.NodeID]
-		perNode[i] = perNodeEntry{
+		perNode[i] = ports.RejectedNode{
 			NodeID:        n.NodeID,
 			Status:        n.Status,
 			DBTLogURI:     n.DBTLogURI,
@@ -102,20 +90,20 @@ func handleSeedBuildFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pi
 		}
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"release_id":       in.ReleaseID,
-		"stage":            "seed_build",
-		"reason":           pkg_model.RejectReasonSeedBuildFailed,
-		"error_detail":     in.ErrorDetail,
-		"failing_nodes":    failing,
-		"per_node":         perNode,
-		"repo":             r.Repo(),
-		"commit_sha":       r.CommitSHA(),
-		"code_bundle_uri":  r.CodeBundleURI(),
-		"candidate_schema": CandidateSchemaFor(in.ReleaseID),
+	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+		Shape:           ports.RejectionShapeSeedBuild,
+		ReleaseID:       in.ReleaseID,
+		Reason:          pkg_model.RejectReasonSeedBuildFailed,
+		ErrorDetail:     in.ErrorDetail,
+		FailingNodes:    failing,
+		PerNode:         perNode,
+		Repo:            r.Repo(),
+		CommitSHA:       r.CommitSHA(),
+		CodeBundleURI:   r.CodeBundleURI(),
+		CandidateSchema: CandidateSchemaFor(in.ReleaseID),
 	})
 	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
+		return fmt.Errorf("encode rejection: %w", err)
 	}
 
 	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {

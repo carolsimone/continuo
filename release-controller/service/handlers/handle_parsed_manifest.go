@@ -14,6 +14,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
 )
@@ -119,28 +120,16 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 		detail = fmt.Sprintf("unknown failure_kind %q: %s", in.FailureKind, in.Detail)
 	}
 
-	// parsePerNodeEntry is the outbox wire shape for one failed parse node: the
-	// same fields the compile leg emits, plus the kind and the parser's own
-	// detail, since there is no log to fetch.
-	type parsePerNodeEntry struct {
-		NodeID   string `json:"node_id"`
-		Status   string `json:"status"`
-		Kind     string `json:"kind"`
-		Detail   string `json:"detail"`
-		FilePath string `json:"file_path"`
-		Service  string `json:"service"`
-		NodeType string `json:"node_type"`
-	}
 	results := make([]pipeline.NodeValidationResult, 0, len(in.FailedNodes))
 	failing := make([]string, 0, len(in.FailedNodes))
-	perNode := make([]parsePerNodeEntry, 0, len(in.FailedNodes))
+	perNode := make([]ports.RejectedNode, 0, len(in.FailedNodes))
 	for _, n := range in.FailedNodes {
 		results = append(results, pipeline.NodeValidationResult{
 			NodeID: n.NodeID, Status: "failed", FilePath: n.FilePath, NodeType: n.NodeType,
 			Detail: n.Detail,
 		})
 		failing = append(failing, n.NodeID)
-		perNode = append(perNode, parsePerNodeEntry{
+		perNode = append(perNode, ports.RejectedNode{
 			NodeID: n.NodeID, Status: "failed", Kind: string(n.Kind), Detail: n.Detail,
 			FilePath: n.FilePath, Service: n.Service, NodeType: n.NodeType,
 		})
@@ -159,19 +148,19 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"release_id":      in.ReleaseID,
-		"stage":           "parse",
-		"reason":          reason,
-		"error_detail":    detail,
-		"failing_nodes":   failing,
-		"per_node":        perNode,
-		"repo":            r.Repo(),
-		"commit_sha":      r.CommitSHA(),
-		"code_bundle_uri": r.CodeBundleURI(),
+	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+		Shape:         ports.RejectionShapeParse,
+		ReleaseID:     in.ReleaseID,
+		Reason:        reason,
+		ErrorDetail:   detail,
+		FailingNodes:  failing,
+		PerNode:       perNode,
+		Repo:          r.Repo(),
+		CommitSHA:     r.CommitSHA(),
+		CodeBundleURI: r.CodeBundleURI(),
 	})
 	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
+		return fmt.Errorf("encode rejection: %w", err)
 	}
 	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
 		return err
@@ -711,13 +700,14 @@ func rejectUnbuildableCrossServiceUpstream(ctx context.Context, d *Deps, u uow.U
 	if err := r.Fail(string(pkg_model.RejectReasonUnbuildableCrossServiceUpstream), detail, nil, now); err != nil {
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
-	payload, err := json.Marshal(map[string]any{
-		"release_id":   releaseID,
-		"reason":       pkg_model.RejectReasonUnbuildableCrossServiceUpstream,
-		"error_detail": detail,
+	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+		Shape:       ports.RejectionShapeUnbuildableUpstream,
+		ReleaseID:   releaseID,
+		Reason:      pkg_model.RejectReasonUnbuildableCrossServiceUpstream,
+		ErrorDetail: detail,
 	})
 	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
+		return fmt.Errorf("encode rejection: %w", err)
 	}
 	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {
 		return err
@@ -804,7 +794,7 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 
 	seen := make(map[string]bool, len(claims))
 	failing := make([]string, 0, len(claims))
-	perNode := make([]map[string]any, 0, len(claims))
+	perNode := make([]ports.RejectedNode, 0, len(claims))
 	for _, c := range claims {
 		for _, cl := range c.Claimants {
 			if !seen[cl.UniqueID] {
@@ -822,15 +812,15 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 			continue
 		}
 		target, other := c.Target(r.ChangedService())
-		perNode = append(perNode, map[string]any{
-			"node_id":         target.UniqueID,
-			"status":          "failed",
-			"service":         target.ServiceName,
-			"file_path":       target.OriginalFilePath,
-			"node_type":       target.NodeType,
-			"relation_id":     c.RelationID,
-			"other_service":   other.ServiceName,
-			"other_file_path": other.OriginalFilePath,
+		perNode = append(perNode, ports.RejectedNode{
+			NodeID:        target.UniqueID,
+			Status:        "failed",
+			Service:       target.ServiceName,
+			FilePath:      target.OriginalFilePath,
+			NodeType:      target.NodeType,
+			RelationID:    c.RelationID,
+			OtherService:  other.ServiceName,
+			OtherFilePath: other.OriginalFilePath,
 		})
 	}
 
@@ -838,18 +828,19 @@ func rejectDuplicateTable(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pip
 		return fmt.Errorf("transition to rejected: %w", err)
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"release_id":      releaseID,
-		"reason":          pkg_model.RejectReasonDuplicateTable,
-		"error_detail":    detail,
-		"failing_nodes":   failing,
-		"per_node":        perNode,
-		"repo":            r.Repo(),
-		"commit_sha":      r.CommitSHA(),
-		"code_bundle_uri": r.CodeBundleURI(),
+	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+		Shape:         ports.RejectionShapeDuplicateTable,
+		ReleaseID:     releaseID,
+		Reason:        pkg_model.RejectReasonDuplicateTable,
+		ErrorDetail:   detail,
+		FailingNodes:  failing,
+		PerNode:       perNode,
+		Repo:          r.Repo(),
+		CommitSHA:     r.CommitSHA(),
+		CodeBundleURI: r.CodeBundleURI(),
 	})
 	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
+		return fmt.Errorf("encode rejection: %w", err)
 	}
 
 	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {

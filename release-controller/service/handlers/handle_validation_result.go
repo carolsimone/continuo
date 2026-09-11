@@ -11,6 +11,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 	"github.com/carolsimone/continuo/release-controller/service/uow"
 	"github.com/google/uuid"
 )
@@ -316,37 +317,17 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		changedSet[id] = true
 	}
 
-	// changedAncestorEntry is one changed upstream of a failing node, carrying
-	// the location THIS candidate declares for it: a fix must edit the file the
-	// candidate holds the ancestor in, which for a node renamed or moved in this
-	// release is not where the promoted graph would place it.
-	type changedAncestorEntry struct {
-		NodeID   string `json:"node_id"`
-		FilePath string `json:"file_path,omitempty"`
-		Service  string `json:"service,omitempty"`
-		Depth    int    `json:"depth"`
-	}
-	type perNodeEntry struct {
-		NodeID               string                 `json:"node_id"`
-		Status               string                 `json:"status"`
-		DBTLogURI            string                 `json:"dbt_log_uri,omitempty"`
-		RunResultsURI        string                 `json:"run_results_uri,omitempty"`
-		CandidateArtifactURI string                 `json:"candidate_artifact_uri,omitempty"`
-		NodeType             string                 `json:"node_type,omitempty"`
-		FilePath             string                 `json:"file_path,omitempty"`
-		Service              string                 `json:"service,omitempty"`
-		ChangedAncestors     []changedAncestorEntry `json:"changed_ancestors,omitempty"`
-	}
 	// Source the per-node audit rows from the projected read model, enriched with
 	// each node's candidate artifact pointer, kind, and source location from the
-	// candidate topology.
-	var perNode []perNodeEntry
+	// candidate topology. A failing node additionally names its changed
+	// ancestors, which may be the root cause of its failure.
+	var perNode []ports.RejectedNode
 	for _, nr := range r.PerNodeResults() {
 		if nr.Stage != "validation" {
 			continue
 		}
 		f := factsByNodeID[nr.NodeID]
-		entry := perNodeEntry{
+		entry := ports.RejectedNode{
 			NodeID:               nr.NodeID,
 			Status:               nr.Status,
 			DBTLogURI:            nr.DBTLogURI,
@@ -358,7 +339,7 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		}
 		if nr.Status != "ok" {
 			for _, a := range release.ChangedAncestors(r.CandidateTopology(), nr.NodeID, changedSet) {
-				entry.ChangedAncestors = append(entry.ChangedAncestors, changedAncestorEntry{
+				entry.ChangedAncestors = append(entry.ChangedAncestors, ports.ChangedAncestor{
 					NodeID: a.NodeID, FilePath: a.FilePath, Service: a.Service, Depth: a.Depth,
 				})
 			}
@@ -366,20 +347,19 @@ func handleValidationFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *p
 		perNode = append(perNode, entry)
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"release_id":       in.ReleaseID,
-		"stage":            "validation",
-		"reason":           pkg_model.RejectReasonValidationFailed,
-		"failing_nodes":    failing,
-		"missing_nodes":    []string{}, // dropped-projection nodes are logged, not carried here; kept for payload shape stability
-		"aggregate_status": in.AggregateStatus,
-		"per_node":         perNode,
-		"repo":             r.Repo(),
-		"commit_sha":       r.CommitSHA(),
-		"code_bundle_uri":  r.CodeBundleURI(),
+	payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+		Shape:           ports.RejectionShapeValidation,
+		ReleaseID:       in.ReleaseID,
+		Reason:          pkg_model.RejectReasonValidationFailed,
+		FailingNodes:    failing,
+		AggregateStatus: in.AggregateStatus,
+		PerNode:         perNode,
+		Repo:            r.Repo(),
+		CommitSHA:       r.CommitSHA(),
+		CodeBundleURI:   r.CodeBundleURI(),
 	})
 	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
+		return fmt.Errorf("encode rejection: %w", err)
 	}
 
 	if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {

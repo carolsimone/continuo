@@ -16,6 +16,7 @@ import (
 	"github.com/carolsimone/continuo/pkg/streams"
 	httpinfra "github.com/carolsimone/continuo/release-controller/adapters/http"
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/domain/pipeline"
 	"github.com/carolsimone/continuo/release-controller/domain/release"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
@@ -43,6 +44,8 @@ func setup(t *testing.T) (*httpinfra.Server, *handlers.Deps, *sqlx.DB) {
 		Telemetry: ports.NoOpTelemetry{},
 		Logger:    slog.Default(),
 		Bucket:    "test-bucket",
+
+		Rejections: serialization.ReleaseRejectedJSON{},
 	}
 	srv := httpinfra.NewServer(deps, liveness.NewRegistry(), "0", slog.Default())
 	return srv, deps, db

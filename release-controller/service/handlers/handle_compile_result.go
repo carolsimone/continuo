@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
+	"github.com/carolsimone/continuo/release-controller/service/ports"
 )
 
 // HandleCompileResultInput carries the aggregated compile outcome from
@@ -98,18 +98,9 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			return fmt.Errorf("transition to rejected: %w", err)
 		}
 
-		// perNodeEntry is the outbox wire shape for a single compile-leg result.
-		// Intentionally omits duration_ms (irrelevant for compile) and file_path
-		// (populated by the remediation service when it reads S3 logs).
-		type perNodeEntry struct {
-			NodeID        string `json:"node_id"`
-			Status        string `json:"status"`
-			DBTLogURI     string `json:"dbt_log_uri,omitempty"`
-			RunResultsURI string `json:"run_results_uri,omitempty"`
-		}
-		perNode := make([]perNodeEntry, len(in.PerNode))
+		perNode := make([]ports.RejectedNode, len(in.PerNode))
 		for i, n := range in.PerNode {
-			perNode[i] = perNodeEntry{
+			perNode[i] = ports.RejectedNode{
 				NodeID:        n.NodeID,
 				Status:        n.Status,
 				DBTLogURI:     n.DBTLogURI,
@@ -117,19 +108,19 @@ func HandleCompileResult(ctx context.Context, d *Deps, in HandleCompileResultInp
 			}
 		}
 
-		payload, err := json.Marshal(map[string]any{
-			"release_id":      in.ReleaseID,
-			"stage":           "compile",
-			"reason":          reason,
-			"error_detail":    errorDetail,
-			"failing_nodes":   failing,
-			"per_node":        perNode,
-			"repo":            r.Repo(),
-			"commit_sha":      r.CommitSHA(),
-			"code_bundle_uri": r.CodeBundleURI(),
+		payload, err := d.Rejections.Encode(ports.ReleaseRejection{
+			Shape:         ports.RejectionShapeCompile,
+			ReleaseID:     in.ReleaseID,
+			Reason:        reason,
+			ErrorDetail:   errorDetail,
+			FailingNodes:  failing,
+			PerNode:       perNode,
+			Repo:          r.Repo(),
+			CommitSHA:     r.CommitSHA(),
+			CodeBundleURI: r.CodeBundleURI(),
 		})
 		if err != nil {
-			return fmt.Errorf("marshal payload: %w", err)
+			return fmt.Errorf("encode rejection: %w", err)
 		}
 
 		if err := emitReleaseRejected(ctx, u, r, payload, now); err != nil {

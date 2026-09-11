@@ -22,6 +22,7 @@ import (
 	"github.com/carolsimone/continuo/release-controller/adapters/postgres"
 	redisadapter "github.com/carolsimone/continuo/release-controller/adapters/redis"
 	s3adapter "github.com/carolsimone/continuo/release-controller/adapters/s3"
+	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
 	"github.com/carolsimone/continuo/release-controller/config"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/carolsimone/continuo/release-controller/service/ports"
@@ -149,6 +150,8 @@ func main() {
 		Logger:    logger,
 		Bucket:    cfg.S3.Bucket,
 		Proposals: proposalsClient,
+
+		Rejections: serialization.ReleaseRejectedJSON{},
 	}
 
 	// Start outbox publisher — spawns its own goroutine internally and runs until
