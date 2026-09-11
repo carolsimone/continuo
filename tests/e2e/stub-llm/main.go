@@ -309,9 +309,13 @@ SELECT amount_eur AS amount FROM e2e_schema.ybreak_up
 // the two fixtures can be told apart by a plain Contains check.
 const (
 	badReadBrokenRead = "public.wrong_name"
-	loopBrokenRead    = "public.loop_wrong_name"
-	stillBrokenRead   = "public.still_wrong_name"
-	bindingRead       = "public.right_name"
+	// unqualifiedRead is the parse fixture's read: the binding relation named
+	// without its schema, which the release's SQL parser rejects. Its repair
+	// is bindingRead — the same relation, qualified.
+	unqualifiedRead = "right_name"
+	loopBrokenRead  = "public.loop_wrong_name"
+	stillBrokenRead = "public.still_wrong_name"
+	bindingRead     = "public.right_name"
 )
 
 // contractFilePath returns the repository path of the contract file the prompt
@@ -419,6 +423,12 @@ func writeProposePythonFixResponse(w http.ResponseWriter, userContent string) {
 	if path != "" && original != "" {
 		var fixed string
 		switch {
+		case strings.Contains(userContent, parseFixMarker):
+			// A parse fix: the prompt carries the parser's error rather than a
+			// validation error, and the repair qualifies the read's relation
+			// rather than pointing it elsewhere. Only the bare name is
+			// replaced, so an already-qualified read is left alone.
+			fixed = strings.ReplaceAll(original, " from "+unqualifiedRead, " from "+bindingRead)
 		case strings.Contains(original, loopBrokenRead):
 			replacement := stillBrokenRead
 			if isRetryShownTheRejectedRead(userContent, original) {

@@ -132,3 +132,34 @@ func TestAssemblePythonContractFix_SystemPromptScopesTheEdit(t *testing.T) {
 	require.Contains(t, lower, "unchanged", "the prompt must tell the model to leave other nodes untouched")
 	require.Contains(t, lower, "complete", "the prompt must demand each file's full new content")
 }
+
+// TestAssemblePythonParseFix_ShowsTheParserError verifies the parse-stage
+// request: the parser's error stands where the validation error would, no
+// runner-log section can appear (no Job ran), the declaring yaml is shown, and
+// the system prompt frames the task as making a read's SQL parse rather than
+// making validation pass.
+func TestAssemblePythonParseFix_ShowsTheParserError(t *testing.T) {
+	ev := pythonEvidence()
+	ev.ErrorExcerpt = "unqualified table reference `orders` in read `orders`. Line 1, Col: 16."
+	ev.RunnerLog = ""
+	ev.ContractEntry = ""
+
+	req := AssemblePythonParseFix(ev)
+	u := req.User
+
+	require.Contains(t, u, "analytics.py_daily_kpis")
+	require.Contains(t, u, "SQL parse error:")
+	require.Contains(t, u, "unqualified table reference `orders`")
+	require.NotContains(t, u, "Validation error:")
+	require.NotContains(t, u, "Full runner log")
+	require.Contains(t, u, "```yaml\nnodes:\n  - schema: analytics\n    table: py_daily_kpis\n")
+	require.Contains(t, u, "services/service-py/contracts/py_daily_kpis.yml")
+
+	require.Contains(t, req.System, "parser rejected")
+	require.Contains(t, req.System, "schema-qualified")
+	require.Contains(t, req.System, "Keep every read")
+
+	// Same answer shape as the validation fix, so one adapter parses both.
+	require.Equal(t, "propose_python_fix", req.ToolName)
+	require.Equal(t, AssemblePythonContractFix(ev).ToolParams, req.ToolParams)
+}

@@ -8,7 +8,7 @@ A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, grouping, ve
 
 **Every fix is verified by actually running it.** Once the clusters have produced their edits, the driver submits one **fix-verification run** per edited service — a pipeline run that takes the full parse → candidate-schema → validation pipeline through to a terminal `passed`/`failed` verdict without ever promoting. A python service is verified by the contract yaml its fix packaged; a dbt service is verified by re-running its own project with the proposed files laid over it, packed into a `source-overlay.tar.gz` whose S3 URI travels to the compile Job as `source_overlay_uri`. The attempt is recorded `verifying` and finalized asynchronously by the verification reconciler (`service/verification`): `proposed` when **every** verification run passed, `failed` with the runs' own errors when any did not — and that error becomes the evidence the next attempt is shown, which replays the whole failing set.
 
-Every fixer's prompt carries precedent — how similar past failures (by exact error signature, or the broader category/reason class) were resolved before, read from the orchestrator's failure case base. A dbt node's validation failure carries a pre-compiled candidate SQL and uses a two-step LLM flow: a Step-1 diagnosis against the candidate SQL, the diff of what this release itself changed in the failing model (last promoted version vs. candidate), the diffs of its recently-changed upstreams, and precedent; then a best-effort Step-2 pass that applies the diagnosis to the failing node's real source, resolved primarily from the release's code bundle in object storage. A **python** node's validation failure runs a different lane entirely, because a python node is not a SQL file but an entry in a contract yaml declaring the relations it reads and the columns it produces: the agent fetches the team's repository at the failing commit, searches it for the file declaring the node, asks the model for that file's corrected content, and packages the result with the same CLI the team's own release CI runs after a merge. Parse failures are rejected by topology-controller's SQL parser before any Job runs, so they carry neither a dbt log nor a candidate SQL: the agent reads the offending file named in the trigger — resolved under the repository prefix of the trigger's own `service`, since a parse failure's node id is a real node id rather than a service — shows the model the parser's error text, and asks for the one file's corrected content in a single LLM call. A **python** node's parse failure is skipped instead of fixed: the SQL the parser rejected is one of the node's `reads` in its service's `contract.yaml`, not the script the trigger names, so no file the agent can reach carries the fix. Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. Duplicate-table failures carry no dbt log at all — the rejection happens at parse time, before any Job runs — so the agent reads only the claimant the release changed, names the competing producer by service and path without reading its source, and asks the model for a rename in a single LLM call.
+Every fixer's prompt carries precedent — how similar past failures (by exact error signature, or the broader category/reason class) were resolved before, read from the orchestrator's failure case base. A dbt node's validation failure carries a pre-compiled candidate SQL and uses a two-step LLM flow: a Step-1 diagnosis against the candidate SQL, the diff of what this release itself changed in the failing model (last promoted version vs. candidate), the diffs of its recently-changed upstreams, and precedent; then a best-effort Step-2 pass that applies the diagnosis to the failing node's real source, resolved primarily from the release's code bundle in object storage. A **python** node's validation failure runs a different lane entirely, because a python node is not a SQL file but an entry in a contract yaml declaring the relations it reads and the columns it produces: the agent fetches the team's repository at the failing commit, searches it for the file declaring the node, asks the model for that file's corrected content, and packages the result with the same CLI the team's own release CI runs after a merge. Parse failures are rejected by topology-controller's SQL parser before any Job runs, so they carry neither a dbt log nor a candidate SQL: the agent reads the offending file named in the trigger — resolved under the repository prefix of the trigger's own `service`, since a parse failure's node id is a real node id rather than a service — shows the model the parser's error text, and asks for the one file's corrected content in a single LLM call. A **python-model** node's parse failure takes the python contract-fix lane instead: the SQL the parser rejected is one of the node's `reads` in its service's `contract.yaml`, not the script the trigger names, so the agent locates the declaring yaml from the node id, asks the model to correct the read's SQL, and proves the repair with a python verification run whose own parse leg is the judge. A **python-csv** node's parse failure is skipped with the reason recorded: its only read is an S3 URI the parser has nothing to reject in. Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. Duplicate-table failures carry no dbt log at all — the rejection happens at parse time, before any Job runs — so the agent reads only the claimant the release changed, names the competing producer by service and path without reading its source, and asks the model for a rename in a single LLM call.
 
 Only the reconciler enqueues the pointer-only `remediation.proposed:v1` event, and only once every verification run passed for the attempt; the driver announces nothing. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
@@ -89,7 +89,7 @@ All events are written to `remediation_agent_outbox` inside the same transaction
 | `GetNodeLocation` | `NodeLocator.Locate` | Returns the failing node's `file_path` and `service_name`. Called by the validation fixer as a fallback, for PR targeting and as the location input to its code-bundle/repo source resolution, only when `file_path` is absent from the trigger — release-controller otherwise threads both fields onto the trigger from the candidate topology; best-effort — a failure degrades Step 2 to the candidate-only proposal. Called as a fallback by the seed fixer only when `file_path` or `service` is absent on the trigger; a failure or empty result there skips the proposal. Not called by compile (the offending path comes from the trigger and the service is the trigger's `node_id`) or duplicate_table (path/service are threaded directly from the trigger, since a duplicate-table rejection can name a node that was never promoted into the active topology `GetNodeLocation` serves). |
 | `GetUpstreamChanges` | `UpstreamChangeReader.UpstreamChanges` | Returns the failing node's most-recently-changed upstream ancestors with their code and config diffs, most-recent first — server-capped at 5 ancestors and 8 KiB per diff. Called once by the validation fixer for the Step-1 prompt; best-effort, degrades to no upstream section on failure. Not called by any other fixer. |
 | `GetNodeVersions` (`current_only=true`) | `VersionReader.CurrentVersion` | Returns the code the failing node runs *now* — the diff baseline for "what this release changed in the failing model." Called once by the validation fixer, and only when its own resolved source is non-empty; best-effort, a failure or absent current version simply omits the own-change-diff section. Not called by any other fixer. |
-| `GetPrecedents` | `PrecedentReader.Precedents` | Returns past rejections matching the trigger's `error_signature`, or — when that has no matches — the broader `(category, reason)` pair, filtering out the failure's own rejection. Called by every fixer (`loadPrecedents`) once its own skip checks pass: the shared single-shot pipeline calls it for compile, seed, and duplicate_table; the validation fixer calls it directly. Best-effort; a failure degrades to no precedent section. |
+| `GetPrecedents` | `PrecedentReader.Precedents` | Returns past rejections matching the trigger's `error_signature`, or — when that has no matches — the broader `(category, reason)` pair, filtering out the failure's own rejection. Called by every fixer (`loadPrecedents`) once its own skip checks pass: the shared `sourceFileFix` skeleton calls it for compile, parse, seed, and duplicate_table; the validation and python contract-fix lanes call it directly. Best-effort; a failure degrades to no precedent section. |
 
 Its own inbound gRPC surface (`RemediationProposals`) is described in the inbound interfaces section above.
 
@@ -130,7 +130,7 @@ The `ReleaseGateway` port (`adapters/releasehttp`), which implements `ports.Veri
 | Endpoint | Purpose |
 |---|---|
 | `POST /verification-runs` | Submits a fix-verification run for one edited service. The body is `{run_id, service, image_tag, kind, verifies_release_id, attempt, source_overlay_uri?}`: `run_id` is minted by `VerificationRunID` (see below), `service` is the edited service, `image_tag` is read back from the original failing release, and `verifies_release_id` names the rejected release this run is judging — the run's own service is the one the fix edits, which need not be the service whose release was rejected, so naming the release lets release-controller assemble THAT release's candidate for its changed service instead of the live production manifest; otherwise a fix to a downstream service would be validated against the upstream service's production code rather than the candidate whose rejection it answers. `kind` is `"python"` for a service whose fix packaged a contract yaml (uploaded under the run's own canonical key before the POST), and `"dbt"` otherwise, in which case `source_overlay_uri` names the `source-overlay.tar.gz` this attempt wrote for that service. `202 Accepted` is success, including release-controller's idempotent-duplicate case where a row for this run id already exists, so a redelivered attempt resubmits harmlessly. |
-| `GET /verification-runs/{run_id}` | Polls a submitted verification run for its status. `Gateway.Status` maps release-controller's `status` onto a `Phase`: `received` → `queued`; `passed` → `passed` (terminal); `failed` → `failed` (terminal), with per-node error text read from each failing validation node's `run_results_uri` through the same S3 evidence reader the fixers use (falling back to the run-level `fail_reason`/`fail_detail` when that structured result is missing or unreadable); every other status (`compiling`, `parsing`, `seed_building`, `validating`) → `running`. The read also carries the run's `activated_at`, which is what the reconciler's per-run timeout is measured from. A non-terminal phase is simply reported back; the reconciler decides whether to keep waiting. |
+| `GET /verification-runs/{run_id}` | Polls a submitted verification run for its status. `Gateway.Status` maps release-controller's `status` onto a `Phase`: `received` → `queued`; `passed` → `passed` (terminal); `failed` → `failed` (terminal), with per-node error text read per stage: a failing validation node's text comes from its `run_results_uri` through the same S3 evidence reader the fixers use, and a failing parse node's from its inline `detail` (the parser rejected it before any Job ran, so there is no result object to read), each falling back to the run-level `fail_reason`/`fail_detail` when its own text is missing or unreadable; a compile- or seed_build-stage failure carries its error only in a raw dbt log, so those nodes take the run-level fallback; every other status (`compiling`, `parsing`, `seed_building`, `validating`) → `running`. The read also carries the run's `activated_at`, which is what the reconciler's per-run timeout is measured from. A non-terminal phase is simply reported back; the reconciler decides whether to keep waiting. |
 | `GET /releases/{original_id}` | Read against the ORIGINAL failing release, for two different fields. Its verdict's per-node errors name every node that release rejected, which is how a python contract fixer finds out whether another node it would package alongside the one it is fixing also failed — a fix that could never be verified is skipped before any model call. And `image_tags[service]` is read by the driver once per edited service before submitting. The trigger carries no image tag, and a verification run needs one to be accepted; reusing the failing release's tag is safe precisely because a verification run never promotes, so the tag never reaches the production pointer an image tag otherwise drives. An absent or empty tag for the service is an error and the attempt is retried. |
 
 ## Data Flow
@@ -152,10 +152,12 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
    row this trigger produces and onto the remediation.proposed:v1 event.
    An empty nodes[] is logged and ACKed: there is nothing to fix.
    Per node: node_type is its kind (dbt-model, dbt-seed, dbt-snapshot,
-   python-model, python-csv), set on duplicate_table and validation triggers,
-   and selects the Fixer for a validation node — a python-model node goes to
-   the python contract fixer, a python-csv node to its own dedicated contract
-   fixer — while the duplicate-table fixer skips either python kind on it.
+   python-model, python-csv), set on duplicate_table, validation and parse
+   triggers, and selects the Fixer for a validation or parse node — a
+   validation python-model node goes to the python contract fixer, a
+   python-csv node to its own dedicated contract fixer, a parse python-model
+   node to the python parse fixer — while the duplicate-table fixer, and the
+   parse fixer for a python-csv node, skip on it with the reason recorded.
    error_excerpt is the classifier's key error line, capped at 4 KiB; it is
    the python contract fixer's primary evidence, since a python validation
    failure's message is the engine's own text rather than a dbt log the fixer
@@ -240,8 +242,9 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
      evidence, never a fix target — a model fix that makes it bind again
      resolves it in verification, and a test that is itself wrong is a
      human's edit. Every other node type reaches fixer.For(source,
-     node_type).Propose: parseFixer, compileFixer,
-     seedFixer, duplicateTableFixer, or — for a validation trigger —
+     node_type).Propose: compileFixer, seedFixer, duplicateTableFixer; for a
+     parse trigger, parseFixer for a dbt or python-csv node and
+     pythonParseFixer for python-model; for a validation trigger,
      validationFixer for a dbt node, pythonValidationFixer for python-model,
      csvValidationFixer for python-csv. An unrecognized source is a
      programming error and is returned loudly, not swallowed.
@@ -376,27 +379,30 @@ The target of a shared-upstream cluster is a node that **may never have failed a
 
 ### Parse fixer
 
-`parseFixer` (`service/fixer/parse.go`) fixes a node whose compiled SQL topology-controller's parser rejected — invalid SQL, or a relation referenced without its schema qualifier — with exactly one LLM call. It shares `gatherSourceFile` (`service/fixer/gather.go`) with the compile fixer below, so the repo read, the co-located-yml/`dbt_project.yml` best-effort context, and the single-file interpretation are identical; only the repo-prefix lookup key and the prompt differ.
+A parse rejection is the one failure class that reaches the agent before any Job has run: topology-controller's SQL parser refused a node's SQL — invalid SQL, or a relation referenced without its schema qualifier — so the trigger carries the parser's own detail text as `error_excerpt`, no `dbt_log_uri`, and no `code_bundle_uri`. `For(parse, node_type)` routes on the node kind, because the rejected SQL lives in a different file for a dbt node than for a python node:
 
-It repairs dbt nodes only. A python node's parse failure is classified and triggers remediation exactly like any other, but this fixer skips it before any read, so the attempt records that node `skipped` and no proposal is produced for it. The reason is that the SQL the parser rejected is not in the file the trigger names: topology-controller reports a python node's parse failure against the script its contract entry declares, while the rejected SQL is one of that entry's `reads` in the service's `contract.yaml` — a file this system carries no repository path for. Editing the script would leave the rejected SQL untouched, and the resulting proposal, packaging no `VerificationContract`, would be submitted as a dbt verification run for a python service.
+- **dbt node** — `parseFixer` (`service/fixer/parse.go`), a `sourceFileFix` lane: it shares `gatherSourceFile` (`service/fixer/gather.go`) with the compile fixer below, so the repo read, the co-located-yml/`dbt_project.yml` best-effort context, and the single-file interpretation are identical; only the repo-prefix lookup key and the prompt differ.
+- **python-model node** — `pythonParseFixer` (`service/fixer/python_parse.go`), a `contractFix` lane. topology-controller reports a python node's parse failure against the script its contract entry declares, but the parser never reads the script: the rejected SQL is one of that entry's `reads` in the contract yaml declaring the node. So the lane ignores the trigger's `file_path` and finds the yaml the way the python validation lane does — `locateContractForFix`, from the node id and the repository checkout at the failing commit — then asks the model to correct the read's SQL, applies and guards the answer with the same `declarationBreach` (deleting the rejected read would parse while the script still performs it, so it is refused), packages the directory, and returns the merged contract as `VerificationContract`. The driver submits a python verification run, whose own parse leg is what proves the fix.
+- **python-csv node** — stays in `parseFixer`, which records a skip before any read, with the reason as the rationale: a python-csv node's only read is an S3 URI, never SQL, so the parser has nothing to reject in it, and a rejection naming one is corrected by hand.
+
+Every skip a `sourceFileFix` lane takes — no file path or service on the trigger, an unmapped service, a missing file, a refused node kind — is recorded as `proposal(status=skipped)` with the reason as its rationale, so the release view never shows an unexplained skipped row.
 
 ```
-1. node_type is python-model or python-csv: proposal(status=skipped), done —
-   no source read, no precedent lookup, no LLM call.
-2. Empty file_path or empty service on the trigger: proposal(status=skipped), done.
-3. gatherSourceFile(svc, in, in.Service, "parse fix") — the same read
-   compileFixer uses below, but keyed on the trigger's `service` field rather
-   than `node_id`: a parse failure's node_id is a real node id, not
-   compile's synthetic service id, so it cannot itself resolve a repo
-   prefix.
-   - Unmapped repo prefix: proposal(status=skipped), done.
+dbt node (parseFixer):
+1. Empty file_path or empty service on the trigger: proposal(status=skipped,
+   rationale=<reason>), done.
+2. gatherSourceFile(svc, in, in.Service) — the same read compileFixer uses
+   below, but keyed on the trigger's `service` field rather than `node_id`: a
+   parse failure's node_id is a real node id, not compile's synthetic service
+   id, so it cannot itself resolve a repo prefix.
+   - Unmapped repo prefix: proposal(status=skipped, rationale), done.
    - Read the offending file at <repo_path>/<file_path>.
-     - 404: proposal(status=skipped), done (definitive; not retried).
+     - 404: proposal(status=skipped, rationale), done (definitive; not retried).
      - Any other error: return it (transient; message redelivered).
    - When the offending file's name ends in .sql, best-effort-gather the same
      extra context compileFixer does: co-located .yml/.yaml siblings and the
      service's dbt_project.yml.
-4. No dbt log is fetched: the rejection happens before any Job runs, so the
+3. No dbt log is fetched: the rejection happens before any Job runs, so the
    trigger's error_excerpt (the parser's own detail text) is the only error
    the model needs and the only one that exists. Fetch precedent
    (loadPrecedents: by error_signature, falling back to (category, reason);
@@ -407,16 +413,35 @@ It repairs dbt nodes only. A python node's parse failure is classified and trigg
    the shared single-file propose_fix tool schema (singleFileProposeRequest),
    the same one compileFixer's prompt uses.
    - LLM transient error → retry.
-5. Interpret the result via singleFileInterpret — the same interpreter
-   compileFixer uses: resolve target_file to exactly one
-   shown file, skip on no safe resolution, fail on a no-op or low-confidence
-   answer, otherwise proposed.
-6. On a proposed outcome, diff the corrected content against the resolved
+4. Interpret the result via singleFileInterpret — the same interpreter
+   compileFixer uses: resolve target_file to exactly one shown file, skip on
+   no safe resolution, fail on a no-op or low-confidence answer, otherwise
+   proposed.
+5. On a proposed outcome, diff the corrected content against the resolved
    file's original content and write the same
    proposed-fix/<release_id>/<node_id>/attempt-<n>.source.sql/.source.diff
    artifacts compileFixer writes; the attempt is verified by a
    fix-verification run for the edited service like any other single-file
    fix.
+
+python-model node (pythonParseFixer):
+1. locateContractForFix — split the node id, fetch the repository tarball at
+   the failing commit, locate the one contract yaml declaring the node,
+   refuse a sibling failure in the same contract directory. Each refusal is
+   proposal(status=skipped, rationale); an unreadable repository is
+   transient (redelivered).
+2. Evidence is the python validation lane's (pythonEvidence) with the
+   parser's text as the excerpt and, by construction, no runner log and no
+   code-bundle entry. One forced propose_python_fix LLM tool call via
+   AssemblePythonParseFix: the same tool and complete-files answer shape as
+   the validation fix, so one adapter parses both; the system prompt frames
+   the task as making every read parse with every relation schema-qualified,
+   and forbids touching anything but the reads' SQL.
+3. contractFix — refuse an answer outside the contract directory or naming a
+   file twice; apply; declarationBreach (the node still declared, identity
+   unchanged, every read kept); re-locate; package the directory with the
+   runtime CLI; write one artifact pair per edited file; return
+   proposal(status=proposed) with VerificationContract for the driver.
 ```
 
 ### Compile fixer
@@ -425,11 +450,11 @@ It repairs dbt nodes only. A python node's parse failure is classified and trigg
 
 ```
 1. Empty file_path on the trigger (a project-level compile error with no
-   models/ path in the log): proposal(status=skipped), done.
+   models/ path in the log): proposal(status=skipped, rationale), done.
 2. Look up the trigger's node_id (the synthetic service id for a compile
-   failure) in the service→repo mapping. Unmapped: proposal(status=skipped), done.
+   failure) in the service→repo mapping. Unmapped: proposal(status=skipped, rationale), done.
 3. Read the offending file at <repo_path>/<file_path>.
-   - 404: proposal(status=skipped), done (definitive; not retried).
+   - 404: proposal(status=skipped, rationale), done (definitive; not retried).
    - Any other error: return it (transient; message redelivered).
 4. When the offending file's name ends in .sql, best-effort-gather extra context
    (every failure here is swallowed; the offending file alone is still sent):
@@ -478,10 +503,10 @@ It repairs dbt nodes only. A python node's parse failure is classified and trigg
    - Primary: both are threaded from the candidate topology on the trigger.
    - Fallback: either is empty — call the orchestrator's
      GetNodeLocation(node_id) to resolve them. A gRPC error, or both still
-     empty after the fallback: proposal(status=skipped), done.
-2. Look up service in the service→repo mapping. Unmapped: proposal(status=skipped), done.
+     empty after the fallback: proposal(status=skipped, rationale), done.
+2. Look up service in the service→repo mapping. Unmapped: proposal(status=skipped, rationale), done.
 3. Read the CSV at <repo_path>/<file_path>.
-   - 404: proposal(status=skipped), done (definitive; not retried).
+   - 404: proposal(status=skipped, rationale), done (definitive; not retried).
    - Any other error: return it (transient; message redelivered).
 4. Fetch and sanitize the dbt seed error via loadDBTLog (only now, once the CSV
    read above has succeeded; not-found → "", any other error is transient and
@@ -511,25 +536,25 @@ It repairs dbt nodes only. A python node's parse failure is classified and trigg
 `duplicateTableFixer` (`service/fixer/duplicate_table.go`) resolves a naming collision — two models in the release produce the same warehouse relation — with exactly one LLM call, reusing the same single-file gather/build/interpret shape as the compile fixer (`singleFileInterpret`).
 
 ```
-1. node_type is python-model or dbt-seed: proposal(status=skipped), done,
-   before any read is attempted.
-   - python-model: its relation is declared in the service's contract.yaml,
-     not in the file file_path names (the contract's script entry, a program
-     that produces the relation but does not name it), and this system
-     carries no repository path for contract.yaml at all — so reading and
-     renaming the script could not fix the collision.
+1. node_type is python-model, python-csv or dbt-seed: proposal(status=skipped,
+   rationale), done, before any read is attempted.
+   - python-model / python-csv: its relation is declared in the service's
+     contract.yaml, not in the file file_path names (the contract's script
+     entry for a python-model node, a program that produces the relation but
+     does not name it), so reading and renaming the named file could not fix
+     the collision.
    - dbt-seed: its relation name comes from the CSV filename or the
      project's seed config, never from the CSV's own contents, so the named
      file cannot contain the fix either — and treating an edited CSV as a
      valid rename proposal would mean accepting an edit to the seed's DATA,
      not its identity.
-2. Empty file_path or service on the trigger: proposal(status=skipped), done.
-3. Look up service in the service→repo mapping. Unmapped: proposal(status=skipped), done.
+2. Empty file_path or service on the trigger: proposal(status=skipped, rationale), done.
+3. Look up service in the service→repo mapping. Unmapped: proposal(status=skipped, rationale), done.
 4. Read the offending file at <repo_path>/<file_path> — the claimant the
    release changed. The competing claimant's source is never read: its
    other_service and other_file_path (from the trigger) are enough for the
    model to choose a distinguishing name.
-   - 404: proposal(status=skipped), done (definitive; not retried).
+   - 404: proposal(status=skipped, rationale), done (definitive; not retried).
    - Any other error: return it (transient; message redelivered).
 5. No dbt log is fetched at any point: a duplicate-relation rejection happens
    at parse time, before any Job runs, so there is none to read. Fetch
@@ -881,7 +906,7 @@ Every skip path returns `status=skipped`. For a shared-upstream cluster the driv
 
 `csvValidationFixer` (`service/fixer/csv_validation.go`) handles a validation rejection whose failing node is a python-csv node. A python-csv node has no script at all: it is an entry in a contract yaml naming its schema and table, a single `csv` read whose value is the uri of the file the runtime loads, and the `output_columns` it promises that file to carry. Validation fetches the file's header line and rejects the node when a declared output column is missing from it. The CSV file is the source of truth, so the fix corrects the contract to match it — rename or drop a mis-declared `output_columns` entry, or, only when the evidence shows the uri itself is stale, correct the `csv:` uri.
 
-Steps 1–4 (split node id, fetch the repo, locate the declaring yaml, check no sibling in the same contract directory also failed) are not merely identical in shape to the python-model lane's — `csvValidationFixer.Propose` and `pythonValidationFixer.Propose` both call one function for them, `locateContractForFix`, which returns either the located contract (schema, table, checkout root, and `Located`) or an already-decided `proposal(status=skipped)`/error for the caller to return as-is. Steps 6–12 (one forced LLM tool call, refuse an unusable answer, apply then package, write audit artifacts, return `proposal(status=proposed)` carrying the merged contract for the driver to verify) are likewise one shared function, `proposeContractFixViaVerification`. The two lanes differ only in the two seams passed into it: what evidence step 5 shows the model, and what step 9's post-apply guard checks.
+Steps 1–4 (split node id, fetch the repo, locate the declaring yaml, check no sibling in the same contract directory also failed) are not merely identical in shape to the python-model lane's — `csvValidationFixer.Propose` and `pythonValidationFixer.Propose` both call one function for them, `locateContractForFix`, which returns either the located contract (schema, table, checkout root, and `Located`) or an already-decided `proposal(status=skipped)`/error for the caller to return as-is. Steps 6–12 (one forced LLM tool call, refuse an unusable answer, apply then package, write audit artifacts, return `proposal(status=proposed)` carrying the merged contract for the driver to verify) are likewise one shared function, `contractFix` — the contract-yaml counterpart of the dbt lanes' `sourceFileFix`, which the python parse lane composes as well. The two lanes differ only in the two seams passed into it: what evidence step 5 shows the model, and what step 9's post-apply guard checks.
 
 - **Step 5 (evidence)** reuses the python lane's evidence assembly (`pythonEvidence`) verbatim — a csv node runs on the same python-runtime image and its code-bundle entry is read the same way — and converts the result to `CsvEvidence`, which mirrors `PythonEvidence` field for field. Only the prompt built from it differs: `propose_csv_fix` (vs. `propose_python_fix`), telling the model the file is the source of truth, that there is no script to preserve, and that the single `csv` read may have its uri corrected but never be deleted or renamed.
 - **Step 9 (post-apply guard)** shares its identity check with the python lane — every node the answer's own files declared before the edit must still be declared, with schema, table, script, **kind**, owner, schedule, and criticality unchanged (`identityBreach`, factored out of the python lane's guard as `buildDeclarationMaps` + `identityBreach` so both lanes enforce it identically, and checked *before* either lane's read rule — a re-identified entry is refused on that alone before its reads are even compared). Kind flipping a node's declared kind — most dangerously python-csv into python-model or back — is refused here the same as renaming its table would be, since a flipped kind changes which of these two rule sets governs the node. What differs is the *read* rule applied to the failing node itself: a python-model node's script may perform any number of reads, so `declarationBreach` refuses dropping any of them for every node it checks; a python-csv node has exactly one, always named `csv`, and correcting its value is the expected fix. So for a node that declares a `csv` key, `csvDeclarationBreach` gives dropping that key a csv-specific message naming the read by name — fired first, ahead of the generic one. It does not replace the generic rule: every node, csv node included, is still run through the same blanket "no read may be dropped" rule (`droppedReadBreach`) the python-model lane applies everywhere, including every read of a python-model sibling packaged alongside the csv node, whose script this fix never touches. For the failing csv node itself, which declares exactly one read, the two checks catch the identical breach; the csv-specific message only gets to report it first.
@@ -939,6 +964,7 @@ Every adapter forces a tool call on every call — no streaming, no free-form te
 The number of calls and which tool fields are populated differ per error class:
 
 - **Python validation** (a validation trigger whose `node_type` is `python-model`): one non-streaming `propose_python_fix` call per attempt. The adapter is given the failure text, the runner log, the node's contract entry as the release parsed it, the verbatim contract yaml declaring it, upstream contract diffs, precedent, and every earlier attempt's diffs and verification-run error, and returns `updated_files` (each changed file's complete new content), `rationale`, and `confidence`. The prompt constrains the model to what validation actually checks — the node's declared reads, `output_columns`, and config — and forbids touching the fields that identify the node (schema, table, script path, owner, schedule, criticality), since changing one makes it a different node rather than a fixed one. There is no `suspected_root_cause_node` field: the verdict comes from a real release, not from the model's guess.
+- **Python parse** (a parse trigger whose `node_type` is `python-model`): one non-streaming `propose_python_fix` call per attempt, the same tool and answer shape as the python validation call. The adapter is given the parser's error text (the trigger's excerpt — there is no runner log, since no Job ran), the verbatim contract yaml declaring the node, upstream contract diffs, precedent, and every earlier attempt's diffs and verification-run error. The prompt constrains the model to the SQL of the node's declared reads — make every read parse with every relation schema-qualified — and forbids touching output_columns, config, or any identifying field.
 - **Validation (dbt)**: two non-streaming calls per cluster. Step 1 is given the candidate SQL, sanitized dbt log, the diff of what this release itself changed in the failing model (last promoted version vs. candidate, from the orchestrator's `GetNodeVersions`), the diffs of its recently-changed upstreams (from `GetUpstreamChanges`, server-capped at 5 ancestors/8 KiB each), and precedent, and returns `proposed_sql`, `rationale`, `confidence`, and `suspected_root_cause_node`. Step 2 is given the failing node's resolved real source (the release's code bundle, or a GitHub repo read on a permanent bundle miss) and the Step-1 rationale, and returns a corrected version of it. Step 2 is made only when that source, the file path, and the service all resolve; a failure, empty result, unchanged result, or low-confidence result falls back silently to the Step-1 candidate proposal.
 - **Shared upstream**: one non-streaming `propose_fix` call per cluster. The adapter is given the changed ancestor's source (from the release's code bundle), the diff of what this release changed in it, the node id and sanitized error excerpt of every failing descendant that shares the cause, and precedent (loaded from the first member — every member shares the signature by construction). It returns `proposed_sql` (the ancestor's complete corrected source), `rationale`, and `confidence`. An empty answer, the ancestor's source returned unchanged, or a low-confidence answer are all read as the model declining, and the cluster falls back to independent per-node fixes rather than failing.
 - **Compile**: one non-streaming call per proposal. The adapter is given every gathered file (the offending file plus any co-located `.yml`/`.yaml` siblings and `dbt_project.yml`), the sanitized dbt compile error, and precedent, and returns `target_file` (which shown file to change), `proposed_content` (that file's complete corrected content), `rationale`, `confidence`, and `suspected_root_cause_node`.
@@ -1071,7 +1097,7 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Prompt assembly (validation candidate + real-source, parse, compile, seed, duplicate table) | `agent-remediation/domain/prompt/prompt.go` (`Assemble`, `AssembleSourceFix`, `AssembleParseFix`, `AssembleCompileFix`, `AssembleSeedFix`, `AssembleDuplicateTableFix`) |
 | Prompt assembly (shared-upstream and cross-service upstream fix) | `agent-remediation/domain/prompt/upstream.go` (`AssembleUpstreamFix`) |
 | Prompt assembly (python-csv contract fix) | `agent-remediation/domain/prompt/csv.go` (`AssembleCsvContractFix`) |
-| Prompt assembly (python contract fix, incl. the prior-attempts section) | `agent-remediation/domain/prompt/python.go` (`AssemblePythonContractFix`) |
+| Prompt assembly (python contract fix and python parse fix — one request shape, one `propose_python_fix` tool, incl. the prior-attempts section) | `agent-remediation/domain/prompt/python.go` (`AssemblePythonContractFix`, `AssemblePythonParseFix`) |
 | Event payloads + deterministic IDs | `agent-remediation/domain/event/` (proposed, pr_opened, pr_closed) |
 | Batched driver — attempt cap, dedup, cluster grouping, per-cluster dispatch, one proposal per (release, attempt); each Fixer fetches its own dbt log | `agent-remediation/service/handlers/propose_fix.go` |
 | Inbound trigger type, `NodeIDs`, and the `remediation.requested:v2` wire shape | `agent-remediation/service/handlers/trigger.go` |
@@ -1079,14 +1105,15 @@ All code-change decisions — review, approval, and PR creation — are human ac
 | Verification-run submission — bucket edits by service, refuse unrunnable ones, build the overlay or upload the contract, submit one run per service | `agent-remediation/service/handlers/verify.go` |
 | Verification-run id minting, with the candidate-schema length cap | `agent-remediation/service/handlers/verification_id.go` |
 | Deterministic source-overlay tarball builder | `agent-remediation/service/overlay/overlay.go` |
-| Per-error-class fixers — `Fixer` interface, `For` factory, shared single-shot pipeline | `agent-remediation/service/fixer/fixer.go` |
-| Parse fixer (offending file + co-located YAML/`dbt_project.yml` context via the shared `gatherSourceFile`, no dbt log, one LLM call) | `agent-remediation/service/fixer/parse.go` |
+| Per-error-class fixers — `Fixer` interface, `For` factory, `sourceFileFix` (the shared skeleton of every one-edited-file lane: gather → one LLM call → interpret → artifacts, with a skip reason recorded as the rationale) | `agent-remediation/service/fixer/fixer.go` |
+| Parse fixer, dbt node (offending file + co-located YAML/`dbt_project.yml` context via the shared `gatherSourceFile`, no dbt log, one LLM call; records a reason and skips a python-csv node) | `agent-remediation/service/fixer/parse.go` |
+| Parse fixer, python-model node (locates the contract yaml from the node id, repairs the rejected read's SQL, packages; shares `locateContractForFix`, `contractFix`, and `declarationBreach` with the python validation lane) | `agent-remediation/service/fixer/python_parse.go` |
 | Compile fixer (offending file + co-located YAML/`dbt_project.yml` context, one LLM call) | `agent-remediation/service/fixer/compile.go` |
 | Seed fixer (CSV read, one LLM call) | `agent-remediation/service/fixer/seed.go` |
 | Duplicate-table fixer (single-file rename, no dbt log, shares `singleFileInterpret` with compile) | `agent-remediation/service/fixer/duplicate_table.go` |
 | Validation fixer, dbt node (two-step candidate + real-source flow, best-effort upstream-diff gather) | `agent-remediation/service/fixer/validation.go` |
 | Validation fixer, python-model node (repo checkout, contract repair, packaging) | `agent-remediation/service/fixer/python_validation.go` |
-| Validation fixer, python-csv node (shares `locateContractForFix` and `proposeContractFixViaVerification` with the python-model lane) | `agent-remediation/service/fixer/csv_validation.go` |
+| Validation fixer, python-csv node (shares `locateContractForFix` and `contractFix` with the python-model lane) | `agent-remediation/service/fixer/csv_validation.go` |
 | Shared-upstream fixer (repair the changed ancestor once; skip so members fall back to independent fixes) | `agent-remediation/service/fixer/upstream.go` |
 | Contract-yaml search across a repository checkout, and the node-declaration read (identity fields + declared read names) a proposed edit is checked against (`ContractLocator` + `ContractInspector`) | `agent-remediation/adapters/repofs/contract_locator.go` |
 | Verification reconciler loop (poll every fix-verification run, combine verdicts, record phase, CAS finalization, replay the whole batch on a rejection, per-run timeout budget) | `agent-remediation/service/verification/reconciler.go` |

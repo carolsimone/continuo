@@ -2,8 +2,7 @@ package fixer
 
 import (
 	"context"
-	"errors"
-	"path"
+	"fmt"
 
 	"github.com/carolsimone/continuo/agent-remediation/domain/prompt"
 	"github.com/carolsimone/continuo/agent-remediation/domain/proposal"
@@ -17,16 +16,15 @@ import (
 type seedFixer struct{}
 
 func (seedFixer) Propose(ctx context.Context, svc Services, in Input) (Result, error) {
-	return singleShot{gather: seedGather, build: seedBuild, interpret: seedInterpret}.Propose(ctx, svc, in)
+	return sourceFileFix{gather: seedGather, build: seedBuild, interpret: seedInterpret}.Propose(ctx, svc, in)
 }
 
-func seedGather(ctx context.Context, svc Services, in Input) (Gathered, bool, error) {
+func seedGather(ctx context.Context, svc Services, in Input) (Gathered, string, error) {
 	filePath, service := in.FilePath, in.Service
 	if filePath == "" || service == "" {
 		fp, svcName, err := svc.Locator.Locate(ctx, in.NodeID)
 		if err != nil {
-			svc.Logger.Warn("seed fix: node location unavailable; skipping", "node", in.NodeID, "error", err)
-			return Gathered{}, true, nil
+			return Gathered{}, fmt.Sprintf("the seed's source location could not be resolved from the graph: %v", err), nil
 		}
 		if filePath == "" {
 			filePath = fp
@@ -36,24 +34,9 @@ func seedGather(ctx context.Context, svc Services, in Input) (Gathered, bool, er
 		}
 	}
 	if filePath == "" || service == "" {
-		svc.Logger.Warn("seed fix: file path or service unavailable; skipping", "node", in.NodeID)
-		return Gathered{}, true, nil
+		return Gathered{}, "neither the trigger nor the graph names the seed's csv file and service, so there is no file to fix", nil
 	}
-	prefix, ok := svc.ServiceRepoPaths[service]
-	if !ok {
-		svc.Logger.Warn("seed fix: no repo path mapping for service; skipping", "service", service)
-		return Gathered{}, true, nil
-	}
-	full := path.Join(prefix, filePath)
-	content, err := svc.Source.ReadFile(ctx, in.Repo, in.CommitSHA, full)
-	if err != nil {
-		if errors.Is(err, ports.ErrSourceNotFound) {
-			svc.Logger.Warn("seed fix: csv not found; skipping", "path", full)
-			return Gathered{}, true, nil
-		}
-		return Gathered{}, false, err // transient: redeliver
-	}
-	return Gathered{Files: map[string]string{full: content}, Order: []string{full}, Primary: full}, false, nil
+	return readOffendingFile(ctx, svc, in, service, filePath)
 }
 
 func seedBuild(svc Services, g Gathered, in Input, dbtLog string, precedents []prompt.Precedent) prompt.ProposeRequest {
@@ -64,11 +47,11 @@ func seedBuild(svc Services, g Gathered, in Input, dbtLog string, precedents []p
 
 func seedInterpret(res ports.ProposeResult, g Gathered, in Input) Outcome {
 	if res.ProposedContent == "" || res.ProposedContent == g.Files[g.Primary] {
-		return Outcome{Status: proposal.StatusFailed} // unchanged / no-op → not a fix
+		return Outcome{Status: proposal.StatusFailed, Rationale: "the model returned the csv unchanged, which is not a fix"}
 	}
 	if isLowConfidence(res.Confidence) {
 		// The model could not infer the bad value; do not propose a guessed CSV.
-		return Outcome{Status: proposal.StatusFailed}
+		return Outcome{Status: proposal.StatusFailed, Rationale: "the model could not infer the bad value with confidence, so no guessed csv is proposed"}
 	}
 	return Outcome{
 		Status:           proposal.StatusProposed,

@@ -34,7 +34,7 @@ func TestFor_UnknownSource(t *testing.T) {
 }
 
 // TestWriteSourceArtifacts_DiffHeaderNamesTheEditedFile verifies that the
-// diff written for the single-shot fixers' source edit is labelled with the
+// diff written for the source-file fixers' edit is labelled with the
 // repository path being edited, not the node id, so the stored diff can
 // actually be applied against the file it claims to change.
 func TestWriteSourceArtifacts_DiffHeaderNamesTheEditedFile(t *testing.T) {

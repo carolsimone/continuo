@@ -54,6 +54,15 @@ const (
 	pyLoopContract = "services/svc-py-e2e-loop/contracts/py_loop_read.yml"
 	pyLoopScript   = "services/svc-py-e2e-loop/scripts/py_loop_read.py"
 
+	// The third service, whose declared read names its relation without a
+	// schema, so the release's SQL parser rejects the node before any Job
+	// runs. Its repair is made in the same contract yaml and proven by a
+	// verification run whose own parse leg is the judge.
+	pyParseService  = "svc-py-e2e-parse"
+	pyParseUniqueID = "e2e_schema.py_unqualified_read"
+	pyParseContract = "services/svc-py-e2e-parse/contracts/py_unqualified_read.yml"
+	pyParseScript   = "services/svc-py-e2e-parse/scripts/py_unqualified_read.py"
+
 	// pyBindingRelation is the relation a repaired contract must read from. It
 	// exists in the warehouse only because these tests create it, which is
 	// what makes a verification run's verdict a real measurement rather than a
@@ -737,4 +746,155 @@ func assertNoNodeVersionsFor(t *testing.T, ctx context.Context, clients *testCli
 	count, _ := n.(int64)
 	require.Zero(t, count,
 		"verification run %s must write no :NodeVersion — it never promoted", runID)
+}
+
+// TestE2E_PythonParseFailure_VerifiedFix drives the python remediation lane
+// from the parse stage, the leg that runs before any Job:
+//
+//	POST /releases (kind=python, one node whose declared read is not schema-qualified)
+//	→ topology-controller's SQL parser rejects the node (unqualified_reference)
+//	→ release-controller: Fail(unqualified_reference), RecordStageResults("parse")
+//	→ release.rejected:v1 {stage: parse, per_node: [{kind, detail, file_path,
+//	  service, node_type=python-model}]} — the parser's own text is inline;
+//	  there is no dbt log because nothing ran
+//	→ classifier emits remediation.requested:v2 (source=parse, node_type=python-model)
+//	→ agent-remediation routes it to the python parse fixer: the trigger's
+//	  file_path names the script, which the parser never reads, so the fixer
+//	  finds the contract yaml from the node id alone, has the model qualify the
+//	  read's relation, packages the directory and POSTs it as a verification run
+//	→ the run's own parse leg accepts the repaired SQL, its validation leg binds
+//	  the now-qualified read, and it stops at 'passed'
+//	→ the reconciler finalizes the proposal to 'proposed'
+//
+// The validation-stage sibling above proves the contract-fix lane; this test
+// proves the parse stage reaches it for a python node, with a rejection that
+// carries no log and no code bundle.
+func TestE2E_PythonParseFailure_VerifiedFix(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping E2E test in short mode")
+	}
+	// 22 minutes: strictly greater than the 17 this test's stage budgets sum to
+	// (release 6 + attempt 3 + verify 5 + finalize 2 + event 1).
+	ctx, cancel := context.WithTimeout(context.Background(), 22*time.Minute)
+	defer cancel()
+
+	clients := setupClients(t, ctx)
+	defer clients.close(ctx)
+
+	verifyServicesHealthy(t)
+	verifyK8sAvailable(t, ctx)
+	requireReleaseControllerHealthy(t, clients)
+
+	// The qualified read the fix declares must bind in the verification run's
+	// validation leg, so the relation has to exist first.
+	dropRelation := ensureBindingRelation(t, ctx, clients)
+	defer dropRelation()
+
+	releaseID := "pyparse-" + uuid.NewString()[:8]
+	t.Logf("release_id=%s service=%s node=%s", releaseID, pyParseService, pyParseUniqueID)
+
+	clearProd := rejectPythonFixtureRelease(t, ctx, clients,
+		pyParseService, pyParseContract, pyParseScript, releaseID)
+	defer clearProd()
+
+	// 1. The rejection is a parse-stage rejection naming the python node, with
+	//    the parser's detail inline and the node's kind on the entry — which is
+	//    what routes it to the python parse fixer before any read.
+	assertRejectedPythonParseStage(t, ctx, clients, releaseID)
+
+	// 2. The fixer produced an attempt and parked it on a verification run.
+	verifying := waitForProposal(t, ctx, clients, releaseID, pyParseUniqueID, 1, "verifying", pyAttemptStartBudget)
+	runID := verifying.VerificationRunID
+	require.NotEmpty(t, runID, "a verifying proposal must name the run that is judging it")
+	require.True(t, strings.HasSuffix(runID, "-a1"),
+		"the first attempt's verification run id must name attempt 1; got %q", runID)
+	t.Logf("proposal attempt 1 is verifying under verification run %s", runID)
+
+	// 3. The run's own parse leg is the judge of a parse fix: it re-parses the
+	//    packaged contract, then validates, and stops at passed.
+	assertNotListedAsRelease(t, ctx, clients, runID)
+	waitForVerificationStatus(t, ctx, clients, runID, "passed", pyVerifyVerdictBudget)
+
+	// 4. The reconciler turns the verified attempt into a reviewable fix.
+	proposed := waitForProposal(t, ctx, clients, releaseID, pyParseUniqueID, 1, "proposed", pyAttemptFinalizeBudget)
+	require.Empty(t, proposed.VerifyError, "a verified fix records no verification error")
+
+	verifications := decodeVerifications(t, proposed.Verifications)
+	require.Len(t, verifications, 1, "the fix edits one service, so exactly one verification run judged it")
+	require.Equal(t, pyParseService, verifications[0].Service)
+
+	edits := decodeFileEdits(t, proposed.FileEdits)
+	require.Len(t, edits, 1, "the fix changes exactly the one file that declares the node")
+	require.Equal(t, pyParseContract, edits[0].Path,
+		"the edit must land in the declaring contract file, not in the script the trigger's file_path names")
+
+	content := string(getS3ObjectByKey(t, ctx, clients, stripS3Prefix(edits[0].ContentURI)))
+	require.Contains(t, content, "select id from "+pyBindingRelation,
+		"the proposed contract must declare the read with its relation schema-qualified")
+	require.NotContains(t, content, "select id from right_name\n",
+		"the unqualified read must no longer be declared")
+	require.Contains(t, content, "table: py_unqualified_read",
+		"the fix must keep declaring the same node, not replace it with a different one")
+
+	// 5. The fix is announced for human review, and nothing reached production.
+	waitForRemediationProposed(t, ctx, clients, releaseID, pyParseUniqueID, pyRecordVisibleBudget)
+	var prodRows int
+	require.NoError(t, clients.releaseDB.GetContext(ctx, &prodRows,
+		`SELECT count(*) FROM service_prod WHERE service_name = $1`, pyParseService))
+	require.Zero(t, prodRows, "a verification run must never write the service's production pointer")
+
+	t.Log("✅ a python node rejected at the parse stage was repaired in its contract, verified by a real verification run, and proposed for review")
+}
+
+// assertRejectedPythonParseStage reads the release's rejection off
+// release.rejected:v1 and pins the shape the python parse lane depends on:
+// stage parse, reason unqualified_reference, one per-node entry carrying the
+// parser's detail inline, the script as file_path, the service, and
+// node_type=python-model.
+func assertRejectedPythonParseStage(t *testing.T, ctx context.Context, clients *testClients, releaseID string) {
+	t.Helper()
+	pollUntil(t, ctx, pyRecordVisibleBudget, 2*time.Second, func() (bool, error) {
+		msgs, err := clients.redisClient.XRange(ctx, streams.ReleaseRejectedV1, "-", "+").Result()
+		if err != nil {
+			return false, nil
+		}
+		for _, msg := range msgs {
+			raw, _ := msg.Values["payload"].(string)
+			var p struct {
+				ReleaseID     string `json:"release_id"`
+				Stage         string `json:"stage"`
+				Reason        string `json:"reason"`
+				Repo          string `json:"repo"`
+				CommitSHA     string `json:"commit_sha"`
+				CodeBundleURI string `json:"code_bundle_uri"`
+				PerNode       []struct {
+					NodeID   string `json:"node_id"`
+					Kind     string `json:"kind"`
+					Detail   string `json:"detail"`
+					FilePath string `json:"file_path"`
+					Service  string `json:"service"`
+					NodeType string `json:"node_type"`
+				} `json:"per_node"`
+			}
+			if raw == "" || json.Unmarshal([]byte(raw), &p) != nil || p.ReleaseID != releaseID {
+				continue
+			}
+			require.Equal(t, "parse", p.Stage)
+			require.Equal(t, "unqualified_reference", p.Reason)
+			require.NotEmpty(t, p.Repo)
+			require.Equal(t, releaseID, p.CommitSHA, "the python fixture posts its release id as the commit sha")
+			require.Empty(t, p.CodeBundleURI,
+				"a parse rejection precedes the parse that produces the code bundle, so the fixer must work without one")
+			require.Len(t, p.PerNode, 1)
+			require.Equal(t, pyParseUniqueID, p.PerNode[0].NodeID)
+			require.Equal(t, "unqualified_reference", p.PerNode[0].Kind)
+			require.Contains(t, p.PerNode[0].Detail, "right_name")
+			require.Equal(t, "scripts/py_unqualified_read.py", p.PerNode[0].FilePath,
+				"a python node's parse failure is reported against its script, which is why the fixer must not edit the named file")
+			require.Equal(t, pyParseService, p.PerNode[0].Service)
+			require.Equal(t, "python-model", p.PerNode[0].NodeType)
+			return true, nil
+		}
+		return false, nil
+	}, fmt.Sprintf("timeout waiting for release.rejected:v1 for release %s", releaseID))
 }

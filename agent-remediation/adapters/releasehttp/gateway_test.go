@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -251,4 +252,41 @@ func TestFailingNodes_NodeWithNoPerNodeResultFallsBackByID(t *testing.T) {
 		"model.core.orders":  "duplicate_table — claimed twice",
 		"model.core.returns": "duplicate_table — claimed twice",
 	}, nodes)
+}
+
+// TestStatus_FailedParseStageCarriesInlineDetail pins the retry-loop evidence
+// for a parse-stage verification failure: a python (or dbt) parse repair that
+// still does not parse fails its verification run before any Job, so the
+// failing per-node result carries the parser's text inline in `detail` with no
+// run_results_uri. nodeErrors must surface that detail as the node's error, so
+// the next attempt is told why its repair still failed rather than "failed
+// without a per-node error".
+func TestStatus_FailedParseStageCarriesInlineDetail(t *testing.T) {
+	const detail = "unqualified table reference `orders`. Line 1, Col: 16."
+	body := `{"run_id":"verify-x","status":"failed","fail_reason":"unqualified_reference","fail_detail":"1 node failed to parse",
+		  "per_node_results":[{"stage":"parse","node_id":"analytics.py_daily_kpis","status":"failed","node_type":"python-model","file_path":"contracts/x.yml","detail":` +
+		strconv.Quote(detail) + `}]}`
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK, body)
+	defer srv.Close()
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	st, err := g.Status(context.Background(), "verify-x")
+	require.NoError(t, err)
+	assert.Equal(t, proposal.PhaseFailed, st.Phase)
+	assert.Equal(t, detail, st.NodeErrors["analytics.py_daily_kpis"],
+		"a parse-stage failure's inline detail is the node's error text; no Job ran, so there is no run_results_uri to read")
+}
+
+// TestStatus_FailedParseStageWithNoDetailFallsBack pins the other half: a parse
+// entry that somehow carries no inline detail still records the run-level fail
+// text rather than dropping the node to a blank reason.
+func TestStatus_FailedParseStageWithNoDetailFallsBack(t *testing.T) {
+	srv := releaseServer(t, "/verification-runs/verify-x", http.StatusOK,
+		`{"run_id":"verify-x","status":"failed","fail_reason":"invalid_sql","fail_detail":"the compiled SQL does not parse",
+		  "per_node_results":[{"stage":"parse","node_id":"analytics.py_daily_kpis","status":"failed"}]}`)
+	defer srv.Close()
+	g := NewGateway(srv.URL, &fakeEvidence{}, nil)
+	st, err := g.Status(context.Background(), "verify-x")
+	require.NoError(t, err)
+	assert.Equal(t, "invalid_sql — the compiled SQL does not parse",
+		st.NodeErrors["analytics.py_daily_kpis"])
 }

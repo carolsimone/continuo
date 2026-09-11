@@ -152,15 +152,19 @@ const siblingYAML = `nodes:
 func pythonRepoTree(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	write := func(rel, content string) {
-		full := filepath.Join(root, filepath.FromSlash(rel))
-		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o750))
-		require.NoError(t, os.WriteFile(full, []byte(content), 0o600))
-	}
-	write("services/service-py/contracts/py_daily_kpis.yml", declaringYAML)
-	write("services/service-py/contracts/other.yml", siblingYAML)
-	write("services/service-py/scripts/py_daily_kpis.py", "print('hi')\n")
+	writeRepoFile(t, root, "services/service-py/contracts/py_daily_kpis.yml", declaringYAML)
+	writeRepoFile(t, root, "services/service-py/contracts/other.yml", siblingYAML)
+	writeRepoFile(t, root, "services/service-py/scripts/py_daily_kpis.py", "print('hi')\n")
 	return root
+}
+
+// writeRepoFile writes one file into a fake repository checkout rooted at
+// root, creating its directories.
+func writeRepoFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o750))
+	require.NoError(t, os.WriteFile(full, []byte(content), 0o600))
 }
 
 // pythonInput is the trigger a rejected python node produces.

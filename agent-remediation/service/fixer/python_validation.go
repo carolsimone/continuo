@@ -38,10 +38,10 @@ import (
 //
 // Locating the contract file and everything from the model call through
 // packaging the merged contract (locateContractForFix,
-// proposeContractFixViaVerification) is shared code, not merely a similar
+// contractFix) is shared code, not merely a similar
 // shape, with the python-csv lane (csvValidationFixer): both call the same
 // two functions. The two lanes differ only in the two seams passed into
-// proposeContractFixViaVerification — what evidence is assembled and what
+// contractFix — what evidence is assembled and what
 // prompt it becomes (buildPythonProposeRequest), and what "the fix preserved
 // the node's declaration" means (declarationBreach) — because a python-csv
 // node has no script and a different set of rules for what a fix may touch.
@@ -69,7 +69,7 @@ func (pythonValidationFixer) Propose(ctx context.Context, svc Services, in Input
 	// prompt it becomes, and what "the fix preserved the node's declaration"
 	// means are specific to a python node, so those three are passed in as the
 	// seams.
-	return proposeContractFixViaVerification(ctx, svc, in, schema, table, root, located,
+	return contractFix(ctx, svc, in, schema, table, root, located,
 		buildPythonProposeRequest, declarationBreach)
 }
 
@@ -172,18 +172,20 @@ func buildPythonProposeRequest(ctx context.Context, svc Services, in Input, loca
 	return prompt.AssemblePythonContractFix(ev), nil
 }
 
-// proposeContractFixViaVerification carries the orchestration shared by every
-// contract-fix lane whose answer can only be judged by a verification run:
-// one model call, applying and guarding the answer, and packaging it into the
+// contractFix is the shared skeleton of every lane whose fix is made in a
+// python contract yaml and can only be judged by a verification run: one
+// model call, applying and guarding the answer, and packaging it into the
 // merged contract a verification run would run, plus writing the audit
-// artifacts. It never submits anything — packaging the whole release from
+// artifacts. The python validation, python-csv validation and python parse
+// lanes compose it; its counterpart for a fix made in one dbt source file is
+// sourceFileFix. It never submits anything — packaging the whole release from
 // every edited service's contract and deciding whether the fix survives
 // belongs to the driver, which collects this and every other cluster's edits
 // first. buildRequest assembles the lane's evidence into the LLM request; a
 // returned error is transient (the driver redelivers). checkDeclarations is
 // the post-apply guard: it returns "" when the answer preserved what the fix
 // is required not to change, or the reason to fail the attempt otherwise.
-func proposeContractFixViaVerification(
+func contractFix(
 	ctx context.Context, svc Services, in Input, schema, table, root string, located ports.Located,
 	buildRequest func(ctx context.Context, svc Services, in Input, located ports.Located) (prompt.ProposeRequest, error),
 	checkDeclarations func(svc Services, files []ports.ProposedFile, originals map[string]string) string,
@@ -738,8 +740,13 @@ func pythonEvidence(ctx context.Context, svc Services, in Input, located ports.L
 // what is expected, and any other runtime means the trigger and the bundle
 // disagree about what this node is, so the entry is left out rather than shown
 // as something it is not. A permanent miss also degrades to no section; only a
-// transient fetch error is returned.
+// transient fetch error is returned. An empty bundle URI means the rejection
+// preceded the parse that produces the bundle (a parse-stage rejection), so
+// there is no entry to look for and the reader is not consulted.
 func pythonContractEntry(ctx context.Context, svc Services, in Input) (string, error) {
+	if in.CodeBundleURI == "" {
+		return "", nil
+	}
 	src, err := svc.CandidateSource.NodeSource(ctx, in.CodeBundleURI, in.NodeID, in.ReleaseID)
 	switch {
 	case err == nil && src.Runtime == ports.RuntimePython:

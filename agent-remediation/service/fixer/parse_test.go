@@ -69,42 +69,51 @@ func TestParse_SkipsWithoutFilePathOrService(t *testing.T) {
 	}
 }
 
-// TestParse_PythonTarget_NeverReadsOrCallsLLM proves the parse lane refuses a
-// python node before any read. topology-controller reports a python node's
-// parse failure against the script named by the node's contract entry, but the
-// SQL the parser rejected is one of that entry's `reads`, which lives in the
-// service's contract.yaml — a file this system carries no repository path for.
-// Editing the script would therefore leave the rejected SQL untouched, and the
-// proposal would package no VerificationContract, so the driver would submit a
-// dbt verification run for a python service.
-//
-// This is a non-negotiable project invariant: no remediation path may ever
-// produce an LLM call or a proposal for a python node, so the source, LLM and
-// precedent fakes must all show zero calls, not just the terminal status.
-func TestParse_PythonTarget_NeverReadsOrCallsLLM(t *testing.T) {
-	for _, nodeType := range []string{"python-model", "python-csv"} {
-		t.Run(nodeType, func(t *testing.T) {
-			fs := &fakeSourceMap{files: map[string]string{"services/svc/scripts/fx.py": "print('hello')"}}
-			llm := &fakeLLM{}
-			precedents := &fakePrecedents{}
-			svc := Services{
-				Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
-				Artifacts: &fakeArtifacts{}, Logger: testLogger(),
-				ServiceRepoPaths: map[string]string{"svc": "services/svc"},
-				Precedents:       precedents,
-			}
-			in := parseInput()
-			in.NodeType = nodeType
-			in.FilePath = "scripts/fx.py"
+// TestParse_PythonCsvTarget_SkipsWithReason proves the source-file parse lane
+// refuses a python-csv node before any read, and records why as the
+// proposal's rationale. A python-csv node's only read is an S3 URI, never
+// SQL, so the parser has nothing to reject in it; if a parse rejection ever
+// names one, the operator must see that remediation has no fix to offer and
+// the contract needs a hand edit, not an unexplained skipped row.
+func TestParse_PythonCsvTarget_SkipsWithReason(t *testing.T) {
+	fs := &fakeSourceMap{files: map[string]string{"services/svc/scripts/fx.py": "print('hello')"}}
+	llm := &fakeLLM{}
+	precedents := &fakePrecedents{}
+	svc := Services{
+		Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
+		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+		Precedents:       precedents,
+	}
+	in := parseInput()
+	in.NodeType = "python-csv"
+	in.FilePath = "scripts/fx.py"
 
-			r, err := parseFixer{}.Propose(context.Background(), svc, in)
-			require.NoError(t, err)
-			require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
-			require.Nil(t, r.VerificationContract)
-			require.Empty(t, fs.readPaths(), "want no source read for a python target")
-			require.Zero(t, llm.calls, "want no LLM call for a python target")
-			require.Zero(t, precedents.calls, "want no precedent lookup for a python target")
-		})
+	r, err := parseFixer{}.Propose(context.Background(), svc, in)
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
+	require.Contains(t, r.Proposal.Rationale, "python-csv")
+	require.Contains(t, r.Proposal.Rationale, "by hand")
+	require.Nil(t, r.VerificationContract)
+	require.Empty(t, fs.readPaths(), "want no source read for a python-csv target")
+	require.Zero(t, llm.calls, "want no LLM call for a python-csv target")
+	require.Zero(t, precedents.calls, "want no precedent lookup for a python-csv target")
+}
+
+// TestParse_SkipRecordsReason pins that every skip the source-file parse lane
+// takes before reading anything carries its reason on the proposal, so a
+// skipped row in the release view is never unexplained.
+func TestParse_SkipRecordsReason(t *testing.T) {
+	svc := Services{Source: &fakeSourceMap{}, Logger: testLogger(), ServiceRepoPaths: map[string]string{"svc": "services/svc"}}
+	for name, in := range map[string]Input{
+		"no file path": func() Input { i := parseInput(); i.FilePath = ""; return i }(),
+		"no service":   func() Input { i := parseInput(); i.Service = ""; return i }(),
+		"unmapped":     func() Input { i := parseInput(); i.Service = "other"; return i }(),
+	} {
+		r, err := parseFixer{}.Propose(context.Background(), svc, in)
+		require.NoError(t, err, name)
+		require.Equal(t, proposal.StatusSkipped, r.Proposal.Status, name)
+		require.NotEmpty(t, r.Proposal.Rationale, name)
 	}
 }
 
@@ -130,4 +139,32 @@ func TestParse_DbtModelTarget_StillGathers(t *testing.T) {
 	require.Equal(t, proposal.StatusProposed, r.Proposal.Status)
 	require.Contains(t, fs.readPaths(), "services/svc/models/fx.sql")
 	require.Len(t, llm.requests, 1)
+}
+
+// TestParse_InterpretFailureRecordsReason pins that a failure decided after
+// the model answered — an unchanged file, a low-confidence answer, a target
+// that was never shown — carries its reason on the proposal the same way a
+// gather-stage skip does.
+func TestParse_InterpretFailureRecordsReason(t *testing.T) {
+	for name, res := range map[string]ports.ProposeResult{
+		"unchanged":      {TargetFile: "services/svc/models/fx.sql", ProposedContent: "select a b, c from t", Confidence: "high"},
+		"low confidence": {TargetFile: "services/svc/models/fx.sql", ProposedContent: "select a, b, c from t", Confidence: "low"},
+		"unknown target": {TargetFile: "services/svc/models/other.sql", ProposedContent: "select 1", Confidence: "high"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fs := &fakeSourceMap{
+				files: map[string]string{"services/svc/models/fx.sql": "select a b, c from t"},
+				dir:   map[string][]string{"services/svc/models": {"services/svc/models/fx.sql"}},
+			}
+			svc := Services{
+				Source: fs, LLM: &fakeLLM{queue: []ports.ProposeResult{res}}, Evidence: fakeEvidence{},
+				Sanitizer: fakeSanitizer{}, Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+				ServiceRepoPaths: map[string]string{"svc": "services/svc"}, Precedents: &fakePrecedents{},
+			}
+			r, err := parseFixer{}.Propose(context.Background(), svc, parseInput())
+			require.NoError(t, err)
+			require.NotEqual(t, proposal.StatusProposed, r.Proposal.Status)
+			require.NotEmpty(t, r.Proposal.Rationale, "a decided-after-answer outcome must say why")
+		})
+	}
 }
