@@ -50,8 +50,7 @@ func compileRejection(perNode []NodeResult) (reason pkg_model.RejectReason, deta
 //
 // ok path: TransitionFromCompiling (Compiling→Parsing), re-assembles the
 // manifest-key set from live service_prod, emits release.requested:v1 with
-// manifest_keys — payload shape identical to the pre-compile-leg behaviour so
-// topology-controller requires no change.
+// manifest_keys.
 //
 // failed path: Fail with a reason derived from the per-node failed_container
 // attribution (compile_failed, parse_rehearsal_failed, or

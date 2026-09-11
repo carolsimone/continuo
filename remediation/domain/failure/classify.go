@@ -163,9 +163,9 @@ func classifyStructured(structured *StructuredResult, logText string) Classifica
 // node id: the target flips between releases (Target prefers whichever
 // service the release actually changed), so keying on node id would fork one
 // physical collision into two signatures the moment the changed service
-// alternates. RelationID falls back to NodeID when empty (a trigger from
-// before the field existed), which keeps this degenerate-but-safe for the
-// duration of a rollout.
+// alternates. RelationID falls back to NodeID when a trigger names no
+// relation, which keys the signature on something stable rather than on
+// nothing.
 func ClassifyDuplicateTable(ev FailureEvidence) Classification {
 	relationID := ev.RelationID
 	if relationID == "" {

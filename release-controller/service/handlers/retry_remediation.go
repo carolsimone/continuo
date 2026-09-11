@@ -147,8 +147,7 @@ func RetryRemediation(ctx context.Context, deps *Deps, releaseID string) (RetryR
 }
 
 // effectiveRound is the remediation round a proposal belongs to: its own
-// RemediationRound field, or 1 for a proposal recorded before that field
-// existed.
+// RemediationRound field, or 1 for a proposal that names no round.
 func effectiveRound(p ports.ProposalSummary) int {
 	if p.RemediationRound == 0 {
 		return 1
@@ -254,7 +253,8 @@ func isDeadEnd(p ports.ProposalSummary) bool {
 
 // owningServices names the services whose fixes an attempt must land before it
 // is exhausted: PRServices when the attempt carries them, otherwise the
-// services named by its effective pull requests (the legacy single-group case).
+// services named by its effective pull requests (the unsplit single-group
+// case, whose one group is named by the empty string).
 func owningServices(p ports.ProposalSummary) []string {
 	if len(p.PRServices) > 0 {
 		return p.PRServices
@@ -281,8 +281,8 @@ func hasOutstandingPR(p ports.ProposalSummary) bool {
 
 // representativePRURL is the pull request URL to name when an attempt blocks a
 // retry: the first non-rejected pull request's URL in service order, so a human
-// is pointed at a PR that could still land rather than a closed one; the legacy
-// singular URL when the attempt carries no per-service pull requests.
+// is pointed at a PR that could still land rather than a closed one; the
+// attempt's singular URL when it carries no per-service pull requests.
 func representativePRURL(p ports.ProposalSummary) string {
 	prs := append([]ports.ProposalPR(nil), p.EffectivePRs()...)
 	sort.Slice(prs, func(i, j int) bool { return prs[i].Service < prs[j].Service })

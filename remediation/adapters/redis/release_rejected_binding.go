@@ -29,13 +29,14 @@ type rejectedPayload struct {
 	// release.rejected:v1 rejection, which is round 1.
 	RemediationRound int `json:"remediation_round"`
 	// CodeBundleURI locates the rejected release's code-bundle document,
-	// stamped by release-controller. Absent (and thus empty) for a payload
-	// from before the field existed or for a rejection with no bundle.
+	// stamped by release-controller. Empty when the rejection carries no
+	// bundle: a compile- or parse-stage rejection precedes the parse that
+	// produces one.
 	CodeBundleURI string `json:"code_bundle_uri"`
-	// Shadow marks a pre-cutover fix-verification rejection. Current
+	// Shadow marks a rejection emitted for a fix-verification run.
 	// release-controller never sets it — a verification run's failure emits no
-	// release event at all — so it can only appear on a legacy message left in
-	// the backlog across an upgrade. It exists solely so those messages can be
+	// release event at all — so it appears only on a message another producer
+	// left in the backlog. The field exists solely so such a message is
 	// dropped (see evidenceFromRejected) rather than misclassified.
 	Shadow  bool `json:"shadow"`
 	PerNode []struct {
@@ -158,12 +159,12 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 		return nil, fmt.Errorf("unmarshal release.rejected payload: %w", err)
 	}
 
-	// A pre-cutover fix-verification rejection may still sit in the backlog
-	// during an upgrade. Classifying it would mint a remediation trigger for a
-	// run V21 has converted to a verification id — which agent-remediation
-	// cannot resolve for an image tag through /releases/{id}, leaving a bogus
-	// attempt that retries forever. Current release-controller never flags a
-	// payload shadow, so dropping these costs nothing but the legacy case.
+	// A rejection flagged shadow is one emitted for a fix-verification run.
+	// Classifying it would mint a remediation trigger keyed on a verification
+	// id — which agent-remediation cannot resolve for an image tag through
+	// /releases/{id}, leaving a bogus attempt that retries forever.
+	// release-controller never flags a payload shadow, so dropping these
+	// costs nothing.
 	if p.Shadow {
 		return nil, nil
 	}

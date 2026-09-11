@@ -51,7 +51,7 @@ func (p *ProposalsClient) ListProposalsForRelease(ctx context.Context, releaseID
 
 // mapPullRequests maps a proposal's per-service pull requests from the wire type
 // to the port type. Returns nil for a proposal that carries none, so the port's
-// EffectivePRs falls back to the singular PRState/PRURL for a legacy row.
+// EffectivePRs falls back to that proposal's singular PRState/PRURL.
 func mapPullRequests(prs []*remediationv1.PullRequest) []ports.ProposalPR {
 	if len(prs) == 0 {
 		return nil

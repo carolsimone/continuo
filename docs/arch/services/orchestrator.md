@@ -356,7 +356,7 @@ Requires `S3_ENDPOINT_URL`, `S3_BUCKET`, and `AWS_DEFAULT_REGION` at start-up (a
 
 ### No gRPC calls to `state`
 
-Orchestrator no longer calls `state` gRPC for any internal writes. All state mutations flow through the Redis event pipeline.
+Orchestrator makes no `state` gRPC writes. All state mutations flow through the Redis event pipeline.
 
 ## Processing Logic
 

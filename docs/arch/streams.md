@@ -106,8 +106,8 @@ regenerated files, exactly as for a stream.
 (`<group>-<hostname>`, falling back to a time-seeded name only when the
 hostname is unavailable). Because the name is stable across restarts, a
 restarted process re-attaches to its own pending-entry list (PEL) instead of
-minting a fresh consumer every boot — the consumer-group registry no longer
-grows an orphaned entry per restart. A dead pod's PEL is still recovered by the
+minting a fresh consumer every boot, so the consumer-group registry holds one
+entry per process rather than one per boot. A dead pod's PEL is still recovered by the
 `XAUTOCLAIM` reclaim sweep (see `docs/arch/05-error-classification.md`).
 
 Throughput within a single consumer is tuned by `WithWorkerPool(n,
@@ -292,8 +292,8 @@ that set's representative), `service`, `pr_url`, `pr_number`, `outcome`
 (each `{path, target_node_id, amended, diff}` — whether a human amended that
 edit before merge, and the amendment diff). `event_id` is a deterministic SHA1
 UUID derived from `(release_id, attempt, service)` — one owning-service PR of a
-split proposal per id, with the legacy service `""` reproducing the pre-split
-`(release_id, attempt)` id byte-for-byte — under a namespace distinct from the
+split proposal per id, and the unsplit group's empty `service` keying its id
+on `(release_id, attempt)` alone — under a namespace distinct from the
 `remediation.pr_opened:v1` id, so the two events never collide. Orchestrator's
 case-base provenance consumer (group
 `orchestrator-remediation-pr-closed-provenance`) records the resolution: it
