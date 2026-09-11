@@ -15,7 +15,7 @@ import (
 // persisted as (per_node_results JSONB) and returned as (per_node_results in the
 // HTTP responses). Every tagged field is present so the DTO reproduces each tag,
 // name, casing and order byte-for-byte.
-const goldenPerNode = `[{"stage":"validation","node_id":"svc.sch.tbl","status":"failed","dbt_log_uri":"s3://l","run_results_uri":"s3://r","duration_ms":42,"file_path":"models/x.sql","node_type":"dbt-model"}]`
+const goldenPerNode = `[{"stage":"validation","node_id":"svc.sch.tbl","status":"failed","dbt_log_uri":"s3://l","run_results_uri":"s3://r","duration_ms":42,"file_path":"models/x.sql","node_type":"dbt-model","detail":"Expecting ). Line 3, Col: 12."}]`
 
 func TestNodeValidationResultDTORoundTrip(t *testing.T) {
 	var dto []NodeValidationResultDTO
@@ -27,6 +27,7 @@ func TestNodeValidationResultDTORoundTrip(t *testing.T) {
 		Stage: "validation", NodeID: "svc.sch.tbl", Status: "failed",
 		DBTLogURI: "s3://l", RunResultsURI: "s3://r", DurationMS: 42,
 		FilePath: "models/x.sql", NodeType: "dbt-model",
+		Detail: "Expecting ). Line 3, Col: 12.",
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("toDomain:\n got %+v\nwant %+v", got, want)

@@ -181,6 +181,12 @@ func TestE2E_Remediation_ParseFailureProposesFix(t *testing.T) {
 	require.NotNil(t, parseRow, "per_node_results must carry a parse row for ftable_e: %v", detail["per_node_results"])
 	assert.Equal(t, "failed", parseRow["status"])
 	assert.Equal(t, filePath, parseRow["file_path"])
+	// A parse row has no log to open, so its own diagnostic is the only
+	// evidence GET /releases/{id} can hand an operator; it must reach them
+	// readable, not as a terminal-coloured parser dump.
+	parseRowDetail, _ := parseRow["detail"].(string)
+	assert.NotEmpty(t, parseRowDetail, "a parse row must carry the parser's diagnostic: %v", parseRow)
+	assert.NotContains(t, parseRowDetail, "\x1b", "terminal escapes must not reach the per-node detail")
 
 	// 2. release.rejected:v1 carries stage=parse and the per-node kind/detail.
 	assertRejectedParseStage(t, ctx, clients, releaseID, filePath)

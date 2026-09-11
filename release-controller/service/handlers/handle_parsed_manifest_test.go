@@ -194,8 +194,12 @@ func TestHandleParsedManifest_Failed_InvalidSQL_RejectsWithParseStage(t *testing
 	assert.Equal(t, "1 node failed to parse: analytics.fx", r.FailDetail())
 	assert.Equal(t, []string{"analytics.fx"}, r.FailingNodes())
 	require.Len(t, r.PerNodeResults(), 1)
+	// The parse leg has no log to point a reader at, so the parser's own
+	// diagnostic — line and column included — is persisted on the per-node
+	// result, which is what GET /releases/{id} exposes.
 	assert.Equal(t, pipeline.NodeValidationResult{
 		Stage: "parse", NodeID: "analytics.fx", Status: "failed", FilePath: "models/fx.sql", NodeType: "dbt-model",
+		Detail: "Expecting ). Line 3, Col: 12.",
 	}, r.PerNodeResults()[0])
 
 	entries := outboxEntries(store)

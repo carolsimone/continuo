@@ -136,6 +136,7 @@ func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeli
 	for _, n := range in.FailedNodes {
 		results = append(results, pipeline.NodeValidationResult{
 			NodeID: n.NodeID, Status: "failed", FilePath: n.FilePath, NodeType: n.NodeType,
+			Detail: n.Detail,
 		})
 		failing = append(failing, n.NodeID)
 		perNode = append(perNode, parsePerNodeEntry{

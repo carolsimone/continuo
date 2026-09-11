@@ -451,7 +451,7 @@ sequenceDiagram
   alt a node's SQL does not parse / references an unqualified relation
     MC->>R: publish manifest.loaded.candidate:v1 {status=failed, failure_kind, detail, failed_nodes[]}
     R->>RC: consume manifest.loaded.candidate:v1 (failed)
-    Note over RC: reason ← failure_kind (invalid_sql | unqualified_reference | invalid_artifact | internal_error), RecordStageResults("parse") one failed row per failed node → release.rejected:v1 {stage="parse", per_node[]: kind, detail, file_path, service, node_type}, advance queue
+    Note over RC: reason ← failure_kind (invalid_sql | unqualified_reference | invalid_artifact | internal_error), RecordStageResults("parse") one failed row per failed node,<br/>each carrying node_id, status, file_path, node_type and the parser's own detail — the leg has no log, so GET /releases/{id} serves that text as the failure's evidence →<br/>release.rejected:v1 {stage="parse", per_node[]: kind, detail, file_path, service, node_type}, advance queue
     RC->>R: publish pipeline.run.finished:v1 {run_kind="candidate", outcome="rejected", ...}
   else parsed and uploaded ok
     MC->>R: publish manifest.loaded.candidate:v1 {status=ok, topology[] (per node: candidate_artifact_uri), code_bundle_uri}

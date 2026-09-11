@@ -95,6 +95,11 @@ type NodeValidationResult struct {
 	// reader can tell a test's bind check from a model's build without the
 	// topology.
 	NodeType string
+	// Detail is this leg's own diagnostic for this node. The parse leg carries
+	// the parser's error text, with the line and column it rejected, since no
+	// Job ran and so no log exists to point a reader at. Empty when the leg
+	// reports through a log instead.
+	Detail string
 }
 
 // Candidate holds the facts only a candidate release has: where its source

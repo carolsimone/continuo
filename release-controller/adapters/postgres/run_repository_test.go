@@ -260,13 +260,21 @@ func TestRunRepository_PerNodeResultsRoundTrip(t *testing.T) {
 	require.NoError(t, r.TransitionToParsing(time.Unix(101, 0).UTC()))
 	require.NoError(t, r.TransitionToValidating(nil, nil, time.Unix(102, 0).UTC()))
 	r.RecordValidationResults([]pipeline.NodeValidationResult{{NodeID: "a", Status: "failed", DBTLogURI: "k/a.log", DurationMS: 9}})
+	// A parse-leg result reports through its own Detail rather than a log, so
+	// the column has to carry that text back out of JSONB unchanged.
+	r.RecordStageResults("parse", []pipeline.NodeValidationResult{{
+		NodeID: "b", Status: "failed", FilePath: "models/b.sql", NodeType: "dbt-model",
+		Detail: "Expecting ). Line 3, Col: 12.",
+	}})
 	require.NoError(t, r.Fail("validation_failed", "", []string{"a"}, time.Unix(103, 0).UTC()))
 	require.NoError(t, repo.Save(ctx, r))
 
 	got, err := repo.Get(ctx, "rp")
 	require.NoError(t, err)
-	require.Len(t, got.PerNodeResults(), 1)
+	require.Len(t, got.PerNodeResults(), 2)
 	assert.Equal(t, "k/a.log", got.PerNodeResults()[0].DBTLogURI)
+	assert.Empty(t, got.PerNodeResults()[0].Detail)
+	assert.Equal(t, "Expecting ). Line 3, Col: 12.", got.PerNodeResults()[1].Detail)
 }
 
 func TestRunRepository_RoundTripsFailDetail(t *testing.T) {
