@@ -8,7 +8,7 @@ A shared driver (`ProposeFix`) owns the attempt cap, inbound dedup, grouping, ve
 
 **Every fix is verified by actually running it.** Once the clusters have produced their edits, the driver submits one **fix-verification run** per edited service — a pipeline run that takes the full parse → candidate-schema → validation pipeline through to a terminal `passed`/`failed` verdict without ever promoting. A python service is verified by the contract yaml its fix packaged; a dbt service is verified by re-running its own project with the proposed files laid over it, packed into a `source-overlay.tar.gz` whose S3 URI travels to the compile Job as `source_overlay_uri`. The attempt is recorded `verifying` and finalized asynchronously by the verification reconciler (`service/verification`): `proposed` when **every** verification run passed, `failed` with the runs' own errors when any did not — and that error becomes the evidence the next attempt is shown, which replays the whole failing set.
 
-Every fixer's prompt carries precedent — how similar past failures (by exact error signature, or the broader category/reason class) were resolved before, read from the orchestrator's failure case base. A dbt node's validation failure carries a pre-compiled candidate SQL and uses a two-step LLM flow: a Step-1 diagnosis against the candidate SQL, the diff of what this release itself changed in the failing model (last promoted version vs. candidate), the diffs of its recently-changed upstreams, and precedent; then a best-effort Step-2 pass that applies the diagnosis to the failing node's real source, resolved primarily from the release's code bundle in object storage. A **python** node's validation failure runs a different lane entirely, because a python node is not a SQL file but an entry in a contract yaml declaring the relations it reads and the columns it produces: the agent fetches the team's repository at the failing commit, searches it for the file declaring the node, asks the model for that file's corrected content, and packages the result with the same CLI the team's own release CI runs after a merge. Parse failures are rejected by topology-controller's SQL parser before any Job runs, so they carry neither a dbt log nor a candidate SQL: the agent reads the offending file named in the trigger — resolved under the repository prefix of the trigger's own `service`, since a parse failure's node id is a real node id rather than a service — shows the model the parser's error text, and asks for the one file's corrected content in a single LLM call. Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. Duplicate-table failures carry no dbt log at all — the rejection happens at parse time, before any Job runs — so the agent reads only the claimant the release changed, names the competing producer by service and path without reading its source, and asks the model for a rename in a single LLM call.
+Every fixer's prompt carries precedent — how similar past failures (by exact error signature, or the broader category/reason class) were resolved before, read from the orchestrator's failure case base. A dbt node's validation failure carries a pre-compiled candidate SQL and uses a two-step LLM flow: a Step-1 diagnosis against the candidate SQL, the diff of what this release itself changed in the failing model (last promoted version vs. candidate), the diffs of its recently-changed upstreams, and precedent; then a best-effort Step-2 pass that applies the diagnosis to the failing node's real source, resolved primarily from the release's code bundle in object storage. A **python** node's validation failure runs a different lane entirely, because a python node is not a SQL file but an entry in a contract yaml declaring the relations it reads and the columns it produces: the agent fetches the team's repository at the failing commit, searches it for the file declaring the node, asks the model for that file's corrected content, and packages the result with the same CLI the team's own release CI runs after a merge. Parse failures are rejected by topology-controller's SQL parser before any Job runs, so they carry neither a dbt log nor a candidate SQL: the agent reads the offending file named in the trigger — resolved under the repository prefix of the trigger's own `service`, since a parse failure's node id is a real node id rather than a service — shows the model the parser's error text, and asks for the one file's corrected content in a single LLM call. A **python** node's parse failure is skipped instead of fixed: the SQL the parser rejected is one of the node's `reads` in its service's `contract.yaml`, not the script the trigger names, so no file the agent can reach carries the fix. Compile failures carry no candidate SQL; the agent reads the offending file named in the trigger and, for a `.sql` file, also gathers its co-located `schema.yml` siblings and the service's `dbt_project.yml`, then asks the model to pick and correct the one file that needs to change in a single LLM call. Seed-build failures read the failing CSV and ask the model for a corrected CSV in a single LLM call, with an honest failed-not-proposed outcome when the bad value cannot be inferred. Duplicate-table failures carry no dbt log at all — the rejection happens at parse time, before any Job runs — so the agent reads only the claimant the release changed, names the competing producer by service and path without reading its source, and asks the model for a rename in a single LLM call.
 
 Only the reconciler enqueues the pointer-only `remediation.proposed:v1` event, and only once every verification run passed for the attempt; the driver announces nothing. Every invocation — whether it produces a proposal, is skipped, is escalated, or fails — is recorded in Postgres so no trigger is invisible. The agent never writes to or creates branches in any git repository; proposal application is a human action.
 
@@ -240,7 +240,7 @@ The driver in `service/handlers/propose_fix.go` turns one rejected release's hea
      evidence, never a fix target — a model fix that makes it bind again
      resolves it in verification, and a test that is itself wrong is a
      human's edit. Every other node type reaches fixer.For(source,
-     node_type).Propose, exactly as before: parseFixer, compileFixer,
+     node_type).Propose: parseFixer, compileFixer,
      seedFixer, duplicateTableFixer, or — for a validation trigger —
      validationFixer for a dbt node, pythonValidationFixer for python-model,
      csvValidationFixer for python-csv. An unrecognized source is a
@@ -378,12 +378,16 @@ The target of a shared-upstream cluster is a node that **may never have failed a
 
 `parseFixer` (`service/fixer/parse.go`) fixes a node whose compiled SQL topology-controller's parser rejected — invalid SQL, or a relation referenced without its schema qualifier — with exactly one LLM call. It shares `gatherSourceFile` (`service/fixer/gather.go`) with the compile fixer below, so the repo read, the co-located-yml/`dbt_project.yml` best-effort context, and the single-file interpretation are identical; only the repo-prefix lookup key and the prompt differ.
 
+It repairs dbt nodes only. A python node's parse failure is classified and triggers remediation exactly like any other, but this fixer skips it before any read, so the attempt records that node `skipped` and no proposal is produced for it. The reason is that the SQL the parser rejected is not in the file the trigger names: topology-controller reports a python node's parse failure against the script its contract entry declares, while the rejected SQL is one of that entry's `reads` in the service's `contract.yaml` — a file this system carries no repository path for. Editing the script would leave the rejected SQL untouched, and the resulting proposal, packaging no `VerificationContract`, would be submitted as a dbt verification run for a python service.
+
 ```
-1. Empty file_path or empty service on the trigger: proposal(status=skipped), done.
-2. gatherSourceFile(svc, in, in.Service, "parse fix") — the same read
+1. node_type is python-model or python-csv: proposal(status=skipped), done —
+   no source read, no precedent lookup, no LLM call.
+2. Empty file_path or empty service on the trigger: proposal(status=skipped), done.
+3. gatherSourceFile(svc, in, in.Service, "parse fix") — the same read
    compileFixer uses below, but keyed on the trigger's `service` field rather
-   than `node_id`: a parse failure's node_id is a real dbt (or python) node
-   id, not compile's synthetic service id, so it cannot itself resolve a repo
+   than `node_id`: a parse failure's node_id is a real node id, not
+   compile's synthetic service id, so it cannot itself resolve a repo
    prefix.
    - Unmapped repo prefix: proposal(status=skipped), done.
    - Read the offending file at <repo_path>/<file_path>.
@@ -392,7 +396,7 @@ The target of a shared-upstream cluster is a node that **may never have failed a
    - When the offending file's name ends in .sql, best-effort-gather the same
      extra context compileFixer does: co-located .yml/.yaml siblings and the
      service's dbt_project.yml.
-3. No dbt log is fetched: the rejection happens before any Job runs, so the
+4. No dbt log is fetched: the rejection happens before any Job runs, so the
    trigger's error_excerpt (the parser's own detail text) is the only error
    the model needs and the only one that exists. Fetch precedent
    (loadPrecedents: by error_signature, falling back to (category, reason);
@@ -402,11 +406,11 @@ The target of a shared-upstream cluster is a node that **may never have failed a
    compile error. The model returns target_file and proposed_content with
    the identical propose_fix tool schema compileFixer's prompt uses.
    - LLM transient error → retry.
-4. Interpret the result via singleFileInterpret — the same interpreter
-   compileFixer uses (see step 6 below): resolve target_file to exactly one
+5. Interpret the result via singleFileInterpret — the same interpreter
+   compileFixer uses: resolve target_file to exactly one
    shown file, skip on no safe resolution, fail on a no-op or low-confidence
    answer, otherwise proposed.
-5. On a proposed outcome, diff the corrected content against the resolved
+6. On a proposed outcome, diff the corrected content against the resolved
    file's original content and write the same
    proposed-fix/<release_id>/<node_id>/attempt-<n>.source.sql/.source.diff
    artifacts compileFixer writes; the attempt is verified by a

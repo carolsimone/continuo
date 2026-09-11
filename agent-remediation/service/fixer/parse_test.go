@@ -68,3 +68,66 @@ func TestParse_SkipsWithoutFilePathOrService(t *testing.T) {
 		require.Equal(t, proposal.StatusSkipped, r.Proposal.Status, name)
 	}
 }
+
+// TestParse_PythonTarget_NeverReadsOrCallsLLM proves the parse lane refuses a
+// python node before any read. topology-controller reports a python node's
+// parse failure against the script named by the node's contract entry, but the
+// SQL the parser rejected is one of that entry's `reads`, which lives in the
+// service's contract.yaml — a file this system carries no repository path for.
+// Editing the script would therefore leave the rejected SQL untouched, and the
+// proposal would package no VerificationContract, so the driver would submit a
+// dbt verification run for a python service.
+//
+// This is a non-negotiable project invariant: no remediation path may ever
+// produce an LLM call or a proposal for a python node, so the source, LLM and
+// precedent fakes must all show zero calls, not just the terminal status.
+func TestParse_PythonTarget_NeverReadsOrCallsLLM(t *testing.T) {
+	for _, nodeType := range []string{"python-model", "python-csv"} {
+		t.Run(nodeType, func(t *testing.T) {
+			fs := &fakeSourceMap{files: map[string]string{"services/svc/scripts/fx.py": "print('hello')"}}
+			llm := &fakeLLM{}
+			precedents := &fakePrecedents{}
+			svc := Services{
+				Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
+				Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+				ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+				Precedents:       precedents,
+			}
+			in := parseInput()
+			in.NodeType = nodeType
+			in.FilePath = "scripts/fx.py"
+
+			r, err := parseFixer{}.Propose(context.Background(), svc, in)
+			require.NoError(t, err)
+			require.Equal(t, proposal.StatusSkipped, r.Proposal.Status)
+			require.Nil(t, r.VerificationContract)
+			require.Empty(t, fs.readPaths(), "want no source read for a python target")
+			require.Zero(t, llm.calls, "want no LLM call for a python target")
+			require.Zero(t, precedents.calls, "want no precedent lookup for a python target")
+		})
+	}
+}
+
+// TestParse_DbtModelTarget_StillGathers pins that the python refusal is scoped
+// to the python node kinds: a dbt model carrying an explicit node_type still
+// reads its source and reaches the model.
+func TestParse_DbtModelTarget_StillGathers(t *testing.T) {
+	fs := &fakeSourceMap{
+		files: map[string]string{"services/svc/models/fx.sql": "select a b, c from t"},
+		dir:   map[string][]string{"services/svc/models": {"services/svc/models/fx.sql"}},
+	}
+	llm := &fakeLLM{queue: []ports.ProposeResult{{TargetFile: "services/svc/models/fx.sql", ProposedContent: "select a, b, c from t", Confidence: "high", Rationale: "added the missing comma"}}}
+	svc := Services{
+		Source: fs, LLM: llm, Evidence: fakeEvidence{}, Sanitizer: fakeSanitizer{},
+		Artifacts: &fakeArtifacts{}, Logger: testLogger(),
+		ServiceRepoPaths: map[string]string{"svc": "services/svc"},
+	}
+	in := parseInput()
+	in.NodeType = "dbt-model"
+
+	r, err := parseFixer{}.Propose(context.Background(), svc, in)
+	require.NoError(t, err)
+	require.Equal(t, proposal.StatusProposed, r.Proposal.Status)
+	require.Contains(t, fs.readPaths(), "services/svc/models/fx.sql")
+	require.Len(t, llm.requests, 1)
+}
