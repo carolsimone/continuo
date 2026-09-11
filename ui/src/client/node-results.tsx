@@ -35,6 +35,16 @@ export function LogView({ uri }: { uri: string }) {
   );
 }
 
+// logCell renders a node's Log column. A node with a log gets the fetch-on-open
+// viewer; a node with none — the parse leg, which rejects before any Job runs —
+// shows its own diagnostic verbatim instead, since that error text, with the
+// line and column it names, is the only evidence that failure produces.
+function logCell(n: NodeValidationResult) {
+  if (n.dbt_log_uri) return <LogView uri={n.dbt_log_uri} />;
+  if (n.detail) return <pre className="node-detail-block">{n.detail}</pre>;
+  return '—';
+}
+
 // NodeResultsTable renders a run's per-node results grouped by pipeline
 // stage: the same table for a candidate release and a fix-verification run.
 // fixCell, when given, adds the Fix column the release page fills with each
@@ -89,7 +99,7 @@ export function NodeResultsTable({ perNode, fixCell }: {
                       <span className={`pill-sm ${releasePillClass(n.status).replace('pill--', 'pill-sm--')}`}>{statusWord}</span>
                     </td>
                     <td>{n.duration_ms ? `${n.duration_ms} ms` : '—'}</td>
-                    <td>{n.dbt_log_uri ? <LogView uri={n.dbt_log_uri} /> : '—'}</td>
+                    <td>{logCell(n)}</td>
                     {fixCell && <td>{fixCell(stage, n)}</td>}
                   </tr>
                 );
