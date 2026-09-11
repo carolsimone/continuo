@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from streams_contract import ParseFailureKind
+from domain.contract_vocabulary import ParseFailureKind
 
 
 class UnqualifiedTableReferenceError(ValueError):

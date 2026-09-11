@@ -23,7 +23,7 @@ import (
 // because the topology is never published for a failed parse.
 type ParsedFailedNode struct {
 	NodeID   string
-	Kind     streams.ParseFailureKind
+	Kind     pkg_model.ParseFailureKind
 	Service  string
 	FilePath string
 	NodeType string
@@ -41,7 +41,7 @@ type HandleParsedManifestInput struct {
 	Status        string // "ok" or "failed"
 	Topology      release.Topology
 	CodeBundleURI string
-	FailureKind   streams.ParseFailureKind
+	FailureKind   pkg_model.ParseFailureKind
 	Detail        string
 	FailedNodes   []ParsedFailedNode
 }
@@ -94,21 +94,21 @@ func HandleParsedManifest(ctx context.Context, d *Deps, in HandleParsedManifestI
 // parseReasons maps each parse failure kind to the reject reason stored on the
 // run and emitted on release.rejected:v1. Every contract kind has an entry
 // (pinned by TestHandleParsedManifest_Failed_ReasonPerKind).
-var parseReasons = map[streams.ParseFailureKind]string{
-	streams.ParseFailureKindInvalidSQL:           "invalid_sql",
-	streams.ParseFailureKindUnqualifiedReference: "unqualified_reference",
-	streams.ParseFailureKindInvalidArtifact:      "invalid_artifact",
-	streams.ParseFailureKindInternal:             "internal_error",
+var parseReasons = map[pkg_model.ParseFailureKind]string{
+	pkg_model.ParseFailureKindInvalidSQL:           "invalid_sql",
+	pkg_model.ParseFailureKindUnqualifiedReference: "unqualified_reference",
+	pkg_model.ParseFailureKindInvalidArtifact:      "invalid_artifact",
+	pkg_model.ParseFailureKindInternal:             "internal_error",
 }
 
 // ParseReason resolves a parse failure kind to its reject reason. A kind this
 // build does not know is reported as internal_error: the release still
 // rejects and the queue still advances, and the detail names the value.
-func ParseReason(kind streams.ParseFailureKind) string {
+func ParseReason(kind pkg_model.ParseFailureKind) string {
 	if r, ok := parseReasons[kind]; ok {
 		return r
 	}
-	return parseReasons[streams.ParseFailureKindInternal]
+	return parseReasons[pkg_model.ParseFailureKindInternal]
 }
 
 func handleParseFailed(ctx context.Context, d *Deps, u uow.UnitOfWork, r *pipeline.Run, in HandleParsedManifestInput, now time.Time) error {

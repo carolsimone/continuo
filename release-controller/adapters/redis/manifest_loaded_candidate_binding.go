@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
@@ -41,7 +42,7 @@ type parsedFailedNodeDTO struct {
 // handler maps it to internal_error and names it in the detail, so a release
 // from a newer producer still rejects and the queue still advances.
 func (d parsedManifestDTO) toInput(logger *slog.Logger) handlers.HandleParsedManifestInput {
-	kind := streams.ParseFailureKind(d.FailureKind)
+	kind := pkg_model.ParseFailureKind(d.FailureKind)
 	if d.Status == "failed" && !kind.IsValid() {
 		logger.Error("manifest.loaded.candidate:v1 carries an undeclared failure_kind; rejecting as internal_error",
 			"release_id", d.ReleaseID, "failure_kind", d.FailureKind)
@@ -49,7 +50,7 @@ func (d parsedManifestDTO) toInput(logger *slog.Logger) handlers.HandleParsedMan
 	failed := make([]handlers.ParsedFailedNode, 0, len(d.FailedNodes))
 	for _, n := range d.FailedNodes {
 		failed = append(failed, handlers.ParsedFailedNode{
-			NodeID: n.NodeID, Kind: streams.ParseFailureKind(n.Kind), Service: n.Service,
+			NodeID: n.NodeID, Kind: pkg_model.ParseFailureKind(n.Kind), Service: n.Service,
 			FilePath: n.FilePath, NodeType: n.NodeType, Detail: n.Detail,
 		})
 	}

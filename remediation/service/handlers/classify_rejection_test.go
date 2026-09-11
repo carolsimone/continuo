@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/event"
@@ -581,7 +582,7 @@ func TestClassifyRejection_ParseEvidenceReadsNoLog(t *testing.T) {
 	}
 	ev := failure.FailureEvidence{
 		Source: failure.SourceParse, ReleaseID: "rel-1", NodeID: "a.b",
-		ParseKind: streams.ParseFailureKindInvalidSQL, Detail: "Expecting )",
+		ParseKind: pkg_model.ParseFailureKindInvalidSQL, Detail: "Expecting )",
 		FilePath: "models/b.sql", Service: "s", Repo: "o/r", CommitSHA: "sha",
 	}
 	require.NoError(t, ClassifyRejection(context.Background(), deps, []failure.FailureEvidence{ev}))

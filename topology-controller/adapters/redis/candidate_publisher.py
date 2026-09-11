@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 from adapters.redis.constants import STREAM_MAXLEN
 from domain.model import FailedNode
-from streams_contract import ParseFailureKind
+from domain.contract_vocabulary import ParseFailureKind
 
 logger = logging.getLogger(__name__)
 

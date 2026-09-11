@@ -390,7 +390,10 @@ streams:
         const: OrchestratorRemediationPrClosedProvenance
 
 # Closed value sets shared across services. Each becomes a typed string in Go
-# (pkg/streams) and a StrEnum in Python (topology-controller/streams_contract.py).
+# (pkg/domain/model/vocabulary.gen.go) and a StrEnum in Python
+# (topology-controller/domain/contract_vocabulary.py). They land in the domain
+# layer, not alongside the stream names above, because domain code names these
+# values and must not import the transport contract.
 # Declaration order within a vocabulary is precedence.
 vocabularies:
   - name: parse_failure_kind

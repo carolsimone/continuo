@@ -12,7 +12,7 @@ from service.candidate_artifacts import DbtSqlArtifactBuilder, PythonSpecArtifac
 from service.candidate_manifest_handler import CandidateManifestHandler
 from service.content_hash import content_hash_fold
 from service.ports import ManifestSourcePort
-from streams_contract import ParseFailureKind
+from domain.contract_vocabulary import ParseFailureKind
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

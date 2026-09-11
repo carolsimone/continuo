@@ -11,7 +11,7 @@ from service.ports import (
 )
 from service.resolver import resolve_upstream_deps
 from service.rewriter import candidate_schema_name
-from streams_contract import ParseFailureKind
+from domain.contract_vocabulary import ParseFailureKind
 
 logger = logging.getLogger(__name__)
 

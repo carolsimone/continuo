@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgoutbox "github.com/carolsimone/continuo/pkg/outbox"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/release-controller/adapters/serialization"
@@ -178,10 +179,10 @@ func TestHandleParsedManifest_Failed_InvalidSQL_RejectsWithParseStage(t *testing
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rA",
 		Status:      "failed",
-		FailureKind: streams.ParseFailureKindInvalidSQL,
+		FailureKind: pkg_model.ParseFailureKindInvalidSQL,
 		Detail:      "1 node failed to parse: analytics.fx",
 		FailedNodes: []handlers.ParsedFailedNode{{
-			NodeID: "analytics.fx", Kind: streams.ParseFailureKindInvalidSQL, Service: "svc-a",
+			NodeID: "analytics.fx", Kind: pkg_model.ParseFailureKindInvalidSQL, Service: "svc-a",
 			FilePath: "models/fx.sql", NodeType: "dbt-model", Detail: "Expecting ). Line 3, Col: 12.",
 		}},
 	})
@@ -225,13 +226,13 @@ func TestHandleParsedManifest_Failed_InvalidSQL_RejectsWithParseStage(t *testing
 }
 
 func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
-	cases := map[streams.ParseFailureKind]string{
-		streams.ParseFailureKindInvalidSQL:           "invalid_sql",
-		streams.ParseFailureKindUnqualifiedReference: "unqualified_reference",
-		streams.ParseFailureKindInvalidArtifact:      "invalid_artifact",
-		streams.ParseFailureKindInternal:             "internal_error",
+	cases := map[pkg_model.ParseFailureKind]string{
+		pkg_model.ParseFailureKindInvalidSQL:           "invalid_sql",
+		pkg_model.ParseFailureKindUnqualifiedReference: "unqualified_reference",
+		pkg_model.ParseFailureKindInvalidArtifact:      "invalid_artifact",
+		pkg_model.ParseFailureKindInternal:             "internal_error",
 	}
-	require.Len(t, cases, len(streams.ParseFailureKinds()), "every contract kind needs a reason")
+	require.Len(t, cases, len(pkg_model.ParseFailureKinds()), "every contract kind needs a reason")
 	for kind, want := range cases {
 		deps, store := seedToParsing(t, "r-"+string(kind), map[string]string{"svc-a": "sha-a"})
 		err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
@@ -257,11 +258,11 @@ func TestHandleParsedManifest_Failed_ReasonPerKind(t *testing.T) {
 // reason that otherwise offers one. The unhealable kinds carry no nodes by
 // design and must stay silent.
 func TestHandleParsedManifest_Failed_HealableKindWithoutNodesWarns(t *testing.T) {
-	for kind, wantWarn := range map[streams.ParseFailureKind]bool{
-		streams.ParseFailureKindInvalidSQL:           true,
-		streams.ParseFailureKindUnqualifiedReference: true,
-		streams.ParseFailureKindInvalidArtifact:      false,
-		streams.ParseFailureKindInternal:             false,
+	for kind, wantWarn := range map[pkg_model.ParseFailureKind]bool{
+		pkg_model.ParseFailureKindInvalidSQL:           true,
+		pkg_model.ParseFailureKindUnqualifiedReference: true,
+		pkg_model.ParseFailureKindInvalidArtifact:      false,
+		pkg_model.ParseFailureKindInternal:             false,
 	} {
 		releaseID := "r-nonodes-" + string(kind)
 		deps, store := seedToParsing(t, releaseID, map[string]string{"svc-a": "sha-a"})
@@ -304,7 +305,7 @@ func TestReleaseRejected_NeverCarriesErrorClass(t *testing.T) {
 		{"parse failure", func(t *testing.T) *fakeStore {
 			deps, store := seedToParsing(t, "rX", map[string]string{"svc-a": "sha-a"})
 			require.NoError(t, handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
-				ReleaseID: "rX", Status: "failed", FailureKind: streams.ParseFailureKindInternal, Detail: "boom",
+				ReleaseID: "rX", Status: "failed", FailureKind: pkg_model.ParseFailureKindInternal, Detail: "boom",
 			}))
 			return store
 		}},
@@ -385,7 +386,7 @@ func TestHandleParsedManifest_Failed_Verification_NoReleaseRejected_FinishedEmit
 	err := handlers.HandleParsedManifest(context.Background(), deps, handlers.HandleParsedManifestInput{
 		ReleaseID:   "rVerify",
 		Status:      "failed",
-		FailureKind: streams.ParseFailureKindInvalidSQL,
+		FailureKind: pkg_model.ParseFailureKindInvalidSQL,
 		Detail:      "ref('missing') unresolved in service_1.table_a",
 	})
 	require.NoError(t, err)

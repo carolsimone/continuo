@@ -91,12 +91,3 @@ func PkgConstantsForTest() map[string]string {
 		"OrchestratorRemediationPrClosedProvenance": OrchestratorRemediationPrClosedProvenance,
 	}
 }
-
-// VocabularyValuesForTest returns every vocabulary's values from contract.yaml
-// in declaration order, keyed by the vocabulary's Go type name. Test-only
-// accessor used by contract_test.go to verify YAML ↔ generated-Go parity.
-func VocabularyValuesForTest() map[string][]string {
-	return map[string][]string{
-		"ParseFailureKind": {"invalid_sql", "unqualified_reference", "invalid_artifact", "internal"},
-	}
-}

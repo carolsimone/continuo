@@ -8,6 +8,7 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	pkgredis "github.com/carolsimone/continuo/pkg/redis"
 	"github.com/carolsimone/continuo/pkg/streams"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
@@ -204,7 +205,7 @@ func evidenceFromRejected(raw []byte) ([]failure.FailureEvidence, error) {
 			Repo:                 p.Repo,
 			CommitSHA:            p.CommitSHA,
 			CodeBundleURI:        p.CodeBundleURI,
-			ParseKind:            streams.ParseFailureKind(n.Kind),
+			ParseKind:            pkg_model.ParseFailureKind(n.Kind),
 			Detail:               n.Detail,
 			ChangedAncestors:     changedAncestors(n.ChangedAncestors),
 		})

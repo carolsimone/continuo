@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/carolsimone/continuo/pkg/streams"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/remediation/domain/failure"
 )
 
@@ -136,13 +136,13 @@ func TestEvidenceFromRejected_ParseStage(t *testing.T) {
 	if len(evs) != 2 {
 		t.Fatalf("want 2 evidence, got %d", len(evs))
 	}
-	if evs[0].Source != failure.SourceParse || evs[0].ParseKind != streams.ParseFailureKindInvalidSQL || evs[0].Detail != "Expecting )" {
+	if evs[0].Source != failure.SourceParse || evs[0].ParseKind != pkg_model.ParseFailureKindInvalidSQL || evs[0].Detail != "Expecting )" {
 		t.Errorf("first evidence: %+v", evs[0])
 	}
 	if evs[0].FilePath != "models/b.sql" || evs[0].Service != "s" || evs[0].NodeType != "dbt-model" || evs[0].Repo != "o/r" {
 		t.Errorf("location not threaded: %+v", evs[0])
 	}
-	if evs[1].ParseKind != streams.ParseFailureKindUnqualifiedReference {
+	if evs[1].ParseKind != pkg_model.ParseFailureKindUnqualifiedReference {
 		t.Errorf("second evidence kind: %q", evs[1].ParseKind)
 	}
 }

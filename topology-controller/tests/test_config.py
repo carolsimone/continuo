@@ -121,7 +121,7 @@ def test_every_failure_kind_the_handler_can_publish_is_in_the_contract():
     a regenerated vocabulary that drops one fails here, not in production."""
     import re
     from pathlib import Path
-    from streams_contract import ParseFailureKind
+    from domain.contract_vocabulary import ParseFailureKind
 
     src = (Path(__file__).parent.parent / "service" / "candidate_manifest_handler.py").read_text()
     used = set(re.findall(r"ParseFailureKind\.([A-Z_]+)", src))

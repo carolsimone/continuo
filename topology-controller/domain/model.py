@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from streams_contract import ParseFailureKind
+from domain.contract_vocabulary import ParseFailureKind
 
 
 class NodeType(StrEnum):

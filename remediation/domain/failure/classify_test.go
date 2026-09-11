@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/carolsimone/continuo/pkg/streams"
+	"github.com/carolsimone/continuo/pkg/domain/model"
 )
 
 func TestClassifyBuckets(t *testing.T) {
@@ -167,7 +167,7 @@ func TestClassify_ExcerptIsCappedOnARuneBoundary(t *testing.T) {
 }
 
 func TestClassifyParse_HealableKindIsLogicAndEmits(t *testing.T) {
-	for _, kind := range []streams.ParseFailureKind{streams.ParseFailureKindInvalidSQL, streams.ParseFailureKindUnqualifiedReference} {
+	for _, kind := range []model.ParseFailureKind{model.ParseFailureKindInvalidSQL, model.ParseFailureKindUnqualifiedReference} {
 		c := ClassifyParse(FailureEvidence{
 			Source: SourceParse, ReleaseID: "rel-1", NodeID: "analytics.fx",
 			ParseKind: kind, Detail: "Expecting ). Line 3, Col: 12.\n  select a b",
@@ -188,10 +188,10 @@ func TestClassifyParse_HealableKindIsLogicAndEmits(t *testing.T) {
 }
 
 func TestClassifyParse_SignatureKeysOnKindAndNode(t *testing.T) {
-	a := ClassifyParse(FailureEvidence{ReleaseID: "rel-1", NodeID: "a.b", ParseKind: streams.ParseFailureKindInvalidSQL, Detail: "x"})
-	b := ClassifyParse(FailureEvidence{ReleaseID: "rel-9", NodeID: "a.b", ParseKind: streams.ParseFailureKindInvalidSQL, Detail: "y"})
-	c := ClassifyParse(FailureEvidence{ReleaseID: "rel-1", NodeID: "a.c", ParseKind: streams.ParseFailureKindInvalidSQL, Detail: "x"})
-	d := ClassifyParse(FailureEvidence{ReleaseID: "rel-1", NodeID: "a.b", ParseKind: streams.ParseFailureKindUnqualifiedReference, Detail: "x"})
+	a := ClassifyParse(FailureEvidence{ReleaseID: "rel-1", NodeID: "a.b", ParseKind: model.ParseFailureKindInvalidSQL, Detail: "x"})
+	b := ClassifyParse(FailureEvidence{ReleaseID: "rel-9", NodeID: "a.b", ParseKind: model.ParseFailureKindInvalidSQL, Detail: "y"})
+	c := ClassifyParse(FailureEvidence{ReleaseID: "rel-1", NodeID: "a.c", ParseKind: model.ParseFailureKindInvalidSQL, Detail: "x"})
+	d := ClassifyParse(FailureEvidence{ReleaseID: "rel-1", NodeID: "a.b", ParseKind: model.ParseFailureKindUnqualifiedReference, Detail: "x"})
 	if a.Signature != b.Signature {
 		t.Errorf("same node and kind across releases must share a signature")
 	}
@@ -201,7 +201,7 @@ func TestClassifyParse_SignatureKeysOnKindAndNode(t *testing.T) {
 }
 
 func TestClassifyParse_NonHealableKindDrops(t *testing.T) {
-	for _, kind := range []streams.ParseFailureKind{streams.ParseFailureKindInvalidArtifact, streams.ParseFailureKindInternal, "nonsense", ""} {
+	for _, kind := range []model.ParseFailureKind{model.ParseFailureKindInvalidArtifact, model.ParseFailureKindInternal, "nonsense", ""} {
 		c := ClassifyParse(FailureEvidence{NodeID: "a.b", ParseKind: kind, Detail: "x"})
 		if c.Decision != DecisionDrop || c.Reason != "parse:not_healable" {
 			t.Errorf("%q: got %+v, want drop/parse:not_healable", kind, c)

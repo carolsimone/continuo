@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from domain.model import FailedNode, ManifestFile
-from streams_contract import ParseFailureKind
+from domain.contract_vocabulary import ParseFailureKind
 
 
 class CandidateSqlUploaderPort(Protocol):

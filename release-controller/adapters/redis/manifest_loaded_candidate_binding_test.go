@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/carolsimone/continuo/pkg/streams"
+	pkg_model "github.com/carolsimone/continuo/pkg/domain/model"
 	"github.com/carolsimone/continuo/release-controller/service/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,10 +17,10 @@ func TestParsedManifestDTO_ToInput_Failed(t *testing.T) {
 	var dto parsedManifestDTO
 	require.NoError(t, json.Unmarshal([]byte(raw), &dto))
 	in := dto.toInput(slog.Default())
-	assert.Equal(t, streams.ParseFailureKindInvalidSQL, in.FailureKind)
+	assert.Equal(t, pkg_model.ParseFailureKindInvalidSQL, in.FailureKind)
 	assert.Equal(t, "1 node failed to parse: a.b", in.Detail)
 	require.Len(t, in.FailedNodes, 1)
-	assert.Equal(t, handlers.ParsedFailedNode{NodeID: "a.b", Kind: streams.ParseFailureKindInvalidSQL, Service: "s",
+	assert.Equal(t, handlers.ParsedFailedNode{NodeID: "a.b", Kind: pkg_model.ParseFailureKindInvalidSQL, Service: "s",
 		FilePath: "models/b.sql", NodeType: "dbt-model", Detail: "Expecting )"}, in.FailedNodes[0])
 }
 

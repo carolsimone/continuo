@@ -3,7 +3,7 @@
 // sorted into, and the decision (emit a remediation trigger, or drop).
 package failure
 
-import "github.com/carolsimone/continuo/pkg/streams"
+import "github.com/carolsimone/continuo/pkg/domain/model"
 
 // Source identifies which pipeline produced the failure. Validation-time
 // (blue/green) failures are classified; production-run failures enter through
@@ -71,7 +71,7 @@ type FailureEvidence struct {
 	CodeBundleURI string
 	// ParseKind is the contract kind of a parse failure (invalid_sql or
 	// unqualified_reference for a healable one); empty for every other source.
-	ParseKind streams.ParseFailureKind
+	ParseKind model.ParseFailureKind
 	// Detail is the parser's own error text for a parse failure, carried on
 	// the rejection because no log exists; empty for every other source.
 	Detail string

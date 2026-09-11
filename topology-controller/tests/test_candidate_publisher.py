@@ -2,7 +2,8 @@ import json
 from unittest.mock import MagicMock
 from adapters.redis.candidate_publisher import CandidateManifestPublisher
 from domain.model import FailedNode, NodeType
-from streams_contract import MANIFEST_LOADED_CANDIDATE_V1, ParseFailureKind
+from domain.contract_vocabulary import ParseFailureKind
+from streams_contract import MANIFEST_LOADED_CANDIDATE_V1
 
 
 def _make():

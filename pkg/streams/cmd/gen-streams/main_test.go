@@ -240,12 +240,12 @@ func TestEmitPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	got, err := emitPython(c, "topology-controller")
+	got, err := emitPythonStreams(c, "topology-controller")
 	if err != nil {
-		t.Fatalf("emitPython: %v", err)
+		t.Fatalf("emitPythonStreams: %v", err)
 	}
 	if got != goldenPy {
-		t.Fatalf("emitPython mismatch.\n--- got ---\n%s\n--- want ---\n%s", got, goldenPy)
+		t.Fatalf("emitPythonStreams mismatch.\n--- got ---\n%s\n--- want ---\n%s", got, goldenPy)
 	}
 }
 
@@ -327,7 +327,9 @@ vocabularies:
 	}
 }
 
-func TestEmitGo_Vocabulary(t *testing.T) {
+// TestEmitGo_HoldsNoVocabulary pins the split: streams.gen.go carries stream
+// and group names only, so nothing in a domain package needs to import it.
+func TestEmitGo_HoldsNoVocabulary(t *testing.T) {
 	c, err := loadAndValidate(strings.NewReader(vocabYAML))
 	if err != nil {
 		t.Fatal(err)
@@ -336,34 +338,79 @@ func TestEmitGo_Vocabulary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"type ParseFailureKind string",
-		`ParseFailureKindInvalidSQL ParseFailureKind = "invalid_sql"`,
-		`ParseFailureKindInternal ParseFailureKind = "internal"`,
-		"func ParseFailureKinds() []ParseFailureKind",
-		"func (k ParseFailureKind) IsValid() bool",
-		"func (k ParseFailureKind) Healable() bool",
-		"case ParseFailureKindInvalidSQL:\n\t\treturn true",
-	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("emitGo missing %q\n%s", want, src)
+	for _, unwanted := range []string{"ParseFailureKind", "Healable"} {
+		if strings.Contains(src, unwanted) {
+			t.Errorf("emitGo emits %q — vocabularies belong in pkg/domain/model\n%s", unwanted, src)
 		}
 	}
 	access, err := emitGoTestAccess(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(access, `"ParseFailureKind": {"invalid_sql", "internal"}`) {
-		t.Errorf("emitGoTestAccess missing vocabulary map\n%s", access)
+	if strings.Contains(access, "VocabularyValuesForTest") {
+		t.Errorf("emitGoTestAccess emits the vocabulary accessor\n%s", access)
 	}
 }
 
-func TestEmitPython_Vocabulary(t *testing.T) {
+func TestEmitGoVocabulary(t *testing.T) {
 	c, err := loadAndValidate(strings.NewReader(vocabYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := emitPython(c, "state")
+	src, err := emitGoVocabulary(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"package model",
+		"type ParseFailureKind string",
+		`ParseFailureKindInvalidSQL ParseFailureKind = "invalid_sql"`,
+		`ParseFailureKindInternal ParseFailureKind = "internal"`,
+		"func ParseFailureKinds() []ParseFailureKind",
+		"func (v ParseFailureKind) IsValid() bool",
+		"func (v ParseFailureKind) Healable() bool",
+		"case ParseFailureKindInvalidSQL:\n\t\treturn true",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("emitGoVocabulary missing %q\n%s", want, src)
+		}
+	}
+	access, err := emitGoVocabularyTestAccess(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(access, "package model") {
+		t.Errorf("emitGoVocabularyTestAccess is not in package model\n%s", access)
+	}
+	if !strings.Contains(access, `"ParseFailureKind": {"invalid_sql", "internal"}`) {
+		t.Errorf("emitGoVocabularyTestAccess missing vocabulary map\n%s", access)
+	}
+}
+
+// TestEmitPythonStreams_HoldsNoVocabulary is the Python half of the split:
+// streams_contract.py carries stream and group names only.
+func TestEmitPythonStreams_HoldsNoVocabulary(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(vocabYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitPythonStreams(c, "state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"StrEnum", "ParseFailureKind"} {
+		if strings.Contains(src, unwanted) {
+			t.Errorf("emitPythonStreams emits %q — vocabularies belong in the domain module\n%s", unwanted, src)
+		}
+	}
+}
+
+func TestEmitPythonVocabulary(t *testing.T) {
+	c, err := loadAndValidate(strings.NewReader(vocabYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := emitPythonVocabulary(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +422,7 @@ func TestEmitPython_Vocabulary(t *testing.T) {
 		"PARSE_FAILURE_KIND_HEALABLE = frozenset({ParseFailureKind.INVALID_SQL})",
 	} {
 		if !strings.Contains(src, want) {
-			t.Errorf("emitPython missing %q\n%s", want, src)
+			t.Errorf("emitPythonVocabulary missing %q\n%s", want, src)
 		}
 	}
 }
