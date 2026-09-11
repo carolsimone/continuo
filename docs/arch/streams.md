@@ -1,15 +1,31 @@
 # Streams Contract
 
-The Redis Stream names and consumer-group names used across continuo services
-are declared in a single YAML file: `pkg/streams/contract.yaml`.
+The Redis Stream names and consumer-group names used across continuo services,
+and the closed value sets those services agree on, are declared in a single
+YAML file: `pkg/streams/contract.yaml` — `streams:` for the transport names,
+`vocabularies:` for the value sets.
 
-A Go generator at `pkg/streams/cmd/gen-streams/` reads this file and produces:
+A Go generator at `pkg/streams/cmd/gen-streams/` reads this file and produces
+six files, split so that transport names and domain vocabulary land in
+different packages:
 
 - `pkg/streams/streams.gen.go` — Go constants for every stream and group.
 - `pkg/streams/streams_test_access.gen.go` — Test-only accessor used by the
   contract integrity test.
+- `pkg/domain/model/vocabulary.gen.go` — Go types for every vocabulary.
+- `pkg/domain/model/vocabulary_test_access.gen.go` — Test-only accessor used by
+  the vocabulary integrity test.
 - `topology-controller/streams_contract.py` — Python constants for the
   topology-controller service (filtered to streams it produces or consumes).
+- `topology-controller/domain/contract_vocabulary.py` — Python `StrEnum`s for
+  every vocabulary.
+
+`pkg/streams` and `streams_contract` hold transport names only, and no domain
+package imports either: the AST guard `TestDomainPackagesDoNotImportStreams`
+(`pkg/streams/domain_imports_test.go`) walks every module's `domain/` tree, and
+`test_domain_imports_no_streams_contract.py` does the same under
+`topology-controller/domain`. Domain code that needs a contract value names it
+from `pkg/domain/model` (Go) or `domain/contract_vocabulary` (Python) instead.
 
 ## Naming policy
 
@@ -33,12 +49,53 @@ A Go generator at `pkg/streams/cmd/gen-streams/` reads this file and produces:
 
 CI fails if `go generate` would produce a diff that isn't committed.
 
+## Vocabularies
+
+A `vocabularies:` entry is a closed set of string values two or more services
+agree on, travelling as a field on a stream payload. Each value carries a
+`healable` flag saying whether a remediation attempt can fix the condition it
+names by changing the user's source. Declaration order is significant: a
+consumer that must pick one value out of several applies it as precedence.
+
+Two vocabularies are declared:
+
+- **`parse_failure_kind`** (`model.ParseFailureKind`) — why topology-controller
+  could not resolve a candidate release. `invalid_sql` and
+  `unqualified_reference` are healable; `invalid_artifact` and `internal` are
+  not. It travels as `failure_kind` on `manifest.loaded.candidate:v1` and as
+  each `failed_nodes[]` entry's `kind`.
+- **`reject_reason`** (`model.RejectReason`) — why release-controller ended a
+  candidate or fix-verification run short of promotion. It travels as `reason`
+  on `release.rejected:v1` and as the run's stored fail reason. Six values are
+  healable — `compile_failed`, `seed_build_failed`, `validation_failed`,
+  `duplicate_table`, `invalid_sql`, `unqualified_reference` — and those are
+  exactly the rejections the remediation classifier turns into a heal trigger
+  and that release-controller's retry endpoint accepts. The other six —
+  `parse_rehearsal_failed`, `artifact_upload_failed`, `invalid_artifact`,
+  `internal_error`, `unbuildable_cross_service_upstream`,
+  `nothing_to_validate` — are refused as not healable, since a retry of one
+  would spend a remediation round for nothing.
+
+`release-controller/service/handlers.IsHealableReason` reads the flag directly,
+so the retry gate and the contract cannot diverge. An AST test in that package
+fails any `Fail(...)` call that passes a bare string literal as the reason, and
+the UI pins a prose label for every value (`ui/src/client/release-helpers.ts`).
+
+Adding a value means editing `contract.yaml`, regenerating, and committing the
+regenerated files, exactly as for a stream.
+
 ## Service usage
 
 - **Go**: `import streams "github.com/carolsimone/continuo/pkg/streams"`, then
   reference constants directly: `streams.NodeUpdatedV1`,
   `streams.OrchestratorNodeUpdated`.
 - **Python (topology-controller)**: `from streams_contract import UPDATE_GRAPH_V1, MANIFEST_UPDATE_GRAPH`.
+- **Vocabularies, Go**: `import "github.com/carolsimone/continuo/pkg/domain/model"`,
+  then `model.ParseFailureKind`, `model.RejectReason` and their values. Each
+  type carries `IsValid()` and `Healable()`, and a `<Type>s()` function
+  returning every value in contract order.
+- **Vocabularies, Python**: `from domain.contract_vocabulary import ParseFailureKind`,
+  plus the `<VOCABULARY>_HEALABLE` frozenset for the healable subset.
 - Service `Config` structs do not carry stream or group fields. Stream and
   group names are passed to `pkg/redis.NewStreamConsumer` at the wiring site in
   `main.go`, so the constant only appears there.
@@ -95,8 +152,9 @@ topology; consumed by release-controller (group
 `release-controller-manifest-loaded-candidate`). On success the payload is
 `{release_id, status: "ok", topology, code_bundle_uri}`. On failure it is
 `{release_id, status: "failed", failure_kind, detail, failed_nodes[]}`.
-`failure_kind` is one of the `parse_failure_kind` vocabulary values declared in
-`pkg/streams/contract.yaml` — `invalid_sql`, `unqualified_reference`,
+`failure_kind` is one of the `parse_failure_kind` vocabulary values (declared in
+`pkg/streams/contract.yaml`, generated into `pkg/domain/model` and
+`topology-controller/domain/contract_vocabulary.py`) — `invalid_sql`, `unqualified_reference`,
 `invalid_artifact`, `internal` — whose declaration order is also its
 precedence order. topology-controller resolves every node before publishing
 a failure: a node whose compiled SQL sqlglot rejects, or that references a
@@ -165,12 +223,13 @@ emitted at the healable rejection on the `releases.rejection_payload` column
 `release.rejected:v1`, since the two payloads share one shape; classifying it
 re-runs the identical per-node triage one round later. The request that
 produces this event is refused before it is ever published unless the
-release is `rejected`, its stored reason is healable (`compile_failed`,
-`seed_build_failed`, `validation_failed`, `duplicate_table`, or a parse reason
-whose contract kind is healable — `invalid_sql` or `unqualified_reference` —
-every other reason, including `invalid_artifact`, `internal_error`,
-`parse_rehearsal_failed`, `artifact_upload_failed`, and
-`unbuildable_cross_service_upstream`, is refused here as not healable), it has
+release is `rejected`, its stored reason carries the `reject_reason`
+vocabulary's `healable` flag (`compile_failed`, `seed_build_failed`,
+`validation_failed`, `duplicate_table`, `invalid_sql`, `unqualified_reference`
+— every other reason, including `invalid_artifact`, `internal_error`,
+`parse_rehearsal_failed`, `artifact_upload_failed`,
+`unbuildable_cross_service_upstream`, and `nothing_to_validate`, is refused
+here as not healable), it has
 a stored rejection payload at all (every reason's rejection handler stores
 one regardless of whether that reason later turns out to be healable), its round is below the cap
 (`MaxRemediationRounds = 3`), and agent-remediation's `ListProposals` reports

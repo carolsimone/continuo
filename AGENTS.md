@@ -54,11 +54,15 @@ Rules:
 # Stream and consumer-group names
 Every Redis stream and consumer group is declared in `pkg/streams/contract.yaml`. A Go generator emits `pkg/streams/streams.gen.go` (`streams.QueryModelV1`, `streams.RetryTaskV1`, `streams.ExecutorRetry`, etc.) and `topology-controller/streams_contract.py` for Python.
 
+The same file's `vocabularies:` block declares the closed value sets several services agree on (`parse_failure_kind`, `reject_reason`). The same generator run emits those into the **shared domain packages**, not the transport ones: `pkg/domain/model/vocabulary.gen.go` (`model.ParseFailureKind`, `model.RejectReason`, each with `IsValid()`/`Healable()`) and `topology-controller/domain/contract_vocabulary.py`. Domain, application and adapter code names a contract value from there.
+
+`pkg/streams` and `streams_contract` hold stream and consumer-group names only, and **no `*/domain` package imports either** — enforced by `TestDomainPackagesDoNotImportStreams` in `pkg/streams/domain_imports_test.go` (Go) and `topology-controller/tests/test_domain_imports_no_streams_contract.py` (Python).
+
 Rules:
 - Never inline a versioned stream name (`"query.model:v1"`) or a service-prefixed consumer-group name in Go, Python, or tests. Always reference the constant from `pkg/streams` (Go) or `streams_contract` (Python).
 - This applies to production code, integration tests, unit-test fixtures, and adapter bindings (`message_processing.stream_name` values must come from the constant, not a local `const fooStreamName = "foo:v1"`).
 - The AST wiring detector in `pkg/streams/wiring_test.go` rejects hardcoded versioned-stream literals in service `main.go` files; new occurrences in handlers, bindings, or tests should be removed for the same reason.
-- Adding a new stream or group means editing `pkg/streams/contract.yaml`, regenerating (`go generate ./pkg/streams/...`), and committing the regenerated files. CI's `go generate && git diff --exit-code` check enforces freshness.
+- Adding a new stream, group, or vocabulary value means editing `pkg/streams/contract.yaml`, regenerating (`go generate ./pkg/streams/...`), and committing the regenerated files. CI's `go generate && git diff --exit-code` check enforces freshness.
 - The AST guard `TestLifecycleGoNeverWrapsAServerStart` in `pkg/streams/lifecycle_wiring_test.go` discovers every service's `main.go` by glob and fails if a blocking-server method (`Start`/`Serve`/`ListenAndServe`/`ListenAndServeTLS`/`Run`) is called, inside a `lifecycleManager.Go(...)` tracked goroutine, on a receiver that is also stopped by a `RegisterShutdownHandler(...)` closure in the same file — that combination deadlocks the drain step of graceful shutdown, since the server can only return after the shutdown handler that follows the drain runs.
 
 # Install-level configuration must reach the code
