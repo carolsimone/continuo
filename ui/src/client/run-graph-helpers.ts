@@ -1,4 +1,5 @@
 import type { GraphEdge } from './types';
+import { serviceOfNode } from './service-helpers';
 
 export function computeDepth(nodeIds: string[], edges: GraphEdge[]): Record<string, number> {
   const known = new Set(nodeIds);
@@ -38,4 +39,56 @@ export function intraServiceOrder(
   return [...nodeIds].sort(
     (a, b) => (depth[a] - depth[b]) || (startKey(a) - startKey(b)) || a.localeCompare(b),
   );
+}
+
+export interface LaneNode { nodeId: string; service: string; depth: number; x: number; y: number; }
+export interface LaneBand { service: string; top: number; height: number; }
+export interface SwimlaneLayout { nodes: LaneNode[]; bands: LaneBand[]; width: number; height: number; maxDepth: number; }
+
+export function buildSwimlaneLayout(
+  nodeIds: string[],
+  edges: GraphEdge[],
+  serviceOrder: string[],
+  collapsed: Set<string>,
+  dims: { col?: number; laneLeft?: number; nodeH?: number; row?: number; top?: number } = {},
+): SwimlaneLayout {
+  const COL = dims.col ?? 158, LEFT = dims.laneLeft ?? 104, ROW = dims.row ?? 38, TOP = dims.top ?? 32;
+  const depth = computeDepth(nodeIds, edges);
+  const maxDepth = nodeIds.reduce((m, id) => Math.max(m, depth[id] ?? 0), 0);
+
+  // busiest (service, depth) cell per lane → lane row count
+  const maxSub: Record<string, number> = {};
+  const cell: Record<string, number> = {};
+  for (const s of serviceOrder) maxSub[s] = 1;
+  for (const id of nodeIds) {
+    const s = serviceOfNode(id);
+    const key = `${s}:${depth[id]}`;
+    cell[key] = (cell[key] ?? 0) + 1;
+    if (cell[key] > (maxSub[s] ?? 1)) maxSub[s] = cell[key];
+  }
+
+  const bands: LaneBand[] = [];
+  const top: Record<string, number> = {};
+  let y = TOP;
+  for (const s of serviceOrder) {
+    const height = collapsed.has(s) ? 32 : 10 + maxSub[s] * ROW;
+    top[s] = y;
+    bands.push({ service: s, top: y, height });
+    y += height;
+  }
+
+  const nodes: LaneNode[] = [];
+  const cellIdx: Record<string, number> = {};
+  for (const id of [...nodeIds].sort((a, b) => depth[a] - depth[b])) {
+    const s = serviceOfNode(id);
+    const d = depth[id];
+    const key = `${s}:${d}`;
+    const sub = (cellIdx[key] = cellIdx[key] == null ? 0 : cellIdx[key] + 1);
+    nodes.push({
+      nodeId: id, service: s, depth: d,
+      x: LEFT + d * COL,
+      y: top[s] + 9 + (collapsed.has(s) ? 0 : sub * ROW),
+    });
+  }
+  return { nodes, bands, width: LEFT + (maxDepth + 1) * COL + 16, height: y + 8, maxDepth };
 }

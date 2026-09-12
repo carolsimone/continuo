@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeDepth, intraServiceOrder } from '../../src/client/run-graph-helpers';
+import { computeDepth, intraServiceOrder, buildSwimlaneLayout } from '../../src/client/run-graph-helpers';
 import type { GraphEdge } from '../../src/client/types';
 
 const e = (from: string, to: string): GraphEdge => ({ from_node_id: from, to_node_id: to });
@@ -52,5 +52,41 @@ describe('intraServiceOrder', () => {
     const ids = ['s.a.p', 's.a.q'];
     const order = intraServiceOrder(ids, [], { 's.a.p': null, 's.a.q': '2026-01-01T00:00:01Z' });
     expect(order).toEqual(['s.a.q', 's.a.p']);
+  });
+});
+
+describe('buildSwimlaneLayout', () => {
+  const order = ['core', 'finance'];
+  // core.seed(0) -> finance.rev(1) -> core.rollup(2)
+  const ids = ['core.a.seed', 'finance.a.rev', 'core.a.rollup'];
+  const edges = [e('core.a.seed', 'finance.a.rev'), e('finance.a.rev', 'core.a.rollup')];
+
+  it('places a node at column = its depth in its service lane', () => {
+    const L = buildSwimlaneLayout(ids, edges, order, new Set(), { col: 100, laneLeft: 100 });
+    const rollup = L.nodes.find((n) => n.nodeId === 'core.a.rollup')!;
+    expect(rollup.service).toBe('core');
+    expect(rollup.depth).toBe(2);
+    expect(rollup.x).toBe(100 + 2 * 100); // laneLeft + depth*col
+  });
+
+  it('a service spanning depths occupies multiple columns in one lane', () => {
+    const L = buildSwimlaneLayout(ids, edges, order, new Set());
+    const coreDepths = L.nodes.filter((n) => n.service === 'core').map((n) => n.depth).sort();
+    expect(coreDepths).toEqual([0, 2]);
+  });
+
+  it('stacks two nodes in the same (service, depth) cell on different rows', () => {
+    const twoIds = ['core.a.s1', 'core.a.s2'];
+    const L = buildSwimlaneLayout(twoIds, [], order, new Set(), { row: 40 });
+    const ys = L.nodes.map((n) => n.y);
+    expect(new Set(ys).size).toBe(2); // distinct rows
+  });
+
+  it('a collapsed lane is shorter than an expanded one', () => {
+    const expanded = buildSwimlaneLayout(ids, edges, order, new Set());
+    const collapsed = buildSwimlaneLayout(ids, edges, order, new Set(['core']));
+    const hExpanded = expanded.bands.find((b) => b.service === 'core')!.height;
+    const hCollapsed = collapsed.bands.find((b) => b.service === 'core')!.height;
+    expect(hCollapsed).toBeLessThan(hExpanded);
   });
 });
