@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeDepth } from '../../src/client/run-graph-helpers';
+import { computeDepth, intraServiceOrder } from '../../src/client/run-graph-helpers';
 import type { GraphEdge } from '../../src/client/types';
 
 const e = (from: string, to: string): GraphEdge => ({ from_node_id: from, to_node_id: to });
@@ -32,5 +32,25 @@ describe('computeDepth', () => {
     const d = computeDepth(['a', 'b'], [e('a', 'b'), e('b', 'a')]);
     expect(Number.isFinite(d.a)).toBe(true);
     expect(Number.isFinite(d.b)).toBe(true);
+  });
+});
+
+describe('intraServiceOrder', () => {
+  it('orders by dependency depth', () => {
+    const ids = ['s.a.c', 's.a.b', 's.a.a'];
+    const order = intraServiceOrder(ids, [e('s.a.a', 's.a.b'), e('s.a.b', 's.a.c')], {});
+    expect(order).toEqual(['s.a.a', 's.a.b', 's.a.c']);
+  });
+
+  it('breaks ties (same depth) by started_at then id', () => {
+    const ids = ['s.a.y', 's.a.x'];
+    const order = intraServiceOrder(ids, [], { 's.a.x': '2026-01-01T00:00:02Z', 's.a.y': '2026-01-01T00:00:01Z' });
+    expect(order).toEqual(['s.a.y', 's.a.x']); // y started first
+  });
+
+  it('places not-yet-started (null started_at) after started ones at the same depth', () => {
+    const ids = ['s.a.p', 's.a.q'];
+    const order = intraServiceOrder(ids, [], { 's.a.p': null, 's.a.q': '2026-01-01T00:00:01Z' });
+    expect(order).toEqual(['s.a.q', 's.a.p']);
   });
 });

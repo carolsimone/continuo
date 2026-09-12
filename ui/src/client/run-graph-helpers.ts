@@ -24,3 +24,18 @@ export function computeDepth(nodeIds: string[], edges: GraphEdge[]): Record<stri
   for (const id of nodeIds) walk(id);
   return depth;
 }
+
+export function intraServiceOrder(
+  nodeIds: string[],
+  edges: GraphEdge[],
+  startedAt: Record<string, string | null | undefined>,
+): string[] {
+  const depth = computeDepth(nodeIds, edges);
+  const startKey = (id: string): number => {
+    const s = startedAt[id];
+    return s ? Date.parse(s) : Number.POSITIVE_INFINITY; // nulls last
+  };
+  return [...nodeIds].sort(
+    (a, b) => (depth[a] - depth[b]) || (startKey(a) - startKey(b)) || a.localeCompare(b),
+  );
+}
