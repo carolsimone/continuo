@@ -1,6 +1,8 @@
-import { Fragment, useRef, useEffect, useState } from 'react';
+import { useRef, useEffect } from 'react';
 import { Task, TaskExecution } from './types';
 import { rollupStatus } from './service-helpers';
+import { taskNodeId } from './detail-page-helpers';
+import NodeTableBody from './NodeTableBody';
 
 interface Props {
   tasks: Task[];
@@ -31,27 +33,14 @@ function sortTasks(tasks: Task[], execByTaskId: Map<string, TaskExecution>): Tas
   );
 }
 
-function pillClass(status: string): string {
-  const map: Record<string, string> = {
-    running: 'pill-sm--running', succeeded: 'pill-sm--succeeded',
-    failed: 'pill-sm--failed', pending: 'pill-sm--pending', cancelled: 'pill-sm--cancelled',
-    skipped: 'pill-sm--skipped',
-  };
-  return map[status] ?? 'pill-sm--pending';
-}
-
-function nodeId(task: Task): string {
-  return `${task.service_name}.${task.schema_name}.${task.table_name}`;
-}
-
-interface ServiceGroup {
+export interface ServiceGroup {
   service: string;
   status: string;
   tasks: Task[];
 }
 
 // Groups sort most-severe-first (same precedence as node rows), ties by name.
-function groupTasksByService(tasks: Task[], execByTaskId: Map<string, TaskExecution>): ServiceGroup[] {
+export function groupTasksByService(tasks: Task[], execByTaskId: Map<string, TaskExecution>): ServiceGroup[] {
   const byService = new Map<string, Task[]>();
   tasks.forEach((task) => {
     const bucket = byService.get(task.service_name);
@@ -88,7 +77,7 @@ export default function NodesPanel({
   // Auto-scroll to the selected / highlighted row
   useEffect(() => {
     if (!selectedNodeId) return;
-    const match = tasks.find(t => nodeId(t) === selectedNodeId);
+    const match = tasks.find(t => taskNodeId(t) === selectedNodeId);
     if (match) {
       rowRefs.current.get(match.task_id)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
@@ -111,152 +100,19 @@ export default function NodesPanel({
   const groups = groupTasksByService(tasks, execByTaskId);
 
   return (
-    <table className="nodes-table">
-      <thead>
-        <tr>
-          <th>Node</th>
-          <th>Status</th>
-          <th>Attempt</th>
-          <th>Error</th>
-          <th>Started</th>
-          <th>Completed</th>
-          <th>Logs</th>
-        </tr>
-      </thead>
-      <tbody>
-        {groups.map(group => {
-          const isExpanded = expandedServices.has(group.service);
-          return (
-            <Fragment key={group.service}>
-              <tr
-                className={`nodes-group-row${isExpanded ? ' nodes-group-row--open' : ''}`}
-                ref={el => { if (el) groupRefs.current.set(group.service, el); }}
-                onClick={() => onServiceToggle(group.service)}
-                tabIndex={0}
-                role="button"
-                aria-expanded={isExpanded}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onServiceToggle(group.service);
-                  }
-                }}
-              >
-                <td colSpan={7}>
-                  <div className="nodes-group-header">
-                    <span className="nodes-group-chevron">{isExpanded ? '▾' : '▸'}</span>
-                    <span
-                      className="nodes-group-dot"
-                      style={{ background: serviceColors.get(group.service) ?? '#94a3b8' }}
-                    />
-                    <span className="nodes-group-name">{group.service}</span>
-                    <span className="nodes-group-count">{group.tasks.length}</span>
-                    <span className={`pill-sm ${pillClass(group.status)}`}>{group.status}</span>
-                  </div>
-                </td>
-              </tr>
-              {isExpanded && group.tasks.map(task => {
-                const exec = execByTaskId.get(task.task_id);
-                const nid = nodeId(task);
-                const isSelected = nid === selectedNodeId;
-                const isRunning = task.status === 'running';
-                const rowClass = [
-                  isSelected ? 'nodes-row--selected' : '',
-                  !isSelected && isRunning ? 'nodes-row--active' : '',
-                ].filter(Boolean).join(' ');
-
-                return (
-                  <tr
-                    key={task.task_id}
-                    className={rowClass}
-                    ref={el => { if (el) rowRefs.current.set(task.task_id, el); }}
-                    onClick={() => onNodeSelect(isSelected ? null : nid)}
-                    tabIndex={0}
-                    role="button"
-                    aria-pressed={isSelected}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        onNodeSelect(isSelected ? null : nid);
-                      }
-                    }}
-                  >
-                    <td>
-                      <div className="nodes-node-name">{task.table_name}</div>
-                      <div className="nodes-node-schema">{task.service_name} · {task.schema_name}</div>
-                    </td>
-                    <td>
-                      <span className={`pill-sm ${pillClass(task.status)}`}>{task.status}</span>
-                    </td>
-                    <td>
-                      <span className="nodes-attempt">
-                        {task.max_retries > 0
-                          ? `${task.retry_count + 1} / ${task.max_retries + 1}`
-                          : `${task.retry_count + 1}`}
-                      </span>
-                    </td>
-                    <td>
-                      {exec?.error_message
-                        ? <ErrorCell message={exec.error_message} />
-                        : <span className="nodes-dash">—</span>}
-                    </td>
-                    <td>
-                      {exec?.started_at
-                        ? <span className="nodes-ts">{new Date(exec.started_at).toLocaleTimeString()}</span>
-                        : <span className="nodes-ts nodes-ts--dim">—</span>}
-                    </td>
-                    <td>
-                      {exec?.completed_at
-                        ? <span className="nodes-ts">{new Date(exec.completed_at).toLocaleTimeString()}</span>
-                        : <span className="nodes-ts nodes-ts--dim">—</span>}
-                    </td>
-                    <td>
-                      {exec?.log_s3_key
-                        ? (
-                          <a
-                            href={`/api/task-execution/${exec.id}/logs?key=${encodeURIComponent(exec.log_s3_key)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="nodes-log-link"
-                            onClick={e => e.stopPropagation()}
-                            onKeyDown={e => e.stopPropagation()}
-                          >
-                            logs
-                          </a>
-                        )
-                        : <span className="nodes-dash">—</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </Fragment>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
-function ErrorCell({ message }: { message: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const isLong = message.length > 60;
-  return (
-    <div className="nodes-error-text">
-      <span className={`nodes-error-short${expanded ? ' nodes-error-short--hidden' : ''}`}>
-        {message}
-      </span>
-      <div className={`nodes-error-full${expanded ? ' nodes-error-full--visible' : ''}`}>
-        {message}
-      </div>
-      {isLong && (
-        <button
-          className="nodes-error-toggle"
-          onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
-          onKeyDown={e => { e.stopPropagation(); }}
-        >
-          {expanded ? 'less' : 'more'}
-        </button>
-      )}
-    </div>
+    <NodeTableBody
+      groups={groups}
+      execByTaskId={execByTaskId}
+      edges={[]}
+      startedAt={{}}
+      forceExpanded={false}
+      expandedServices={expandedServices}
+      onServiceToggle={onServiceToggle}
+      selectedNodeId={selectedNodeId}
+      onNodeSelect={onNodeSelect}
+      serviceColors={serviceColors}
+      rowRefs={rowRefs}
+      groupRefs={groupRefs}
+    />
   );
 }
