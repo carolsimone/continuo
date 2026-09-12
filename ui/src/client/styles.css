@@ -1637,3 +1637,95 @@ a.release-author:hover { text-decoration: underline; }
 .rf-btn.on { background: #4f46e5; border-color: #4f46e5; color: #fff; }
 .rf-btn.fail.on { background: #dc2626; border-color: #dc2626; }
 .run-search { margin-left: auto; font-size: 12.5px; border: 1px solid #e6e9ee; border-radius: 8px; padding: 7px 11px; min-width: 170px; }
+
+/* ---- Run swimlane (status graph: lane = service, column = dependency depth) ----
+   The lane/node grid itself is laid out with inline styles from
+   buildSwimlaneLayout's pixel coordinates; the rules below only paint the
+   lanes, node/cell boxes and edges at those coordinates. Status colors reuse
+   the same literals as .rp-* / .pill-sm--<status> above so a bucket reads the
+   same way across the run view. */
+.swim-wrap {
+  overflow: auto;
+  max-height: 600px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+.swim-stage { min-width: 100%; }
+.swim-lane { border-bottom: 1px solid #f1f5f9; }
+.swim-lane:nth-child(odd) { background: #fafbfc; }
+
+.swim-lab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.swim-lab .chev { font-size: 10px; color: #94a3b8; width: 10px; display: inline-block; text-align: center; }
+.swim-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.swim-roll { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: #f1f5f9; color: #64748b; }
+.swim-roll.ok   { background: #dcfce7; color: #15803d; }
+.swim-roll.run  { background: #ede9fe; color: #6d28d9; }
+.swim-roll.fail { background: #fee2e2; color: #dc2626; }
+.swim-roll.skip { background: #e2e8f0; color: #475569; }
+.swim-roll.pend { background: #f1f5f9; color: #64748b; }
+
+.swim-edges { pointer-events: none; }
+.swim-edge, .swim-edge-hot { fill: none; stroke-width: 1.5; }
+.swim-edge { stroke: #cbd5e1; }
+.swim-edge-hot { stroke: #dc2626; stroke-width: 2; }
+#swim-ah path { fill: #cbd5e1; }
+
+.swim-node {
+  position: relative;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 12px;
+  background: #fff;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+/* Left status stripe, independent of the service-colored border above. */
+.swim-node::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 8px 0 0 8px;
+}
+.swim-node.ok::before   { background: #22c55e; }
+.swim-node.run::before  { background: #6d28d9; }
+.swim-node.fail::before { background: #dc2626; }
+.swim-node.skip::before { background: #475569; }
+.swim-node.pend::before { background: #64748b; }
+
+.swim-sd { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.swim-sd.ok   { background: #22c55e; }
+.swim-sd.run  { background: #6d28d9; }
+.swim-sd.fail { background: #dc2626; }
+.swim-sd.skip { background: #475569; }
+.swim-sd.pend { background: #64748b; }
+
+/* A collapsed lane renders each node as a small strip square instead of a
+   full box, so a wide DAG still fits its whole width when collapsed. */
+.swim-cell { width: 14px; height: 14px; border-radius: 3px; background: #cbd5e1; }
+.swim-cell.ok   { background: #22c55e; }
+.swim-cell.run  { background: #6d28d9; }
+.swim-cell.fail { background: #dc2626; }
+.swim-cell.skip { background: #475569; }
+.swim-cell.pend { background: #64748b; }
