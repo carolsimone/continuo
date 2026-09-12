@@ -1596,3 +1596,37 @@ a.release-author:hover { text-decoration: underline; }
 /* One wrapping row for a status pill and/or several labeled chips, so a
    proposal split across many services stays one compact cell. */
 .remediation-prs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+
+/* ---- Run progress header (live run summary bar) ---- */
+.run-progress {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.run-progress-top { display: flex; align-items: baseline; gap: 10px; }
+.run-progress-pct { font-size: 22px; font-weight: 700; }
+.run-progress-of { font-size: 12.5px; color: #6b7280; }
+.run-progress-bar {
+  display: flex;
+  height: 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 8px 0;
+  background: #e5e7eb;
+}
+.rp-seg { display: block; height: 100%; }
+/* Bucket colors reuse literals already used elsewhere in this file for the
+   same status, so a status reads the same way here as it does in the rest of
+   the run view: succeeded matches .progress-bar-fill / .run-dot--ok / the
+   "live" indicator; running, failed, skipped and pending match the
+   .pill-sm--<status> text colors NodesPanel uses for the same buckets. */
+.rp-succeeded { background: #22c55e; }
+.rp-running   { background: #6d28d9; }
+.rp-failed    { background: #dc2626; }
+.rp-skipped   { background: #475569; }
+.rp-pending   { background: #64748b; }
+.run-progress-counts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; }
+.rp-count { display: flex; align-items: center; gap: 6px; }
+.rp-dot { width: 8px; height: 8px; border-radius: 2px; }
