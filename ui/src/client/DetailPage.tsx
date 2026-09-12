@@ -17,10 +17,22 @@ import { fetchAllPages } from './fetch-all-pages';
 import { getDriftState, getDriftBadge } from './drift-helpers';
 import DAGPanel from './DAGPanel';
 import NodeTypeIcon from './NodeTypeIcon';
-import NodesPanel from './NodesPanel';
 import PastRunsPanel from './PastRunsPanel';
+import RunProgressHeader from './RunProgressHeader';
+import RunNodeTable from './RunNodeTable';
+import RunSwimlane from './RunSwimlane';
+import TopologyPanel from './TopologyPanel';
 import RerunFailedModal, { RerunFailedMode } from './RerunFailedModal';
 import Tabs, { useActiveTab } from './Tabs';
+
+// Adds or removes a key from a Set without mutating the original — used for the
+// swimlane's per-lane collapse state, which is toggled by lane label clicks.
+function toggleSet(set: Set<string>, key: string): Set<string> {
+  const next = new Set(set);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  return next;
+}
 
 function initialLastRunId(locationState: unknown): string | null | undefined {
   if (locationState == null) return undefined;
@@ -120,6 +132,8 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const [triggerState, setTriggerState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [rerunModalOpen, setRerunModalOpen] = useState(false);
+  const [runView, setRunView] = useState<'list' | 'graph'>('list');
+  const [laneCollapsed, setLaneCollapsed] = useState<Set<string>>(new Set());
 
   // Arriving at a schedule resets every piece of page state and resolves the
   // run the page opens on. The dashboard card passes the schedule's last run
@@ -555,13 +569,15 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   const submittingRerun = rerunState === 'loading' || rebaseState === 'loading';
 
   const isLatest = mode === 'latest';
-  const panelSpecs = isLatest
-    ? []
-    : [
-        { slug: 'nodes', label: 'Nodes', count: activeTasks.length },
-        { slug: 'runs', label: 'Past Runs', count: runs.length },
-      ];
-  const activePanel = useActiveTab('panel', 'nodes', panelSpecs.map(t => t.slug));
+  // Full-width tabs for a run view: status first (Run), then structure
+  // (Topology), then history (Past runs). Latest mode keeps its own layout and
+  // does not use these.
+  const pageTabSpecs = [
+    { slug: 'run', label: 'Run' },
+    { slug: 'topology', label: 'Topology' },
+    { slug: 'runs', label: 'Past runs', count: runs.length },
+  ];
+  const activePage = useActiveTab('panel', 'run', pageTabSpecs.map(t => t.slug));
 
   return (
     <div className="page">
@@ -650,142 +666,166 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
         </div>
       )}
 
-      <div className="detail-layout">
-        <section className="detail-card detail-graph-card">
-          <div className="detail-card-header">
-            Dependency Graph
-            <span className={graphBadgeClass}>{graphBadgeLabel}</span>
+      {isLatest ? (
+        // Latest mode is a topology-catalog view: the schedule's current
+        // dependency graph on the left and its run history on the right, with
+        // no live run status to summarise.
+        <div className="detail-layout">
+          <section className="detail-card detail-graph-card">
+            <div className="detail-card-header">
+              Dependency Graph
+              <span className={graphBadgeClass}>{graphBadgeLabel}</span>
+            </div>
+            <div className="dag-card-body">
+              {graphCardState === 'ready' && activeGraph ? (
+                <>
+                  <ReactFlowProvider>
+                    <DAGPanel
+                      graphNodes={activeGraph.nodes}
+                      graphEdges={activeGraph.edges}
+                      tasks={[]}
+                      selectedNodeId={selectedNodeId}
+                      onNodeClick={handleNodeSelect}
+                      colorByStatus={false}
+                      serviceView={false}
+                      expandedServices={effectiveExpandedServices}
+                      onServiceClick={handleServiceToggle}
+                      serviceColors={serviceColors}
+                    />
+                  </ReactFlowProvider>
+                  {selectedNodeId && !selectedRunId && lastRunId && (
+                    <div className="dag-focus-legend">
+                      <div className="dag-focus-legend-title">
+                        <NodeTypeIcon nodeType={selectedNodeType} size={12} />
+                        {selectedNodeId.split('.').pop()}
+                      </div>
+                      <div className="dag-focus-legend-row">
+                        <div className="dag-focus-dot dag-focus-dot--selected" /> Selected
+                      </div>
+                      <div className="dag-focus-legend-row">
+                        <div className="dag-focus-dot dag-focus-dot--parent" />
+                        Depends on ({legendParentIds.size})
+                      </div>
+                      <div className="dag-focus-legend-row">
+                        <div className="dag-focus-dot dag-focus-dot--child" />
+                        Required by ({legendChildIds.size})
+                      </div>
+                      <div className="dag-focus-legend-row">
+                        <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
+                      </div>
+                      {selectedNodeId && name && (
+                        <a
+                          className="dag-focus-open-link"
+                          href={`/node/${encodeURIComponent(selectedNodeId)}`}
+                          onClick={e => {
+                            e.preventDefault();
+                            navigate(
+                              `/node/${encodeURIComponent(selectedNodeId)}`,
+                              { state: { from: { type: 'schedule', name, mode: 'latest' } } },
+                            );
+                          }}
+                        >
+                          Open node detail →
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : graphCardState === 'error' ? (
+                <div className="graph-empty-state">
+                  <p className="graph-empty-title">Graph unavailable</p>
+                  <p className="graph-empty-copy">{graphErrorMessage}</p>
+                </div>
+              ) : graphCardState === 'empty' ? (
+                <div className="graph-empty-state">
+                  <p className="graph-empty-title">No DAG to display</p>
+                  <p className="graph-empty-copy">{graphEmptyMessage}</p>
+                </div>
+              ) : (
+                <div className="graph-empty-state">
+                  <p className="graph-empty-title">Loading graph</p>
+                  <p className="graph-empty-copy">
+                    {selectedRunId ? 'Fetching the historical run snapshot…' : 'Fetching the dependency graph…'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <div className="detail-right-col">
+            <section className="detail-card">
+              <div className="section-header">
+                <div className="section-header__main">
+                  <span className="section-header__title">Past Runs</span>
+                  <span className="section-header__count">{runs.length}</span>
+                </div>
+              </div>
+              <PastRunsPanel
+                runs={runs}
+                liveRunId={liveRunExists ? lastRunId : null}
+                liveStatus={liveRunExists ? formatStatusLabel(liveSchedulerStatus) : null}
+                selectedRunId={selectedRunId}
+                onSelectRun={handleSelectRun}
+              />
+            </section>
           </div>
-          <div className="dag-card-body">
-            {graphCardState === 'ready' && activeGraph ? (
-              <>
-                <ReactFlowProvider>
-                  <DAGPanel
-                    graphNodes={activeGraph.nodes}
-                    graphEdges={activeGraph.edges}
-                    tasks={isLatest ? [] : activeTasks}
-                    selectedNodeId={selectedNodeId}
-                    onNodeClick={handleNodeSelect}
-                    colorByStatus={!isLatest}
-                    serviceView={!isLatest}
-                    expandedServices={effectiveExpandedServices}
-                    onServiceClick={handleServiceToggle}
-                    serviceColors={serviceColors}
-                  />
-                </ReactFlowProvider>
-                {selectedNodeId && !selectedRunId && lastRunId && (
-                  <div className="dag-focus-legend">
-                    <div className="dag-focus-legend-title">
-                      <NodeTypeIcon nodeType={selectedNodeType} size={12} />
-                      {selectedNodeId.split('.').pop()}
-                    </div>
-                    <div className="dag-focus-legend-row">
-                      <div className="dag-focus-dot dag-focus-dot--selected" /> Selected
-                    </div>
-                    <div className="dag-focus-legend-row">
-                      <div className="dag-focus-dot dag-focus-dot--parent" />
-                      Depends on ({legendParentIds.size})
-                    </div>
-                    <div className="dag-focus-legend-row">
-                      <div className="dag-focus-dot dag-focus-dot--child" />
-                      Required by ({legendChildIds.size})
-                    </div>
-                    <div className="dag-focus-legend-row">
-                      <div className="dag-focus-dot dag-focus-dot--dim" /> Unrelated
-                    </div>
-                    {selectedNodeId && name && (
-                      <a
-                        className="dag-focus-open-link"
-                        href={`/node/${encodeURIComponent(selectedNodeId)}`}
-                        onClick={e => {
-                          e.preventDefault();
-                          navigate(
-                            `/node/${encodeURIComponent(selectedNodeId)}`,
-                            { state: { from: { type: 'schedule', name, mode: mode === 'latest' ? 'latest' : 'run' } } },
-                          );
-                        }}
-                      >
-                        Open node detail →
-                      </a>
-                    )}
-                  </div>
-                )}
-              </>
-            ) : graphCardState === 'error' ? (
-              <div className="graph-empty-state">
-                <p className="graph-empty-title">Graph unavailable</p>
-                <p className="graph-empty-copy">{graphErrorMessage}</p>
+        </div>
+      ) : (
+        <>
+          <Tabs variant="page" param="panel" defaultSlug="run" tabs={pageTabSpecs} />
+          {activePage === 'run' && (
+            <div className="run-view">
+              <div className="seg-toggle">
+                <button className={runView === 'list' ? 'on' : ''} onClick={() => setRunView('list')}>List</button>
+                <button className={runView === 'graph' ? 'on' : ''} onClick={() => setRunView('graph')}>Graph</button>
               </div>
-            ) : graphCardState === 'empty' ? (
-              <div className="graph-empty-state">
-                <p className="graph-empty-title">No DAG to display</p>
-                <p className="graph-empty-copy">{graphEmptyMessage}</p>
-              </div>
+              <RunProgressHeader tasks={activeTasks} />
+              {runView === 'list' ? (
+                <RunNodeTable
+                  tasks={activeTasks}
+                  executions={selectedRunId ? [] : latestExecutions}
+                  edges={activeGraph?.edges ?? []}
+                  expandedServices={effectiveExpandedServices}
+                  onServiceToggle={handleServiceToggle}
+                />
+              ) : (
+                <RunSwimlane
+                  graph={activeGraph ?? { nodes: [], edges: [] }}
+                  tasks={activeTasks}
+                  serviceOrder={services}
+                  collapsed={laneCollapsed}
+                  onLaneToggle={(s) => setLaneCollapsed((prev) => toggleSet(prev, s))}
+                />
+              )}
+            </div>
+          )}
+          {activePage === 'topology' && (
+            graph && graph.nodes.length > 0 ? (
+              <TopologyPanel graph={graph} />
             ) : (
               <div className="graph-empty-state">
-                <p className="graph-empty-title">Loading graph</p>
+                <p className="graph-empty-title">
+                  {graphState === 'error' ? 'Topology unavailable' : 'No topology to display'}
+                </p>
                 <p className="graph-empty-copy">
-                  {selectedRunId ? 'Fetching the historical run snapshot…' : 'Fetching the dependency graph…'}
+                  {graphState === 'error'
+                    ? 'Failed to load the dependency graph.'
+                    : 'This schedule does not have a dependency graph yet.'}
                 </p>
               </div>
-            )}
-          </div>
-        </section>
-
-        <div className="detail-right-col">
-          <section className="detail-card">
-            {isLatest ? (
-              <>
-                <div className="section-header">
-                  <div className="section-header__main">
-                    <span className="section-header__title">Past Runs</span>
-                    <span className="section-header__count">{runs.length}</span>
-                  </div>
-                </div>
-                <PastRunsPanel
-                  runs={runs}
-                  liveRunId={liveRunExists ? lastRunId : null}
-                  liveStatus={liveRunExists ? formatStatusLabel(liveSchedulerStatus) : null}
-                  selectedRunId={selectedRunId}
-                  onSelectRun={handleSelectRun}
-                />
-              </>
-            ) : (
-              <>
-                <Tabs variant="panel" param="panel" defaultSlug="nodes" tabs={panelSpecs} />
-                {activePanel === 'nodes' && (
-                  <div className="nodes-table-scroll">
-                    {selectedRunId && !runGraph ? (
-                      <p className="empty">Loading node snapshot…</p>
-                    ) : lastRunId === null && runs.length === 0 && activeTasks.length === 0 ? (
-                      <p className="empty">No runs yet.</p>
-                    ) : (
-                      <NodesPanel
-                        tasks={activeTasks}
-                        executions={selectedRunId ? [] : latestExecutions}
-                        selectedNodeId={selectedNodeId}
-                        onNodeSelect={handleNodeSelect}
-                        expandedServices={effectiveExpandedServices}
-                        onServiceToggle={handleServiceToggle}
-                        serviceColors={serviceColors}
-                      />
-                    )}
-                  </div>
-                )}
-                {activePanel === 'runs' && (
-                  <PastRunsPanel
-                    runs={runs}
-                    liveRunId={liveRunExists ? lastRunId : null}
-                    liveStatus={liveRunExists ? formatStatusLabel(liveSchedulerStatus) : null}
-                    selectedRunId={selectedRunId}
-                    onSelectRun={handleSelectRun}
-                  />
-                )}
-              </>
-            )}
-          </section>
-        </div>
-      </div>
+            )
+          )}
+          {activePage === 'runs' && (
+            <PastRunsPanel
+              runs={runs}
+              liveRunId={liveRunExists ? lastRunId : null}
+              liveStatus={liveRunExists ? formatStatusLabel(liveSchedulerStatus) : null}
+              selectedRunId={selectedRunId}
+              onSelectRun={handleSelectRun}
+            />
+          )}
+        </>
+      )}
     </div>
   );
 }

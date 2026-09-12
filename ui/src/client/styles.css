@@ -1729,3 +1729,24 @@ a.release-author:hover { text-decoration: underline; }
 .swim-cell.fail { background: #dc2626; }
 .swim-cell.skip { background: #475569; }
 .swim-cell.pend { background: #64748b; }
+
+/* Run tab body: the List/Graph sub-toggle sits above the run-progress header
+   and the active view (RunNodeTable or RunSwimlane). */
+.run-view { display: flex; flex-direction: column; }
+.seg-toggle {
+  display: inline-flex;
+  border: 1px solid #e6e9ee;
+  border-radius: 9px;
+  overflow: hidden;
+  width: fit-content;
+  margin-bottom: 12px;
+}
+.seg-toggle button {
+  font: 600 13px system-ui;
+  padding: 7px 14px;
+  background: #fff;
+  color: #565c66;
+  border: 0;
+  cursor: pointer;
+}
+.seg-toggle button.on { background: #4f46e5; color: #fff; }

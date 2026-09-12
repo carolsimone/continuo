@@ -21,7 +21,24 @@ function mockFetchSequence(routes: Record<string, () => Promise<unknown>>) {
   });
 }
 
+// The per-node focus legend lives on the topology-catalog view (latest mode),
+// which renders the schedule's node-level dependency graph. Selecting a node
+// there reveals a legend keyed off the node's family, plus an "Open node
+// detail" link. The Run view is status-first and carries no such graph.
+// Ordering matters: the mock matches the first pattern the URL contains, so the
+// specific `/api/schedules/:name/...` routes must precede the broad
+// `/api/schedules` list route.
 const routes = {
+  [`/api/schedules/${SCHED}/graph`]: async () => ({
+    nodes: [
+      { node_id: CSV_NODE_ID, node_type: 'python-csv', schedule_name: SCHED },
+    ],
+    edges: [],
+  }),
+  [`/api/schedules/${SCHED}/runs`]: async () => ({ runs: [] }),
+  '/api/schedules': async () => ({
+    schedules: [{ schedule_name: SCHED, last_run_id: RUN_ID }],
+  }),
   [`/api/runs/${RUN_ID}/graph`]: async () => ({
     nodes: [
       { node_id: CSV_NODE_ID, node_type: 'python-csv', schedule_name: SCHED, status: 'succeeded' },
@@ -30,22 +47,6 @@ const routes = {
     run_topology_generation: 1,
     latest_topology_generation: 1,
   }),
-  [`/api/schedules/${SCHED}/graph`]: async () => ({
-    nodes: [
-      { node_id: CSV_NODE_ID, node_type: 'python-csv', schedule_name: SCHED },
-    ],
-    edges: [],
-  }),
-  [`/api/schedulers/${RUN_ID}/tasks`]: async () => ({
-    tasks: [
-      {
-        task_id: 't1', service_name: 'svc1', schema_name: 'public', table_name: 'vendor_feed',
-        job_name: 'vendor_feed', status: 'succeeded', retry_count: 0, max_retries: 0, created_at: null,
-      },
-    ],
-  }),
-  [`/api/schedulers/${RUN_ID}/executions`]: async () => ({ executions: [] }),
-  [`/api/schedules/${SCHED}/runs`]: async () => ({ runs: [] }),
   [`/api/schedulers/${RUN_ID}`]: async () => ({
     scheduler: {
       schedule_id: RUN_ID, schedule_name: SCHED, status: 'succeeded',
@@ -53,6 +54,16 @@ const routes = {
     },
   }),
 };
+
+function renderLatest() {
+  return render(
+    <MemoryRouter initialEntries={[`/schedule/${SCHED}/latest`]}>
+      <Routes>
+        <Route path="/schedule/:name/latest" element={<DetailPage mode="latest" />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -62,13 +73,7 @@ describe('DetailPage focus legend node type', () => {
   it('shows the selected node family icon in the legend title', async () => {
     vi.stubGlobal('fetch', mockFetchSequence(routes));
 
-    const { container } = render(
-      <MemoryRouter initialEntries={[{ pathname: `/schedule/${SCHED}`, state: { last_run_id: RUN_ID } }]}>
-        <Routes>
-          <Route path="/schedule/:name" element={<DetailPage />} />
-        </Routes>
-      </MemoryRouter>,
-    );
+    const { container } = renderLatest();
 
     await waitFor(() => {
       expect(container.querySelector(`.react-flow__node[data-id="${CSV_NODE_ID}"]`)).not.toBeNull();
@@ -81,5 +86,19 @@ describe('DetailPage focus legend node type', () => {
       expect(legend!.querySelector('[data-node-type-icon="python-csv"]')).not.toBeNull();
       expect(legend!.textContent).toContain('vendor_feed');
     });
+  });
+
+  it('reveals an "Open node detail" link for the selected node', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(routes));
+
+    const { container, findByRole } = renderLatest();
+
+    await waitFor(() => {
+      expect(container.querySelector(`.react-flow__node[data-id="${CSV_NODE_ID}"]`)).not.toBeNull();
+    });
+    fireEvent.click(container.querySelector(`.react-flow__node[data-id="${CSV_NODE_ID}"]`)!);
+
+    const link = await findByRole('link', { name: /open node detail/i });
+    expect(link.getAttribute('href')).toBe(`/node/${CSV_NODE_ID}`);
   });
 });
