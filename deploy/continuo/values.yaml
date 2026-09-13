@@ -140,10 +140,11 @@ minio:
   # accounts. Disable and fill s3.* for any real S3-compatible endpoint.
   enabled: true
   image:
-    repository: minio/minio
+    # Quay, because MinIO no longer serves the community images on Docker Hub.
+    repository: quay.io/minio/minio
     tag: "RELEASE.2025-09-07T16-13-09Z"
   mcImage:
-    repository: minio/mc
+    repository: quay.io/minio/mc
     tag: "RELEASE.2025-08-13T08-35-41Z"
   auth:
     # Optional pre-created Secret holding the bundled instance's root user AND
