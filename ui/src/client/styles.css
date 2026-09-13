@@ -1596,3 +1596,173 @@ a.release-author:hover { text-decoration: underline; }
 /* One wrapping row for a status pill and/or several labeled chips, so a
    proposal split across many services stays one compact cell. */
 .remediation-prs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+
+/* ---- Run progress header (live run summary bar) ---- */
+.run-progress {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.run-progress-top { display: flex; align-items: baseline; gap: 10px; }
+.run-progress-pct { font-size: 22px; font-weight: 700; }
+.run-progress-of { font-size: 12.5px; color: #6b7280; }
+.run-progress-bar {
+  display: flex;
+  height: 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 8px 0;
+  background: #e5e7eb;
+}
+.rp-seg { display: block; height: 100%; }
+/* Bucket colors reuse literals already used elsewhere in this file for the
+   same status, so a status reads the same way here as it does in the rest of
+   the run view: succeeded matches .progress-bar-fill / .run-dot--ok / the
+   "live" indicator; running, failed, skipped and pending match the
+   .pill-sm--<status> text colors NodesPanel uses for the same buckets. */
+.rp-succeeded { background: #22c55e; }
+.rp-running   { background: #6d28d9; }
+.rp-failed    { background: #dc2626; }
+.rp-skipped   { background: #475569; }
+.rp-cancelled { background: #d97706; }
+.rp-pending   { background: #64748b; }
+.run-progress-counts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; }
+.rp-count { display: flex; align-items: center; gap: 6px; }
+.rp-dot { width: 8px; height: 8px; border-radius: 2px; }
+
+/* ---- Run node table filter bar (All / Running / Failed + name search) ---- */
+.run-filters { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.rf-btn { font-size: 12.5px; padding: 6px 12px; border-radius: 8px; border: 1px solid #e6e9ee; background: #fff; color: #565c66; cursor: pointer; }
+.rf-btn.on { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+.rf-btn.fail.on { background: #dc2626; border-color: #dc2626; }
+.run-search { margin-left: auto; font-size: 12.5px; border: 1px solid #e6e9ee; border-radius: 8px; padding: 7px 11px; min-width: 170px; }
+
+/* ---- Run swimlane (status graph: lane = service, column = dependency depth) ----
+   The lane/node grid itself is laid out with inline styles from
+   buildSwimlaneLayout's pixel coordinates; the rules below only paint the
+   lanes, node/cell boxes and edges at those coordinates. Status colors reuse
+   the same literals as .rp-* / .pill-sm--<status> above so a bucket reads the
+   same way across the run view. */
+.swim-wrap {
+  overflow: auto;
+  max-height: 600px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+.swim-stage { min-width: 100%; }
+.swim-lane { border-bottom: 1px solid #f1f5f9; }
+.swim-lane:nth-child(odd) { background: #fafbfc; }
+
+.swim-lab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.swim-lab .chev { font-size: 10px; color: #94a3b8; width: 10px; display: inline-block; text-align: center; }
+.swim-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.swim-roll { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: #f1f5f9; color: #64748b; }
+.swim-roll.ok   { background: #dcfce7; color: #15803d; }
+.swim-roll.run  { background: #ede9fe; color: #6d28d9; }
+.swim-roll.fail { background: #fee2e2; color: #dc2626; }
+.swim-roll.skip { background: #e2e8f0; color: #475569; }
+.swim-roll.pend { background: #f1f5f9; color: #64748b; }
+.swim-roll.cancel { background: #fef3c7; color: #b45309; }
+
+.swim-edges { pointer-events: none; }
+.swim-edge, .swim-edge-hot { fill: none; stroke-width: 1.5; }
+.swim-edge { stroke: #cbd5e1; }
+.swim-edge-hot { stroke: #dc2626; stroke-width: 2; }
+#swim-ah path { fill: #cbd5e1; }
+
+.swim-node {
+  position: relative;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 12px;
+  background: #fff;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+/* Left status stripe, independent of the service-colored border above. */
+.swim-node::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 8px 0 0 8px;
+}
+.swim-node.ok::before   { background: #22c55e; }
+.swim-node.run::before  { background: #6d28d9; }
+.swim-node.fail::before { background: #dc2626; }
+.swim-node.skip::before { background: #475569; }
+.swim-node.pend::before { background: #64748b; }
+.swim-node.cancel::before { background: #d97706; }
+
+.swim-sd { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.swim-sd.ok   { background: #22c55e; }
+.swim-sd.run  { background: #6d28d9; }
+.swim-sd.fail { background: #dc2626; }
+.swim-sd.skip { background: #475569; }
+.swim-sd.pend { background: #64748b; }
+.swim-sd.cancel { background: #d97706; }
+
+/* A collapsed lane renders each node as a small strip square instead of a
+   full box, so a wide DAG still fits its whole width when collapsed. */
+.swim-cell { width: 14px; height: 14px; border-radius: 3px; background: #cbd5e1; }
+.swim-cell.ok   { background: #22c55e; }
+.swim-cell.run  { background: #6d28d9; }
+.swim-cell.fail { background: #dc2626; }
+.swim-cell.skip { background: #475569; }
+.swim-cell.pend { background: #64748b; }
+.swim-cell.cancel { background: #d97706; }
+
+/* Run tab body: the List/Graph sub-toggle sits above the run-progress header
+   and the active view (RunNodeTable or RunSwimlane). */
+.run-view { display: flex; flex-direction: column; }
+
+/* Topology tab: a spatial surface (the dependency graph) must fill the
+   viewport height rather than collapse to its content. DAGPanel emits a
+   search strip + a flex:1 viewport, so this wrapper is the height-anchored
+   flex column that gives that viewport a definite height. */
+.topology-viewport {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-height: calc(100vh - 220px);
+}
+.seg-toggle {
+  display: inline-flex;
+  border: 1px solid #e6e9ee;
+  border-radius: 9px;
+  overflow: hidden;
+  width: fit-content;
+  margin-bottom: 12px;
+}
+.seg-toggle button {
+  font: 600 13px system-ui;
+  padding: 7px 14px;
+  background: #fff;
+  color: #565c66;
+  border: 0;
+  cursor: pointer;
+}
+.seg-toggle button.on { background: #4f46e5; color: #fff; }

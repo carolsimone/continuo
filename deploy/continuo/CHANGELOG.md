@@ -12,6 +12,13 @@ shipped in those.
 
 ## [Unreleased]
 
+### Fixed
+- Pull the bundled MinIO server and client images from Quay
+  (`quay.io/minio/minio`, `quay.io/minio/mc`) instead of Docker Hub, which no
+  longer serves the `minio/minio` / `minio/mc` community images. Same image
+  releases; only the registry changes, so an existing values file that does
+  not pin `minio.image.repository` / `minio.mcImage.repository` keeps working.
+
 ## [0.5.0] - 2026-09-09
 
 ### Added

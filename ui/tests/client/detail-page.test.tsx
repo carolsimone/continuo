@@ -369,77 +369,11 @@ describe('DetailPage — Trigger run topbar button', () => {
   });
 });
 
-describe('DetailPage — Open node detail link', () => {
-  it('renders an "Open node detail" link when a node is selected and links to the node page', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    // Wait for graph + nodes panel to render then select the node from the NodesPanel.
-    // The node row contains table_name "orders" in nodes-node-name, and "svc1 · public" in nodes-node-schema
-    const nodeButton = await screen.findByRole('button', { name: /orders/i });
-    fireEvent.click(nodeButton);
-
-    const link = await screen.findByRole('link', { name: /open node detail/i });
-    expect(link.getAttribute('href')).toBe(`/node/${SAMPLE_NODE_ID}`);
-  });
-
-  it('does NOT show the link when no node is selected', async () => {
-    const fetchMock = mockFetchSequence(failedRoutes());
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    // Without clicking any node, the link should not be rendered.
-    // Use waitFor to give the page time to finish initial fetches.
-    await waitFor(() => {
-      const calls = fetchMock.mock.calls.map(c => String(c[0]));
-      expect(calls.some(u => u.includes(`/api/runs/${RUN_ID}/graph`))).toBe(true);
-    });
-    expect(screen.queryByRole('link', { name: /open node detail/i })).toBeNull();
-  });
-
-  it('keeps the node selected when the graph card mounts after the click', async () => {
-    // The Nodes table renders from the tasks fetch and the graph card from the
-    // graph fetch. Holding the graph fetch behind a gate forces the order this
-    // test is about: the user clicks a node row, and only then does the DAG
-    // panel mount.
-    let releaseGraph: () => void = () => {};
-    const graphGate = new Promise<void>((resolve) => {
-      releaseGraph = resolve;
-    });
-    const base = failedRoutes();
-    const routes = {
-      ...base,
-      [`/api/schedules/${SCHED}/graph`]: async () => {
-        await graphGate;
-        return base[`/api/schedules/${SCHED}/graph`]();
-      },
-      [`/api/runs/${RUN_ID}/graph`]: async () => {
-        await graphGate;
-        return base[`/api/runs/${RUN_ID}/graph`]();
-      },
-    };
-    const fetchMock = mockFetchSequence(routes);
-    vi.stubGlobal('fetch', fetchMock);
-
-    render(withRouter({ last_run_id: RUN_ID }));
-
-    const nodeButton = await screen.findByRole('button', { name: /orders/i });
-    fireEvent.click(nodeButton);
-
-    // The graph card is still loading, so the click landed before the DAG mounted.
-    expect(screen.getByText('Loading graph')).toBeInTheDocument();
-
-    releaseGraph();
-    await waitFor(() => expect(screen.queryByText('Loading graph')).toBeNull());
-
-    expect(
-      await screen.findByRole('link', { name: /open node detail/i }),
-    ).toBeInTheDocument();
-  });
-});
+// The per-node focus legend and its "Open node detail" link belong to the
+// node-level dependency graph, which the Run view no longer carries (the Run
+// tab is status-first). That graph and its legend live on the topology-catalog
+// (latest) view; the legend + link behaviour is covered against that view in
+// detail-page-legend.test.tsx.
 
 describe('DetailPage — Trigger run success cue', () => {
   it('turns the Trigger run button green and relabels on success', async () => {
@@ -590,15 +524,16 @@ function withRouterAt(initialPath: string) {
   );
 }
 
-describe('DetailPage — right-column panel tabs', () => {
+describe('DetailPage — page tabs (Run / Topology / Past runs)', () => {
   beforeEach(() => { vi.stubGlobal('fetch', mockFetchSequence(freshRoutes())); });
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it('defaults to the Nodes panel on /schedule/:name', async () => {
+  it('defaults to the Run tab on /schedule/:name', async () => {
     render(withRouterAt(`/schedule/${SCHED}`));
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /nodes/i })).toHaveClass('tabs__tab--active');
+      expect(screen.getByRole('tab', { name: /^run$/i })).toHaveClass('tabs__tab--active');
     });
+    expect(screen.getByRole('tab', { name: /topology/i })).not.toHaveClass('tabs__tab--active');
     expect(screen.getByRole('tab', { name: /past runs/i })).not.toHaveClass('tabs__tab--active');
   });
 
@@ -609,10 +544,17 @@ describe('DetailPage — right-column panel tabs', () => {
     });
   });
 
-  it('falls back to Nodes when ?panel is unknown', async () => {
+  it('selects the Topology tab when ?panel=topology is in the URL', async () => {
+    render(withRouterAt(`/schedule/${SCHED}?panel=topology`));
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /topology/i })).toHaveClass('tabs__tab--active');
+    });
+  });
+
+  it('falls back to Run when ?panel is unknown', async () => {
     render(withRouterAt(`/schedule/${SCHED}?panel=garbage`));
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /nodes/i })).toHaveClass('tabs__tab--active');
+      expect(screen.getByRole('tab', { name: /^run$/i })).toHaveClass('tabs__tab--active');
     });
   });
 
@@ -834,7 +776,7 @@ describe('DetailPage — executions pagination regression (Task 7)', () => {
   });
 });
 
-describe('DetailPage — service grouping sync between graph and table', () => {
+describe('DetailPage — Run List service grouping', () => {
   const NODE_A = 'svc1.public.orders';
   const NODE_B = 'svc2.public.payments';
 
@@ -865,26 +807,23 @@ describe('DetailPage — service grouping sync between graph and table', () => {
     };
   }
 
-  // Node names appear both as graph vertices and table rows once a service is
-  // expanded, so table assertions go through the row-name class, not by text.
+  // Node rows carry the table_name in `.nodes-node-name`; a service is
+  // expanded when its rows are present, collapsed when only the group header
+  // shows.
   function tableNodeNames(container: HTMLElement): (string | null)[] {
     return [...container.querySelectorAll('.nodes-node-name')].map(el => el.textContent);
   }
 
-  it('defaults both panels to collapsed service groups when several services exist', async () => {
+  it('defaults service groups to collapsed when several services exist', async () => {
     vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
     try {
       const { container } = render(withRouter({ last_run_id: RUN_ID }));
 
-      // Graph: one vertex per service, no model-node vertices.
+      // One collapsible header per service; the node rows are hidden until a
+      // group is opened.
       await waitFor(() => {
-        expect(container.querySelector('.react-flow__node[data-id="svc:svc1"]')).toBeTruthy();
-        expect(container.querySelector('.react-flow__node[data-id="svc:svc2"]')).toBeTruthy();
+        expect(container.querySelectorAll('.nodes-group-row')).toHaveLength(2);
       });
-      expect(container.querySelector(`.react-flow__node[data-id="${NODE_A}"]`)).toBeNull();
-
-      // Table: group headers visible, node rows hidden.
-      expect(container.querySelectorAll('.nodes-group-row')).toHaveLength(2);
       expect(screen.queryByText('orders')).toBeNull();
       expect(screen.queryByText('payments')).toBeNull();
     } finally {
@@ -892,7 +831,7 @@ describe('DetailPage — service grouping sync between graph and table', () => {
     }
   });
 
-  it('expanding a group in the table reveals its model nodes in the graph', async () => {
+  it('expanding a group reveals its node rows while the other stays collapsed', async () => {
     vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
     try {
       const { container } = render(withRouter({ last_run_id: RUN_ID }));
@@ -906,36 +845,15 @@ describe('DetailPage — service grouping sync between graph and table', () => {
 
       await waitFor(() => {
         expect(tableNodeNames(container)).toContain('orders');
-        expect(container.querySelector(`.react-flow__node[data-id="${NODE_A}"]`)).toBeTruthy();
       });
-      // The other service stays collapsed in both panels.
-      expect(container.querySelector('.react-flow__node[data-id="svc:svc2"]')).toBeTruthy();
+      // The other service stays collapsed.
       expect(tableNodeNames(container)).not.toContain('payments');
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it('clicking a service vertex in the graph expands its group in the table', async () => {
-    vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
-    try {
-      const { container } = render(withRouter({ last_run_id: RUN_ID }));
-      await waitFor(() => {
-        expect(container.querySelector('.react-flow__node[data-id="svc:svc2"]')).toBeTruthy();
-      });
-
-      fireEvent.click(container.querySelector('.react-flow__node[data-id="svc:svc2"]')!);
-
-      await waitFor(() => {
-        expect(tableNodeNames(container)).toContain('payments');
-      });
-      expect(tableNodeNames(container)).not.toContain('orders');
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it('collapsing the service of the selected node clears the selection', async () => {
+  it('collapsing an expanded group hides its node rows again', async () => {
     vi.stubGlobal('fetch', mockFetchSequence(multiServiceRoutes()));
     try {
       const { container } = render(withRouter({ last_run_id: RUN_ID }));
@@ -949,14 +867,10 @@ describe('DetailPage — service grouping sync between graph and table', () => {
       await waitFor(() => {
         expect(tableNodeNames(container)).toContain('orders');
       });
-      const ordersRow = [...container.querySelectorAll('.nodes-node-name')]
-        .find(el => el.textContent === 'orders')!.closest('tr')!;
-      fireEvent.click(ordersRow);
-      expect(await screen.findByRole('link', { name: /open node detail/i })).toBeInTheDocument();
 
       fireEvent.click(svc1Header); // collapse again
       await waitFor(() => {
-        expect(screen.queryByRole('link', { name: /open node detail/i })).toBeNull();
+        expect(tableNodeNames(container)).not.toContain('orders');
       });
     } finally {
       vi.unstubAllGlobals();
@@ -994,6 +908,80 @@ describe('DetailPage — panel tabs keep loaded page state', () => {
     expect(within(screen.getByRole('tab', { name: /past runs/i })).getByText('2')).toBeInTheDocument();
     expect(screen.getAllByText(/^(succeeded|failed)$/, { selector: '.pill-sm' })).toHaveLength(2);
     expect(screen.queryByText('No runs yet.')).toBeNull();
+  });
+});
+
+describe('DetailPage — Run / Topology / Past runs tabs', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('defaults to the Run tab with the List view, then switches to the swimlane Graph, and Topology shows the node graph', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(failedRoutes()));
+    const { container } = render(withRouter({ last_run_id: RUN_ID }));
+
+    // Run tab is the default active tab, and its List sub-view is the default:
+    // the node table row for the run's single node is visible.
+    expect(await screen.findByText('orders')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /^run$/i })).toHaveClass('tabs__tab--active');
+    // List is the default view — the swimlane is not mounted yet.
+    expect(container.querySelector('.swim-node')).toBeNull();
+
+    // Switching the Run view to Graph mounts the swimlane.
+    fireEvent.click(screen.getByRole('button', { name: /^graph$/i }));
+    await waitFor(() => expect(container.querySelector('.swim-node')).toBeTruthy());
+
+    // The Topology tab renders the node-level dependency graph.
+    fireEvent.click(screen.getByRole('tab', { name: /topology/i }));
+    await waitFor(() => expect(container.querySelector('.react-flow')).toBeTruthy());
+  });
+
+  it('shows the run-progress header on the Run tab', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(failedRoutes()));
+    render(withRouter({ last_run_id: RUN_ID }));
+
+    // The progress header aggregates the live task set; the single failed task
+    // means 100% complete (done = succeeded + failed + skipped).
+    expect(await screen.findByTestId('run-progress-pct')).toHaveTextContent('100%');
+    expect(screen.getByTestId('count-failed')).toHaveTextContent('1');
+  });
+
+  it('does not render the old run-view graph card or its focus legend', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(failedRoutes()));
+    const { container } = render(withRouter({ last_run_id: RUN_ID }));
+
+    await screen.findByText('orders');
+    expect(container.querySelector('.detail-graph-card')).toBeNull();
+    expect(container.querySelector('.dag-focus-legend')).toBeNull();
+    // The Run tab defaults to the List view, so no graph is rendered there.
+    expect(container.querySelector('.react-flow')).toBeNull();
+  });
+});
+
+describe('DetailPage — Run tab empty/loading states', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  // A schedule that has never run resolves lastRunId to null, fetches no tasks,
+  // and has no runs. The Run tab must show "No runs yet." rather than rendering
+  // RunProgressHeader over an empty task list (which reads as a fake 0%).
+  function noRunsRoutes() {
+    return {
+      [`/api/schedules/${SCHED}/graph`]: async () => ({ nodes: [], edges: [] }),
+      [`/api/schedules/${SCHED}/runs`]: async () => ({ runs: [] }),
+      '/api/schedules': async () => ({
+        schedules: [{ schedule_name: SCHED, last_run_id: null }],
+      }),
+    };
+  }
+
+  it('shows "No runs yet." (not a 0% progress bar) for a schedule with no runs/tasks', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(noRunsRoutes()));
+
+    // No navigation state: lastRunId is resolved from /api/schedules and lands
+    // on null for a schedule that has never run.
+    render(withRouter(null));
+
+    expect(await screen.findByText('No runs yet.')).toBeInTheDocument();
+    // The fake progress bar must NOT be rendered for a never-run schedule.
+    expect(screen.queryByTestId('run-progress-pct')).toBeNull();
   });
 });
 
