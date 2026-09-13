@@ -77,6 +77,7 @@ export function buildSwimlaneLayout(
     y += height;
   }
 
+  const COLLAPSED_CELL_STRIDE = 18; // px between adjacent status cells in a collapsed lane
   const nodes: LaneNode[] = [];
   const cellIdx: Record<string, number> = {};
   for (const id of [...nodeIds].sort((a, b) => depth[a] - depth[b])) {
@@ -84,10 +85,16 @@ export function buildSwimlaneLayout(
     const d = depth[id];
     const key = `${s}:${d}`;
     const sub = (cellIdx[key] = cellIdx[key] == null ? 0 : cellIdx[key] + 1);
+    const isCollapsed = collapsed.has(s);
+    // A collapsed lane packs its nodes into one row of status cells; stagger
+    // them along x by their in-cell index so two nodes sharing a service and
+    // depth never render at the same coordinates (which would hide one behind
+    // the other, e.g. a failed node under a succeeded one). Expanded lanes
+    // stack by row (y) instead.
     nodes.push({
       nodeId: id, service: s, depth: d,
-      x: LEFT + d * COL,
-      y: top[s] + 9 + (collapsed.has(s) ? 0 : sub * ROW),
+      x: LEFT + d * COL + (isCollapsed ? sub * COLLAPSED_CELL_STRIDE : 0),
+      y: top[s] + 9 + (isCollapsed ? 0 : sub * ROW),
     });
   }
   return { nodes, bands, width: LEFT + (maxDepth + 1) * COL + 16, height: y + 8, maxDepth };

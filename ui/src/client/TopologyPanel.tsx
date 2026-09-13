@@ -10,19 +10,25 @@ import { listServices } from './service-helpers';
 export default function TopologyPanel({ graph }: { graph: ScheduleGraph }) {
   const expandedServices = new Set(listServices(graph.nodes, []));
 
+  // DAGPanel returns a search strip + a `flex: 1` viewport, so it needs a
+  // height-constrained flex-column parent or the graph canvas collapses to
+  // zero height (the tab shell supplies no definite height). See the
+  // full-viewport surfaces rule in .claude/design-guideline/ui.md.
   return (
-    <ReactFlowProvider>
-      <DAGPanel
-        graphNodes={graph.nodes}
-        graphEdges={graph.edges}
-        tasks={[]}
-        selectedNodeId={null}
-        onNodeClick={() => {}}
-        colorByStatus={false}
-        serviceView={false}
-        expandedServices={expandedServices}
-        onServiceClick={() => {}}
-      />
-    </ReactFlowProvider>
+    <div className="topology-viewport">
+      <ReactFlowProvider>
+        <DAGPanel
+          graphNodes={graph.nodes}
+          graphEdges={graph.edges}
+          tasks={[]}
+          selectedNodeId={null}
+          onNodeClick={() => {}}
+          colorByStatus={false}
+          serviceView={false}
+          expandedServices={expandedServices}
+          onServiceClick={() => {}}
+        />
+      </ReactFlowProvider>
+    </div>
   );
 }

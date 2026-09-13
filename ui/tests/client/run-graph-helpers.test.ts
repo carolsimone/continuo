@@ -89,4 +89,12 @@ describe('buildSwimlaneLayout', () => {
     const hCollapsed = collapsed.bands.find((b) => b.service === 'core')!.height;
     expect(hCollapsed).toBeLessThan(hExpanded);
   });
+
+  it('gives collapsed same-cell nodes distinct x positions so they do not overlap', () => {
+    const twoIds = ['core.a.s1', 'core.a.s2']; // same service, same depth 0, no edges
+    const L = buildSwimlaneLayout(twoIds, [], order, new Set(['core']));
+    const coreNodes = L.nodes.filter((n) => n.service === 'core');
+    expect(new Set(coreNodes.map((n) => n.y)).size).toBe(1); // collapsed → single row
+    expect(new Set(coreNodes.map((n) => n.x)).size).toBe(2); // but distinct x, not stacked at one point
+  });
 });

@@ -1626,6 +1626,7 @@ a.release-author:hover { text-decoration: underline; }
 .rp-running   { background: #6d28d9; }
 .rp-failed    { background: #dc2626; }
 .rp-skipped   { background: #475569; }
+.rp-cancelled { background: #d97706; }
 .rp-pending   { background: #64748b; }
 .run-progress-counts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; }
 .rp-count { display: flex; align-items: center; gap: 6px; }
@@ -1674,6 +1675,7 @@ a.release-author:hover { text-decoration: underline; }
 .swim-roll.fail { background: #fee2e2; color: #dc2626; }
 .swim-roll.skip { background: #e2e8f0; color: #475569; }
 .swim-roll.pend { background: #f1f5f9; color: #64748b; }
+.swim-roll.cancel { background: #fef3c7; color: #b45309; }
 
 .swim-edges { pointer-events: none; }
 .swim-edge, .swim-edge-hot { fill: none; stroke-width: 1.5; }
@@ -1713,6 +1715,7 @@ a.release-author:hover { text-decoration: underline; }
 .swim-node.fail::before { background: #dc2626; }
 .swim-node.skip::before { background: #475569; }
 .swim-node.pend::before { background: #64748b; }
+.swim-node.cancel::before { background: #d97706; }
 
 .swim-sd { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .swim-sd.ok   { background: #22c55e; }
@@ -1720,6 +1723,7 @@ a.release-author:hover { text-decoration: underline; }
 .swim-sd.fail { background: #dc2626; }
 .swim-sd.skip { background: #475569; }
 .swim-sd.pend { background: #64748b; }
+.swim-sd.cancel { background: #d97706; }
 
 /* A collapsed lane renders each node as a small strip square instead of a
    full box, so a wide DAG still fits its whole width when collapsed. */
@@ -1729,10 +1733,22 @@ a.release-author:hover { text-decoration: underline; }
 .swim-cell.fail { background: #dc2626; }
 .swim-cell.skip { background: #475569; }
 .swim-cell.pend { background: #64748b; }
+.swim-cell.cancel { background: #d97706; }
 
 /* Run tab body: the List/Graph sub-toggle sits above the run-progress header
    and the active view (RunNodeTable or RunSwimlane). */
 .run-view { display: flex; flex-direction: column; }
+
+/* Topology tab: a spatial surface (the dependency graph) must fill the
+   viewport height rather than collapse to its content. DAGPanel emits a
+   search strip + a flex:1 viewport, so this wrapper is the height-anchored
+   flex column that gives that viewport a definite height. */
+.topology-viewport {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-height: calc(100vh - 220px);
+}
 .seg-toggle {
   display: inline-flex;
   border: 1px solid #e6e9ee;

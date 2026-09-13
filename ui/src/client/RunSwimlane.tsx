@@ -3,11 +3,15 @@ import { buildSwimlaneLayout } from './run-graph-helpers';
 import { serviceOfNode, buildServiceColors, rollupStatus } from './service-helpers';
 import { resolveNodeStatus, parseNodeId } from './detail-page-helpers';
 
-const CLS: Record<string, string> = { succeeded: 'ok', running: 'run', failed: 'fail', skipped: 'skip', pending: 'pend' };
+const CLS: Record<string, string> = { succeeded: 'ok', running: 'run', failed: 'fail', skipped: 'skip', cancelled: 'cancel', pending: 'pend' };
 const clsOf = (s: string) => CLS[s] ?? 'pend';
 
+// Rendered node-box vs collapsed status-cell dimensions. Edge endpoints are
+// anchored to whichever a node currently is, so a dependency into or out of a
+// collapsed lane connects at the cell, not 120px away where the box would be.
 const NODE_W = 134;
-const NODE_HALF_H = 15;
+const NODE_H = 30;
+const CELL_SIZE = 14;
 
 // Status graph as swimlanes: one horizontal lane per service, columns are
 // dependency depth. Node placement and lane sizing come from
@@ -33,7 +37,9 @@ export default function RunSwimlane({
     const statuses = graph.nodes
       .filter((n) => serviceOfNode(n.node_id) === service)
       .map((n) => statusById.get(n.node_id)!);
-    const done = statuses.filter((s) => s === 'succeeded' || s === 'failed' || s === 'skipped').length;
+    const done = statuses.filter(
+      (s) => s === 'succeeded' || s === 'failed' || s === 'skipped' || s === 'cancelled',
+    ).length;
     return { done, total: statuses.length, roll: rollupStatus(statuses) };
   };
 
@@ -57,10 +63,13 @@ export default function RunSwimlane({
             const a = pos.get(e.from_node_id);
             const b = pos.get(e.to_node_id);
             if (!a || !b) return null;
-            const sx = a.x + NODE_W;
-            const sy = a.y + NODE_HALF_H;
+            const aWidth = collapsed.has(a.service) ? CELL_SIZE : NODE_W;
+            const aHalfH = (collapsed.has(a.service) ? CELL_SIZE : NODE_H) / 2;
+            const bHalfH = (collapsed.has(b.service) ? CELL_SIZE : NODE_H) / 2;
+            const sx = a.x + aWidth;
+            const sy = a.y + aHalfH;
             const tx = b.x;
-            const ty = b.y + NODE_HALF_H;
+            const ty = b.y + bHalfH;
             const mx = (sx + tx) / 2;
             const targetStatus = statusById.get(e.to_node_id);
             const hot = targetStatus === 'failed' || targetStatus === 'skipped';

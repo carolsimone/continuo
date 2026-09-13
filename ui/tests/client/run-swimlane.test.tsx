@@ -66,4 +66,30 @@ describe('RunSwimlane', () => {
     expect(Number.isFinite(parseFloat(Array.from(lefts)[0]))).toBe(true);
     expect(container.querySelectorAll('.swim-node.pend').length).toBe(2);
   });
+
+  it('paints a cancelled node with the cancel class, not pending', () => {
+    const g = { nodes: [node('core.a.stopped')], edges: [] as GraphEdge[] };
+    const { container } = render(
+      <RunSwimlane graph={g} tasks={[task('core.a.stopped', 'cancelled')]} serviceOrder={['core']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+    );
+    expect(container.querySelector('.swim-node.cancel')).toBeTruthy();
+    expect(container.querySelector('.swim-node.pend')).toBeNull();
+  });
+
+  it('anchors an edge to a collapsed source cell, not 120px past it where the box would be', () => {
+    const g = {
+      nodes: [node('core.a.up'), node('finance.a.down')],
+      edges: [{ from_node_id: 'core.a.up', to_node_id: 'finance.a.down' } as GraphEdge],
+    };
+    const { container } = render(
+      <RunSwimlane graph={g} tasks={[]} serviceOrder={['core', 'finance']} collapsed={new Set(['core'])} onLaneToggle={vi.fn()} />,
+    );
+    const cell = container.querySelector<HTMLElement>('.swim-cell')!;
+    const cellLeft = parseFloat(cell.style.left); // collapsed source is a 14px cell
+    const d = container.querySelector('path.swim-edge, path.swim-edge-hot')!.getAttribute('d')!;
+    const startX = parseFloat(d.match(/^M([\d.]+),/)![1]);
+    // the edge must start at the cell's right edge (cellLeft + 14), not cellLeft + 134
+    expect(startX).toBeGreaterThanOrEqual(cellLeft + 14 - 1);
+    expect(startX).toBeLessThanOrEqual(cellLeft + 14 + 1);
+  });
 });

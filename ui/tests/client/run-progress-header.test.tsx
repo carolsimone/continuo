@@ -19,4 +19,12 @@ describe('RunProgressHeader', () => {
     // done = succeeded+failed = 3 of 5 = 60%
     expect(screen.getByTestId('run-progress-pct')).toHaveTextContent('60%');
   });
+
+  it('counts cancelled separately and toward completion, not as pending', () => {
+    render(<RunProgressHeader tasks={[t('succeeded'), t('cancelled')]} />);
+    expect(screen.getByTestId('count-cancelled')).toHaveTextContent('1');
+    expect(screen.getByTestId('count-pending')).toHaveTextContent('0');
+    // a cancelled task is terminal: done = succeeded + cancelled = 2 of 2 = 100%
+    expect(screen.getByTestId('run-progress-pct')).toHaveTextContent('100%');
+  });
 });
