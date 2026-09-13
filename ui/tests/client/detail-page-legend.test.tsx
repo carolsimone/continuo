@@ -70,6 +70,18 @@ afterEach(() => {
 });
 
 describe('DetailPage focus legend node type', () => {
+  it('does not show the "Open node detail" link when no node is selected', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(routes));
+
+    const { container, queryByRole } = renderLatest();
+
+    await waitFor(() => {
+      expect(container.querySelector(`.react-flow__node[data-id="${CSV_NODE_ID}"]`)).not.toBeNull();
+    });
+
+    expect(queryByRole('link', { name: /open node detail/i })).toBeNull();
+  });
+
   it('shows the selected node family icon in the legend title', async () => {
     vi.stubGlobal('fetch', mockFetchSequence(routes));
 

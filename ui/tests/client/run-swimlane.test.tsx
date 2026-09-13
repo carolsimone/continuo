@@ -45,4 +45,24 @@ describe('RunSwimlane', () => {
     );
     expect(container.querySelectorAll('.swim-cell').length).toBeGreaterThanOrEqual(1);
   });
+
+  it('renders a graph node with no matching task as pending', () => {
+    const g = { nodes: [node('core.a.orphan')], edges: [] as GraphEdge[] };
+    const { container } = render(
+      <RunSwimlane graph={g} tasks={[]} serviceOrder={['core']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+    );
+    expect(container.querySelectorAll('.swim-node.pend').length).toBe(1);
+  });
+
+  it('lays out a zero-edge graph with every node at depth 0 instead of throwing', () => {
+    const g = { nodes: [node('core.a.x'), node('core.a.y')], edges: [] as GraphEdge[] };
+    const { container } = render(
+      <RunSwimlane graph={g} tasks={[]} serviceOrder={['core']} collapsed={new Set()} onLaneToggle={vi.fn()} />,
+    );
+    const nodes = container.querySelectorAll<HTMLElement>('.swim-node');
+    expect(nodes.length).toBe(2);
+    const lefts = new Set(Array.from(nodes).map((el) => el.style.left));
+    expect(lefts.size).toBe(1);
+    expect(container.querySelectorAll('.swim-node.pend').length).toBe(2);
+  });
 });
