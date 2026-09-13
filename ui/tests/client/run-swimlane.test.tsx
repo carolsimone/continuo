@@ -63,6 +63,7 @@ describe('RunSwimlane', () => {
     expect(nodes.length).toBe(2);
     const lefts = new Set(Array.from(nodes).map((el) => el.style.left));
     expect(lefts.size).toBe(1);
+    expect(Number.isFinite(parseFloat(Array.from(lefts)[0]))).toBe(true);
     expect(container.querySelectorAll('.swim-node.pend').length).toBe(2);
   });
 });
