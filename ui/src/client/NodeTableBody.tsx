@@ -29,9 +29,10 @@ interface Props {
   forceExpanded: boolean;
   expandedServices: Set<string>;
   onServiceToggle: (service: string) => void;
-  // Row selection is optional: NodesPanel wires it to the graph/detail view;
-  // callers with no notion of a "selected" node (RunNodeTable) omit it and
-  // rows render unselected with clicks doing nothing.
+  // Row selection is optional: NodesPanel wires it to the graph/detail view,
+  // making each node row an interactive button; callers with no notion of a
+  // "selected" node (RunNodeTable) omit it and rows render as plain,
+  // non-interactive cells (no role/tabIndex/handlers).
   selectedNodeId?: string | null;
   onNodeSelect?: (nodeId: string | null) => void;
   serviceColors?: Map<string, string>;
@@ -60,6 +61,13 @@ export default function NodeTableBody({
   const fallbackGroupRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const rowRefMap = rowRefs ?? fallbackRowRefs;
   const groupRefMap = groupRefs ?? fallbackGroupRefs;
+
+  // Node rows are interactive only when a caller wires row selection
+  // (NodesPanel). A caller that omits onNodeSelect (RunNodeTable) gets plain
+  // rows — no role/tabIndex/aria-pressed and no click/keyboard handlers — so
+  // the rows are not tabbable, do not announce as buttons, and carry no dead
+  // affordance that clicks to nothing.
+  const interactive = onNodeSelect !== undefined;
 
   return (
     <table className="nodes-table">
@@ -127,16 +135,20 @@ export default function NodeTableBody({
                     key={task.task_id}
                     className={rowClass}
                     ref={el => { if (el) rowRefMap.current.set(task.task_id, el); }}
-                    onClick={() => onNodeSelect?.(isSelected ? null : nid)}
-                    tabIndex={0}
-                    role="button"
-                    aria-pressed={isSelected}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        onNodeSelect?.(isSelected ? null : nid);
+                    {...(interactive
+                      ? {
+                        onClick: () => onNodeSelect?.(isSelected ? null : nid),
+                        tabIndex: 0,
+                        role: 'button',
+                        'aria-pressed': isSelected,
+                        onKeyDown: (e: React.KeyboardEvent) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onNodeSelect?.(isSelected ? null : nid);
+                          }
+                        },
                       }
-                    }}
+                      : {})}
                   >
                     <td>
                       <div className="nodes-node-name">{task.table_name}</div>

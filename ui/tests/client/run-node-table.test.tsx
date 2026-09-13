@@ -18,10 +18,10 @@ describe('RunNodeTable', () => {
         expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
     );
     expect(screen.getByText('ok_node')).toBeInTheDocument();
-    // Anchored regex: a task row is itself `role="button"` and its accessible
-    // name is its full row text, which can also contain the word "failed"
-    // (e.g. the bad_node row's status pill) — anchoring to the start matches
-    // only the filter button's own label ("Failed 1"), not such a row.
+    // Anchored regex: a service group header is also `role="button"` and its
+    // accessible name can contain the word "failed" (its rolled-up status
+    // pill) — anchoring to the start matches only the filter button's own
+    // label ("Failed 1"), not the group header.
     fireEvent.click(screen.getByRole('button', { name: /^failed/i }));
     expect(screen.queryByText('ok_node')).not.toBeInTheDocument();
     expect(screen.getByText('bad_node')).toBeInTheDocument();
@@ -50,6 +50,20 @@ describe('RunNodeTable', () => {
     );
     const names = [...container.querySelectorAll('.nodes-node-name')].map((el) => el.textContent);
     expect(names).toEqual(['upstream', 'downstream']);
+  });
+
+  it('Failed badge counts failed AND skipped, matching what the filter reveals', () => {
+    const mixed = [task('ok_node', 'succeeded'), task('bad_node', 'failed'), task('skip_node', 'skipped')];
+    render(
+      <RunNodeTable tasks={mixed} executions={execs} edges={[]}
+        expandedServices={new Set(['core'])} onServiceToggle={vi.fn()} />,
+    );
+    // Badge reads failed(1) + skipped(1) = 2, matching the rows the click shows.
+    const failedBtn = screen.getByRole('button', { name: /^failed 2$/i });
+    fireEvent.click(failedBtn);
+    expect(screen.getByText('bad_node')).toBeInTheDocument();
+    expect(screen.getByText('skip_node')).toBeInTheDocument();
+    expect(screen.queryByText('ok_node')).not.toBeInTheDocument();
   });
 
   it('auto-expands and shows a matching group when filtering by text search', () => {

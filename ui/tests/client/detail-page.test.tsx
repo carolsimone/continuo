@@ -956,6 +956,35 @@ describe('DetailPage — Run / Topology / Past runs tabs', () => {
   });
 });
 
+describe('DetailPage — Run tab empty/loading states', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  // A schedule that has never run resolves lastRunId to null, fetches no tasks,
+  // and has no runs. The Run tab must show "No runs yet." rather than rendering
+  // RunProgressHeader over an empty task list (which reads as a fake 0%).
+  function noRunsRoutes() {
+    return {
+      [`/api/schedules/${SCHED}/graph`]: async () => ({ nodes: [], edges: [] }),
+      [`/api/schedules/${SCHED}/runs`]: async () => ({ runs: [] }),
+      '/api/schedules': async () => ({
+        schedules: [{ schedule_name: SCHED, last_run_id: null }],
+      }),
+    };
+  }
+
+  it('shows "No runs yet." (not a 0% progress bar) for a schedule with no runs/tasks', async () => {
+    vi.stubGlobal('fetch', mockFetchSequence(noRunsRoutes()));
+
+    // No navigation state: lastRunId is resolved from /api/schedules and lands
+    // on null for a schedule that has never run.
+    render(withRouter(null));
+
+    expect(await screen.findByText('No runs yet.')).toBeInTheDocument();
+    // The fake progress bar must NOT be rendered for a never-run schedule.
+    expect(screen.queryByTestId('run-progress-pct')).toBeNull();
+  });
+});
+
 describe('DetailPage — brand header', () => {
   it('starts the header with the brand, before the back link', async () => {
     const fetchMock = mockFetchSequence(failedRoutes());

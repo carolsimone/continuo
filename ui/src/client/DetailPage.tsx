@@ -423,6 +423,16 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   });
   const activeTasks = selectedRunId ? deriveHistoricalTasks(runGraph) : tasks;
 
+  // The Run tab summarises a run's task set; when there is nothing yet to
+  // summarise it must not render RunProgressHeader over an empty list, which
+  // would read as a fake "0 of 0 nodes complete / 0%". A schedule that has
+  // never run shows "No runs yet."; a selected historical run whose snapshot
+  // is still loading, or a live run whose tasks are still arriving, shows
+  // "Loading run…". Only a non-empty task set renders the header and views.
+  const runTabNoRuns = lastRunId === null && runs.length === 0 && activeTasks.length === 0;
+  const runTabLoading = !runTabNoRuns
+    && ((selectedRunId ? runGraph === null : lastRunId === undefined) || activeTasks.length === 0);
+
   // Service-level grouping shared by the graph and the nodes table. A graph
   // with a single service always renders expanded — a lone service vertex
   // would carry no information.
@@ -775,27 +785,43 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
           <Tabs variant="page" param="panel" defaultSlug="run" tabs={pageTabSpecs} />
           {activePage === 'run' && (
             <div className="run-view">
-              <div className="seg-toggle">
-                <button className={runView === 'list' ? 'on' : ''} onClick={() => setRunView('list')}>List</button>
-                <button className={runView === 'graph' ? 'on' : ''} onClick={() => setRunView('graph')}>Graph</button>
-              </div>
-              <RunProgressHeader tasks={activeTasks} />
-              {runView === 'list' ? (
-                <RunNodeTable
-                  tasks={activeTasks}
-                  executions={selectedRunId ? [] : latestExecutions}
-                  edges={activeGraph?.edges ?? []}
-                  expandedServices={effectiveExpandedServices}
-                  onServiceToggle={handleServiceToggle}
-                />
+              {runTabNoRuns ? (
+                <div className="graph-empty-state">
+                  <p className="graph-empty-title">No runs yet.</p>
+                  <p className="graph-empty-copy">This schedule has not run.</p>
+                </div>
+              ) : runTabLoading ? (
+                <div className="graph-empty-state">
+                  <p className="graph-empty-title">Loading run…</p>
+                  <p className="graph-empty-copy">
+                    {selectedRunId ? 'Fetching the historical run snapshot…' : 'Fetching the latest run…'}
+                  </p>
+                </div>
               ) : (
-                <RunSwimlane
-                  graph={activeGraph ?? { nodes: [], edges: [] }}
-                  tasks={activeTasks}
-                  serviceOrder={services}
-                  collapsed={laneCollapsed}
-                  onLaneToggle={(s) => setLaneCollapsed((prev) => toggleSet(prev, s))}
-                />
+                <>
+                  <div className="seg-toggle">
+                    <button className={runView === 'list' ? 'on' : ''} onClick={() => setRunView('list')}>List</button>
+                    <button className={runView === 'graph' ? 'on' : ''} onClick={() => setRunView('graph')}>Graph</button>
+                  </div>
+                  <RunProgressHeader tasks={activeTasks} />
+                  {runView === 'list' ? (
+                    <RunNodeTable
+                      tasks={activeTasks}
+                      executions={selectedRunId ? [] : latestExecutions}
+                      edges={activeGraph?.edges ?? []}
+                      expandedServices={effectiveExpandedServices}
+                      onServiceToggle={handleServiceToggle}
+                    />
+                  ) : (
+                    <RunSwimlane
+                      graph={activeGraph ?? { nodes: [], edges: [] }}
+                      tasks={activeTasks}
+                      serviceOrder={services}
+                      collapsed={laneCollapsed}
+                      onLaneToggle={(s) => setLaneCollapsed((prev) => toggleSet(prev, s))}
+                    />
+                  )}
+                </>
               )}
             </div>
           )}

@@ -48,7 +48,9 @@ export default function RunNodeTable({
   const isFiltering = filter !== 'all' || normalizedQuery !== '';
 
   const runningCount = tasks.filter((t) => t.status === 'running').length;
-  const failedCount = tasks.filter((t) => t.status === 'failed').length;
+  // The Failed filter reveals failed AND skipped rows (see matchesFilter), so
+  // its badge counts both — the number matches what clicking it shows.
+  const failedCount = tasks.filter((t) => t.status === 'failed' || t.status === 'skipped').length;
 
   return (
     <div>
