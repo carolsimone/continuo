@@ -1118,6 +1118,55 @@ func TestHandle_ValidationModeLabel_WritesValidationNodeCompletedOutboxRowOnly(t
 	}
 }
 
+// TestCandidateNodeCompleted_DistinctAggregateLanePerNode guards against a
+// throughput regression: the merged outbox runs with PerAggregateFIFO, so all
+// rows sharing an aggregate id publish one-per-tick. Candidate node completions
+// are independent, so two nodes of the SAME release must land on DIFFERENT
+// aggregate ids (own FIFO lanes) and drain in parallel; the same node must be
+// stable. A per-release aggregate id would serialize a large release's nodes to
+// one completion per outbox tick.
+func TestCandidateNodeCompleted_DistinctAggregateLanePerNode(t *testing.T) {
+	aggIDFor := func(t *testing.T, nodeID string) uuid.UUID {
+		t.Helper()
+		outbox := &jobStatusFakeOutboxRepo{}
+		handler := newHandler(
+			&fakeK8sClient{
+				status: &model.JobResult{Status: model.JobStatusSucceeded},
+				labels: map[string]string{"mode": "validation"},
+				annotations: map[string]string{
+					pkgmodel.AnnotationReleaseID: "rel-shared",
+					pkgmodel.AnnotationNodeID:    nodeID,
+				},
+			},
+			noopCancelledRepo(), 3,
+		)
+		cmd := command.CheckJobStatus{
+			TaskID:     uuid.New(),
+			ScheduleID: uuid.New(),
+			JobName:    "validate-" + nodeID,
+			MaxRetries: 3,
+		}
+		if err := handler.Handle(context.Background(), newJobStatusFakeUoW(outbox), cmd, uuid.Nil); err != nil {
+			t.Fatalf("Handle: %v", err)
+		}
+		if len(outbox.entries) != 1 {
+			t.Fatalf("expected 1 outbox entry, got %d", len(outbox.entries))
+		}
+		return outbox.entries[0].AggregateID
+	}
+
+	nodeA1 := aggIDFor(t, "node-a")
+	nodeA2 := aggIDFor(t, "node-a")
+	nodeB := aggIDFor(t, "node-b")
+
+	if nodeA1 != nodeA2 {
+		t.Errorf("same (release, node) must yield a stable aggregate id: %s != %s", nodeA1, nodeA2)
+	}
+	if nodeA1 == nodeB {
+		t.Errorf("different nodes of the same release must get different aggregate lanes, both got %s", nodeA1)
+	}
+}
+
 // TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed verifies a failed
 // validation Job emits a single row with outcome=failed.
 func TestHandle_ValidationModeLabel_FailedStatus_OutcomeFailed(t *testing.T) {

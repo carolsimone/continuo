@@ -271,8 +271,12 @@ func (h *JobStatusHandler) handleValidationTerminal(
 
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "release",
-		AggregateID:   uuid.NewSHA1(validationLabelNamespace, []byte("release:"+releaseID)),
-		EventType:     event.EventTypeValidationNodeCompleted,
+		// Per-(release, node) aggregate id: node completions are independent, so a
+		// distinct id per node puts each in its own per-aggregate-FIFO lane and a
+		// release's nodes drain in parallel. A per-release id would serialize them
+		// to one publish per outbox tick.
+		AggregateID: uuid.NewSHA1(validationLabelNamespace, []byte("release:"+releaseID+":node:"+nodeID)),
+		EventType:   event.EventTypeValidationNodeCompleted,
 		Payload:       payload,
 		StreamName:    streams.ValidationNodeCompletedV1,
 		MaxRetries:    pkgoutbox.DefaultMaxRetries,
@@ -332,8 +336,12 @@ func (h *JobStatusHandler) handleSeedBuildTerminal(
 
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "release",
-		AggregateID:   uuid.NewSHA1(seedBuildLabelNamespace, []byte("release:"+releaseID)),
-		EventType:     event.EventTypeSeedBuildNodeCompleted,
+		// Per-(release, node) aggregate id: node completions are independent, so a
+		// distinct id per node puts each in its own per-aggregate-FIFO lane and a
+		// release's nodes drain in parallel. A per-release id would serialize them
+		// to one publish per outbox tick.
+		AggregateID: uuid.NewSHA1(seedBuildLabelNamespace, []byte("release:"+releaseID+":node:"+nodeID)),
+		EventType:   event.EventTypeSeedBuildNodeCompleted,
 		Payload:       payload,
 		StreamName:    streams.SeedBuildNodeCompletedV1,
 		MaxRetries:    pkgoutbox.DefaultMaxRetries,
@@ -399,8 +407,12 @@ func (h *JobStatusHandler) handleCompileTerminal(
 
 	if err := u.OutboxRepo().Create(ctx, &pkgoutbox.Entry{
 		AggregateType: "release",
-		AggregateID:   uuid.NewSHA1(compileLabelNamespace, []byte("release:"+releaseID)),
-		EventType:     event.EventTypeCompileNodeCompleted,
+		// Per-(release, node) aggregate id: node completions are independent, so a
+		// distinct id per node puts each in its own per-aggregate-FIFO lane and a
+		// release's nodes drain in parallel. A per-release id would serialize them
+		// to one publish per outbox tick.
+		AggregateID: uuid.NewSHA1(compileLabelNamespace, []byte("release:"+releaseID+":node:"+nodeID)),
+		EventType:   event.EventTypeCompileNodeCompleted,
 		Payload:       payload,
 		StreamName:    streams.CompileNodeCompletedV1,
 		MaxRetries:    pkgoutbox.DefaultMaxRetries,
