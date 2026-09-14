@@ -21,7 +21,6 @@ import PastRunsPanel from './PastRunsPanel';
 import RunProgressHeader from './RunProgressHeader';
 import RunNodeTable from './RunNodeTable';
 import RunSwimlane from './RunSwimlane';
-import TopologyPanel from './TopologyPanel';
 import RerunFailedModal, { RerunFailedMode } from './RerunFailedModal';
 import Tabs, { useActiveTab } from './Tabs';
 
@@ -584,7 +583,6 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
   // does not use these.
   const pageTabSpecs = [
     { slug: 'run', label: 'Run' },
-    { slug: 'topology', label: 'Topology' },
     { slug: 'runs', label: 'Past runs', count: runs.length },
   ];
   const activePage = useActiveTab('panel', 'run', pageTabSpecs.map(t => t.slug));
@@ -824,22 +822,6 @@ export default function DetailPage({ mode = 'run' }: DetailPageProps) {
                 </>
               )}
             </div>
-          )}
-          {activePage === 'topology' && (
-            graph && graph.nodes.length > 0 ? (
-              <TopologyPanel graph={graph} />
-            ) : (
-              <div className="graph-empty-state">
-                <p className="graph-empty-title">
-                  {graphState === 'error' ? 'Topology unavailable' : 'No topology to display'}
-                </p>
-                <p className="graph-empty-copy">
-                  {graphState === 'error'
-                    ? 'Failed to load the dependency graph.'
-                    : 'This schedule does not have a dependency graph yet.'}
-                </p>
-              </div>
-            )
           )}
           {activePage === 'runs' && (
             <PastRunsPanel
