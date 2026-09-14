@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/carolsimone/continuo/k8s-controller/service/ports"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
 )
 
 var _ ports.LogUploader = (*FakeLogUploader)(nil)

@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/carolsimone/continuo/k8s-controller/service/ports"
+	"github.com/carolsimone/continuo/execution-controller/service/ports"
 )
 
 // S3Client implements ports.LogUploader backed by AWS S3 / MinIO.

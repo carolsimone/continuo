@@ -21,9 +21,9 @@ const promoteMaxLen = streams.StreamMaxLen
 
 // promoteScript atomically moves all due tickets (score <= now) from the ZSET
 // into the stream, bounded by LIMIT. Because Redis runs the whole script
-// uninterrupted, with multiple k8s-controller replicas each due job is promoted
-// exactly once: the first replica's ZREM/HDEL means a concurrent run sees
-// nothing to promote. Returns the number of due members processed.
+// uninterrupted, with multiple execution-controller replicas each due job is
+// promoted exactly once: the first replica's ZREM/HDEL means a concurrent run
+// sees nothing to promote. Returns the number of due members processed.
 //
 // The ticket stores the source outbox row's entry ID next to the payload, so the
 // XADD stamps outbox_entry_id as a flat field just like the direct publisher
