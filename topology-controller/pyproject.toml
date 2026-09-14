@@ -7,7 +7,7 @@ dependencies = [
     "redis>=8.1.0",
     "grpcio>=1.83.1",
     "protobuf>=7.36.1",
-    "boto3>=1.43.89",
+    "boto3>=1.43.92",
     "PyYAML>=6.0",
 ]
 
