@@ -193,7 +193,7 @@ func verifyOrchestratorRunNotActive(t *testing.T, ctx context.Context, clients *
 	t.Logf("✅ orchestrator no longer reports run %s as active (finalized via run.finalized:v1)", want)
 }
 
-// verifyCancelledSchedulesGuardArmed polls all three service databases until each
+// verifyCancelledSchedulesGuardArmed polls both service databases until each
 // has a row in cancelled_schedules for the given schedule_id, confirming that
 // the schedule.cancelled:v1 Redis event was consumed by every consumer.
 func verifyCancelledSchedulesGuardArmed(t *testing.T, ctx context.Context, clients *testClients, schedulerID uuid.UUID) {
@@ -217,21 +217,10 @@ func verifyCancelledSchedulesGuardArmed(t *testing.T, ctx context.Context, clien
 			},
 		},
 		{
-			name: "executor-controller",
+			name: "execution-controller",
 			query: func() (bool, error) {
 				var exists bool
-				err := clients.executorDB.QueryRowContext(ctx,
-					"SELECT EXISTS(SELECT 1 FROM cancelled_schedules WHERE schedule_id = $1)",
-					schedulerID,
-				).Scan(&exists)
-				return exists, err
-			},
-		},
-		{
-			name: "k8s-controller",
-			query: func() (bool, error) {
-				var exists bool
-				err := clients.k8sDB.QueryRowContext(ctx,
+				err := clients.executionDB.QueryRowContext(ctx,
 					"SELECT EXISTS(SELECT 1 FROM cancelled_schedules WHERE schedule_id = $1)",
 					schedulerID,
 				).Scan(&exists)

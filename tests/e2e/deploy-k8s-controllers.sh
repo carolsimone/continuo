@@ -7,7 +7,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/common.s
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="${SCRIPT_DIR}/k8s"
 
-log_info "Starting K8s controllers setup for E2E tests..."
+log_info "Starting K8s controller setup for E2E tests..."
 
 # Step 1: Detect docker bridge IP
 log_info "Detecting docker bridge IP..."

@@ -31,10 +31,7 @@ func verifyServicesHealthy(t *testing.T) {
 	}
 
 	// k8s controllers
-	k8sControllers := map[string]int{
-		"executor-controller": 8084,
-		"k8s-controller":      8085,
-	}
+	k8sControllers := map[string]int{"execution-controller": 8084}
 
 	for deployment, port := range k8sControllers {
 		// `kubectl port-forward deployment/X` attaches to whatever pod the API

@@ -244,7 +244,7 @@ func triggerRelProbeRun(t *testing.T, ctx context.Context, clients *testClients)
 // for (service, imageTag) from MinIO, mirroring the canonical key the
 // executor's compile leg writes to and the hydrate-parse-cache initContainer
 // reads from: s3://<bucket>/<service>/parse-cache/<image_tag>/partial_parse.msgpack
-// (see executor-controller/service/artifacts.ParseCacheProdURI). Deleting it proves
+// (see execution-controller/service/artifacts.ParseCacheProdURI). Deleting it proves
 // the degrade path end-to-end: a run Job that can no longer fetch the artifact
 // must still succeed, recording parse_cache='degraded'.
 func deleteParseCacheProdArtifact(t *testing.T, ctx context.Context, clients *testClients, service, imageTag string) {

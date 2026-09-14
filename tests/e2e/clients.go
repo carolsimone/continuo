@@ -29,9 +29,8 @@ type testClients struct {
 	agentRemediationClient remediationv1.RemediationProposalsClient
 	redisClient            *goredis.Client
 	neo4jDriver            neo4jdriver.DriverWithContext
-	executorDB             *sqlx.DB
+	executionDB            *sqlx.DB
 	orchestratorDB         *sqlx.DB
-	k8sDB                  *sqlx.DB
 	stateDB                *sqlx.DB
 	releaseDB              *sqlx.DB
 	dbtDB                  *sqlx.DB
@@ -95,9 +94,8 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 	require.NoError(t, err, "Failed to connect to Neo4j")
 
 	// Setup PostgreSQL connections for each database
-	executorDB := connectPostgres(t, pgHost, "continuo_executor")
+	executionDB := connectPostgres(t, pgHost, "continuo_execution")
 	orchestratorDB := connectPostgres(t, pgHost, "continuo_orchestrator")
-	k8sDB := connectPostgres(t, pgHost, "continuo_k8s")
 	stateDB := connectPostgres(t, pgHost, "continuo_state")
 	releaseDB := connectPostgres(t, pgHost, "continuo_release")
 	dbtDB := connectPostgres(t, pgHost, getEnv("E2E_WAREHOUSE_DB", "continuo_dbt"))
@@ -110,9 +108,8 @@ func setupClients(t *testing.T, ctx context.Context) *testClients {
 		agentRemediationClient: remediationv1.NewRemediationProposalsClient(agentRemediationConn),
 		redisClient:            redisClient,
 		neo4jDriver:            neo4jDriver,
-		executorDB:             executorDB,
+		executionDB:            executionDB,
 		orchestratorDB:         orchestratorDB,
-		k8sDB:                  k8sDB,
 		stateDB:                stateDB,
 		releaseDB:              releaseDB,
 		dbtDB:                  dbtDB,
@@ -161,9 +158,8 @@ func connectPostgres(t *testing.T, host, database string) *sqlx.DB {
 func (c *testClients) close(ctx context.Context) {
 	_ = c.redisClient.Close()
 	_ = c.neo4jDriver.Close(ctx)
-	_ = c.executorDB.Close()
+	_ = c.executionDB.Close()
 	_ = c.orchestratorDB.Close()
-	_ = c.k8sDB.Close()
 	_ = c.stateDB.Close()
 	_ = c.releaseDB.Close()
 	_ = c.dbtDB.Close()
